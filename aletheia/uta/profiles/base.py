@@ -10,6 +10,7 @@ from typing import Any
 from aletheia.data.symbols import to_canonical
 from aletheia.uta.models import (
     AccountBalance,
+    FillReport,
     InstrumentIdentity,
     OrderLifecycle,
     OrderStatusReport,
@@ -58,7 +59,11 @@ class CCXTProfile:
     balance_requests: tuple[dict[str, object], ...] = ({},)
     position_params: dict[str, object] = {}
     open_order_requests: tuple[dict[str, object], ...] = ({},)
+    closed_order_requests: tuple[dict[str, object], ...] = ({},)
+    fill_requests: tuple[dict[str, object], ...] = ({},)
+    ledger_requests: tuple[dict[str, object], ...] = ({},)
     supported_market_types: tuple[str, ...] = ("usdt_futures",)
+    private_history_retention_days = 90
 
     def __init__(self, **client_options: object) -> None:
         credential_fields = (
@@ -290,3 +295,90 @@ class CCXTProfile:
             source_at=source_at,
             received_at=received_at,
         )
+
+    def order_reason(self, raw: dict[str, object]) -> str | None:
+        """Preserve only stable, consumer-owned venue reason codes."""
+        info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+        value = (
+            raw.get("cancelReason")
+            or raw.get("cancel_reason")
+            or info.get("cancelReason")
+            or info.get("cancel_reason")
+        )
+        reason = str(value or "").strip().lower()
+        if reason == "trade_too_many_times_cancel":
+            return reason
+        return None
+
+    def fill(
+        self,
+        raw: dict[str, object],
+        markets: dict[str, Any],
+        identity: UTAAccountIdentity,
+        received_at: datetime,
+    ) -> FillReport:
+        instrument = self.instrument(raw, markets)
+        multiplier = instrument.contract_size or Decimal(1)
+        quantity = (decimal_value(raw.get("amount")) or Decimal(0)) * multiplier
+        price = decimal_value(raw.get("price"))
+        if quantity <= 0 or price is None or price <= 0:
+            raise ValueError("invalid fill economics")
+        fee = raw.get("fee") if isinstance(raw.get("fee"), dict) else {}
+        executed_at = utc_from_milliseconds(raw.get("timestamp"), received_at)
+        if executed_at is None:
+            raise ValueError("fill timestamp missing")
+        info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+        fill_id = raw.get("id") or info.get("tradeId") or info.get("fillId")
+        if not fill_id:
+            raise ValueError("fill identity missing")
+        return FillReport(
+            identity=identity,
+            instrument=instrument,
+            client_order_id=(
+                str(raw.get("clientOrderId")) if raw.get("clientOrderId") else None
+            ),
+            venue_order_id=str(raw.get("order")) if raw.get("order") else None,
+            venue_fill_id=str(fill_id),
+            side=str(raw.get("side") or "unknown"),
+            quantity=quantity,
+            price=price,
+            fee=decimal_value(fee.get("cost")),
+            fee_currency=str(fee.get("currency")) if fee.get("currency") else None,
+            liquidity_side=str(raw.get("takerOrMaker")) if raw.get("takerOrMaker") else None,
+            executed_at=executed_at,
+            received_at=received_at,
+        )
+
+    def funding_events(self, rows: list[dict[str, object]]) -> list[dict]:
+        """Normalize private ledger rows; subclasses opt into venue semantics."""
+        return []
+
+    def account_authority(self, balances: list[dict[str, object]]) -> tuple[str | None, str]:
+        """Return exchange account id and explicit trading permission when exposed."""
+        account_id = None
+        permission = "unknown"
+        stack: list[object] = list(balances)
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    normalized = str(key).lower().replace("-", "_")
+                    if account_id is None and normalized in {
+                        "uid", "user_id", "userid", "account_id", "accountid",
+                    } and item not in {None, "", 0, False}:
+                        account_id = str(item)
+                    if normalized in {
+                        "cantrade", "can_trade", "tradepermission", "order_permission",
+                    }:
+                        if isinstance(item, bool):
+                            permission = "granted" if item else "denied"
+                        else:
+                            text = str(item).lower()
+                            if text in {"true", "1", "yes", "granted"}:
+                                permission = "granted"
+                            elif text in {"false", "0", "no", "denied", "read_only"}:
+                                permission = "denied"
+                    stack.append(item)
+            elif isinstance(value, (list, tuple)):
+                stack.extend(value)
+        return account_id, permission

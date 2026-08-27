@@ -366,13 +366,13 @@ def test_exchange_sync_client_inherits_profile(tmp_path, monkeypatch):
     assert client.profile == "uta_v3"
 
 
-def test_broker_funding_settlement_client_inherits_profile(tmp_path, monkeypatch):
+def test_broker_funding_settlement_uses_uta_account_mode(tmp_path, monkeypatch):
     from aletheia.portfolio.broker_funding_settlement import _client_for_mode
 
     _use_profile(tmp_path, monkeypatch, "uta_v3")
     _stub_creds(monkeypatch)
     client = _client_for_mode("bitget_demo")
-    assert client.profile == "uta_v3"
+    assert client.execution_mode == "bitget_demo"
 
 
 def test_demo_adapter_client_inherits_profile(tmp_path, monkeypatch):

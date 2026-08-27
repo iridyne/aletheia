@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from datetime import datetime, timezone
 import importlib
 import json
@@ -176,14 +175,13 @@ def test_delayed_private_fill_materializes_actual_economics(
     )
     repo.insert_order(order)
 
-    broker = importlib.import_module(broker_module)
-
     async def _evidence(stored_order):
         assert stored_order["id"] == order.id
         return [_private_fill(exchange_order_id, suffix=execution_mode)]
 
     monkeypatch.setattr(
-        broker, "fetch_private_fill_evidence", _evidence, raising=False
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _evidence,
     )
 
     result = reconcile()
@@ -306,7 +304,8 @@ def test_reported_filled_waits_for_private_fill_before_finalizing(
         return [_private_fill(exchange_order_id, suffix=f"sync-{execution_mode}")]
 
     monkeypatch.setattr(
-        broker, "fetch_private_fill_evidence", _evidence, raising=False
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _evidence,
     )
     result = reconcile()
     fill = db.execute(
@@ -396,13 +395,12 @@ def test_verified_averaging_leg_does_not_upgrade_unverified_history(
         status="materialization_missing",
     )
     repo.insert_order(order)
-    broker = importlib.import_module(broker_module)
-
     async def _evidence(stored_order):
         return [_private_fill(exchange_order_id, suffix=f"average-{execution_mode}")]
 
     monkeypatch.setattr(
-        broker, "fetch_private_fill_evidence", _evidence, raising=False
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _evidence,
     )
 
     result = reconcile()
@@ -468,15 +466,14 @@ def test_unmatched_estimated_fill_blocks_position_verification(
             1_784_050_000, tz=timezone.utc
         ).isoformat(),
     ))
-    broker = importlib.import_module(broker_module)
-
     async def _evidence(stored_order):
         return [_private_fill(
             exchange_order_id, suffix=f"estimated-conflict-{execution_mode}"
         )]
 
     monkeypatch.setattr(
-        broker, "fetch_private_fill_evidence", _evidence, raising=False
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _evidence,
     )
 
     result = reconcile()
@@ -548,9 +545,14 @@ def test_periodic_job_reconciles_all_explicit_account_orders(tmp_path, monkeypat
             suffix=f"scheduled-{stored_order['execution_mode']}",
         )]
 
-    monkeypatch.setattr(okx_broker, "fetch_private_fill_evidence", _okx_evidence)
+    async def _evidence(stored_order):
+        if str(stored_order["execution_mode"]).startswith("okx"):
+            return await _okx_evidence(stored_order)
+        return await _binance_evidence(stored_order)
+
     monkeypatch.setattr(
-        binance_broker, "fetch_private_fill_evidence", _binance_evidence
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _evidence,
     )
     monkeypatch.setattr(
         scheduler,
@@ -619,73 +621,23 @@ def test_periodic_job_with_no_orders_constructs_no_exchange_client(
         status="implemented",
     )
 )
-def test_six_account_modes_construct_only_their_mapped_private_client(
+def test_six_account_modes_query_only_their_mapped_uta_account(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import binance_broker, okx_broker
-    from aletheia.execution.reconciliation import reconcile
-    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation as recon
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
-    constructed: list[tuple[str, str]] = []
+    queried: list[str] = []
 
-    class _BitgetClient:
-        def __init__(self, mode, **_kwargs):
-            constructed.append(("bitget", mode))
+    async def _empty(self, **_kwargs):
+        queried.append(self.execution_mode)
+        return []
 
-        async def get_open_orders(self, **kwargs):
-            return []
-
-        async def get_fills(self, **kwargs):
-            return []
-
-        async def close(self):
-            pass
-
-    class _OKXExchange:
-        async def load_markets(self):
-            return None
-
-        def market(self, symbol):
-            return {"id": "BTC-USDT-SWAP", "contractSize": 0.01}
-
-        async def private_get_trade_fills_history(self, params):
-            return {"code": "0", "data": []}
-
-    class _OKXClient:
-        def __init__(self, mode):
-            constructed.append(("okx", mode))
-            self.exchange = _OKXExchange()
-
-        def _ensure_exchange(self):
-            return self.exchange
-
-        async def close(self):
-            pass
-
-    class _BinanceExchange:
-        async def load_markets(self):
-            return None
-
-        async def fetch_my_trades(self, *args, **kwargs):
-            return []
-
-    class _BinanceClient:
-        def __init__(self, mode):
-            constructed.append(("binance", mode))
-            self.exchange = _BinanceExchange()
-
-        def _ensure_exchange(self):
-            return self.exchange
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(bitget_client, "BitgetClient", _BitgetClient)
-    monkeypatch.setattr(okx_broker, "OKXClient", _OKXClient)
-    monkeypatch.setattr(binance_broker, "BinanceClient", _BinanceClient)
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_open_orders", _empty)
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_fills", _empty)
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_order_fills", _empty)
 
     account_modes = (
         "bitget_demo",
@@ -714,17 +666,10 @@ def test_six_account_modes_construct_only_their_mapped_private_client(
             status="submitted",
         ))
 
-    result = reconcile()
+    result = recon.reconcile()
 
     assert result["checked"] == 6
-    assert Counter(constructed) == Counter({
-        ("bitget", "demo"): 1,
-        ("bitget", "live"): 1,
-        ("okx", "demo"): 1,
-        ("okx", "live"): 1,
-        ("binance", "testnet"): 1,
-        ("binance", "live"): 1,
-    })
+    assert set(queried) == set(account_modes)
 
 
 @spec_claim(
@@ -743,12 +688,10 @@ def test_same_remote_trade_id_is_isolated_across_six_accounts(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import binance_broker, okx_broker
+    from aletheia.execution import reconciliation as recon
     from aletheia.execution.exchange_materialization import (
         durable_private_fill_id,
     )
-    from aletheia.execution.reconciliation import reconcile
-    from aletheia.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
@@ -788,40 +731,21 @@ def test_same_remote_trade_id_is_isolated_across_six_accounts(
         row["tradeId"] = shared_remote_fill_id
         return row
 
-    class _BitgetClient:
-        def __init__(self, mode, **_kwargs):
-            self.execution_mode = (
-                "bitget_demo" if mode == "demo" else "bitget_live_limited"
-            )
+    async def _empty_open(self, **_kwargs):
+        return []
 
-        async def get_open_orders(self, **kwargs):
-            return []
+    async def _fills(self, **_kwargs):
+        return [_same_remote_fill(exchange_ids[self.execution_mode])]
 
-        async def get_fills(self, **kwargs):
-            return [_same_remote_fill(exchange_ids[self.execution_mode])]
-
-        async def get_order_fills(self, *, order_id, **kwargs):
-            assert order_id == exchange_ids[self.execution_mode]
-            return [_same_remote_fill(order_id)]
-
-        async def close(self):
-            pass
-
-    async def _okx_evidence(order):
-        return [_same_remote_fill(order["exchange_order_id"])]
-
-    async def _binance_evidence(order):
-        return [_same_remote_fill(order["exchange_order_id"])]
-
-    monkeypatch.setattr(bitget_client, "BitgetClient", _BitgetClient)
-    monkeypatch.setattr(okx_broker, "fetch_private_fill_evidence", _okx_evidence)
     monkeypatch.setattr(
-        binance_broker,
-        "fetch_private_fill_evidence",
-        _binance_evidence,
+        recon._UTAReconciliationProjection, "get_open_orders", _empty_open
+    )
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_fills", _fills)
+    monkeypatch.setattr(
+        recon._UTAReconciliationProjection, "get_order_fills", _fills
     )
 
-    first = reconcile()
+    first = recon.reconcile()
     fills = [
         dict(row)
         for row in db.execute(
@@ -845,7 +769,7 @@ def test_same_remote_trade_id_is_isolated_across_six_accounts(
     }
     assert all(row["id"].endswith(f":{shared_remote_fill_id}") for row in fills)
 
-    second = reconcile()
+    second = recon.reconcile()
     assert second["checked"] == 0
     assert db.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 6
 
@@ -985,7 +909,8 @@ def test_close_waits_for_private_fill_then_materializes_once(
         )]
 
     monkeypatch.setattr(
-        broker, "fetch_private_fill_evidence", _evidence, raising=False
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _evidence,
     )
     result = reconcile()
     stored_position = repo._select_one("positions", position.id)
@@ -1077,14 +1002,14 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(
         status="materialization_missing",
     )
     repo.insert_order(order)
-    broker = importlib.import_module(broker_module)
     sensitive = "private-api-secret-must-not-persist"
 
     async def _query_failure(stored_order):
         raise RuntimeError(sensitive)
 
     monkeypatch.setattr(
-        broker, "fetch_private_fill_evidence", _query_failure, raising=False
+        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+        _query_failure,
     )
 
     result = reconcile()

@@ -45,10 +45,26 @@ Fixing baseline: `master@abdfbecab65e3e93090ab85234ead8d53ae19be1`.
 Phase 2 intentionally does not implement order/fill/funding/verified-exit/Trust
 evidence or any mutation. Those remain Phase 3 and later gates.
 
+## Phase 3 evidence/recovery/Trust cutover
+
+Fixing baseline: `master@324ddafe53d5b577979b84da9ba83da8d6e3cdc7`.
+
+| Boundary | Phase 3 state | Authority result |
+|---|---|---|
+| UTA reports | `CCXTUTAAdapter` implements exact Order, bounded Fill history, mass status, bounded funding ledger, verified exit and account-authority probe for all six configured account modes. | Complete empty remains distinct from partial/unavailable; history bounds fail closed. |
+| Reconciliation | Existing atomic Fill/Position materializers consume normalized UTA evidence through a temporary raw-row projection. No concrete venue client is constructed. | Open-list absence is diagnostic only and never creates a terminal fact. |
+| Stale/pending recovery | Cleanup uses complete exact UTA mass status; pending-close recovery uses exact Order/Fill reports and retains evidence-then-CAS. | Age and unavailable evidence never fabricate cancellation; stable venue cancel reasons remain available. |
+| Disappearance/funding | Verified-exit and funding settlement consume `VerifiedExitReport`, exact current Position reports and `FundingLedgerReport`. | Account identity is checked before query; incomplete evidence cannot close or fabricate zero funding. |
+| Live Trust | Preflight consumes the selected UTA identity and `AccountAuthorityProbeReport`, including profile and credential generation. | Permission unknown stays unknown and Trust continues to deny it by policy. |
+| Compatibility seams | Reconciliation, funding and verified-exit expose temporary projection factories for existing tests/rollback wiring; they contain no private network implementation and delegate to UTA by default. | Phase 8 removes these seams after every execution profile is qualified. |
+
+Phase 3 does not submit, modify or cancel an exchange order. Mutation methods
+remain `NOT_SENT`; execution cutover starts in Phase 4.
+
 ## Adjacent execution findings
 
 | Issue | Exact-head evidence | Composition decision |
 |---|---|---|
 | #2042 Bitget late acknowledgement | Merged PR #2102 (`9adbace4`) added shared `repositories.finalize_exchange_acknowledgement()` and all three brokers call it. The helper uses `transaction(immediate=True)`, a conditional unresolved-state update, immutable compatible venue identity, close-claim ownership and returns the durable Fill/Position winner. | Root is already repaired on this head. The future coordinator must reuse and preserve this CAS contract; moving the network boundary does not supersede it. |
 | #2045 OKX/Binance acknowledgement TOCTOU | The same merged helper replaces their prior read-then-write guard and current barrier regressions live in `tests/test_exchange_submission_integrity.py`. | Same composition as #2042. The Issue remains separate history until its own closure gate is handled; #2299 must not relabel that proof. |
-| #1421 stale cleanup fabricates cancellation | `execution/stale_order_cleanup.py` still maps open-list absence to `stale_order_absent_on_exchange`, outage/age to `stale_order_unverifiable_aged_out`, and a closed local Position to pending-close removal without exact remote terminal evidence. | Still unresolved. Phase 3 must route ordinary reconciliation and cleanup through UTA exact Order/Fill reports; open-list absence or unavailable evidence must remain unresolved. This is composed into the migration, not declared fixed by Phase 0. |
+| #1421 stale cleanup fabricates cancellation | Phase 3 removes the hard-age unverifiable cancellation path and requires complete UTA mass-status evidence with no Order or Fill before ordinary orphan cancellation. | Root composes with Phase 3 and now has focused regressions; Issue closure still requires its own GitHub evidence gate. |

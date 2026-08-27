@@ -30,7 +30,8 @@ _CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
 
 _PUBLIC_EVIDENCE_FIELDS = frozenset({
     "broker", "execution_mode", "account_environment", "account_fingerprint",
-    "credential_revision", "config_revision", "adapter_capability_version",
+    "credential_revision", "credential_generation", "uta_profile",
+    "config_revision", "adapter_capability_version",
     "account_identity_source", "ok", "reason_code", "private_authenticated",
     "account_readable", "public_reachability", "environment_verified",
     "permission_status", "completeness", "fetched_at", "expires_at",
@@ -61,6 +62,8 @@ def _evidence_binding(evidence: dict[str, Any]) -> str:
         "execution_mode": evidence.get("execution_mode"),
         "account_environment": evidence.get("account_environment"),
         "account_fingerprint": evidence.get("account_fingerprint"),
+        "credential_generation": evidence.get("credential_generation"),
+        "uta_profile": evidence.get("uta_profile"),
         "config_revision": evidence.get("config_revision"),
         "permission_status": evidence.get("permission_status"),
     })
@@ -88,11 +91,19 @@ def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
     if str(getattr(cfg.exchange, "mode", "") or "").lower() != "live":
         raise ValueError("exchange_mode_not_live")
     credential_revision, refs = _credential_revision(broker)
+    from aletheia.uta.manager import _account_generation, _profile_spec
+
+    scope, uta_profile, _venue, _environment, _fields, _profile_type = (
+        _profile_spec(cfg, mode)
+    )
+    credential_generation = _account_generation(cfg, mode, scope, uta_profile)
     config_revision = _digest({
         "broker": broker,
         "execution_mode": mode,
         "environment": "live",
         "credential_revision": credential_revision,
+        "credential_generation": credential_generation,
+        "uta_profile": uta_profile,
         "paper_execution_mode": str(getattr(cfg.exchange, "paper_execution_mode", "")),
         "risk_allowed_exchange": str(getattr(cfg.risk, "allowed_exchange", "")),
     })
@@ -102,6 +113,8 @@ def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
         "account_environment": "live",
         "credential_refs": list(refs),
         "credential_revision": credential_revision,
+        "credential_generation": credential_generation,
+        "uta_profile": uta_profile,
         "config_revision": config_revision,
         "adapter_capability_version": ADAPTER_CAPABILITY_VERSION,
     }
@@ -170,39 +183,31 @@ def _permission(raw: Any) -> str:
     return "unknown"
 
 
-async def _private_account_probe(identity: dict[str, Any]) -> tuple[Any, str | None, str, str]:
-    broker = identity["broker"]
-    client = None
+async def _private_account_probe(identity: dict[str, Any], cfg=None):
+    """Read selected live authority only through the UTA account boundary."""
+    from aletheia.uta.manager import create_uta_adapter
+    from aletheia.uta.models import CapabilitySupport, ReadCompleteness
+
+    adapter = create_uta_adapter(identity["execution_mode"], cfg)
     try:
-        if broker == "bitget":
-            from aletheia.exchanges.bitget.client import BitgetClient
-            from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-
-            client = BitgetClient(mode="live", profile=configured_bitget_profile())
-            account = await client.get_account()
-            raw = getattr(account, "raw", {}) or {}
-            return raw, getattr(account, "user_id", None), _environment(raw), _permission(raw)
-        if broker == "okx":
-            from aletheia.exchanges.okx.client import OKXClient
-
-            client = OKXClient(mode="live")
-            balance = await client.fetch_balance()
-            raw = balance.get("info", balance) if isinstance(balance, dict) else balance
-            return raw, _account_id(raw), _environment(raw), _permission(raw)
-        if broker == "binance":
-            from aletheia.exchanges.binance.client import BinanceClient
-
-            client = BinanceClient(mode="live")
-            balance = await client.fetch_balance()
-            raw = balance.get("info", balance) if isinstance(balance, dict) else balance
-            return raw, _account_id(raw), _environment(raw), _permission(raw)
+        await adapter.connect()
+        report = await adapter.probe_account_authority()
     finally:
-        if client is not None:
-            try:
-                await client.close()
-            except Exception:
-                pass
-    raise ValueError("selected_exchange_unsupported")
+        try:
+            await adapter.close()
+        except Exception:
+            pass
+    if (
+        report.identity != adapter.identity
+        or report.completeness is not ReadCompleteness.COMPLETE
+        or not report.authenticated_private_readable
+    ):
+        raise RuntimeError(report.reason_code or "account_authority_incomplete")
+    permission = {
+        CapabilitySupport.SUPPORTED: "granted",
+        CapabilitySupport.UNSUPPORTED: "denied",
+    }.get(report.trading_permission, "unknown")
+    return report.account_fingerprint, report.identity.environment, permission
 
 
 def public_evidence(evidence: dict[str, Any] | None) -> dict[str, Any]:
@@ -252,8 +257,8 @@ async def run_live_preflight(cfg=None) -> dict[str, Any]:
     except ValueError as exc:
         return _result_failure(None, str(exc), now=now)
     try:
-        raw, account_id, environment, permission = await asyncio.wait_for(
-            _private_account_probe(identity), timeout=PREFLIGHT_TIMEOUT_SECONDS,
+        account_fingerprint, environment, permission = await asyncio.wait_for(
+            _private_account_probe(identity, cfg), timeout=PREFLIGHT_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         # Only stable categories cross the trust boundary.  Raw exchange errors can
@@ -297,10 +302,10 @@ async def run_live_preflight(cfg=None) -> dict[str, Any]:
         result.update({"private_authenticated": True, "account_readable": True})
         return result
 
-    fingerprint = _digest({
+    fingerprint = account_fingerprint or _digest({
         "broker": identity["broker"],
         "environment": environment,
-        "account_id": account_id or identity["credential_revision"],
+        "account_id": identity["credential_revision"],
     })
     result = dict(identity)
     result.update({
@@ -314,7 +319,9 @@ async def run_live_preflight(cfg=None) -> dict[str, Any]:
         "permission_status": permission,
         "permission_unknown_policy": PERMISSION_UNKNOWN_POLICY,
         "completeness": "complete",
-        "account_identity_source": "exchange_user_id" if account_id else "credential_binding",
+        "account_identity_source": (
+            "uta_account_probe" if account_fingerprint else "credential_binding"
+        ),
         "fetched_at": _iso(now),
         "expires_at": _iso(now + timedelta(seconds=PREFLIGHT_MAX_AGE_SECONDS)),
     })
@@ -337,7 +344,15 @@ def evidence_matches_config(cfg, evidence: dict[str, Any] | None) -> tuple[bool,
         identity = resolve_live_execution_identity(cfg)
     except ValueError as exc:
         return False, str(exc)
-    for field in ("broker", "execution_mode", "account_environment", "credential_revision", "config_revision"):
+    for field in (
+        "broker",
+        "execution_mode",
+        "account_environment",
+        "credential_revision",
+        "credential_generation",
+        "uta_profile",
+        "config_revision",
+    ):
         if evidence.get(field) != identity.get(field):
             return False, f"{field}_mismatch"
     now = _now()

@@ -14,6 +14,8 @@ class OKXDemoProfile(CCXTProfile):
     exchange_name = "okx"
     sandbox = True
     open_order_requests = ({"type": "swap"}, {"type": "spot"})
+    closed_order_requests = open_order_requests
+    fill_requests = open_order_requests
     supported_market_types = ("spot", "usdt_futures")
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
@@ -49,3 +51,17 @@ class OKXDemoProfile(CCXTProfile):
             unrealized += decimal_value(item.get("upl")) or Decimal(0)
         values["unrealized_pnl"] = unrealized if details else None
         return values, tuple(normalized), reason
+
+    def funding_events(self, rows):
+        from aletheia.uta.funding import normalize_okx_funding_rows
+
+        return normalize_okx_funding_rows(
+            row.get("info", row) if isinstance(row, dict) else {} for row in rows
+        )
+
+
+class OKXLiveProfile(OKXDemoProfile):
+    expected_execution_mode = "okx_live_limited"
+    expected_environment = "live"
+    expected_profile = "okx_live"
+    sandbox = False

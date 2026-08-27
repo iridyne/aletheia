@@ -17,6 +17,7 @@ import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
 from aletheia.data.symbols import to_bitget, to_canonical
+from aletheia.execution.broker_funding import make_complete_ledger
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
     durable_private_fill_id,
@@ -30,6 +31,14 @@ from aletheia.storage.models import AuditEvent
 from aletheia.storage.repositories import update_order
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
+from aletheia.uta.compat import instrument_from_local, scope_from_local
+from aletheia.uta.manager import query_uta
+from aletheia.uta.models import (
+    FillQuery,
+    FundingLedgerQuery,
+    OrderQuery,
+    ReadCompleteness,
+)
 
 logger = logging.getLogger("aletheia.reconciliation")
 
@@ -810,71 +819,197 @@ def _write_filled_gap_event(
         )
 
 
+class _UTAReconciliationProjection:
+    """Temporary raw-row projection for the existing atomic materializer."""
+
+    def __init__(self, execution_mode: str) -> None:
+        self.execution_mode = execution_mode
+
+    @staticmethod
+    def _fill_row(fill) -> dict:
+        return {
+            "tradeId": fill.venue_fill_id,
+            "orderId": fill.venue_order_id,
+            "clientOid": fill.client_order_id,
+            "fillPrice": str(fill.price),
+            "fillQuantity": str(fill.quantity),
+            "fee": str(fill.fee) if fill.fee is not None else None,
+            "feeCoin": fill.fee_currency,
+            "cTime": int(fill.executed_at.timestamp() * 1000),
+            "tradeScope": fill.liquidity_side,
+        }
+
+    @staticmethod
+    def _order_row(order) -> dict:
+        return {
+            "orderId": order.venue_order_id,
+            "clientOid": order.client_order_id,
+            "status": order.state.value,
+            "symbol": order.instrument.canonical_symbol,
+        }
+
+    async def get_open_orders(self, *, market_type: str | None = None) -> list[dict]:
+        report = await query_uta(
+            self.execution_mode,
+            "get_open_orders",
+            OrderQuery(scope=scope_from_local("BTC/USDT", market_type or "usdt_futures").model_copy(update={"instrument": None})),
+        )
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            raise RuntimeError(report.reason_code or "uta_open_orders_incomplete")
+        return [
+            self._order_row(order)
+            for order in report.orders
+            if market_type is None or order.instrument.market_type == market_type
+        ]
+
+    async def get_fills(
+        self,
+        *,
+        symbol: str | None = None,
+        market_type: str = "usdt_futures",
+        start_at=None,
+    ) -> list[dict]:
+        scope = (
+            scope_from_local(symbol, market_type, start_at=start_at)
+            if symbol
+            else scope_from_local(
+                "BTC/USDT", market_type, start_at=start_at
+            ).model_copy(update={"instrument": None})
+        )
+        report = await query_uta(
+            self.execution_mode,
+            "get_fills",
+            FillQuery(scope=scope),
+        )
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            raise RuntimeError(report.reason_code or "uta_fills_incomplete")
+        return [
+            self._fill_row(fill)
+            for fill in report.fills
+            if fill.instrument.market_type == market_type
+        ]
+
+    async def get_order_fills(
+        self,
+        *,
+        order_id: str | None,
+        symbol: str,
+        market_type: str,
+        client_order_id: str | None = None,
+        start_at=None,
+    ) -> list[dict]:
+        report = await query_uta(
+            self.execution_mode,
+            "get_fills",
+            FillQuery(
+                scope=scope_from_local(symbol, market_type, start_at=start_at),
+                venue_order_id=order_id,
+                client_order_id=client_order_id,
+            ),
+        )
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            raise RuntimeError(report.reason_code or "uta_exact_fills_incomplete")
+        return [self._fill_row(fill) for fill in report.fills]
+
+    async def get_order_detail_by_client_oid(
+        self, client_order_id: str, symbol: str
+    ) -> dict | None:
+        report = await query_uta(
+            self.execution_mode,
+            "get_order",
+            OrderQuery(
+                scope=scope_from_local(symbol, "usdt_futures"),
+                client_order_id=client_order_id,
+            ),
+        )
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
+        return self._order_row(report.found) if report.found else None
+
+    async def get_funding_ledger(
+        self,
+        *,
+        broker_id: str,
+        symbol: str,
+        start_time_ms: int,
+        end_time_ms: int,
+        market_type: str = "usdt_futures",
+    ) -> dict:
+        start = datetime.fromtimestamp(start_time_ms / 1000, tz=timezone.utc)
+        end = datetime.fromtimestamp(end_time_ms / 1000, tz=timezone.utc)
+        report = await query_uta(
+            self.execution_mode,
+            "get_funding_ledger",
+            FundingLedgerQuery(
+                scope=scope_from_local(
+                    symbol, market_type, start_at=start, end_at=end
+                )
+            ),
+        )
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            raise RuntimeError(report.reason_code or "uta_funding_incomplete")
+        events = [
+            {
+                "event_id": entry.venue_ledger_id,
+                "symbol": entry.instrument.canonical_symbol,
+                "cash_change": float(entry.amount),
+                "funding_cost": -float(entry.amount),
+                "currency": entry.currency,
+                "scheduled_at": entry.settlement_at.isoformat(),
+                "occurred_at_ms": int(entry.settlement_at.timestamp() * 1000),
+                "raw_type": entry.source_provenance,
+                "direction": None,
+            }
+            for entry in report.entries
+        ]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment=report.identity.environment,
+            source_endpoint="uta.get_funding_ledger",
+            history_start_ms=start_time_ms,
+            history_end_ms=end_time_ms,
+            events=events,
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 def _fetch_multibroker_evidence(order: dict):
-    """Select the broker-owned private history reader for this exact account."""
-    execution_mode = order.get("execution_mode")
-    if execution_mode in {"okx_demo", "okx_live_limited"}:
-        from aletheia.execution.okx_broker import fetch_private_fill_evidence
-
-        return fetch_private_fill_evidence(order)
-    if execution_mode in {"binance_testnet", "binance_live_limited"}:
-        from aletheia.execution.binance_broker import fetch_private_fill_evidence
-
-        return fetch_private_fill_evidence(order)
-    raise ValueError("unsupported exchange reconciliation mode")
+    """Read normalized UTA fills and adapt them to the existing materializer."""
+    mode = str(order.get("execution_mode") or "")
+    client = _UTAReconciliationProjection(mode)
+    return client.get_order_fills(
+        order_id=str(order.get("exchange_order_id") or "") or None,
+        client_order_id=str(order.get("client_order_id") or "") or None,
+        symbol=str(order["symbol"]),
+        market_type=str(order.get("market_type") or "spot"),
+        start_at=order.get("created_at"),
+    )
 
 
 async def _fetch_multibroker_funding(order: dict, request: dict) -> dict:
-    """Read the exact private funding ledger for a proven complete close."""
-    execution_mode = str(order.get("execution_mode") or "")
-    if execution_mode in {"okx_demo", "okx_live_limited"}:
-        from aletheia.exchanges.okx.client import OKXClient
-
-        client = OKXClient(
-            mode="demo" if execution_mode == "okx_demo" else "live"
-        )
-    elif execution_mode in {"binance_testnet", "binance_live_limited"}:
-        from aletheia.exchanges.binance.client import BinanceClient
-
-        client = BinanceClient(
-            mode="testnet" if execution_mode == "binance_testnet" else "live"
-        )
-    else:
-        raise ValueError("unsupported exchange funding mode")
-    try:
-        return await client.get_funding_ledger(
-            broker_id=execution_mode,
-            symbol=str(request["position"]["symbol"]),
-            start_time_ms=int(request["start_time_ms"]),
-            end_time_ms=int(request["end_time_ms"]),
-        )
-    finally:
-        try:
-            await client.close()
-        except Exception as exc:
-            logger.warning(
-                "funding reconciliation client close failed (%s)",
-                type(exc).__name__,
-            )
+    """Read the exact normalized UTA funding ledger for a complete close."""
+    return await _UTAReconciliationProjection(
+        str(order.get("execution_mode") or "")
+    ).get_funding_ledger(
+        broker_id=str(order.get("execution_mode") or ""),
+        symbol=str(request["position"]["symbol"]),
+        market_type=str(order.get("market_type") or "usdt_futures"),
+        start_time_ms=int(request["start_time_ms"]),
+        end_time_ms=int(request["end_time_ms"]),
+    )
 
 def _ccxt_client_for_mode(mode: str):
-    """Build the live CCXT client for a reconcilable mode."""
-    if mode == "okx_live_limited":
-        from aletheia.exchanges.okx.client import OKXClient
-        return OKXClient(mode="live")
-    if mode == "binance_live_limited":
-        from aletheia.exchanges.binance.client import BinanceClient
-        return BinanceClient(mode="live")
-    raise ValueError(f"no CCXT reconcile client for mode {mode}")
+    """Compatibility projection over normalized UTA reports."""
+    return _UTAReconciliationProjection(mode)
 
 
 def _reconcile_ccxt_broker(mode: str, all_orders: list[dict]) -> dict:
-    """CR-EX-01: reconcile one CCXT broker's live orders via get_open_orders(), mirroring
-    the Bitget path. Fail-safe — on ANY fetch failure infer NOTHING and return the orders
-    as ``unreconciled`` (for alerting) rather than fabricating a fill from a failed read.
+    """Legacy open-list diagnostic; absence never establishes a terminal state.
 
-    Returns {"checked", "filled", "errors", "unreconciled": [orders that couldn't be
-    reconciled]}.
+    Exact order and Fill reports are consumed by :func:`reconcile`; this helper
+    remains only for its existing monitoring/tests and never mutates storage.
     """
     live = [
         o for o in all_orders
@@ -890,21 +1025,20 @@ def _reconcile_ccxt_broker(mode: str, all_orders: list[dict]) -> dict:
         logger.warning("reconcile: %s get_open_orders failed: %s", mode, e)
         return {"checked": len(live), "filled": 0, "errors": [f"{mode}: {e}"], "unreconciled": live}
 
-    open_ids = {str(r.get("id")) for r in (rows or []) if r.get("id")}
-    resolved = set(resolve_orders_missing_from_exchange(live, open_ids, modes=(mode,)))
-    filled = 0
-    for o in live:
-        if o["exchange_order_id"] in resolved:
-            update_order(o["id"], status="filled", filled_at=datetime.now(timezone.utc).isoformat())
-            write_audit({
-                "actor": "system", "source": "reconciliation",
-                "event_type": "order_reconciled_filled", "entity_type": "order",
-                "entity_id": o["id"],
-                "before": {"status": o["status"]}, "after": {"status": "filled"},
-                "message": f"Order {o['exchange_order_id']} ({mode}) no longer open on exchange; marked filled",
-            })
-            filled += 1
-    return {"checked": len(live), "filled": filled, "errors": [], "unreconciled": []}
+    open_ids = {
+        str(r.get("orderId") or r.get("id"))
+        for r in (rows or [])
+        if r.get("orderId") or r.get("id")
+    }
+    unresolved = [
+        order for order in live if str(order["exchange_order_id"]) not in open_ids
+    ]
+    return {
+        "checked": len(live),
+        "filled": 0,
+        "errors": [],
+        "unreconciled": unresolved,
+    }
 
 def reconcile() -> dict:
     """Reconcile unresolved exchange Orders and materialize proven fills."""
@@ -1065,8 +1199,6 @@ def reconcile() -> dict:
                 state=str(order.get("status") or "unresolved"),
                 reason="complete_exchange_fill_not_proven",
             )
-    from aletheia.exchanges.bitget.client import BitgetClient
-
     # Historical terminal Orders are never added to the ordinary open-order
     # scan.  They get a dedicated, exact orderId-only path after local authority
     # and exposure preflights have passed.
@@ -1104,14 +1236,14 @@ def reconcile() -> dict:
             continue
         try:
             if filled_gap_client is None:
-                from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-                filled_gap_client = BitgetClient(mode="demo", profile=configured_bitget_profile())
+                filled_gap_client = _UTAReconciliationProjection("bitget_demo")
             rows = _response_rows(
                 _run_coro(
                     filled_gap_client.get_order_fills(
                         order_id=str(order["exchange_order_id"]),
                         symbol=to_bitget(str(order["symbol"])),
                         market_type=market_type,
+                        start_at=order.get("created_at"),
                     )
                 )
             )
@@ -1204,8 +1336,7 @@ def reconcile() -> dict:
         ]
         if not mode_orders:
             continue
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
+        client = _UTAReconciliationProjection(execution_mode)
         markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
         open_rows: dict[str, list[dict]] = {}
         fill_rows: dict[str, list[dict]] = {}
@@ -1213,6 +1344,15 @@ def reconcile() -> dict:
         symbol_fill_rows: dict[tuple[str, str], list[dict] | None] = {}
 
         for market_type in markets:
+            history_start = min(
+                [
+                    str(order["created_at"])
+                    for order in mode_orders
+                    if str(order.get("market_type") or "spot") == market_type
+                    and order.get("created_at")
+                ],
+                default=None,
+            )
             try:
                 open_rows[market_type] = _response_rows(
                     _run_coro(client.get_open_orders(market_type=market_type))
@@ -1230,7 +1370,9 @@ def reconcile() -> dict:
                 )
             try:
                 fill_rows[market_type] = _response_rows(
-                    _run_coro(client.get_fills(market_type=market_type))
+                    _run_coro(client.get_fills(
+                        market_type=market_type, start_at=history_start
+                    ))
                 )
             except Exception as exc:
                 fill_rows[market_type] = []
@@ -1302,11 +1444,12 @@ def reconcile() -> dict:
                 try:
                     rows = _response_rows(
                         _run_coro(
-                            client.get_order_fills(
-                                order_id=str(order["exchange_order_id"]),
-                                symbol=to_bitget(str(order["symbol"])),
-                                market_type=market_type,
-                            )
+                                client.get_order_fills(
+                                    order_id=str(order["exchange_order_id"]),
+                                    symbol=to_bitget(str(order["symbol"])),
+                                    market_type=market_type,
+                                    start_at=order.get("created_at"),
+                                )
                         )
                     )
                 except Exception as exc:
@@ -1341,6 +1484,7 @@ def reconcile() -> dict:
                                 client.get_fills(
                                     symbol=exchange_symbol,
                                     market_type=market_type,
+                                    start_at=order.get("created_at"),
                                 )
                             )
                         )

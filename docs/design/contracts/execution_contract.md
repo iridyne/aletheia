@@ -248,9 +248,9 @@ route 也在读取/更新 Proposal 前返回 `403 preview_execution_blocked`。
 
 | 项 | 行为 | 位置 |
 |----|------|------|
-| 逻辑 | 读交易所 live open orders → 本地 `status=submitted` 但不在交易所 open 的 → 标 `filled` | `reconciliation.py:38-85` |
+| 逻辑 | 通过 UTA 读取 exact Order、Fill、Position/mass status；只有完整、身份匹配的私有 Fill 才进入既有原子 materializer | `execution/reconciliation.py`、`uta/ccxt_adapter.py` |
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
-| 防伪 | 对账从不创建虚假 Fill,仅更新 `order.status` | `reconciliation.py:77` |
+| 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
 
 **Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
 
@@ -528,7 +528,8 @@ alert-only/fail-closed，不借本合同扩大自动权限。Demo ready candidat
 
 ### 11.2 Broker-neutral verified exit
 
-状态：RG-T06 / OI-B02 的只读 protocol 与三家 adapter、以及 RG-T07 的调用编排均已实现。
+状态：RG-T06 / OI-B02 的语义由 UTA `VerifiedExitReport` 和 RG-T07 编排实现；consumer 不再
+构造三家 concrete private client。
 
 Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
 
@@ -551,7 +552,7 @@ Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 
 alert-only，active reconciliation incident 仍先阻断收口。
 
 RG-T07 编排层另有一道独立防线（2026-08-19 事故后加入）：`confirmed_absent_without_fill` 本身不是
-administrative close 的充分授权——settlement 必须先用当前 profile client 做一次新鲜的全量仓位直查，
+administrative close 的充分授权——settlement 必须先用同一 UTA identity 做一次新鲜的 exact 仓位直查，
 直查仍确认 absent 才可关闭，并把 candidate 的 `direct_query_state` 落为 `confirmed_absent` 作为持久
 证据；直查显示仓位仍在则保持 open（下一轮 classify 会把 candidate 结案为 `reappeared`），直查不可用
 则 fail-closed 推迟。`verified_fill` 路径不受此门约束（私有成交历史是更强的平仓证据）。
@@ -680,9 +681,10 @@ slippage、fee、broker、Risk 或 Live 配置；
 ## 12. Unified Trading Account V1 migration boundary
 
 Issue #2299 接受的 D2 设计取代 #2189 中“UTA remains read-only”这一句，但不改变 Gateway、
-Risk 或本地存储的既有权威。当前 Phase 0 的已实现范围是 `aletheia/uta` 中版本为 `1` 的冻结
-合同、Decimal-safe 身份/查询/命令/报告、完整性与 command evidence 语义，以及只保存不可变
-配置/factory 的 registry。它不切换任何生产私有 I/O，默认运行路径仍是 `legacy`。
+Risk 或本地存储的既有权威。Phase 0～2 已实现冻结合同、Decimal-safe 模型、registry、shadow
+parity 和 account/position read projection；Phase 3 把 reconciliation、stale/pending recovery、
+verified exit、funding settlement 与 Live Trust 的私有读取切到 UTA 规范化报告。Phase 3 不发送
+任何命令，mutation 仍返回 `NOT_SENT`；执行写入从 Phase 4 才按 profile 逐一切换。
 
 后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
 UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction

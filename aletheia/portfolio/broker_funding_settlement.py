@@ -312,28 +312,83 @@ def materialize_broker_funding_economics(
     }
 
 
+async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dict:
+    from aletheia.execution.broker_funding import make_complete_ledger
+    from aletheia.uta.compat import scope_from_local
+    from aletheia.uta.manager import query_uta
+    from aletheia.uta.models import FundingLedgerQuery, ReadCompleteness
+
+    execution_mode = str(position["execution_mode"])
+    report = await query_uta(
+        execution_mode,
+        "get_funding_ledger",
+        FundingLedgerQuery(scope=scope_from_local(
+            str(position["symbol"]),
+            str(position["market_type"]),
+            start_at=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc),
+            end_at=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc),
+        )),
+    )
+    if report.completeness is not ReadCompleteness.COMPLETE:
+        raise ValueError(report.reason_code or "UTA funding ledger incomplete")
+    events = [
+        {
+            "event_id": entry.venue_ledger_id,
+            "symbol": entry.instrument.canonical_symbol,
+            "cash_change": float(entry.amount),
+            "funding_cost": -float(entry.amount),
+            "currency": entry.currency,
+            "scheduled_at": entry.settlement_at.isoformat(),
+            "occurred_at_ms": int(entry.settlement_at.timestamp() * 1000),
+            "raw_type": entry.source_provenance,
+            "direction": None,
+        }
+        for entry in report.entries
+    ]
+    return make_complete_ledger(
+        broker_id=execution_mode,
+        account_environment=report.identity.environment,
+        source_endpoint="uta_v1",
+        history_start_ms=start_ms,
+        history_end_ms=end_ms,
+        events=events,
+    )
+
+
+class _UTAFundingProjection:
+    """Phase-3 compatibility seam over normalized UTA funding reports."""
+
+    def __init__(self, execution_mode: str) -> None:
+        self.execution_mode = execution_mode
+
+    async def get_funding_ledger(
+        self,
+        *,
+        broker_id: str,
+        symbol: str,
+        start_time_ms: int,
+        end_time_ms: int,
+        market_type: str = "usdt_futures",
+    ) -> dict:
+        return await _uta_funding_ledger(
+            {
+                "execution_mode": self.execution_mode,
+                "symbol": symbol,
+                "market_type": market_type,
+            },
+            start_time_ms,
+            end_time_ms,
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 def _client_for_mode(execution_mode: str):
-    if execution_mode in {"bitget_demo", "bitget_live_limited"}:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-
-        return BitgetClient(
-            mode="demo" if execution_mode == "bitget_demo" else "live",
-            profile=configured_bitget_profile(),
-        )
-    if execution_mode in {"okx_demo", "okx_live_limited"}:
-        from aletheia.exchanges.okx.client import OKXClient
-
-        return OKXClient(
-            mode="demo" if execution_mode == "okx_demo" else "live"
-        )
-    if execution_mode in {"binance_testnet", "binance_live_limited"}:
-        from aletheia.exchanges.binance.client import BinanceClient
-
-        return BinanceClient(
-            mode="testnet" if execution_mode == "binance_testnet" else "live"
-        )
-    raise ValueError(f"unsupported broker funding mode: {execution_mode}")
+    """Temporary test/rollback seam; production implementation is UTA-only."""
+    if execution_mode not in _EXCHANGE_FUNDING_MODES:
+        raise ValueError(f"unsupported exchange funding mode: {execution_mode}")
+    return _UTAFundingProjection(execution_mode)
 
 
 async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:

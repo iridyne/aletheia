@@ -28,9 +28,31 @@ def _account_result(*, uid="account-1", environment="live", permissions=("trade"
     }
 
 
+def _install_uta_probe(
+    monkeypatch,
+    trust,
+    *,
+    expected_mode: str,
+    uid: str = "account-1",
+    environment: str = "live",
+    permission: str = "granted",
+    error: Exception | None = None,
+):
+    async def probe(identity, cfg=None):
+        assert identity["execution_mode"] == expected_mode
+        if error:
+            raise error
+        return trust._digest({"account_id": uid}), environment, permission
+
+    monkeypatch.setattr(trust, "_private_account_probe", probe)
+
+
 @pytest.mark.anyio
 async def test_okx_preflight_does_not_use_bitget_cache_or_client(monkeypatch):
     cfg, trust = _config(monkeypatch, "okx")
+    _install_uta_probe(
+        monkeypatch, trust, expected_mode="okx_live_limited", uid="okx-user"
+    )
 
     class FakeOKX:
         def __init__(self, mode):
@@ -64,6 +86,12 @@ async def test_okx_preflight_does_not_use_bitget_cache_or_client(monkeypatch):
 @pytest.mark.anyio
 async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
     cfg, trust = _config(monkeypatch, "okx")
+    _install_uta_probe(
+        monkeypatch,
+        trust,
+        expected_mode="okx_live_limited",
+        error=RuntimeError("selected OKX authentication failed"),
+    )
 
     class InvalidOKX:
         def __init__(self, mode):
@@ -98,6 +126,12 @@ async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
 @pytest.mark.anyio
 async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
     cfg, trust = _config(monkeypatch, "bitget")
+    _install_uta_probe(
+        monkeypatch,
+        trust,
+        expected_mode="bitget_live_limited",
+        uid="bitget-user",
+    )
 
     class FakeBitget:
         def __init__(self, mode, **_):
@@ -122,6 +156,13 @@ async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
 @pytest.mark.anyio
 async def test_bitget_denied_authority_is_reported_without_losing_private_facts(monkeypatch):
     cfg, trust = _config(monkeypatch, "bitget")
+    _install_uta_probe(
+        monkeypatch,
+        trust,
+        expected_mode="bitget_live_limited",
+        uid="bitget-user",
+        permission="denied",
+    )
 
     class FakeBitget:
         def __init__(self, mode, **_):
@@ -151,6 +192,13 @@ async def test_bitget_denied_authority_is_reported_without_losing_private_facts(
 @pytest.mark.anyio
 async def test_demo_payload_fails_live_preflight(monkeypatch):
     cfg, trust = _config(monkeypatch, "okx")
+    _install_uta_probe(
+        monkeypatch,
+        trust,
+        expected_mode="okx_live_limited",
+        uid="okx-user",
+        environment="demo",
+    )
 
     class FakeOKX:
         def __init__(self, mode):
@@ -173,6 +221,12 @@ async def test_demo_payload_fails_live_preflight(monkeypatch):
 @pytest.mark.anyio
 async def test_binance_selected_account_uses_binance_private_probe(monkeypatch):
     cfg, trust = _config(monkeypatch, "binance")
+    _install_uta_probe(
+        monkeypatch,
+        trust,
+        expected_mode="binance_live_limited",
+        uid="binance-user",
+    )
 
     class FakeBinance:
         def __init__(self, mode):
@@ -196,6 +250,9 @@ async def test_binance_selected_account_uses_binance_private_probe(monkeypatch):
 @pytest.mark.anyio
 async def test_account_fingerprint_change_invalidates_bound_evidence(monkeypatch):
     cfg, trust = _config(monkeypatch, "okx")
+    _install_uta_probe(
+        monkeypatch, trust, expected_mode="okx_live_limited", uid="okx-user"
+    )
 
     class FakeOKX:
         def __init__(self, mode):
@@ -220,6 +277,13 @@ async def test_account_fingerprint_change_invalidates_bound_evidence(monkeypatch
 @pytest.mark.anyio
 async def test_permission_unknown_is_explicitly_denied(monkeypatch):
     cfg, trust = _config(monkeypatch, "okx")
+    _install_uta_probe(
+        monkeypatch,
+        trust,
+        expected_mode="okx_live_limited",
+        uid="okx-user",
+        permission="unknown",
+    )
 
     class FakeOKX:
         def __init__(self, mode):

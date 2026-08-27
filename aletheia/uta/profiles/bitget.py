@@ -33,6 +33,8 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
         {"type": "spot"},
         {"type": "swap", "productType": "USDT-FUTURES"},
     )
+    closed_order_requests = open_order_requests
+    fill_requests = open_order_requests
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
         super().__init__(api_key=api_key, secret=secret, passphrase=passphrase, uta=False)
@@ -60,6 +62,13 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
             values["unrealized_pnl"] = unrealized
         return values, normalized, reason
 
+    def funding_events(self, rows):
+        from aletheia.uta.funding import normalize_bitget_funding_rows
+
+        return normalize_bitget_funding_rows(
+            row.get("info", row) if isinstance(row, dict) else {} for row in rows
+        )
+
 
 class BitgetUTAV3Profile(_BitgetDemoProfile):
     expected_profile = "uta_v3"
@@ -69,6 +78,8 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
         {"uta": True, "type": "spot", "productType": "SPOT"},
         {"uta": True, "type": "swap", "productType": "USDT-FUTURES"},
     )
+    closed_order_requests = open_order_requests
+    fill_requests = open_order_requests
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
         super().__init__(api_key=api_key, secret=secret, passphrase=passphrase, uta=True)
@@ -87,3 +98,17 @@ class BitgetUTAV3Profile(_BitgetDemoProfile):
         if saw_usd_value:
             values["equity"] = usd_equity
         return values, normalized, None if saw_usd_value else _reason
+
+    funding_events = BitgetClassicV2Profile.funding_events
+
+
+class BitgetClassicV2LiveProfile(BitgetClassicV2Profile):
+    expected_execution_mode = "bitget_live_limited"
+    expected_environment = "live"
+    sandbox = False
+
+
+class BitgetUTAV3LiveProfile(BitgetUTAV3Profile):
+    expected_execution_mode = "bitget_live_limited"
+    expected_environment = "live"
+    sandbox = False

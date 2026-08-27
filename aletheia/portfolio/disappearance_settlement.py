@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from aletheia.data.symbols import to_bitget
-from aletheia.execution.verified_exit import VerifiedExitRequest
+from aletheia.execution.verified_exit import (
+    VerifiedExitFill,
+    VerifiedExitRequest,
+    classify_verified_exit,
+    inconclusive_verified_exit,
+)
 from aletheia.portfolio.disappearance_confirmation import (
     DIRECT_CONFIRMED_ABSENT,
     disappearance_ready,
@@ -28,27 +31,101 @@ def _to_ms(value: str | None) -> int | None:
     return int(parsed.timestamp() * 1000)
 
 
+async def _query_uta_verified_exit(
+    execution_mode: str, request: VerifiedExitRequest
+):
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.manager import create_uta_adapter, query_uta
+    from aletheia.uta.models import VerifiedExitQuery, VerifiedExitState
+
+    identity = create_uta_adapter(execution_mode).identity
+    if (
+        request.execution_mode != identity.execution_mode
+        or request.broker_id != identity.execution_mode
+        or request.account_environment != identity.environment
+        or request.account_scope != identity.account_fingerprint
+    ):
+        raise ValueError("verified exit UTA account identity mismatch")
+    report = await query_uta(
+        execution_mode,
+        "verify_position_exit",
+        VerifiedExitQuery(
+            identity=identity,
+            local_position_id=request.position_id,
+            instrument=instrument_from_local(request.symbol, request.market_type),
+            direction=request.direction,
+            expected_quantity=Decimal(str(request.quantity)),
+            history_start_at=datetime.fromtimestamp(
+                request.history_start_ms / 1000, tz=timezone.utc
+            ),
+            history_end_at=datetime.fromtimestamp(
+                request.history_end_ms / 1000, tz=timezone.utc
+            ),
+            local_order_ids=request.known_entry_order_ids,
+        ),
+    )
+    if report.state is VerifiedExitState.POSITION_PRESENT:
+        return inconclusive_verified_exit(request, "position_present")
+    if report.state is VerifiedExitState.INCONCLUSIVE:
+        return inconclusive_verified_exit(
+            request,
+            report.reason_code or "uta_verified_exit_inconclusive",
+            position_absent=report.current_position is None,
+        )
+    fills = tuple(
+        VerifiedExitFill(
+            fill_id=fill.venue_fill_id,
+            order_id=fill.venue_order_id or fill.client_order_id,
+            price=float(fill.price),
+            quantity=float(fill.quantity),
+            fee=float(fill.fee) if fill.fee is not None else None,
+            fee_currency=fill.fee_currency,
+            realized_pnl=None,
+            filled_at_ms=int(fill.executed_at.timestamp() * 1000),
+        )
+        for fill in report.exit_fills
+    )
+    return classify_verified_exit(
+        request,
+        position_absent=True,
+        history_complete=True,
+        close_fills=fills,
+        ambiguous_activity=False,
+        pages=1,
+        source_endpoint="uta_v1",
+    )
+
+
+class _UTAVerifiedExitProjection:
+    """Phase-3 compatibility seam over normalized UTA verified-exit reports."""
+
+    def __init__(self, execution_mode: str) -> None:
+        self.execution_mode = execution_mode
+
+    async def get_verified_position_exit(self, request: VerifiedExitRequest):
+        return await _query_uta_verified_exit(self.execution_mode, request)
+
+    async def get_positions(self):
+        from aletheia.uta.manager import query_uta
+        from aletheia.uta.models import PositionQuery
+
+        return await query_uta(
+            self.execution_mode, "get_positions", PositionQuery()
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 def _client_for_mode(execution_mode: str):
-    if execution_mode in {"bitget_demo", "bitget_live_limited"}:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-        return BitgetClient(
-            mode="live" if execution_mode == "bitget_live_limited" else "demo",
-            profile=configured_bitget_profile(),
-        )
-    if execution_mode in {"okx_demo", "okx_live_limited"}:
-        from aletheia.exchanges.okx.client import OKXClient
-        return OKXClient(mode="live" if execution_mode == "okx_live_limited" else "demo")
-    if execution_mode in {"binance_testnet", "binance_live_limited"}:
-        from aletheia.exchanges.binance.client import BinanceClient
-        return BinanceClient(
-            mode="live" if execution_mode == "binance_live_limited" else "testnet"
-        )
-    raise ValueError(f"unsupported verified-exit mode: {execution_mode}")
+    return _UTAVerifiedExitProjection(execution_mode)
 
 
-def _run_query(client, request):
-    async def query():
+def _run_query(execution_mode: str, request: VerifiedExitRequest):
+    from aletheia.async_utils import run_coro_from_sync
+
+    async def run():
+        client = _client_for_mode(execution_mode)
         try:
             return await client.get_verified_position_exit(request)
         finally:
@@ -56,17 +133,10 @@ def _run_query(client, request):
             if close is not None:
                 await close()
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop and loop.is_running():
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, query()).result(timeout=60)
-    return asyncio.run(query())
+    return run_coro_from_sync(run(), timeout=60)
 
 
-def _direct_positions_present(client, position: dict) -> bool | None:
+def _direct_positions_present(execution_mode: str, position: dict) -> bool | None:
     """Fresh venue presence check through the configured profile client.
 
     Independent of the verified-exit protocol's internal absence determination
@@ -76,29 +146,44 @@ def _direct_positions_present(client, position: dict) -> bool | None:
     when a successful query proves absence, and None when the query itself is
     unavailable — callers must fail closed on None.
     """
-    async def query():
-        try:
-            return await client.get_positions()
-        finally:
-            close = getattr(client, "close", None)
-            if close is not None:
-                await close()
-
     from aletheia.async_utils import run_coro_from_sync
+    from aletheia.uta.models import ReadCompleteness
+
     try:
-        rows = run_coro_from_sync(query(), timeout=60)
+        async def read():
+            client = _client_for_mode(execution_mode)
+            try:
+                return await client.get_positions()
+            finally:
+                close = getattr(client, "close", None)
+                if close is not None:
+                    await close()
+
+        report = run_coro_from_sync(read(), timeout=60)
     except Exception:
         return None
-    symbol = to_bitget(str(position.get("symbol") or ""))
+    if isinstance(report, list):
+        rows = report
+    else:
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            return None
+        rows = report.positions
     direction = str(position.get("direction") or "").lower()
-    for row in rows or []:
+    symbol = str(position.get("symbol") or "")
+    market_type = str(position.get("market_type") or "")
+    for row in rows:
         try:
-            row_symbol = to_bitget(str(getattr(row, "symbol", "") or ""))
-            row_side = str(getattr(row, "side", "") or "").lower()
-            quantity = float(getattr(row, "quantity", 0) or 0)
+            row_side = str(row.side or "").lower()
+            quantity = float(row.quantity)
         except (TypeError, ValueError):
             continue
-        if quantity <= 0 or row_symbol != symbol:
+        row_instrument = getattr(row, "instrument", None)
+        if row_instrument is not None and (
+            row_instrument.canonical_symbol != symbol
+            or row_instrument.market_type != market_type
+        ):
+            continue
+        if quantity <= 0:
             continue
         if not row_side or row_side in {direction, "net", "both"}:
             return True
@@ -165,7 +250,7 @@ def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
         known_entry_order_ids=_known_entry_order_ids(position),
     )
     try:
-        evidence = _run_query(_client_for_mode(execution_mode), request)
+        evidence = _run_query(execution_mode, request)
     except Exception as exc:
         return {
             "candidate_id": candidate_id, "closed": False,
@@ -179,7 +264,7 @@ def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
     direct_absence_confirmed = None
     if evidence.state == "confirmed_absent_without_fill":
         direct_absence_confirmed = _direct_positions_present(
-            _client_for_mode(execution_mode), position,
+            execution_mode, position,
         )
         if direct_absence_confirmed is None:
             return {
