@@ -156,6 +156,92 @@ def test_inspect_pnl(cli_db):
     assert "Rolling" in result.output
 
 
+def test_inspect_pnl_labels_today_sample_as_bounded(monkeypatch):
+    import json as json_mod
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from aletheia.analytics import execution_mode, outcome_integrity, trade_stats
+    from aletheia.maintenance import historical_accounting
+    from aletheia.portfolio import pnl as portfolio_pnl
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = [
+        {
+            "symbol": f"SYM{i}/USDT",
+            "direction": "long",
+            "realized_pnl": -100.0 if i == 0 else 1.0,
+            "close_reason": "strategy_exit",
+            "closed_at": f"{today}T00:{i % 60:02d}:00+00:00",
+        }
+        for i in range(201)
+    ]
+
+    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "paper_internal")
+    monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **_kwargs: rows)
+    monkeypatch.setattr(
+        outcome_integrity,
+        "assess_reportable_outcome",
+        lambda _row: SimpleNamespace(eligible=True),
+    )
+    monkeypatch.setattr(
+        trade_stats,
+        "compute_rolling_trade_stats",
+        lambda **_kwargs: {
+            "total_pnl": None,
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0,
+            "avg_pnl": 0,
+            "best_win": 0,
+            "worst_loss": 0,
+            "per_symbol": [],
+        },
+    )
+    monkeypatch.setattr(portfolio_pnl, "mark_positions_to_market", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        historical_accounting,
+        "historical_accounting_summary",
+        lambda **_kwargs: {
+            "historical_reconciled_pnl": None,
+            "historical_reconciled_count": 0,
+            "historical_reconciliation_unavailable_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        outcome_integrity,
+        "build_outcome_cohort_summary",
+        lambda **_kwargs: {
+            "raw_event_count": 0,
+            "eligible_outcome_count": 0,
+            "excluded_outcome_count": 0,
+            "outcome_exclusion_reasons": {},
+            "eligible_realized_pnl": None,
+        },
+    )
+
+    result = runner.invoke(app, ["inspect", "pnl", "--json"])
+
+    assert result.exit_code == 0
+    today_payload = json_mod.loads(result.output)["today"]
+    assert today_payload["realized"] == 100.0
+    assert today_payload["eligible_count"] == 201
+    assert today_payload["shown_count"] == 200
+    assert today_payload["omitted_count"] == 1
+    assert today_payload["cohort_complete"] is True
+    assert today_payload["loaded_from"] == rows[0]["closed_at"]
+    assert today_payload["loaded_through"] == rows[-1]["closed_at"]
+    assert len(today_payload["trades"]) == 200
+    assert sum(row["pnl"] for row in today_payload["trades"]) == 200.0
+
+    human = runner.invoke(app, ["inspect", "pnl"])
+
+    assert human.exit_code == 0
+    assert "201 verified outcomes; showing newest 200, 1 omitted" in human.output
+    assert "(200 verified outcomes)" not in human.output
+
+
 def test_inspect_orders_stats(cli_db):
     """inspect orders --stats runs without error."""
     result = runner.invoke(app, ["inspect", "orders", "--stats"])
