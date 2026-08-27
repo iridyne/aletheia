@@ -3213,6 +3213,7 @@ export interface TradeFrequencyDay {
 
 export interface SymbolDirectionEntry {
 	symbol: string;
+	market_type: string;
 	direction: string;
 	win_rate: number;
 	avg_pnl_pct: number;
