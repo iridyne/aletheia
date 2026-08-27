@@ -664,3 +664,19 @@ multi-entry、partial close 或 adopted Position；multi-entry 以
 `unsupported_execution_multi_entry` 明确排除，不伪装成数据链缺失。该测量不授权改变
 slippage、fee、broker、Risk 或 Live 配置；
 任一身份/经济字段缺失均为 `insufficient_data`。
+
+---
+
+## 12. Unified Trading Account V1 migration boundary
+
+Issue #2299 接受的 D2 设计取代 #2189 中“UTA remains read-only”这一句，但不改变 Gateway、
+Risk 或本地存储的既有权威。当前 Phase 0 的已实现范围是 `aletheia/uta` 中版本为 `1` 的冻结
+合同、Decimal-safe 身份/查询/命令/报告、完整性与 command evidence 语义，以及只保存不可变
+配置/factory 的 registry。它不切换任何生产私有 I/O，默认运行路径仍是 `legacy`。
+
+后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
+UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction
+之外，返回后只用短 expected-state/CAS 应用证据。`partial`、`unsupported`、`unavailable`、
+timeout 或异常都不能变成空、零、取消、仓位消失或完整经济事实；可能已经发送的 mutation 必须是
+`ambiguous` 且禁止自动重试。完整目标、profile rollout 与 qualification 证据由已接受的
+[`unified_trading_account.md`](../proposals/unified_trading_account.md) 和 Issue #2299 管理。

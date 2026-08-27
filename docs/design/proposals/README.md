@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Complete Unified Trading Account](unified_trading_account.md): one private
+  external-account read/write boundary beneath Gateway authority, with explicit
+  evidence, reconciliation and profile qualification semantics.
 - [Usage v2 production read model and workspace](usage_v2_workspace.md):
   event-time fail-closed cost semantics and one typed, read-only Usage page for
   overview, trend, attribution, reliability, and configured budgets.
