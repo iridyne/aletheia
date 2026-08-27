@@ -239,6 +239,12 @@ class ModelProvider:
                 if _ACTIVE_STREAM_REQUEST.get() is not None:
                     metadata["stream"] = True
                 started_dt = datetime.now(timezone.utc)
+                try:
+                    from aletheia.economics.pricing_sync import capture_catalog_observation
+
+                    pricing_observation = capture_catalog_observation()
+                except Exception:
+                    pricing_observation = None
                 started_mono = time.perf_counter()
                 try:
                     response = await original_complete(self, request)
@@ -260,6 +266,7 @@ class ModelProvider:
                             raw_usage=None,
                             error_type=type(exc).__name__,
                             metadata=metadata,
+                            pricing_observation=pricing_observation,
                         )
                     except Exception:
                         pass
@@ -290,6 +297,7 @@ class ModelProvider:
                         latency_ms=(time.perf_counter() - started_mono) * 1000.0,
                         raw_usage=raw_usage,
                         metadata=metadata,
+                        pricing_observation=pricing_observation,
                     )
                 except Exception:
                     pass
@@ -316,6 +324,12 @@ class ModelProvider:
                 before_attempt = int(getattr(request, "_aletheia_cost_attempt_index", 0))
                 token = _ACTIVE_STRUCTURED_REQUEST.set(request)
                 started_dt = datetime.now(timezone.utc)
+                try:
+                    from aletheia.economics.pricing_sync import capture_catalog_observation
+
+                    pricing_observation = capture_catalog_observation()
+                except Exception:
+                    pricing_observation = None
                 started_mono = time.perf_counter()
                 try:
                     result = await original_structured(self, request, schema)
@@ -345,6 +359,7 @@ class ModelProvider:
                                     **_cost_metadata(self, mode="structured", request=request),
                                     "structured_direct": True,
                                 },
+                                pricing_observation=pricing_observation,
                             )
                         except Exception:
                             pass
@@ -374,6 +389,7 @@ class ModelProvider:
                                     **_cost_metadata(self, mode="structured", request=request),
                                     "structured_direct": True,
                                 },
+                                pricing_observation=pricing_observation,
                             )
                         except Exception:
                             pass
@@ -396,6 +412,12 @@ class ModelProvider:
                 before_attempt = int(getattr(request, "_aletheia_cost_attempt_index", 0))
                 token = _ACTIVE_STREAM_REQUEST.set(request)
                 started_dt = datetime.now(timezone.utc)
+                try:
+                    from aletheia.economics.pricing_sync import capture_catalog_observation
+
+                    pricing_observation = capture_catalog_observation()
+                except Exception:
+                    pricing_observation = None
                 started_mono = time.perf_counter()
                 final_usage = None
                 final_model = str(getattr(self, "model", "") or "unknown")
@@ -427,6 +449,7 @@ class ModelProvider:
                                     **_cost_metadata(self, mode="stream", request=request),
                                     "stream_direct": True,
                                 },
+                                pricing_observation=pricing_observation,
                             )
                         except Exception:
                             pass
@@ -451,6 +474,7 @@ class ModelProvider:
                                     **_cost_metadata(self, mode="stream", request=request),
                                     "stream_direct": True,
                                 },
+                                pricing_observation=pricing_observation,
                             )
                         except Exception:
                             pass

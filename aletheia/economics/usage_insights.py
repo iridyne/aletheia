@@ -83,6 +83,34 @@ def _window_rows(db: sqlite3.Connection, start: datetime, end: datetime) -> list
     )
 
 
+def _logical_window_rows(db: sqlite3.Connection, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    return _rows(
+        db,
+        "SELECT * FROM llm_inference_calls "
+        "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
+        "AND replace(started_at,' ','T') < replace(?,' ','T') "
+        "ORDER BY replace(started_at,' ','T'),rowid",
+        (start.isoformat(), end.isoformat()),
+    )
+
+
+def _physical_projection_rows(db: sqlite3.Connection, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """Include every attempt owned by an in-window logical call, even across a bucket edge."""
+    return _rows(
+        db,
+        "SELECT e.* FROM runtime_cost_events e "
+        "LEFT JOIN llm_inference_calls l ON l.logical_call_id=e.call_id "
+        "WHERE e.event_type='llm' AND ((l.logical_call_id IS NOT NULL "
+        "AND replace(l.started_at,' ','T') >= replace(?,' ','T') "
+        "AND replace(l.started_at,' ','T') < replace(?,' ','T')) "
+        "OR (l.logical_call_id IS NULL "
+        "AND replace(e.started_at,' ','T') >= replace(?,' ','T') "
+        "AND replace(e.started_at,' ','T') < replace(?,' ','T'))) "
+        "ORDER BY replace(COALESCE(l.started_at,e.started_at),' ','T'),e.attempt_index,e.rowid",
+        (start.isoformat(), end.isoformat(), start.isoformat(), end.isoformat()),
+    )
+
+
 def _usage(row: dict[str, Any]) -> dict[str, int | None]:
     envelope = _json(row.get("usage_json"))
     normalized = envelope.get("normalized")
@@ -118,6 +146,24 @@ def _price_index(db: sqlite3.Connection) -> dict[tuple[str, str], list[tuple[dat
 
 def _resolve(rows: list[dict[str, Any]], prices: dict) -> list[dict[str, Any]]:
     for row in rows:
+        if row.get("_integrity_reason"):
+            row["_usage"], row["_cost_usd"] = (
+                {
+                    field: None
+                    for field in (
+                        "input_tokens",
+                        "output_tokens",
+                        "total_tokens",
+                        "reasoning_tokens",
+                        "cached_input_tokens",
+                        "provider_cache_read_input_tokens",
+                        "provider_cache_creation_input_tokens",
+                        "web_search_requests",
+                    )
+                },
+                None,
+            )
+            continue
         usage = _usage(row)
         stored = _number(row.get("estimated_cost_usd"))
         cost = stored if row.get("cost_status") == "known" and stored is not None else None
@@ -130,6 +176,101 @@ def _resolve(rows: list[dict[str, Any]], prices: dict) -> list[dict[str, Any]]:
     return rows
 
 
+def _project_window(
+    db: sqlite3.Connection,
+    tables: set[str],
+    start: datetime,
+    end: datetime,
+    prices: dict,
+) -> list[dict[str, Any]]:
+    """Join completed logical calls to attempts without rewriting either ledger."""
+    if "llm_inference_calls" not in tables:
+        return _resolve(_window_rows(db, start, end), prices)
+    physical = _physical_projection_rows(db, start, end)
+    logical = _logical_window_rows(db, start, end)
+    by_id = {str(row["logical_call_id"]): row for row in logical}
+    by_call: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    projected: list[dict[str, Any]] = []
+    for row in physical:
+        call_id = _text(row.get("call_id")) or str(row.get("id"))
+        ledger = by_id.get(call_id)
+        if ledger is not None and ledger.get("status") == "running":
+            continue
+        if ledger is not None:
+            row["_logical_status"] = ledger.get("status")
+            row["_logical_started_at"] = ledger.get("started_at")
+            row["_logical_retry_count"] = int(ledger.get("retry_count") or 0)
+            row["_logical_fallback_used"] = ledger.get("fallback_used")
+            row["_logical_caller"] = ledger.get("caller")
+            row["_logical_error_type"] = ledger.get("error_type")
+            by_call[call_id].append(row)
+        projected.append(row)
+    for call_id, ledger in by_id.items():
+        if ledger.get("status") == "running":
+            continue
+        attempts = by_call.get(call_id, [])
+        expected = int(ledger.get("attempt_count") or 0)
+        if expected == 0 and not attempts:
+            metadata = _json(ledger.get("metadata_json"))
+            metadata["logical_agent"] = ledger.get("caller")
+            projected.append(
+                {
+                    "id": "logical_zero_" + call_id,
+                    "event_type": "llm",
+                    "run_id": ledger.get("run_id"),
+                    "call_id": call_id,
+                    "provider": ledger.get("final_provider") or ledger.get("requested_provider"),
+                    "model_or_tool": ledger.get("final_model") or "Unattributed",
+                    "attempt_index": 0,
+                    "status": "error",
+                    "started_at": ledger.get("started_at"),
+                    "finished_at": ledger.get("finished_at"),
+                    "latency_ms": None,
+                    "usage_json": '{"normalized":{"input_tokens":0,"output_tokens":0}}',
+                    "estimated_cost_usd": 0.0,
+                    "cost_status": "known",
+                    "metadata_json": json.dumps(metadata, separators=(",", ":")),
+                    "error_type": ledger.get("error_type"),
+                    "_logical_status": "error",
+                    "_logical_retry_count": 0,
+                    "_logical_fallback_used": ledger.get("fallback_used"),
+                    "_synthetic_zero_attempt": True,
+                }
+            )
+        elif expected > 0 and not attempts:
+            metadata = _json(ledger.get("metadata_json"))
+            metadata["logical_agent"] = ledger.get("caller")
+            projected.append(
+                {
+                    "id": "logical_missing_" + call_id,
+                    "event_type": "llm",
+                    "run_id": ledger.get("run_id"),
+                    "call_id": call_id,
+                    "provider": ledger.get("final_provider") or ledger.get("requested_provider"),
+                    "model_or_tool": ledger.get("final_model") or "Unattributed",
+                    "attempt_index": 0,
+                    "status": ledger.get("status"),
+                    "started_at": ledger.get("started_at"),
+                    "finished_at": ledger.get("finished_at"),
+                    "latency_ms": None,
+                    "usage_json": "{}",
+                    "estimated_cost_usd": None,
+                    "cost_status": "unknown",
+                    "metadata_json": json.dumps(metadata, separators=(",", ":")),
+                    "error_type": ledger.get("error_type"),
+                    "_logical_status": ledger.get("status"),
+                    "_logical_retry_count": int(ledger.get("retry_count") or 0),
+                    "_logical_fallback_used": ledger.get("fallback_used"),
+                    "_integrity_reason": "physical_attempt_missing",
+                    "_synthetic_missing_attempt": True,
+                }
+            )
+        elif len(attempts) != expected:
+            for row in attempts:
+                row["_integrity_reason"] = "physical_attempt_missing"
+    return _resolve(projected, prices)
+
+
 def _groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -137,10 +278,22 @@ def _groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return result
 
 
+def _group_succeeded(group: list[dict[str, Any]]) -> bool:
+    logical = next(
+        (row.get("_logical_status") for row in group if row.get("_logical_status")),
+        None,
+    )
+    return logical == "success" if logical is not None else any(row.get("status") == "success" for row in group)
+
+
+def _grouping_instant(row: dict[str, Any]) -> datetime | None:
+    return _instant(row.get("_logical_started_at") or row.get("started_at"))
+
+
 def _metrics(rows: list[dict[str, Any]], *, observed_zero: bool) -> dict[str, Any]:
     groups = _groups(rows)
     calls = len(groups)
-    success = sum(any(row.get("status") == "success" for row in group) for group in groups.values())
+    success = sum(_group_succeeded(group) for group in groups.values())
     token_complete = bool(rows) and all(
         row["_usage"].get("input_tokens") is not None and row["_usage"].get("output_tokens") is not None for row in rows
     )
@@ -268,7 +421,7 @@ def _trend(
     result = []
     while cursor < end:
         begun, finished = max(cursor, start), min(cursor + step, end)
-        bucket = [row for row in rows if (at := _instant(row.get("started_at"))) and begun <= at < finished]
+        bucket = [row for row in rows if (at := _grouping_instant(row)) and begun <= at < finished]
         metrics = _metrics(bucket, observed_zero=_covered(intervals, begun, finished))
         complete = metrics["total_tokens"] is not None
         result.append(
@@ -302,9 +455,7 @@ def _bucket_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     calls = len(groups)
     return {
         "calls": calls,
-        "success_rate_pct": _pct(
-            sum(any(row.get("status") == "success" for row in group) for group in groups.values()), calls
-        ),
+        "success_rate_pct": _pct(sum(_group_succeeded(group) for group in groups.values()), calls),
         "input_tokens": sum(int(row["_usage"]["input_tokens"]) for row in rows) if complete_tokens else None,
         "output_tokens": sum(int(row["_usage"]["output_tokens"]) for row in rows) if complete_tokens else None,
         "tokens": sum(int(row["_usage"]["input_tokens"]) + int(row["_usage"]["output_tokens"]) for row in rows)
@@ -339,7 +490,12 @@ def _breakdowns(
     providers: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         metadata, run_id = _json(row.get("metadata_json")), _text(row.get("run_id"))
-        agent = run_names.get(run_id or "") or _text(metadata.get("logical_agent")) or "Unattributed"
+        agent = (
+            run_names.get(run_id or "")
+            or _text(row.get("_logical_caller"))
+            or _text(metadata.get("logical_agent"))
+            or "Unattributed"
+        )
         provider, model = (
             _text(row.get("provider")) or "Unattributed",
             _text(row.get("model_or_tool")) or "Unattributed",
@@ -414,21 +570,35 @@ def _breakdowns(
 
 def _reliability(rows: list[dict[str, Any]]) -> dict[str, Any]:
     groups = _groups(rows)
-    latencies = [value for row in rows if (value := _number(row.get("latency_ms"))) is not None]
-    failed = [group for group in groups.values() if not any(row.get("status") == "success" for row in group)]
+    physical = [
+        row for row in rows if not row.get("_synthetic_zero_attempt") and not row.get("_synthetic_missing_attempt")
+    ]
+    latencies = [value for row in physical if (value := _number(row.get("latency_ms"))) is not None]
+    failed = [group for group in groups.values() if not _group_succeeded(group)]
     errors = len(failed)
     result: dict[str, Any] = {
-        "attempts": len(rows),
+        "attempts": len(physical),
         "errors": errors,
-        "retries": sum(max(0, len(group) - 1) for group in groups.values()),
+        "retries": sum(
+            int(group[0].get("_logical_retry_count"))
+            if group[0].get("_logical_retry_count") is not None
+            else max(0, len(group) - 1)
+            for group in groups.values()
+        ),
         "fallbacks": sum(
-            len({(row.get("provider"), row.get("model_or_tool")) for row in group}) > 1 for group in groups.values()
+            bool(group[0].get("_logical_fallback_used"))
+            if group[0].get("_logical_fallback_used") is not None
+            else len({(row.get("provider"), row.get("model_or_tool")) for row in group}) > 1
+            for group in groups.values()
         ),
         "p50_latency_ms": _quantile(latencies, 0.5),
         "p95_latency_ms": _quantile(latencies, 0.95),
     }
     if errors:
-        categories = Counter(_text(group[-1].get("error_type")) or "Uncategorized" for group in failed)
+        categories = Counter(
+            _text(group[-1].get("_logical_error_type")) or _text(group[-1].get("error_type")) or "Uncategorized"
+            for group in failed
+        )
         result["error_categories"] = [
             {"category": name, "count": count}
             for name, count in sorted(categories.items(), key=lambda item: (-item[1], item[0]))
@@ -474,7 +644,7 @@ def _budgets(db: sqlite3.Connection, tables: set[str], prices: dict, end: dateti
         db, "SELECT scope,subject,usd_cap,window FROM economics_budgets WHERE enabled=1 ORDER BY scope,subject,window"
     ):
         start = _period_start(str(policy["window"]), end)
-        events = _resolve(_window_rows(db, start, end), prices) if start else []
+        events = _project_window(db, tables, start, end, prices) if start else []
         scope, subject = str(policy["scope"]), _text(policy.get("subject"))
         if scope == "agent_run":
             events = [row for row in events if _text(row.get("run_id")) == subject]
@@ -553,7 +723,7 @@ def build_usage_insights(*, days: int, as_of: datetime | None = None, group: str
             if not {"runtime_cost_events", "pricing_snapshots"}.issubset(tables):
                 return _empty(days, start, end, group)
             prices = _price_index(db)
-            rows = _resolve(_window_rows(db, start, end), prices)
+            rows = _project_window(db, tables, start, end, prices)
             base = {"contract_version": 2, "window": _window(days, start, end)}
             if group == "operations":
                 return {
@@ -567,7 +737,7 @@ def build_usage_insights(*, days: int, as_of: datetime | None = None, group: str
             intervals = _trace_intervals(db, tables, previous_start, end)
             overview = _metrics(rows, observed_zero=_covered(intervals, start, end))
             previous = _metrics(
-                _resolve(_window_rows(db, previous_start, start), prices),
+                _project_window(db, tables, previous_start, start, prices),
                 observed_zero=_covered(intervals, previous_start, start),
             )
             complete = bool(previous["_complete"] and _covered(intervals, previous_start, start))

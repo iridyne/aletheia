@@ -5,6 +5,11 @@ import pytest
 from aletheia.economics.tracing import add_catalog_pricing_snapshot, estimate_llm_cost
 from aletheia.economics.usage_insights import build_usage_insights
 from aletheia.economics.schema import ensure_economics_schema
+from aletheia.economics.inference_calls import (
+    record_inference_finished,
+    record_inference_started,
+)
+from aletheia.model_provider.inference_contract import build_inference_call
 from aletheia.storage.sqlite import get_db
 
 
@@ -59,6 +64,31 @@ def _price(at: str, rate: float, version: str) -> None:
     )
 
 
+def _logical(
+    *,
+    started_at: str,
+    status: str,
+    attempts: int = 0,
+):
+    call = build_inference_call(
+        caller="unregistered",
+        system="system",
+        messages=[{"role": "user", "content": "user"}],
+        context_adapter_id="none",
+        requested_provider="provider-a",
+    )
+    record_inference_started(call, started_at=started_at)
+    for _ in range(attempts):
+        call.claim_attempt_index()
+    record_inference_finished(
+        call,
+        status=status,
+        error_type="test_error" if status == "error" else None,
+        finished_at=started_at,
+    )
+    return call
+
+
 def test_usage_v2_uses_event_effective_price_not_latest_snapshot():
     _price("2026-01-01T00:00:00+00:00", 1, "old")
     _price("2026-01-03T00:00:00+00:00", 10, "new")
@@ -103,7 +133,7 @@ def test_usage_v2_cache_pricing_is_exact_and_fails_closed():
     del price["cache_creation_input_usd_per_million"]
     cost, status, metadata = estimate_llm_cost(usage, price)
     assert cost is None and status == "unknown"
-    assert metadata["reason"] == "cache_creation_pricing_missing"
+    assert metadata == {"reason": "positive_special_rate_missing", "field": "cache_creation"}
 
 
 def test_usage_v2_missing_attempt_evidence_invalidates_totals_bucket_and_row():
@@ -162,6 +192,96 @@ def test_usage_v2_counts_logical_calls_separately_from_attempts():
         "p50_latency_ms": 100.5,
         "p95_latency_ms": 100.95,
     }
+
+
+def test_zero_attempt_failure_is_one_completed_call_with_confirmed_zero_usage():
+    _logical(started_at="2026-01-02T01:00:00+00:00", status="error")
+
+    summary = build_usage_insights(days=1, as_of=datetime(2026, 1, 3, tzinfo=timezone.utc))
+    operations = build_usage_insights(
+        days=1,
+        as_of=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        group="operations",
+    )
+
+    assert summary["overview"] == {
+        "cost_usd": 0.0,
+        "total_tokens": 0,
+        "llm_calls": 1,
+        "success_rate_pct": 0.0,
+        "avg_cost_per_call_usd": 0.0,
+    }
+    assert operations["reliability"]["attempts"] == 0
+    assert operations["reliability"]["errors"] == 1
+
+
+def test_declared_attempt_missing_fails_closed_but_keeps_logical_call_count():
+    call = _logical(
+        started_at="2026-01-02T01:00:00+00:00",
+        status="success",
+        attempts=2,
+    )
+    _event(
+        "only-physical-attempt",
+        started_at="2026-01-02T01:00:00+00:00",
+        cost=0.1,
+        cost_status="known",
+        call_id=call.logical_call_id,
+    )
+
+    summary = build_usage_insights(days=1, as_of=datetime(2026, 1, 3, tzinfo=timezone.utc))
+
+    assert summary["overview"]["llm_calls"] == 1
+    assert summary["overview"]["success_rate_pct"] == 100
+    assert summary["overview"]["cost_usd"] is None
+    assert summary["overview"]["total_tokens"] is None
+
+
+def test_running_logical_call_is_excluded_from_completed_kpis():
+    _logical(started_at="2026-01-02T01:00:00+00:00", status="error")
+    running = build_inference_call(
+        caller="unregistered",
+        system="system",
+        messages=[{"role": "user", "content": "running"}],
+        context_adapter_id="none",
+        requested_provider="provider-a",
+    )
+    record_inference_started(running, started_at="2026-01-02T02:00:00+00:00")
+
+    summary = build_usage_insights(days=1, as_of=datetime(2026, 1, 3, tzinfo=timezone.utc))
+
+    assert summary["overview"]["llm_calls"] == 1
+
+
+def test_logical_call_keeps_retry_attempt_that_crosses_window_end():
+    call = _logical(
+        started_at="2026-01-02T23:59:59+00:00",
+        status="success",
+        attempts=2,
+    )
+    _event(
+        "boundary-attempt-0",
+        started_at="2026-01-02T23:59:59+00:00",
+        cost=0.1,
+        cost_status="known",
+        call_id=call.logical_call_id,
+        attempt_index=0,
+        status="error",
+    )
+    _event(
+        "boundary-attempt-1",
+        started_at="2026-01-03T00:00:01+00:00",
+        cost=0.2,
+        cost_status="known",
+        call_id=call.logical_call_id,
+        attempt_index=1,
+    )
+
+    summary = build_usage_insights(days=1, as_of=datetime(2026, 1, 3, tzinfo=timezone.utc))
+
+    assert summary["overview"]["llm_calls"] == 1
+    assert summary["overview"]["cost_usd"] == pytest.approx(0.3)
+    assert sum(row["llm_calls"] or 0 for row in summary["trend"]) == 1
 
 
 def test_usage_v2_preserves_persisted_normalized_cache_counters():
