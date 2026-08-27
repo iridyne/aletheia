@@ -214,6 +214,10 @@ class CCXTUTAAdapter:
                     # Preserve request position: profile mappings such as Bitget
                     # Classic must not mistake a surviving mix response for spot.
                     rows.append({})
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+            failed = len(self._profile.balance_requests)
         except (Exception, TimeoutError):
             failed = len(self._profile.balance_requests)
         if not successful:
@@ -272,6 +276,17 @@ class CCXTUTAAdapter:
             )
             if not isinstance(raw_positions, list):
                 raise ValueError("invalid CCXT positions")
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+            return PositionListReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.UNAVAILABLE,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="private_positions_unavailable",
+                profile_version=self._profile_version,
+            )
         except (Exception, TimeoutError):
             return PositionListReport(
                 identity=self.identity,
@@ -348,6 +363,11 @@ class CCXTUTAAdapter:
                     raw_orders.extend(rows)
                 except (Exception, TimeoutError):
                     failed_calls += 1
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+            failed_calls = len(self._profile.open_order_requests)
+            exchange = None
         except (Exception, TimeoutError):
             failed_calls = len(self._profile.open_order_requests)
             exchange = None

@@ -410,6 +410,10 @@ def test_adapter_refuses_cross_loop_reuse(monkeypatch):
     assert exc_info.value.code is UTAErrorCode.CONFIG
     assert exc_info.value.reason == "cross_loop_adapter_reuse"
 
+    with pytest.raises(UTAError) as read_exc:
+        asyncio.run(adapter.get_account())
+    assert read_exc.value.reason == "cross_loop_adapter_reuse"
+
 
 @pytest.mark.asyncio
 async def test_close_is_bounded_and_idempotent(monkeypatch):
