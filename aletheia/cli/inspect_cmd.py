@@ -1466,12 +1466,19 @@ def factor_feedback(
     typer.echo(f"  {'key':<30s} {'trades':>6s} {'win%':>5s} {'expect':>7s} {'PF':>5s} {'status':<18s}")
     for r in rows:
         key = (r.get("factor_key") or r.get("scanner") or "?")[:30]
-        trades = r.get("total_trades") or r.get("n") or 0
+        trades = r.get("total_trades") or r.get("trade_count") or r.get("n") or 0
         wr = _format_ratio_percent(r.get("win_rate"))
         exp = r.get("expectancy", 0)
         pf = r.get("profit_factor", 0)
+        pf_text = (
+            "∞"
+            if r.get("profit_factor_state") == "unbounded_no_losses"
+            else "—"
+            if pf is None
+            else f"{float(pf):.2f}"
+        )
         st = r.get("status", "?")
-        typer.echo(f"  {key:<30s} {trades:>6d} {wr:>5s} {exp:>+6.2f} {pf:>5.2f} {st:<18s}")
+        typer.echo(f"  {key:<30s} {trades:>6d} {wr:>5s} {exp:>+6.2f} {pf_text:>5s} {st:<18s}")
 
 
 @inspect_app.command("microstructure")
