@@ -465,14 +465,26 @@ def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
     assert has_fresh_market_snapshot(
         "BTC/USDT", "perp", exchange="bitget", now=datetime.now(timezone.utc),
     ) is False
-    assert calls == [{
-        "symbol": "BTC/USDT",
-        "exchange": "bitget",
-        "market_type": "perp",
-        "limit": 1,
-    }]
+    assert calls == [
+        {"symbol": "BTC/USDT", "exchange": "bitget", "market_type": "perp", "limit": 1}
+    ]
     assert has_fresh_market_snapshot(
         "BTC/USDT", "perp", exchange="", now=datetime.now(timezone.utc),
+    ) is False
+
+
+def test_snapshot_freshness_requires_exchange(monkeypatch):
+    from datetime import datetime, timezone
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    def snapshots(**_kwargs):
+        raise AssertionError("missing venue must not query venue-agnostic snapshots")
+
+    monkeypatch.setattr(
+        "aletheia.universe.snapshot_freshness.list_market_snapshots", snapshots,
+    )
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", now=datetime.now(timezone.utc),
     ) is False
 
 
@@ -521,6 +533,45 @@ def test_snapshot_freshness_is_exact_venue_scoped(tmp_path, monkeypatch):
     ) is True
     assert has_fresh_market_snapshot(
         "BTC/USDT", "spot", exchange="binance", now=now,
+    ) is True
+
+
+def test_snapshot_freshness_is_exchange_scoped(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    now = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    fresh_bitget = {
+        "exchange": "bitget",
+        "symbol": "SOXL/USDT",
+        "market_type": "perp",
+        "snapshot_at": now.isoformat(),
+    }
+    stale_binance = {
+        "exchange": "binance",
+        "symbol": "SOXL/USDT",
+        "market_type": "perp",
+        "snapshot_at": (now - timedelta(hours=3)).isoformat(),
+    }
+
+    def snapshots(**kwargs):
+        assert kwargs["symbol"] == "SOXL/USDT"
+        assert kwargs["market_type"] == "perp"
+        if kwargs.get("exchange") == "binance":
+            return [stale_binance]
+        return [fresh_bitget]
+
+    monkeypatch.setattr(
+        "aletheia.universe.snapshot_freshness.list_market_snapshots", snapshots,
+    )
+
+    assert has_fresh_market_snapshot(
+        "SOXL/USDT", "perp", exchange="binance", now=now,
+    ) is False
+
+    stale_binance["snapshot_at"] = now.isoformat()
+    assert has_fresh_market_snapshot(
+        "SOXL/USDT", "perp", exchange="binance", now=now,
     ) is True
 
 

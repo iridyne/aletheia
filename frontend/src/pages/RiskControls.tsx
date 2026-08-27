@@ -16,6 +16,33 @@ function errMsg(e: any): string {
   return safeErrorText(e?.message || e?.error)
 }
 
+export function openPositionRows(positions: unknown): Record<string, unknown>[] {
+  return Array.isArray(positions)
+    ? positions.filter((p): p is Record<string, unknown> => {
+      if (typeof p !== 'object' || !p) return false
+      return String((p as Record<string, unknown>).status || '').toLowerCase() === 'open'
+    })
+    : []
+}
+
+export function marketTypesFromOpenPositions(positions: unknown): Record<string, Set<string>> {
+  const marketTypesForSymbol: Record<string, Set<string>> = {}
+  for (const p of openPositionRows(positions)) {
+    if (!p.symbol || !p.market_type) continue
+    const sym = String(p.symbol)
+    const mtype = String(p.market_type)
+    ;(marketTypesForSymbol[sym] ??= new Set()).add(mtype)
+  }
+  return marketTypesForSymbol
+}
+
+export function preferPerpMarketType(types: Set<string>): string {
+  for (const derivative of ['perp', 'usdt_futures', 'futures', 'swap']) {
+    if (types.has(derivative)) return derivative
+  }
+  return Array.from(types)[0] ?? ''
+}
+
 /**
  * Risk & Controls — the brakes console (master-caution panel × Bloomberg risk monitor).
  *
@@ -125,24 +152,10 @@ export default function RiskControls() {
   // is currently symbol-only (#52 deferred, coupled with market_type
   // migration), so this is a display-honesty best-effort until the
   // backend groups by (symbol, market_type).
-  const marketTypesForSymbol: Record<string, Set<string>> = {}
-  const posArray = Array.isArray(positions) ? positions : []
-  for (const p of posArray) {
-    if (typeof p !== 'object' || !p) continue
-    const pObj = p as {symbol?: unknown, market_type?: unknown}
-    if (!pObj.symbol || !pObj.market_type) continue
-    const sym = String(pObj.symbol)
-    const mtype = String(pObj.market_type)
-    ;(marketTypesForSymbol[sym] ??= new Set()).add(mtype)
-  }
-  const _preferPerp = (types: Set<string>): string => {
-    for (const derivative of ['perp', 'usdt_futures', 'futures', 'swap']) {
-      if (types.has(derivative)) return derivative
-    }
-    return Array.from(types)[0] ?? ''
-  }
+  const openPositions = openPositionRows(positions)
+  const marketTypesForSymbol = marketTypesFromOpenPositions(positions)
   const marketTypeBySymbol: Record<string, string> = Object.fromEntries(
-    Object.entries(marketTypesForSymbol).map(([sym, types]) => [sym, _preferPerp(types)])
+    Object.entries(marketTypesForSymbol).map(([sym, types]) => [sym, preferPerpMarketType(types)])
   )
   // A quick lookup so the row can flag "spot+perp merged" visually.
   const hasMixedMarketType = (sym: string) => (marketTypesForSymbol[sym]?.size ?? 0) > 1
@@ -164,7 +177,9 @@ export default function RiskControls() {
   const capCapital = (activePolicy.capital as Record<string, unknown> | undefined)
   const capLoss = (activePolicy.loss as Record<string, unknown> | undefined)
   const equity = Number((portfolio as Record<string, unknown> | undefined)?.exchange_equity_usdt) || Number((portfolio as Record<string, unknown> | undefined)?.total_value_usdt) || 0
-  const positionsCount = Number((portfolio as Record<string, unknown> | undefined)?.positions_count) || posArray.length || 0
+  const positionsCountValue = (portfolio as Record<string, unknown> | undefined)?.positions_count
+  const positionsCountRaw = positionsCountValue == null ? null : Number(positionsCountValue)
+  const positionsCount = positionsCountRaw != null && Number.isFinite(positionsCountRaw) ? positionsCountRaw : openPositions.length
   const posCap = Number(capPositions?.max_open_positions) || null
   const marginCap = Number(capCapital?.max_position_margin_usdt) || null
   const dailyLossPct = Number(capLoss?.max_daily_loss_pct) || null
@@ -177,10 +192,8 @@ export default function RiskControls() {
   const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
   const todayLoss = todayPnl == null ? null : todayPnl < 0 ? Math.abs(todayPnl) : 0
   // Derive margin (pledged cash) per position: notional / leverage. Spot leverage = 1.
-  const largestMargin = posArray.reduce((m, p) => {
-    if (typeof p !== 'object' || !p) return m
+  const largestMargin = openPositions.reduce((m, p) => {
     const pObj = p as {status?: unknown, quantity?: unknown, current_price?: unknown, entry_price?: unknown, leverage?: unknown}
-    if (pObj.status && pObj.status !== 'open') return m
     const qty = Math.abs(Number(pObj.quantity) || 0)
     const px  = Number(pObj.current_price) || Number(pObj.entry_price) || 0
     const lev = Math.max(1, Number(pObj.leverage) || 1)

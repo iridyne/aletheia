@@ -336,7 +336,6 @@ async def llm_complete(
         _record_call_finished(
             inference_call, status="error", error_type="llm_budget_exhausted"
         )
-        _record_llm(False)
         return None, "llm_budget_exhausted"
     except Exception as e:
         detail = _exception_detail(e)
@@ -847,6 +846,8 @@ async def llm_structured(
                 _record_structured_outcome("timeout")
                 _record_llm(False)
                 return _failure("llm_unavailable: structured_timeout")
+            except BudgetExceededError:
+                return _failure("llm_budget_exhausted")
             content = (resp.content or "").strip()
             usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
             output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))

@@ -6,7 +6,7 @@ from httpx import AsyncClient, ASGITransport
 from aletheia.server.app import app
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import TradeProposal, Position, MarketSnapshot, Order
+from aletheia.storage.models import TradeProposal, Position, MarketSnapshot, Order, RiskDecision
 from aletheia.storage import repositories as repo
 
 
@@ -257,6 +257,109 @@ async def test_reject_submitted_exchange_proposal_preserves_live_order_state(cli
     persisted_order = repo.get_order(order.id)
     assert persisted_order["status"] == "submitted"
     assert persisted_order["exchange_order_id"] == "venue-order-123"
+
+
+@pytest.mark.anyio
+async def test_order_risk_decision_uses_exact_authoritative_fk(client):
+    """Causal Chain must not replace an Order's consumed authority with newer preflight."""
+    from tests.execution_authority import seed_order_authority
+
+    proposal, decision = seed_order_authority(
+        proposal_id="risk-chain-proposal",
+        risk_decision_id="risk-authoritative-a",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+    )
+    repo._update(
+        "risk_decisions",
+        decision.id,
+        {"risk_score": 12, "message": "authoritative A"},
+    )
+    repo.insert_order(Order(
+        id="risk-chain-order",
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        status="filled",
+    ))
+    repo.insert_risk_decision(RiskDecision(
+        id="risk-preflight-b",
+        proposal_id=proposal.id,
+        approved=False,
+        risk_score=99,
+        decision_role="preflight",
+        message="newer preflight B",
+    ))
+
+    by_order = await client.get("/api/orders/risk-chain-order/risk-decision")
+    by_proposal = await client.get(f"/api/proposals/{proposal.id}/risk-decision")
+
+    assert by_order.status_code == 200
+    assert by_order.json()["status"] == "available"
+    assert by_order.json()["decision"]["id"] == "risk-authoritative-a"
+    assert by_order.json()["decision"]["message"] == "authoritative A"
+    assert by_proposal.status_code == 200
+    assert by_proposal.json()["status"] == "available"
+    assert by_proposal.json()["decision"]["id"] == "risk-authoritative-a"
+
+
+@pytest.mark.anyio
+async def test_order_risk_decision_rejects_preflight_authority(client):
+    proposal = TradeProposal(
+        id="risk-chain-preflight-proposal",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    preflight = RiskDecision(
+        id="risk-chain-preflight-only",
+        proposal_id=proposal.id,
+        approved=True,
+        decision_role="preflight",
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(preflight)
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "INSERT INTO orders "
+        "(id,proposal_id,risk_decision_id,symbol,market_type,direction,order_type,"
+        "quantity,price,execution_mode) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "risk-chain-preflight-order",
+            proposal.id,
+            preflight.id,
+            proposal.symbol,
+            proposal.market_type,
+            proposal.direction,
+            proposal.order_type,
+            proposal.quantity,
+            proposal.price,
+            proposal.execution_mode,
+        ),
+    )
+
+    response = await client.get("/api/orders/risk-chain-preflight-order/risk-decision")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "integrity_unavailable"
+    assert response.json()["reason_code"] == "risk_decision_not_authoritative"
+    assert response.json()["decision"] is None
 
 
 @pytest.mark.anyio

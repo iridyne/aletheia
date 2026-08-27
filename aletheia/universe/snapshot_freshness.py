@@ -15,7 +15,7 @@ def has_fresh_market_snapshot(
     symbol: str,
     market_type: str | None,
     *,
-    exchange: str | None,
+    exchange: str | None = None,
     max_age_hours: int = 2,
     now: datetime | None = None,
 ) -> bool:

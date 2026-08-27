@@ -6,6 +6,18 @@ Functions here are exchange-agnostic — they must work for any venue.
 import json
 
 
+def entry_acknowledgement_state(status: object) -> tuple[str, str | None]:
+    """Return durable Order state for an exchange entry acknowledgement."""
+    normalized = str(status or "").strip().lower()
+    if normalized in {"filled", "partially_filled"}:
+        return "materialization_missing", "private_fill_evidence_pending"
+    if normalized in {"submitted", "open"}:
+        return "submitted", None
+    if normalized in {"cancelled", "canceled", "rejected", "expired"}:
+        return "cancelled", "explicit_venue_rejection"
+    return "submission_unknown", "unrecognized_venue_order_status"
+
+
 def entry_acknowledgement_result(acknowledgement: dict) -> dict:
     return {
         key: acknowledgement[key]
