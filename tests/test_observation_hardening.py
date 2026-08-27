@@ -163,6 +163,31 @@ def test_drift_refuses_when_not_in_git_checkout(cli, tmp_path, monkeypatch):
 # ─── (3) --quiet mode on observe run ─────────────────────────────────────────
 
 
+def test_run_records_checkout_commit_without_gateway_boot(cli, monkeypatch):
+    import json
+
+    from aletheia.cli.observe_cmd import observe_app
+
+    expected = "a" * 40
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.build_info.get_boot_commit", lambda: None,
+    )
+    monkeypatch.setattr("aletheia.update.git_ops.current_commit", lambda: expected)
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe",
+        lambda **_: {"pass_status": "success"},
+    )
+
+    with patch(
+        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        return_value="worker",
+    ):
+        result = cli.invoke(observe_app, ["run", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["source_commit"] == expected
+
+
 def test_run_quiet_mode_stays_silent_on_clean_pass(cli, monkeypatch):
     """--quiet: a clean pass (0 windows_errored, 0 UFC mismatched) writes nothing.
     This is what the systemd unit uses for steady-state runs."""
