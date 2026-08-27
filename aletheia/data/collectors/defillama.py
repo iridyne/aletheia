@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -56,6 +57,7 @@ class DefiLlamaCollector:
 
         snapshots: list[OnchainSnapshot] = []
         errors: list[str] = []
+        metric_outcomes: dict[str, str] = {}
         now = datetime.now(timezone.utc).isoformat()
 
         _LABELS = ("stablecoin_mcap", "chain_tvl", "dex_volume")
@@ -68,9 +70,14 @@ class DefiLlamaCollector:
         for label, result in zip(_LABELS, results):
             if isinstance(result, BaseException):
                 errors.append(f"{label}: {result}")
+                metric_outcomes[label] = "failed"
                 logger.warning("DefiLlama %s fetch failed: %s", label, result)
             elif result is not None:
                 snapshots.append(result)
+                metric_outcomes[label] = "accepted"
+            else:
+                errors.append(f"{label}: empty_or_invalid")
+                metric_outcomes[label] = "empty_or_invalid"
 
         # Persist to DB only for standalone use. Scheduler ticks publish the
         # returned rows with their other context data in one transaction.
@@ -89,7 +96,11 @@ class DefiLlamaCollector:
             "DefiLlama collected: %d snapshots, %d errors",
             len(snapshots), len(errors),
         )
-        return {"snapshots": snapshots, "errors": errors}
+        return {
+            "snapshots": snapshots,
+            "errors": errors,
+            "metric_outcomes": metric_outcomes,
+        }
 
 
 async def _fetch_stablecoin_mcap(observed_at: str):
@@ -172,14 +183,23 @@ async def _fetch_chain_tvl(observed_at: str):
         resp.raise_for_status()
         chains = resp.json()
 
-    if not isinstance(chains, list):
+    if not isinstance(chains, list) or not chains:
         return None
 
-    total_tvl = sum(c.get("tvl", 0) or 0 for c in chains)
+    usable_chains: list[tuple[dict, float]] = []
+    for chain in chains:
+        if not isinstance(chain, dict):
+            continue
+        tvl = _finite_nonnegative(chain.get("tvl"))
+        if tvl is not None:
+            usable_chains.append((chain, tvl))
+    total_tvl = sum(tvl for _, tvl in usable_chains)
+    if total_tvl <= 0:
+        return None
 
     sorted_chains = sorted(
-        chains,
-        key=lambda c: c.get("tvl", 0) or 0,
+        usable_chains,
+        key=lambda item: item[1],
         reverse=True,
     )[:_TOP_CHAINS_N]
 
@@ -187,14 +207,14 @@ async def _fetch_chain_tvl(observed_at: str):
         {
             "name": c.get("name", ""),
             "token_symbol": c.get("tokenSymbol", ""),
-            "tvl_usd": round(c.get("tvl", 0) or 0, 0),
+            "tvl_usd": round(tvl, 0),
             "chain_id": c.get("chainId"),
         }
-        for c in sorted_chains
+        for c, tvl in sorted_chains
     ]
 
     raw_summary = {
-        "total_chains_count": len(chains),
+        "total_chains_count": len(usable_chains),
         "total_tvl_usd": round(total_tvl, 0),
     }
 
@@ -225,11 +245,17 @@ async def _fetch_dex_volume(observed_at: str):
     if not isinstance(data, dict):
         return None
 
-    total_24h = data.get("total24h", 0) or 0
-    total_7d = data.get("total7d", 0) or 0
+    total_24h = _finite_nonnegative(data.get("total24h"))
+    total_7d = _finite_nonnegative(data.get("total7d"))
+    protocols = data.get("protocols")
+    if total_24h is None or total_24h <= 0:
+        return None
+    if total_7d is None:
+        return None
+    if not isinstance(protocols, list) or not protocols:
+        return None
     change_1d = data.get("change_1d")
 
-    protocols = data.get("protocols", [])
     sorted_protocols = sorted(
         protocols,
         key=lambda p: p.get("total24h", 0) or 0,
@@ -267,3 +293,13 @@ async def _fetch_dex_volume(observed_at: str):
         raw_summary=json.dumps(raw_summary),
         observed_at=observed_at,
     )
+
+
+def _finite_nonnegative(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
