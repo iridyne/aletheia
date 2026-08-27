@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { AgentRun, Opportunity } from '../types'
@@ -36,6 +36,11 @@ import {
 
 const runCol = createColumnHelper<AgentRun>()
 const oppCol = createColumnHelper<Opportunity>()
+const AGENT_ACTIVITY_TABS = ['runs', 'opps'] as const
+type AgentActivityTab = typeof AGENT_ACTIVITY_TABS[number]
+function isAgentActivityTab(tab: string | null): tab is AgentActivityTab {
+  return !!tab && AGENT_ACTIVITY_TABS.includes(tab as AgentActivityTab)
+}
 
 function parseJson(raw: string | null): any[] {
   if (!raw) return []
@@ -76,6 +81,9 @@ const oppColumns = [
 ]
 
 export default function AgentActivity() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const activeTab: AgentActivityTab = isAgentActivityTab(requestedTab) ? requestedTab : 'runs'
   const { data: runs, isPending: runsPending, isError: runsError } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
   const { data: opps, isPending: oppsPending, isError: oppsError } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
 
@@ -98,6 +106,19 @@ export default function AgentActivity() {
         ? 'stale'
         : undefined
 
+  useEffect(() => {
+    if (requestedTab === activeTab) return
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', activeTab)
+    setSearchParams(next, { replace: true })
+  }, [activeTab, requestedTab, searchParams, setSearchParams])
+
+  const setActiveTab = (tab: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', isAgentActivityTab(tab) ? tab : 'runs')
+    setSearchParams(next)
+  }
+
   return (
     <div>
       <PageHeader
@@ -105,6 +126,8 @@ export default function AgentActivity() {
         role="Decide · agent transparency. Every agent run with its tool-call trace, and the opportunities those runs produced (each with its thesis). The reasoning behind what the system proposes."
       />
       <Tabs
+        value={activeTab}
+        onChange={setActiveTab}
         tabs={[
           { id: 'runs', label: 'Runs', badge: runRows.length || undefined, render: () => <RunsTab runs={runRows} state={runsState} /> },
           { id: 'opps', label: 'Opportunities', badge: openOpps > 0 ? openOpps : undefined, render: () => <OpportunitiesTab opps={oppRows} state={oppsState} /> },
