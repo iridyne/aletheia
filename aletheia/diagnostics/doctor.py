@@ -298,22 +298,37 @@ def _diagnostic_logs(*, tail_lines: int) -> dict:
 
 def _recent_failures(limit: int = 12) -> list[dict]:
     try:
-        from aletheia.agent_runtime.run_view import finished_at, summarize_run_errors
+        from aletheia.agent_runtime.run_view import (
+            FAILED_AGENT_RUN_STATUSES,
+            SUCCESS_AGENT_RUN_STATUSES,
+            finished_at,
+            is_failed_agent_run,
+            summarize_run_errors,
+        )
         from aletheia.storage.sqlite import get_db
         db = get_db()
+        failed_statuses = tuple(sorted(FAILED_AGENT_RUN_STATUSES))
+        success_statuses = tuple(sorted(SUCCESS_AGENT_RUN_STATUSES))
+        params = (*failed_statuses, *success_statuses, limit)
+        failed_marks = ",".join("?" for _ in failed_statuses)
+        success_marks = ",".join("?" for _ in success_statuses)
         rows = db.execute(
-            "SELECT id, agent_name, status, started_at, "
-            "ended_at AS finished_at, errors AS error "
-            "FROM agent_runs "
-            "WHERE status NOT IN ('completed', 'success') "
-            "OR COALESCE(NULLIF(errors, ''), '[]') <> '[]' "
-            "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
-            (limit,),
+            f"""SELECT id, agent_name, status, started_at,
+                       ended_at AS finished_at, errors AS error
+                FROM agent_runs
+                WHERE status IN ({failed_marks})
+                   OR (
+                       status IN ({success_marks})
+                       AND COALESCE(NULLIF(errors, ''), '[]') <> '[]'
+                   )
+                ORDER BY COALESCE(ended_at, started_at) DESC
+                LIMIT ?""",
+            params,
         ).fetchall()
         failures: list[dict] = []
         for row in rows:
             summary = summarize_run_errors(row["error"])
-            if row["status"] in ("completed", "success") and not summary:
+            if not is_failed_agent_run(row["status"], row["error"]):
                 continue
             failures.append(
                 {
