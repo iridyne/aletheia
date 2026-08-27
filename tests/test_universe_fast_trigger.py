@@ -163,6 +163,31 @@ def test_setup_fingerprint_changes_with_breakout_structure():
     assert one.material_fingerprint != two.material_fingerprint
 
 
+def test_build_momentum_setup_preserves_funding_observed_at():
+    from aletheia.universe.fast_trigger import build_momentum_setup
+
+    observed_at = "2026-08-26T11:45:00+00:00"
+    setup = build_momentum_setup(
+        snapshot_id="snapshot-1",
+        member_id="member-1",
+        asset_id="asset-1",
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        regime_tag="bull",
+        rank=1,
+        material_fingerprint="fingerprint-1",
+        atr_15m_pct=1.0,
+        candles=_bars("long"),
+        funding_rate=0.0004,
+        funding_observed_at=observed_at,
+        now=datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert setup.funding_observed_at == observed_at
+
+
 def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
