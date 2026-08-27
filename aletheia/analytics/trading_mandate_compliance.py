@@ -14,6 +14,7 @@ from typing import Any
 
 from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.config.loader import load_config
+from aletheia.storage.repositories import validate_trade_proposal_commit_hash
 from aletheia.trading.trading_mandate import (
     TRADING_MANDATE_FIT_VERSION,
     TRADING_MANDATE_VERSION,
@@ -104,6 +105,15 @@ def _proposal_mandate(proposal: dict[str, Any] | None) -> dict[str, Any]:
     identity = snapshot.get("trading_mandate_identity")
     fit = snapshot.get("trading_mandate_fit")
     try:
+        validate_trade_proposal_commit_hash(proposal)
+    except ValueError:
+        return {
+            "status": "mandate_unavailable",
+            "identity": None,
+            "fit": None,
+            "reason_codes": ["proposal_integrity_mismatch"],
+        }
+    try:
         validate_frozen_trading_mandate_provenance(snapshot)
     except ValueError:
         return {
@@ -159,6 +169,10 @@ def _fit_status(proposal: dict[str, Any] | None) -> str:
 
 def _fit_reasons(proposal: dict[str, Any] | None) -> list[str]:
     return _proposal_mandate(proposal)["reason_codes"]
+
+
+def _proposal_integrity_unavailable(evidence: dict[str, Any]) -> bool:
+    return "proposal_integrity_mismatch" in evidence.get("reason_codes", ())
 
 
 def _horizon_declaration(proposal: dict[str, Any] | None) -> tuple[float | None, float | None, str]:
@@ -286,12 +300,17 @@ def _single_report(
     proposal = record if record_type == "proposal" else _row(db, "trade_proposals", record.get("proposal_id"))
     evidence = _proposal_mandate(proposal)
     source_ids = _source_identities(db, proposal)
+    unavailable_reason = (
+        "proposal_integrity_mismatch"
+        if _proposal_integrity_unavailable(evidence)
+        else None
+    )
     return {
         "contract_version": COMPLIANCE_CONTRACT_VERSION,
         "read_only": True,
         "record_type": record_type,
-        "availability": "available",
-        "unavailable_reason": None,
+        "availability": "unavailable" if unavailable_reason else "available",
+        "unavailable_reason": unavailable_reason,
         "configured_mandate": configured,
         "mandate_identity": evidence["identity"],
         "trading_mandate_identity": evidence["identity"],
@@ -338,10 +357,14 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
     behavior_fingerprints: set[str] = set()
     runtime_sessions: set[str] = set()
     frozen_identities: set[str] = set()
+    proposal_integrity_mismatches = 0
     for proposal in proposals:
         evidence = _proposal_mandate(proposal)
+        if _proposal_integrity_unavailable(evidence):
+            proposal_integrity_mismatches += 1
+            continue
         proposal_statuses[evidence["status"]] += 1
-        reason_counts.update(_fit_reasons(proposal))
+        reason_counts.update(evidence["reason_codes"])
         for field, target in (
             ("producer_commit", behavior_commits),
             ("behavior_fingerprint", behavior_fingerprints),
@@ -380,6 +403,9 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
         if proposal is None:
             proposal = _row(db, "trade_proposals", position.get("proposal_id"))
         evidence = _proposal_mandate(proposal)
+        if _proposal_integrity_unavailable(evidence):
+            exclusions["proposal_integrity_mismatch"] += 1
+            continue
         status = evidence["status"]
         position_statuses[status] += 1
         if position.get("producer_commit"):
@@ -491,6 +517,7 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
             "unavailable_or_malformed_mandate_evidence": (
                 position_statuses["mandate_unavailable"]
             ),
+            "proposal_integrity_mismatches": proposal_integrity_mismatches,
         },
         "cohort_identity": {
             "fit_contract_version": TRADING_MANDATE_FIT_VERSION,

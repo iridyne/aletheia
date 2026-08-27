@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     _RISK_DECISION_PREFIX,
     _RISK_PROPOSAL_PREFIX,
@@ -33,6 +33,7 @@ from aletheia.storage.repositories import (
     list_unresolved_native_entry_orders_for_risk,
     transaction,
     update_trade_proposal,
+    validate_trade_proposal_commit_hash,
 )
 from aletheia.trading.entry_plan import (
     RISK_REWARD_OUTSIDE_ENVELOPE,
@@ -1399,6 +1400,12 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
             violations.append("invalid_leverage")
     if proposal.execution_mode not in _NATIVE_EXECUTION_MODES:
         violations.append("invalid_execution_mode")
+    violations.extend(
+        exit_intent_violations(
+            expected_horizon_hours=proposal.expected_horizon_hours,
+            stop_source=proposal.stop_source,
+        )
+    )
     return violations
 
 
@@ -1411,12 +1418,10 @@ def _verified_original_proposal_commit_hash(
     row = get_trade_proposal(proposal.id)
     if row is not None:
         stored = TradeProposal.model_validate(row)
-        if stored.commit_hash is None:
-            raise ProposalIntegrityError("stored proposal has no commit hash")
-        if _compute_proposal_hash(stored) != stored.commit_hash:
-            raise ProposalIntegrityError(
-                "stored proposal content does not match commit hash"
-            )
+        try:
+            validate_trade_proposal_commit_hash(stored)
+        except ValueError as exc:
+            raise ProposalIntegrityError(str(exc)) from exc
         if require_evaluated_snapshot_match:
             # Venue preparation may normalize quantity, but every other field
             # covered by the original Proposal hash must remain identical. Put

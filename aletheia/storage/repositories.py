@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import (
@@ -2383,6 +2383,25 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
 
     payload = p.model_dump(exclude=_PROPOSAL_HASH_EXCLUDES)
     return sha256_json(payload)[:16]
+
+
+def validate_trade_proposal_commit_hash(
+    proposal: TradeProposal | Mapping[str, object],
+) -> str:
+    """Return the stored Proposal hash only if immutable content still matches it."""
+    try:
+        stored = (
+            proposal
+            if isinstance(proposal, TradeProposal)
+            else TradeProposal.model_validate(proposal)
+        )
+    except ValidationError as exc:
+        raise ValueError("stored proposal content cannot be validated") from exc
+    if stored.commit_hash is None:
+        raise ValueError("stored proposal has no commit hash")
+    if _compute_proposal_hash(stored) != stored.commit_hash:
+        raise ValueError("stored proposal content does not match commit hash")
+    return stored.commit_hash
 
 
 def insert_trade_proposal(
@@ -6107,6 +6126,10 @@ def insert_portfolio_snapshot(snap) -> None:
     _insert("portfolio_snapshots", snap.model_dump())
 
 
+def _snapshot_cutoff_us(days: int) -> int:
+    return iso_instant_us((datetime.now(timezone.utc) - timedelta(days=days)).isoformat()) or 0
+
+
 def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) -> list[dict]:
     """Return the latest snapshot window in chronological order.
 
@@ -6119,30 +6142,32 @@ def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) 
     from the newest end of the full series (default 100 rows).
     """
     db = get_db()
+    register_instant_us(db)
     if days is not None and days > 0:
+        cutoff_us = _snapshot_cutoff_us(days)
         if limit and limit > 0:
             rows = db.execute(
                 """
                 SELECT * FROM (
                     SELECT *
                     FROM portfolio_snapshots
-                    WHERE snapshot_at >= datetime('now', ?)
-                    ORDER BY snapshot_at DESC, id DESC
+                    WHERE aletheia_instant_us(snapshot_at) >= ?
+                    ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                     LIMIT ?
                 )
-                ORDER BY snapshot_at ASC, id ASC
+                ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
                 """,
-                (f"-{days} days", limit),
+                (cutoff_us, limit),
             ).fetchall()
         else:
             rows = db.execute(
                 """
                 SELECT *
                 FROM portfolio_snapshots
-                WHERE snapshot_at >= datetime('now', ?)
-                ORDER BY snapshot_at ASC, id ASC
+                WHERE aletheia_instant_us(snapshot_at) >= ?
+                ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
                 """,
-                (f"-{days} days",),
+                (cutoff_us,),
             ).fetchall()
     else:
         cap = limit if (limit and limit > 0) else 100
@@ -6152,10 +6177,10 @@ def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) 
             FROM (
                 SELECT *
                 FROM portfolio_snapshots
-                ORDER BY snapshot_at DESC, id DESC
+                ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             (cap,),
         ).fetchall()
@@ -6181,21 +6206,22 @@ def list_account_equity_snapshots(
     the oldest. The default is None (no cap) so all range selectors remain distinct.
     """
     db = get_db()
+    register_instant_us(db)
     params: list[object] = [execution_mode]
     where = "execution_mode = ? AND account_equity_usdt IS NOT NULL"
     if days is not None and days > 0:
-        where += " AND snapshot_at >= datetime('now', ?)"
-        params.append(f"-{days} days")
+        where += " AND aletheia_instant_us(snapshot_at) >= ?"
+        params.append(_snapshot_cutoff_us(days))
     if limit and limit > 0:
         rows = db.execute(
             f"""
             SELECT * FROM (
                 SELECT * FROM portfolio_snapshots
                 WHERE {where}
-                ORDER BY snapshot_at DESC, id DESC
+                ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             (*params, limit),
         ).fetchall()
@@ -6204,7 +6230,7 @@ def list_account_equity_snapshots(
             f"""
             SELECT * FROM portfolio_snapshots
             WHERE {where}
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             params,
         ).fetchall()
@@ -9869,12 +9895,25 @@ def insert_coingecko_top_rows(rows: list[dict]) -> int:
 
 
 def latest_coingecko_top(top_n: int = 50) -> list[dict]:
-    """Return the most recent batch's top_n rows, all sharing one observed_at.
+    """Return the most recent batch's top_n rows.
 
-    Two-step read pins to MAX(observed_at) first — otherwise a top_n=50 read
-    could mix two adjacent batches if 100 rows landed in one tick (per spec MS-C04).
+    New rows are pinned by batch_id so mixed provider source times cannot split
+    one acquisition batch. Legacy rows fall back to the original observed_at pin.
     """
     db = get_db()
+    batch_row = db.execute(
+        "SELECT batch_id FROM coingecko_top_snapshots "
+        "WHERE batch_id IS NOT NULL AND batch_id != '' "
+        "ORDER BY acquired_at DESC, observed_at DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    if batch_row and batch_row["batch_id"]:
+        return _select_all(
+            "coingecko_top_snapshots",
+            where="batch_id = ?",
+            params=(batch_row["batch_id"],),
+            order="market_cap_rank ASC",
+            limit=top_n,
+        )
     latest_row = db.execute("SELECT MAX(observed_at) AS m FROM coingecko_top_snapshots").fetchone()
     if not latest_row or not latest_row["m"]:
         return []

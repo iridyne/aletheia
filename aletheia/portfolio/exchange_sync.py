@@ -22,6 +22,7 @@ Governance:
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -151,7 +152,11 @@ def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -
     if state is None:
         return "unconfigured"
     age = state.get("age_seconds")
-    if age is None or age > max_age_sec:
+    try:
+        age_value = float(age)
+    except (TypeError, ValueError):
+        return "stale"
+    if not math.isfinite(age_value) or age_value < 0 or age_value > max_age_sec:
         return "stale"
     return "ok"
 

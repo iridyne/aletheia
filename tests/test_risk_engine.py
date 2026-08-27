@@ -45,6 +45,90 @@ def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
     reset_db()
 
 
+@pytest.mark.parametrize(
+    "field, value, violation",
+    [
+        ("expected_horizon_hours", 0.0, "invalid_expected_horizon_hours"),
+        ("expected_horizon_hours", -1.0, "invalid_expected_horizon_hours"),
+        ("expected_horizon_hours", float("nan"), "invalid_expected_horizon_hours"),
+        ("expected_horizon_hours", float("inf"), "invalid_expected_horizon_hours"),
+        ("stop_source", "human", "invalid_stop_source"),
+    ],
+)
+def test_risk_rejects_invalid_exit_intent_before_side_effects(
+    tmp_path,
+    monkeypatch,
+    field,
+    value,
+    violation,
+):
+    setup_test_env(tmp_path, monkeypatch)
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **trade,
+    ).model_copy(update={field: value})
+
+    result = evaluate_proposal(proposal, decision_role="preflight")
+
+    assert result.approved is False
+    assert violation in result.violations
+    assert repo.list_orders() == []
+    assert repo.list_positions(status="open") == []
+    reset_db()
+
+
+@pytest.mark.parametrize(
+    "intent, reason_code",
+    [
+        (
+            {"expected_horizon_hours": float("inf"), "stop_source": "operator"},
+            "invalid_expected_horizon_hours",
+        ),
+        (
+            {"expected_horizon_hours": 4.0, "stop_source": "human"},
+            "invalid_stop_source",
+        ),
+    ],
+)
+def test_gateway_rejects_invalid_exit_intent_before_persisting(
+    tmp_path,
+    monkeypatch,
+    intent,
+    reason_code,
+):
+    setup_test_env(tmp_path, monkeypatch)
+
+    result = submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **intent,
+    )
+
+    assert result["status"] == "rejected"
+    assert result["proposal_id"] is None
+    assert result["reason_code"] == reason_code
+    assert repo.list_trade_proposals() == []
+    reset_db()
+
+
 def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

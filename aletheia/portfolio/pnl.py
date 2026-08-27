@@ -1377,10 +1377,10 @@ def today_pnl_by_symbol(
     result: dict[str, float | None] = {}
     for symbol, rows in grouped.items():
         total, unavailable = _complete_realized_total(rows)
-        # Return None when ALL closes for this symbol are unavailable so the
-        # tooltip can show '—' rather than a misleading 0.00.  The portfolio
-        # aggregate uses the partial sum instead (with a completeness flag).
-        result[symbol] = None if unavailable == len(rows) else round(total, 4)
+        # Per-symbol projection has no sibling completeness fields, so a
+        # partial subtotal would look final. The aggregate keeps partial +
+        # explicit unavailable count instead.
+        result[symbol] = None if unavailable > 0 else round(total, 4)
     return result
 
 
@@ -1411,9 +1411,13 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
+    unrealized_by_symbol: dict[str, float] = {}
     for p in positions:
         notional = p["quantity"] * (p.get("current_price") or p["entry_price"])
         exposure[p["symbol"]] = exposure.get(p["symbol"], 0.0) + notional
+        unrealized = _finite_number(p.get("unrealized_pnl"))
+        if unrealized is not None:
+            unrealized_by_symbol[p["symbol"]] = unrealized_by_symbol.get(p["symbol"], 0.0) + unrealized
 
     # Exchange-account view (real Bitget balance/positions, cached). Never blocks
     # on a network call here — the scheduler refreshes the cache out-of-band, so
@@ -1512,27 +1516,25 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
             from aletheia.portfolio import exchange_sync
 
             unified = exchange_sync.get_unified_cached_state()
-            if unified is not None:
-                uta_age = unified.get("age_seconds")
-                if uta_age is not None and uta_age < 600:
-                    uta_state = unified
-                    # When unified state is available and has data, use as hero number
-                    uta_equity = unified.get("total_equity_usdt")
-                    if uta_equity and uta_equity > 0:
-                        final_total_value = float(uta_equity)
-                        account_equity_usdt = final_total_value
-                    # UTA uPnL is the authoritative cross-broker unrealized PnL. The
-                    # legacy single-broker Bitget cache above sets final_unrealized to
-                    # 0 when the active account is on another broker (e.g. OKX), which
-                    # contradicted the equity-curve's local estimate. Prefer UTA here
-                    # so the UNREALIZED card matches the real exchange mark-price uPnL.
-                    uta_count = len(unified.get("positions") or [])
-                    uta_upnl = unified.get("total_unrealized_pnl")
-                    if uta_upnl is not None:
-                        final_unrealized = float(uta_upnl)
-                        final_today_pnl = float(uta_upnl) + total_today_realized
-                    if uta_count:
-                        final_positions_count = uta_count
+            if exchange_sync.status_for(unified) == "ok":
+                uta_state = unified
+                # When unified state is available and has data, use as hero number
+                uta_equity = unified.get("total_equity_usdt")
+                if uta_equity and uta_equity > 0:
+                    final_total_value = float(uta_equity)
+                    account_equity_usdt = final_total_value
+                # UTA uPnL is the authoritative cross-broker unrealized PnL. The
+                # legacy single-broker Bitget cache above sets final_unrealized to
+                # 0 when the active account is on another broker (e.g. OKX), which
+                # contradicted the equity-curve's local estimate. Prefer UTA here
+                # so the UNREALIZED card matches the real exchange mark-price uPnL.
+                uta_count = len(unified.get("positions") or [])
+                uta_upnl = unified.get("total_unrealized_pnl")
+                if uta_upnl is not None:
+                    final_unrealized = float(uta_upnl)
+                    final_today_pnl = float(uta_upnl) + total_today_realized
+                if uta_count:
+                    final_positions_count = uta_count
         except Exception:
             pass
 
@@ -1570,9 +1572,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
-        "unrealized_by_symbol": {
-            p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")
-        },
+        "unrealized_by_symbol": {k: round(v, 4) for k, v in unrealized_by_symbol.items()},
         "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
