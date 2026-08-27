@@ -6,6 +6,7 @@ are consistent across the Analytics tab and Trade Insights panel.
 """
 from __future__ import annotations
 
+from aletheia.analytics.streaks import summarize_streaks
 from aletheia.analytics.temporal import parse_utc_instant
 
 from aletheia.data.symbols import to_canonical
@@ -323,43 +324,18 @@ def _by_regime(rows) -> list[dict]:
 
 
 def _streaks(rows) -> dict:
-    max_wins = 0
-    max_losses = 0
-    cur_wins = 0
-    cur_losses = 0
-    overall_wins = 0
-    overall_losses = 0
-
-    for r in rows:
-        pnl = r["realized_pnl"] or 0.0
-        if pnl > 0:
-            overall_wins += 1
-            cur_wins += 1
-            cur_losses = 0
-            max_wins = max(max_wins, cur_wins)
-        else:
-            overall_losses += 1
-            cur_losses += 1
-            cur_wins = 0
-            max_losses = max(max_losses, cur_losses)
-
-    if cur_wins > 0:
-        current_streak = cur_wins
-        current_streak_type = "win"
-    elif cur_losses > 0:
-        current_streak = cur_losses
-        current_streak_type = "loss"
-    else:
-        current_streak = 0
-        current_streak_type = "none"
+    pnls = [r["realized_pnl"] or 0.0 for r in rows]
+    summary = summarize_streaks(pnls)
+    current_streak_type = summary["current_streak_sign"] or "none"
 
     return {
-        "max_consecutive_wins": max_wins,
-        "max_consecutive_losses": max_losses,
-        "current_streak": current_streak,
+        "max_consecutive_wins": summary["max_consecutive_wins"],
+        "max_consecutive_losses": summary["max_consecutive_losses"],
+        "current_streak": summary["current_streak_length"],
         "current_streak_type": current_streak_type,
-        "total_wins": overall_wins,
-        "total_losses": overall_losses,
+        "total_wins": sum(1 for p in pnls if p > 0),
+        "total_losses": sum(1 for p in pnls if p < 0),
+        "total_flats": sum(1 for p in pnls if p == 0),
     }
 
 
