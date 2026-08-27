@@ -99,6 +99,44 @@ def test_capital_events_adjust_account_equity_without_changing_raw_series(
     assert result["adjustment"]["method"] == "visible_window_net_flow_adjusted_usdt"
 
 
+def test_account_equity_history_baseline_respects_day_cutoff(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        data,
+        "load_config",
+        lambda: SimpleNamespace(
+            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
+        ),
+    )
+    fixed_now = datetime(2026, 8, 22, 15, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo, "datetime", FixedDatetime)
+    before = fixed_now - timedelta(days=7, seconds=1)
+    cutoff = fixed_now - timedelta(days=7)
+    after = cutoff + timedelta(seconds=1)
+    for snapshot_at, equity in (
+        (before.isoformat(), 100.0),
+        (cutoff.isoformat(), 200.0),
+        (after.isoformat(), 300.0),
+    ):
+        repo.insert_portfolio_snapshot(PortfolioSnapshot(
+            total_value_usdt=equity,
+            account_equity_usdt=equity,
+            execution_mode="paper_internal",
+            snapshot_at=snapshot_at,
+        ))
+
+    result = data.get_account_equity_history(days=7)
+
+    assert [point["equity_usdt"] for point in result["points"]] == [200.0, 300.0]
+    assert result["adjustment"]["baseline_at"] == cutoff.isoformat()
+
+
 def test_local_paper_balance_change_is_exposed_as_adjustment_marker(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     start = datetime(2026, 7, 1, microsecond=100_000, tzinfo=timezone.utc)

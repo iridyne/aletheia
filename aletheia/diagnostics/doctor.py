@@ -3902,9 +3902,6 @@ def _probe_filter_evidence(report: Report) -> None:
         outcomes = db.execute(
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
-            "SUM(CASE WHEN status='settled' AND "
-            f"  {complete_outcome_economics_sql()} "
-            "  THEN 1 ELSE 0 END) AS net_complete, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
             "  THEN 1 ELSE 0 END) AS overdue, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
@@ -3912,10 +3909,23 @@ def _probe_filter_evidence(report: Report) -> None:
             "FROM filter_candidate_outcomes",
             (now_iso, stale_before),
         ).fetchone()
+        from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+
+        net_complete_rows = db.execute(
+            "SELECT * FROM filter_candidate_outcomes "
+            "WHERE status='settled' AND "
+            f"{complete_outcome_economics_sql()}",
+        ).fetchall()
+        net_complete = 0
+        temporal_invalid_settled = 0
+        for raw in net_complete_rows:
+            if candidate_outcome_temporal_reason(dict(raw), as_of_at=now_iso) is None:
+                net_complete += 1
+            else:
+                temporal_invalid_settled += 1
         outcome_candidates = int(decisions["outcome_candidates"] or 0)
         registered = int(outcomes["registered"] or 0) if outcomes else 0
         settled = int(outcomes["settled"] or 0) if outcomes else 0
-        net_complete = int(outcomes["net_complete"] or 0) if outcomes else 0
         overdue = int(outcomes["overdue"] or 0) if outcomes else 0
         stale_overdue = int(outcomes["stale_overdue"] or 0) if outcomes else 0
         awaiting_cadence = max(0, overdue - stale_overdue)
@@ -3936,7 +3946,8 @@ def _probe_filter_evidence(report: Report) -> None:
             f"batches={batch_total}, batch_candidates={batch_candidates}, "
             f"batch_filters={batch_filters}, malformed={malformed_batches}; "
             f"outcome_candidates={registered}/{outcome_candidates}; "
-            f"settled={settled}, net_complete={net_complete}, overdue={overdue}, "
+            f"settled={settled}, net_complete={net_complete}, "
+            f"temporal_invalid_settled={temporal_invalid_settled}, overdue={overdue}, "
             f"awaiting_cadence={awaiting_cadence}, stale_overdue={stale_overdue}, "
             f"unobserved_failed={unobserved_failed}"
         )
