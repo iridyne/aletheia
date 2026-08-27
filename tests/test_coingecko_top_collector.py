@@ -11,6 +11,7 @@ Covers CoinGeckoTopCollector.collect() and _build_movers_summary():
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -79,6 +80,9 @@ def _patch_httpx(monkeypatch, payload, captured):
 
 
 def _make_coin(i: int, pct_24h: float | None = 0.0, pct_1h: float | None = 0.1, pct_7d: float | None = 0.5):
+    last_updated = (
+        datetime.now(timezone.utc) - timedelta(minutes=1)
+    ).isoformat().replace("+00:00", "Z")
     return {
         "id": f"coin-{i}",
         "symbol": f"sym{i}",
@@ -90,6 +94,7 @@ def _make_coin(i: int, pct_24h: float | None = 0.0, pct_1h: float | None = 0.1, 
         "price_change_percentage_1h_in_currency": pct_1h,
         "price_change_percentage_24h_in_currency": pct_24h,
         "price_change_percentage_7d_in_currency": pct_7d,
+        "last_updated": last_updated,
     }
 
 
@@ -119,6 +124,10 @@ def test_collect_maps_fields(monkeypatch):
         "price_change_1h_pct",
         "price_change_24h_pct",
         "price_change_7d_pct",
+        "source_observed_at",
+        "acquired_at",
+        "source_age_sec",
+        "batch_id",
         "observed_at",
     }
     for row in result["rows"]:
@@ -133,6 +142,10 @@ def test_collect_maps_fields(monkeypatch):
     assert first["market_cap_rank"] == 1
     assert first["volume_24h_usd"] == 50_000
     assert first["price_change_24h_pct"] == 0.0
+    assert first["observed_at"] == first["source_observed_at"]
+    assert first["acquired_at"] != first["source_observed_at"]
+    assert result["batch_id"] == first["batch_id"]
+    assert "CoinGecko batch" in result["movers_summary"]
 
 
 def test_collect_returns_empty_rows_on_network_failure(monkeypatch):
@@ -150,6 +163,25 @@ def test_collect_returns_empty_rows_on_network_failure(monkeypatch):
     assert len(result["errors"]) >= 1
     assert "coingecko_top" in result["errors"][0]
     assert result["movers_summary"] is None
+
+
+def test_collect_rejects_missing_stale_and_future_source_times(monkeypatch):
+    now = datetime.now(timezone.utc)
+    payload = [
+        {**_make_coin(1), "last_updated": None},
+        {**_make_coin(2), "last_updated": "not-a-date"},
+        {**_make_coin(3), "last_updated": (now - timedelta(hours=3)).isoformat()},
+        {**_make_coin(4), "last_updated": (now + timedelta(hours=1)).isoformat()},
+    ]
+    captured: list = []
+    _patch_httpx(monkeypatch, payload, captured)
+
+    result = asyncio.run(CoinGeckoTopCollector().collect(top_n=4))
+
+    assert result["rows"] == []
+    assert result["movers_summary"] is None
+    assert result["rejected_count"] == 4
+    assert result["errors"] == ["source_time_rejected"]
 
 
 def test_collect_clamps_top_n_to_250(monkeypatch):

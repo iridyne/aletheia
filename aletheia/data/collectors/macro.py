@@ -82,6 +82,8 @@ class MacroCollector:
             logger.debug("CoinGecko global fetch failed: %s", cg_result)
         else:
             btc_dominance, total_cap, total_cap_change = cg_result
+            if all(v is None for v in cg_result):
+                errors.append("coingecko:empty")
 
         spy = vix = dxy = nasdaq = None
         if fred_coro is not None:
@@ -92,6 +94,8 @@ class MacroCollector:
             else:
                 spy, vix, dxy, nasdaq = fred_result
                 logger.debug("FRED macro: spy=%s vix=%s dxy=%s nasdaq=%s", spy, vix, dxy, nasdaq)
+                if all(v is None for v in fred_result):
+                    errors.append("fred:empty")
 
         fng_value: int | None = None
         fng_classification: str | None = None
@@ -102,6 +106,8 @@ class MacroCollector:
                 logger.debug("Alt.me F&G fetch failed (non-fatal): %s", fng_result)
             else:
                 fng_value, fng_classification = fng_result
+                if fng_value is None and fng_classification is None:
+                    errors.append("fng:empty")
 
         # Fallback: fill any None tradfi values from yFinance.
         # #92 fix: yfinance's Ticker.history() is synchronous and can block the
@@ -128,12 +134,28 @@ class MacroCollector:
                 vix = vix or yf_vix
                 dxy = dxy or yf_dxy
                 nasdaq = nasdaq or yf_nasdaq
+                if all(v is None for v in yf_results):
+                    errors.append("yfinance:empty")
             except Exception as e:
                 errors.append(f"yfinance: {e}")
                 logger.debug("yfinance fallback also failed: %s", e)
 
         # Risk regime heuristic
         risk_regime = _classify_risk_regime(vix, total_cap_change)
+        accepted_values = (
+            btc_dominance,
+            total_cap,
+            total_cap_change,
+            spy,
+            vix,
+            dxy,
+            nasdaq,
+            fng_value,
+            fng_classification,
+        )
+        if all(value is None for value in accepted_values):
+            errors.append("macro:no_usable_inputs")
+            return {"snapshot": None, "errors": list(dict.fromkeys(errors))}
 
         snapshot = MacroSnapshot(
             btc_dominance=btc_dominance,
@@ -143,7 +165,7 @@ class MacroCollector:
             vix_close=vix,
             dxy_close=dxy,
             nasdaq_close=nasdaq,
-            risk_regime=risk_regime,
+            risk_regime=risk_regime or "unavailable",
             fng_value=fng_value,
             fng_classification=fng_classification,
             observed_at=now,
@@ -278,8 +300,10 @@ def _fetch_tradfi() -> tuple[float | None, float | None, float | None, float | N
 
 def _classify_risk_regime(
     vix: float | None, cap_change: float | None
-) -> str:
+) -> str | None:
     """Simple heuristic: VIX > 25 or cap down > 3% → risk_off; VIX < 15 + cap up → risk_on."""
+    if vix is None and cap_change is None:
+        return None
     if vix is not None and vix > 25:
         return "risk_off"
     if cap_change is not None and cap_change < -3.0:
