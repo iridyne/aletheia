@@ -1510,7 +1510,7 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
 def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
     """Return current queue occupants with their conviction score for priority comparison.
 
-    Each dict contains opportunity_id, symbol, conviction.  Same eligibility
+    Each dict contains opportunity_id, symbol, conviction, created_at.  Same eligibility
     criteria as count_unresolved_signal_pending — only rows that consume an
     admission slot are returned.
     """
@@ -1518,7 +1518,7 @@ def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
     rows = (
         get_db()
         .execute(
-            "SELECT pending.opportunity_id, pending.symbol, pending.conviction "
+            "SELECT pending.opportunity_id, pending.symbol, pending.conviction, pending.created_at "
             "FROM pi_decisions pending "
             "JOIN opportunities source ON source.id=pending.opportunity_id "
             "WHERE pending.action='signal_pending' "
@@ -1565,6 +1565,7 @@ def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
             "opportunity_id": str(row["opportunity_id"]),
             "symbol": str(row["symbol"] or ""),
             "conviction": int(row["conviction"] or 0),
+            "created_at": row["created_at"],
         }
         for row in rows
     ]
