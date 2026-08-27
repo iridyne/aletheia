@@ -689,26 +689,23 @@ def do_status() -> None:
     """Show gateway status."""
     from aletheia.gateway import service_control
     service = service_control.status()
-    if service.get("scope") == "machine" and service.get("installed"):
-        typer.echo(f"Gateway: {service.get('runtime', 'unknown')} (Windows machine service)")
-        typer.echo("Dashboard: http://127.0.0.1:8787")
-        typer.echo(f"Service: installed={service.get('installed')} enabled={service.get('enabled')} owned={service.get('owned')} config_valid={service.get('config_valid')}")
-        typer.echo(f"Data directory: {service.get('data_dir')}")
-        if service.get("reason"):
-            typer.echo(f"Service reason: {service['reason']}")
-        return
     cfg = load_config()
-    running = is_running()
-    pid = read_pid()
+    machine_service = service.get("scope") == "machine" and service.get("installed")
+    running = bool(service.get("running")) if machine_service else is_running()
+    pid = service.get("pid") if machine_service else read_pid()
     from aletheia.gateway.network import frontdoor_bind_hosts
     urls = [f"http://{host}:{cfg.app.dashboard_port}" for host in frontdoor_bind_hosts(cfg)]
-    typer.echo(f"Gateway process: {'running' if running else 'stopped'}" + (f" (PID {pid})" if running else ""))
-    if running:
-        typer.echo(f"Front door: {'ready' if _verify_api_ready_accessible(cfg) else 'not ready'}")
+    ready = _verify_api_ready_accessible(cfg) if running else False
+    owner = "Windows machine service" if machine_service else "process"
+    typer.echo(f"Gateway {owner}: {'running' if running else 'stopped'}" + (f" (PID {pid})" if running and pid else ""))
+    typer.echo(f"Front door: {'ready' if ready else 'not ready' if running else 'unavailable (gateway stopped)'}")
     typer.echo(f"Paused: {cfg.runtime.paused}")
-    typer.echo(f"Dashboard: {urls[0]}")
-    for url in urls[1:]:
-        typer.echo(f"Remote dashboard: {url}")
+    if ready:
+        typer.echo(f"Dashboard: {urls[0]}")
+        for url in urls[1:]:
+            typer.echo(f"Remote dashboard: {url}")
+    else:
+        typer.echo(f"Dashboard: unavailable ({'front door not ready' if running else 'gateway stopped'})")
     exchange_label = (
         "Local paper (no external exchange)"
         if cfg.exchange.paper_execution_mode == "paper_internal"
@@ -718,7 +715,9 @@ def do_status() -> None:
     typer.echo(f"Live state: {cfg.live.state}")
     typer.echo(f"Permission: {cfg.agent.permission_mode}")
     try:
-        if service.get("registration") in {"persistent", "transient"}:
+        if machine_service:
+            lifecycle_label = f"machine ({service.get('backend', 'service')})"
+        elif service.get("registration") in {"persistent", "transient"}:
             lifecycle_label = f"{service.get('registration')} ({service.get('platform')})"
         else:
             lifecycle_label = "not registered"
@@ -726,6 +725,10 @@ def do_status() -> None:
         typer.echo(f"Service: installed={service.get('installed')} enabled={service.get('enabled')} recovery={service.get('recovery_scope')}")
     except Exception:
         typer.echo("Lifecycle: unknown (manager query failed)")
+    if machine_service:
+        typer.echo(f"Data directory: {service.get('data_dir')}")
+        if service.get("reason"):
+            typer.echo(f"Service reason: {service['reason']}")
 
     try:
         from aletheia.gateway.tunnel import tunnel_status as _ts
@@ -739,6 +742,14 @@ def do_status() -> None:
             typer.echo("Tunnel: disabled")
     except Exception:
         pass
+    service_invalid = machine_service and (
+        service.get("enabled") is False
+        or service.get("owned") is False
+        or service.get("config_valid") is False
+        or bool(service.get("reason"))
+    )
+    if not running or not ready or service_invalid:
+        raise typer.Exit(1)
 
 
 def do_logs(lines: int = 50) -> None:
