@@ -311,6 +311,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
         "contents": "read",
         "pull-requests": "read",
     }
+    assert deep_preflight["steps"][0]["with"] == {"fetch-depth": "1"}
     assert deep_preflight["steps"][2]["name"] == "Read current exact-head PR body"
     assert "github.rest.pulls.get" in deep_preflight["steps"][2]["with"]["script"]
     assert "pullRequest.head.sha !== context.payload.pull_request.head.sha" in (
