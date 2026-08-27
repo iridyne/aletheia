@@ -544,16 +544,25 @@ def strategies(
 ):
     """List strategy records with key parameters."""
     from aletheia.storage.repositories import list_strategies
+    from aletheia.storage.models import (
+        StrategyParametersInvalid,
+        decode_strategy_parameters,
+    )
     rows = list_strategies(limit=limit)
     if state != "all":
         rows = [r for r in rows if r.get("state") == state]
     result = []
+    invalid_rows = 0
     for r in rows:
-        params = {}
+        params: dict = {}
+        parameters_status = "available"
+        parameters_error = None
         try:
-            params = json.loads(r.get("parameters") or "{}")
-        except Exception:
-            pass
+            params = decode_strategy_parameters(r.get("parameters"))
+        except StrategyParametersInvalid as exc:
+            invalid_rows += 1
+            parameters_status = "invalid"
+            parameters_error = exc.reason
         result.append({
             "id": r.get("id"),
             "name": r.get("name"),
@@ -564,9 +573,18 @@ def strategies(
             "paper_trading_paused": r.get("paper_trading_paused"),
             "under_review": r.get("under_review"),
             "symbol": params.get("symbol"),
-            "has_ruleset": bool(params.get("ruleset")),
+            "has_ruleset": bool(params.get("ruleset")) if parameters_error is None else None,
+            "parameters_status": parameters_status,
+            "parameters_error": parameters_error,
             "created_at": r.get("created_at"),
         })
+    if json_output:
+        _output({
+            "availability": "partial" if invalid_rows else "available",
+            "invalid_parameters_count": invalid_rows,
+            "rows": result,
+        }, json_output)
+        return
     _output(result, json_output)
 
 
