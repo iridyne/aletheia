@@ -109,17 +109,17 @@ administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效
 
 生产者在拒绝输入时，该原因是唯一解释事实：Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
-生产者放行并新建 Opportunity 时也必须留下精确的 entry-trigger 事实。Universe emitter
-现在发布 Candidate/Setup handoff，并且只在 canonical EntryEligibility false→true 时新建
-setup-linked V2 Opportunity；历史缺少 `setup_id`/V2 generation 的 `universe_scanner`
-Opportunity 只保留为 legacy/observation carrier，默认不得进入新 Ranker/API 可执行路径。
+独立生产者放行并新建 Opportunity 时也必须留下精确事实。Universe-linked 新路径只发布
+Candidate Planning Generation，并由 Entry Planner 产生 Entry Plan；不再发布 Setup 或 executable
+Opportunity。历史缺少或携带 `setup_id`/V2 generation 的 `universe_scanner` Opportunity 均只保留为
+legacy/observation carrier，默认不得进入新 Ranker/API 可执行路径。
 Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
-所有 Universe family 共用 Candidate→Setup/Armed→EntryEligibility Trigger→Opportunity 生命周期。
-`setup_armed_entry_not_eligible` 只证明 Setup 已发布但 exact current market fact 不满足入场；
-`triggered_opportunity_created` 才进入普通 Ranker cohort。V1 不引入新的 pullback、ATR、SMC/ICT
+所有 Universe family 共用 Candidate→Entry Plan→Execution 生命周期；Trigger 只属于 TRIGGERED plan。
+`setup_armed_entry_not_eligible` 与 `triggered_opportunity_created` 仅是历史 adapter 审计事件，不取得
+新开仓权限。V1 不引入新的 pullback、ATR、SMC/ICT
 或 order-flow threshold；entry trigger、entry zone、market-validity invalidation、same-venue cost
 snapshot 与 material fingerprint 必须来自当前已授权的 scanner/tradability/freshness 事实。
 进入队列后的 immutable producer admission 拒绝属于 queue lifecycle：写入唯一的 producer

@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-26 · 维护者:Aletheia Dev
+> Last updated: 2026-08-27 · 维护者:Aletheia Dev
 
 ---
 
@@ -16,21 +16,21 @@
 
 **开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
 
-```
-trade_proposals.id
-  → risk_decisions.proposal_id
-  → orders.proposal_id + orders.risk_decision_id
-  → fills.order_id
-  → positions (从 orders/fills 投影;schema 现直接携带 `proposal_id` + `order_id` + `opportunity_id`,新 position 开仓即写,adopt 也走同一路径 — #30/#50)
+```mermaid
+flowchart LR
+    A[Order Intent<br/>physical TradeProposal] --> B[Authoritative RiskDecision]
+    B --> C[Order]
+    C --> D[Private Fill]
+    D --> E[Position]
 ```
 
 **平仓因果链**不伪造第二个 RiskDecision：
 
-```
-open positions.id
-  → orders.position_id + orders.close_reason（若有 Operator 原话，另存 orders.close_reasoning；risk_decision_id=NULL）
-  → fills.order_id
-  → 同一 positions.id 收敛为 closed
+```mermaid
+flowchart LR
+    A[Open Position authority] --> B[Close Order]
+    B --> C[Private Fill]
+    C --> D[Same Position closed]
 ```
 
 开仓 Order 消费 approved authoritative RiskDecision；平仓 Order 消费它所减少的
@@ -39,17 +39,10 @@ durable close client identity。入场 RiskDecision 不能被复制到平仓单�
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
 
-Momentum Fast Trigger 是 Proposal 的新增上游，不是执行旁路。它必须先持久化精确 Setup 授权、
-同 venue T0 快照、唯一 Opportunity 和 immutable Proposal，再在事务外调用
-`execute_existing_proposal()`；RiskDecision、broker dispatch、Order/Fill/Position 因果链及
-`submission_unknown` 禁止重发语义完全沿用本契约。默认 `shadow` 不调用 Gateway；`paper_internal`
-的 `execute` 只走本地 paper broker，exchange-backed `execute` 首版只允许 `bitget_demo`，任何
-Live mode 必须在 Gateway 之前拒绝。
-
-V2 Fast Trigger 在 Gateway 调用前必须再次读取内存中的最新 same-venue snapshot。entry zone
-越界或 structural invalidation 先到者写入 append-only hard assessment，并原子把 Setup/Opportunity
-终结为 `invalidated`、拒绝 pending Proposal；Risk 和 broker 调用数必须为零。T0 generation
-不可因这次状态变化而重价或改写。
+Entry Plan 是 Universe-linked Proposal 的唯一 active 上游，不是执行旁路。它以 plan id 绑定
+immutable Proposal、authoritative RiskDecision 和 stable client order identity；duplicate execute
+只能恢复同一链，`submission_unknown` 必须先对账且禁止重发。V1 exchange tactic 只允许
+`bitget_demo`，任何 Live 或未注册 venue capability 都在 Gateway fail closed。
 
 ---
 
@@ -57,7 +50,7 @@ V2 Fast Trigger 在 Gateway 调用前必须再次读取内存中的最新 same-v
 
 | 环 | 结构 | 状态流 | 位置 |
 |----|------|--------|------|
-| Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
+| Order Intent | Physical compatibility model: `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; this is an internal immutable Risk/Gateway carrier, never an owner-facing planning stage | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
 | Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, close_reasoning?, risk_decision_id=NULL, ...)`；`close_reasoning` 只承载 pending Operator rationale，不代表已关闭；新 Paper Order 另存 immutable `reference_price/source` 供只读成本配对 | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
@@ -107,6 +100,23 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 - 每个本地 Position 只属于一个 immutable Proposal。相同 symbol/direction/strategy 的另一 Proposal
   不得在 broker 内并入已有 Position；正常 Gateway/Risk 路径会先拒绝重复暴露，broker 的独立
   lineage 是最后一道防御，避免费用、保护价和归因跨 Proposal 混合。
+
+### 3.0a Entry Plan Order Policy
+
+- `RESTING_MAKER` 与 Triggered Maker 必须逐层传递 `post_only=true`、
+  `time_in_force=post_only` 和 exact limit price。venue/profile 无法表达时返回
+  capability unavailable；普通 GTC Limit 永远不是 Maker。
+- Urgent Taker 默认是 opposing-BBO IOC Limit：long 使用 latest exact ask，short 使用 latest
+  exact bid。`max_slippage_bps` 与 `worst_price` 任一越界都拒绝，不得 chase；Market order 不在
+  V1 authority 中。
+- Risk reservation 必须在 Order 持久化和 exchange submission 之前存在。Order 与 Entry Plan
+  `risk_reserved → ordered` 在同一 SQLite writer transaction 中前进。
+- Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，
+  随后持锁重读 private Fill/Order。full Fill 赢得竞态；partial Fill 保留真实 Position，并允许取消
+  remainder；request-side `requested_liquidity` 不能冒充 `realized_liquidity`。
+- `paper_internal` 可验证 plan、trigger、Risk 和 deterministic Order Intent，但其 immediate-fill
+  模型不能证明 Post-Only queue 或 maker fill。真实 tactic qualification 使用 deterministic fake
+  adapter tests 与 Bitget Demo private evidence。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 

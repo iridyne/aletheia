@@ -57,9 +57,7 @@ def _execution_claim_times() -> tuple[str, str, datetime]:
 
 def _execution_claim_is_fresh(claim: dict, now: datetime) -> bool:
     try:
-        expires = datetime.fromisoformat(
-            str(claim.get("lease_expires_at")).replace("Z", "+00:00")
-        )
+        expires = datetime.fromisoformat(str(claim.get("lease_expires_at")).replace("Z", "+00:00"))
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
         return expires > now
@@ -92,17 +90,49 @@ def _write_post_commit_audit(
 def _reject_for_exchange_constraints(proposal: TradeProposal, reason: str) -> dict:
     """Persist a fail-closed executable-venue rule rejection without an order."""
     update_trade_proposal(proposal.id, status="rejected")
-    write_audit({
-        "actor": "system", "source": "execution_gateway",
-        "event_type": "proposal_rejected", "entity_type": "trade_proposal",
-        "entity_id": proposal.id, "before": {"status": proposal.status},
-        "after": {"status": "rejected"}, "message": reason,
-    })
+    _fail_entry_plan(proposal, reason)
+    write_audit(
+        {
+            "actor": "system",
+            "source": "execution_gateway",
+            "event_type": "proposal_rejected",
+            "entity_type": "trade_proposal",
+            "entity_id": proposal.id,
+            "before": {"status": proposal.status},
+            "after": {"status": "rejected"},
+            "message": reason,
+        }
+    )
     return {"status": "rejected", "proposal_id": proposal.id, "message": reason}
 
 
+def _fail_entry_plan(proposal: TradeProposal, reason: str) -> None:
+    if not proposal.entry_plan_id:
+        return
+    from aletheia.storage import repositories as repo
+
+    plan = repo.get_entry_plan(proposal.entry_plan_id)
+    if plan and plan["status"] not in {
+        "filled",
+        "invalidated",
+        "expired",
+        "cancelled",
+        "failed",
+    }:
+        repo.transition_entry_plan(
+            proposal.entry_plan_id,
+            expected_status=plan["status"],
+            status="failed",
+            reason=reason[:160],
+        )
+
+
 def _prepare_exchange_quantity(
-    execution_mode: str, symbol: str, market_type: str, quantity: float, price: float,
+    execution_mode: str,
+    symbol: str,
+    market_type: str,
+    quantity: float,
+    price: float,
 ) -> tuple[float, str | None]:
     """Apply executable-venue minima before Risk Engine sees an exchange order.
 
@@ -111,12 +141,19 @@ def _prepare_exchange_quantity(
     if execution_mode == "paper_internal":
         return quantity, None
     from aletheia.execution.order_constraints import (
-        ConstraintUnavailable, prepare_exchange_quantity,
+        ConstraintUnavailable,
+        prepare_exchange_quantity,
     )
+
     try:
         from aletheia.data.symbols import to_canonical
+
         return prepare_exchange_quantity(
-            execution_mode, to_canonical(symbol), market_type, quantity, price,
+            execution_mode,
+            to_canonical(symbol),
+            market_type,
+            quantity,
+            price,
         ), None
     except ConstraintUnavailable as exc:
         logger.warning("Exchange order constraints unavailable for %s/%s: %s", execution_mode, symbol, exc)
@@ -142,6 +179,13 @@ def submit_proposal(
     expected_horizon_hours: float | None = None,
     stop_source: str | None = None,
     source: str = "native",
+    entry_plan_id: str | None = None,
+    order_tactic: str | None = None,
+    time_in_force: str | None = None,
+    post_only: bool | None = None,
+    bbo_reference: str | None = None,
+    max_slippage_bps: float | None = None,
+    worst_price: float | None = None,
 ) -> dict:
     """Submit a trade proposal through the full execution pipeline.
 
@@ -171,7 +215,9 @@ def submit_proposal(
     # no authorization provenance.
     live_authorization_ref: str | None = None
     if execution_mode in {
-        "okx_live_limited", "bitget_live_limited", "binance_live_limited",
+        "okx_live_limited",
+        "bitget_live_limited",
+        "binance_live_limited",
     }:
         from aletheia.trust.live_unlock import current_authorization_ref
 
@@ -181,9 +227,7 @@ def submit_proposal(
                 "status": "rejected",
                 "reason_code": "live_authorization_missing",
                 "proposal_id": None,
-                "message": (
-                    "Live authorization is not active; no live Proposal was created."
-                ),
+                "message": ("Live authorization is not active; no live Proposal was created."),
             }
 
     proposal = TradeProposal(
@@ -207,6 +251,13 @@ def submit_proposal(
         stop_source=stop_source,
         source=source,
         live_authorization_ref=live_authorization_ref,
+        entry_plan_id=entry_plan_id,
+        order_tactic=order_tactic,
+        time_in_force=time_in_force,
+        post_only=post_only,
+        bbo_reference=bbo_reference,
+        max_slippage_bps=max_slippage_bps,
+        worst_price=worst_price,
     )
     insert_trade_proposal(proposal)
     return execute_existing_proposal(proposal.id, execution_mode)
@@ -239,10 +290,7 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
                 "status": "rejected",
                 "reason_code": "execution_mode_mismatch",
                 "proposal_id": proposal.id,
-                "message": (
-                    "Requested execution mode does not match the stored Proposal; "
-                    "no order was created."
-                ),
+                "message": ("Requested execution mode does not match the stored Proposal; no order was created."),
             }
         if proposal.status == "executed":
             return {
@@ -261,19 +309,13 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
             return {
                 "status": proposal.status,
                 "proposal_id": proposal.id,
-                "message": (
-                    f"Proposal is already marked as {proposal.status}; "
-                    "no new order was created."
-                ),
+                "message": (f"Proposal is already marked as {proposal.status}; no new order was created."),
             }
         if proposal.status not in {"pending", "approved", "executing"}:
             return {
                 "status": proposal.status,
                 "proposal_id": proposal.id,
-                "message": (
-                    f"Proposal has unsupported execution state {proposal.status}; "
-                    "no order was created."
-                ),
+                "message": (f"Proposal has unsupported execution state {proposal.status}; no order was created."),
             }
 
         claimed_at, lease_expires_at, now = _execution_claim_times()
@@ -286,16 +328,13 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
             }
 
         if proposal.status == "executing" and (
-            proposal.execution_mode != "paper_internal"
-            or has_order_for_proposal(proposal.id)
+            proposal.execution_mode != "paper_internal" or has_order_for_proposal(proposal.id)
         ):
             # An expired external claim may have crossed the exchange boundary;
             # never infer that no order was sent. A paper claim with an Order is
             # likewise not safe to replay because local materialization exists.
             stored_status = (
-                "submission_unknown"
-                if proposal.execution_mode != "paper_internal"
-                else "materialization_missing"
+                "submission_unknown" if proposal.execution_mode != "paper_internal" else "materialization_missing"
             )
             reason_code = (
                 "execution_lease_expired_exchange_reconciliation_required"
@@ -304,9 +343,7 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
             )
             update_trade_proposal(proposal.id, status=stored_status)
             if claim is not None:
-                release_proposal_execution_claim(
-                    proposal.id, str(claim.get("owner_token") or "")
-                )
+                release_proposal_execution_claim(proposal.id, str(claim.get("owner_token") or ""))
             reconciliation_result = {
                 "status": "reconciliation_required",
                 "proposal_status": stored_status,
@@ -344,9 +381,7 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
                 return {
                     "status": "already_claimed",
                     "proposal_id": proposal.id,
-                    "message": (
-                        "Proposal execution was claimed concurrently; no new order was created."
-                    ),
+                    "message": ("Proposal execution was claimed concurrently; no new order was created."),
                 }
             if proposal.status in {"pending", "approved"}:
                 update_trade_proposal(proposal.id, status="executing")
@@ -376,9 +411,7 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
 
     try:
         try:
-            return _execute_proposal(
-                proposal, execution_claim_token=owner_token
-            )
+            return _execute_proposal(proposal, execution_claim_token=owner_token)
         except ProposalIntegrityError as exc:
             return _terminal_execution_error(
                 proposal,
@@ -417,6 +450,77 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
             )
 
 
+def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
+    """Cancel through Gateway; a concurrently materialized Fill always wins."""
+
+    from aletheia.execution.bitget_broker import cancel_entry_order
+    from aletheia.storage import repositories as repo
+
+    plan = repo.get_entry_plan(plan_id)
+    if plan is None:
+        return {"status": "not_found", "entry_plan_id": plan_id}
+    terminal = {"filled", "cancelled", "invalidated", "expired", "failed"}
+    if plan["status"] in terminal:
+        return {"status": plan["status"], "entry_plan_id": plan_id}
+    order = repo.get_order(plan.get("order_id")) if plan.get("order_id") else None
+    if order is None or not order.get("exchange_order_id"):
+        return {"status": "not_cancellable", "entry_plan_id": plan_id}
+    if order.get("execution_mode") != "bitget_demo":
+        return {"status": "capability_unavailable", "entry_plan_id": plan_id}
+
+    def fully_filled(current_order: dict) -> bool:
+        filled = sum(float(row["fill_quantity"]) for row in repo.list_fills(limit=10_000, order_id=current_order["id"]))
+        return filled + 1e-12 >= float(current_order["quantity"])
+
+    if fully_filled(order):
+        repo.transition_entry_plan(
+            plan_id,
+            expected_status=plan["status"],
+            status="filled",
+            reason="fill_won_cancel_race",
+        )
+        return {"status": "filled", "entry_plan_id": plan_id}
+
+    result = cancel_entry_order(
+        exchange_order_id=order["exchange_order_id"],
+        symbol=order["symbol"],
+        market_type=order["market_type"],
+        execution_mode=order["execution_mode"],
+    )
+    if not result.get("cancelled"):
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+
+    with repo.transaction(immediate=True):
+        fresh_order = repo.get_order(order["id"])
+        fresh_plan = repo.get_entry_plan(plan_id)
+        if fresh_order and (fresh_order.get("status") == "filled" or fully_filled(fresh_order)):
+            if fresh_plan and fresh_plan["status"] != "filled":
+                repo.transition_entry_plan(
+                    plan_id,
+                    expected_status=fresh_plan["status"],
+                    status="filled",
+                    reason="fill_won_cancel_race",
+                )
+            return {"status": "filled", "entry_plan_id": plan_id}
+        if fresh_order and fresh_order.get("status") in {
+            "pending",
+            "submitted",
+            "partial",
+            "partially_filled",
+            "submission_unknown",
+            "materialization_missing",
+        }:
+            repo.update_order(order["id"], status="cancelled", error_reason=reason)
+        if fresh_plan:
+            repo.transition_entry_plan(
+                plan_id,
+                expected_status=fresh_plan["status"],
+                status="cancelled",
+                reason=reason,
+            )
+    return {"status": "cancelled", "entry_plan_id": plan_id}
+
+
 _EXECUTION_MODE_TO_VENUE = _venue_capabilities.EXECUTION_MODE_TO_VENUE
 # Compatibility alias retained for existing execution specs that clear the
 # authoritative shared cache between cases.
@@ -440,6 +544,7 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
         return None
 
     from aletheia.data.symbols import to_canonical
+
     canonical = to_canonical(symbol)
 
     # OKX demo uses the shared normalized capability seam backed by its
@@ -461,7 +566,9 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
     if registry is None:
         return None  # registry not yet synced — fail-open
     if market_type not in registry:
-        return f"{symbol} ({market_type}) not available on {execution_mode} (no {market_type} products in venue registry)"
+        return (
+            f"{symbol} ({market_type}) not available on {execution_mode} (no {market_type} products in venue registry)"
+        )
     supported = registry[market_type]
     if canonical not in supported:
         return f"{symbol} ({market_type}) not available on {execution_mode}"
@@ -470,22 +577,26 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
 
 def _reject_for_risk(proposal: TradeProposal, risk_result) -> dict:
     update_trade_proposal(proposal.id, status="rejected")
-    write_audit({
-        "actor": "system",
-        "source": "execution_gateway",
-        "event_type": "proposal_rejected",
-        "entity_type": "trade_proposal",
-        "entity_id": proposal.id,
-        "before": {"status": proposal.status},
-        "after": {"status": "rejected"},
-        "message": risk_result.message,
-    })
+    _fail_entry_plan(proposal, "canonical_risk_rejected")
+    write_audit(
+        {
+            "actor": "system",
+            "source": "execution_gateway",
+            "event_type": "proposal_rejected",
+            "entity_type": "trade_proposal",
+            "entity_id": proposal.id,
+            "before": {"status": proposal.status},
+            "after": {"status": "rejected"},
+            "message": risk_result.message,
+        }
+    )
     return {
         "status": "rejected",
         "proposal_id": proposal.id,
         "risk_violations": getattr(risk_result, "violations", []),
         "message": risk_result.message,
     }
+
 
 def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
     """Stamp the Operator's exit intent (expected_horizon_hours + stop provenance) from
@@ -504,6 +615,7 @@ def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
     if updates:
         updates["exit_plan_version"] = 1
         update_position(pid, **updates)
+
 
 def _exchange_order_matches_proposal(
     proposal: TradeProposal,
@@ -545,8 +657,7 @@ def _exchange_fill_position_chain_is_durable(
         (order_id,),
     ).fetchall()
     positions = db.execute(
-        "SELECT id, proposal_id, order_id, quantity FROM positions "
-        "WHERE order_id=? AND proposal_id=?",
+        "SELECT id, proposal_id, order_id, quantity FROM positions WHERE order_id=? AND proposal_id=?",
         (order_id, proposal.id),
     ).fetchall()
     if len(fills) != 1 or len(positions) != 1:
@@ -556,8 +667,7 @@ def _exchange_fill_position_chain_is_durable(
     position = dict(positions[0])
     try:
         quantities_are_non_empty = (
-            float(fill.get("fill_quantity") or 0.0) > 0.0
-            and float(position.get("quantity") or 0.0) > 0.0
+            float(fill.get("fill_quantity") or 0.0) > 0.0 and float(position.get("quantity") or 0.0) > 0.0
         )
     except (TypeError, ValueError):
         return False
@@ -606,7 +716,8 @@ def _post_acceptance_unresolved_status(
     result_status = str(result.get("order_status") or "").lower()
     if (
         known_status in {"executed", "partially_filled", "materialization_missing"}
-        or result_status in {
+        or result_status
+        in {
             "filled",
             "partial",
             "partially_filled",
@@ -660,8 +771,7 @@ def _recover_exchange_result_after_post_acceptance_failure(
 ) -> dict:
     """Contain every local failure after a broker returned an accepted result."""
     logger.warning(
-        "Proposal %s exchange post-acceptance finalization failed; recovery "
-        "required (%s)",
+        "Proposal %s exchange post-acceptance finalization failed; recovery required (%s)",
         proposal.id,
         type(failure).__name__,
     )
@@ -732,8 +842,7 @@ def _recover_exchange_result_after_post_acceptance_failure(
         proposal,
         result,
         proposal_status,
-        post_acceptance_failure=proposal_status
-        in {"submission_unknown", "materialization_missing"},
+        post_acceptance_failure=proposal_status in {"submission_unknown", "materialization_missing"},
     )
 
 
@@ -759,14 +868,18 @@ def _durable_retry_suppressing_exchange_order(
     """Find accepted-or-possibly-accepted native evidence after broker failure."""
     from aletheia.storage.sqlite import get_db
 
-    rows = get_db().execute(
-        "SELECT * FROM orders WHERE proposal_id=? AND execution_mode=? "
-        "AND source='native' AND status IN "
-        "('pending','submitted','partial','partially_filled',"
-        "'submission_unknown','materialization_missing','filled') "
-        "ORDER BY rowid ASC",
-        (proposal.id, proposal.execution_mode),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM orders WHERE proposal_id=? AND execution_mode=? "
+            "AND source='native' AND status IN "
+            "('pending','submitted','partial','partially_filled',"
+            "'submission_unknown','materialization_missing','filled') "
+            "ORDER BY rowid ASC",
+            (proposal.id, proposal.execution_mode),
+        )
+        .fetchall()
+    )
     candidates: list[tuple[int, dict, str]] = []
     priority = {
         "submitted": 1,
@@ -780,16 +893,12 @@ def _durable_retry_suppressing_exchange_order(
             "order_id": order.get("id"),
             "exchange_order_id": order.get("exchange_order_id"),
         }
-        if not _exchange_order_matches_proposal(
-            proposal, order, result_identity
-        ):
+        if not _exchange_order_matches_proposal(proposal, order, result_identity):
             continue
         recovered_status = _retry_suppressing_order_state(order.get("status"))
         if recovered_status is None:
             continue
-        candidates.append(
-            (priority[recovered_status], order, recovered_status)
-        )
+        candidates.append((priority[recovered_status], order, recovered_status))
     if not candidates:
         return None
     _, order, recovered_status = max(candidates, key=lambda item: item[0])
@@ -836,8 +945,7 @@ def _recover_broker_exception_from_durable_order(
                     type(persist_error).__name__,
                 )
         logger.warning(
-            "Proposal %s broker outcome evidence unavailable; automatic "
-            "resubmission blocked (%s)",
+            "Proposal %s broker outcome evidence unavailable; automatic resubmission blocked (%s)",
             proposal.id,
             type(error).__name__,
         )
@@ -855,8 +963,7 @@ def _recover_broker_exception_from_durable_order(
                     "proposal_status_persisted": status_persisted,
                 },
                 "message": (
-                    "Broker outcome evidence could not be read; automatic "
-                    "resubmission blocked pending reconciliation"
+                    "Broker outcome evidence could not be read; automatic resubmission blocked pending reconciliation"
                 ),
             },
             proposal_id=proposal.id,
@@ -868,8 +975,7 @@ def _recover_broker_exception_from_durable_order(
             "proposal_id": proposal.id,
             "proposal_status_persisted": status_persisted,
             "message": (
-                "The broker outcome cannot be read safely; automatic "
-                "resubmission is blocked pending reconciliation."
+                "The broker outcome cannot be read safely; automatic resubmission is blocked pending reconciliation."
             ),
         }
     if recovered is None:
@@ -877,8 +983,7 @@ def _recover_broker_exception_from_durable_order(
 
     order, proposal_status = recovered
     logger.warning(
-        "Proposal %s broker failed after durable exchange handoff; retained as "
-        "%s (%s)",
+        "Proposal %s broker failed after durable exchange handoff; retained as %s (%s)",
         proposal.id,
         proposal_status,
         type(error).__name__,
@@ -946,8 +1051,7 @@ def _recover_broker_exception_from_durable_order(
     )
     response["reason_code"] = "exchange_handoff_recovered_from_durable_order"
     response["message"] = (
-        "A durable exchange handoff exists after broker finalization failed; "
-        "automatic resubmission is blocked."
+        "A durable exchange handoff exists after broker finalization failed; automatic resubmission is blocked."
     )
     return response
 
@@ -1025,16 +1129,18 @@ def _terminal_execution_error(
         )
     with transaction():
         update_trade_proposal(proposal.id, status="error")
-    write_audit({
-        "actor": "system",
-        "source": "execution_gateway",
-        "event_type": "execution_error",
-        "entity_type": "trade_proposal",
-        "entity_id": proposal.id,
-        "before": {"status": proposal.status},
-        "after": {"status": "error"},
-        "message": f"{reason_code}: {safe_message}",
-    })
+    write_audit(
+        {
+            "actor": "system",
+            "source": "execution_gateway",
+            "event_type": "execution_error",
+            "entity_type": "trade_proposal",
+            "entity_id": proposal.id,
+            "before": {"status": proposal.status},
+            "after": {"status": "error"},
+            "message": f"{reason_code}: {safe_message}",
+        }
+    )
     return {
         "status": "error",
         "reason_code": reason_code,
@@ -1059,8 +1165,7 @@ def _record_unresolved_execution(
         status = "submission_unknown"
         reason_code = "exchange_submission_acknowledgement_unknown"
         safe_message = (
-            "Exchange acceptance could not be confirmed after a transport failure; "
-            "automatic resubmission is blocked."
+            "Exchange acceptance could not be confirmed after a transport failure; automatic resubmission is blocked."
         )
     exchange_order_id = getattr(error, "exchange_order_id", None)
     status_persisted = False
@@ -1104,11 +1209,7 @@ def _record_unresolved_execution(
             },
             "message": (
                 f"{reason_code}; automatic resubmission blocked"
-                + (
-                    f" (exchange_order_id={exchange_order_id})"
-                    if exchange_order_id
-                    else ""
-                )
+                + (f" (exchange_order_id={exchange_order_id})" if exchange_order_id else "")
             ),
         },
         proposal_id=proposal.id,
@@ -1167,17 +1268,13 @@ def _execute_proposal(
                 )
                 if not preflight_result.approved:
                     return _reject_for_risk(proposal, preflight_result)
-            risk_result = evaluate_proposal(
-                proposal, decision_role="authoritative"
-            )
+            risk_result = evaluate_proposal(proposal, decision_role="authoritative")
             execution_proposal = proposal
         else:
             # Exchange-bound orders retain a fresh preflight hard gate before
             # venue metadata or any other external preparation. That decision is
             # never passed to a broker.
-            preflight_result = evaluate_proposal(
-                proposal, decision_role="preflight"
-            )
+            preflight_result = evaluate_proposal(proposal, decision_role="preflight")
             if not preflight_result.approved:
                 return _reject_for_risk(proposal, preflight_result)
 
@@ -1197,12 +1294,8 @@ def _execute_proposal(
             # or mutates the caller's Proposal object. Every other causal field
             # is preserved, including opportunity_id=proposal.opportunity_id and
             # leverage=proposal.leverage.
-            execution_proposal = proposal.model_copy(
-                update={"quantity": adjusted_quantity}
-            )
-            risk_result = evaluate_proposal(
-                execution_proposal, decision_role="authoritative"
-            )
+            execution_proposal = proposal.model_copy(update={"quantity": adjusted_quantity})
+            risk_result = evaluate_proposal(execution_proposal, decision_role="authoritative")
 
         if not risk_result.approved:
             return _reject_for_risk(proposal, risk_result)
@@ -1210,6 +1303,53 @@ def _execute_proposal(
         # The broker consumes only the authoritative decision and its exact
         # evaluated snapshot.
         allowed_mode = risk_result.allowed_execution_mode
+
+        if execution_proposal.entry_plan_id:
+            if allowed_mode != "bitget_demo":
+                return _reject_for_exchange_constraints(
+                    proposal,
+                    "Entry Plan order tactics are qualified only for Bitget Demo.",
+                )
+            if execution_proposal.order_type != "limit":
+                return _reject_for_exchange_constraints(
+                    proposal,
+                    "Entry Plan execution requires a price-bounded Limit order.",
+                )
+            if execution_proposal.order_tactic == "POST_ONLY_LIMIT" and not (
+                execution_proposal.post_only is True and execution_proposal.time_in_force == "post_only"
+            ):
+                return _reject_for_exchange_constraints(
+                    proposal,
+                    "Maker Entry Plan requires true Post-Only semantics.",
+                )
+            if execution_proposal.order_tactic == "OPPOSING_BBO_IOC" and not (
+                execution_proposal.post_only is False
+                and execution_proposal.time_in_force == "ioc"
+                and execution_proposal.bbo_reference in {"bid", "ask"}
+                and execution_proposal.max_slippage_bps is not None
+            ):
+                return _reject_for_exchange_constraints(
+                    proposal,
+                    "Urgent Entry Plan requires bounded opposing-BBO IOC semantics.",
+                )
+            from aletheia.storage import repositories as repo
+
+            plan_row = repo.get_entry_plan(execution_proposal.entry_plan_id)
+            expected_plan_status = (
+                "waiting" if plan_row and plan_row.get("execution_mode") == "RESTING_MAKER" else "triggered"
+            )
+            if plan_row is None or (
+                plan_row["status"] != "risk_reserved"
+                and not repo.transition_entry_plan(
+                    execution_proposal.entry_plan_id,
+                    expected_status=expected_plan_status,
+                    status="risk_reserved",
+                )
+            ):
+                return _reject_for_exchange_constraints(
+                    proposal,
+                    "Entry Plan lifecycle no longer permits a Risk reservation.",
+                )
 
         # Symbol availability is the last pre-order check. If it raises, the
         # Proposal must still reach a durable terminal state with no Order.
@@ -1220,19 +1360,24 @@ def _execute_proposal(
         )
         if _unavail:
             update_trade_proposal(proposal.id, status="rejected")
+            _fail_entry_plan(proposal, _unavail)
             logger.info(
                 "Proposal %s skipped — symbol not on exchange: %s",
                 proposal.id,
                 _unavail,
             )
-            write_audit({
-                "actor": "system", "source": "execution_gateway",
-                "event_type": "proposal_skipped", "entity_type": "trade_proposal",
-                "entity_id": proposal.id,
-                "before": {"status": proposal.status},
-                "after": {"status": "rejected"},
-                "message": _unavail,
-            })
+            write_audit(
+                {
+                    "actor": "system",
+                    "source": "execution_gateway",
+                    "event_type": "proposal_skipped",
+                    "entity_type": "trade_proposal",
+                    "entity_id": proposal.id,
+                    "before": {"status": proposal.status},
+                    "after": {"status": "rejected"},
+                    "message": _unavail,
+                }
+            )
             return {
                 "status": "rejected",
                 "proposal_id": proposal.id,
@@ -1259,16 +1404,11 @@ def _execute_proposal(
         if allowed_mode == "paper_internal":
             attribution_snapshot = _ensure_paper_attribution_snapshot(execution_proposal)
             with transaction(immediate=True):
-                if execution_claim_token and not proposal_execution_claim_owned(
-                    proposal.id, execution_claim_token
-                ):
+                if execution_claim_token and not proposal_execution_claim_owned(proposal.id, execution_claim_token):
                     return {
                         "status": "already_claimed",
                         "proposal_id": proposal.id,
-                        "message": (
-                            "A newer execution owner reclaimed this Proposal; "
-                            "no paper order was created."
-                        ),
+                        "message": ("A newer execution owner reclaimed this Proposal; no paper order was created."),
                     }
                 result = execute_paper_order(
                     proposal_id=proposal.id,
@@ -1328,7 +1468,7 @@ def _execute_proposal(
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
                 _entry = execution_proposal.price or 0.0
-                result = execute_live_order(
+                order_kwargs = dict(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
                     symbol=execution_proposal.symbol,
@@ -1340,14 +1480,19 @@ def _execute_proposal(
                     strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
-                    take_profit_price=(
-                        execution_proposal.take_profit
-                        if allowed_mode == "bitget_demo"
-                        else None                    ),
+                    take_profit_price=(execution_proposal.take_profit if allowed_mode == "bitget_demo" else None),
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
+                if allowed_mode == "bitget_demo":
+                    order_kwargs.update(
+                        entry_plan_id=execution_proposal.entry_plan_id,
+                        order_tactic=execution_proposal.order_tactic,
+                        time_in_force=execution_proposal.time_in_force,
+                        post_only=bool(execution_proposal.post_only),
+                    )
+                result = execute_live_order(**order_kwargs)
             except (PostSubmitDBError, SubmissionUnknownError) as e:
                 return _record_unresolved_execution(proposal, e)
             except Exception as e:
@@ -1361,15 +1506,22 @@ def _execute_proposal(
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
+                    _fail_entry_plan(proposal, "demo_order_failed")
                 msg = f"demo_order_failed: broker execution failed ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
-                write_audit({
-                    "actor": "system", "source": "execution_gateway",
-                    "event_type": "demo_order_error", "entity_type": "trade_proposal",
-                    "entity_id": proposal.id, "before": {"status": proposal.status},
-                    "after": {"status": "error"}, "message": msg,
-                })
+                write_audit(
+                    {
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "demo_order_error",
+                        "entity_type": "trade_proposal",
+                        "entity_id": proposal.id,
+                        "before": {"status": proposal.status},
+                        "after": {"status": "error"},
+                        "message": msg,
+                    }
+                )
                 # #8 fix: don't leak raw exception text to the API — some CCXT
                 # errors carry request URLs / partial headers. Route through
                 # clean_error_message (already used by broker error paths) and
@@ -1396,23 +1548,21 @@ def _execute_proposal(
             from aletheia.config.exchanges import live_execution_mode_for_exchange
 
             selected_exchange = getattr(getattr(cfg, "exchange", None), "name", None)
-            expected_live_mode = (
-                live_execution_mode_for_exchange(selected_exchange)
-                if selected_exchange
-                else None
-            )
+            expected_live_mode = live_execution_mode_for_exchange(selected_exchange) if selected_exchange else None
             if expected_live_mode is not None and allowed_mode != expected_live_mode:
                 update_trade_proposal(proposal.id, status="rejected")
-                write_audit({
-                    "actor": "system",
-                    "source": "execution_gateway",
-                    "event_type": "proposal_rejected",
-                    "entity_type": "trade_proposal",
-                    "entity_id": proposal.id,
-                    "before": {"status": proposal.status},
-                    "after": {"status": "rejected"},
-                    "message": "Live proposal does not match the selected exchange",
-                })
+                write_audit(
+                    {
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "proposal_rejected",
+                        "entity_type": "trade_proposal",
+                        "entity_id": proposal.id,
+                        "before": {"status": proposal.status},
+                        "after": {"status": "rejected"},
+                        "message": "Live proposal does not match the selected exchange",
+                    }
+                )
                 return {
                     "status": "rejected",
                     "proposal_id": proposal.id,
@@ -1426,21 +1576,24 @@ def _execute_proposal(
                 )
 
                 evidence_ok, _ = evidence_matches_config(
-                    cfg, getattr(cfg.live, "unlock_evidence", None),
+                    cfg,
+                    getattr(cfg.live, "unlock_evidence", None),
                 )
                 if not evidence_ok:
                     revoke_stale_live_unlock(cfg)
                     update_trade_proposal(proposal.id, status="rejected")
-                    write_audit({
-                        "actor": "system",
-                        "source": "execution_gateway",
-                        "event_type": "proposal_rejected",
-                        "entity_type": "trade_proposal",
-                        "entity_id": proposal.id,
-                        "before": {"status": proposal.status},
-                        "after": {"status": "rejected"},
-                        "message": "Live account trust evidence is missing or stale",
-                    })
+                    write_audit(
+                        {
+                            "actor": "system",
+                            "source": "execution_gateway",
+                            "event_type": "proposal_rejected",
+                            "entity_type": "trade_proposal",
+                            "entity_id": proposal.id,
+                            "before": {"status": proposal.status},
+                            "after": {"status": "rejected"},
+                            "message": "Live account trust evidence is missing or stale",
+                        }
+                    )
                     return {
                         "status": "rejected",
                         "proposal_id": proposal.id,
@@ -1452,22 +1605,23 @@ def _execute_proposal(
                 # account, environment, or config) breaks the scope binding even
                 # if the new unlock is itself valid — reject the old Proposal.
                 ref_ok, ref_reason = authorization_matches_ref(
-                    cfg, getattr(proposal, "live_authorization_ref", None),
+                    cfg,
+                    getattr(proposal, "live_authorization_ref", None),
                 )
                 if not ref_ok:
                     update_trade_proposal(proposal.id, status="rejected")
-                    write_audit({
-                        "actor": "system",
-                        "source": "execution_gateway",
-                        "event_type": "proposal_rejected",
-                        "entity_type": "trade_proposal",
-                        "entity_id": proposal.id,
-                        "before": {"status": proposal.status},
-                        "after": {"status": "rejected"},
-                        "message": (
-                            f"Live authorization revalidation failed: {ref_reason}"
-                        ),
-                    })
+                    write_audit(
+                        {
+                            "actor": "system",
+                            "source": "execution_gateway",
+                            "event_type": "proposal_rejected",
+                            "entity_type": "trade_proposal",
+                            "entity_id": proposal.id,
+                            "before": {"status": proposal.status},
+                            "after": {"status": "rejected"},
+                            "message": (f"Live authorization revalidation failed: {ref_reason}"),
+                        }
+                    )
                     return {
                         "status": "rejected",
                         "reason_code": ref_reason,
@@ -1480,16 +1634,18 @@ def _execute_proposal(
                     }
             if cfg.live.state == "live_disabled":
                 update_trade_proposal(proposal.id, status="rejected")
-                write_audit({
-                    "actor": "system",
-                    "source": "execution_gateway",
-                    "event_type": "proposal_rejected",
-                    "entity_type": "trade_proposal",
-                    "entity_id": proposal.id,
-                    "before": {"status": proposal.status},
-                    "after": {"status": "rejected"},
-                    "message": "Live trading is disabled",
-                })
+                write_audit(
+                    {
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "proposal_rejected",
+                        "entity_type": "trade_proposal",
+                        "entity_id": proposal.id,
+                        "before": {"status": proposal.status},
+                        "after": {"status": "rejected"},
+                        "message": "Live trading is disabled",
+                    }
+                )
                 return {"status": "rejected", "proposal_id": proposal.id, "message": "Live trading is disabled"}
             try:
                 if allowed_mode == "okx_live_limited":
@@ -1499,7 +1655,7 @@ def _execute_proposal(
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
                 _entry2 = execution_proposal.price or 0.0
-                result = execute_live_order(
+                order_kwargs = dict(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
                     symbol=execution_proposal.symbol,
@@ -1512,13 +1668,20 @@ def _execute_proposal(
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
                     take_profit_price=(
-                        execution_proposal.take_profit
-                        if allowed_mode == "bitget_live_limited"
-                        else None                    ),
+                        execution_proposal.take_profit if allowed_mode == "bitget_live_limited" else None
+                    ),
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
+                if allowed_mode == "bitget_demo":
+                    order_kwargs.update(
+                        entry_plan_id=execution_proposal.entry_plan_id,
+                        order_tactic=execution_proposal.order_tactic,
+                        time_in_force=execution_proposal.time_in_force,
+                        post_only=bool(execution_proposal.post_only),
+                    )
+                result = execute_live_order(**order_kwargs)
             except (PostSubmitDBError, SubmissionUnknownError) as e:
                 return _record_unresolved_execution(proposal, e)
             except Exception as e:
@@ -1535,12 +1698,18 @@ def _execute_proposal(
                 msg = f"live_order_failed: broker execution failed ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
-                write_audit({
-                    "actor": "system", "source": "execution_gateway",
-                    "event_type": "live_order_error", "entity_type": "trade_proposal",
-                    "entity_id": proposal.id, "before": {"status": proposal.status},
-                    "after": {"status": "error"}, "message": msg,
-                })
+                write_audit(
+                    {
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "live_order_error",
+                        "entity_type": "trade_proposal",
+                        "entity_id": proposal.id,
+                        "before": {"status": proposal.status},
+                        "after": {"status": "error"},
+                        "message": msg,
+                    }
+                )
                 # #8 fix: don't leak raw exception text to the API — some CCXT
                 # errors carry request URLs / partial headers. Route through
                 # clean_error_message (already used by broker error paths) and
@@ -1579,16 +1748,18 @@ def _execute_proposal(
             return recovered
         with transaction():
             update_trade_proposal(proposal.id, status="error")
-        write_audit({
-            "actor": "system", "source": "execution_gateway",
-            "event_type": "execution_error", "entity_type": "trade_proposal",
-            "entity_id": proposal.id, "before": {"status": proposal.status},
-            "after": {"status": "error"},
-            "message": (
-                "execution_pipeline_failed: broker execution failed "
-                f"({type(e).__name__})"
-            ),
-        })
+        write_audit(
+            {
+                "actor": "system",
+                "source": "execution_gateway",
+                "event_type": "execution_error",
+                "entity_type": "trade_proposal",
+                "entity_id": proposal.id,
+                "before": {"status": proposal.status},
+                "after": {"status": "error"},
+                "message": (f"execution_pipeline_failed: broker execution failed ({type(e).__name__})"),
+            }
+        )
         # #8 fix: same treatment as the inner exception branches — never dump
         # raw exception text to the API response.
         return {

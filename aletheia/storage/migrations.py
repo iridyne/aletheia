@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v46"
+SCHEMA_VERSION = "aletheia-sqlite-v47"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3384,9 +3384,7 @@ _AGENT_DURATION_CHECKSUM = hashlib.sha256(
     (repr(_AGENT_DURATION_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
 ).hexdigest()
 
-_AGENT_USAGE_STORAGE_COLUMNS = (
-    ("economics_tracing_enabled", "runtime_sessions", "INTEGER"),
-)
+_AGENT_USAGE_STORAGE_COLUMNS = (("economics_tracing_enabled", "runtime_sessions", "INTEGER"),)
 _AGENT_RUN_ARTIFACTS_SQL = """
 CREATE TABLE IF NOT EXISTS agent_run_artifacts (
     run_id TEXT NOT NULL REFERENCES agent_runs(id),
@@ -3399,21 +3397,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_run_artifacts_artifact
 ON agent_run_artifacts(artifact_type, artifact_id);
 """
 _AGENT_USAGE_STORAGE_CHECKSUM = hashlib.sha256(
-    (
-        repr(_AGENT_USAGE_STORAGE_COLUMNS)
-        + _AGENT_RUN_ARTIFACTS_SQL
-        + "\nadditive_agent_usage_storage_v1"
-    ).encode("utf-8")
+    (repr(_AGENT_USAGE_STORAGE_COLUMNS) + _AGENT_RUN_ARTIFACTS_SQL + "\nadditive_agent_usage_storage_v1").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
-_AGENT_ARTIFACT_REFERENCE_COLUMNS = (
-    ("reference_version", "agent_run_artifacts", "TEXT NOT NULL DEFAULT 'v1'"),
-)
+_AGENT_ARTIFACT_REFERENCE_COLUMNS = (("reference_version", "agent_run_artifacts", "TEXT NOT NULL DEFAULT 'v1'"),)
 _AGENT_ARTIFACT_REFERENCE_CHECKSUM = hashlib.sha256(
-    (
-        repr(_AGENT_ARTIFACT_REFERENCE_COLUMNS)
-        + "\nadditive_agent_artifact_reference_v1"
-    ).encode("utf-8")
+    (repr(_AGENT_ARTIFACT_REFERENCE_COLUMNS) + "\nadditive_agent_artifact_reference_v1").encode("utf-8")
 ).hexdigest()
 
 _PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS = (
@@ -3428,10 +3419,7 @@ _PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS = (
     ("last_mutated_at", "market_ohlcv", "TEXT"),
 )
 _PROFIT_GRADIENT_DATA_BOUNDARY_CHECKSUM = hashlib.sha256(
-    (
-        repr(_PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS)
-        + "\nprofit_gradient_data_boundaries_v1"
-    ).encode("utf-8")
+    (repr(_PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS) + "\nprofit_gradient_data_boundaries_v1").encode("utf-8")
 ).hexdigest()
 
 _PAPER_ACCOUNT_INVALIDATION_SQL = """
@@ -3481,10 +3469,7 @@ _PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS = (
     ("invalidation_reason", "serenity_post_mortems", "TEXT"),
 )
 _PAPER_ACCOUNT_INVALIDATION_CHECKSUM = hashlib.sha256(
-    (
-        _PAPER_ACCOUNT_INVALIDATION_SQL
-        + repr(_PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS)
-    ).encode("utf-8")
+    (_PAPER_ACCOUNT_INVALIDATION_SQL + repr(_PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS)).encode("utf-8")
 ).hexdigest()
 
 _UNIVERSE_FAST_TRIGGER_COLUMNS = (
@@ -3592,11 +3577,7 @@ CREATE INDEX IF NOT EXISTS idx_pi_decisions_setup
     ON pi_decisions(setup_id) WHERE setup_id IS NOT NULL;
 """
 _UNIVERSE_FAST_TRIGGER_CHECKSUM = hashlib.sha256(
-    (
-        repr(_UNIVERSE_FAST_TRIGGER_COLUMNS)
-        + _UNIVERSE_FAST_TRIGGER_SQL
-        + "\nuniverse_fast_trigger_v2"
-    ).encode("utf-8")
+    (repr(_UNIVERSE_FAST_TRIGGER_COLUMNS) + _UNIVERSE_FAST_TRIGGER_SQL + "\nuniverse_fast_trigger_v2").encode("utf-8")
 ).hexdigest()
 
 _OPPORTUNITY_GENERATION_V2_COLUMNS = (
@@ -3702,11 +3683,9 @@ BEGIN
 END;
 """
 _OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
-    (
-        repr(_OPPORTUNITY_GENERATION_V2_COLUMNS)
-        + _OPPORTUNITY_GENERATION_V2_SQL
-        + "\nopportunity_generation_v3"
-    ).encode("utf-8")
+    (repr(_OPPORTUNITY_GENERATION_V2_COLUMNS) + _OPPORTUNITY_GENERATION_V2_SQL + "\nopportunity_generation_v3").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 _LEARNING_FAILED_WINDOW_COLUMNS = (
@@ -3726,9 +3705,126 @@ _COINGECKO_SOURCE_TIME_COLUMNS = (
     ("source_age_sec", "coingecko_top_snapshots", "INTEGER"),
 )
 _COINGECKO_SOURCE_TIME_CHECKSUM = hashlib.sha256(
-    (repr(_COINGECKO_SOURCE_TIME_COLUMNS) + "\ncoingecko_source_time_v1").encode(
-        "utf-8"
-    )
+    (repr(_COINGECKO_SOURCE_TIME_COLUMNS) + "\ncoingecko_source_time_v1").encode("utf-8")
+).hexdigest()
+
+_ENTRY_PLAN_V1_COLUMNS = (
+    ("venue", "universe_members", "TEXT"),
+    ("entry_plan_id", "trade_proposals", "TEXT"),
+    ("order_tactic", "trade_proposals", "TEXT"),
+    ("time_in_force", "trade_proposals", "TEXT"),
+    ("post_only", "trade_proposals", "INTEGER"),
+    ("bbo_reference", "trade_proposals", "TEXT"),
+    ("max_slippage_bps", "trade_proposals", "REAL"),
+    ("worst_price", "trade_proposals", "REAL"),
+    ("entry_plan_id", "orders", "TEXT"),
+    ("order_tactic", "orders", "TEXT"),
+    ("time_in_force", "orders", "TEXT"),
+    ("post_only", "orders", "INTEGER"),
+    ("requested_liquidity", "orders", "TEXT"),
+    ("realized_liquidity", "fills", "TEXT"),
+)
+_ENTRY_PLAN_V1_SQL = """
+CREATE TABLE IF NOT EXISTS candidate_planning_generations (
+    id TEXT PRIMARY KEY,
+    planning_key TEXT NOT NULL CHECK(
+        length(planning_key)=64 AND planning_key=lower(planning_key)
+        AND planning_key NOT GLOB '*[^0-9a-f]*'
+    ),
+    planning_identity TEXT NOT NULL CHECK(
+        length(planning_identity)=64 AND planning_identity=lower(planning_identity)
+        AND planning_identity NOT GLOB '*[^0-9a-f]*'
+    ),
+    identity_version TEXT NOT NULL CHECK(identity_version='candidate-planning/v1'),
+    candidate_id TEXT NOT NULL REFERENCES universe_members(id),
+    last_candidate_id TEXT NOT NULL REFERENCES universe_members(id),
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL CHECK(market_type IN ('spot', 'perp')),
+    candidate_family TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('long', 'short')),
+    is_current INTEGER NOT NULL DEFAULT 1 CHECK(is_current IN (0, 1)),
+    status TEXT NOT NULL CHECK(status IN (
+        'pending', 'planning', 'planned', 'no_plan', 'unavailable', 'superseded'
+    )),
+    result_kind TEXT CHECK(result_kind IN (
+        'entry_plan', 'no_plan', 'unavailable', 'stale_result'
+    )),
+    owner_token TEXT,
+    claim_expires_at TEXT,
+    retry_not_before TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+    entry_plan_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    runtime_session_id TEXT,
+    producer_commit TEXT,
+    behavior_fingerprint TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_planning_current
+ON candidate_planning_generations(planning_key) WHERE is_current=1;
+CREATE INDEX IF NOT EXISTS idx_candidate_planning_work
+ON candidate_planning_generations(is_current, status, retry_not_before, created_at);
+
+CREATE TABLE IF NOT EXISTS entry_plans (
+    id TEXT PRIMARY KEY,
+    planning_generation_id TEXT NOT NULL UNIQUE
+        REFERENCES candidate_planning_generations(id),
+    candidate_id TEXT NOT NULL REFERENCES universe_members(id),
+    planning_key TEXT NOT NULL,
+    version TEXT NOT NULL CHECK(version='entry-plan/v1'),
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL CHECK(market_type IN ('spot', 'perp')),
+    direction TEXT NOT NULL CHECK(direction IN ('long', 'short')),
+    execution_mode TEXT NOT NULL CHECK(execution_mode IN ('RESTING_MAKER', 'TRIGGERED')),
+    plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),
+    plan_hash TEXT NOT NULL CHECK(
+        length(plan_hash)=64 AND plan_hash=lower(plan_hash)
+        AND plan_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK(status IN (
+        'waiting', 'risk_reserved', 'triggered', 'ordered', 'partially_filled',
+        'filled', 'invalidated', 'expired', 'cancelled', 'failed'
+    )),
+    order_id TEXT REFERENCES orders(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    terminal_at TEXT,
+    terminal_reason TEXT,
+    runtime_session_id TEXT,
+    producer_commit TEXT,
+    behavior_fingerprint TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_entry_plans_watch
+ON entry_plans(status, execution_mode, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_plans_active_key
+ON entry_plans(planning_key) WHERE status IN (
+    'waiting', 'risk_reserved', 'triggered', 'ordered', 'partially_filled'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_proposals_entry_plan_once
+ON trade_proposals(entry_plan_id) WHERE entry_plan_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_entry_plan
+ON orders(entry_plan_id) WHERE entry_plan_id IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS trg_entry_plan_facts_immutable
+BEFORE UPDATE OF planning_generation_id, candidate_id, planning_key, version,
+                 venue, symbol, market_type, direction, execution_mode,
+                 plan_json, plan_hash, created_at
+ON entry_plans
+BEGIN
+    SELECT RAISE(ABORT, 'Entry Plan facts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_entry_plan_no_delete
+BEFORE DELETE ON entry_plans
+BEGIN
+    SELECT RAISE(ABORT, 'Entry Plan history is retained');
+END;
+"""
+_ENTRY_PLAN_V1_CHECKSUM = hashlib.sha256(
+    (repr(_ENTRY_PLAN_V1_COLUMNS) + _ENTRY_PLAN_V1_SQL + "\ncandidate_planning_entry_plan_v1").encode("utf-8")
 ).hexdigest()
 
 _LESSON_REVIEWER_ATTEMPTS_SQL = """
@@ -3745,9 +3841,7 @@ CREATE TABLE IF NOT EXISTS learning_lesson_reviewer_attempts (
 CREATE INDEX IF NOT EXISTS idx_learning_lesson_reviewer_attempts_watermark
 ON learning_lesson_reviewer_attempts(input_watermark, started_at DESC);
 """
-_LESSON_REVIEWER_ATTEMPTS_CHECKSUM = hashlib.sha256(
-    _LESSON_REVIEWER_ATTEMPTS_SQL.encode("utf-8")
-).hexdigest()
+_LESSON_REVIEWER_ATTEMPTS_CHECKSUM = hashlib.sha256(_LESSON_REVIEWER_ATTEMPTS_SQL.encode("utf-8")).hexdigest()
 
 _EVENT_JSONL_OUTBOX_COLUMNS = (
     ("jsonl_mirror_status", "ps_event_log", "TEXT NOT NULL DEFAULT 'pending'"),
@@ -3761,11 +3855,9 @@ CREATE INDEX IF NOT EXISTS idx_ps_event_jsonl_outbox
 ON ps_event_log(jsonl_mirror_status, jsonl_next_attempt_at, created_at);
 """
 _EVENT_JSONL_OUTBOX_CHECKSUM = hashlib.sha256(
-    (
-        repr(_EVENT_JSONL_OUTBOX_COLUMNS)
-        + _EVENT_JSONL_OUTBOX_INDEX_SQL
-        + "\nadditive_event_jsonl_outbox_v1"
-    ).encode("utf-8")
+    (repr(_EVENT_JSONL_OUTBOX_COLUMNS) + _EVENT_JSONL_OUTBOX_INDEX_SQL + "\nadditive_event_jsonl_outbox_v1").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 _EXIT_TRAILING_RECOVERY_COLUMNS = (
@@ -3798,9 +3890,7 @@ END;
 """
 _EXIT_TRAILING_RECOVERY_CHECKSUM = hashlib.sha256(
     (
-        repr(_EXIT_TRAILING_RECOVERY_COLUMNS)
-        + _EXIT_TRAILING_RECOVERY_SQL
-        + "\nadditive_exit_trailing_recovery_v1"
+        repr(_EXIT_TRAILING_RECOVERY_COLUMNS) + _EXIT_TRAILING_RECOVERY_SQL + "\nadditive_exit_trailing_recovery_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -3809,14 +3899,9 @@ _LEARNING_HYPOTHESIS_IDENTITY_COLUMNS = (
     ("fingerprint_schema_version", "learning_hypotheses", "INTEGER"),
 )
 _LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM = hashlib.sha256(
-    (
-        repr(_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS)
-        + "\nadditive_learning_hypothesis_identity_v1"
-    ).encode("utf-8")
+    (repr(_LEARNING_HYPOTHESIS_IDENTITY_COLUMNS) + "\nadditive_learning_hypothesis_identity_v1").encode("utf-8")
 ).hexdigest()
-_LEARNING_DREAMING_BACKLOG_COLUMNS = (
-    ("input_cursor", "learning_job_health", "TEXT"),
-)
+_LEARNING_DREAMING_BACKLOG_COLUMNS = (("input_cursor", "learning_job_health", "TEXT"),)
 _LEARNING_DREAMING_BACKLOG_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_knowledge_trade_case_created
     ON knowledge_items(item_type, status, created_at, id);
@@ -3838,10 +3923,7 @@ _POSITION_REALTIME_REVISION_SQL = (
         revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
     )
     """,
-    (
-        "INSERT OR IGNORE INTO position_realtime_revision(singleton, revision) "
-        "VALUES (1, 0)"
-    ),
+    ("INSERT OR IGNORE INTO position_realtime_revision(singleton, revision) VALUES (1, 0)"),
     """
     CREATE TRIGGER IF NOT EXISTS trg_positions_realtime_revision_insert
     AFTER INSERT ON positions
@@ -3871,9 +3953,7 @@ _POSITION_REALTIME_REVISION_SQL = (
     """,
 )
 _POSITION_REALTIME_REVISION_CHECKSUM = hashlib.sha256(
-    (
-        repr(_POSITION_REALTIME_REVISION_SQL) + "\nposition_realtime_revision_v1"
-    ).encode("utf-8")
+    (repr(_POSITION_REALTIME_REVISION_SQL) + "\nposition_realtime_revision_v1").encode("utf-8")
 ).hexdigest()
 
 
@@ -3885,9 +3965,7 @@ _UFC_CANONICAL_IDENTITY = (
 # Published by #922. Databases may already have this exact checksum in their
 # migration ledger; v25's equivalent verifier repair must not rotate it.
 _UFC_CANONICAL_IDENTITY_CHECKSUM = hashlib.sha256(
-    (repr(_UFC_CANONICAL_IDENTITY) + "\nmaterialize_active_paper_identity_v1").encode(
-        "utf-8"
-    )
+    (repr(_UFC_CANONICAL_IDENTITY) + "\nmaterialize_active_paper_identity_v1").encode("utf-8")
 ).hexdigest()
 
 _POSITION_PATH_OBSERVATIONS_SQL = """
@@ -3968,10 +4046,7 @@ BEGIN
 END;
 """
 _POSITION_PATH_OBSERVATIONS_CHECKSUM = hashlib.sha256(
-    (
-        _POSITION_PATH_OBSERVATIONS_SQL
-        + "\nappend_only_position_path_observations_v1\nPRAGMA optimize"
-    ).encode("utf-8")
+    (_POSITION_PATH_OBSERVATIONS_SQL + "\nappend_only_position_path_observations_v1\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
 _POSITION_PATH_DEFERRED_BUCKETS_SQL = """
@@ -3990,10 +4065,7 @@ CREATE INDEX IF NOT EXISTS idx_position_path_deferred_bucket
 ON position_path_observation_deferred_buckets(bucket_open_ms, position_id);
 """
 _POSITION_PATH_DEFERRED_BUCKETS_CHECKSUM = hashlib.sha256(
-    (
-        _POSITION_PATH_DEFERRED_BUCKETS_SQL
-        + "\ndurable_position_path_retry_v1\nPRAGMA optimize"
-    ).encode("utf-8")
+    (_POSITION_PATH_DEFERRED_BUCKETS_SQL + "\ndurable_position_path_retry_v1\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
 _POSITION_PATH_OBSERVER_CURSOR_SQL = """
@@ -4007,10 +4079,7 @@ CREATE TABLE IF NOT EXISTS position_path_observer_cursor (
 );
 """
 _POSITION_PATH_OBSERVER_CURSOR_CHECKSUM = hashlib.sha256(
-    (
-        _POSITION_PATH_OBSERVER_CURSOR_SQL
-        + "\ndurable_position_path_observer_cursor_v1\nPRAGMA optimize"
-    ).encode("utf-8")
+    (_POSITION_PATH_OBSERVER_CURSOR_SQL + "\ndurable_position_path_observer_cursor_v1\nPRAGMA optimize").encode("utf-8")
 ).hexdigest()
 
 
@@ -4023,8 +4092,7 @@ def _ufc_v25_normalize(value):
         return {
             str(key).lower(): _ufc_v25_normalize(item)
             for key, item in sorted(value.items())
-            if str(key).lower()
-            not in {"summary", "title", "created_at", "updated_at"}
+            if str(key).lower() not in {"summary", "title", "created_at", "updated_at"}
         }
     if isinstance(value, list):
         return sorted(
@@ -4037,7 +4105,13 @@ def _ufc_v25_normalize(value):
 
 
 def _ufc_v25_fingerprint(
-    *, path_id, scope, action, target_horizon, source_cohort, behavior_version,
+    *,
+    path_id,
+    scope,
+    action,
+    target_horizon,
+    source_cohort,
+    behavior_version,
     schema_version,
 ) -> str:
     """Frozen UFC schema-1 fingerprint implementation for migration v25 only."""
@@ -4053,14 +4127,11 @@ def _ufc_v25_fingerprint(
         "schema_version": schema_version,
         "behavior_contract_version": behavior_version.lower(),
     }
-    canonical = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-_MARKET_SIGNAL_IDENTITY_COLUMNS = (
-    ("last_market_signal_evidence", "positions", "TEXT"),
-)
+
+_MARKET_SIGNAL_IDENTITY_COLUMNS = (("last_market_signal_evidence", "positions", "TEXT"),)
 _MARKET_SIGNAL_IDENTITY_CHECKSUM = hashlib.sha256(
     (repr(_MARKET_SIGNAL_IDENTITY_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
 ).hexdigest()
@@ -4887,10 +4958,9 @@ CREATE TABLE learning_inference_decisions (
 );
 """
 _LEARNING_RANDOMIZATION_INFERENCE_CHECKSUM = hashlib.sha256(
-    (
-        _LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL
-        + "\nconditional_randomization_inference_v1\nPRAGMA optimize"
-    ).encode("utf-8")
+    (_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL + "\nconditional_randomization_inference_v1\nPRAGMA optimize").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 
@@ -4921,9 +4991,7 @@ _UNIVERSE_TWIN_PROSPECTIVE_COLUMNS = (
     ("assigned_policy_selected", "universe_twin_shadow_records", "INTEGER"),
 )
 _UNIVERSE_TWIN_PROSPECTIVE_CHECKSUM = hashlib.sha256(
-    (repr(_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS) + "\nadditive_columns_and_indexes_v2_atomic").encode(
-        "utf-8"
-    )
+    (repr(_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS) + "\nadditive_columns_and_indexes_v2_atomic").encode("utf-8")
 ).hexdigest()
 
 _TECHNICAL_SNAPSHOT_METADATA_COLUMNS = (
@@ -4935,10 +5003,7 @@ _TECHNICAL_SNAPSHOT_METADATA_COLUMNS = (
     ),
 )
 _TECHNICAL_SNAPSHOT_METADATA_CHECKSUM = hashlib.sha256(
-    (
-        repr(_TECHNICAL_SNAPSHOT_METADATA_COLUMNS)
-        + "\nadditive_columns_v1"
-    ).encode("utf-8")
+    (repr(_TECHNICAL_SNAPSHOT_METADATA_COLUMNS) + "\nadditive_columns_v1").encode("utf-8")
 ).hexdigest()
 
 _EXECUTION_REFERENCE_COLUMNS = (
@@ -4955,21 +5020,14 @@ BEGIN
 END;
 """
 _EXECUTION_REFERENCE_CHECKSUM = hashlib.sha256(
-    (
-        repr(_EXECUTION_REFERENCE_COLUMNS)
-        + "\n"
-        + _EXECUTION_REFERENCE_SQL
-        + "\nadditive_execution_reference_v1"
-    ).encode("utf-8")
-).hexdigest()
-
-_SHADOW_LEARNING_TRACE_COLUMNS = (
-    ("learning_score_trace_json", "shadow_trades", "TEXT"),
-)
-_SHADOW_LEARNING_TRACE_CHECKSUM = hashlib.sha256(
-    (repr(_SHADOW_LEARNING_TRACE_COLUMNS) + "\nadditive_shadow_learning_trace_v1").encode(
+    (repr(_EXECUTION_REFERENCE_COLUMNS) + "\n" + _EXECUTION_REFERENCE_SQL + "\nadditive_execution_reference_v1").encode(
         "utf-8"
     )
+).hexdigest()
+
+_SHADOW_LEARNING_TRACE_COLUMNS = (("learning_score_trace_json", "shadow_trades", "TEXT"),)
+_SHADOW_LEARNING_TRACE_CHECKSUM = hashlib.sha256(
+    (repr(_SHADOW_LEARNING_TRACE_COLUMNS) + "\nadditive_shadow_learning_trace_v1").encode("utf-8")
 ).hexdigest()
 
 _UNIVERSE_POSITIONING_COLUMNS = (
@@ -5026,9 +5084,7 @@ _SERENITY_RETRY_IDEMPOTENCY_SQL = (
     "ON serenity_research_runs(parent_run_id, retry_count) "
     "WHERE idempotency_key LIKE 'serenity-retry:%'"
 )
-_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(
-    _SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")
-).hexdigest()
+_SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(_SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")).hexdigest()
 
 _PERSONA_ROLLOUT_SQL = (
     "CREATE TABLE IF NOT EXISTS persona_rollouts ("
@@ -5078,21 +5134,12 @@ _PERSONA_ROLLOUT_SQL = (
 )
 _PERSONA_ROLLOUT_COLUMNS = (("sizing_manifest", "positions", "TEXT"),)
 _PERSONA_ROLLOUT_CHECKSUM = hashlib.sha256(
-    (
-        _PERSONA_ROLLOUT_SQL
-        + repr(_PERSONA_ROLLOUT_COLUMNS)
-        + "\nprospective_persona_rollout_v1"
-    ).encode("utf-8")
+    (_PERSONA_ROLLOUT_SQL + repr(_PERSONA_ROLLOUT_COLUMNS) + "\nprospective_persona_rollout_v1").encode("utf-8")
 ).hexdigest()
 
-_EXCHANGE_UPNL_IDENTITY_COLUMNS = (
-    ("unrealized_pnl_source", "positions", "TEXT NOT NULL DEFAULT 'local_estimate'"),
-)
+_EXCHANGE_UPNL_IDENTITY_COLUMNS = (("unrealized_pnl_source", "positions", "TEXT NOT NULL DEFAULT 'local_estimate'"),)
 _EXCHANGE_UPNL_IDENTITY_CHECKSUM = hashlib.sha256(
-    (
-        repr(_EXCHANGE_UPNL_IDENTITY_COLUMNS)
-        + "\nexchange_upnl_identity_v1"
-    ).encode("utf-8")
+    (repr(_EXCHANGE_UPNL_IDENTITY_COLUMNS) + "\nexchange_upnl_identity_v1").encode("utf-8")
 ).hexdigest()
 
 # Observation Lab v1 (Issue #1072). The frozen-unit table lives in the Lab's
@@ -5102,14 +5149,9 @@ _EXCHANGE_UPNL_IDENTITY_CHECKSUM = hashlib.sha256(
 # migration only adds the ``adapter_identity_hash`` column on the spec row so
 # the identity-vector invalidation check (owner review §4) has a place to
 # stash its hash.
-_OBSERVATION_LAB_FROZEN_UNITS_COLUMNS = (
-    ("adapter_identity_hash", "filter_shadow_experiments", "TEXT"),
-)
+_OBSERVATION_LAB_FROZEN_UNITS_COLUMNS = (("adapter_identity_hash", "filter_shadow_experiments", "TEXT"),)
 _OBSERVATION_LAB_FROZEN_UNITS_CHECKSUM = hashlib.sha256(
-    (
-        repr(_OBSERVATION_LAB_FROZEN_UNITS_COLUMNS)
-        + "\nobservation_lab_frozen_units_v2"
-    ).encode("utf-8")
+    (repr(_OBSERVATION_LAB_FROZEN_UNITS_COLUMNS) + "\nobservation_lab_frozen_units_v2").encode("utf-8")
 ).hexdigest()
 
 # EX-04 (#1004): bind the opaque live-authorization scope hash to every
@@ -5117,14 +5159,9 @@ _OBSERVATION_LAB_FROZEN_UNITS_CHECKSUM = hashlib.sha256(
 # the exact authorization is still active before an order goes out. The
 # column is nullable — every historical Proposal was paper/demo and has no
 # live authorization to carry.
-_LIVE_AUTHORIZATION_REF_COLUMNS = (
-    ("live_authorization_ref", "trade_proposals", "TEXT"),
-)
+_LIVE_AUTHORIZATION_REF_COLUMNS = (("live_authorization_ref", "trade_proposals", "TEXT"),)
 _LIVE_AUTHORIZATION_REF_CHECKSUM = hashlib.sha256(
-    (
-        repr(_LIVE_AUTHORIZATION_REF_COLUMNS)
-        + "\nlive_authorization_ref_v1"
-    ).encode("utf-8")
+    (repr(_LIVE_AUTHORIZATION_REF_COLUMNS) + "\nlive_authorization_ref_v1").encode("utf-8")
 ).hexdigest()
 
 _MOMENTUM_SHORT_EXHAUSTION_COLUMNS = (
@@ -5134,10 +5171,7 @@ _MOMENTUM_SHORT_EXHAUSTION_COLUMNS = (
     ("direction_exhaustion_signal", "filter_candidate_outcomes", "INTEGER"),
 )
 _MOMENTUM_SHORT_EXHAUSTION_CHECKSUM = hashlib.sha256(
-    (
-        repr(_MOMENTUM_SHORT_EXHAUSTION_COLUMNS)
-        + "\nmomentum_short_exhaustion_shadow_v1"
-    ).encode("utf-8")
+    (repr(_MOMENTUM_SHORT_EXHAUSTION_COLUMNS) + "\nmomentum_short_exhaustion_shadow_v1").encode("utf-8")
 ).hexdigest()
 
 
@@ -5234,78 +5268,40 @@ _MIGRATION_DESCRIPTIONS = {
     "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
     "20260806_0005_llm_inference_linkage_v6": "LLM inference audit linkage columns",
     "20260807_0006_market_signal_identity_v7": "exact market-signal evidence column",
-    "20260808_0007_universe_twin_shadow_evidence_v8": (
-        "non-authoritative Universe twin Shadow evidence tables"
-    ),
-    "20260808_0008_position_protection_state_v9": (
-        "immutable ExitPlan history and dormant protective-barrier state"
-    ),
-    "20260808_0009_learning_fixed_look_v10": (
-        "prospective fixed-look Learning inference decisions"
-    ),
-    "20260808_0010_exit_breakeven_shadow_v11": (
-        "prospective read-only exit breakeven shadow evidence"
-    ),
-    "20260808_0011_learning_randomization_inference_v12": (
-        "conditional-randomization Learning inference contract"
-    ),
+    "20260808_0007_universe_twin_shadow_evidence_v8": ("non-authoritative Universe twin Shadow evidence tables"),
+    "20260808_0008_position_protection_state_v9": ("immutable ExitPlan history and dormant protective-barrier state"),
+    "20260808_0009_learning_fixed_look_v10": ("prospective fixed-look Learning inference decisions"),
+    "20260808_0010_exit_breakeven_shadow_v11": ("prospective read-only exit breakeven shadow evidence"),
+    "20260808_0011_learning_randomization_inference_v12": ("conditional-randomization Learning inference contract"),
     "20260809_0012_universe_twin_prospective_v13": (
         "prospective Shadow policy identity, assignment, and outcome linkage"
     ),
-    "20260809_0014_serenity_retry_idempotency_v15": (
-        "one newly-created Serenity retry per parent and retry count"
-    ),
+    "20260809_0014_serenity_retry_idempotency_v15": ("one newly-created Serenity retry per parent and retry count"),
     "20260809_0015_execution_reference_v16": (
         "immutable pre-fill reference prices for paired Paper execution accounting"
     ),
-    "20260810_0016_shadow_learning_trace_v17": (
-        "prospective Ranker Learning score trace on existing Shadow rows"
-    ),
-    "20260810_0017_universe_positioning_v18": (
-        "public positioning ratios and isolated Relative Rank Shadow evidence"
-    ),
-    "20260811_0022_exit_trailing_recovery_v23": (
-        "write-once trailing recovery evidence on frozen protection identity"
-    ),
+    "20260810_0016_shadow_learning_trace_v17": ("prospective Ranker Learning score trace on existing Shadow rows"),
+    "20260810_0017_universe_positioning_v18": ("public positioning ratios and isolated Relative Rank Shadow evidence"),
+    "20260811_0022_exit_trailing_recovery_v23": ("write-once trailing recovery evidence on frozen protection identity"),
     "20260811_0023_learning_hypothesis_identity_v24": (
         "explicit behavior-contract and fingerprint-schema hypothesis provenance"
     ),
-    "20260812_0024_ufc_canonical_identity_v25": (
-        "materialize fingerprint-verified identity for the active UFC Paper"
-    ),
-    "20260815_0028_learning_dreaming_backlog_v29": (
-        "durable Dreaming case cursor and pending-backlog indexes"
-    ),
-    "20260816_0029_position_realtime_revision_v30": (
-        "monotonic Position revisions for real-time invalidation"
-    ),
-    "20260817_0030_persona_rollout_v31": (
-        "prospective Persona rollout state, evidence events, and sizing manifests"
-    ),
-    "20260817_0031_exchange_upnl_identity_v32": (
-        "owner-facing exchange uPnL identity and fallback source"
-    ),
+    "20260812_0024_ufc_canonical_identity_v25": ("materialize fingerprint-verified identity for the active UFC Paper"),
+    "20260815_0028_learning_dreaming_backlog_v29": ("durable Dreaming case cursor and pending-backlog indexes"),
+    "20260816_0029_position_realtime_revision_v30": ("monotonic Position revisions for real-time invalidation"),
+    "20260817_0030_persona_rollout_v31": ("prospective Persona rollout state, evidence events, and sizing manifests"),
+    "20260817_0031_exchange_upnl_identity_v32": ("owner-facing exchange uPnL identity and fallback source"),
     "20260817_0032_observation_lab_frozen_units_v33": (
         "Observation Lab v1 POC: adapter identity hash + frozen first-exposure units"
     ),
-    "20260819_0035_options_market_structure_v36": (
-        "BTC/ETH Deribit options GEX and gamma-structure snapshot table"
-    ),
+    "20260819_0035_options_market_structure_v36": ("BTC/ETH Deribit options GEX and gamma-structure snapshot table"),
     "20260820_0036_gamma_flip_reset_v37": (
         "Null historical gamma_flip_estimate values computed with incorrect cumulative-strike algorithm"
     ),
-    "20260823_0037_pending_close_reasoning_v38": (
-        "durable Operator rationale handoff for pending exchange closes"
-    ),
-    "20260824_0038_agent_artifact_reference_v39": (
-        "durable agent-artifact reference version"
-    ),
-    "20260824_0039_profit_gradient_data_boundaries_v40": (
-        "candidate and OHLCV evidence provenance boundaries"
-    ),
-    "20260826_0040_paper_account_invalidation_v41": (
-        "append-only paper-account economics invalidation"
-    ),
+    "20260823_0037_pending_close_reasoning_v38": ("durable Operator rationale handoff for pending exchange closes"),
+    "20260824_0038_agent_artifact_reference_v39": ("durable agent-artifact reference version"),
+    "20260824_0039_profit_gradient_data_boundaries_v40": ("candidate and OHLCV evidence provenance boundaries"),
+    "20260826_0040_paper_account_invalidation_v41": ("append-only paper-account economics invalidation"),
     "20260826_0041_universe_fast_trigger_v42": (
         "Momentum setup, conditional authorization, and exact T0 trigger facts"
     ),
@@ -5320,6 +5316,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260827_0045_learning_failed_window_v46": (
         "persist failed daily Learning input watermark for retry/audit visibility"
+    ),
+    "20260827_0046_candidate_planning_entry_plan_v47": (
+        "durable Candidate planning ownership and immutable Entry Plan lifecycle"
     ),
 }
 
@@ -5404,9 +5403,7 @@ def _apply_llm_inference_linkage_v6(db: sqlite3.Connection) -> None:
     """Add content-free inference linkage without rewriting the frozen baseline."""
 
     for column, table, column_type in _LLM_INFERENCE_LINKAGE_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -5415,9 +5412,7 @@ def _apply_agent_duration_v19(db: sqlite3.Connection) -> None:
     """Add nullable elapsed-time fields without rewriting historical records."""
 
     for column, table, column_type in _AGENT_DURATION_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -5426,9 +5421,7 @@ def _apply_agent_usage_storage_v20(db: sqlite3.Connection) -> None:
     """Add current-run artifact links and optional tracing snapshots without backfill."""
 
     for column, table, column_type in _AGENT_USAGE_STORAGE_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_AGENT_RUN_ARTIFACTS_SQL)
@@ -5438,9 +5431,7 @@ def _apply_agent_artifact_reference_v39(db: sqlite3.Connection) -> None:
     """Mark pre-durable artifact links without rewriting retained evidence."""
 
     for column, table, column_type in _AGENT_ARTIFACT_REFERENCE_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -5449,9 +5440,7 @@ def _apply_profit_gradient_data_boundaries_v40(db: sqlite3.Connection) -> None:
     """Add nullable provenance without rewriting historical evidence."""
 
     for column, table, column_type in _PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -5462,47 +5451,31 @@ def _apply_paper_account_invalidation_v41(db: sqlite3.Connection) -> None:
     db.execute("BEGIN IMMEDIATE")
     try:
         table_sql = db.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' "
-            "AND name='paper_account_events'"
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='paper_account_events'"
         ).fetchone()
-        staging_exists = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' "
-            "AND name='paper_account_events_v41'"
-        ).fetchone() is not None
+        staging_exists = (
+            db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_account_events_v41'").fetchone()
+            is not None
+        )
         if table_sql is None:
             if not staging_exists:
                 raise MigrationStateError("paper_account_events table is missing")
+            db.execute("ALTER TABLE paper_account_events_v41 RENAME TO paper_account_events")
             db.execute(
-                "ALTER TABLE paper_account_events_v41 RENAME TO paper_account_events"
-            )
-            db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_paper_account_events_created "
-                "ON paper_account_events(created_at DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_paper_account_events_created ON paper_account_events(created_at DESC)"
             )
         elif "position_economics_invalidated" not in str(table_sql[0] or ""):
             if staging_exists:
-                raise MigrationStateError(
-                    "paper_account_events v41 staging table conflicts with source table"
-                )
-            for statement in (
-                _PAPER_ACCOUNT_INVALIDATION_SQL.strip().split(";\n")
-            ):
+                raise MigrationStateError("paper_account_events v41 staging table conflicts with source table")
+            for statement in _PAPER_ACCOUNT_INVALIDATION_SQL.strip().split(";\n"):
                 if statement.strip():
                     db.execute(statement)
 
-        tables = {
-            str(row[0])
-            for row in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
+        tables = {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         for column, table, column_type in _PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS:
             if table not in tables:
                 continue
-            existing = {
-                str(row[1])
-                for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-            }
+            existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
             if column not in existing:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
         db.commit()
@@ -5515,9 +5488,7 @@ def _apply_universe_fast_trigger_v41(db: sqlite3.Connection) -> None:
     """Add bounded setup authority and same-venue T0 materialization facts."""
 
     for column, table, column_type in _UNIVERSE_FAST_TRIGGER_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_UNIVERSE_FAST_TRIGGER_SQL)
@@ -5527,9 +5498,7 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
     """Add immutable generation envelopes without rewriting legacy rows."""
 
     for column, table, column_type in _OPPORTUNITY_GENERATION_V2_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
@@ -5549,18 +5518,26 @@ def _apply_learning_failed_window_v46(db: sqlite3.Connection) -> None:
 def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
     """Add provider source-time provenance without rewriting legacy rows."""
 
-    tables = {
-        str(row[0])
-        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
+    tables = {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for column, table, column_type in _COINGECKO_SOURCE_TIME_COLUMNS:
         if table not in tables:
             continue
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_entry_plan_v47(db: sqlite3.Connection) -> None:
+    """Add one active Entry Plan ledger and its durable planning ownership."""
+
+    tables = {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for column, table, column_type in _ENTRY_PLAN_V1_COLUMNS:
+        if table not in tables:
+            continue
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_ENTRY_PLAN_V1_SQL)
 
 
 def _apply_controller_recommendation_cost_model_v45(db: sqlite3.Connection) -> None:
@@ -5591,10 +5568,7 @@ def _apply_event_jsonl_outbox_v22(db: sqlite3.Connection) -> None:
 
     db.execute("SAVEPOINT event_jsonl_outbox_v22")
     try:
-        existing = {
-            str(row[1])
-            for row in db.execute("PRAGMA table_info(ps_event_log)").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute("PRAGMA table_info(ps_event_log)").fetchall()}
         status_was_missing = "jsonl_mirror_status" not in existing
         for column, table, column_type in _EVENT_JSONL_OUTBOX_COLUMNS:
             if column not in existing:
@@ -5603,10 +5577,7 @@ def _apply_event_jsonl_outbox_v22(db: sqlite3.Connection) -> None:
         if status_was_missing:
             # Existing rows were already handled by the legacy dual-write path. Do not
             # replay the entire historical ledger merely because retry facts are new.
-            db.execute(
-                "UPDATE ps_event_log SET jsonl_mirror_status='mirrored', "
-                "jsonl_mirrored_at=created_at"
-            )
+            db.execute("UPDATE ps_event_log SET jsonl_mirror_status='mirrored', jsonl_mirrored_at=created_at")
         db.execute(_EVENT_JSONL_OUTBOX_INDEX_SQL)
         db.execute("RELEASE SAVEPOINT event_jsonl_outbox_v22")
     except Exception:
@@ -5618,10 +5589,7 @@ def _apply_event_jsonl_outbox_v22(db: sqlite3.Connection) -> None:
 def _apply_exit_trailing_recovery_v23(db: sqlite3.Connection) -> None:
     """Retain one immutable recovery observation per protected Position."""
 
-    existing = {
-        str(row[1])
-        for row in db.execute("PRAGMA table_info(position_protection_state)").fetchall()
-    }
+    existing = {str(row[1]) for row in db.execute("PRAGMA table_info(position_protection_state)").fetchall()}
     for column, table, column_type in _EXIT_TRAILING_RECOVERY_COLUMNS:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
@@ -5656,28 +5624,17 @@ def _apply_learning_dreaming_backlog_v29(db: sqlite3.Connection) -> None:
         """
     )
     for column, table, column_type in _LEARNING_DREAMING_BACKLOG_COLUMNS:
-        existing = {
-            str(row[1])
-            for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
-    tables = {
-        str(row[0])
-        for row in db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
+    tables = {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     if "knowledge_items" in tables:
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_knowledge_trade_case_created "
             "ON knowledge_items(item_type, status, created_at, id)"
         )
     if "ps_lessons" in tables:
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_ps_lessons_trade_case_source "
-            "ON ps_lessons(source_type, source_id)"
-        )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_ps_lessons_trade_case_source ON ps_lessons(source_type, source_id)")
     db.execute("PRAGMA optimize")
 
 
@@ -5693,9 +5650,7 @@ def _apply_persona_rollout_v31(db: sqlite3.Connection) -> None:
     """Persist prospective Persona rollout state and entry manifests."""
 
     for column, table, column_type in _PERSONA_ROLLOUT_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_PERSONA_ROLLOUT_SQL)
@@ -5706,9 +5661,7 @@ def _apply_exchange_upnl_identity_v32(db: sqlite3.Connection) -> None:
     """Persist the owner-facing source of each open-position uPnL mark."""
 
     for column, table, column_type in _EXCHANGE_UPNL_IDENTITY_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
@@ -5722,9 +5675,7 @@ def _apply_observation_lab_frozen_units_v33(db: sqlite3.Connection) -> None:
     ``app.db`` because the spec is the identity anchor operators query.
     """
     for column, table, column_type in _OBSERVATION_LAB_FROZEN_UNITS_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
@@ -5733,9 +5684,7 @@ def _apply_observation_lab_frozen_units_v33(db: sqlite3.Connection) -> None:
 def _apply_live_authorization_ref_v34(db: sqlite3.Connection) -> None:
     """Add the EX-04 opaque live authorization ref column on trade_proposals."""
     for column, table, column_type in _LIVE_AUTHORIZATION_REF_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
@@ -5748,16 +5697,15 @@ def _apply_momentum_short_exhaustion_shadow_v35(db: sqlite3.Connection) -> None:
     exhaustion signal for momentum:short:perp candidates. No behavior change —
     these columns support shadow/counterfactual outcome tracking only.
     """
-    table_exists = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='filter_candidate_outcomes'"
-    ).fetchone() is not None
+    table_exists = (
+        db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='filter_candidate_outcomes'").fetchone()
+        is not None
+    )
     if not table_exists:
         db.execute("PRAGMA optimize")
         return
     for column, table, column_type in _MOMENTUM_SHORT_EXHAUSTION_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
@@ -5777,9 +5725,7 @@ def _apply_gamma_flip_reset_v37(db: sqlite3.Connection) -> None:
 def _apply_pending_close_reasoning_v38(db: sqlite3.Connection) -> None:
     """Add the nullable pending-close rationale carrier without rewriting history."""
 
-    existing = {
-        str(row[1]) for row in db.execute("PRAGMA table_info(orders)").fetchall()
-    }
+    existing = {str(row[1]) for row in db.execute("PRAGMA table_info(orders)").fetchall()}
     if "close_reasoning" not in existing:
         db.execute(_PENDING_CLOSE_REASONING_SQL)
     db.execute("PRAGMA optimize")
@@ -5789,9 +5735,7 @@ def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
     """Persist future fingerprint inputs without rewriting historical identity."""
 
     for column, table, column_type in _LEARNING_HYPOTHESIS_IDENTITY_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -5814,9 +5758,7 @@ def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
             (path_id,),
         ).fetchall()
         if len(rows) > 1:
-            raise MigrationStateError(
-                "UFC identity migration found multiple open Paper experiments"
-            )
+            raise MigrationStateError("UFC identity migration found multiple open Paper experiments")
         if rows:
             (
                 _experiment_id,
@@ -5830,13 +5772,9 @@ def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
                 stored_schema_version,
             ) = rows[0]
             if stored_behavior_version not in (None, behavior_version):
-                raise MigrationStateError(
-                    "active UFC Paper behavior contract does not match v25"
-                )
+                raise MigrationStateError("active UFC Paper behavior contract does not match v25")
             if stored_schema_version not in (None, schema_version):
-                raise MigrationStateError(
-                    "active UFC Paper fingerprint schema does not match v25"
-                )
+                raise MigrationStateError("active UFC Paper fingerprint schema does not match v25")
 
             import json
 
@@ -5850,9 +5788,7 @@ def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
                 schema_version=schema_version,
             )
             if fingerprint != stored_fingerprint:
-                raise MigrationStateError(
-                    "active UFC Paper fingerprint cannot prove canonical v25 identity"
-                )
+                raise MigrationStateError("active UFC Paper fingerprint cannot prove canonical v25 identity")
             db.execute(
                 "UPDATE learning_hypotheses SET behavior_contract_version=?, "
                 "fingerprint_schema_version=? WHERE hypothesis_id=?",
@@ -5871,6 +5807,7 @@ def _apply_position_path_observations_v26(db: sqlite3.Connection) -> None:
     db.executescript(_POSITION_PATH_OBSERVATIONS_SQL)
     db.execute("PRAGMA optimize")
 
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -5885,15 +5822,11 @@ def _apply_position_path_observer_cursor_v28(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
-
-
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
 
     for column, table, column_type in _MARKET_SIGNAL_IDENTITY_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -5909,9 +5842,7 @@ def _apply_position_protection_state_v9(db: sqlite3.Connection) -> None:
     """Add dormant protection state without initializing or evaluating Positions."""
 
     for column, table, column_type in _POSITION_PROTECTION_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_POSITION_PROTECTION_SQL)
@@ -5922,9 +5853,7 @@ def _apply_learning_fixed_look_v10(db: sqlite3.Connection) -> None:
     """Add prospective inference state without granting existing verdicts authority."""
 
     for column, table, column_type in _LEARNING_FIXED_LOOK_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_LEARNING_FIXED_LOOK_SQL)
@@ -5950,8 +5879,7 @@ def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
         "trg_learning_inference_status_monotonic",
     }
     row = db.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' "
-        "AND name='learning_inference_decisions'"
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='learning_inference_decisions'"
     ).fetchone()
     if row is None:
         raise MigrationStateError("learning inference decision table is missing")
@@ -5964,22 +5892,15 @@ def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
 
     db.execute("SAVEPOINT learning_randomization_inference_v12")
     try:
-        old_count = int(
-            db.execute(
-                "SELECT COUNT(*) FROM learning_inference_decisions"
-            ).fetchone()[0]
-        )
+        old_count = int(db.execute("SELECT COUNT(*) FROM learning_inference_decisions").fetchone()[0])
         trigger_names = [
             str(item[0])
             for item in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='trigger' "
-                "AND tbl_name='learning_inference_decisions'"
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='learning_inference_decisions'"
             ).fetchall()
         ]
         if set(trigger_names) != expected_triggers:
-            raise MigrationStateError(
-                "Learning inference decision trigger contract drifted"
-            )
+            raise MigrationStateError("Learning inference decision trigger contract drifted")
         index_names = {
             str(item[0])
             for item in db.execute(
@@ -5988,17 +5909,12 @@ def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
             ).fetchall()
         }
         if index_names != {"idx_learning_inference_family"}:
-            raise MigrationStateError(
-                "Learning inference decision index contract drifted"
-            )
+            raise MigrationStateError("Learning inference decision index contract drifted")
         for name in trigger_names:
             quoted = name.replace('"', '""')
             db.execute(f'DROP TRIGGER "{quoted}"')
         db.execute("DROP INDEX IF EXISTS idx_learning_inference_family")
-        db.execute(
-            "ALTER TABLE learning_inference_decisions "
-            "RENAME TO learning_inference_decisions_v1"
-        )
+        db.execute("ALTER TABLE learning_inference_decisions RENAME TO learning_inference_decisions_v1")
         db.execute(_LEARNING_RANDOMIZATION_INFERENCE_TABLE_SQL)
         columns = (
             "experiment_id, inference_family_id, inference_contract_version, plan_json, "
@@ -6009,11 +5925,7 @@ def _apply_learning_randomization_inference_v12(db: sqlite3.Connection) -> None:
             f"INSERT INTO learning_inference_decisions ({columns}) "
             f"SELECT {columns} FROM learning_inference_decisions_v1"
         )
-        new_count = int(
-            db.execute(
-                "SELECT COUNT(*) FROM learning_inference_decisions"
-            ).fetchone()[0]
-        )
+        new_count = int(db.execute("SELECT COUNT(*) FROM learning_inference_decisions").fetchone()[0])
         if new_count != old_count:
             raise MigrationStateError("learning inference decision row count changed")
         db.execute("DROP TABLE learning_inference_decisions_v1")
@@ -6047,10 +5959,7 @@ def _apply_universe_twin_prospective_v13(db: sqlite3.Connection) -> None:
     db.execute(f"SAVEPOINT {savepoint}")
     try:
         for column, table, column_type in _UNIVERSE_TWIN_PROSPECTIVE_COLUMNS:
-            existing = {
-                str(row[1])
-                for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-            }
+            existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
             if column not in existing:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
         db.execute(
@@ -6074,9 +5983,7 @@ def _apply_technical_snapshot_metadata_v14(db: sqlite3.Connection) -> None:
     """Persist versioned technical-snapshot identity on Universe features."""
 
     for column, table, column_type in _TECHNICAL_SNAPSHOT_METADATA_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
@@ -6086,9 +5993,7 @@ def _apply_execution_reference_v16(db: sqlite3.Connection) -> None:
     """Persist immutable pre-fill references without changing order behavior."""
 
     for column, table, column_type in _EXECUTION_REFERENCE_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute(_EXECUTION_REFERENCE_SQL)
@@ -6099,9 +6004,7 @@ def _apply_shadow_learning_trace_v17(db: sqlite3.Connection) -> None:
     """Freeze Ranker Learning inputs on existing report-only Shadow rows."""
 
     for column, table, column_type in _SHADOW_LEARNING_TRACE_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
@@ -6111,9 +6014,7 @@ def _apply_universe_positioning_v18(db: sqlite3.Connection) -> None:
     """Persist public positioning ratios and isolated Shadow clusters."""
 
     for column, table, column_type in _UNIVERSE_POSITIONING_COLUMNS:
-        existing = {
-            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute(_UNIVERSE_RELATIVE_RANK_SHADOW_TABLE_SQL)
@@ -6399,6 +6300,12 @@ _MIGRATIONS = (
         schema_version="aletheia-sqlite-v46",
         apply=_apply_learning_failed_window_v46,
     ),
+    MigrationStep(
+        migration_id="20260827_0046_candidate_planning_entry_plan_v47",
+        checksum=_ENTRY_PLAN_V1_CHECKSUM,
+        schema_version="aletheia-sqlite-v47",
+        apply=_apply_entry_plan_v47,
+    ),
 )
 
 
@@ -6422,34 +6329,24 @@ def _validate_migration_registry() -> None:
     previous_id: str | None = None
     for migration in _MIGRATIONS:
         if migration.migration_id in seen:
-            raise MigrationStateError(
-                f"duplicate migration id: {migration.migration_id}"
-            )
+            raise MigrationStateError(f"duplicate migration id: {migration.migration_id}")
         seen.add(migration.migration_id)
         if previous_id is not None and migration.migration_id <= previous_id:
-            raise MigrationStateError(
-                "migration registry must be strictly ordered by migration id"
-            )
+            raise MigrationStateError("migration registry must be strictly ordered by migration id")
         previous_id = migration.migration_id
         if len(migration.checksum) != 64:
-            raise MigrationStateError(
-                f"invalid checksum for migration {migration.migration_id}"
-            )
+            raise MigrationStateError(f"invalid checksum for migration {migration.migration_id}")
         try:
             int(migration.checksum, 16)
         except ValueError as exc:
-            raise MigrationStateError(
-                f"invalid checksum for migration {migration.migration_id}"
-            ) from exc
+            raise MigrationStateError(f"invalid checksum for migration {migration.migration_id}") from exc
 
     legacy = next(
         (m for m in _MIGRATIONS if m.migration_id == _LEGACY_BASELINE_ID),
         None,
     )
     if legacy and legacy.checksum != _legacy_baseline_implementation_checksum():
-        raise MigrationChecksumMismatch(
-            "legacy migration implementation changed without a new migration id"
-        )
+        raise MigrationChecksumMismatch("legacy migration implementation changed without a new migration id")
 
 
 def _read_applied_migrations(db) -> dict[str, sqlite3.Row]:
@@ -6471,28 +6368,18 @@ def _validate_applied_migrations(
     registered = {migration.migration_id: migration for migration in _MIGRATIONS}
     unknown = sorted(set(applied) - set(registered))
     if unknown:
-        raise DatabaseSchemaAheadError(
-            "database contains migrations unknown to this code: " + ", ".join(unknown)
-        )
+        raise DatabaseSchemaAheadError("database contains migrations unknown to this code: " + ", ".join(unknown))
 
     for migration_id, row in applied.items():
         expected = registered[migration_id]
         if row["checksum"] != expected.checksum:
-            raise MigrationChecksumMismatch(
-                f"migration checksum mismatch for {migration_id}"
-            )
+            raise MigrationChecksumMismatch(f"migration checksum mismatch for {migration_id}")
         if row["schema_version"] != expected.schema_version:
-            raise MigrationStateError(
-                f"migration schema version mismatch for {migration_id}"
-            )
+            raise MigrationStateError(f"migration schema version mismatch for {migration_id}")
 
     applied_ids = set(applied)
     first_pending_index = next(
-        (
-            index
-            for index, migration in enumerate(_MIGRATIONS)
-            if migration.migration_id not in applied_ids
-        ),
+        (index for index, migration in enumerate(_MIGRATIONS) if migration.migration_id not in applied_ids),
         len(_MIGRATIONS),
     )
     out_of_order = [
@@ -6502,12 +6389,9 @@ def _validate_applied_migrations(
     ]
     if out_of_order:
         raise MigrationStateError(
-            "migration ledger is not a contiguous prefix; applied after a gap: "
-            + ", ".join(out_of_order)
+            "migration ledger is not a contiguous prefix; applied after a gap: " + ", ".join(out_of_order)
         )
-    return tuple(
-        migration for migration in _MIGRATIONS if migration.migration_id not in applied
-    )
+    return tuple(migration for migration in _MIGRATIONS if migration.migration_id not in applied)
 
 
 def migration_status() -> dict:
@@ -6603,9 +6487,7 @@ def _apply_production_migrations(
                 MigrationProgressEvent(
                     phase="started",
                     migration_id=migration.migration_id,
-                    description=_MIGRATION_DESCRIPTIONS.get(
-                        migration.migration_id, "versioned database upgrade"
-                    ),
+                    description=_MIGRATION_DESCRIPTIONS.get(migration.migration_id, "versioned database upgrade"),
                     step_index=index,
                     step_count=len(pending),
                     estimated_remaining_sec=estimated_remaining,
@@ -6617,9 +6499,7 @@ def _apply_production_migrations(
             duration_ms = (time.perf_counter() - started) * 1000.0
             _record_migration_applied(db, migration, duration_ms=duration_ms)
             future_estimates = [
-                estimates[item.migration_id]
-                for item in pending[index:]
-                if estimates[item.migration_id] is not None
+                estimates[item.migration_id] for item in pending[index:] if estimates[item.migration_id] is not None
             ]
             future_remaining = (
                 (
@@ -6634,9 +6514,7 @@ def _apply_production_migrations(
                 MigrationProgressEvent(
                     phase="completed",
                     migration_id=migration.migration_id,
-                    description=_MIGRATION_DESCRIPTIONS.get(
-                        migration.migration_id, "versioned database upgrade"
-                    ),
+                    description=_MIGRATION_DESCRIPTIONS.get(migration.migration_id, "versioned database upgrade"),
                     step_index=index,
                     step_count=len(pending),
                     duration_sec=duration_ms / 1000.0,
@@ -6661,6 +6539,7 @@ _blueprint: "sqlite3.Connection | None" = None
 
 def _is_pytest() -> bool:
     import os
+
     return "PYTEST_CURRENT_TEST" in os.environ
 
 
@@ -6684,9 +6563,7 @@ def _apply_pytest_migrations() -> bool:
     # Only use backup when the destination is empty (no tables yet).
     # Tests that pre-populate data before calling run_migrations() (e.g. migration
     # backfill tests) must go through normal DDL so their existing rows are preserved.
-    table_count = db.execute(
-        "SELECT count(*) FROM sqlite_master WHERE type='table'"
-    ).fetchone()[0]
+    table_count = db.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
     if table_count == 0:
         try:
             _blueprint.backup(db)

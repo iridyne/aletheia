@@ -17,7 +17,17 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     try:
         from aletheia.storage.sqlite import get_db
 
-        rows = get_db().execute(
+        plan_rows = get_db().execute(
+            "SELECT pg.last_candidate_id, ep.id, ep.status, ep.execution_mode, "
+            "ep.created_at, ep.updated_at FROM candidate_planning_generations pg "
+            "JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+            f"WHERE pg.is_current=1 AND pg.last_candidate_id IN ({placeholders})",
+            tuple(member_ids),
+        ).fetchall()
+        plans_by_candidate = {str(row["last_candidate_id"]): dict(row) for row in plan_rows}
+        # Backward-compatible wire fields only. New product surfaces consume the
+        # Entry Plan projection above; historical setup storage remains readable.
+        legacy_rows = get_db().execute(
             "SELECT us.member_id, us.state, us.opportunity_id "
             "FROM universe_setups us "
             "JOIN ("
@@ -28,13 +38,19 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
             "AND latest.latest_created_at=datetime(us.created_at)",
             tuple(member_ids),
         ).fetchall()
-        by_member = {str(row["member_id"]): dict(row) for row in rows}
+        legacy_by_member = {str(row["member_id"]): dict(row) for row in legacy_rows}
     except Exception:
-        by_member = {}
+        plans_by_candidate = {}
+        legacy_by_member = {}
     enriched = []
     for member in members:
         item = dict(member)
-        setup = by_member.get(str(item.get("id") or ""))
+        candidate_id = str(item.get("id") or "")
+        plan = plans_by_candidate.get(candidate_id)
+        item["entry_plan_id"] = plan.get("id") if plan else None
+        item["entry_plan_status"] = plan.get("status") if plan else None
+        item["entry_plan_execution_mode"] = plan.get("execution_mode") if plan else None
+        setup = legacy_by_member.get(candidate_id)
         item["setup_state"] = setup.get("state") if setup else None
         item["triggered_opportunity_id"] = setup.get("opportunity_id") if setup else None
         enriched.append(item)
@@ -91,14 +107,20 @@ def get_snapshot(snapshot_id: str):
 
 @router.get("/members/{member_id}")
 def get_member(member_id: str):
-    """Get a single Candidate with explanation, features, and triggered Opportunities."""
+    """Get a Candidate with its current Entry Plan and compatibility history."""
     member = repo.get_universe_member(member_id)
     if not member:
         raise HTTPException(404, "Member not found")
     features = repo.get_latest_feature_snapshot(member["asset_id"])
     opportunities = repo.list_opportunities_by_member(member_id, limit=5)
     [member] = _attach_candidate_handoff_state([member])
-    return {"member": member, "features": features, "opportunities": opportunities}
+    entry_plan = repo.get_entry_plan(member["entry_plan_id"]) if member.get("entry_plan_id") else None
+    return {
+        "member": member,
+        "features": features,
+        "entry_plans": [entry_plan] if entry_plan else [],
+        "opportunities": opportunities,  # Backward-compatible historical read model.
+    }
 
 
 @router.post("/refresh")

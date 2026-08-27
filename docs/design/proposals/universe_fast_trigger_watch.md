@@ -1,6 +1,6 @@
 ---
 id: universe-fast-trigger-watch
-status: implemented
+status: superseded
 related_contracts:
   - ../contracts/decision_lifecycle_contract.md
   - ../contracts/execution_contract.md
@@ -11,11 +11,9 @@ supersedes: []
 
 # Universe Fast Trigger Watch
 
-> Proposal status: implemented in this worktree, not a deployment or
-> economic-qualification claim.
-> #2207 is the canonical production lifecycle authority. This document remains
-> the momentum-specific fast watcher design; it is not the V1 all-family
-> EntryEligibility contract.
+> Superseded by [Entry Plan Contract](entry-plan-contract.md) under #2288. This
+> document is retained only as historical design evidence for the compatibility
+> adapter; its Setup/authorization/Opportunity flow is not an active owner.
 
 Repository implementation includes Opportunity Generation V2, terminal entry
 validity evidence, and observation-only market-structure assessments. Exact-commit
