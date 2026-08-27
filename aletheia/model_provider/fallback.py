@@ -146,25 +146,31 @@ def _parse_fallback_entry(entry: str, default_provider: str) -> tuple[str, str |
 def _state(provider_name: str, model: str) -> ModelHealthState:
     key = (provider_name, model)
     with _MODEL_HEALTH_LOCK:
-        state = _MODEL_HEALTH.get(key)
-        if state is None:
-            state = ModelHealthState(provider=provider_name, model=model)
-            _MODEL_HEALTH[key] = state
-        return state
+        return _state_locked(provider_name, model)
+
+
+def _state_locked(provider_name: str, model: str) -> ModelHealthState:
+    state = _MODEL_HEALTH.get((provider_name, model))
+    if state is None:
+        state = ModelHealthState(provider=provider_name, model=model)
+        _MODEL_HEALTH[(provider_name, model)] = state
+    return state
 
 
 def _is_in_cooldown(provider_name: str, model: str) -> bool:
-    state = _MODEL_HEALTH.get((provider_name, model))
-    return bool(state and state.cooling_down)
+    with _MODEL_HEALTH_LOCK:
+        state = _MODEL_HEALTH.get((provider_name, model))
+        return bool(state and state.cooling_down)
 
 
 def _record_model_success(provider_name: str, model: str) -> None:
-    state = _state(provider_name, model)
-    was_cooling = state.cooling_down
-    state.consecutive_failures = 0
-    state.cooldown_until = 0
-    state.last_error = None
-    state.last_success_at = time.time()
+    with _MODEL_HEALTH_LOCK:
+        state = _state_locked(provider_name, model)
+        was_cooling = state.cooling_down
+        state.consecutive_failures = 0
+        state.cooldown_until = 0
+        state.last_error = None
+        state.last_success_at = time.time()
     if was_cooling:
         emit_infra_event(
             severity="info",
@@ -178,12 +184,24 @@ def _record_model_success(provider_name: str, model: str) -> None:
 
 
 def _record_model_failure(provider_name: str, model: str, exc: BaseException) -> None:
-    state = _state(provider_name, model)
-    state.consecutive_failures += 1
-    state.last_error = str(exc)[:300]
-    state.last_failure_at = time.time()
-    if state.consecutive_failures >= _COOLDOWN_FAILURE_THRESHOLD:
-        state.cooldown_until = time.time() + _COOLDOWN_SEC
+    cooldown_event: dict[str, Any] | None = None
+    with _MODEL_HEALTH_LOCK:
+        state = _state_locked(provider_name, model)
+        now = time.time()
+        was_cooling = state.cooldown_until > now
+        state.consecutive_failures += 1
+        state.last_error = str(exc)[:300]
+        state.last_failure_at = now
+        if state.consecutive_failures >= _COOLDOWN_FAILURE_THRESHOLD:
+            state.cooldown_until = now + _COOLDOWN_SEC
+            if not was_cooling:
+                cooldown_event = {
+                    "provider": provider_name,
+                    "model": model,
+                    "consecutive_failures": state.consecutive_failures,
+                    "cooldown_sec": _COOLDOWN_SEC,
+                }
+    if cooldown_event is not None:
         emit_infra_event(
             severity="warning",
             source="llm",
@@ -191,29 +209,23 @@ def _record_model_failure(provider_name: str, model: str, exc: BaseException) ->
             entity_id=f"{provider_name}/{model}",
             message=f"LLM model temporarily cooling down after transient failures: {provider_name}/{model}",
             action="using_fallback_model",
-            metadata={
-                "provider": provider_name,
-                "model": model,
-                "consecutive_failures": state.consecutive_failures,
-                "cooldown_sec": _COOLDOWN_SEC,
-            },
+            metadata=cooldown_event,
             dedupe_sec=60,
         )
 
 
 def get_model_health_snapshot() -> list[dict[str, Any]]:
     """Return sanitized in-process LLM model health for status surfaces."""
-    now = time.time()
-    snapshot = []
-    # Snapshot the values under lock so a concurrent _state() insert can't mutate
-    # the dict mid-iteration (CC-1).
     with _MODEL_HEALTH_LOCK:
-        states = list(_MODEL_HEALTH.values())
-    for state in states:
-        item = asdict(state)
-        item["cooling_down"] = state.cooldown_until > now
-        item["cooldown_remaining_sec"] = max(0, round(state.cooldown_until - now, 1))
-        snapshot.append(item)
+        now = time.time()
+        snapshot = []
+        for state in _MODEL_HEALTH.values():
+            item = asdict(state)
+            item["cooling_down"] = state.cooldown_until > now
+            item["cooldown_remaining_sec"] = max(
+                0, round(state.cooldown_until - now, 1)
+            )
+            snapshot.append(item)
     return sorted(snapshot, key=lambda x: (x["provider"], x["model"]))
 
 

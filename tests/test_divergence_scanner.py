@@ -190,7 +190,9 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
     opp = opps[0]
     assert opp["symbol"] == "BTC/USDT"
     assert opp["asset_class"] == "crypto"
-    assert opp["execution_eligible"] == 1
+    # Divergence is retained as a Candidate until a family-specific trigger can
+    # freeze entry, invalidation, and same-venue cost facts.
+    assert opp["execution_eligible"] == 0
     assert opp["direction_bias"] == "long"
     assert opp["market"] == "spot"
     assert datetime.fromisoformat(opp["valid_until"]) == (

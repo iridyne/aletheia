@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-09 · 维护者:Aletheia Dev
+> Last updated: 2026-08-26 · 维护者:Aletheia Dev
 
 ---
 
@@ -38,6 +38,18 @@ open Position，并必须匹配 Position 的 proposal/instrument/execution mode/
 durable close client identity。入场 RiskDecision 不能被复制到平仓单上冒充退出授权。
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
+
+Momentum Fast Trigger 是 Proposal 的新增上游，不是执行旁路。它必须先持久化精确 Setup 授权、
+同 venue T0 快照、唯一 Opportunity 和 immutable Proposal，再在事务外调用
+`execute_existing_proposal()`；RiskDecision、broker dispatch、Order/Fill/Position 因果链及
+`submission_unknown` 禁止重发语义完全沿用本契约。默认 `shadow` 不调用 Gateway；`paper_internal`
+的 `execute` 只走本地 paper broker，exchange-backed `execute` 首版只允许 `bitget_demo`，任何
+Live mode 必须在 Gateway 之前拒绝。
+
+V2 Fast Trigger 在 Gateway 调用前必须再次读取内存中的最新 same-venue snapshot。entry zone
+越界或 structural invalidation 先到者写入 append-only hard assessment，并原子把 Setup/Opportunity
+终结为 `invalidated`、拒绝 pending Proposal；Risk 和 broker 调用数必须为零。T0 generation
+不可因这次状态变化而重价或改写。
 
 ---
 
