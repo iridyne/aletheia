@@ -15,6 +15,7 @@ def has_fresh_market_snapshot(
     symbol: str,
     market_type: str | None,
     *,
+    exchange: str | None = None,
     max_age_hours: int = 2,
     now: datetime | None = None,
 ) -> bool:
@@ -24,10 +25,12 @@ def has_fresh_market_snapshot(
     establish that a perpetual contract is executable, or vice versa.
     """
     storage_market_type = _snapshot_market_type(market_type)
-    if not symbol or not storage_market_type:
+    venue = str(exchange or "").strip()
+    if not symbol or not storage_market_type or not venue:
         return False
     snapshots = list_market_snapshots(
         symbol=symbol,
+        exchange=venue,
         market_type=storage_market_type,
         limit=1,
     )

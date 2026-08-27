@@ -90,7 +90,9 @@ def test_get_current_uses_service_snapshot_namespace_with_mixed_config(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["snapshot"] == snap
-    assert data["members"] == members
+    assert data["members"] == [
+        {**members[0], "setup_state": None, "triggered_opportunity_id": None}
+    ]
     assert data["fallback"] is False
     get_snapshot.assert_called_once_with()
 
@@ -158,6 +160,7 @@ def test_get_member_found(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["member"]["symbol"] == "BTC/USDT"
+    assert body["member"]["setup_state"] is None
     assert body["features"]["rsi_14"] == 55.0
     assert len(body["opportunities"]) == 1
 

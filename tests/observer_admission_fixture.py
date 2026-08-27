@@ -1,12 +1,17 @@
 """Minimal deterministic admission fixture for Market Observer tests."""
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from aletheia.analytics.filter_evidence import record_filter_decision
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import InstrumentId, instrument_analysis_context
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Opportunity
+from aletheia.storage.models import (
+    Opportunity,
+    OpportunityGenerationV2,
+    OpportunityInstrumentIdentity,
+)
 from aletheia.trading.instruments import instrument_market_to_db_market
 
 
@@ -76,7 +81,11 @@ def admit_observer_instrument(
             },
         }),
     )
-    repo.insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue="fixture",
+        market_type=market_type,
+    )
     record_filter_decision(
         candidate_key=f"universe_member:{member_id}",
         candidate_kind="universe_member",
@@ -109,3 +118,59 @@ def admit_observer_instrument(
         lambda _cfg: ([instrument], {str(instrument): member}, snapshot_id, []),
     )
     return opportunity
+
+
+def insert_universe_opportunity_generation(
+    opportunity: Opportunity,
+    *,
+    venue: str = "fixture",
+    market_type: str = "spot",
+    signal_mark: float = 100.0,
+) -> Opportunity:
+    detected_at = datetime.now(timezone.utc)
+    valid_until = (detected_at + timedelta(hours=1)).isoformat()
+    stored = opportunity.model_copy(
+        update={
+            "valid_until": opportunity.valid_until or valid_until,
+            "entry_zone": json.dumps(
+                [signal_mark, signal_mark],
+                separators=(",", ":"),
+            ),
+            "signal_mark": str(signal_mark),
+            "scanner_family": opportunity.scanner_family or "momentum",
+            "setup_id": opportunity.setup_id or f"test-setup-{opportunity.id}",
+        }
+    )
+    generation = OpportunityGenerationV2(
+        instrument_identity=OpportunityInstrumentIdentity(
+            venue=venue,
+            symbol=stored.symbol,
+            market_type=market_type,
+        ),
+        family=stored.scanner_family or "momentum",
+        archetype="continuation",
+        direction=(
+            stored.direction_bias
+            if stored.direction_bias in {"long", "short"}
+            else "long"
+        ),
+        detected_at=detected_at.isoformat(),
+        signal_mark=signal_mark,
+        motive_evidence={"source": "test_fixture"},
+        entry_trigger={"type": "test_fixture"},
+        entry_zone=(signal_mark, signal_mark),
+        invalidation={"type": "test_fixture"},
+        horizon_hours=4.0,
+        cost_snapshot={
+            "cost_model_version": "test-fixture",
+            "spread_bps": 1.0,
+            "estimated_slippage_bps": 1.0,
+            "funding": {"status": "not_applicable"},
+            "depth_10bps_usd": 1_000_000.0,
+            "target_notional_usd": None,
+            "capacity_ratio": None,
+        },
+        material_fingerprint="a" * 64,
+        valid_until=stored.valid_until or valid_until,
+    )
+    return repo.insert_opportunity_generation(stored, generation)

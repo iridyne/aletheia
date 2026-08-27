@@ -1,6 +1,7 @@
 """Regression tests for venue + market scoped OHLCV storage."""
 
 import sqlite3
+from datetime import datetime, timezone
 
 from aletheia.data.providers import Candle
 
@@ -82,3 +83,76 @@ def test_legacy_ohlcv_migration_marks_ambiguous_venue_honestly(tmp_path, monkeyp
     assert "market_type" in columns
     assert pk == ["exchange", "symbol", "market_type", "timeframe", "ts"]
     assert dict(row) == {"exchange": "legacy_unknown", "market_type": "spot"}
+
+
+def test_identical_ohlcv_refetch_preserves_mutation_provenance(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    class _Clock(datetime):
+        current = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current if tz else cls.current.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo, "datetime", _Clock)
+
+    repo.upsert_ohlcv_candles(
+        "BTC/USDT", "1h", [_candle()], exchange="binance", market_type="spot"
+    )
+    original = repo.get_db().execute(
+        "SELECT first_persisted_at, last_mutated_at, close, provider "
+        "FROM market_ohlcv WHERE exchange='binance' AND symbol='BTC/USDT' "
+        "AND market_type='spot' AND timeframe='1h' AND ts=1000"
+    ).fetchone()
+
+    _Clock.current = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    repo.upsert_ohlcv_candles(
+        "BTC/USDT", "1h", [_candle()], exchange="binance", market_type="spot"
+    )
+    identical = repo.get_db().execute(
+        "SELECT first_persisted_at, last_mutated_at, close, provider "
+        "FROM market_ohlcv WHERE exchange='binance' AND symbol='BTC/USDT' "
+        "AND market_type='spot' AND timeframe='1h' AND ts=1000"
+    ).fetchone()
+
+    assert identical["first_persisted_at"] == original["first_persisted_at"]
+    assert identical["last_mutated_at"] == original["last_mutated_at"]
+
+    _Clock.current = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    repo.upsert_ohlcv_candles(
+        "BTC/USDT",
+        "1h",
+        [Candle(timestamp=1000, open=1.0, high=2.0, low=0.5, close=1.6, volume=10.0)],
+        exchange="binance",
+        market_type="spot",
+    )
+    changed_price = repo.get_db().execute(
+        "SELECT first_persisted_at, last_mutated_at, close, provider "
+        "FROM market_ohlcv WHERE exchange='binance' AND symbol='BTC/USDT' "
+        "AND market_type='spot' AND timeframe='1h' AND ts=1000"
+    ).fetchone()
+
+    assert changed_price["first_persisted_at"] == original["first_persisted_at"]
+    assert changed_price["last_mutated_at"] == _Clock.current.isoformat()
+    assert changed_price["close"] == 1.6
+
+    _Clock.current = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    repo.upsert_ohlcv_candles(
+        "BTC/USDT",
+        "1h",
+        [Candle(timestamp=1000, open=1.0, high=2.0, low=0.5, close=1.6, volume=10.0)],
+        provider="rest-refetch",
+        exchange="binance",
+        market_type="spot",
+    )
+    changed_provider = repo.get_db().execute(
+        "SELECT first_persisted_at, last_mutated_at, close, provider "
+        "FROM market_ohlcv WHERE exchange='binance' AND symbol='BTC/USDT' "
+        "AND market_type='spot' AND timeframe='1h' AND ts=1000"
+    ).fetchone()
+
+    assert changed_provider["first_persisted_at"] == original["first_persisted_at"]
+    assert changed_provider["last_mutated_at"] == _Clock.current.isoformat()
+    assert changed_provider["provider"] == "rest-refetch"
