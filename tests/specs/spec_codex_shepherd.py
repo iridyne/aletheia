@@ -67,7 +67,15 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    assert "concurrency" not in workflow
+    assert job["concurrency"] == {
+        "group": (
+            "codex-shepherd-reconcile-${{ github.event.pull_request.number || "
+            "github.event.issue.number || github.event.workflow_run.pull_requests[0].number || "
+            "github.run_id }}"
+        ),
+        "cancel-in-progress": "true",
+    }
 
     step = job["steps"][0]
     assert step["uses"].startswith("actions/github-script@")
@@ -79,6 +87,10 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert "actions: write" not in str(job)
 
     recovery = workflow["jobs"]["metadata-ci-recovery"]
+    assert recovery["concurrency"] == {
+        "group": "codex-shepherd-metadata-recovery-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
+    }
     assert recovery["permissions"] == {
         "actions": "write",
         "checks": "read",

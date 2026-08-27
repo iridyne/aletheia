@@ -266,7 +266,8 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     """#2167 Phase 1/addendum A: metadata has its own same-head status boundary."""
     gate = _change_contract_workflow()
     triggers = gate["on"]
-    ci_triggers = _workflow()["on"]
+    workflow = _workflow()
+    ci_triggers = workflow["on"]
 
     assert triggers == {
         "pull_request": {
@@ -279,6 +280,13 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert ci_triggers["pull_request"] == {"branches": ["master"]}
 
     assert gate["permissions"] == {"contents": "read"}
+    assert gate["env"] == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.connectTimeout",
+        "GIT_CONFIG_VALUE_0": "30",
+        "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+        "GIT_HTTP_LOW_SPEED_TIME": "30",
+    }
     assert gate["concurrency"] == {
         "group": "change-contract-${{ github.event.pull_request.number }}",
         "cancel-in-progress": "true",
@@ -300,7 +308,14 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert "preflight_metadata" in commands
     assert "upload-artifact" not in CHANGE_CONTRACT_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    workflow_jobs = _workflow()["jobs"]
+    workflow_jobs = workflow["jobs"]
+    assert workflow["env"] == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.connectTimeout",
+        "GIT_CONFIG_VALUE_0": "30",
+        "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+        "GIT_HTTP_LOW_SPEED_TIME": "30",
+    }
     deep_preflight = workflow_jobs["change-contract-preflight"]
     assert deep_preflight["runs-on"] == SELF_HOSTED
     assert deep_preflight["timeout-minutes"] == "5"
@@ -311,6 +326,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
         "contents": "read",
         "pull-requests": "read",
     }
+    assert deep_preflight["steps"][0]["with"] == {"fetch-depth": "2"}
     assert deep_preflight["steps"][2]["name"] == "Read current exact-head PR body"
     assert "github.rest.pulls.get" in deep_preflight["steps"][2]["with"]["script"]
     assert "pullRequest.head.sha !== context.payload.pull_request.head.sha" in (
@@ -328,6 +344,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
 
 def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata_repairs() -> None:
     shepherd = _shepherd_workflow()
+    assert "concurrency" not in shepherd
     assert shepherd["on"]["workflow_run"] == {
         "workflows": ["Aletheia CI", "Aletheia Change Contract gate"],
         "types": ["completed"],
@@ -356,6 +373,10 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "createComment" not in metadata_branch  # uses the existing postComment helper
 
     recovery = shepherd["jobs"]["metadata-ci-recovery"]
+    assert recovery["concurrency"] == {
+        "group": "codex-shepherd-metadata-recovery-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
+    }
     assert recovery["permissions"] == {
         "actions": "write",
         "checks": "read",
@@ -375,6 +396,16 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "createWorkflowDispatch" not in recovery_script
     assert "metadata recovery job owns any required same-head CI rerun" in metadata_branch
     assert script.count("failure.category === 'preflight_metadata'") == 2
+
+    reconciliation = shepherd["jobs"]["shepherd"]
+    assert reconciliation["concurrency"] == {
+        "group": (
+            "codex-shepherd-reconcile-${{ github.event.pull_request.number || "
+            "github.event.issue.number || github.event.workflow_run.pull_requests[0].number || "
+            "github.run_id }}"
+        ),
+        "cancel-in-progress": "true",
+    }
 
 
 def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:
@@ -537,7 +568,15 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     }
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["refresh"]
-    assert job["if"] == "github.event.workflow_run.conclusion == 'success'"
+    assert job["if"] == (
+        "github.event.workflow_run.conclusion == 'success' && "
+        "github.event.workflow_run.event == 'repository_dispatch'"
+    )
+    assert workflow["concurrency"] == {
+        "group": "refresh-release-candidate-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
+    }
+    assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
         "actions": "read",
         "contents": "write",
@@ -567,7 +606,8 @@ def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
 
     assert "version=8.24.3" in commands
     assert "gitleaks_${version}_linux_x64.tar.gz" in commands
-    assert "--retry 3 --retry-delay 2" in commands
+    assert "--connect-timeout 15 --max-time 60" in commands
+    assert "--retry 3 --retry-delay 2 --retry-max-time 180" in commands
     assert "--retry-all-errors" not in commands
     assert "sha256sum --check" in commands
     assert "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c" in commands
@@ -750,6 +790,9 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
     assert schedule["runs-on"] == "ubuntu-24.04" or schedule["runs-on"] == SELF_HOSTED
+    assert schedule["timeout-minutes"] == "5"
+    assert schedule["concurrency"]["cancel-in-progress"] == "true"
+    assert "auto-merge-schedule-" in schedule["concurrency"]["group"]
     schedule_guard = schedule["if"]
     assert "event_name == 'pull_request_target'" in schedule_guard
     assert "action != 'closed'" in schedule_guard
@@ -775,6 +818,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "[filename, previous_filename].includes('.github/workflows/auto-merge.yml')" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
+    assert release_candidate["timeout-minutes"] == "10"
     assert release_candidate["permissions"] == {
         "contents": "write",
         "issues": "write",

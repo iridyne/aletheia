@@ -8,11 +8,21 @@ on:
 permissions:
   contents: read
 
+# Each successful repository-dispatch merge is a unique edge event. Keep its
+# callback observable; an unrelated auto-merge completion must not cancel it
+# before the job-level event filter runs.
+concurrency:
+  group: refresh-release-candidate-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   refresh:
     name: Refresh an active release candidate
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'repository_dispatch'
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: write
