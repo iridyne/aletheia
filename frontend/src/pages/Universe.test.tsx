@@ -20,6 +20,7 @@ const current: UniverseCurrentResponse = {
     estimated_cost: 2.1, crowding_risk: 11, late_entry_penalty: 3, scanner_family: 'momentum',
     quote_volume_24h: 18_400_000, spread_bps: 4.2, ttl_sec: 3600, expires_at: '2026-08-13T01:00:00Z',
     inclusion_reason: JSON.stringify(['RS24h leads BTC']), risk_flags: '[]', execution_eligible: 1,
+    setup_state: null, triggered_opportunity_id: null,
   }],
 }
 
@@ -33,13 +34,13 @@ function renderUniverse() {
 describe('Universe Board', () => {
   it('prioritizes pool health, allocation, and actionable candidate context', () => {
     const html = renderUniverse()
-    expect(html).toContain('Executable')
+    expect(html).toContain('Candidate')
     expect(html).toContain('Scanned')
     expect(html).toContain('Allocation')
     expect(html).toContain('Why in pool')
     expect(html).toContain('RS24h leads BTC')
     expect(html).toContain('Market quality')
-    expect(html).toContain('Decision state')
+    expect(html).toContain('Candidate state')
     expect(html).not.toContain('Net Scanner Calibration')
   })
 })

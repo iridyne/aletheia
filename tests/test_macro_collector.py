@@ -140,6 +140,66 @@ def test_macro_collect_with_fng_disabled(monkeypatch):
     assert called["flag"] is False, "_fetch_fng must NOT be called when disabled"
 
 
+def test_macro_collect_zero_usable_inputs_returns_no_snapshot(monkeypatch):
+    async def _empty_coingecko():
+        return (None, None, None)
+
+    async def _empty_fng():
+        return (None, None)
+
+    monkeypatch.setattr(macro_mod, "_fetch_coingecko", _empty_coingecko)
+    monkeypatch.setattr(macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    monkeypatch.setattr(macro_mod, "_fetch_fng", _empty_fng)
+
+    class _FakeMarketData:
+        enable_fear_greed = True
+
+    class _FakeCfg:
+        market_data = _FakeMarketData()
+
+    import aletheia.config.loader as loader_mod
+    monkeypatch.setattr(loader_mod, "load_config", lambda: _FakeCfg())
+
+    result = asyncio.run(MacroCollector().collect([]))
+
+    assert result["snapshot"] is None
+    assert "macro:no_usable_inputs" in result["errors"]
+    assert "coingecko:empty" in result["errors"]
+    assert "fng:empty" in result["errors"]
+    assert "yfinance:empty" in result["errors"]
+
+
+def test_macro_collect_fng_only_does_not_emit_neutral_regime(monkeypatch):
+    async def _empty_coingecko():
+        return (None, None, None)
+
+    async def _valid_fng():
+        return (15, "Extreme Fear")
+
+    monkeypatch.setattr(macro_mod, "_fetch_coingecko", _empty_coingecko)
+    monkeypatch.setattr(macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    monkeypatch.setattr(macro_mod, "_fetch_fng", _valid_fng)
+
+    class _FakeMarketData:
+        enable_fear_greed = True
+
+    class _FakeCfg:
+        market_data = _FakeMarketData()
+
+    import aletheia.config.loader as loader_mod
+    monkeypatch.setattr(loader_mod, "load_config", lambda: _FakeCfg())
+
+    result = asyncio.run(MacroCollector().collect([]))
+    snapshot = result["snapshot"]
+
+    assert snapshot is not None
+    assert snapshot.fng_value == 15
+    assert snapshot.fng_classification == "Extreme Fear"
+    assert snapshot.risk_regime == "unavailable"
+
+
 # ---------------------------------------------------------------------------
 # 5. MS-C02 invariant: F&G failure does not regress other fields
 # ---------------------------------------------------------------------------

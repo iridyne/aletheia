@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -53,6 +54,10 @@ _AGG_SUFFIX = "_PERP.A"
 # How far back to fetch liquidation history per collection tick.
 _LIQUIDATION_WINDOW_HOURS = 4
 _OI_DELTA_SANITY_PCT = 300.0
+_OI_BATCH_SIZE = 20
+_LIQUIDATION_BATCH_SIZE = 10
+_LIQUIDATION_CURSORS: dict[tuple[str, ...], int] = {}
+_LIQUIDATION_CURSOR_LOCK = threading.Lock()
 
 
 class CoinalyzeCollector:
@@ -87,23 +92,50 @@ class CoinalyzeCollector:
         liq_list: list[LiquidationEvent] = []
         errors: list[str] = []
 
-        coinalyze_syms = [_to_coinalyze_symbol(s) for s in symbols if s]
+        pairs = _symbol_pairs(symbols)
+        canonical_symbols = [canonical for canonical, _ in pairs]
+        coinalyze_syms = [coinalyze for _, coinalyze in pairs]
+        coverage = {
+            "open_interest": _coverage(canonical_symbols),
+            "liquidations": _coverage(canonical_symbols),
+        }
 
         # --- Open Interest ---
         try:
-            oi_list = await _fetch_open_interest(api_key, symbols, coinalyze_syms)
+            oi_list = await _fetch_open_interest(
+                api_key,
+                canonical_symbols,
+                coinalyze_syms,
+                coverage=coverage["open_interest"],
+            )
         except Exception as e:
             errors.append(f"oi: {e}")
             logger.warning("coinalyze OI fetch failed: %s", e)
 
         # --- Liquidations ---
         try:
-            liq_list = await _fetch_liquidations(api_key, symbols, coinalyze_syms)
+            liq_list = await _fetch_liquidations(
+                api_key,
+                canonical_symbols,
+                coinalyze_syms,
+                coverage=coverage["liquidations"],
+            )
         except Exception as e:
             errors.append(f"liquidations: {e}")
             logger.warning("coinalyze liquidation fetch failed: %s", e)
 
-        return {"open_interest": oi_list, "liquidations": liq_list, "errors": errors}
+        for family, state in coverage.items():
+            if state["deferred"]:
+                errors.append(f"{family}_deferred")
+            if state["rejected"]:
+                errors.append(f"{family}_rejected")
+
+        return {
+            "open_interest": oi_list,
+            "liquidations": liq_list,
+            "coverage": coverage,
+            "errors": list(dict.fromkeys(errors)),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -132,84 +164,145 @@ def _to_coinalyze_symbol(canonical: str) -> str:
     return canonical.replace("/", "") + _AGG_SUFFIX
 
 
+def _symbol_pairs(symbols: list[str]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw in symbols:
+        canonical = str(raw or "").strip().upper()
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        pairs.append((canonical, _to_coinalyze_symbol(canonical)))
+    return pairs
+
+
+def _coverage(symbols: list[str]) -> dict[str, list[str]]:
+    return {
+        "requested": list(symbols),
+        "attempted": [],
+        "accepted": [],
+        "rejected": [],
+        "deferred": [],
+        "observed_empty": [],
+    }
+
+
+def _liquidation_attempt_pairs(
+    pairs: list[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    if len(pairs) <= _LIQUIDATION_BATCH_SIZE:
+        return pairs, []
+    key = tuple(canonical for canonical, _ in pairs)
+    with _LIQUIDATION_CURSOR_LOCK:
+        start = _LIQUIDATION_CURSORS.get(key, 0) % len(pairs)
+        attempted = [
+            pairs[(start + offset) % len(pairs)]
+            for offset in range(_LIQUIDATION_BATCH_SIZE)
+        ]
+        _LIQUIDATION_CURSORS[key] = (start + len(attempted)) % len(pairs)
+    attempted_set = {canonical for canonical, _ in attempted}
+    deferred = [pair for pair in pairs if pair[0] not in attempted_set]
+    return attempted, deferred
+
+
 async def _fetch_open_interest(
-    api_key: str, symbols: list[str], coinalyze_syms: list[str],
+    api_key: str,
+    symbols: list[str],
+    coinalyze_syms: list[str],
+    *,
+    coverage: dict[str, list[str]] | None = None,
 ) -> list[OpenInterestSnapshot]:
     """Fetch current aggregated OI from Coinalyze /v1/open-interest."""
     results: list[OpenInterestSnapshot] = []
-    syms_param = ",".join(coinalyze_syms[:20])  # cap to stay within rate limits
 
     async with httpx_client(timeout=15) as client:
-        resp = await client.get(
-            f"{_BASE_URL}/open-interest",
-            params={"symbols": syms_param, "api_key": api_key},
-        )
-        if resp.status_code != 200:
-            logger.warning("coinalyze OI non-200: %s %s", resp.status_code, resp.text[:200])
-            return results
-
-        data = resp.json()
-        if not isinstance(data, list):
-            logger.warning("coinalyze OI unexpected response shape: %r", type(data))
-            return results
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        sym_map = dict(zip(coinalyze_syms[:20], symbols[:20]))
-
-        for item in data:
-            coinalyze_sym = item.get("symbol", "")
-            canonical = sym_map.get(coinalyze_sym)
-            if not canonical:
+        for start in range(0, len(coinalyze_syms), _OI_BATCH_SIZE):
+            batch_syms = coinalyze_syms[start:start + _OI_BATCH_SIZE]
+            batch_symbols = symbols[start:start + _OI_BATCH_SIZE]
+            if not batch_syms:
+                continue
+            if coverage is not None:
+                coverage["attempted"].extend(batch_symbols)
+            resp = await client.get(
+                f"{_BASE_URL}/open-interest",
+                params={"symbols": ",".join(batch_syms), "api_key": api_key},
+            )
+            if resp.status_code != 200:
+                logger.warning("coinalyze OI non-200: %s %s", resp.status_code, resp.text[:200])
+                if coverage is not None:
+                    coverage["rejected"].extend(batch_symbols)
                 continue
 
-            raw_oi_usd = item.get("open_interest_usd")
-            if raw_oi_usd is None:
-                raw_oi_usd = item.get("openInterestUsd")
-            if raw_oi_usd is None:
-                continue
-            try:
-                oi_usd = float(raw_oi_usd)
-            except (TypeError, ValueError):
-                continue
-            if not math.isfinite(oi_usd) or oi_usd <= 0:
+            data = resp.json()
+            if not isinstance(data, list):
+                logger.warning("coinalyze OI unexpected response shape: %r", type(data))
+                if coverage is not None:
+                    coverage["rejected"].extend(batch_symbols)
                 continue
 
-            # Compute 1h change against a same-source 45-75 minute baseline.
-            # Must pass exchange="coinalyze" so the lookup stays within Coinalyze
-            # rows; without it _latest_deriv_where(None) excludes cross-venue tags
-            # and returns the primary-exchange row, mixing heterogeneous OI pools.
-            oi_change_1h_pct: float | None = None
-            try:
-                from aletheia.storage.repositories import open_interest_near
-                prev = open_interest_near(
-                    canonical,
-                    "coinalyze",
-                    reference_at=now_iso,
-                )
-                if prev and prev.get("open_interest_usd") is not None:
-                    prev_oi = float(prev["open_interest_usd"])
-                    if math.isfinite(prev_oi) and prev_oi > 0:
-                        delta = round((oi_usd - prev_oi) / prev_oi * 100, 2)
-                        if math.isfinite(delta) and abs(delta) <= _OI_DELTA_SANITY_PCT:
-                            oi_change_1h_pct = delta
-            except Exception:
-                pass
+            now_iso = datetime.now(timezone.utc).isoformat()
+            sym_map = dict(zip(batch_syms, batch_symbols))
 
-            results.append(OpenInterestSnapshot(
-                symbol=canonical,
-                exchange="coinalyze",
-                open_interest_usd=oi_usd,
-                open_interest_coin=None,
-                oi_change_1h_pct=oi_change_1h_pct,
-                long_short_ratio=None,  # Coinalyze OI endpoint doesn't include LSR
-                observed_at=now_iso,
-            ))
+            for item in data:
+                coinalyze_sym = item.get("symbol", "")
+                canonical = sym_map.get(coinalyze_sym)
+                if not canonical:
+                    continue
+
+                raw_oi_usd = item.get("open_interest_usd")
+                if raw_oi_usd is None:
+                    raw_oi_usd = item.get("openInterestUsd")
+                if raw_oi_usd is None:
+                    continue
+                try:
+                    oi_usd = float(raw_oi_usd)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(oi_usd) or oi_usd <= 0:
+                    continue
+
+                # Compute 1h change against a same-source 45-75 minute baseline.
+                # Must pass exchange="coinalyze" so the lookup stays within Coinalyze
+                # rows; without it _latest_deriv_where(None) excludes cross-venue tags
+                # and returns the primary-exchange row, mixing heterogeneous OI pools.
+                oi_change_1h_pct: float | None = None
+                try:
+                    from aletheia.storage.repositories import open_interest_near
+                    prev = open_interest_near(
+                        canonical,
+                        "coinalyze",
+                        reference_at=now_iso,
+                    )
+                    if prev and prev.get("open_interest_usd") is not None:
+                        prev_oi = float(prev["open_interest_usd"])
+                        if math.isfinite(prev_oi) and prev_oi > 0:
+                            delta = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                            if math.isfinite(delta) and abs(delta) <= _OI_DELTA_SANITY_PCT:
+                                oi_change_1h_pct = delta
+                except Exception:
+                    pass
+
+                if coverage is not None:
+                    coverage["accepted"].append(canonical)
+                results.append(OpenInterestSnapshot(
+                    symbol=canonical,
+                    exchange="coinalyze",
+                    open_interest_usd=oi_usd,
+                    open_interest_coin=None,
+                    oi_change_1h_pct=oi_change_1h_pct,
+                    long_short_ratio=None,  # Coinalyze OI endpoint doesn't include LSR
+                    observed_at=now_iso,
+                ))
 
     return results
 
 
 async def _fetch_liquidations(
-    api_key: str, symbols: list[str], coinalyze_syms: list[str],
+    api_key: str,
+    symbols: list[str],
+    coinalyze_syms: list[str],
+    *,
+    coverage: dict[str, list[str]] | None = None,
 ) -> list[LiquidationEvent]:
     """Fetch recent aggregated liquidation events from Coinalyze."""
     results: list[LiquidationEvent] = []
@@ -217,10 +310,15 @@ async def _fetch_liquidations(
     since = now - timedelta(hours=_LIQUIDATION_WINDOW_HOURS)
     since_ts = int(since.timestamp())
 
-    sym_map = dict(zip(coinalyze_syms[:20], symbols[:20]))
+    attempt_pairs, deferred_pairs = _liquidation_attempt_pairs(
+        list(zip(symbols, coinalyze_syms))
+    )
+    if coverage is not None:
+        coverage["attempted"].extend(canonical for canonical, _ in attempt_pairs)
+        coverage["deferred"].extend(canonical for canonical, _ in deferred_pairs)
 
     async with httpx_client(timeout=15) as client:
-        for coinalyze_sym, canonical in list(sym_map.items())[:10]:  # cap per rate limit
+        for canonical, coinalyze_sym in attempt_pairs:
             try:
                 resp = await client.get(
                     f"{_BASE_URL}/liquidation-history",
@@ -234,12 +332,17 @@ async def _fetch_liquidations(
                     logger.debug(
                         "coinalyze liq non-200 for %s: %s", canonical, resp.status_code
                     )
+                    if coverage is not None:
+                        coverage["rejected"].append(canonical)
                     continue
 
                 data = resp.json()
                 if not isinstance(data, list):
+                    if coverage is not None:
+                        coverage["rejected"].append(canonical)
                     continue
 
+                accepted_before = len(results)
                 for item in data:
                     # Coinalyze liquidation-history items contain:
                     #   t (timestamp ms), lsl (long liq USD), ssl (short liq USD)
@@ -284,8 +387,15 @@ async def _fetch_liquidations(
                             event_time=event_time,
                             observed_at=now.isoformat(),
                         ))
+                if coverage is not None:
+                    if len(results) > accepted_before:
+                        coverage["accepted"].append(canonical)
+                    else:
+                        coverage["observed_empty"].append(canonical)
 
             except Exception as e:
                 logger.debug("coinalyze liq fetch failed for %s: %s", canonical, e)
+                if coverage is not None:
+                    coverage["rejected"].append(canonical)
 
     return results

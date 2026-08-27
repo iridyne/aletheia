@@ -168,6 +168,8 @@ function DirectionBreakdown({ data }: { data: TradeInsights['by_direction'] }) {
     win_rate: s.win_rate,
     avg_pnl_pct: s.avg_pnl_pct,
     avg_hold_hours: s.avg_hold_hours,
+    hold_time_available_count: s.hold_time_available_count,
+    hold_time_unavailable_count: s.hold_time_unavailable_count,
   }))
   return (
     <Card>
@@ -194,7 +196,10 @@ function DirectionBreakdown({ data }: { data: TradeInsights['by_direction'] }) {
             <span className="mono">{r.trade_count} trades</span>
             <span className={`mono ${r.win_rate >= 50 ? 'pos' : 'neg'}`}>{r.win_rate.toFixed(1)}% wr</span>
             <span className={`mono ${r.avg_pnl_pct >= 0 ? 'pos' : 'neg'}`}>{r.avg_pnl_pct >= 0 ? '+' : ''}{r.avg_pnl_pct.toFixed(2)}% exp</span>
-            <span className="mono text-muted">{r.avg_hold_hours.toFixed(1)}h hold</span>
+            <span className="mono text-muted">
+              {r.avg_hold_hours === null ? '—' : `${r.avg_hold_hours.toFixed(1)}h`} hold
+              {r.hold_time_unavailable_count ? ` · ${r.hold_time_available_count ?? 0}/${(r.hold_time_available_count ?? 0) + r.hold_time_unavailable_count} timed` : ''}
+            </span>
           </div>
         ))}
       </div>

@@ -495,6 +495,8 @@ function HeartbeatZone({
   const topSymbols = Object.entries(unrealBySymbol)
     .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
     .slice(0, 5)
+  const positionsCount = Number(p?.positions_count ?? positions.length ?? 0)
+  const hasPositions = Number.isFinite(positionsCount) && positionsCount > 0
 
   const opDisplay = getOperatorDisplayStatus(operatorStatus)
   // Busy = actively running ANY task (Working/Trading/Reviewing/Dreaming/Repairing),
@@ -568,6 +570,8 @@ function HeartbeatZone({
               })}
             </tbody>
           </table>
+        ) : hasPositions ? (
+          <p className="text-muted text-sm">持仓 PnL 暂无分解</p>
         ) : (
           <p className="text-muted text-sm">无持仓</p>
         )}

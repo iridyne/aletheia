@@ -142,24 +142,33 @@ def test_fee_in_quote_base_asset_converted():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_explicit_cancellation_branch_in_okx_broker():
-    """#1502: okx_broker.execute_live_order contains explicit-rejection branch."""
-    import inspect
-    import aletheia.execution.okx_broker as mod
-    src = inspect.getsource(mod.execute_live_order)
-    assert "explicit_venue_rejection" in src, (
-        "okx_broker.execute_live_order must handle explicit venue cancellation (#1502)"
+    """#1502: explicit terminal acknowledgements remain cancelled, not unknown."""
+    from aletheia.execution.broker_utils import entry_acknowledgement_state
+
+    assert entry_acknowledgement_state("cancelled") == (
+        "cancelled",
+        "explicit_venue_rejection",
     )
-    assert "'cancelled', 'rejected', 'expired'" in src or \
-           '"cancelled", "rejected", "expired"' in src, (
-        "okx_broker must check for explicit terminal statuses from venue"
+    assert entry_acknowledgement_state("rejected") == (
+        "cancelled",
+        "explicit_venue_rejection",
+    )
+    assert entry_acknowledgement_state("expired") == (
+        "cancelled",
+        "explicit_venue_rejection",
     )
 
 
 def test_explicit_cancellation_branch_in_binance_broker():
-    """#1502: binance_broker.execute_live_order contains explicit-rejection branch."""
-    import inspect
-    import aletheia.execution.binance_broker as mod
-    src = inspect.getsource(mod.execute_live_order)
-    assert "explicit_venue_rejection" in src, (
-        "binance_broker.execute_live_order must handle explicit venue cancellation (#1502)"
+    """#2043: unknown acknowledgements fail closed instead of submitted."""
+    from aletheia.execution.broker_utils import entry_acknowledgement_state
+
+    assert entry_acknowledgement_state("open") == ("submitted", None)
+    assert entry_acknowledgement_state("partially_filled") == (
+        "materialization_missing",
+        "private_fill_evidence_pending",
+    )
+    assert entry_acknowledgement_state("new-venue-status") == (
+        "submission_unknown",
+        "unrecognized_venue_order_status",
     )

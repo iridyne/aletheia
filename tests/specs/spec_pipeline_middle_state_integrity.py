@@ -870,8 +870,8 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
         "pipeline_middle_state_integrity",
         "§5 atomic Opportunity producer identity",
         "L2c",
-        "Concurrent deterministic producer retries for one symbol, snapshot, and market "
-        "resolve one durable owner; Observer only enriches that existing lifecycle.",
+        "Concurrent Observer retries for one symbol, snapshot, and market resolve one "
+        "durable owner; Universe triggers use generation-bound setup materialization.",
         status="implemented",
     )
 )
@@ -895,9 +895,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
                 market="spot",
                 direction_bias="long",
                 universe_snapshot_id="snapshot-race-owner",
-                source_agent=(
-                    "market_observer" if index == 0 else "universe_scanner"
-                ),
+                source_agent="market_observer",
             )
             barrier.wait(timeout=5)
             owner, created = repo.insert_opportunity_once_by_snapshot(candidate)
@@ -941,9 +939,10 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
         market_observer
     )
     assert "update_open_opportunity(" in inspect.getsource(market_observer)
-    assert "insert_opportunity_once_by_snapshot(" in inspect.getsource(
-        signal_emitter
-    )
+    signal_emitter_source = inspect.getsource(signal_emitter)
+    assert "insert_opportunity_once_by_snapshot(" not in signal_emitter_source
+    assert "insert_universe_setup(" in signal_emitter_source
+    assert "insert_opportunity_generation(" in signal_emitter_source
 
 
 @spec_claim(

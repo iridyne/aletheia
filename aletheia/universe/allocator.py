@@ -643,7 +643,11 @@ def allocate_universe(
             # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
             # reach the Trading Decision daemon as tradeable but fail silently at proposal submission.
             _sym = item.get("symbol", "")
-            _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
+            _has_live_price = has_fresh_market_snapshot(
+                _sym,
+                item.get("market_type", "spot"),
+                exchange=item.get("venue"),
+            )
 
             if not _has_live_price:
                 logger.warning(
