@@ -344,6 +344,109 @@ def test_defillama_one_endpoint_failure_isolated(tmp_path, monkeypatch):
     sq.close_db()
 
 
+def test_defillama_empty_payloads_do_not_emit_zero_snapshots(tmp_path, monkeypatch):
+    assert _FIXTURE_STABLE.exists(), f"Fixture missing: {_FIXTURE_STABLE}"
+    raw_stable = json.loads(_FIXTURE_STABLE.read_text(encoding="utf-8"))
+
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
+    sq.close_db()
+    mig.run_migrations()
+
+    import aletheia.data.collectors.defillama as mod
+    from aletheia.data.collector_health import classify_collector_result
+
+    class _MockResp:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._data
+
+    class _MockCtx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kwargs):
+            if "stablecoins" in url:
+                return _MockResp(raw_stable)
+            if "chains" in url:
+                return _MockResp([])
+            if "dexs" in url:
+                return _MockResp({})
+            raise ValueError(f"Unexpected URL: {url}")
+
+    original = mod.httpx_client
+
+    def _mock_client(*args, **kwargs):
+        return _MockCtx()
+
+    mod.httpx_client = _mock_client
+    try:
+        result = asyncio.run(mod.DefiLlamaCollector().collect())
+    finally:
+        mod.httpx_client = original
+
+    assert [snap.metric_type for snap in result["snapshots"]] == ["stablecoin_mcap"]
+    assert result["metric_outcomes"] == {
+        "stablecoin_mcap": "accepted",
+        "chain_tvl": "empty_or_invalid",
+        "dex_volume": "empty_or_invalid",
+    }
+    assert classify_collector_result(result) == "partial"
+    assert repo.latest_onchain_snapshots(metric_type="stablecoin_mcap")
+    assert repo.latest_onchain_snapshots(metric_type="chain_tvl") == []
+    assert repo.latest_onchain_snapshots(metric_type="dex_volume") == []
+    sq.close_db()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"protocols": []},
+        {"protocols": [{"name": "dex"}], "total7d": 1.0},
+        {"protocols": [{"name": "dex"}], "total24h": "junk", "total7d": 1.0},
+        {"protocols": [{"name": "dex"}], "total24h": float("nan"), "total7d": 1.0},
+        {"protocols": [{"name": "dex"}], "total24h": float("inf"), "total7d": 1.0},
+        {"protocols": [{"name": "dex"}], "total24h": -1.0, "total7d": 1.0},
+    ],
+)
+def test_defillama_invalid_dex_payloads_do_not_emit_zero_snapshot(payload, monkeypatch):
+    import aletheia.data.collectors.defillama as mod
+    from aletheia.data.collectors.defillama import _fetch_dex_volume
+
+    class _MockResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+
+    class _MockCtx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kwargs):
+            return _MockResp()
+
+    monkeypatch.setattr(mod, "httpx_client", lambda *args, **kwargs: _MockCtx())
+
+    assert asyncio.run(_fetch_dex_volume("2026-08-27T00:00:00+00:00")) is None
+
+
 # ---------------------------------------------------------------------------
 # DFL-E2E — Live API (network-gated, marks online)
 # ---------------------------------------------------------------------------
