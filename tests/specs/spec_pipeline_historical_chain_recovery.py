@@ -120,41 +120,10 @@ def _seed_entry(
 
 
 def _patch_bitget_client(monkeypatch, rows, calls):
-    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history
 
-    class _ReadOnlyClient:
-        def __init__(self, mode, **_kwargs):
-            calls.append(("client", mode))
-            assert mode == "demo"
-
-        async def get_order_fills(self, *, order_id, symbol, market_type):
-            calls.append(("exact_fills", order_id, symbol, market_type))
-            return [
-                dict(row) for row in rows
-                if str(row.get("orderId") or "") == str(order_id)
-            ]
-
-        async def get_open_orders(self, *, market_type="spot"):
-            calls.append(("open_orders", market_type))
-            return []
-
-        async def get_fills(self, *, symbol=None, market_type="spot"):
-            calls.append(("fills", symbol, market_type))
-            return [dict(row) for row in rows]
-
-        async def place_order(self, *args, **kwargs):
-            raise AssertionError("historical recovery must never place an order")
-
-        async def place_tpsl_order(self, *args, **kwargs):
-            raise AssertionError("historical recovery must never place TPSL")
-
-        async def cancel_order(self, *args, **kwargs):
-            raise AssertionError("historical recovery must never cancel an order")
-
-        async def cancel_plan_order(self, *args, **kwargs):
-            raise AssertionError("historical recovery must never cancel TPSL")
-
-    monkeypatch.setattr(bitget_client, "BitgetClient", _ReadOnlyClient)
+    patch_private_history(monkeypatch, reconciliation, rows, calls=calls)
 
 
 @spec_claim(
@@ -221,9 +190,8 @@ def test_exact_filled_gap_recovers_without_scanning_all_terminal_orders(
     assert len(positions) == 1
     assert positions[0]["entry_fill_verified"] == 1
     assert positions[0]["entry_price_source"] == "broker_fill"
-    assert calls == [
-        ("client", "demo"),
-        ("exact_fills", order.exchange_order_id, "BTCUSDT", "usdt_futures"),
+    assert [(method, query.venue_order_id) for method, _, query in calls] == [
+        ("get_fills", order.exchange_order_id),
     ]
 
 
@@ -290,7 +258,7 @@ def test_filled_gap_rejects_missing_authority_or_compatible_open_position(
     assert db.execute(
         "SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)
     ).fetchone()[0] == 0
-    assert not [call for call in calls if call[0] == "exact_fills"]
+    assert not [call for call in calls if call[0] == "get_fills"]
     expected_reason = {
         "missing_authority": "filled_gap_authority_missing",
         "compatible_position": "filled_gap_compatible_open_position",
@@ -880,4 +848,7 @@ def test_same_partial_private_evidence_replays_through_materializer_twice(
     assert second_position["quantity"] == pytest.approx(0.4)
     assert first_position["entry_fee"] == pytest.approx(0.08)
     assert second_position["entry_fee"] == pytest.approx(0.08)
-    assert len([call for call in calls if call[0] == "exact_fills"]) == 2
+    assert len([
+        call for call in calls
+        if call[0] == "get_fills" and call[2].venue_order_id == order.exchange_order_id
+    ]) == 2
