@@ -4,6 +4,24 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.8.4](https://github.com/iridyne/aletheia/compare/v0.8.3...v0.8.4) (2026-08-27)
+
+
+### Features
+
+* **entry:** converge Candidate planning and maker-first execution ([#2288](https://github.com/iridyne/aletheia/issues/2288)) ([1a96418](https://github.com/iridyne/aletheia/commit/1a96418ac2793744f41937a1916d6e2741f628c6))
+* **market-data:** add causal market structure provider ([#2309](https://github.com/iridyne/aletheia/issues/2309)) ([abdfbec](https://github.com/iridyne/aletheia/commit/abdfbecab65e3e93090ab85234ead8d53ae19be1))
+* **uta:** add Phase 1 read-only CCXT shadow profiles ([#2307](https://github.com/iridyne/aletheia/issues/2307)) ([d54957c](https://github.com/iridyne/aletheia/commit/d54957c986f98afd9725ee9540add43ef4ffb9b8))
+* **uta:** realize unified account contract v1 ([#2305](https://github.com/iridyne/aletheia/issues/2305)) ([bdd4931](https://github.com/iridyne/aletheia/commit/bdd4931c815c9a7e20c1cb35069e016c133376f2))
+
+
+### Bug Fixes
+
+* **frontend:** gate source update apply action ([#2248](https://github.com/iridyne/aletheia/issues/2248)) ([9d440ba](https://github.com/iridyne/aletheia/commit/9d440ba04bf87a21f294b22bd6f4e28457d5f1db))
+* **learning:** isolate filter evidence cost cohorts ([#2199](https://github.com/iridyne/aletheia/issues/2199)) ([d96fe9f](https://github.com/iridyne/aletheia/commit/d96fe9f2a312485d16cdf9f86f81b667b0bb7120))
+* **learning:** preserve draft skill lineage ([#2245](https://github.com/iridyne/aletheia/issues/2245)) ([fe2c7a0](https://github.com/iridyne/aletheia/commit/fe2c7a0a3bbf809180c6b6b6489fedfeb390a25e))
+* **learning:** retry incomplete startup catchup ([#2256](https://github.com/iridyne/aletheia/issues/2256)) ([227bbf5](https://github.com/iridyne/aletheia/commit/227bbf55a4559e759a67237a7507db31b51ea3cf))
+
 ## [0.8.3](https://github.com/iridyne/aletheia/compare/v0.8.2...v0.8.3) (2026-08-27)
 
 
