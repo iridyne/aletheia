@@ -42,6 +42,21 @@ class _RepairProvider(ModelProvider):
         )
 
 
+class _EmptyTextProvider(ModelProvider):
+    name = "empty_text_test"
+
+    def __init__(self) -> None:
+        self.model = "reasoning-only-model"
+
+    async def complete(self, _request):
+        return ModelResponse(
+            content="",
+            model=self.model,
+            usage={"completion_tokens": 600},
+            raw={"usage": {"completion_tokens": 600}},
+        )
+
+
 class _FailingProvider(ModelProvider):
     name = "harness_failing"
 
@@ -124,6 +139,51 @@ async def test_structured_repair_attempts_share_one_logical_call():
         (logical["logical_call_id"],),
     ).fetchall()
     assert [tuple(row) for row in outcomes] == [(0, "schema_invalid"), (1, "accepted")]
+
+
+@pytest.mark.asyncio
+async def test_empty_text_transport_success_is_logical_error():
+    from aletheia.agents import helpers
+
+    provider = _EmptyTextProvider()
+    health = []
+    with (
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
+        patch.object(helpers, "complete_with_fallback", _physical_complete),
+        patch.object(helpers, "_record_llm", lambda success: health.append(success)),
+    ):
+        content, error = await helpers.llm_complete(
+            "system",
+            "user",
+            caller="research_agent.note",
+        )
+
+    assert content is None
+    assert error == "llm_unavailable: empty_response"
+    assert health == [False]
+    db = get_db()
+    logical = db.execute(
+        "SELECT logical_call_id,status,attempt_count,final_model,error_type "
+        "FROM llm_inference_calls WHERE caller='research_agent.note' "
+        "ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    assert logical is not None
+    assert dict(logical) == {
+        "logical_call_id": logical["logical_call_id"],
+        "status": "error",
+        "attempt_count": 1,
+        "final_model": "reasoning-only-model",
+        "error_type": "empty_response",
+    }
+    physical = db.execute(
+        "SELECT status,model_or_tool,usage_json FROM runtime_cost_events WHERE call_id=?",
+        (logical["logical_call_id"],),
+    ).fetchone()
+    assert physical["status"] == "success"
+    assert physical["model_or_tool"] == "reasoning-only-model"
+    usage = json.loads(physical["usage_json"])
+    assert usage["raw"] == {"completion_tokens": 600}
+    assert usage["normalized"]["output_tokens"] == 600
 
 
 @pytest.mark.asyncio
