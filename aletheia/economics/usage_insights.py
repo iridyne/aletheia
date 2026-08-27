@@ -185,7 +185,7 @@ def _empty(days: int, end: datetime, reason: str) -> dict[str, Any]:
 def _runtime_rows(db: sqlite3.Connection, window: tuple[str, str]) -> list[dict[str, Any]]:
     return _query_rows(
         db,
-        "SELECT id,event_type,run_id,opportunity_id,decision_id,proposal_id,call_id,provider,model_or_tool,requested_model,attempt_index,status,started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,cost_status,error_type,metadata_json "
+        "SELECT id,event_type,run_id,runtime_session_id,opportunity_id,decision_id,proposal_id,call_id,provider,model_or_tool,requested_model,attempt_index,status,started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,cost_status,error_type,metadata_json "
         "FROM runtime_cost_events WHERE " + _window_sql("started_at"),
         window,
     )
@@ -538,10 +538,28 @@ def _reliability(db: sqlite3.Connection, tables: set[str], llm_rows: list[dict[s
     ), sum(isinstance(row.get("latency_ms"), (int, float)) for row in llm_rows)
 
 
-def _policy_events(policy: dict[str, Any], events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]] | None, str | None]:
+def _active_budget_session(end: datetime) -> tuple[str | None, datetime | None, str | None]:
+    try:
+        from aletheia.agent_runtime.runtime_session import (
+            current_session,
+            current_session_durable,
+        )
+    except Exception:
+        return None, None, "The active runtime session is not available."
+    if not current_session_durable():
+        return None, None, "The active runtime session is not durably persisted."
+    session = current_session()
+    session_id = _text(session.get("session_id") if session else None)
+    started = _iso(session.get("started_at") if session else None)
+    if not session_id or started is None:
+        return None, None, "The active runtime session identity is unavailable."
+    if started > end:
+        return None, None, "The active runtime session starts after this usage window."
+    return session_id, started, None
+
+
+def _scope_events(policy: dict[str, Any], events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]] | None, str | None]:
     scope, subject = str(policy.get("scope") or ""), _text(policy.get("subject"))
-    if str(policy.get("window")) == "session":
-        return None, "Session budgets cannot be reconstructed from historical rows."
     if scope == "system":
         return events, None
     if scope == "agent_run" and subject:
@@ -555,6 +573,23 @@ def _policy_events(policy: dict[str, Any], events: list[dict[str, Any]]) -> tupl
     return None, "The budget subject is not recorded on historical cost events."
 
 
+def _policy_events(
+    policy: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    active_session_id: str | None = None,
+    active_session_reason: str | None = None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    if str(policy.get("window")) == "session":
+        if not active_session_id:
+            return None, active_session_reason or "The active runtime session is not available."
+        events = [
+            row for row in events
+            if _text(row.get("runtime_session_id")) == active_session_id
+        ]
+    return _scope_events(policy, events)
+
+
 def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[dict[str, Any], int, int]:
     if "economics_budgets" not in tables:
         return _section("not_available", "The economics budget ledger is not available.", rows=[]), 0, 0
@@ -562,14 +597,34 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
     if not policies:
         return _section("not_configured", "No budget policies are declared.", rows=[]), 0, 0
     weekly_start = end - timedelta(days=7)
-    events = _runtime_rows(db, (weekly_start.isoformat(), end.isoformat()))
+    active_session_id, active_session_start, active_session_reason = (
+        _active_budget_session(end)
+        if any(str(policy.get("window")) == "session" for policy in policies)
+        else (None, None, None)
+    )
+    event_start = (
+        min(weekly_start, active_session_start)
+        if active_session_start is not None else weekly_start
+    )
+    events = _runtime_rows(db, (event_start.isoformat(), end.isoformat()))
     _project_latest_litellm_estimates(db, events)
     rows, calculable = [], 0
     for policy in policies:
-        duration = timedelta(days=1 if policy.get("window") == "daily" else 7)
-        start = end - duration
-        window_events, unavailable_reason = _policy_events(policy, [row for row in events if _iso(row.get("started_at")) and _iso(row["started_at"]) >= start])
-        base = {"policy_id": policy["id"], "scope": policy["scope"], "subject": policy.get("subject"), "window": policy["window"], "usd_cap": _number(policy["usd_cap"]), "enabled": bool(policy["enabled"]), "window_started_at": start.isoformat()}
+        is_session = str(policy.get("window")) == "session"
+        duration = None if is_session else timedelta(days=1 if policy.get("window") == "daily" else 7)
+        start = active_session_start if is_session else end - duration
+        scoped_events = (
+            []
+            if start is None else
+            [row for row in events if _iso(row.get("started_at")) and _iso(row["started_at"]) >= start]
+        )
+        window_events, unavailable_reason = _policy_events(
+            policy,
+            scoped_events,
+            active_session_id=active_session_id,
+            active_session_reason=active_session_reason,
+        )
+        base = {"policy_id": policy["id"], "scope": policy["scope"], "subject": policy.get("subject"), "window": policy["window"], "usd_cap": _number(policy["usd_cap"]), "enabled": bool(policy["enabled"]), "window_started_at": start.isoformat() if start is not None else None}
         if window_events is None:
             rows.append({**base, "status": "not_available", "reason": unavailable_reason, "known_spent_usd": None, "unknown_event_count": None, "headroom_usd": None, "forecast_status": "not_available", "forecast_reason": unavailable_reason, "forecast_usd": None, "forecast_headroom_usd": None})
             continue
@@ -583,6 +638,8 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
             forecast_reason = "Estimated or unknown-price events prevent an honest forecast."
         elif not window_events:
             forecast_reason = "No priced events are recorded for this rolling window."
+        elif duration is None:
+            forecast_reason = "Session budgets have no fixed duration forecast."
         else:
             forecast = known * duration.total_seconds() / elapsed
         status = "available" if not non_known else "partial"

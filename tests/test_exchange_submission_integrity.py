@@ -458,6 +458,140 @@ def test_explicit_api_rejection_remains_known_error(
     assert "explicit exchange rejection" not in orders[0]["error_reason"]
 
 
+@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS[1:])
+@pytest.mark.parametrize("exchange_status", ("submitted", "open"))
+def test_okx_binance_known_open_ack_statuses_remain_submitted(
+    tmp_path, monkeypatch, broker_module, client_name, execution_mode, exchange_status,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    async def _acknowledged_open(_order):
+        return SimpleNamespace(
+            order_id="EX-KNOWN-OPEN-ACK",
+            status=exchange_status,
+            fill_price=None,
+            filled_quantity=None,
+        )
+
+    broker = _prepare_broker(
+        monkeypatch, broker_module, client_name, _acknowledged_open,
+    )
+    result = broker.execute_live_order(
+        proposal_id="proposal-known-open-ack",
+        risk_decision_id="risk-known-open-ack",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode=execution_mode,
+    )
+
+    [order] = repo.list_orders(limit=10)
+    assert result["order_status"] == "submitted"
+    assert order["status"] == "submitted"
+    assert order["exchange_order_id"] == "EX-KNOWN-OPEN-ACK"
+    assert order["error_reason"] is None
+    assert repo.list_fills(limit=10) == []
+    assert repo.list_positions(status="open", limit=10) == []
+
+
+@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS[1:])
+@pytest.mark.parametrize("exchange_status", ("cancelled", "canceled", "rejected", "expired"))
+def test_okx_binance_terminal_ack_statuses_remain_cancelled(
+    tmp_path, monkeypatch, broker_module, client_name, execution_mode, exchange_status,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    audits = []
+
+    async def _terminal_ack(_order):
+        return SimpleNamespace(
+            order_id="EX-TERMINAL-ACK",
+            status=exchange_status,
+            fill_price=None,
+            filled_quantity=None,
+        )
+
+    broker = _prepare_broker(monkeypatch, broker_module, client_name, _terminal_ack)
+    monkeypatch.setattr(broker, "write_post_commit_audit", audits.append)
+    result = broker.execute_live_order(
+        proposal_id="proposal-terminal-ack",
+        risk_decision_id="risk-terminal-ack",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode=execution_mode,
+    )
+
+    [order] = repo.list_orders(limit=10)
+    assert result["order_status"] == "cancelled"
+    assert order["status"] == "cancelled"
+    assert order["exchange_order_id"] == "EX-TERMINAL-ACK"
+    assert order["error_reason"] == "explicit_venue_rejection"
+    assert audits[0]["event_type"] == "order_explicitly_rejected"
+    assert audits[0]["reason"] == f"venue_status:{exchange_status}"
+    assert repo.list_fills(limit=10) == []
+    assert repo.list_positions(status="open", limit=10) == []
+
+
+@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS[1:])
+def test_okx_binance_unknown_ack_status_is_submission_unknown_and_not_retried(
+    tmp_path, monkeypatch, broker_module, client_name, execution_mode,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.errors import SubmissionUnknownError
+    from aletheia.storage import repositories as repo
+
+    audits = []
+    calls = []
+
+    async def _unknown_ack(order):
+        calls.append(order.client_oid)
+        return SimpleNamespace(
+            order_id="EX-UNKNOWN-ACK",
+            status="new_venue_status",
+            fill_price=None,
+            filled_quantity=None,
+        )
+
+    broker = _prepare_broker(monkeypatch, broker_module, client_name, _unknown_ack)
+    monkeypatch.setattr(broker, "write_post_commit_audit", audits.append)
+    kwargs = dict(
+        proposal_id="proposal-unknown-ack",
+        risk_decision_id="risk-unknown-ack",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode=execution_mode,
+    )
+
+    result = broker.execute_live_order(**kwargs)
+    [order] = repo.list_orders(limit=10)
+    assert result["order_status"] == "submission_unknown"
+    assert order["status"] == "submission_unknown"
+    assert order["exchange_order_id"] == "EX-UNKNOWN-ACK"
+    assert order["error_reason"] == "unrecognized_venue_order_status"
+    assert audits[0]["event_type"] == "order_submission_unknown"
+    assert audits[0]["reason"] == "unrecognized_venue_order_status"
+    assert repo.list_fills(limit=10) == []
+    assert repo.list_positions(status="open", limit=10) == []
+
+    with pytest.raises(SubmissionUnknownError):
+        broker.execute_live_order(**kwargs)
+    assert calls == ["proposal-unknown-ack"]
+    assert len(repo.list_orders(limit=10)) == 1
+
+
 @pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
 @pytest.mark.parametrize(
     "error_factory",

@@ -807,6 +807,16 @@ async def _fetch_single_feature(
         "bb_width_4h": bb_width_4h,
         "vol_ratio_4h": vol_ratio_4h,
         "taker_buy_ratio": taker_buy_ratio,
+        # In-memory only: the Momentum setup builder needs the exact 21 closed
+        # bars already fetched on this venue. UniverseFeatureSnapshot remains
+        # compact; no duplicate JSON candle blob is written to SQLite.
+        "_closed_ohlcv_15m": [
+            {
+                "ts": int(c[0]), "open": float(c[1]), "high": float(c[2]),
+                "low": float(c[3]), "close": float(c[4]), "volume": float(c[5]),
+            }
+            for c in ohlcv_15m
+        ],
     }
 
     # OI-price divergence: +1=hidden_accumulation (OI↑ price↓ = possible accumulation),

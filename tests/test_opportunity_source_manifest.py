@@ -6,7 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from aletheia.data.symbols import instrument_analysis_context
-from tests.observer_admission_fixture import crypto_background
+from tests.observer_admission_fixture import (
+    crypto_background,
+    insert_universe_opportunity_generation,
+)
 
 
 def _prepare_db(tmp_path, monkeypatch):
@@ -28,7 +31,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agents import market_observer as observer
     from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+    from aletheia.storage.repositories import get_opportunity
     from aletheia.analytics.filter_evidence import record_filter_decision
 
     init_tool_registry()
@@ -67,7 +70,11 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
             },
         }),
     )
-    insert_opportunity(original)
+    insert_universe_opportunity_generation(
+        original,
+        venue="fixture",
+        market_type="perp",
+    )
     record_filter_decision(
         candidate_key="universe_member:scanner-member",
         candidate_kind="universe_member",
@@ -248,7 +255,6 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
     from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import insert_opportunity
 
     opportunity = Opportunity(
         id="scanner-missing-emitter-fact",
@@ -277,7 +283,11 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
             },
         }),
     )
-    insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue="fixture",
+        market_type="spot",
+    )
 
     assert verify_signal_emitter_admission(
         opportunity.model_dump()
@@ -543,7 +553,6 @@ async def test_proposal_preflight_retries_unavailable_producer_attestation(
         prepare_decision_as_proposal,
     )
     from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import insert_opportunity
 
     opportunity = Opportunity(
         id="temporarily-unverifiable-producer",
@@ -554,7 +563,11 @@ async def test_proposal_preflight_retries_unavailable_producer_attestation(
         universe_snapshot_id="snapshot",
         universe_member_id="member",
     )
-    insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue="fixture",
+        market_type="perp",
+    )
     decision = TradingDecision(
         action="trade",
         symbol=opportunity.symbol,
@@ -583,7 +596,6 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
         prepare_decision_as_proposal,
     )
     from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import insert_opportunity
 
     opportunity = Opportunity(
         id="corrupted-direction-carrier",
@@ -615,7 +627,11 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
             },
         }),
     )
-    insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue="fixture",
+        market_type="perp",
+    )
     decision = TradingDecision(
         action="trade",
         symbol=opportunity.symbol,
@@ -652,6 +668,7 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 
     inserted = []
+    valid_until = "2099-12-31T01:00:00Z"
     member = {
         "id": "member-1",
         "snapshot_id": "snapshot-1",
@@ -660,7 +677,8 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
         "scanner_family": "momentum",
         "total_score": 70,
         "venue": "fixture",
-        "expires_at": "2026-07-19T01:00:00Z",
+        "expires_at": valid_until,
+        "entry_price_usd": 100.0,
     }
     background = crypto_background("BTC/USDT", "perp")
     member["instrument_background"] = background
@@ -673,6 +691,7 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
         "analysis_context": instrument_analysis_context(background),
         "feature_snapshot_id": "feature-1",
         "scanner_direction": "long",
+        "last_price": 100.0,
         "return_1h": 2.0,
         "return_4h": 4.0,
         "rsi_14": 62.0,
@@ -680,21 +699,22 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     }
 
     with patch(
-        "aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
+        "aletheia.universe.signal_emitter.repo.find_opportunity_by_symbol_snapshot",
         return_value=None,
     ), patch(
-        "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
-        side_effect=lambda opp: (inserted.append(opp) or opp.model_dump(), True),
+        "aletheia.universe.signal_emitter.repo.insert_opportunity_generation",
+        side_effect=lambda opp, _generation: inserted.append(opp) or opp,
     ), patch(
         "aletheia.universe.signal_emitter._record_emission_decision"
     ), patch(
         "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
         return_value=True,
-    ), patch(
+    ) as fresh_check, patch(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         return_value={"status": "watch"},
     ):
         assert emit_deterministic_opportunities([member], "snapshot-1", [feature]) == 1
+        assert fresh_check.call_args.kwargs["exchange"] == "fixture"
 
     metadata = json.loads(inserted[0].metadata)
     manifest = metadata["evidence_manifest"]
@@ -820,6 +840,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         "hyperliquid": ["funding-rendered", "oi-rendered"],
         "position_x": ["position-x-rendered"],
         "options_structure": ["options-rendered"],
+        "technical_context": [],
     }
 
     manifest = observer._opportunity_evidence_manifest(
@@ -841,6 +862,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
     assert manifest["policy_epoch"] == "opportunity_information_integrity/v1"
     assert manifest["t0"]["feature_snapshot_id"] == "feature-t0"
     assert manifest["t1"]["sources"] == prefetched.rendered_sources
+    assert manifest["t1"]["technical_context"] == {"status": "unavailable"}
 
 
 def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
@@ -871,6 +893,17 @@ def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
                     {"id": "oi-t1", "kind": "open_interest"},
                 ],
                 "position_x": [{"id": "position-x-t1", "source": "owner_aggregate"}],
+                "technical_context": [{
+                    "id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                    "stable_id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                    "quality_state": "complete",
+                }],
+            },
+            "technical_context": {
+                "status": "available",
+                "source_id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                "stable_id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                "quality_state": "complete",
             },
         },
     }
@@ -941,6 +974,9 @@ def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
 
     assert manifest["opportunity_t0"] == opportunity_evidence["t0"]
     assert manifest["opportunity_t1"] == opportunity_evidence["t1"]
+    assert manifest["opportunity_t1"]["technical_context"]["source_id"].endswith(
+        ":frozen"
+    )
     assert manifest["system_operator_t1"]["technical_snapshot_id"] == "operator-feature-t1"
     assert "source_identities" not in manifest["system_operator_t1"]
     assert manifest["system_operator_t1"]["opportunity_context"] == {

@@ -9,9 +9,41 @@ from aletheia.storage import repositories as repo
 router = APIRouter(prefix="/api/universe", tags=["universe"])
 
 
+def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
+    member_ids = [str(member.get("id") or "") for member in members if member.get("id")]
+    if not member_ids:
+        return members
+    placeholders = ",".join("?" for _ in member_ids)
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT us.member_id, us.state, us.opportunity_id "
+            "FROM universe_setups us "
+            "JOIN ("
+            " SELECT member_id, MAX(datetime(created_at)) AS latest_created_at "
+            " FROM universe_setups "
+            f" WHERE member_id IN ({placeholders}) GROUP BY member_id"
+            ") latest ON latest.member_id=us.member_id "
+            "AND latest.latest_created_at=datetime(us.created_at)",
+            tuple(member_ids),
+        ).fetchall()
+        by_member = {str(row["member_id"]): dict(row) for row in rows}
+    except Exception:
+        by_member = {}
+    enriched = []
+    for member in members:
+        item = dict(member)
+        setup = by_member.get(str(item.get("id") or ""))
+        item["setup_state"] = setup.get("state") if setup else None
+        item["triggered_opportunity_id"] = setup.get("opportunity_id") if setup else None
+        enriched.append(item)
+    return enriched
+
+
 @router.get("/current")
 def get_current_universe():
-    """Return the current active universe snapshot and its members."""
+    """Return the current active universe snapshot and its Candidates."""
     from aletheia.universe.service import UniverseService
     svc = UniverseService()
     cfg = load_config()
@@ -24,12 +56,14 @@ def get_current_universe():
     snap = repo.get_active_universe_snapshot()
     # execution_eligible_only=False: UI sees stale members (tagged stale=True)
     # rather than falling back to the static 3-symbol pool.
-    members = svc.get_current_universe(execution_eligible_only=False)
+    members = _attach_candidate_handoff_state(
+        svc.get_current_universe(execution_eligible_only=False)
+    )
 
     stale_count = sum(1 for m in members if m.get("stale"))
     return {
         "snapshot": snap,
-        "members": members,
+        "members": members,  # compatibility alias: these rows are Candidates.
         "enabled": cfg.universe.enabled,
         "fallback": snap is None,
         "stale": stale_count > 0,
@@ -45,7 +79,7 @@ def list_snapshots(market_type: str = "crypto", limit: int = 20):
 
 @router.get("/snapshots/{snapshot_id}")
 def get_snapshot(snapshot_id: str):
-    """Get a specific snapshot with its members."""
+    """Get a specific snapshot with its Candidates."""
     from aletheia.storage.sqlite import get_db
     db = get_db()
     row = db.execute("SELECT * FROM universe_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
@@ -57,12 +91,13 @@ def get_snapshot(snapshot_id: str):
 
 @router.get("/members/{member_id}")
 def get_member(member_id: str):
-    """Get a single universe member with full explanation, features, and linked opportunities."""
+    """Get a single Candidate with explanation, features, and triggered Opportunities."""
     member = repo.get_universe_member(member_id)
     if not member:
         raise HTTPException(404, "Member not found")
     features = repo.get_latest_feature_snapshot(member["asset_id"])
     opportunities = repo.list_opportunities_by_member(member_id, limit=5)
+    [member] = _attach_candidate_handoff_state([member])
     return {"member": member, "features": features, "opportunities": opportunities}
 
 

@@ -3,19 +3,20 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-08-10 (structured System Operator trade motivation)
+> Last updated: 2026-08-26 (Momentum conditional authorization + Fast Trigger)
 
 ---
 
-## 1. Scheduler Job Overview (40 recurring jobs with optional jobs enabled + 3 startup one-shots)
+## 1. Scheduler Job Overview
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
 | 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| 2 | market_observer | 10min | observer | Scan structured, exact-instrument facts for trading opportunities |
+| 2 | market_observer | 10min | observer | Add advisory structured facts to existing triggered opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
 | 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
+| 5a | fast_trigger_authorizer | 1min | agents | When Fast Trigger is enabled, review at most one highest-ranked pending Momentum Setup; provider failure leaves it unarmed. |
 | 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 7a | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
@@ -129,9 +130,10 @@ durably queued and independently retried by `outcome_hook_replay`.
   derivatives/macro/on-chain data, and successfully analyzed, relevance-qualified,
   exact-entity news
 - **LLM**: Yes (analysis of market conditions)
-- **Outputs**: namespaced `metadata.observer_assessment` on an existing open,
-  deterministic `universe_scanner` Opportunity; producer-owned direction, confidence,
-  thesis, identity and expiry remain unchanged
+- **Outputs**: namespaced `metadata.observer_assessment` on an existing open
+  Opportunity; producer-owned direction, confidence, thesis, identity and expiry
+  remain unchanged. Legacy `universe_scanner` Opportunity rows remain audit-only
+  unless they carry setup-linked V2 trigger evidence.
 - **Side effects**: Enriches only the exact snapshot/member/instrument carrier whose
   `signal_emitter` pass fact is durable. It does not create an Opportunity or gate the
   scanner → Ranker handoff.
@@ -321,6 +323,15 @@ durably queued and independently retried by `outcome_hook_replay`.
   only their prompt display is bounded.
 - **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes are observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. The read-only evaluator compares gross weighted/equal/individual/no-structure baselines and rejects retrospective imports, mixed epochs, or mixed feature contracts; cost-aware evidence remains unavailable. No automatic source or scheduler is claimed, `ready_for_research_review` grants no promotion, and the evidence never changes Agent, Risk, or Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
+
+#### Momentum Fast Trigger Authorizer / Watcher
+
+- **Slow trigger**: `fast_trigger_authorizer` runs once per minute, reads at most the highest-ranked pending Momentum Setup, and makes one structured `arm/refuse` System Operator call without debate. Timeout/provider failure writes no authorization and leaves the Setup pending.
+- **Output**: `arm` atomically writes `PiDecision(action='arm', setup_id)` plus one bounded `ConditionalEntryAuthorization`; it freezes TriggerSpec/direction/structure/entry zone and risk envelope, never future entry, quantity or TP.
+- **Hot path**: lifecycle-owned `fast_trigger_watch` consumes credential-free exact-venue public quote/trade/books5/candle1m data for at most ten armed setups. It performs no LLM/provider call and writes SQLite only on state/subscription generation/trigger transitions.
+- **Failure behavior**: missing ACK, stale/absent/sequence-anomalous data, TTL/fingerprint/authorization mismatch, runtime pause/kill switch, or unavailable venue adapter blocks materialization. Local `paper_internal` defaults to the Bitget public fast-data venue and still executes only through the local paper broker; exchange-backed execution uses `bitget_demo` only. OKX/Binance without an adapter return `fast_trigger_stream_unavailable:<venue>` and Live is forbidden.
+- **Default**: `fast_trigger.mode=shadow` observes and prewarms without Gateway order authority; `execute` remains an explicit opt-in and `off` explicitly disables the watcher.
+- **Side effects**: after deterministic pullback/reclaim, one short CAS transaction persists the T0 snapshot and single Opportunity/Proposal. `shadow` never calls Gateway; `execute` calls only `execute_existing_proposal`, so Risk and broker routing remain unchanged and uncertain submission is never retried.
 
 #### position_path_observer
 

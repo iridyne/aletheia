@@ -10,6 +10,10 @@ from statistics import fmean
 from typing import Any
 
 from aletheia.analytics.outcome_semantics import validated_outcome_economics
+from aletheia.learning.outcomes import (
+    assess_candidate_outcome,
+    candidate_outcome_temporal_reason,
+)
 
 CONTRACT_VERSION = "risk-policy-value/v1"
 BASELINE_POLICY = "pass-all-candidates/v1"
@@ -53,6 +57,7 @@ def build_risk_policy_contribution(
     db,
     *,
     cutoff: str,
+    as_of_at: str | None = None,
     min_sample_size: int = 5,
     min_interventions: int = 5,
 ) -> dict[str, Any]:
@@ -67,6 +72,7 @@ def build_risk_policy_contribution(
     cutoff_at = _parse_time(cutoff)
     if cutoff_at is None:
         return empty_risk_policy_contribution("invalid_audit_cutoff")
+    report_as_of = as_of_at or datetime.now(timezone.utc).isoformat()
     rows = db.execute(
         "SELECT rd.id AS risk_decision_id, rd.proposal_id, rd.approved, "
         "rd.evaluated_quantity, rd.proposal_commit_hash, rd.proposal_execution_mode, "
@@ -118,7 +124,7 @@ def build_risk_policy_contribution(
             exclusions["ambiguous_risk_filter_evidence"] += 1
             continue
         row = candidates[0]
-        reason = _exclusion_reason(row, cutoff_at)
+        reason = _exclusion_reason(row, cutoff_at, report_as_of)
         if reason is not None:
             exclusions[reason] += 1
             continue
@@ -126,6 +132,7 @@ def build_risk_policy_contribution(
 
     base = empty_risk_policy_contribution("insufficient_risk_policy_evidence")
     base.update({
+        "as_of_at": report_as_of,
         "raw_authoritative_count": len(grouped),
         "eligible_count": len(eligible),
         "excluded_count": sum(exclusions.values()),
@@ -212,7 +219,11 @@ def build_risk_policy_contribution(
     return base
 
 
-def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
+def _exclusion_reason(
+    row: dict[str, Any],
+    cutoff_at: datetime,
+    as_of_at: str | datetime | None = None,
+) -> str | None:
     if row.get("approved") not in (0, 1):
         return "invalid_risk_decision_value"
     if row.get("proposal_source") != "native":
@@ -276,6 +287,19 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
         return "risk_filter_instrument_mismatch"
     if row.get("outcome_status") != "settled" or row.get("settled_at") in {None, ""}:
         return "risk_outcome_unsettled"
+    outcome = _candidate_outcome_row(row)
+    temporal_reason = candidate_outcome_temporal_reason(
+        outcome,
+        as_of_at=as_of_at or datetime.now(timezone.utc),
+    )
+    if temporal_reason:
+        if temporal_reason == "unsettled":
+            return "risk_outcome_unsettled"
+        if temporal_reason in {"dirty_or_missing_entry_time"}:
+            return "risk_outcome_outside_window"
+        if temporal_reason == "settlement_after_as_of":
+            return "risk_outcome_settlement_after_as_of"
+        return "risk_outcome_horizon_mismatch"
     if (
         row.get("filter_venue") != row.get("outcome_venue")
         or str(row.get("outcome_symbol") or "").lower()
@@ -326,7 +350,36 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
     })
     if economics is None:
         return "risk_outcome_economics_mismatch"
+    assessment = assess_candidate_outcome(outcome, as_of_at=as_of_at)
+    if not assessment.eligible:
+        return "risk_outcome_economics_mismatch"
     return None
+
+
+def _candidate_outcome_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "outcome_candidate_key": row.get("filter_outcome_key"),
+        "venue": row.get("outcome_venue"),
+        "symbol": row.get("outcome_symbol"),
+        "market_type": row.get("outcome_market_type"),
+        "direction": row.get("outcome_direction"),
+        "horizon": HORIZON,
+        "entry_price_usd": row.get("entry_price_usd"),
+        "entry_ts": row.get("entry_ts"),
+        "due_at": row.get("due_at"),
+        "settled_at": row.get("settled_at"),
+        "exit_price_usd": row.get("exit_price_usd"),
+        "directional_return_pct": row.get("directional_return_pct"),
+        "estimated_fee_pct": row.get("estimated_fee_pct"),
+        "estimated_spread_slippage_pct": row.get("estimated_spread_slippage_pct"),
+        "estimated_funding_pct": row.get("estimated_funding_pct"),
+        "net_return_pct": row.get("net_return_pct"),
+        "min_tradable_edge_pct": row.get("min_tradable_edge_pct"),
+        "settlement_price_source": row.get("settlement_price_source"),
+        "settlement_lag_sec": row.get("settlement_lag_sec"),
+        "cost_model_version": row.get("cost_model_version"),
+        "status": row.get("outcome_status"),
+    }
 
 
 def _parse_json(raw: Any) -> Any:

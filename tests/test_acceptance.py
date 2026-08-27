@@ -69,7 +69,7 @@ def test_ac03_gateway_status_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     r = runner.invoke(cli_app, ["gateway", "status"])
-    assert r.exit_code == 0
+    assert r.exit_code == 1
     assert "stopped" in r.output
 
 

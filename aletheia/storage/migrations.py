@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v41"
+SCHEMA_VERSION = "aletheia-sqlite-v44"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3475,6 +3475,240 @@ _PAPER_ACCOUNT_INVALIDATION_CHECKSUM = hashlib.sha256(
         _PAPER_ACCOUNT_INVALIDATION_SQL
         + repr(_PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS)
     ).encode("utf-8")
+).hexdigest()
+
+_UNIVERSE_FAST_TRIGGER_COLUMNS = (
+    ("setup_id", "opportunities", "TEXT"),
+    ("signal_mark", "opportunities", "TEXT"),
+    ("trigger_behavior_version", "opportunities", "TEXT"),
+    ("setup_id", "trade_proposals", "TEXT"),
+    ("authorization_id", "trade_proposals", "TEXT"),
+    ("setup_id", "pi_decisions", "TEXT"),
+)
+_UNIVERSE_FAST_TRIGGER_SQL = """
+CREATE TABLE IF NOT EXISTS universe_setups (
+    id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('long', 'short')),
+    rank INTEGER NOT NULL CHECK(rank > 0),
+    material_fingerprint TEXT NOT NULL,
+    trigger_spec_hash TEXT NOT NULL,
+    trigger_spec_version TEXT NOT NULL,
+    regime_tag TEXT,
+    breakout_level REAL NOT NULL CHECK(breakout_level > 0),
+    atr REAL NOT NULL CHECK(atr > 0),
+    pullback_band TEXT NOT NULL,
+    entry_zone TEXT NOT NULL,
+    invalidation_price REAL NOT NULL CHECK(invalidation_price > 0),
+    state TEXT NOT NULL CHECK(state IN (
+        'pending_authorization', 'armed', 'pullback_seen', 'triggering',
+        'executed', 'refused', 'expired', 'invalidated'
+    )),
+    opportunity_id TEXT,
+    proposal_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    runtime_session_id TEXT,
+    producer_commit TEXT,
+    behavior_fingerprint TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_universe_setups_generation
+    ON universe_setups(venue, symbol, market_type, direction, material_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_universe_setups_watch
+    ON universe_setups(state, rank, valid_until);
+
+CREATE TABLE IF NOT EXISTS conditional_entry_authorizations (
+    id TEXT PRIMARY KEY,
+    setup_id TEXT NOT NULL REFERENCES universe_setups(id),
+    operator_decision_id TEXT NOT NULL REFERENCES pi_decisions(id),
+    authorized_mode TEXT NOT NULL CHECK(authorized_mode IN ('shadow', 'execute')),
+    trigger_spec_hash TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('long', 'short')),
+    entry_zone TEXT NOT NULL,
+    invalidation_price REAL NOT NULL CHECK(invalidation_price > 0),
+    max_spread_bps REAL NOT NULL CHECK(max_spread_bps > 0),
+    min_depth_10bps_usd REAL NOT NULL CHECK(min_depth_10bps_usd > 0),
+    max_risk_pct REAL NOT NULL CHECK(max_risk_pct > 0),
+    max_leverage INTEGER NOT NULL CHECK(max_leverage > 0),
+    target_risk_reward REAL NOT NULL CHECK(target_risk_reward = 2.0),
+    expected_horizon_hours REAL NOT NULL CHECK(expected_horizon_hours > 0 AND expected_horizon_hours <= 48),
+    authorized_at TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    runtime_session_id TEXT,
+    producer_commit TEXT,
+    behavior_fingerprint TEXT,
+    UNIQUE(setup_id)
+);
+
+CREATE TABLE IF NOT EXISTS fast_trigger_market_snapshots (
+    id TEXT PRIMARY KEY,
+    setup_id TEXT NOT NULL REFERENCES universe_setups(id),
+    authorization_id TEXT NOT NULL REFERENCES conditional_entry_authorizations(id),
+    opportunity_id TEXT NOT NULL REFERENCES opportunities(id),
+    proposal_id TEXT NOT NULL REFERENCES trade_proposals(id),
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    bid REAL NOT NULL CHECK(bid > 0),
+    ask REAL NOT NULL CHECK(ask > 0),
+    spread_bps REAL NOT NULL CHECK(spread_bps >= 0),
+    depth_10bps_usd REAL NOT NULL CHECK(depth_10bps_usd >= 0),
+    taker_buy_ratio REAL NOT NULL CHECK(taker_buy_ratio BETWEEN 0 AND 1),
+    quote_exchange_timestamp_ms INTEGER NOT NULL CHECK(quote_exchange_timestamp_ms >= 0),
+    quote_received_timestamp_ms INTEGER NOT NULL CHECK(quote_received_timestamp_ms >= 0),
+    trade_exchange_timestamp_ms INTEGER NOT NULL CHECK(trade_exchange_timestamp_ms >= 0),
+    trade_received_timestamp_ms INTEGER NOT NULL CHECK(trade_received_timestamp_ms >= 0),
+    depth_exchange_timestamp_ms INTEGER NOT NULL CHECK(depth_exchange_timestamp_ms >= 0),
+    depth_received_timestamp_ms INTEGER NOT NULL CHECK(depth_received_timestamp_ms >= 0),
+    quote_sequence INTEGER NOT NULL,
+    trade_sequence INTEGER NOT NULL,
+    depth_sequence INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(setup_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_setup_once
+    ON opportunities(setup_id) WHERE setup_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_proposals_setup_once
+    ON trade_proposals(setup_id) WHERE setup_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pi_decisions_setup
+    ON pi_decisions(setup_id) WHERE setup_id IS NOT NULL;
+"""
+_UNIVERSE_FAST_TRIGGER_CHECKSUM = hashlib.sha256(
+    (
+        repr(_UNIVERSE_FAST_TRIGGER_COLUMNS)
+        + _UNIVERSE_FAST_TRIGGER_SQL
+        + "\nuniverse_fast_trigger_v2"
+    ).encode("utf-8")
+).hexdigest()
+
+_OPPORTUNITY_GENERATION_V2_COLUMNS = (
+    ("generation_version", "opportunities", "TEXT"),
+    ("generation_json", "opportunities", "TEXT"),
+    ("generation_hash", "opportunities", "TEXT"),
+    ("scanner_family", "universe_setups", "TEXT NOT NULL DEFAULT 'momentum'"),
+    ("motive_evidence", "universe_setups", "TEXT NOT NULL DEFAULT '{}'"),
+    ("funding_rate", "universe_setups", "REAL"),
+    ("funding_observed_at", "universe_setups", "TEXT"),
+)
+_OPPORTUNITY_GENERATION_V2_SQL = """
+CREATE TABLE IF NOT EXISTS opportunity_entry_validity_assessments (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT NOT NULL REFERENCES opportunities(id),
+    setup_id TEXT REFERENCES universe_setups(id),
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL CHECK(market_type IN ('spot', 'perp')),
+    check_type TEXT NOT NULL CHECK(check_type IN (
+        'entry_zone', 'structural_price', 'market_structure'
+    )),
+    authority TEXT NOT NULL CHECK(authority IN ('hard', 'shadow')),
+    verdict TEXT NOT NULL CHECK(verdict IN ('allow', 'block', 'unavailable')),
+    observed_at TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+    evidence_hash TEXT NOT NULL CHECK(
+        length(evidence_hash)=64 AND evidence_hash=lower(evidence_hash)
+        AND evidence_hash NOT GLOB '*[^0-9a-f]*'
+    ),
+    created_at TEXT NOT NULL,
+    UNIQUE(opportunity_id, check_type, algorithm_version, observed_at, evidence_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_opportunity_validity_generation
+ON opportunity_entry_validity_assessments(opportunity_id, observed_at);
+
+CREATE TRIGGER IF NOT EXISTS trg_opportunity_generation_v2_insert_complete
+BEFORE INSERT ON opportunities
+WHEN NEW.generation_version IS NOT NULL AND (
+    NEW.generation_version != 'opportunity-generation/v2'
+    OR NEW.generation_json IS NULL OR json_valid(NEW.generation_json)=0
+    OR NEW.generation_hash IS NULL OR length(NEW.generation_hash)!=64
+    OR NEW.generation_hash!=lower(NEW.generation_hash)
+    OR NEW.generation_hash GLOB '*[^0-9a-f]*'
+    OR json_type(NEW.generation_json, '$.instrument_identity')!='object'
+    OR json_type(NEW.generation_json, '$.family')!='text'
+    OR json_type(NEW.generation_json, '$.archetype')!='text'
+    OR json_type(NEW.generation_json, '$.direction')!='text'
+    OR json_type(NEW.generation_json, '$.detected_at')!='text'
+    OR json_type(NEW.generation_json, '$.signal_mark') NOT IN ('integer','real')
+    OR json_type(NEW.generation_json, '$.motive_evidence')!='object'
+    OR json_type(NEW.generation_json, '$.entry_trigger')!='object'
+    OR json_type(NEW.generation_json, '$.entry_zone')!='array'
+    OR json_type(NEW.generation_json, '$.invalidation')!='object'
+    OR json_type(NEW.generation_json, '$.horizon_hours') NOT IN ('integer','real')
+    OR json_type(NEW.generation_json, '$.cost_snapshot')!='object'
+    OR json_type(NEW.generation_json, '$.material_fingerprint')!='text'
+    OR json_type(NEW.generation_json, '$.valid_until')!='text'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Opportunity generation v2 must be complete');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_opportunity_generation_v2_immutable
+BEFORE UPDATE OF generation_version, generation_json, generation_hash,
+                 symbol, market, direction_bias, scanner_family, valid_until,
+                 entry_zone, stop_loss_hint, tp_hint, setup_id, signal_mark,
+                 trigger_behavior_version
+ON opportunities
+WHEN OLD.generation_version='opportunity-generation/v2' AND (
+    NEW.generation_version IS NOT OLD.generation_version
+    OR NEW.generation_json IS NOT OLD.generation_json
+    OR NEW.generation_hash IS NOT OLD.generation_hash
+    OR NEW.symbol IS NOT OLD.symbol OR NEW.market IS NOT OLD.market
+    OR NEW.direction_bias IS NOT OLD.direction_bias
+    OR NEW.scanner_family IS NOT OLD.scanner_family
+    OR NEW.valid_until IS NOT OLD.valid_until OR NEW.entry_zone IS NOT OLD.entry_zone
+    OR NEW.stop_loss_hint IS NOT OLD.stop_loss_hint OR NEW.tp_hint IS NOT OLD.tp_hint
+    OR NEW.setup_id IS NOT OLD.setup_id OR NEW.signal_mark IS NOT OLD.signal_mark
+    OR NEW.trigger_behavior_version IS NOT OLD.trigger_behavior_version
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Opportunity generation is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_opportunity_generation_v2_retained
+BEFORE DELETE ON opportunities
+WHEN OLD.generation_version='opportunity-generation/v2'
+BEGIN
+    SELECT RAISE(ABORT, 'Opportunity generation is retained');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_opportunity_validity_no_update
+BEFORE UPDATE ON opportunity_entry_validity_assessments
+BEGIN
+    SELECT RAISE(ABORT, 'Opportunity validity assessment is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_opportunity_validity_no_delete
+BEFORE DELETE ON opportunity_entry_validity_assessments
+BEGIN
+    SELECT RAISE(ABORT, 'Opportunity validity assessment is retained');
+END;
+"""
+_OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
+    (
+        repr(_OPPORTUNITY_GENERATION_V2_COLUMNS)
+        + _OPPORTUNITY_GENERATION_V2_SQL
+        + "\nopportunity_generation_v3"
+    ).encode("utf-8")
+).hexdigest()
+
+_COINGECKO_SOURCE_TIME_COLUMNS = (
+    ("source_observed_at", "coingecko_top_snapshots", "TEXT"),
+    ("acquired_at", "coingecko_top_snapshots", "TEXT"),
+    ("batch_id", "coingecko_top_snapshots", "TEXT"),
+    ("source_age_sec", "coingecko_top_snapshots", "INTEGER"),
+)
+_COINGECKO_SOURCE_TIME_CHECKSUM = hashlib.sha256(
+    (repr(_COINGECKO_SOURCE_TIME_COLUMNS) + "\ncoingecko_source_time_v1").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 _LESSON_REVIEWER_ATTEMPTS_SQL = """
@@ -5052,6 +5286,15 @@ _MIGRATION_DESCRIPTIONS = {
     "20260826_0040_paper_account_invalidation_v41": (
         "append-only paper-account economics invalidation"
     ),
+    "20260826_0041_universe_fast_trigger_v42": (
+        "Momentum setup, conditional authorization, and exact T0 trigger facts"
+    ),
+    "20260826_0042_opportunity_generation_v43": (
+        "immutable Crypto Opportunity generations and entry-validity evidence"
+    ),
+    "20260826_0043_coingecko_source_time_v44": (
+        "CoinGecko provider source-time provenance"
+    ),
 }
 
 
@@ -5240,6 +5483,47 @@ def _apply_paper_account_invalidation_v41(db: sqlite3.Connection) -> None:
     except Exception:
         db.rollback()
         raise
+
+
+def _apply_universe_fast_trigger_v41(db: sqlite3.Connection) -> None:
+    """Add bounded setup authority and same-venue T0 materialization facts."""
+
+    for column, table, column_type in _UNIVERSE_FAST_TRIGGER_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_UNIVERSE_FAST_TRIGGER_SQL)
+
+
+def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
+    """Add immutable generation envelopes without rewriting legacy rows."""
+
+    for column, table, column_type in _OPPORTUNITY_GENERATION_V2_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
+
+
+def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
+    """Add provider source-time provenance without rewriting legacy rows."""
+
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    for column, table, column_type in _COINGECKO_SOURCE_TIME_COLUMNS:
+        if table not in tables:
+            continue
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
@@ -6030,6 +6314,24 @@ _MIGRATIONS = (
         checksum=_PAPER_ACCOUNT_INVALIDATION_CHECKSUM,
         schema_version="aletheia-sqlite-v41",
         apply=_apply_paper_account_invalidation_v41,
+    ),
+    MigrationStep(
+        migration_id="20260826_0041_universe_fast_trigger_v42",
+        checksum=_UNIVERSE_FAST_TRIGGER_CHECKSUM,
+        schema_version="aletheia-sqlite-v42",
+        apply=_apply_universe_fast_trigger_v41,
+    ),
+    MigrationStep(
+        migration_id="20260826_0042_opportunity_generation_v43",
+        checksum=_OPPORTUNITY_GENERATION_V2_CHECKSUM,
+        schema_version="aletheia-sqlite-v43",
+        apply=_apply_opportunity_generation_v42,
+    ),
+    MigrationStep(
+        migration_id="20260826_0043_coingecko_source_time_v44",
+        checksum=_COINGECKO_SOURCE_TIME_CHECKSUM,
+        schema_version="aletheia-sqlite-v44",
+        apply=_apply_coingecko_source_time_v44,
     ),
 )
 
