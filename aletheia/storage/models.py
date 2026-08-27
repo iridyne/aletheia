@@ -1907,3 +1907,11 @@ class OnchainSnapshot(BaseModel):
     top_entries: str = "[]"              # JSON: list of top-N entries
     raw_summary: str = "{}"             # JSON: key scalar metrics
     observed_at: str = Field(default_factory=_utcnow)
+
+    @model_validator(mode="after")
+    def _finite_nonnegative_total(self):
+        if self.total_usd is not None and (
+            not math.isfinite(float(self.total_usd)) or float(self.total_usd) < 0
+        ):
+            raise ValueError("onchain total_usd must be finite and non-negative")
+        return self
