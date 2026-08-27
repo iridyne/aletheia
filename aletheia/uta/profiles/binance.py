@@ -12,6 +12,15 @@ class BinanceTestnetProfile(CCXTProfile):
     expected_profile = "binance_testnet"
     exchange_name = "binanceusdm"
     sandbox = True
+    mutation_market_order = True
+    mutation_limit_order = True
+    mutation_modify_order = True
+    mutation_cancel_order = True
+    mutation_reduce_only = True
+    mutation_leverage = True
+    mutation_post_only = True
+    mutation_client_order_id = True
+    integer_leverage = True
 
     def __init__(self, *, api_key: str, secret: str) -> None:
         super().__init__(
@@ -51,6 +60,59 @@ class BinanceTestnetProfile(CCXTProfile):
         return normalize_binance_funding_rows(
             row.get("info", row) if isinstance(row, dict) else {} for row in rows
         )
+
+    async def prepare_submit(self, exchange, command) -> None:
+        if command.leverage is not None:
+            await exchange.set_leverage(
+                int(command.leverage), command.instrument.venue_symbol
+            )
+
+    @staticmethod
+    def _params(command) -> dict:
+        params: dict[str, object] = {}
+        if command.client_order_id:
+            params["newClientOrderId"] = command.client_order_id
+        if command.reduce_only:
+            params["reduceOnly"] = True
+        if command.position_side:
+            params["positionSide"] = command.position_side
+        if command.time_in_force:
+            params["timeInForce"] = command.time_in_force
+        if command.post_only:
+            params["postOnly"] = True
+        return params
+
+    def submit_request(self, command):
+        return (
+            command.instrument.venue_symbol,
+            command.order_type,
+            command.side,
+            command.quantity,
+            command.limit_price,
+            self._params(command),
+        )
+
+    def modify_request(self, command, current):
+        order_id = command.target_venue_order_id or command.target_client_order_id
+        params = {}
+        if not command.target_venue_order_id and command.target_client_order_id:
+            params["origClientOrderId"] = command.target_client_order_id
+        return (
+            order_id,
+            command.instrument.venue_symbol,
+            current.order_type,
+            current.side,
+            command.quantity or current.original_quantity,
+            command.limit_price or current.price,
+            params,
+        )
+
+    def cancel_request(self, command):
+        order_id = command.target_venue_order_id or command.target_client_order_id
+        params = {}
+        if not command.target_venue_order_id and command.target_client_order_id:
+            params["origClientOrderId"] = command.target_client_order_id
+        return order_id, command.instrument.venue_symbol, params
 
 
 class BinanceLiveProfile(BinanceTestnetProfile):

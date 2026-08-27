@@ -61,6 +61,32 @@ Fixing baseline: `master@324ddafe53d5b577979b84da9ba83da8d6e3cdc7`.
 Phase 3 does not submit, modify or cancel an exchange order. Mutation methods
 remain `NOT_SENT`; execution cutover starts in Phase 4.
 
+## Phase 4 Binance testnet execution slice
+
+Fixing baseline: `master@b54ae5af48a162e3a009d0820616c9866937f58f`.
+
+| Boundary | Phase 4 implementation state | Authority result |
+|---|---|---|
+| UTA mutation | The Binance testnet profile implements market/limit submit, leverage preparation, reduce-only, modify and cancel through normalized command reports. Other profiles remain `NOT_SENT`. | Raw Binance parameters remain profile-owned; stable command evidence distinguishes not-sent, rejected, acknowledged and ambiguous. |
+| Entry | Gateway selects `execution/coordinator.py` only when `binance_testnet` is configured `uta_v1`; legacy and shadow selectors keep the existing broker. | The Coordinator commits pending Order before I/O and reuses the shared acknowledgement CAS afterward; there is no dual submission. |
+| Full close | Position Manager routes Binance close intent back through Gateway. A selected testnet UTA close commits the durable Position claim, sends one reduce-only command, then applies its report by CAS. | Late private Fill/close settlement wins over a late acknowledgement or ambiguous report. Binance live-limited remains legacy. |
+| Protection | Binance testnet had no implemented exchange-native protection placement/replacement before this phase. | Capability remains explicitly unsupported; the default-off local protection behavior is unchanged rather than invented. |
+| Rollback/qualification | Selection remains configuration-only and defaults to legacy. Automated tests cover pending-before-I/O, no writer-lock network call, ambiguity, exact Fill materialization and late-ack barriers. | Neither macOS nor the Fedora Paper runtime had Binance testnet credentials at the dated check, so credential qualification is **not available** and `uta_v1` must remain inactive. |
+
+The repeatable secret-safe gate is:
+
+```bash
+uv run python scripts/qualify_uta.py \
+  --execution-mode binance_testnet --read-parity --execution-probe \
+  --confirm-testnet-order --reference-price <fresh-public-price>
+```
+
+It accepts only Binance testnet in Phase 4, derives the minimum legal size from
+current venue constraints, exercises resting submit/modify/cancel and market
+entry/private-Fill/reduce-only-close/verified-exit evidence, and writes a
+credential-free artifact bound to code SHA, account fingerprint and credential
+generation. Missing credentials exits non-zero with `qualified=false`.
+
 ## Adjacent execution findings
 
 | Issue | Exact-head evidence | Composition decision |

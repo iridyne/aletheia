@@ -305,8 +305,8 @@ def close_position_routed(
             close_reasoning=close_reasoning,
         )
     elif mode in ("binance_testnet", "binance_live_limited"):
-        from aletheia.execution.binance_broker import close_testnet_position
-        result = close_testnet_position(
+        from aletheia.execution.gateway import close_exchange_position
+        result = close_exchange_position(
             position_id,
             reason=reason,
             close_reasoning=close_reasoning,

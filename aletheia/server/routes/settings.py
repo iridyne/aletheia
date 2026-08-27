@@ -717,17 +717,24 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
     if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
         raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
-    if req.uta_read_boundary == "uta_v1":
-        raise HTTPException(
-            409,
-            detail={
-                "code": "uta_profile_not_qualified",
-                "message": "UTA v1 activation requires persisted qualification evidence.",
-            },
-        )
     # Pre-validate outside the mutation lock to fail fast
     cfg_check = load_config()
     next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
+    if req.uta_read_boundary == "uta_v1":
+        from aletheia.trust.uta_qualification import uta_profile_qualified
+
+        qualified, qualification_reason = uta_profile_qualified(
+            next_paper_mode, cfg_check
+        )
+        if not qualified:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "uta_profile_not_qualified",
+                    "message": "UTA v1 activation requires persisted qualification evidence.",
+                    "reason": qualification_reason,
+                },
+            )
     if req.uta_read_boundary is not None and next_paper_mode not in {
         "binance_testnet",
         "okx_demo",

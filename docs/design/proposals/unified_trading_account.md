@@ -20,11 +20,13 @@ truth. GitHub Issue #2299 is the closed semantic implementation specification.
 
 ## Current fact
 
-The existing `aletheia.portfolio.uta` package is a read-only multi-broker
-aggregation seam. Gateway, reconciliation, recovery, funding, verified-exit and
-Trust still contain concrete private-client or venue-broker couplings. Existing
-`submission_unknown`, `materialization_missing`, Risk-before-Gateway authority,
-and `paper_internal` behavior remain authoritative.
+UTA owns normalized private reads for all configured profiles and the evidence,
+recovery, funding, verified-exit and Trust consumers. Binance testnet also has a
+configuration-gated execution slice through Gateway and the generic Coordinator;
+it remains legacy-selected until credential-backed qualification succeeds. Other
+venue mutations and all live-limited execution remain on their migration paths.
+Existing `submission_unknown`, `materialization_missing`, Risk-before-Gateway
+authority and `paper_internal` behavior remain authoritative.
 
 ## Goals and non-goals
 
@@ -69,6 +71,10 @@ reconciliation, funding, verified-exit, Trust, profile and structural tests.
 Every switched demo/testnet profile additionally requires secret-safe
 credential-backed qualification bound to exact code, account generation and
 authoritative private Fill evidence. No real-money order is an acceptance gate.
+The Phase 4 Binance gate is `scripts/qualify_uta.py`; its execution probe requires
+an explicit testnet-order confirmation and derives minimum legal size from venue
+constraints. A missing credential or any unresolved command produces a
+non-qualified artifact and cannot authorize selector activation.
 
 ## Rollout and rollback
 

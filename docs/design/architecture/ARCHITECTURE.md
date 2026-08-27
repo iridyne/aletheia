@@ -84,11 +84,12 @@ Position Manager（保护性止损/止盈/追踪与平仓）
 ## Unified Trading Account migration
 
 [`unified_trading_account.md`](../proposals/unified_trading_account.md) 已接受
-完整 UTA 设计，取代“UTA 仅只读”这一旧决策。Phase 0～2 已提供冻结合同、factory registry、
-read parity 和 account/position projection；Phase 3 的 recovery、reconciliation、funding、
-verified-exit 与 Live Trust 私有读取统一消费 UTA 报告。此阶段所有 mutation 仍为 `NOT_SENT`，
-未完成 profile execution qualification 前不得隐式切换写路径。最终边界保持：Gateway 授权，
-coordinator 执行本地状态机械步骤，UTA 只做外部账户 I/O 并返回证据，Aletheia storage 写入本地事实。
+完整 UTA 设计，取代“UTA 仅只读”这一旧决策。Phase 0～3 已提供冻结合同、factory registry、
+read parity、account projection，以及 recovery、reconciliation、funding、verified-exit 与 Live Trust
+的 UTA 私有读取。Binance testnet 的 `uta_v1` 选择器现可把 Gateway entry/full-close 送到通用
+Coordinator；Coordinator 执行 pending/claim、外部调用后的短 CAS 与审计，UTA 只做外部账户 I/O，
+Aletheia storage 写入本地事实。凭据 qualification 未通过前该 profile 仍保持 legacy 默认，其他
+profile mutation 仍为 `NOT_SENT`。
 
 ---
 
