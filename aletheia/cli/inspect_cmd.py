@@ -1050,8 +1050,9 @@ def pnl(
     """
     from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     from aletheia.analytics.outcome_integrity import (
+        assess_reportable_outcome,
         build_outcome_cohort_summary,
-        eligible_strategy_outcomes,
+        raw_account_events,
     )
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
@@ -1073,25 +1074,39 @@ def pnl(
 
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
-    closed = eligible_strategy_outcomes(
-        closed_after=today_str, limit=200, execution_mode=mode,
+    tomorrow_str = (
+        datetime.fromisoformat(today_str).replace(tzinfo=timezone.utc)
+        + timedelta(days=1)
+    ).date().isoformat()
+    today_raw = raw_account_events(
+        closed_after=today_str,
+        closed_before=tomorrow_str,
+        limit=10_000,
+        execution_mode=mode,
     )
     today_closed = [
-        p for p in closed
-        if (p.get("closed_at") or "")[:10] == today_str
+        p for p in today_raw
+        if assess_reportable_outcome(p).eligible
     ]
-    today_cohort = build_outcome_cohort_summary(
-        closed_after=today_str, execution_mode=mode,
+    today_total = (
+        round(sum(float(p["realized_pnl"]) for p in today_closed), 8)
+        if today_closed
+        else None
     )
-    today_total = today_cohort["eligible_realized_pnl"]
+    today_sample = today_closed[-200:]
+    today_eligible_count = len(today_closed)
+    today_shown_count = len(today_sample)
+    today_omitted_count = max(0, today_eligible_count - today_shown_count)
     today_detail = [
         {
             "symbol": p["symbol"], "direction": p["direction"],
             "pnl": round(float(p["realized_pnl"]), 2),
             "close_reason": p.get("close_reason", "?"),
         }
-        for p in today_closed
+        for p in today_sample
     ]
+    today_loaded_from = today_raw[0].get("closed_at") if today_raw else None
+    today_loaded_through = today_raw[-1].get("closed_at") if today_raw else None
 
     # Rolling stats
     rolling = compute_rolling_trade_stats(days=days, execution_mode=mode)
@@ -1111,7 +1126,17 @@ def pnl(
     result = {
         "execution_mode": mode,
         "execution_mode_status": "resolved",
-        "today": {"date": today_str, "realized": round(today_total, 2) if today_total is not None else None, "trades": today_detail},
+        "today": {
+            "date": today_str,
+            "realized": round(today_total, 2) if today_total is not None else None,
+            "eligible_count": today_eligible_count,
+            "shown_count": today_shown_count,
+            "omitted_count": today_omitted_count,
+            "cohort_complete": len(today_raw) < 10_000,
+            "loaded_from": today_loaded_from,
+            "loaded_through": today_loaded_through,
+            "trades": today_detail,
+        },
         "rolling": rolling,
         "cohort": build_outcome_cohort_summary(
             closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
@@ -1129,9 +1154,17 @@ def pnl(
     typer.echo(f"execution_mode: {mode}")
     typer.echo(f"=== Today ({today_str} UTC) ===")
     if today_total is None:
-        typer.echo("  realized: unavailable (insufficient verified outcomes)")
+        typer.echo(f"  realized: unavailable ({today_eligible_count} verified outcomes)")
     else:
-        typer.echo(f"  realized: {today_total:.2f} USDT ({len(today_detail)} verified outcomes)")
+        sample_text = (
+            f"; showing newest {today_shown_count}, {today_omitted_count} omitted"
+            if today_omitted_count
+            else ""
+        )
+        typer.echo(
+            f"  realized: {today_total:.2f} USDT "
+            f"({today_eligible_count} verified outcomes{sample_text})"
+        )
     for t in today_detail:
         typer.echo(f"  {t['symbol']} {t['direction']}: {t['pnl']:+.2f} ({t['close_reason']})")
 
