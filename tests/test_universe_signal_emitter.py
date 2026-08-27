@@ -1,5 +1,7 @@
 """Tests for universe signal_emitter — deterministic direction inference + opportunity emission."""
 
+import json
+
 import pytest
 from unittest.mock import patch
 
@@ -181,6 +183,39 @@ def _insert_market_price(
             price=price,
         )
     )
+
+
+def test_build_setup_preserves_funding_observed_at():
+    from aletheia.universe.signal_emitter import _build_setup
+
+    observed_at = "2026-08-26T11:45:00+00:00"
+    setup = _build_setup(
+        member={
+            "id": "member-1",
+            "asset_id": "asset-1",
+            "total_score": 75,
+            "expires_at": "2026-08-26T13:00:00+00:00",
+        },
+        feature={
+            "asset_id": "asset-1",
+            "venue": "bitget",
+            "funding_rate": 0.0004,
+            "funding_observed_at": observed_at,
+            "reasons": ["funding ok"],
+        },
+        snapshot_id="snapshot-1",
+        member_index=0,
+        symbol="BTC/USDT",
+        market_type="perp",
+        family="momentum",
+        direction="long",
+        material_fingerprint="fingerprint-1",
+        regime_tag="bull",
+    )
+
+    motive = json.loads(setup.motive_evidence)
+    assert setup.funding_observed_at == observed_at
+    assert motive["funding_observed_at"] == observed_at
 
 
 class TestEmitDeterministicOpportunities:

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, lazy, Suspense } from "react";
+import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { createColumnHelper } from "@tanstack/react-table";
@@ -41,10 +41,16 @@ import {
 	marketBadgeTone,
 	isPerpMarket,
 } from "../lib/format";
+import { orderIntent, orderIntentLabel, type OrderIntent } from "../lib/orderIntent";
 import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import { bootApi } from "../api/boot";
 import TradeAnalyticsPanel from "../charts/TradeAnalyticsPanel";
 const TradeInsightsPanel = lazy(() => import("../charts/TradeInsightsPanel"));
+const TRADES_TABS = ["blotter", "analytics"] as const;
+type TradesTab = typeof TRADES_TABS[number];
+function isTradesTab(tab: string | null): tab is TradesTab {
+	return !!tab && TRADES_TABS.includes(tab as TradesTab);
+}
 
 /**
  * Trades & Positions (WEBUI_PAGE_MAP.md — Positions + Paper Trades MERGED).
@@ -90,6 +96,14 @@ const pnlSourceBadge = (source: string | undefined) => {
 			? "muted"
 			: "yellow";
 	return <Badge tone={tone}>{humanize(value)}</Badge>;
+};
+
+const intentTone = (intent: OrderIntent) =>
+	intent === "close" ? "yellow" : intent === "entry" ? "blue" : "muted";
+
+const orderIntentBadge = (order: Order) => {
+	const intent = orderIntent(order);
+	return <Badge tone={intentTone(intent)}>{orderIntentLabel(intent)}</Badge>;
 };
 
 const openColumns = [
@@ -221,6 +235,11 @@ const closedColumns = [
 ];
 
 const orderColumns = [
+	ordCol.display({
+		id: "intent",
+		header: "Intent",
+		cell: ({ row }) => orderIntentBadge(row.original),
+	}),
 	ordCol.accessor("symbol", {
 		header: "Symbol",
 		cell: (info) => (
@@ -268,8 +287,8 @@ const orderColumns = [
 ];
 
 type Selection =
-	| { kind: "order"; order: Order }
-	| { kind: "position"; position: Position }
+	| { kind: "order"; id: string }
+	| { kind: "position"; id: string }
 	| null;
 
 /**
@@ -339,8 +358,9 @@ function useManualClose(onSuccess?: () => void) {
 
 export default function TradesPositions() {
 	const navigate = useNavigate();
-	const [searchParams] = useSearchParams();
-	const initialTab = searchParams.get("tab") || "blotter";
+	const [searchParams, setSearchParams] = useSearchParams();
+	const requestedTab = searchParams.get("tab");
+	const activeTab = isTradesTab(requestedTab) ? requestedTab : "blotter";
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
@@ -381,6 +401,27 @@ export default function TradesPositions() {
 	const open = allPos.filter((p) => p.status === "open");
 	const closed = allPos.filter((p) => p.status !== "open");
 	const orderRows = ordersArray as Order[];
+	const selectedOrder =
+		sel?.kind === "order"
+			? orderRows.find((order) => order.id === sel.id) ?? null
+			: null;
+	const selectedPosition =
+		sel?.kind === "position"
+			? allPos.find((position) => position.id === sel.id) ?? null
+			: null;
+
+	useEffect(() => {
+		if (requestedTab === activeTab) return;
+		const next = new URLSearchParams(searchParams);
+		next.set("tab", activeTab);
+		setSearchParams(next, { replace: true });
+	}, [activeTab, requestedTab, searchParams, setSearchParams]);
+
+	const setActiveTab = (tab: string) => {
+		const next = new URLSearchParams(searchParams);
+		next.set("tab", isTradesTab(tab) ? tab : "blotter");
+		setSearchParams(next);
+	};
 
 	// Map query state → DataTable.state; initial error/no data → unavailable, success empty → empty, error with cached data → stale
 	const positionsState = positionsPending && positionsArray.length === 0
@@ -461,7 +502,8 @@ export default function TradesPositions() {
 			<AccountSnapshot />
 
 			<Tabs
-				initial={initialTab}
+				value={activeTab}
+				onChange={setActiveTab}
 				tabs={[
 					{
 						id: "blotter",
@@ -490,17 +532,17 @@ export default function TradesPositions() {
 										<Card>
 											<p className="text-muted text-sm">No open positions.</p>
 										</Card>
-									) : (
-										<Card>
-											<DataTable
-												data={open}
-												columns={openColumnsWithExposure}
-												onRowClick={(p) =>
-													setSel({ kind: "position", position: p })
-												}
-												columnToggle
-												tableId="open-positions"
-												noWrap
+										) : (
+											<Card>
+												<DataTable
+													data={open}
+													columns={openColumnsWithExposure}
+													onRowClick={(p) =>
+														setSel({ kind: "position", id: p.id })
+													}
+													columnToggle
+													tableId="open-positions"
+													noWrap
 												state={positionsState}
 											/>
 										</Card>
@@ -542,15 +584,15 @@ export default function TradesPositions() {
 												Export CSV
 											</a>
 										</div>
-										<Card>
-											<DataTable
-												data={orderRows}
-												columns={orderColumns}
-												onRowClick={(o) => setSel({ kind: "order", order: o })}
-												state={ordersState}
-												emptyMessage="No orders yet."
-											/>
-										</Card>
+											<Card>
+												<DataTable
+													data={orderRows}
+													columns={orderColumns}
+													onRowClick={(o) => setSel({ kind: "order", id: o.id })}
+													state={ordersState}
+													emptyMessage="No orders yet."
+												/>
+											</Card>
 									</div>
 
 									{closed.length > 0 && (
@@ -558,15 +600,15 @@ export default function TradesPositions() {
 											<div className="blotter-section-head">
 												<h3>Closed Positions</h3>
 											</div>
-											<Card>
-												<DataTable
-													data={closed}
-													columns={closedColumns}
-													onRowClick={(p) =>
-														setSel({ kind: "position", position: p })
-													}
-												/>
-											</Card>
+												<Card>
+													<DataTable
+														data={closed}
+														columns={closedColumns}
+														onRowClick={(p) =>
+															setSel({ kind: "position", id: p.id })
+														}
+													/>
+												</Card>
 										</div>
 									)}
 								</div>
@@ -597,22 +639,48 @@ export default function TradesPositions() {
 				]}
 			/>
 
-			<DetailDrawer
-				open={!!sel}
-				onClose={() => setSel(null)}
-				title={sel?.kind === "order" ? "Order Detail" : "Position Detail"}
-			>
-				{sel?.kind === "order" && (
-					<OrderDetail order={sel.order} navigate={navigate} />
-				)}
-				{sel?.kind === "position" && (
-					<PositionDetail
-						position={sel.position}
-						onClose={() => setSel(null)}
-					/>
-				)}
-			</DetailDrawer>
+				<DetailDrawer
+					open={!!sel}
+					onClose={() => setSel(null)}
+					title={sel?.kind === "order" ? "Order Detail" : "Position Detail"}
+				>
+					{sel?.kind === "order" && (
+						ordersAvailable && selectedOrder ? (
+							<OrderDetail order={selectedOrder} navigate={navigate} />
+						) : (
+							<SelectionUnavailable kind="order" unavailable={!ordersAvailable} />
+						)
+					)}
+					{sel?.kind === "position" && (
+						positionsAvailable && selectedPosition ? (
+							<PositionDetail
+								position={selectedPosition}
+								onClose={() => setSel(null)}
+							/>
+						) : (
+							<SelectionUnavailable kind="position" unavailable={!positionsAvailable} />
+						)
+					)}
+				</DetailDrawer>
 		</div>
+	);
+}
+
+function SelectionUnavailable({
+	kind,
+	unavailable,
+}: {
+	kind: "order" | "position";
+	unavailable: boolean;
+}) {
+	return (
+		<DrawerSection label="Current Record">
+			<p className="text-muted text-sm">
+				{unavailable
+					? `Current ${kind} facts are unavailable; the drawer is not showing the last clicked snapshot.`
+					: `Selected ${kind} is no longer in the current query result.`}
+			</p>
+		</DrawerSection>
 	);
 }
 
@@ -759,9 +827,12 @@ function OrderDetail({
 	order: Order;
 	navigate: (p: string) => void;
 }) {
+	const intent = orderIntent(order);
+	const showCloseIdentity = intent !== "entry";
 	return (
 		<>
 			<DrawerSection label="Order">
+				<DrawerField label="Intent" value={orderIntentBadge(order)} />
 				<DrawerField
 					label="Symbol"
 					value={fmtSymbol(order.symbol, order.market_type)}
@@ -778,6 +849,25 @@ function OrderDetail({
 				{order.error_reason && (
 					<DrawerField label="Error Reason" value={order.error_reason} />
 				)}
+				{showCloseIdentity && (
+					<>
+						<DrawerField
+							label="Linked Position"
+							value={order.position_id || "unavailable"}
+							mono
+						/>
+						<DrawerField
+							label="Close Reason"
+							value={
+								order.close_reason ? humanize(order.close_reason) : "unavailable"
+							}
+						/>
+					</>
+				)}
+				<DrawerField
+					label="Provenance"
+					value={order.source ? humanize(order.source) : null}
+				/>
 			</DrawerSection>
 			<DrawerSection label="Execution">
 				<DrawerField label="Quantity" value={order.quantity} mono />

@@ -1,4 +1,8 @@
-# Usage Insights — Information Architecture and Visual Contract
+# Usage Insights — Information Architecture and Visual Contract (superseded)
+
+This historical design is superseded by
+[`usage_v2_workspace.md`](../proposals/usage_v2_workspace.md). The current API
+and cost semantics are owned by the API reference and data-utilization contract.
 
 > Status: implemented 2026-08-12. The page follows Aletheia's dense terminal language and
 > progressive disclosure rules. Reference pattern: OpenAI/Anthropic usage reporting,

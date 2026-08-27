@@ -128,6 +128,113 @@ async def test_profile_creation_trusts_inference_when_catalogue_is_unavailable(
 
 
 @pytest.mark.anyio
+async def test_openai_profile_rejects_invalid_protocol_before_probe(client, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    healthcheck = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthcheck)
+
+    response = await client[0].post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "bad-openai-protocol",
+            "display_name": "Bad OpenAI Protocol",
+            "type": "openai_compatible",
+            "base_url": "https://openai-compatible.example/v1",
+            "model": "test-model",
+            "protocol": "anthropic_messages",
+            "api_key": "must-not-be-saved",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Unsupported openai_compatible protocol" in response.text
+    assert "bad-openai-protocol" not in (await client[0].get("/api/model")).json()["providers"]
+    assert get_secret("model.profile.bad-openai-protocol.api_key") is None
+    healthcheck.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_anthropic_profile_uses_registry_protocol_authority(client):
+    response = await client[0].post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "anthropic-api",
+            "display_name": "Anthropic API",
+            "type": "anthropic_compatible",
+            "base_url": "https://anthropic-compatible.example",
+            "model": "claude-test",
+            "api_key": "anthropic-secret",
+        },
+    )
+
+    assert response.status_code == 201
+    providers = (await client[0].get("/api/model")).json()["providers"]
+    assert providers["anthropic-api"]["protocol"] == "anthropic_messages"
+
+    invalid = await client[0].patch(
+        "/api/settings/model-profiles/anthropic-api",
+        json={"protocol": "chat_completions"},
+    )
+    assert invalid.status_code == 422
+    assert "Unsupported anthropic_compatible protocol" in invalid.text
+
+
+@pytest.mark.anyio
+async def test_test_candidate_rejects_invalid_protocol_before_probe(client, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    healthcheck = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthcheck)
+
+    response = await client[0].post(
+        "/api/model/test-candidate",
+        json={
+            "provider": "openai_compatible",
+            "type": "openai_compatible",
+            "base_url": "https://openai-compatible.example/v1",
+            "model": "test-model",
+            "protocol": "bogus",
+            "api_key": "candidate-secret",
+            "probe": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Unsupported openai_compatible protocol" in response.text
+    healthcheck.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_detect_models_rejects_invalid_protocol_before_provider_call(client, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    list_models = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(OpenAICompatibleProvider, "list_models", list_models)
+
+    response = await client[0].post(
+        "/api/model/detect-models",
+        json={
+            "provider": "openai_compatible",
+            "type": "openai_compatible",
+            "base_url": "https://openai-compatible.example/v1",
+            "protocol": "anthropic_messages",
+            "api_key": "candidate-secret",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Unsupported openai_compatible protocol" in response.text
+    list_models.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_profile_create_rolls_back_secret_when_config_save_fails(client, monkeypatch):
     def fail_save(_cfg):
         raise RuntimeError("simulated config write failure")

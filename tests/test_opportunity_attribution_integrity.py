@@ -102,6 +102,7 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
     }
     persisted = []
     opportunities = []
+    generations = []
     monkeypatch.setattr(features, "_persist_feature_snapshot", persisted.append)
     monkeypatch.setattr(
         "aletheia.learning.opportunity_information_policy.ensure_opportunity_information_policy_epoch",
@@ -115,7 +116,8 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
     ), patch.object(
         signal_emitter.repo,
         "insert_opportunity_generation",
-        side_effect=lambda opportunity, _generation: opportunities.append(opportunity)
+        side_effect=lambda opportunity, generation: opportunities.append(opportunity)
+        or generations.append(generation)
         or opportunity,
     ), patch.object(signal_emitter, "_record_emission_decision"), patch.object(
         signal_emitter, "has_fresh_market_snapshot", return_value=True
@@ -130,6 +132,7 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
     assert persisted == [computed]
     assert feature["feature_snapshot_id"] == computed.id
     assert manifest["t0"]["feature_snapshot_id"] == computed.id
+    assert generations[0].motive_evidence["feature_snapshot_id"] == computed.id
 
 
 def test_serenity_trade_selects_namespace_before_uuid_lookup(monkeypatch):

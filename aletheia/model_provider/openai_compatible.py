@@ -15,6 +15,7 @@ from aletheia.model_provider.base import (
     StructuredModelRequest,
     model_json_schema_payload,
 )
+from aletheia.model_provider.registry import validate_provider_protocol
 
 # Backwards-compatible alias — the implementation now lives in aletheia.net so every
 # provider shares one credential-scrubbing path (error-leak 2.7).
@@ -121,7 +122,9 @@ class OpenAICompatibleProvider(ModelProvider):
     def __init__(self, base_url: str, model: str = "default", protocol: str = "chat_completions", api_key: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.protocol = protocol
+        self.protocol = validate_provider_protocol(
+            "openai_compatible", protocol, explicit=True
+        )
         self.api_key = api_key
 
     def _headers(self) -> dict:
