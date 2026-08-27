@@ -266,7 +266,8 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     """#2167 Phase 1/addendum A: metadata has its own same-head status boundary."""
     gate = _change_contract_workflow()
     triggers = gate["on"]
-    ci_triggers = _workflow()["on"]
+    workflow = _workflow()
+    ci_triggers = workflow["on"]
 
     assert triggers == {
         "pull_request": {
@@ -279,6 +280,13 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert ci_triggers["pull_request"] == {"branches": ["master"]}
 
     assert gate["permissions"] == {"contents": "read"}
+    assert gate["env"] == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.connectTimeout",
+        "GIT_CONFIG_VALUE_0": "30",
+        "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+        "GIT_HTTP_LOW_SPEED_TIME": "30",
+    }
     assert gate["concurrency"] == {
         "group": "change-contract-${{ github.event.pull_request.number }}",
         "cancel-in-progress": "true",
@@ -300,7 +308,14 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert "preflight_metadata" in commands
     assert "upload-artifact" not in CHANGE_CONTRACT_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    workflow_jobs = _workflow()["jobs"]
+    workflow_jobs = workflow["jobs"]
+    assert workflow["env"] == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.connectTimeout",
+        "GIT_CONFIG_VALUE_0": "30",
+        "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+        "GIT_HTTP_LOW_SPEED_TIME": "30",
+    }
     deep_preflight = workflow_jobs["change-contract-preflight"]
     assert deep_preflight["runs-on"] == SELF_HOSTED
     assert deep_preflight["timeout-minutes"] == "5"
