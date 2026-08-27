@@ -329,6 +329,15 @@ async def llm_complete(
             provider=provider_instance,
             provider_name=provider_name,
         )
+        if not (resp.content or "").strip():
+            _record_call_finished(
+                inference_call,
+                status="error",
+                response=resp,
+                error_type="empty_response",
+            )
+            _record_llm(False)
+            return None, "llm_unavailable: empty_response"
         _record_call_finished(inference_call, status="success", response=resp)
         _record_llm(True)
         return resp.content, None
