@@ -15,14 +15,14 @@ ignored.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence
 
 from aletheia.analytics.attribution import segment_stats
 
 
-def _parse_closed_at(value) -> datetime | None:
-    """Parse an ISO ``closed_at`` string into a tz-aware datetime, or None."""
+def parse_utc_instant(value) -> datetime | None:
+    """Parse an ISO timestamp into a UTC-aware datetime, or None."""
     if not value:
         return None
     s = str(value).strip()
@@ -32,9 +32,17 @@ def _parse_closed_at(value) -> datetime | None:
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     try:
-        return datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s)
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        return None
+    return dt.astimezone(timezone.utc)
+
+
+def _parse_closed_at(value) -> datetime | None:
+    """Parse an ISO ``closed_at`` string into a UTC-aware datetime, or None."""
+    return parse_utc_instant(value)
 
 
 def _bucket(outcomes: Sequence[dict], key_fn) -> dict:

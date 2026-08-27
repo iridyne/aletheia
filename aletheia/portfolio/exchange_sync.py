@@ -112,6 +112,30 @@ def _age_seconds(fetched_at: str) -> Optional[float]:
         return None
 
 
+def _numeric_account_value(state: Optional[dict], *keys: str) -> float | None:
+    if not isinstance(state, dict):
+        return None
+    for key in keys:
+        if key not in state or state.get(key) is None:
+            continue
+        try:
+            value = float(state[key])
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+    return None
+
+
+def account_equity_value(state: Optional[dict]) -> float | None:
+    """Return explicit cached equity, preserving zero as a known value."""
+    return _numeric_account_value(state, "equity_usdt", "total_equity_usdt")
+
+
+def account_available_value(state: Optional[dict]) -> float | None:
+    """Return explicit cached available balance, preserving zero as a known value."""
+    return _numeric_account_value(state, "available_usdt", "total_available_usdt")
+
+
 def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
     """Return the cached state for `mode` (defaults to current cfg.exchange.mode).
 
@@ -138,7 +162,7 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
         # which carries the true total equity across all brokers.
         if not explicit_mode and not (cfg.exchange.paper_execution_mode or "").startswith("bitget"):
             unified = get_unified_cached_state()
-            if unified is not None and (unified.get("total_equity_usdt") or 0) > 0:
+            if unified is not None and account_equity_value(unified) is not None:
                 return unified
     raw = _read_raw(mode)
     if raw is None:
@@ -158,6 +182,8 @@ def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -
         return "stale"
     if not math.isfinite(age_value) or age_value < 0 or age_value > max_age_sec:
         return "stale"
+    if state.get("sync_status") in {"error", "unconfigured"}:
+        return str(state["sync_status"])
     return "ok"
 
 
@@ -209,7 +235,26 @@ def get_unified_cached_state() -> Optional[dict]:
     if raw is None:
         return None
     raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
+    raw["connected_brokers"] = list(
+        raw.get("connected_brokers")
+        or [account.get("broker_id") for account in raw.get("accounts", []) if account.get("broker_id")]
+    )
+    raw["sync_status"] = _unified_sync_status(raw)
+    raw["sync_complete"] = raw["sync_status"] == "ok"
     return raw
+
+
+def _unified_sync_status(state: dict, max_age_sec: int = 600) -> str:
+    age = state.get("age_seconds")
+    if age is None:
+        age = _age_seconds(state.get("fetched_at", ""))
+    if age is None or age > max_age_sec:
+        return "stale"
+    if state.get("errors"):
+        return "error"
+    if not state.get("connected_brokers") and not state.get("accounts"):
+        return "unconfigured"
+    return "ok"
 
 
 def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
@@ -446,6 +491,9 @@ def sync_all_exchanges() -> Optional[dict]:
 
     try:
         unified = get_unified_state_sync()
+        connected_brokers = getattr(unified, "connected_brokers", None) or [
+            acct.get("broker_id") for acct in unified.accounts if acct.get("broker_id")
+        ]
         payload = {
             "total_equity_usdt": unified.total_equity_usdt,
             "total_available_usdt": unified.total_available_usdt,
@@ -453,8 +501,11 @@ def sync_all_exchanges() -> Optional[dict]:
             "accounts": unified.accounts,
             "positions": unified.positions,
             "errors": unified.errors,
+            "connected_brokers": connected_brokers,
             "fetched_at": unified.fetched_at,
         }
+        payload["sync_status"] = _unified_sync_status(payload)
+        payload["sync_complete"] = payload["sync_status"] == "ok"
         _store_unified(payload)
 
         # Auto-record initial deposit for newly-seen brokers.

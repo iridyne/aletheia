@@ -22,7 +22,7 @@ from aletheia.trading.trading_mandate import (
     validate_frozen_trading_mandate_provenance,
 )
 
-COMPLIANCE_CONTRACT_VERSION = "trading_mandate_compliance/v1"
+COMPLIANCE_CONTRACT_VERSION = "trading_mandate_compliance/v2"
 _FIT_STATUSES = (
     "in_scope",
     "out_of_scope",
@@ -195,16 +195,82 @@ def _horizon_declaration(proposal: dict[str, Any] | None) -> tuple[float | None,
     return _finite(declared.get("min_hours")), _finite(declared.get("max_hours")), evidence["status"]
 
 
-def _duration(
-    position: dict[str, Any],
+def _event_window_exclusion(
+    value: object,
     *,
-    as_of: datetime | None = None,
-) -> float | None:
+    cutoff: datetime,
+    window_to: datetime,
+    field: str,
+) -> str | None:
+    observed = _utc(value)
+    if observed is None:
+        return f"{field}_invalid"
+    if observed > window_to:
+        return f"{field}_future"
+    if observed < cutoff:
+        return f"{field}_before_window"
+    return None
+
+
+def _rows_in_window(
+    rows: Any,
+    *,
+    field: str,
+    reason_field: str,
+    cutoff: datetime,
+    window_to: datetime,
+    exclusions: Counter[str],
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        reason = _event_window_exclusion(
+            item.get(field),
+            cutoff=cutoff,
+            window_to=window_to,
+            field=reason_field,
+        )
+        if reason is None:
+            selected.append(item)
+        elif reason != f"{reason_field}_before_window":
+            exclusions[reason] += 1
+    return selected
+
+
+def _duration(position: dict[str, Any]) -> float | None:
     opened = _utc(position.get("opened_at"))
-    closed = _utc(position.get("closed_at")) or as_of
+    closed = _utc(position.get("closed_at"))
     if opened is None or closed is None or closed < opened:
         return None
     return (closed - opened).total_seconds() / 3600.0
+
+
+def _duration_exclusion(
+    position: dict[str, Any],
+    *,
+    cutoff: datetime,
+    window_to: datetime,
+) -> str | None:
+    opened = _utc(position.get("opened_at"))
+    if opened is None:
+        return "opened_at_invalid"
+    raw_closed = position.get("closed_at")
+    if raw_closed in (None, ""):
+        return "position_open"
+    closed = _utc(raw_closed)
+    if closed is None:
+        return "closed_at_invalid"
+    if closed < opened:
+        return "closed_before_open"
+    if opened < cutoff:
+        return "opened_at_before_window"
+    if opened > window_to:
+        return "opened_at_future"
+    if closed < cutoff:
+        return "closed_at_before_window"
+    if closed > window_to:
+        return "closed_at_future"
+    return None
 
 
 def _single_report(
@@ -267,16 +333,23 @@ def _single_report(
 def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=max(1, int(hours)))
-    proposals = [
-        dict(row)
-        for row in db.execute("SELECT * FROM trade_proposals ORDER BY datetime(created_at), rowid").fetchall()
-        if (created := _utc(row["created_at"])) is not None and created >= cutoff
-    ]
-    positions = [
-        dict(row)
-        for row in db.execute("SELECT * FROM positions ORDER BY datetime(opened_at), rowid").fetchall()
-        if (opened := _utc(row["opened_at"])) is not None and opened >= cutoff
-    ]
+    cohort_exclusions: Counter[str] = Counter()
+    proposals = _rows_in_window(
+        db.execute("SELECT * FROM trade_proposals ORDER BY datetime(created_at), rowid").fetchall(),
+        field="created_at",
+        reason_field="proposal_created_at",
+        cutoff=cutoff,
+        window_to=now,
+        exclusions=cohort_exclusions,
+    )
+    positions = _rows_in_window(
+        db.execute("SELECT * FROM positions ORDER BY datetime(opened_at), rowid").fetchall(),
+        field="opened_at",
+        reason_field="position_opened_at",
+        cutoff=cutoff,
+        window_to=now,
+        exclusions=cohort_exclusions,
+    )
     proposals_by_id = {row["id"]: row for row in proposals}
     proposal_statuses = Counter({status: 0 for status in _FIT_STATUSES})
     reason_counts: Counter[str] = Counter()
@@ -310,13 +383,17 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
         "incompatible_count": 0,
         "not_declared_count": 0,
         "not_available_count": 0,
+        "not_measurable_by_reason": {},
     }
     overrun = {
         "declared_max_horizon_positions": 0,
         "measurable_count": 0,
         "overrun_count": 0,
         "not_measurable_count": 0,
+        "not_measurable_by_reason": {},
     }
+    duration_exclusions: Counter[str] = Counter()
+    overrun_exclusions: Counter[str] = Counter()
     outcome_by_status: dict[str, dict[str, Any]] = {
         status: {"eligible_count": 0, "net_pnl": None} for status in _FIT_STATUSES
     }
@@ -346,9 +423,15 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
                 duration_summary["not_available_count"] += 1
         else:
             duration_summary["declared_horizon_positions"] += 1
-            actual_hours = _duration(position, as_of=now)
+            duration_reason = _duration_exclusion(
+                position,
+                cutoff=cutoff,
+                window_to=now,
+            )
+            actual_hours = None if duration_reason else _duration(position)
             if actual_hours is None:
                 duration_summary["not_available_count"] += 1
+                duration_exclusions[duration_reason or "duration_not_available"] += 1
             else:
                 duration_summary["measurable_duration_positions"] += 1
                 compatible = (minimum is None or actual_hours >= minimum) and (
@@ -357,9 +440,10 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
                 duration_summary["compatible_count" if compatible else "incompatible_count"] += 1
             if maximum is not None:
                 overrun["declared_max_horizon_positions"] += 1
-                actual_hours = _duration(position, as_of=now)
+                actual_hours = None if duration_reason else _duration(position)
                 if actual_hours is None:
                     overrun["not_measurable_count"] += 1
+                    overrun_exclusions[duration_reason or "duration_not_available"] += 1
                 else:
                     overrun["measurable_count"] += 1
                     if actual_hours > maximum:
@@ -389,6 +473,8 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
             if outcome_by_status[status]["net_pnl"] is not None
             else None
         )
+    duration_summary["not_measurable_by_reason"] = dict(sorted(duration_exclusions.items()))
+    overrun["not_measurable_by_reason"] = dict(sorted(overrun_exclusions.items()))
     frozen_identity_values = [json.loads(value) for value in sorted(frozen_identities)]
     return {
         "contract_version": COMPLIANCE_CONTRACT_VERSION,
@@ -425,6 +511,7 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
             ),
         },
         "exclusions": {
+            "cohort_by_reason": dict(sorted(cohort_exclusions.items())),
             "positions_by_reason": dict(sorted(exclusions.items())),
             "historical_or_missing_mandate_evidence": position_statuses["not_recorded"],
             "unavailable_or_malformed_mandate_evidence": (
