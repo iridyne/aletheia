@@ -53,13 +53,18 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function renderLens() {
+function renderLens(initialEntry = '/prediction-markets') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
   client.setQueryData(['prediction-status'], status)
   client.setQueryData(['prediction-markets'], [market])
   client.setQueryData(['prediction-runs'], [])
+  vi.spyOn(api, 'getPredictionMarketDetail').mockResolvedValue({
+    ...market,
+    question: market.event_title,
+    external_market_id: market.market_id,
+  } as any)
   vi.spyOn(api, 'getPredictionMarketHistory').mockResolvedValue({ source: 'test', points: [] })
   vi.spyOn(api, 'getPredictionMarketClaims').mockResolvedValue([])
   vi.spyOn(api, 'getSerenityEvidence').mockResolvedValue([])
@@ -68,7 +73,7 @@ function renderLens() {
   document.body.appendChild(node)
   root = createRoot(node)
   act(() => root!.render(
-    <MemoryRouter initialEntries={['/prediction-markets']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={client}>
         <PredictionLens />
       </QueryClientProvider>
@@ -83,7 +88,7 @@ function closeDrawer(node: ParentNode) {
 }
 
 describe('Prediction Lens keyboard entrypoints', () => {
-  it('opens a radar card from its native button and restores focus after close', () => {
+  it('opens a radar card through exact market identity and restores focus after close', async () => {
     const node = renderLens()
     const card = node.querySelector<HTMLButtonElement>('button.pred-market-card')
     expect(card?.getAttribute('aria-label')).toBe(`Open details for ${market.event_title}`)
@@ -93,13 +98,17 @@ describe('Prediction Lens keyboard entrypoints', () => {
       card!.focus()
       card!.click()
     })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+    expect(api.getPredictionMarketDetail).toHaveBeenCalledWith(market.market_id)
     expect(node.querySelector('[role="dialog"]')).toBeTruthy()
 
     closeDrawer(node)
     expect(document.activeElement).toBe(card)
   })
 
-  it('opens a probability mover with Enter or Space and restores row focus', () => {
+  it('opens a probability mover with Enter or Space and restores row focus', async () => {
     const node = renderLens()
     const moversTab = [...node.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       .find(button => button.textContent?.includes('Probability Movers'))
@@ -116,9 +125,22 @@ describe('Prediction Lens keyboard entrypoints', () => {
       row!.focus()
       row!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+    expect(api.getPredictionMarketDetail).toHaveBeenCalledWith(market.market_id)
     expect(node.querySelector('[role="dialog"]')).toBeTruthy()
 
     closeDrawer(node)
     expect(document.activeElement).toBe(row)
+  })
+
+  it('opens an exact market from the URL without selecting the first card', async () => {
+    const node = renderLens('/prediction-markets?market_id=external-market-1')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+    expect(api.getPredictionMarketDetail).toHaveBeenCalledWith('external-market-1')
+    expect(node.querySelector('[role="dialog"]')?.textContent).toContain(market.event_title)
   })
 })
