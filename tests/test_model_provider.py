@@ -87,7 +87,42 @@ def test_router_returns_anthropic(tmp_path, monkeypatch):
     clear_cache()
     provider = get_provider("anthropic_compatible")
     assert isinstance(provider, AnthropicCompatibleProvider)
+    assert provider.protocol == "anthropic_messages"
     clear_cache()
+
+
+def test_router_rejects_invalid_loaded_http_protocol(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["bad_profile"] = ProviderConfig.model_validate(
+        {
+            "type": "openai_compatible",
+            "base_url": "http://localhost:8000/v1",
+            "protocol": "anthropic_messages",
+            "enabled": True,
+        }
+    )
+    save_config(cfg)
+    clear_cache()
+
+    with pytest.raises(ValueError, match="Unsupported openai_compatible protocol"):
+        get_provider("bad_profile")
+    clear_cache()
+
+
+def test_openai_provider_rejects_unknown_protocol_before_chat_fallback():
+    with pytest.raises(ValueError, match="Unsupported openai_compatible protocol"):
+        OpenAICompatibleProvider(
+            base_url="http://localhost:8000/v1",
+            model="test",
+            protocol="chat_completion",
+        )
 
 
 def test_router_returns_codex(tmp_path, monkeypatch):

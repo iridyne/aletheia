@@ -16,12 +16,15 @@ from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import delete_secret, get_secret, set_secret
 from aletheia.files.jsonl import write_audit
 from aletheia.model_provider.base import MODEL_HEALTH_STALE_AFTER_SECONDS
-from aletheia.model_provider.databricks import DATABRICKS_PROTOCOLS, validate_workspace_url
+from aletheia.model_provider.databricks import validate_workspace_url
 from aletheia.model_provider.registry import (  # pyright: ignore[reportMissingImports]
     API_PROVIDER_TYPES,
     CLI_PROVIDER_TYPES,
     PROVIDER_TYPES,
+    default_protocol_for_provider_type,
+    provider_config_protocol,
     provider_kind,
+    validate_provider_protocol,
 )
 from aletheia.model_provider.router import (
     clear_cache,
@@ -480,6 +483,19 @@ def _resolve_candidate_provider(provider_id: str, requested_type: str | None, cf
     return provider_type, pcfg
 
 
+def _candidate_protocol(provider_type: str, requested_protocol: str | None, pcfg) -> str:
+    try:
+        if requested_protocol is not None:
+            return validate_provider_protocol(
+                provider_type, requested_protocol, explicit=True
+            )
+        if pcfg is not None:
+            return provider_config_protocol(provider_type, pcfg)
+        return default_protocol_for_provider_type(provider_type)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/model/detect-models")
 async def detect_models(req: DetectModelsRequest):
     """Probe a candidate provider identity without persisting credentials."""
@@ -495,6 +511,11 @@ async def detect_models(req: DetectModelsRequest):
     provider_type, pcfg = _resolve_candidate_provider(req.provider, req.type, cfg)
     if provider_type in CLI_PROVIDERS:
         raise HTTPException(400, f"{provider_type} uses CLI introspection, not HTTP detection")
+    protocol = (
+        _candidate_protocol(provider_type, req.protocol, pcfg)
+        if provider_type in API_PROVIDER_TYPES
+        else None
+    )
     stored_key = (
         await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
         if pcfg and pcfg.api_key_secret_ref
@@ -515,6 +536,7 @@ async def detect_models(req: DetectModelsRequest):
         provider = OpenAICompatibleProvider(
             base_url=req.base_url or (pcfg.base_url if pcfg else "") or "",
             model="default",
+            protocol=protocol or default_protocol_for_provider_type(provider_type),
             api_key=api_key,
         )
     elif provider_type == "anthropic_compatible":
@@ -525,13 +547,14 @@ async def detect_models(req: DetectModelsRequest):
             model="default",
             api_key=api_key,
             auth_scheme=auth_scheme,
+            protocol=protocol or default_protocol_for_provider_type(provider_type),
         )
     elif provider_type == "databricks":
         try:
             provider = DatabricksProvider(
                 workspace_url=req.workspace_url or (pcfg.workspace_url if pcfg else "") or "",
                 model=(pcfg.model if pcfg else "default") or "default",
-                protocol=req.protocol or (pcfg.protocol if pcfg else "serving_endpoint") or "serving_endpoint",
+                protocol=protocol or default_protocol_for_provider_type(provider_type),
                 api_key=api_key,
             )
         except ValueError as exc:
@@ -582,6 +605,11 @@ async def test_model_candidate(req: TestCandidateRequest):
     model = req.model or (pcfg.model if pcfg else "default")
     if provider_type in CLI_PROVIDERS:
         raise HTTPException(400, f"{provider_type} uses local auth, not a candidate key")
+    protocol = (
+        _candidate_protocol(provider_type, req.protocol, pcfg)
+        if provider_type in API_PROVIDER_TYPES
+        else None
+    )
     stored_key = None
     if pcfg and pcfg.api_key_secret_ref:
         stored_key = await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
@@ -600,7 +628,7 @@ async def test_model_candidate(req: TestCandidateRequest):
         provider = OpenAICompatibleProvider(
             base_url=req.base_url or (pcfg.base_url if pcfg else "") or "",
             model=model,
-            protocol=req.protocol or (pcfg.protocol if pcfg else "chat_completions"),
+            protocol=protocol or default_protocol_for_provider_type(provider_type),
             api_key=api_key,
         )
     elif provider_type == "anthropic_compatible":
@@ -610,13 +638,14 @@ async def test_model_candidate(req: TestCandidateRequest):
             model=model,
             api_key=api_key,
             auth_scheme=auth_scheme,
+            protocol=protocol or default_protocol_for_provider_type(provider_type),
         )
     elif provider_type == "databricks":
         try:
             provider = DatabricksProvider(
                 workspace_url=req.workspace_url or (pcfg.workspace_url if pcfg else "") or "",
                 model=model,
-                protocol=req.protocol or (pcfg.protocol if pcfg else "serving_endpoint") or "serving_endpoint",
+                protocol=protocol or default_protocol_for_provider_type(provider_type),
                 api_key=api_key,
             )
         except ValueError as exc:
@@ -629,7 +658,7 @@ async def test_model_candidate(req: TestCandidateRequest):
         raise HTTPException(400, f"No test-candidate support for {provider_type}")
 
     candidate_identity = await asyncio.to_thread(
-        _candidate_configuration_identity, req, provider_type, pcfg, api_key
+        _candidate_configuration_identity, req, provider_type, pcfg, api_key, protocol
     )
     try:
         health = await provider.healthcheck()
@@ -916,7 +945,9 @@ def _profile_api_key_ref(provider_id: str, provider_type: str, pcfg) -> str:
     return f"model.profile.{provider_id}.api_key"
 
 
-def _candidate_configuration_identity(req, provider_type: str, pcfg, api_key: str | None) -> str:
+def _candidate_configuration_identity(
+    req, provider_type: str, pcfg, api_key: str | None, protocol: str | None = None
+) -> str:
     """Build the same identity that a verified profile will persist."""
 
     from aletheia.config.schema import ProviderConfig
@@ -926,8 +957,8 @@ def _candidate_configuration_identity(req, provider_type: str, pcfg, api_key: st
         if field_name in req.model_fields and getattr(req, field_name) is not None:
             values[field_name] = getattr(req, field_name)
     values["type"] = provider_type
-    if provider_type == "databricks" and not values.get("protocol"):
-        values["protocol"] = "serving_endpoint"
+    if protocol is not None:
+        values["protocol"] = protocol
     candidate = ProviderConfig.model_validate(values)
     if api_key:
         candidate.api_key_secret_ref = _profile_api_key_ref(req.provider, provider_type, candidate)
@@ -958,15 +989,23 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
         pcfg = ProviderConfig(
             type=provider_type,
             display_name=req.display_name or "",
-            protocol="serving_endpoint" if provider_type == "databricks" else "chat_completions",
+            protocol=default_protocol_for_provider_type(provider_type),
         )
         cfg.models.providers[req.provider] = pcfg
+
+    try:
+        if req.protocol is not None:
+            req.protocol = validate_provider_protocol(
+                provider_type, req.protocol, explicit=True
+            )
+        else:
+            pcfg.protocol = provider_config_protocol(provider_type, pcfg)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
     if provider_type == "databricks":
         if req.base_url is not None:
             raise HTTPException(422, "Databricks uses workspace_url; base_url is not accepted")
-        if req.protocol is not None and req.protocol not in DATABRICKS_PROTOCOLS:
-            raise HTTPException(422, "Unsupported Databricks protocol")
         if req.workspace_url is not None:
             try:
                 validate_workspace_url(req.workspace_url)
