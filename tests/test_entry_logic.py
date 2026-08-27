@@ -21,7 +21,10 @@ from aletheia.storage.models import (
 from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent
-from tests.observer_admission_fixture import crypto_background
+from tests.observer_admission_fixture import (
+    crypto_background,
+    insert_universe_opportunity_generation,
+)
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -131,7 +134,12 @@ def _seed_admitted_opportunity(
             },
         }),
     )
-    repo.insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue=cfg.market_data.ccxt_exchange,
+        market_type=market_type,
+        signal_mark=60_000.0,
+    )
     record_filter_decision(
         candidate_key=f"universe_member:{member_id}",
         candidate_kind="universe_member",

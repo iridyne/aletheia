@@ -41,6 +41,15 @@ function timeAgo(isoStr: string | null | undefined): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
+function candidateState(member: UniverseMember): { label: string; tone: 'green' | 'warning' | 'muted' } {
+  const flags = parseJson(member.risk_flags)
+  if (member.triggered_opportunity_id) return { label: 'Triggered opportunity', tone: 'green' }
+  if (member.setup_state === 'armed' || member.setup_state === 'pullback_seen') return { label: 'Setup armed', tone: 'green' }
+  if (member.stale) return { label: 'Stale', tone: 'warning' }
+  if (flags.length) return { label: 'Flagged', tone: 'warning' }
+  return { label: 'Candidate', tone: 'muted' }
+}
+
 const makeColumns = (marketType?: string | null) => [
   col.accessor('rank', { header: '#', cell: info => <span className="mono">{info.getValue()}</span> }),
   col.accessor('symbol', {
@@ -72,15 +81,13 @@ const makeColumns = (marketType?: string | null) => [
     ),
   }),
   col.accessor('execution_eligible', {
-    header: 'Decision state',
+    header: 'Candidate state',
     cell: info => {
       const member = info.row.original
-      const flags = parseJson(member.risk_flags)
+      const state = candidateState(member)
       return <span className="universe-decision-state">
-        <Badge tone={member.execution_eligible ? 'green' : flags.length ? 'warning' : 'muted'}>
-          {member.execution_eligible ? 'Executable' : flags.length ? 'Flagged' : 'Not executable'}
-        </Badge>
-        <span className="mono">{member.ttl_sec >= 3600 ? `${(member.ttl_sec / 3600).toFixed(0)}h` : `${Math.ceil(member.ttl_sec / 60)}m`} left</span>
+        <Badge tone={state.tone}>{state.label}</Badge>
+        <span className="mono">{member.ttl_sec >= 3600 ? `${(member.ttl_sec / 3600).toFixed(0)}h` : `${Math.ceil(member.ttl_sec / 60)}m`} TTL</span>
       </span>
     },
   }),
@@ -90,7 +97,7 @@ export default function Universe() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [selected, setSelected] = useState<UniverseMember | null>(null)
-  const [filter, setFilter] = useState<'all' | 'executable' | 'flagged' | 'stale'>('all')
+  const [filter, setFilter] = useState<'all' | 'setup' | 'flagged' | 'stale'>('all')
   const [familyFilter, setFamilyFilter] = useState('all')
   const [search, setSearch] = useState('')
 
@@ -123,12 +130,13 @@ export default function Universe() {
     return counts
   }, {}), [members])
   const families = Object.keys(familyCounts).sort()
-  const executableCount = members.filter(member => !!member.execution_eligible).length
+  const setupCount = members.filter(member => member.setup_state === 'armed' || member.setup_state === 'pullback_seen' || !!member.triggered_opportunity_id).length
   const flaggedCount = members.filter(member => parseJson(member.risk_flags).length > 0).length
   const filteredMembers = members.filter(member => {
     const flags = parseJson(member.risk_flags).length > 0
+    const hasSetup = member.setup_state === 'armed' || member.setup_state === 'pullback_seen' || !!member.triggered_opportunity_id
     const matchesState = filter === 'all'
-      || filter === 'executable' && !!member.execution_eligible
+      || filter === 'setup' && hasSetup
       || filter === 'flagged' && flags
       || filter === 'stale' && !!member.stale
     const matchesFamily = familyFilter === 'all' || member.scanner_family === familyFilter
@@ -153,7 +161,7 @@ export default function Universe() {
 
       <section className="universe-pool-health" aria-label="Universe pool health">
         <MetricTile label="Candidates" value={members.length} context={isFallback ? 'static fallback pool' : 'retained after scanning'} />
-        <MetricTile label="Executable" value={executableCount} context={`${Math.max(0, members.length - executableCount)} not executable`} />
+        <MetricTile label="Setups" value={setupCount} context={`${Math.max(0, members.length - setupCount)} candidate-only`} />
         <MetricTile label="Flagged" value={flaggedCount} context={flaggedCount ? 'review member risk flags' : 'no member risk flags'} />
         <MetricTile label="Status" value={statusText} tone={statusTone} context={`refreshed ${timeAgo(snapshot?.created_at)}`} />
       </section>
@@ -180,7 +188,7 @@ export default function Universe() {
         <div className="universe-list-head">
           <div><h2>Universe list</h2><p>{filteredMembers.length} of {members.length} candidates</p></div>
           <div className="universe-filters" aria-label="Filter universe candidates">
-            {(['all', 'executable', 'flagged', 'stale'] as const).map(value => <Button key={value} size="sm" variant="ghost" className={`universe-filter${filter === value ? ' active' : ''}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{humanize(value)} {value === 'all' ? members.length : value === 'executable' ? executableCount : value === 'flagged' ? flaggedCount : staleCount}</Button>)}
+            {(['all', 'setup', 'flagged', 'stale'] as const).map(value => <Button key={value} size="sm" variant="ghost" className={`universe-filter${filter === value ? ' active' : ''}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{humanize(value)} {value === 'all' ? members.length : value === 'setup' ? setupCount : value === 'flagged' ? flaggedCount : staleCount}</Button>)}
             <select aria-label="Filter by scanner family" value={familyFilter} onChange={event => setFamilyFilter(event.target.value)}>
               <option value="all">All families</option>
               {families.map(family => <option key={family} value={family}>{humanize(family)}</option>)}
@@ -250,7 +258,7 @@ function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember;
     <DetailDrawer open={true} title={`${fmtSymbol(member.symbol, marketType)} — Rank #${member.rank}`} onClose={onClose}>
       <DrawerSection label="Scores">
         <DrawerField label="Total Score" value={member.total_score?.toFixed(1)} mono />
-        <DrawerField label="Opportunity" value={member.opportunity_score?.toFixed(1) ?? '—'} mono />
+        <DrawerField label="Selection Score" value={member.opportunity_score?.toFixed(1) ?? '—'} mono />
         <DrawerField label="Tradability" value={member.tradability_score?.toFixed(0) ?? '—'} mono />
         <DrawerField label="Liquidity" value={member.liquidity_score?.toFixed(0) ?? '—'} mono />
         <DrawerField label="Est. Cost" value={member.estimated_cost?.toFixed(1) ?? '—'} mono />
@@ -267,7 +275,7 @@ function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember;
         <DrawerField label="Family" value={member.scanner_family ? humanize(member.scanner_family) : '—'} />
         <DrawerField label="TTL" value={`${member.ttl_sec}s`} mono />
         <DrawerField label="Expires" value={fmtTimestamp(member.expires_at)} mono />
-        <DrawerField label="Eligible" value={member.execution_eligible ? 'Yes' : 'No'} />
+        <DrawerField label="State" value={candidateState(member).label} />
       </DrawerSection>
 
       {features && (
@@ -303,7 +311,7 @@ function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember;
       </DrawerSection>
 
       {opportunities.length > 0 && (
-        <DrawerSection label="Linked Opportunities">
+      <DrawerSection label="Triggered Opportunities">
           {opportunities.map((opp) => (
             <div key={opp.id} className="flex justify-between text-sm">
               <span><span className="mono">{fmtSymbol(opp.symbol, marketType)}</span> · {opp.direction_bias ? humanize(opp.direction_bias) : '—'}</span>

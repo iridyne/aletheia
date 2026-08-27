@@ -44,7 +44,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 ### A. Trading Core (22 tables)
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
-| `opportunities` | Scanner output -- trading signals; lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, universe snapshot/member identity | market_observer |
+| `opportunities` | Immutable entry-event carriers; Universe-linked crypto rows are created from setup EntryEligibility triggers, not raw Candidate score. Lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, setup_id, universe snapshot/member identity, generation hash | market_observer / universe trigger materializer |
 | `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
 | `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
 | `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, market_type, execution_mode, quantity, price, leverage | risk engine / execution gateway |
@@ -239,13 +239,17 @@ and spec `AR-S08`.
 
 ### G. Universe Pipeline (7 tables)
 
+`universe_members` is the durable Candidate table. The physical name is kept for
+compatibility; semantically these rows are Universe-selected Candidates, not
+Opportunity rows and not an executable queue.
+
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `universe_registry` | All known tradeable assets | symbol, exchange, asset_class, metadata (JSON) |
 | `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` | asset_id, ts, 15m RSI/ATR/return/range-in-ATR, 1h RSI/ATR/returns, 4h RSI/ATR/BB width/volume ratio, bb_squeeze, derivatives fields |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
-| `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
+| `universe_members` | Candidate assets in a universe snapshot; legacy physical name | snapshot_id, symbol, market_type, rank, score, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
 | `universe_twin_shadow_batches` | Non-authoritative prospective continuous-score comparison, sampled at most once per 55min | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, scanner-run assignment arm/propensity/coefficient, control/treatment policy, 4h outcome contract, allocator replay state, blockers, batch_hash |
@@ -420,7 +424,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | UniverseFeatureSnapshot | universe_feature_snapshots | Universe |
 | UniverseScannerRun | universe_scanner_runs | Universe |
 | UniverseSnapshot | universe_snapshots | Universe |
-| UniverseMember | universe_members | Universe |
+| Candidate / UniverseMember compatibility alias | universe_members | Universe |
 | UniverseForwardOutcome | universe_forward_outcomes | Universe |
 | UniversePolicy | universe_policies | Universe |
 | PiDecision | pi_decisions | System Operator |

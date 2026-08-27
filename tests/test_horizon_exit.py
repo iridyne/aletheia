@@ -305,5 +305,8 @@ def test_scheduled_wake_is_not_acknowledged_before_review_and_survives_restart(
 def test_wake_guards():
     # no horizon
     assert pm._maybe_wake_on_horizon(_pos(horizon=None, age_hours=100)) is False
+    # malformed/non-finite authored horizons are not due immediately or forever
+    for horizon in (0.0, -1.0, float("nan"), float("inf")):
+        assert pm._maybe_wake_on_horizon(_pos(horizon=horizon, age_hours=100)) is False
     # horizon not yet reached
     assert pm._maybe_wake_on_horizon(_pos(horizon=10, age_hours=5)) is False

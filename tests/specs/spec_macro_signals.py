@@ -490,6 +490,54 @@ def test_latest_coingecko_top_pins_to_single_batch(tmp_path, monkeypatch):
     sq.close_db()
 
 
+def test_latest_coingecko_top_pins_new_rows_by_batch_id(tmp_path, monkeypatch):
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
+    sq.close_db()
+    mig.run_migrations()
+
+    older = [
+        {
+            "coin_id": f"a{i}",
+            "symbol": f"A{i}",
+            "name": "A",
+            "price_usd": 1.0,
+            "market_cap_rank": i,
+            "observed_at": "2026-06-27T01:00:00+00:00",
+            "source_observed_at": "2026-06-27T01:00:00+00:00",
+            "acquired_at": "2026-06-27T01:01:00+00:00",
+            "batch_id": "old-batch",
+        }
+        for i in range(1, 4)
+    ]
+    newer_mixed_source = [
+        {
+            "coin_id": f"b{i}",
+            "symbol": f"B{i}",
+            "name": "B",
+            "price_usd": 1.0,
+            "market_cap_rank": i,
+            "observed_at": f"2026-06-27T02:0{i}:00+00:00",
+            "source_observed_at": f"2026-06-27T02:0{i}:00+00:00",
+            "acquired_at": "2026-06-27T02:10:00+00:00",
+            "batch_id": "new-batch",
+        }
+        for i in range(1, 4)
+    ]
+    repo.insert_coingecko_top_rows(older)
+    repo.insert_coingecko_top_rows(newer_mixed_source)
+
+    rows = repo.latest_coingecko_top(top_n=10)
+
+    assert {row["batch_id"] for row in rows} == {"new-batch"}
+    assert [row["symbol"] for row in rows] == ["B1", "B2", "B3"]
+    assert len({row["observed_at"] for row in rows}) == 3
+    sq.close_db()
+
+
 # ---------------------------------------------------------------------------
 # Step 4 — Historical funding / OI backfill
 # ---------------------------------------------------------------------------
