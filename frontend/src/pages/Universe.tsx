@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import type { UniverseCurrentResponse, UniverseMember, UniverseMemberDetail } from '../types'
+import type { Candidate, CandidateDetail, UniverseCurrentResponse } from '../types'
 import { DataTable } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
@@ -11,8 +11,8 @@ import MetricTile from '../components/MetricTile'
 import { Badge, Button, Card, CardHeader } from '../components/ui'
 import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
-const col = createColumnHelper<UniverseMember>()
-const EMPTY_UNIVERSE_MEMBERS: UniverseMember[] = []
+const col = createColumnHelper<Candidate>()
+const EMPTY_UNIVERSE_MEMBERS: Candidate[] = []
 
 function parseJson(raw: string | null | undefined): any[] {
   if (!raw) return []
@@ -41,10 +41,12 @@ function timeAgo(isoStr: string | null | undefined): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
-function candidateState(member: UniverseMember): { label: string; tone: 'green' | 'warning' | 'muted' } {
+function candidateState(member: Candidate): { label: string; tone: 'green' | 'warning' | 'muted' } {
   const flags = parseJson(member.risk_flags)
-  if (member.triggered_opportunity_id) return { label: 'Triggered opportunity', tone: 'green' }
-  if (member.setup_state === 'armed' || member.setup_state === 'pullback_seen') return { label: 'Setup armed', tone: 'green' }
+  if (member.entry_plan_status) return {
+    label: `Entry Plan ${humanize(member.entry_plan_status)}`,
+    tone: ['invalidated', 'expired', 'cancelled', 'failed'].includes(member.entry_plan_status) ? 'warning' : 'green',
+  }
   if (member.stale) return { label: 'Stale', tone: 'warning' }
   if (flags.length) return { label: 'Flagged', tone: 'warning' }
   return { label: 'Candidate', tone: 'muted' }
@@ -96,8 +98,8 @@ const makeColumns = (marketType?: string | null) => [
 export default function Universe() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const [selected, setSelected] = useState<UniverseMember | null>(null)
-  const [filter, setFilter] = useState<'all' | 'setup' | 'flagged' | 'stale'>('all')
+  const [selected, setSelected] = useState<Candidate | null>(null)
+  const [filter, setFilter] = useState<'all' | 'plan' | 'flagged' | 'stale'>('all')
   const [familyFilter, setFamilyFilter] = useState('all')
   const [search, setSearch] = useState('')
 
@@ -130,13 +132,13 @@ export default function Universe() {
     return counts
   }, {}), [members])
   const families = Object.keys(familyCounts).sort()
-  const setupCount = members.filter(member => member.setup_state === 'armed' || member.setup_state === 'pullback_seen' || !!member.triggered_opportunity_id).length
+  const planCount = members.filter(member => !!member.entry_plan_id).length
   const flaggedCount = members.filter(member => parseJson(member.risk_flags).length > 0).length
   const filteredMembers = members.filter(member => {
     const flags = parseJson(member.risk_flags).length > 0
-    const hasSetup = member.setup_state === 'armed' || member.setup_state === 'pullback_seen' || !!member.triggered_opportunity_id
+    const hasPlan = !!member.entry_plan_id
     const matchesState = filter === 'all'
-      || filter === 'setup' && hasSetup
+      || filter === 'plan' && hasPlan
       || filter === 'flagged' && flags
       || filter === 'stale' && !!member.stale
     const matchesFamily = familyFilter === 'all' || member.scanner_family === familyFilter
@@ -161,7 +163,7 @@ export default function Universe() {
 
       <section className="universe-pool-health" aria-label="Universe pool health">
         <MetricTile label="Candidates" value={members.length} context={isFallback ? 'static fallback pool' : 'retained after scanning'} />
-        <MetricTile label="Setups" value={setupCount} context={`${Math.max(0, members.length - setupCount)} candidate-only`} />
+        <MetricTile label="Entry Plans" value={planCount} context={`${Math.max(0, members.length - planCount)} candidate-only`} />
         <MetricTile label="Flagged" value={flaggedCount} context={flaggedCount ? 'review member risk flags' : 'no member risk flags'} />
         <MetricTile label="Status" value={statusText} tone={statusTone} context={`refreshed ${timeAgo(snapshot?.created_at)}`} />
       </section>
@@ -188,7 +190,7 @@ export default function Universe() {
         <div className="universe-list-head">
           <div><h2>Universe list</h2><p>{filteredMembers.length} of {members.length} candidates</p></div>
           <div className="universe-filters" aria-label="Filter universe candidates">
-            {(['all', 'setup', 'flagged', 'stale'] as const).map(value => <Button key={value} size="sm" variant="ghost" className={`universe-filter${filter === value ? ' active' : ''}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{humanize(value)} {value === 'all' ? members.length : value === 'setup' ? setupCount : value === 'flagged' ? flaggedCount : staleCount}</Button>)}
+            {(['all', 'plan', 'flagged', 'stale'] as const).map(value => <Button key={value} size="sm" variant="ghost" className={`universe-filter${filter === value ? ' active' : ''}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{humanize(value)} {value === 'all' ? members.length : value === 'plan' ? planCount : value === 'flagged' ? flaggedCount : staleCount}</Button>)}
             <select aria-label="Filter by scanner family" value={familyFilter} onChange={event => setFamilyFilter(event.target.value)}>
               <option value="all">All families</option>
               {families.map(family => <option key={family} value={family}>{humanize(family)}</option>)}
@@ -205,9 +207,9 @@ export default function Universe() {
   )
 }
 
-function WhyInPool({ members, marketType }: { members: UniverseMember[]; marketType?: string | null }) {
+function WhyInPool({ members, marketType }: { members: Candidate[]; marketType?: string | null }) {
   const rows = useMemo(() => {
-    const buckets = new Map<string, { reason: string; count: number; top: UniverseMember | null; topScore: number }>()
+    const buckets = new Map<string, { reason: string; count: number; top: Candidate | null; topScore: number }>()
     for (const member of members) {
       const reasons = parseJson(member.inclusion_reason) as string[]
       const primary = reasons[0]
@@ -246,13 +248,13 @@ function WhyInPool({ members, marketType }: { members: UniverseMember[]; marketT
 // Calibration evidence fields retained for spec conformance:
 // by_cohort_horizon rows use row.direction and row.market_type to scope guard isolation.
 // See spec_opportunity_outcomes §OO-C03 guard market scope.
-function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember; marketType?: string | null; onClose: () => void }) {
-  const { data } = useQuery<UniverseMemberDetail>({
+function MemberDrawer({ member, marketType, onClose }: { member: Candidate; marketType?: string | null; onClose: () => void }) {
+  const { data } = useQuery<CandidateDetail>({
     queryKey: ['universe-member', member.id],
-    queryFn: () => api.getUniverseMember(member.id),
+    queryFn: () => api.getCandidate(member.id),
   })
   const features = data?.features
-  const opportunities = data?.opportunities ?? []
+  const entryPlans = data?.entry_plans ?? []
 
   return (
     <DetailDrawer open={true} title={`${fmtSymbol(member.symbol, marketType)} — Rank #${member.rank}`} onClose={onClose}>
@@ -310,12 +312,12 @@ function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember;
         )}
       </DrawerSection>
 
-      {opportunities.length > 0 && (
-      <DrawerSection label="Triggered Opportunities">
-          {opportunities.map((opp) => (
-            <div key={opp.id} className="flex justify-between text-sm">
-              <span><span className="mono">{fmtSymbol(opp.symbol, marketType)}</span> · {opp.direction_bias ? humanize(opp.direction_bias) : '—'}</span>
-              <span className="text-muted">{humanize(opp.status)} · <span className="mono">{fmtTimestamp(opp.created_at)}</span></span>
+      {entryPlans.length > 0 && (
+      <DrawerSection label="Entry Plans">
+          {entryPlans.map((plan) => (
+            <div key={plan.id} className="flex justify-between text-sm">
+              <span>{humanize(plan.execution_mode)}</span>
+              <span className="text-muted">{humanize(plan.status)} · <span className="mono">{fmtTimestamp(plan.created_at)}</span></span>
             </div>
           ))}
         </DrawerSection>

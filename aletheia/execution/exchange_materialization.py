@@ -46,36 +46,27 @@ def _close_reasoning_for_order(order: dict) -> dict | None:
         payload = json.loads(raw)
         json.dumps(payload, allow_nan=False)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise MaterializationIntegrityError(
-            "close reasoning carrier is malformed"
-        ) from exc
+        raise MaterializationIntegrityError("close reasoning carrier is malformed") from exc
     if not isinstance(payload, dict):
         raise MaterializationIntegrityError("close reasoning carrier is not an object")
     required_text = ("actor", "source", "reason_code", "reason")
     if payload.get("version") != "trade_decision_rationale.v1" or any(
-        not isinstance(payload.get(field), str) or not payload[field].strip()
-        for field in required_text
+        not isinstance(payload.get(field), str) or not payload[field].strip() for field in required_text
     ):
         raise MaterializationIntegrityError("close reasoning carrier fields are invalid")
     if payload["reason_code"] != order.get("close_reason"):
-        raise MaterializationIntegrityError(
-            "close reasoning carrier does not match Order reason"
-        )
+        raise MaterializationIntegrityError("close reasoning carrier does not match Order reason")
     if len(payload["reason"]) > 1200:
         raise MaterializationIntegrityError("close reasoning carrier exceeds reason limit")
     if type(payload.get("is_ai_judgment")) is not bool:
-        raise MaterializationIntegrityError(
-            "close reasoning carrier judgment flag is invalid"
-        )
+        raise MaterializationIntegrityError("close reasoning carrier judgment flag is invalid")
     if not isinstance(payload.get("trigger"), dict):
         raise MaterializationIntegrityError("close reasoning carrier trigger is invalid")
     allowed_actors = {"system_operator", "system", "human", "position_reconciler"}
     if payload["actor"] not in allowed_actors:
         raise MaterializationIntegrityError("close reasoning carrier actor is invalid")
     if payload["is_ai_judgment"] != (payload["actor"] == "system_operator"):
-        raise MaterializationIntegrityError(
-            "close reasoning carrier actor and judgment flag conflict"
-        )
+        raise MaterializationIntegrityError("close reasoning carrier actor and judgment flag conflict")
     reserved_source_actors = {
         "portfolio_review": {"system_operator"},
         "operator_proactive_exit": {"system_operator"},
@@ -86,9 +77,7 @@ def _close_reasoning_for_order(order: dict) -> dict | None:
     }
     expected_actors = reserved_source_actors.get(payload["source"])
     if expected_actors is not None and payload["actor"] not in expected_actors:
-        raise MaterializationIntegrityError(
-            "close reasoning carrier actor and source conflict"
-        )
+        raise MaterializationIntegrityError("close reasoning carrier actor and source conflict")
     return payload
 
 
@@ -103,6 +92,7 @@ class PrivateFill:
     fee_currency: str
     filled_at: str
     filled_at_ms: int
+    realized_liquidity: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -113,9 +103,7 @@ class PrivateFill:
             or self.quantity <= 0
             or self.filled_at_ms <= 0
         ):
-            raise PrivateFillEvidenceInvalid(
-                "private fill row is incomplete or non-finite"
-            )
+            raise PrivateFillEvidenceInvalid("private fill row is incomplete or non-finite")
 
 
 @dataclass(frozen=True)
@@ -136,9 +124,7 @@ def durable_private_fill_id(execution_mode: str, remote_fill_id: str) -> str:
     execution_mode = str(execution_mode or "").strip()
     remote_fill_id = str(remote_fill_id or "").strip()
     if not execution_mode or not remote_fill_id:
-        raise MaterializationIntegrityError(
-            "private Fill identity requires account scope and remote id"
-        )
+        raise MaterializationIntegrityError("private Fill identity requires account scope and remote id")
     return f"private-fill:{execution_mode}:{remote_fill_id}"
 
 
@@ -149,10 +135,7 @@ def _private_fill_already_local(
     execution_mode: str,
 ) -> bool:
     """Recognize new scoped ids plus exact legacy raw-id rows."""
-    return (
-        durable_private_fill_id(execution_mode, item.fill_id) in local_ids
-        or item.fill_id in local_ids
-    )
+    return durable_private_fill_id(execution_mode, item.fill_id) in local_ids or item.fill_id in local_ids
 
 
 @contextmanager
@@ -251,12 +234,8 @@ def parse_bitget_private_fills(rows) -> list[PrivateFill]:
     for row in _coerce_rows(rows):
         fill_id = str(row.get("tradeId") or row.get("execId") or "").strip()
         exchange_order_id = str(row.get("orderId") or row.get("order_id") or "").strip()
-        client_order_id = str(
-            row.get("clientOid") or row.get("clientOrderId") or ""
-        ).strip() or None
-        price = _positive_float(
-            row.get("fillPrice") or row.get("price") or row.get("execPrice")
-        )
+        client_order_id = str(row.get("clientOid") or row.get("clientOrderId") or "").strip() or None
+        price = _positive_float(row.get("fillPrice") or row.get("price") or row.get("execPrice"))
         quantity = _positive_float(
             row.get("fillQuantity")
             or row.get("fillQty")
@@ -268,9 +247,7 @@ def parse_bitget_private_fills(rows) -> list[PrivateFill]:
         fee = _fee_from_row(row)
         try:
             timestamp_ms = int(row.get("cTime") or row.get("createdTime") or 0)
-            filled_at = datetime.fromtimestamp(
-                timestamp_ms / 1000, tz=timezone.utc
-            ).isoformat()
+            filled_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
         except (TypeError, ValueError, OSError, OverflowError):
             timestamp_ms = 0
             filled_at = ""
@@ -282,9 +259,9 @@ def parse_bitget_private_fills(rows) -> list[PrivateFill]:
             or fee is None
             or timestamp_ms <= 0
         ):
-            raise PrivateFillEvidenceInvalid(
-                "private fill row is incomplete or non-finite"
-            )
+            raise PrivateFillEvidenceInvalid("private fill row is incomplete or non-finite")
+        raw_liquidity = str(row.get("tradeScope") or row.get("execType") or row.get("liquidity") or "").strip().lower()
+        realized_liquidity = {"m": "maker", "maker": "maker", "t": "taker", "taker": "taker"}.get(raw_liquidity)
         evidence = PrivateFill(
             fill_id=fill_id,
             exchange_order_id=exchange_order_id,
@@ -293,14 +270,13 @@ def parse_bitget_private_fills(rows) -> list[PrivateFill]:
             quantity=quantity,
             fee=fee[0],
             fee_currency=fee[1],
+            realized_liquidity=realized_liquidity,
             filled_at=filled_at,
             filled_at_ms=timestamp_ms,
         )
         prior = parsed.get(fill_id)
         if prior is not None and prior != evidence:
-            raise MaterializationIntegrityError(
-                f"conflicting private fill identity: {fill_id}"
-            )
+            raise MaterializationIntegrityError(f"conflicting private fill identity: {fill_id}")
         parsed[fill_id] = evidence
     return sorted(parsed.values(), key=lambda item: (item.filled_at_ms, item.fill_id))
 
@@ -312,10 +288,7 @@ def evidence_for_order(order: dict, rows) -> tuple[str | None, list[PrivateFill]
     raw_rows = _coerce_rows(rows)
     if exchange_order_id:
         matched_rows = [
-            row
-            for row in raw_rows
-            if str(row.get("orderId") or row.get("order_id") or "").strip()
-            == exchange_order_id
+            row for row in raw_rows if str(row.get("orderId") or row.get("order_id") or "").strip() == exchange_order_id
         ]
         return exchange_order_id, parse_bitget_private_fills(matched_rows)
     if not client_order_id:
@@ -323,15 +296,12 @@ def evidence_for_order(order: dict, rows) -> tuple[str | None, list[PrivateFill]
     matched_rows = [
         row
         for row in raw_rows
-        if str(row.get("clientOid") or row.get("clientOrderId") or "").strip()
-        == client_order_id
+        if str(row.get("clientOid") or row.get("clientOrderId") or "").strip() == client_order_id
     ]
     matched = parse_bitget_private_fills(matched_rows)
     remote_ids = {item.exchange_order_id for item in matched}
     if len(remote_ids) > 1:
-        raise MaterializationIntegrityError(
-            "one client order identity maps to multiple exchange orders"
-        )
+        raise MaterializationIntegrityError("one client order identity maps to multiple exchange orders")
     return (next(iter(remote_ids)) if remote_ids else None), matched
 
 
@@ -365,9 +335,7 @@ def _attribution_fields(proposal: dict) -> dict:
         "btc_entry_price": snapshot.get("btc_entry_price"),
         "regime_tag": str(snapshot.get("regime_tag") or "unknown"),
         "entry_market_summary": (
-            json.dumps(market_context, sort_keys=True)
-            if isinstance(market_context, dict)
-            else None
+            json.dumps(market_context, sort_keys=True) if isinstance(market_context, dict) else None
         ),
         "decision_reasoning": proposal.get("agent_rationale"),
         "sizing_manifest": sizing_manifest,
@@ -378,13 +346,9 @@ def _require_compatible_entry_position(order: dict, position: dict) -> dict:
     """Fail closed when a durable entry backlink crosses position identity."""
     for field in ("symbol", "market_type", "direction", "execution_mode"):
         if position.get(field) != order.get(field):
-            raise MaterializationIntegrityError(
-                f"entry Order {field} does not match linked Position"
-            )
+            raise MaterializationIntegrityError(f"entry Order {field} does not match linked Position")
     if position.get("status") != "open":
-        raise MaterializationIntegrityError(
-            "entry Order references a linked Position that is not open"
-        )
+        raise MaterializationIntegrityError("entry Order references a linked Position that is not open")
     return position
 
 
@@ -412,7 +376,9 @@ def _linked_open_position(order: dict, proposal: dict) -> dict | None:
         ORDER BY rowid ASC
         """,
         (
-            order["symbol"], order["market_type"], order["direction"],
+            order["symbol"],
+            order["market_type"],
+            order["direction"],
             order["execution_mode"],
         ),
     ).fetchall()
@@ -443,9 +409,7 @@ def _tail_delta(evidence: list[PrivateFill], quantity: float) -> list[PrivateFil
     evidence_quantity = sum(item.quantity for item in evidence)
     tolerance = max(1e-12, abs(quantity) * 1e-9)
     if quantity < -tolerance or abs(evidence_quantity - quantity) > tolerance:
-        raise MaterializationIntegrityError(
-            "whole private fills cannot explain the local/exchange quantity delta"
-        )
+        raise MaterializationIntegrityError("whole private fills cannot explain the local/exchange quantity delta")
     return list(evidence)
 
 
@@ -463,9 +427,7 @@ def _fee_in_quote(
     materialization proceeds conservatively rather than blocking.  (#1752)
     """
     if not math.isfinite(fee) or not math.isfinite(fill_price):
-        raise MaterializationIntegrityError(
-            "private fill quote economics must be finite"
-        )
+        raise MaterializationIntegrityError("private fill quote economics must be finite")
     if fee == 0:
         return 0.0
     canonical = to_canonical(symbol)
@@ -480,16 +442,16 @@ def _fee_in_quote(
     # Third-currency fee (e.g. BGB, BNB): treat as zero — conservative and
     # avoids blocking a legitimate fill when the exchange charges in a deduction asset.
     import logging as _log
+
     _log.getLogger(__name__).warning(
         "private fill fee in unknown currency %r for %s — treating as 0.0",
-        fee_currency, symbol,
+        fee_currency,
+        symbol,
     )
     return 0.0
 
 
-def _private_fill_totals(
-    evidence: Iterable[PrivateFill], *, symbol: str
-) -> tuple[float, float, float]:
+def _private_fill_totals(evidence: Iterable[PrivateFill], *, symbol: str) -> tuple[float, float, float]:
     """Reject finite inputs whose derived Order economics are not finite."""
     quantity = 0.0
     notional = 0.0
@@ -505,16 +467,10 @@ def _private_fill_totals(
         quantity += item.quantity
         notional += item_notional
         fee += item_fee
-        if (
-            item_notional <= 0
-            or not all(
-                math.isfinite(value)
-                for value in (item_notional, item_fee, quantity, notional, fee)
-            )
+        if item_notional <= 0 or not all(
+            math.isfinite(value) for value in (item_notional, item_fee, quantity, notional, fee)
         ):
-            raise PrivateFillEvidenceInvalid(
-                "private fill derived economics must be finite"
-            )
+            raise PrivateFillEvidenceInvalid("private fill derived economics must be finite")
     return quantity, notional, fee
 
 
@@ -531,9 +487,7 @@ def _fill_totals(rows: Iterable[dict], *, symbol: str) -> tuple[float, float, fl
                 raise ValueError("missing private Fill fee")
             row_fee = float(raw_fee)
         except (KeyError, TypeError, ValueError) as exc:
-            raise MaterializationIntegrityError(
-                "durable private Fill economics are incomplete"
-            ) from exc
+            raise MaterializationIntegrityError("durable private Fill economics are incomplete") from exc
         if (
             not math.isfinite(row_quantity)
             or not math.isfinite(row_price)
@@ -541,9 +495,7 @@ def _fill_totals(rows: Iterable[dict], *, symbol: str) -> tuple[float, float, fl
             or row_quantity <= 0
             or row_price <= 0
         ):
-            raise MaterializationIntegrityError(
-                "durable private Fill economics must be finite"
-            )
+            raise MaterializationIntegrityError("durable private Fill economics must be finite")
         row_notional = row_quantity * row_price
         row_quote_fee = _fee_in_quote(
             fee=row_fee,
@@ -551,19 +503,13 @@ def _fill_totals(rows: Iterable[dict], *, symbol: str) -> tuple[float, float, fl
             fill_price=row_price,
             symbol=symbol,
         )
-        if row_notional <= 0 or not all(
-            math.isfinite(value) for value in (row_notional, row_quote_fee)
-        ):
-            raise MaterializationIntegrityError(
-                "durable private Fill derived economics must be finite"
-            )
+        if row_notional <= 0 or not all(math.isfinite(value) for value in (row_notional, row_quote_fee)):
+            raise MaterializationIntegrityError("durable private Fill derived economics must be finite")
         quantity += row_quantity
         notional += row_notional
         fee += row_quote_fee
     if not all(math.isfinite(value) for value in (quantity, notional, fee)):
-        raise MaterializationIntegrityError(
-            "durable private Fill totals must be finite"
-        )
+        raise MaterializationIntegrityError("durable private Fill totals must be finite")
     return quantity, notional, fee
 
 
@@ -590,24 +536,16 @@ def _verify_durable_fills(
             }
         ]
         if len(matches) != 1:
-            raise MaterializationIntegrityError(
-                f"durable {lifecycle} Fill has no same-id private evidence"
-            )
+            raise MaterializationIntegrityError(f"durable {lifecycle} Fill has no same-id private evidence")
         matched = matches[0]
         if (
-            abs(float(local["fill_quantity"]) - matched.quantity)
-            > quantity_tolerance
-            or abs(float(local["fill_price"]) - matched.price)
-            > max(1e-12, matched.price * 1e-9)
-            or abs(float(local.get("fee") or 0.0) - matched.fee)
-            > max(1e-12, matched.fee * 1e-9)
-            or str(local.get("fee_currency") or "").upper()
-            != matched.fee_currency.upper()
+            abs(float(local["fill_quantity"]) - matched.quantity) > quantity_tolerance
+            or abs(float(local["fill_price"]) - matched.price) > max(1e-12, matched.price * 1e-9)
+            or abs(float(local.get("fee") or 0.0) - matched.fee) > max(1e-12, matched.fee * 1e-9)
+            or str(local.get("fee_currency") or "").upper() != matched.fee_currency.upper()
             or _timestamp_ms(local.get("filled_at")) != matched.filled_at_ms
         ):
-            raise MaterializationIntegrityError(
-                f"durable {lifecycle} Fill conflicts with same-id private evidence"
-            )
+            raise MaterializationIntegrityError(f"durable {lifecycle} Fill conflicts with same-id private evidence")
         if upgrade_source and local.get("fee_source") != "reconciled":
             # Exact identity, economics, and exchange time allow an older row's
             # provenance to be upgraded. Any mismatch above remains fail-closed.
@@ -637,10 +575,14 @@ def materialize_bitget_entry(
         if order.get("position_id") and repo._select_one("positions", order["position_id"]):
             # A linked open Position still represents an entry Order.  Close
             # Orders are linked to a Position *and* are its pending close id.
-            pending = repo.get_db().execute(
-                "SELECT 1 FROM positions WHERE id=? AND pending_close_order_id=?",
-                (order["position_id"], order_id),
-            ).fetchone()
+            pending = (
+                repo.get_db()
+                .execute(
+                    "SELECT 1 FROM positions WHERE id=? AND pending_close_order_id=?",
+                    (order["position_id"], order_id),
+                )
+                .fetchone()
+            )
             if pending is not None:
                 return MaterializationResult(state="not_entry", position_id=order["position_id"])
 
@@ -672,16 +614,10 @@ def materialize_bitget_entry(
             symbol=order["symbol"],
         )
         tolerance = max(1e-12, float(order["quantity"]) * 1e-9)
-        if historical_gap_recovery and abs(
-            exchange_quantity - float(order["quantity"])
-        ) > tolerance:
-            raise MaterializationIntegrityError(
-                "historical filled-gap recovery requires complete private quantity"
-            )
+        if historical_gap_recovery and abs(exchange_quantity - float(order["quantity"])) > tolerance:
+            raise MaterializationIntegrityError("historical filled-gap recovery requires complete private quantity")
         if local_quantity > exchange_quantity + tolerance:
-            raise MaterializationIntegrityError(
-                "local fill quantity exceeds complete private evidence"
-            )
+            raise MaterializationIntegrityError("local fill quantity exceeds complete private evidence")
 
         _verify_durable_fills(
             db,
@@ -731,15 +667,11 @@ def materialize_bitget_entry(
                 ),
             ).fetchone()
             if compatible is not None:
-                raise MaterializationIntegrityError(
-                    "historical filled-gap recovery cannot merge into an open Position"
-                )
+                raise MaterializationIntegrityError("historical filled-gap recovery cannot merge into an open Position")
 
         position = _linked_open_position(order, proposal)
         if historical_gap_recovery and position is not None:
-            raise MaterializationIntegrityError(
-                "historical filled-gap recovery cannot attach to an existing Position"
-            )
+            raise MaterializationIntegrityError("historical filled-gap recovery cannot attach to an existing Position")
         for item in delta_evidence:
             repo.insert_fill(
                 Fill(
@@ -750,6 +682,7 @@ def materialize_bitget_entry(
                     fee=item.fee,
                     fee_currency=item.fee_currency,
                     fee_source="reconciled",
+                    realized_liquidity=item.realized_liquidity,
                     filled_at=item.filled_at,
                 )
             )
@@ -767,9 +700,7 @@ def materialize_bitget_entry(
                 symbol=order["symbol"],
             )
             if total_quantity <= 0:
-                return MaterializationResult(
-                    state="evidence_missing", exchange_order_id=exchange_order_id
-                )
+                return MaterializationResult(state="evidence_missing", exchange_order_id=exchange_order_id)
             entry_price = total_notional / total_quantity
             requested_price = float(order.get("price") or entry_price)
             slippage_cost = abs(entry_price - requested_price) * total_quantity
@@ -781,21 +712,10 @@ def materialize_bitget_entry(
             )
             if (
                 entry_price <= 0
-                or not all(
-                    math.isfinite(value)
-                    for value in (entry_price, requested_price, slippage_cost)
-                )
-                or (
-                    liquidation_price is not None
-                    and (
-                        not math.isfinite(liquidation_price)
-                        or liquidation_price <= 0
-                    )
-                )
+                or not all(math.isfinite(value) for value in (entry_price, requested_price, slippage_cost))
+                or (liquidation_price is not None and (not math.isfinite(liquidation_price) or liquidation_price <= 0))
             ):
-                raise MaterializationIntegrityError(
-                    "materialized entry economics must be finite"
-                )
+                raise MaterializationIntegrityError("materialized entry economics must be finite")
             position_model = Position(
                 symbol=order["symbol"],
                 market_type=order["market_type"],
@@ -816,9 +736,7 @@ def materialize_bitget_entry(
                 entry_fee=total_fee,
                 entry_price_source="broker_fill",
                 entry_fill_verified=True,
-                opened_at=min(
-                    evidence, key=lambda item: item.filled_at_ms
-                ).filled_at,
+                opened_at=min(evidence, key=lambda item: item.filled_at_ms).filled_at,
                 slippage_cost=slippage_cost,
                 **_attribution_fields(proposal),
             )
@@ -834,9 +752,7 @@ def materialize_bitget_entry(
                 repo.update_position(position_id, **_exit_intent)
         else:
             if position.get("status") != "open":
-                raise MaterializationIntegrityError(
-                    "entry fill maps to a non-open Position"
-                )
+                raise MaterializationIntegrityError("entry fill maps to a non-open Position")
             position_id = position["id"]
             if delta_quantity > 0:
                 old_quantity = float(position["quantity"])
@@ -845,13 +761,11 @@ def materialize_bitget_entry(
                 old_slippage = float(position.get("slippage_cost") or 0.0)
                 new_quantity = old_quantity + delta_quantity
                 current_price = delta_notional / delta_quantity
-                new_entry = (
-                    old_quantity * old_entry + delta_notional
-                ) / new_quantity
+                new_entry = (old_quantity * old_entry + delta_notional) / new_quantity
                 new_entry_fee = old_entry_fee + delta_fee
-                new_slippage = old_slippage + abs(
-                    current_price - float(order.get("price") or current_price)
-                ) * delta_quantity
+                new_slippage = (
+                    old_slippage + abs(current_price - float(order.get("price") or current_price)) * delta_quantity
+                )
                 if (
                     new_quantity <= 0
                     or new_entry <= 0
@@ -871,9 +785,7 @@ def materialize_bitget_entry(
                         )
                     )
                 ):
-                    raise MaterializationIntegrityError(
-                        "averaged entry economics must be finite"
-                    )
+                    raise MaterializationIntegrityError("averaged entry economics must be finite")
                 update_fields = {
                     "quantity": new_quantity,
                     "entry_price": new_entry,
@@ -885,9 +797,9 @@ def materialize_bitget_entry(
                 # prove how an older entry leg was priced.  Only a Position whose
                 # existing aggregate was already verified can remain verified
                 # after this weighted-average update.
-                existing_entry_verified = bool(
-                    position.get("entry_fill_verified")
-                ) and position.get("entry_price_source") == "broker_fill"
+                existing_entry_verified = (
+                    bool(position.get("entry_fill_verified")) and position.get("entry_price_source") == "broker_fill"
+                )
                 update_fields["entry_fill_verified"] = existing_entry_verified
                 if existing_entry_verified:
                     update_fields["entry_price_source"] = "broker_fill"
@@ -956,14 +868,16 @@ def _position_for_close_order(order: dict) -> dict | None:
         if position is None:
             raise MaterializationIntegrityError("close Order references a missing Position")
         if position.get("pending_close_order_id") not in (None, "", order["id"]):
-            raise MaterializationIntegrityError(
-                "close Order does not own the Position pending-close claim"
-            )
+            raise MaterializationIntegrityError("close Order does not own the Position pending-close claim")
         return position
-    row = repo.get_db().execute(
-        "SELECT * FROM positions WHERE pending_close_order_id=? ORDER BY rowid ASC LIMIT 1",
-        (order["id"],),
-    ).fetchone()
+    row = (
+        repo.get_db()
+        .execute(
+            "SELECT * FROM positions WHERE pending_close_order_id=? ORDER BY rowid ASC LIMIT 1",
+            (order["id"],),
+        )
+        .fetchone()
+    )
     return dict(row) if row is not None else None
 
 
@@ -1054,9 +968,7 @@ def _materialize_complete_private_close(
     """
     order = repo.get_order(order_id)
     if order is None:
-        raise MaterializationIntegrityError(
-            "close Order disappeared before materialization"
-        )
+        raise MaterializationIntegrityError("close Order disappeared before materialization")
     position = _position_for_close_order(order)
     if position is None:
         return None
@@ -1075,9 +987,7 @@ def _materialize_complete_private_close(
             exchange_order_id=order.get("exchange_order_id"),
         )
     if position.get("status") != "open":
-        raise MaterializationIntegrityError(
-            "close fill maps to a Position that is neither open nor closed"
-        )
+        raise MaterializationIntegrityError("close fill maps to a Position that is neither open nor closed")
     repo.validate_native_order_authority(order)
     exchange_order_id, evidence = evidence_for_order(order, rows)
     if exchange_order_id is None or not evidence:
@@ -1112,21 +1022,15 @@ def _materialize_complete_private_close(
     )
     local_quantity, _, _ = _fill_totals(local_rows, symbol=order["symbol"])
     if local_quantity > exchange_quantity + tolerance:
-        raise MaterializationIntegrityError(
-            "local close quantity exceeds complete private evidence"
-        )
+        raise MaterializationIntegrityError("local close quantity exceeds complete private evidence")
 
     exit_price = total_notional / exchange_quantity
     if not math.isfinite(exit_price) or exit_price <= 0:
-        raise PrivateFillEvidenceInvalid(
-            "private close exit price must be finite"
-        )
+        raise PrivateFillEvidenceInvalid("private close exit price must be finite")
     closed_at = max(item.filled_at for item in evidence)
     evidence_identity = _PRIVATE_CLOSE_EVIDENCE.get(execution_mode)
     if evidence_identity is None:
-        raise MaterializationIntegrityError(
-            "close private evidence account is unsupported"
-        )
+        raise MaterializationIntegrityError("close private evidence account is unsupported")
     evidence_source, source_endpoint, account_environment = evidence_identity
     inserted_count = 0
     funding = None
@@ -1148,36 +1052,18 @@ def _materialize_complete_private_close(
         nonlocal inserted_count
         current_order = repo.get_order(order_id)
         if current_order is None:
-            raise MaterializationIntegrityError(
-                "close Order disappeared during materialization"
-            )
-        if any(
-            current_order.get(field) != order.get(field)
-            for field in close_authority_fields
-        ):
-            raise MaterializationIntegrityError(
-                "close Order authority changed during materialization"
-            )
+            raise MaterializationIntegrityError("close Order disappeared during materialization")
+        if any(current_order.get(field) != order.get(field) for field in close_authority_fields):
+            raise MaterializationIntegrityError("close Order authority changed during materialization")
         repo.validate_native_order_authority(current_order)
         if _close_reasoning_for_order(current_order) != close_reasoning:
-            raise MaterializationIntegrityError(
-                "close reasoning changed during materialization"
-            )
+            raise MaterializationIntegrityError("close reasoning changed during materialization")
         current_position = _position_for_close_order(current_order)
         if current_position is None or current_position["id"] != position["id"]:
-            raise MaterializationIntegrityError(
-                "close Order lost its Position claim"
-            )
-        current_exchange_id, current_evidence = evidence_for_order(
-            current_order, rows
-        )
-        if (
-            current_exchange_id != exchange_order_id
-            or current_evidence != evidence
-        ):
-            raise MaterializationIntegrityError(
-                "private close evidence changed during materialization"
-            )
+            raise MaterializationIntegrityError("close Order lost its Position claim")
+        current_exchange_id, current_evidence = evidence_for_order(current_order, rows)
+        if current_exchange_id != exchange_order_id or current_evidence != evidence:
+            raise MaterializationIntegrityError("private close evidence changed during materialization")
         if funding_ledger is not None and funding is not None:
             from aletheia.execution.broker_funding import (
                 BrokerFundingIntegrityError,
@@ -1194,15 +1080,15 @@ def _materialize_complete_private_close(
             except BrokerFundingIntegrityError as exc:
                 raise MaterializationIntegrityError(str(exc)) from exc
             if current_funding != funding:
-                raise MaterializationIntegrityError(
-                    "broker funding attribution changed during close commit"
-                )
+                raise MaterializationIntegrityError("broker funding attribution changed during close commit")
         current_rows = [
             dict(row)
-            for row in repo.get_db().execute(
+            for row in repo.get_db()
+            .execute(
                 "SELECT * FROM fills WHERE order_id=? ORDER BY filled_at, rowid",
                 (order_id,),
-            ).fetchall()
+            )
+            .fetchall()
         ]
         _verify_durable_fills(
             repo.get_db(),
@@ -1222,18 +1108,10 @@ def _materialize_complete_private_close(
                 execution_mode=execution_mode,
             )
         ]
-        current_quantity, _, _ = _fill_totals(
-            current_rows, symbol=order["symbol"]
-        )
+        current_quantity, _, _ = _fill_totals(current_rows, symbol=order["symbol"])
         missing_quantity = exchange_quantity - current_quantity
-        if (
-            missing_quantity < -tolerance
-            or abs(sum(item.quantity for item in unseen) - missing_quantity)
-            > tolerance
-        ):
-            raise MaterializationIntegrityError(
-                "durable close Fill quantity conflicts with private evidence"
-            )
+        if missing_quantity < -tolerance or abs(sum(item.quantity for item in unseen) - missing_quantity) > tolerance:
+            raise MaterializationIntegrityError("durable close Fill quantity conflicts with private evidence")
         for item in unseen:
             repo.insert_fill(
                 Fill(
@@ -1244,6 +1122,7 @@ def _materialize_complete_private_close(
                     fee=item.fee,
                     fee_currency=item.fee_currency,
                     fee_source="reconciled",
+                    realized_liquidity=item.realized_liquidity,
                     filled_at=item.filled_at,
                 )
             )
@@ -1296,19 +1175,14 @@ def _materialize_complete_private_close(
             "exchange_order_id": exchange_order_id,
             "client_order_id": order.get("client_order_id"),
             "fill_ids": [item.fill_id for item in evidence],
-            "durable_fill_ids": [
-                durable_private_fill_id(execution_mode, item.fill_id)
-                for item in evidence
-            ],
+            "durable_fill_ids": [durable_private_fill_id(execution_mode, item.fill_id) for item in evidence],
             "fill_quantity": exchange_quantity,
             "fee_in_quote": total_fee,
             "fills": [
                 {
                     "fill_id": item.fill_id,
                     "remote_fill_id": item.fill_id,
-                    "durable_fill_id": durable_private_fill_id(
-                        execution_mode, item.fill_id
-                    ),
+                    "durable_fill_id": durable_private_fill_id(execution_mode, item.fill_id),
                     "price": item.price,
                     "quantity": item.quantity,
                     "fee": item.fee,
@@ -1330,22 +1204,16 @@ def _materialize_complete_private_close(
     )
 
 
-def materialize_bitget_close(
-    order_id: str, rows, funding_ledger: dict | None = None
-) -> MaterializationResult:
+def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = None) -> MaterializationResult:
     """Converge an asynchronously filled exchange close without invention."""
     try:
-        complete = _materialize_complete_private_close(
-            order_id, rows, funding_ledger=funding_ledger
-        )
+        complete = _materialize_complete_private_close(order_id, rows, funding_ledger=funding_ledger)
         if complete is not None:
             return complete
         with _atomic_materialization():
             order = repo.get_order(order_id)
             if order is None:
-                raise MaterializationIntegrityError(
-                    "close Order disappeared before materialization"
-                )
+                raise MaterializationIntegrityError("close Order disappeared before materialization")
             position = _position_for_close_order(order)
             if position is None:
                 return MaterializationResult(state="not_close")
@@ -1356,9 +1224,7 @@ def materialize_bitget_close(
                     exchange_order_id=order.get("exchange_order_id"),
                 )
             if position.get("status") != "open":
-                raise MaterializationIntegrityError(
-                    "close fill maps to a Position that is neither open nor closed"
-                )
+                raise MaterializationIntegrityError("close fill maps to a Position that is neither open nor closed")
             repo.validate_native_order_authority(order)
             _close_reasoning_for_order(order)
 
@@ -1389,9 +1255,7 @@ def materialize_bitget_close(
             tolerance = max(1e-12, requested_quantity * 1e-9)
             execution_mode = str(order.get("execution_mode") or "")
             if local_quantity > exchange_quantity + tolerance:
-                raise MaterializationIntegrityError(
-                    "local close quantity exceeds complete private evidence"
-                )
+                raise MaterializationIntegrityError("local close quantity exceeds complete private evidence")
             _verify_durable_fills(
                 db,
                 local_rows,
@@ -1410,21 +1274,18 @@ def materialize_bitget_close(
                     execution_mode=execution_mode,
                 )
             ]
-            delta_evidence = _tail_delta(
-                unseen_evidence, max(0.0, exchange_quantity - local_quantity)
-            )
+            delta_evidence = _tail_delta(unseen_evidence, max(0.0, exchange_quantity - local_quantity))
             for item in delta_evidence:
                 repo.insert_fill(
                     Fill(
-                        id=durable_private_fill_id(
-                            execution_mode, item.fill_id
-                        ),
+                        id=durable_private_fill_id(execution_mode, item.fill_id),
                         order_id=order_id,
                         fill_price=item.price,
                         fill_quantity=item.quantity,
                         fee=item.fee,
                         fee_currency=item.fee_currency,
                         fee_source="reconciled",
+                        realized_liquidity=item.realized_liquidity,
                         filled_at=item.filled_at,
                     )
                 )
@@ -1459,9 +1320,7 @@ def materialize_bitget_close(
                             order_id,
                             status="filled",
                             error_reason=None,
-                            filled_at=_ms_to_iso(
-                                max(item.filled_at_ms for item in evidence)
-                            ),
+                            filled_at=_ms_to_iso(max(item.filled_at_ms for item in evidence)),
                         )
                         repo.update_position(
                             position["id"],
@@ -1488,8 +1347,7 @@ def materialize_bitget_close(
                 delta_quantity = sum(item.quantity for item in delta_evidence)
                 remaining_qty = max(0.0, old_qty - delta_quantity)
                 partial_exit_price = (
-                    sum(item.price * item.quantity for item in delta_evidence)
-                    / delta_quantity
+                    sum(item.price * item.quantity for item in delta_evidence) / delta_quantity
                     if delta_quantity > 0
                     else None
                 )
@@ -1521,27 +1379,25 @@ def materialize_bitget_close(
                         pending_close_order_id=order_id,
                         pending_close_status="partially_filled",
                     )
-                repo.insert_position_close_event({
-                    "id": new_id(),
-                    "position_id": position["id"],
-                    "symbol": order.get("symbol"),
-                    "direction": order.get("direction"),
-                    "execution_mode": order.get("execution_mode"),
-                    "close_reason": order.get("close_reason"),
-                    "exit_price": partial_exit_price,
-                    "closed_qty": delta_quantity,
-                    "realized_pnl": None,
-                    "entry_fee": None,
-                    "exit_fee": round(partial_exit_fee, 8) if partial_exit_fee else None,
-                    "is_partial": 1,
-                    "closed_at": _ms_to_iso(closed_at_ms),
-                })
+                repo.insert_position_close_event(
+                    {
+                        "id": new_id(),
+                        "position_id": position["id"],
+                        "symbol": order.get("symbol"),
+                        "direction": order.get("direction"),
+                        "execution_mode": order.get("execution_mode"),
+                        "close_reason": order.get("close_reason"),
+                        "exit_price": partial_exit_price,
+                        "closed_qty": delta_quantity,
+                        "realized_pnl": None,
+                        "entry_fee": None,
+                        "exit_fee": round(partial_exit_fee, 8) if partial_exit_fee else None,
+                        "is_partial": 1,
+                        "closed_at": _ms_to_iso(closed_at_ms),
+                    }
+                )
                 return MaterializationResult(
-                    state=(
-                        "filled_clip_partial_position"
-                        if order_fully_filled
-                        else "partially_filled"
-                    ),
+                    state=("filled_clip_partial_position" if order_fully_filled else "partially_filled"),
                     new_fill_count=len(delta_evidence),
                     position_id=position["id"],
                     exchange_order_id=exchange_order_id,
@@ -1569,14 +1425,10 @@ def materialize_bitget_close(
             # _materialize_complete_private_close returned None (order_qty < pos_qty),
             # so we own the update here inside the atomic transaction.
             pos_qty = float(position["quantity"])
-            exit_price_partial = (
-                sum(i.quantity * i.price for i in evidence) / exchange_quantity
-            )
+            exit_price_partial = sum(i.quantity * i.price for i in evidence) / exchange_quantity
             new_delta = exchange_quantity - local_quantity
             if new_delta < -tolerance:
-                raise MaterializationIntegrityError(
-                    "partial close local qty exceeds evidence"
-                )
+                raise MaterializationIntegrityError("partial close local qty exceeds evidence")
             # new_pos_qty is always pos_qty - exchange_quantity (full order qty), not
             # just the incremental delta, so that multi-batch convergence is correct.
             # The guard `new_delta > tolerance` ensures we only write when there are
@@ -1585,21 +1437,24 @@ def materialize_bitget_close(
             if new_delta > tolerance:
                 repo.update_position(position["id"], quantity=new_pos_qty)
                 from aletheia.storage.models import new_id as _new_id
-                repo.insert_position_close_event({
-                    "id": _new_id(),
-                    "position_id": position["id"],
-                    "symbol": order.get("symbol"),
-                    "direction": position.get("direction"),
-                    "execution_mode": execution_mode,
-                    "close_reason": order.get("close_reason") or "clipped_partial",
-                    "exit_price": exit_price_partial,
-                    "closed_qty": exchange_quantity,
-                    "realized_pnl": None,
-                    "entry_fee": None,
-                    "exit_fee": None,
-                    "is_partial": 1,
-                    "closed_at": max(i.filled_at for i in evidence),
-                })
+
+                repo.insert_position_close_event(
+                    {
+                        "id": _new_id(),
+                        "position_id": position["id"],
+                        "symbol": order.get("symbol"),
+                        "direction": position.get("direction"),
+                        "execution_mode": execution_mode,
+                        "close_reason": order.get("close_reason") or "clipped_partial",
+                        "exit_price": exit_price_partial,
+                        "closed_qty": exchange_quantity,
+                        "realized_pnl": None,
+                        "entry_fee": None,
+                        "exit_fee": None,
+                        "is_partial": 1,
+                        "closed_at": max(i.filled_at for i in evidence),
+                    }
+                )
             repo.update_order(
                 order_id,
                 status="filled",

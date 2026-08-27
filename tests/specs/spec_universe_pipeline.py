@@ -43,7 +43,7 @@ def test_refresh_registers_full_scored_arm_with_selected_subset():
         assert allocated.id == "allocated"
 
 
-def _assert_emission_failure_cannot_publish_partial_universe_refresh(
+def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     tmp_path, monkeypatch, failure_kind, *, caller_owns_transaction=False
 ):
     from tests.test_entry_logic import setup_env
@@ -54,7 +54,6 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
     from aletheia.storage.sqlite import get_db
     from aletheia.universe import service
-    from aletheia.universe.signal_emitter import EmissionEvidenceError
 
     cfg = load_config()
     cfg.universe.enabled = True
@@ -119,15 +118,10 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     async def settle_due():
         return 0
 
-    failure_code = (
-        "opportunity_emission_evidence_failed:snapshot:member"
-        if failure_kind == "evidence"
-        else "opportunity_emission_runtime_failed:snapshot"
-    )
+    failure_code = f"candidate_planning_generation_{failure_kind}_failed"
 
-    def emission_failure(*_args, **_kwargs):
-        error_type = EmissionEvidenceError if failure_kind == "evidence" else RuntimeError
-        raise error_type(failure_code)
+    def planning_generation_failure(*_args, **_kwargs):
+        raise RuntimeError(failure_code)
 
     monkeypatch.setattr(service, "load_config", lambda: cfg)
     monkeypatch.setattr(service.repo, "mark_outlier_outcomes_failed", lambda: 0)
@@ -182,8 +176,9 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
         "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
     )
     monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.emit_deterministic_opportunities",
-        emission_failure,
+        service.repo,
+        "ensure_candidate_planning_generation",
+        planning_generation_failure,
     )
 
     caller_transaction = repo.transaction() if caller_owns_transaction else nullcontext()
@@ -222,34 +217,34 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     SpecClaim(
         "UP-25",
         "universe_pipeline",
-        "§3 retryable opportunity emission",
+        "§3 atomic Candidate planning publication",
         "L2b",
-        "When deterministic Opportunity emission escapes with any unhandled failure, "
+        "When durable Candidate Planning Generation creation escapes with an unhandled failure, "
         "UniverseService rolls back the attempted snapshot publication, keeps the previous "
         "healthy snapshot active, and records the failed run with the attempted snapshot id.",
         status="implemented",
     ),
 )
-def test_emission_evidence_failure_cannot_publish_partial_universe_refresh(
+def test_planning_generation_evidence_failure_cannot_publish_partial_universe_refresh(
     tmp_path, monkeypatch
 ):
-    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path, monkeypatch, "evidence"
     )
 
 
-def test_unhandled_emitter_runtime_failure_cannot_publish_partial_universe_refresh(
+def test_unhandled_planning_generation_failure_cannot_publish_partial_universe_refresh(
     tmp_path, monkeypatch
 ):
-    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path, monkeypatch, "runtime"
     )
 
 
-def test_emission_failure_rolls_back_inside_existing_transaction(
+def test_planning_generation_failure_rolls_back_inside_existing_transaction(
     tmp_path, monkeypatch
 ):
-    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path,
         monkeypatch,
         "evidence",

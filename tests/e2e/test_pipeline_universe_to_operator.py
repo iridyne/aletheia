@@ -203,7 +203,7 @@ class _StockLinkedCCXTProvider(_FixtureCCXTProvider):
 
 
 @pytest.mark.asyncio
-async def test_real_universe_refresh_reaches_one_operator_defer(
+async def test_real_universe_refresh_reaches_one_durable_no_plan(
     e2e_db, monkeypatch, tmp_path
 ):
     import aletheia.config.loader as config_loader
@@ -294,6 +294,28 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
 
     snapshot_id = await UniverseService().refresh()
     assert snapshot_id is not None
+
+    candidates = repo.list_universe_members(snapshot_id, limit=10)
+    assert len(candidates) == 1
+    generation = e2e_db.execute(
+        "SELECT * FROM candidate_planning_generations WHERE is_current=1"
+    ).fetchone()
+    assert generation is not None
+    assert generation["last_candidate_id"] == candidates[0]["id"]
+    assert repo.list_opportunities(limit=10) == []
+
+    from aletheia.agent_shell.entry_planner import EntryPlanDraft, plan_next_candidate
+
+    async def no_plan(_context):
+        return EntryPlanDraft(
+            result="NO_PLAN",
+            reasoning="The bounded fixture does not authorize a complete Entry Plan.",
+        )
+
+    planning = await plan_next_candidate(no_plan)
+    assert planning["status"] == "no_plan"
+    assert repo.get_candidate_planning_generation(generation["id"])["status"] == "no_plan"
+    return
 
     opportunities = repo.list_opportunities(limit=10)
     assert len(opportunities) == 1
@@ -419,7 +441,7 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
 
 
 @pytest.mark.asyncio
-async def test_stock_linked_perp_reaches_existing_operator_context(
+async def test_stock_linked_perp_reaches_candidate_planning_context(
     e2e_db, monkeypatch, tmp_path,
 ):
     import json
@@ -505,6 +527,20 @@ async def test_stock_linked_perp_reaches_existing_operator_context(
 
     snapshot_id = await UniverseService().refresh()
     assert snapshot_id is not None
+    candidates = repo.list_universe_members(snapshot_id, limit=10)
+    assert len(candidates) == 1
+    assert candidates[0]["symbol"] == "SOXL/USDT"
+    assert candidates[0]["market_type"] == "perp"
+    generation = e2e_db.execute(
+        "SELECT * FROM candidate_planning_generations WHERE is_current=1"
+    ).fetchone()
+    assert generation is not None
+    assert generation["last_candidate_id"] == candidates[0]["id"]
+    assert generation["symbol"] == "SOXL/USDT"
+    assert generation["market_type"] == "perp"
+    assert repo.list_opportunities(limit=10) == []
+    return
+
     opportunities = repo.list_opportunities(limit=10)
     assert len(opportunities) == 1
     opportunity = opportunities[0]

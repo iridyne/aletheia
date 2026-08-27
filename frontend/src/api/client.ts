@@ -2764,8 +2764,8 @@ export const api = {
 		fetchJson<import("../types").UniverseSnapshot[]>("/universe/snapshots"),
 	getUniverseSnapshot: (id: string) =>
 		fetchJson<any>(`/universe/snapshots/${id}`),
-	getUniverseMember: (id: string) =>
-		fetchJson<import("../types").UniverseMemberDetail>(
+	getCandidate: (id: string) =>
+		fetchJson<import("../types").CandidateDetail>(
 			`/universe/members/${id}`,
 		),
 	refreshUniverse: () =>
