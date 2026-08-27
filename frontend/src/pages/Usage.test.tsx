@@ -1,9 +1,24 @@
+// @vitest-environment happy-dom
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
-import type { UsageInsightsResponse } from '../api/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api, type UsageInsightsResponse } from '../api/client'
 import Usage from './Usage'
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+let root: ReturnType<typeof createRoot> | undefined
+
+afterEach(() => {
+  act(() => root?.unmount())
+  root = undefined
+  document.body.innerHTML = ''
+  vi.restoreAllMocks()
+})
 
 const insights: UsageInsightsResponse = {
   window: { days: 7, started_at: '2026-08-03T00:00:00Z', ended_at: '2026-08-10T00:00:00Z', as_of: '2026-08-10T00:00:00Z', timezone: 'UTC' },
@@ -74,6 +89,79 @@ describe('Usage', () => {
     expect(html).toContain('timeout: 2')
     expect(html).toContain('usage-section skeleton')
     expect(html).not.toContain('Research yield · last 7 days')
+  })
+
+  it('renders failed pricing refresh as retryable', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+    client.setQueryData(['usage-insights', 1, 'summary'], insights)
+    client.setQueryData(['pricing-refresh-status'], {
+      status: 'failed',
+      started_at: null,
+      completed_at: '2026-08-27T00:00:00Z',
+      last_success_at: null,
+      error: 'worker_start_failed',
+      source_url: 'https://example.invalid/prices.json',
+      version: null,
+      fetched_model_count: null,
+      matched_model_count: 0,
+      snapshots_created: 0,
+      unmatched_models: [],
+    })
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <Usage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+
+    expect(html).toContain('Pricing refresh failed: worker_start_failed')
+    expect(html).toContain('Refresh pricing')
+    expect(html).not.toContain('Refreshing…')
+  })
+
+  it('refetches pricing status after refresh admission error', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } })
+    client.setQueryData(['usage-insights', 1, 'summary'], insights)
+    const failedStatus = {
+      status: 'failed' as const,
+      started_at: null,
+      completed_at: '2026-08-27T00:00:00Z',
+      last_success_at: null,
+      error: 'worker_start_failed',
+      source_url: 'https://example.invalid/prices.json',
+      version: null,
+      fetched_model_count: null,
+      matched_model_count: 0,
+      snapshots_created: 0,
+      unmatched_models: [],
+    }
+    const getStatus = vi.spyOn(api, 'getPricingRefreshStatus').mockResolvedValue(failedStatus)
+    vi.spyOn(api, 'refreshPricing').mockRejectedValue(new Error('worker start failed'))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root!.render(
+        <MemoryRouter>
+          <QueryClientProvider client={client}>
+            <Usage />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      )
+    })
+    const button = [...container.querySelectorAll('button')].find(node => node.textContent === 'Refresh pricing')
+    expect(button).toBeTruthy()
+
+    await act(async () => {
+      button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(getStatus.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(container.textContent).toContain('Pricing refresh failed: worker_start_failed')
   })
 
   it('renders consumption first and preserves honest coverage states', () => {
