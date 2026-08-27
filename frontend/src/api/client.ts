@@ -2304,8 +2304,25 @@ export const api = {
 	approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
 	rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
 	getProposalRiskDecision: (id: string) =>
-		fetchJson<{ proposal_id: string; decision: any }>(
+		fetchJson<{
+			proposal_id: string;
+			status: string;
+			reason_code: string | null;
+			decision: any;
+			preflight_decision?: any;
+		}>(
 			`/proposals/${id}/risk-decision`,
+		),
+	getOrderRiskDecision: (id: string) =>
+		fetchJson<{
+			order_id: string;
+			proposal_id: string | null;
+			risk_decision_id: string | null;
+			status: string;
+			reason_code: string | null;
+			decision: any;
+		}>(
+			`/orders/${id}/risk-decision`,
 		),
 	getTrades: () => fetchJson<MarketTrade[]>("/trades"),
 	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
