@@ -24,6 +24,7 @@ from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.broker_utils import (
     close_acknowledgement_result,
     entry_acknowledgement_result,
+    entry_acknowledgement_state,
 )
 from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
@@ -408,44 +409,27 @@ def execute_live_order(
             "message": "Exchange acknowledged submission without an order id; automatic retry suppressed",
         })
         raise SubmissionUnknownError(client_oid=proposal_id)
-    # #1502: explicit terminal rejection from the venue is NOT submission_unknown.
-    if order_resp.status in ("cancelled", "rejected", "expired") and exchange_order_id:
-        try:
-            acknowledgement = finalize_exchange_acknowledgement(
-                order.id,
-                exchange_order_id=exchange_order_id,
-                status="cancelled",
-                error_reason="explicit_venue_rejection",
-            )
-        except Exception as e:
-            raise PostSubmitDBError(
-                "exchange acknowledgement could not be persisted", exchange_order_id,
-            ) from e
-        if acknowledgement["applied"]:
-            write_post_commit_audit({
-                "actor": "system", "source": "binance_broker",
-                "event_type": "order_explicitly_rejected", "entity_type": "order",
-                "entity_id": order.id,
-                "reason": f"venue_status:{order_resp.status}",
-                "after": {"status": "cancelled"},
-            })
-        return entry_acknowledgement_result(acknowledgement)
-    exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
-    stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
+    stored_status, error_reason = entry_acknowledgement_state(order_resp.status)
     try:
         acknowledgement = finalize_exchange_acknowledgement(
             order.id,
             exchange_order_id=exchange_order_id,
             status=stored_status,
-            error_reason=(
-                "private_fill_evidence_pending" if exchange_reported_fill else None
-            ),
+            error_reason=error_reason,
         )
     except Exception as e:
         raise PostSubmitDBError(
             "exchange acknowledgement could not be persisted", exchange_order_id,
         ) from e
-    if exchange_reported_fill and acknowledgement["applied"]:
+    if stored_status == "cancelled" and acknowledgement["applied"]:
+        write_post_commit_audit({
+            "actor": "system", "source": "binance_broker",
+            "event_type": "order_explicitly_rejected", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": f"venue_status:{str(order_resp.status or '').strip().lower()}",
+            "after": {"status": "cancelled"},
+        })
+    elif stored_status == "materialization_missing" and acknowledgement["applied"]:
         write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "order_materialization_pending", "entity_type": "order",
@@ -456,6 +440,19 @@ def execute_live_order(
             "message": (
                 f"Exchange order {exchange_order_id} reported a fill; local "
                 "Fill/Position waits for order-matched private fill evidence"
+            ),
+        })
+    elif stored_status == "submission_unknown" and acknowledgement["applied"]:
+        write_post_commit_audit({
+            "actor": "system", "source": "binance_broker",
+            "event_type": "order_submission_unknown", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": "unrecognized_venue_order_status",
+            "before": {"status": "pending"},
+            "after": {"status": "submission_unknown"},
+            "message": (
+                "Exchange returned an unrecognized order status; automatic retry "
+                "suppressed"
             ),
         })
 

@@ -448,6 +448,46 @@ def test_doctor_reports_filter_evidence_registration(tmp_path, monkeypatch):
     assert "outcome_candidates=1/1" in check.detail
 
 
+def test_filter_evidence_net_complete_requires_temporal_validity(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    record_filter_decision(
+        candidate_key="opportunity:doctor-temporal",
+        candidate_kind="opportunity",
+        filter_name="family_ttl",
+        stage="paper_ranker",
+        decision="passed",
+        reason_code="universe_member_fresh",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="spot",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', entry_ts=?, due_at=?, "
+        "settled_at='2999-01-01T00:00:00+00:00', exit_price_usd=101.2, "
+        "directional_return_pct=1.2, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+        "net_return_pct=1.0, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='candidate-net-v1'",
+        (_iso_ago(120), _iso_ago(60)),
+    )
+    report = dx.Report(generated_at="t")
+
+    dx._probe_filter_evidence(report)
+
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+    assert "settled=4" in check.detail
+    assert "net_complete=0" in check.detail
+    assert "temporal_invalid_settled=4" in check.detail
+
+
 def test_recent_failures_reads_agent_runs_using_current_columns(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
