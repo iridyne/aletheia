@@ -55,7 +55,7 @@ def test_uta_v1_protocol_surface_is_complete_and_singular():
         "UTA canonical contract and registry contain no Aletheia storage writes, concrete private clients, or live client singleton.",
     )
 )
-def test_phase_zero_uta_package_has_no_storage_or_concrete_client_side_channel():
+def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     violations = []
     forbidden_imports = (
         "aletheia.storage",
@@ -76,6 +76,30 @@ def test_phase_zero_uta_package_has_no_storage_or_concrete_client_side_channel()
                 if name.startswith(forbidden_imports):
                     violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: {name}")
     assert violations == []
+
+
+@spec_claim(
+    SpecClaim(
+        "UTA-S04",
+        "uta_boundary",
+        "§4 Phase 1 shadow isolation",
+        "L2b",
+        "The CCXT shadow adapter uses the managed factory and has no production consumer or mutation cutover.",
+    )
+)
+def test_phase_one_shadow_uses_managed_ccxt_without_consumer_cutover():
+    adapter = (UTA_ROOT / "ccxt_adapter.py").read_text(encoding="utf-8")
+    assert "from aletheia.net import make_ccxt" in adapter
+    assert "read_only_shadow_mutation_disabled" in adapter
+
+    consumers = []
+    for path in (ROOT / "aletheia").rglob("*.py"):
+        if path.is_relative_to(UTA_ROOT):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "CCXTUTAAdapter" in text:
+            consumers.append(str(path.relative_to(ROOT)))
+    assert consumers == []
 
 
 @spec_claim(

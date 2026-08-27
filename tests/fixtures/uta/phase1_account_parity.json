@@ -1,0 +1,65 @@
+{
+  "binance": {
+    "balances": [
+      {
+        "total": {"USDT": "10.00"},
+        "free": {"USDT": "7"},
+        "used": {"USDT": "3"}
+      }
+    ],
+    "expected_equity": "10.00",
+    "expected_completeness": "complete"
+  },
+  "okx": {
+    "balances": [
+      {
+        "total": {"USDT": "7"},
+        "free": {"USDT": "5"},
+        "used": {"USDT": "2"},
+        "info": {
+          "data": [
+            {
+              "totalEq": "12.50",
+              "details": [{"ccy": "USDT", "upl": "0.25"}]
+            }
+          ]
+        }
+      }
+    ],
+    "expected_equity": "12.50",
+    "expected_completeness": "complete"
+  },
+  "classic_v2": {
+    "balances": [
+      {
+        "total": {"USDT": "2"},
+        "free": {"USDT": "2"},
+        "used": {"USDT": "0"},
+        "info": []
+      },
+      {
+        "total": {"USDT": "10"},
+        "free": {"USDT": "8"},
+        "used": {"USDT": "2"},
+        "info": [{"usdtEquity": "10", "unrealizedPL": "0.5"}]
+      }
+    ],
+    "expected_equity": "12",
+    "expected_completeness": "complete"
+  },
+  "uta_v3": {
+    "balances": [
+      {
+        "total": {"USDT": "6", "BTC": "0.0001"},
+        "free": {"USDT": "6", "BTC": "0.0001"},
+        "used": {"USDT": "0", "BTC": "0"},
+        "info": [
+          {"coin": "USDT", "usdValue": "6"},
+          {"coin": "BTC", "usdValue": "5"}
+        ]
+      }
+    ],
+    "expected_equity": "11",
+    "expected_completeness": "complete"
+  }
+}
