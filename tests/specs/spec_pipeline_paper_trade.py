@@ -1744,7 +1744,7 @@ def test_gateway_rejects_second_normal_proposal_without_aggregation(tmp_path, mo
         "§1 divergence instrument handoff",
         "L2b",
         "A bullish divergence derived from a bare-symbol spot ticker persists market=spot "
-        "and reaches signal_pending with the same spot identity.",
+        "but remains non-execution-eligible until a trigger freezes entry facts.",
         status="implemented",
     )
 )
@@ -1794,11 +1794,12 @@ def test_divergence_long_spot_identity_reaches_pending(tmp_path, monkeypatch):
 
     scanner_result = asyncio.run(run_divergence_scanner(permission_mode="Paper"))
     opp = conn.execute(
-        "SELECT id, market, status FROM opportunities "
+        "SELECT id, market, status, execution_eligible FROM opportunities "
         "WHERE source_agent='divergence_scanner'"
     ).fetchone()
     assert opp is not None, scanner_result
     assert opp["market"] == "spot"
+    assert opp["execution_eligible"] == 0
 
     paper_result = asyncio.run(
         run_paper_trader(permission_mode="Paper", run_id="divergence-spot-handoff")
@@ -1809,9 +1810,5 @@ def test_divergence_long_spot_identity_reaches_pending(tmp_path, monkeypatch):
         (opp["id"],),
     ).fetchall()
 
-    assert [dict(row) for row in pending] == [{
-        "opportunity_id": opp["id"],
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "market_type": "spot",
-    }], paper_result
+    assert [dict(row) for row in pending] == []
+    assert paper_result["outputs"] == ["no_ranked_candidate"]

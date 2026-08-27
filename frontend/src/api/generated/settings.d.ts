@@ -287,6 +287,34 @@ export interface components {
             /** Symbol List */
             symbol_list?: string[];
         };
+        /**
+         * FastTriggerConfig
+         * @description Bounded Momentum trigger; the safe default observes without executing.
+         */
+        FastTriggerConfig: {
+            /**
+             * Authorization Ttl Minutes
+             * @default 60
+             */
+            authorization_ttl_minutes: number;
+            /**
+             * Max Setups
+             * @default 10
+             */
+            max_setups: number;
+            /**
+             * Mode
+             * @default shadow
+             * @enum {string}
+             */
+            mode: "off" | "shadow" | "execute";
+            /**
+             * Trigger Behavior Version
+             * @default momentum-fast-trigger/v1
+             * @constant
+             */
+            trigger_behavior_version: "momentum-fast-trigger/v1";
+        };
         /** GuardConfig */
         GuardConfig: {
             /**
@@ -1932,6 +1960,7 @@ export interface components {
             economics: components["schemas"]["EconomicsConfig"];
             event_triggers: components["schemas"]["EventTriggerConfig"];
             exchange: components["schemas"]["ExchangeConfig"];
+            fast_trigger: components["schemas"]["FastTriggerConfig"];
             guard: components["schemas"]["GuardConfig"];
             health: components["schemas"]["HealthConfig"];
             historical_data: components["schemas"]["HistoricalDataConfig"];
