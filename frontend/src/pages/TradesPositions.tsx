@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, lazy, Suspense } from "react";
+import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { createColumnHelper } from "@tanstack/react-table";
@@ -45,6 +45,11 @@ import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import { bootApi } from "../api/boot";
 import TradeAnalyticsPanel from "../charts/TradeAnalyticsPanel";
 const TradeInsightsPanel = lazy(() => import("../charts/TradeInsightsPanel"));
+const TRADES_TABS = ["blotter", "analytics"] as const;
+type TradesTab = typeof TRADES_TABS[number];
+function isTradesTab(tab: string | null): tab is TradesTab {
+	return !!tab && TRADES_TABS.includes(tab as TradesTab);
+}
 
 /**
  * Trades & Positions (WEBUI_PAGE_MAP.md — Positions + Paper Trades MERGED).
@@ -339,8 +344,9 @@ function useManualClose(onSuccess?: () => void) {
 
 export default function TradesPositions() {
 	const navigate = useNavigate();
-	const [searchParams] = useSearchParams();
-	const initialTab = searchParams.get("tab") || "blotter";
+	const [searchParams, setSearchParams] = useSearchParams();
+	const requestedTab = searchParams.get("tab");
+	const activeTab = isTradesTab(requestedTab) ? requestedTab : "blotter";
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
@@ -389,6 +395,19 @@ export default function TradesPositions() {
 		sel?.kind === "position"
 			? allPos.find((position) => position.id === sel.id) ?? null
 			: null;
+
+	useEffect(() => {
+		if (requestedTab === activeTab) return;
+		const next = new URLSearchParams(searchParams);
+		next.set("tab", activeTab);
+		setSearchParams(next, { replace: true });
+	}, [activeTab, requestedTab, searchParams, setSearchParams]);
+
+	const setActiveTab = (tab: string) => {
+		const next = new URLSearchParams(searchParams);
+		next.set("tab", isTradesTab(tab) ? tab : "blotter");
+		setSearchParams(next);
+	};
 
 	// Map query state → DataTable.state; initial error/no data → unavailable, success empty → empty, error with cached data → stale
 	const positionsState = positionsPending && positionsArray.length === 0
@@ -469,7 +488,8 @@ export default function TradesPositions() {
 			<AccountSnapshot />
 
 			<Tabs
-				initial={initialTab}
+				value={activeTab}
+				onChange={setActiveTab}
 				tabs={[
 					{
 						id: "blotter",
