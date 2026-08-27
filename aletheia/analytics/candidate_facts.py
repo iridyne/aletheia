@@ -10,6 +10,7 @@ from aletheia.analytics.filter_evidence import decode_filter_decision_batch
 from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
 from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import iso_instant_us, register_instant_us
 
 
 FACT_CONTRACT_VERSION = "profit_loop_fact/v1"
@@ -34,6 +35,30 @@ def _visible(row: dict[str, Any], cutoff: datetime) -> bool:
             value = _utc(row[field])
             return value is not None and value <= cutoff
     return True
+
+
+def _instant_us(value: object) -> int | None:
+    if isinstance(value, datetime):
+        return iso_instant_us(value.astimezone(timezone.utc).isoformat())
+    return iso_instant_us(value)
+
+
+def _identity(row: dict[str, Any]) -> str:
+    return str(row.get("outcome_candidate_key") or row.get("candidate_key") or row.get("id"))
+
+
+def _in_window(value: object, *, lower_us: int | None, upper_us: int) -> bool:
+    value_us = _instant_us(value)
+    return value_us is not None and value_us <= upper_us and (
+        lower_us is None or value_us >= lower_us
+    )
+
+
+def _register_instant(db: Any) -> None:
+    try:
+        register_instant_us(db)
+    except Exception:
+        pass
 
 
 def _rows(db: Any, sql: str, params: Iterable[object] = ()) -> list[dict[str, Any]]:
@@ -72,40 +97,38 @@ def _batch_facts(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     facts: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
-    if epoch_start is None:
-        batch_sql = (
-            "SELECT * FROM filter_decision_batches"
-            " WHERE datetime(evaluated_at) <= datetime(?)"
-            " ORDER BY datetime(evaluated_at), rowid"
-        )
-        batch_params = (cutoff.isoformat(),)
-    else:
-        batch_sql = (
-            "SELECT * FROM filter_decision_batches"
-            " WHERE datetime(evaluated_at) >= datetime(?)"
-            " AND datetime(evaluated_at) <= datetime(?)"
-            " ORDER BY datetime(evaluated_at), rowid"
-        )
-        batch_params = (epoch_start.isoformat(), cutoff.isoformat())
+    cutoff_us = _instant_us(cutoff)
+    if cutoff_us is None:
+        return facts, exclusions
+    epoch_start_us = _instant_us(epoch_start) if epoch_start is not None else None
+    batch_sql = (
+        "SELECT * FROM filter_decision_batches"
+        " WHERE aletheia_instant_us(evaluated_at) <= ?"
+        " ORDER BY aletheia_instant_us(evaluated_at), rowid"
+    )
     for batch in _rows(
         db,
         batch_sql,
-        batch_params,
+        (cutoff_us,),
     ):
         if not _visible(batch, cutoff):
             continue
+        batch_in_epoch = _in_window(
+            batch.get("evaluated_at"), lower_us=epoch_start_us, upper_us=cutoff_us
+        )
         try:
             raw_facts = decode_filter_decision_batch(str(batch.get("candidate_facts") or "[]"))
         except (TypeError, ValueError, json.JSONDecodeError):
-            exclusions.append(
-                {
-                    "source_table": "filter_decision_batches",
-                    "source_batch_id": batch.get("id"),
-                    "event_at": batch.get("evaluated_at"),
-                    "availability": "unavailable",
-                    "unavailable_reason": "malformed_candidate_facts_json",
-                }
-            )
+            if batch_in_epoch:
+                exclusions.append(
+                    {
+                        "source_table": "filter_decision_batches",
+                        "source_batch_id": batch.get("id"),
+                        "event_at": batch.get("evaluated_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": "malformed_candidate_facts_json",
+                    }
+                )
             continue
         declared_count = batch.get("candidate_count")
         if declared_count is not None:
@@ -114,17 +137,18 @@ def _batch_facts(
             except (TypeError, ValueError, OverflowError):
                 declared_count = None
             if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
-                exclusions.append(
-                    {
-                        "source_table": "filter_decision_batches",
-                        "source_batch_id": batch.get("id"),
-                        "event_at": batch.get("evaluated_at"),
-                        "availability": "unavailable",
-                        "unavailable_reason": "candidate_fact_count_mismatch",
-                        "declared_candidate_count": declared_count,
-                        "decoded_candidate_count": len(raw_facts),
-                    }
-                )
+                if batch_in_epoch:
+                    exclusions.append(
+                        {
+                            "source_table": "filter_decision_batches",
+                            "source_batch_id": batch.get("id"),
+                            "event_at": batch.get("evaluated_at"),
+                            "availability": "unavailable",
+                            "unavailable_reason": "candidate_fact_count_mismatch",
+                            "declared_candidate_count": declared_count,
+                            "decoded_candidate_count": len(raw_facts),
+                        }
+                    )
                 continue
         batch_invalid_reason: str | None = None
         for raw in raw_facts:
@@ -141,19 +165,20 @@ def _batch_facts(
                     batch_invalid_reason = "candidate_fact_after_cutoff"
                     break
         if batch_invalid_reason is not None:
-            exclusions.append(
-                {
-                    "source_table": "filter_decision_batches",
-                    "source_batch_id": batch.get("id"),
-                    "event_at": batch.get("evaluated_at"),
-                    "availability": "unavailable",
-                    "unavailable_reason": batch_invalid_reason,
-                }
-            )
+            if batch_in_epoch:
+                exclusions.append(
+                    {
+                        "source_table": "filter_decision_batches",
+                        "source_batch_id": batch.get("id"),
+                        "event_at": batch.get("evaluated_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": batch_invalid_reason,
+                    }
+                )
             continue
         for sequence, raw in enumerate(raw_facts):
             raw_at = _utc(raw.get("evaluated_at")) or _utc(batch.get("evaluated_at"))
-            if epoch_start is not None and raw_at is not None and raw_at < epoch_start:
+            if raw_at is None:
                 continue
             fact = {
                 **raw,
@@ -245,26 +270,32 @@ def candidate_coverage_counts(
         raise ValueError(f"unsupported fixed horizon: {horizon}")
     if lower.tzinfo is None or upper.tzinfo is None or lower > upper:
         raise ValueError("invalid_coverage_window")
+    _register_instant(db)
     lower_iso = lower.astimezone(timezone.utc).isoformat()
     upper_iso = upper.astimezone(timezone.utc).isoformat()
+    lower_us = _instant_us(lower)
+    upper_us = _instant_us(upper)
+    if lower_us is None or upper_us is None:
+        raise ValueError("invalid_coverage_window")
 
-    identities: set[str] = set()
+    first_seen: dict[str, int] = {}
     cursor = db.execute(
         "SELECT COALESCE(NULLIF(outcome_candidate_key, ''), "
-        "NULLIF(candidate_key, ''), CAST(id AS TEXT)) AS identity "
+        "NULLIF(candidate_key, ''), CAST(id AS TEXT)) AS identity, "
+        "MIN(aletheia_instant_us(evaluated_at)) AS first_us "
         "FROM filter_decisions "
-        "WHERE datetime(evaluated_at) IS NOT NULL "
-        "GROUP BY identity "
-        "HAVING MIN(datetime(evaluated_at)) >= datetime(?) "
-        "AND MIN(datetime(evaluated_at)) <= datetime(?)",
-        (lower_iso, upper_iso),
+        "WHERE aletheia_instant_us(evaluated_at) IS NOT NULL "
+        "GROUP BY identity",
     )
     for row in cursor:
-        identities.add(str(row[0]))
+        first_us = row["first_us"] if hasattr(row, "keys") else row[1]
+        if first_us is not None:
+            identity = row["identity"] if hasattr(row, "keys") else row[0]
+            first_seen[str(identity)] = int(first_us)
 
     unknown_row = db.execute(
         "SELECT COUNT(*) AS unknown FROM filter_decisions "
-        "WHERE datetime(evaluated_at) IS NULL"
+        "WHERE aletheia_instant_us(evaluated_at) IS NULL"
     ).fetchone()
     unknown_timestamp_units = int((unknown_row[0] if unknown_row is not None else 0) or 0)
 
@@ -272,17 +303,20 @@ def candidate_coverage_counts(
     batch_cursor = db.execute(
         "SELECT id, candidate_count, candidate_facts, evaluated_at "
         "FROM filter_decision_batches "
-        "WHERE datetime(evaluated_at) >= datetime(?) "
-        "AND datetime(evaluated_at) <= datetime(?) "
-        "ORDER BY datetime(evaluated_at), rowid",
-        (lower_iso, upper_iso),
+        "WHERE aletheia_instant_us(evaluated_at) <= ? "
+        "ORDER BY aletheia_instant_us(evaluated_at), rowid",
+        (upper_us,),
     )
     for batch in batch_cursor:
         batch_id = str(batch["id"])
+        batch_in_window = _in_window(
+            batch["evaluated_at"], lower_us=lower_us, upper_us=upper_us
+        )
         try:
             raw_facts = decode_filter_decision_batch(str(batch["candidate_facts"] or "[]"))
         except (TypeError, ValueError, json.JSONDecodeError):
-            unavailable_units += 1
+            if batch_in_window:
+                unavailable_units += 1
             continue
         declared_count = batch["candidate_count"]
         if declared_count is not None:
@@ -291,28 +325,34 @@ def candidate_coverage_counts(
             except (TypeError, ValueError, OverflowError):
                 declared_count = None
             if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
-                unavailable_units += 1
+                if batch_in_window:
+                    unavailable_units += 1
                 continue
         for sequence, raw in enumerate(raw_facts):
             if not isinstance(raw, dict):
                 continue
             fact_at = _utc(raw.get("evaluated_at")) or _utc(batch["evaluated_at"])
-            if fact_at is None or not (lower <= fact_at <= upper):
+            fact_us = _instant_us(fact_at)
+            if fact_us is None or fact_us > upper_us:
                 continue
-            identities.add(
-                str(
-                    raw.get("outcome_candidate_key")
-                    or raw.get("candidate_key")
-                    or f"{batch_id}:{sequence}"
-                )
+            identity = str(
+                raw.get("outcome_candidate_key")
+                or raw.get("candidate_key")
+                or f"{batch_id}:{sequence}"
             )
+            first_seen[identity] = min(fact_us, first_seen.get(identity, fact_us))
+    identities = {
+        identity
+        for identity, first_us in first_seen.items()
+        if lower_us <= first_us <= upper_us
+    }
 
     settled_keys: set[str] = set()
     outcome_cursor = db.execute(
         "SELECT * FROM filter_candidate_outcomes "
         "WHERE horizon=? AND status='settled' "
-        "AND datetime(entry_ts) <= datetime(?)",
-        (horizon, upper_iso),
+        "AND aletheia_instant_us(entry_ts) <= ?",
+        (horizon, upper_us),
     )
     for row in outcome_cursor:
         record = dict(row)
@@ -392,21 +432,17 @@ def _build_candidate_facts_inner(
     epoch_start: datetime | None,
     source: Any,
 ) -> dict[str, Any]:
-    if epoch_start is None:
-        explicit_sql = (
-            "SELECT * FROM filter_decisions"
-            " WHERE datetime(evaluated_at) <= datetime(?)"
-            " ORDER BY datetime(evaluated_at), sequence_no, rowid"
-        )
-        explicit_params = (cutoff.isoformat(),)
-    else:
-        explicit_sql = (
-            "SELECT * FROM filter_decisions"
-            " WHERE datetime(evaluated_at) >= datetime(?)"
-            " AND datetime(evaluated_at) <= datetime(?)"
-            " ORDER BY datetime(evaluated_at), sequence_no, rowid"
-        )
-        explicit_params = (epoch_start.isoformat(), cutoff.isoformat())
+    _register_instant(source)
+    cutoff_us = _instant_us(cutoff)
+    epoch_start_us = _instant_us(epoch_start) if epoch_start is not None else None
+    if cutoff_us is None:
+        raise ValueError("invalid as_of_at")
+    explicit_sql = (
+        "SELECT * FROM filter_decisions"
+        " WHERE aletheia_instant_us(evaluated_at) <= ?"
+        " ORDER BY aletheia_instant_us(evaluated_at), sequence_no, rowid"
+    )
+    explicit_params = (cutoff_us,)
     explicit = _rows(source, explicit_sql, explicit_params)
     filter_rows = [{**row, "source_table": "filter_decisions"} for row in explicit if _visible(row, cutoff)]
     batch_rows, batch_exclusions = _batch_facts(source, cutoff, epoch_start)
@@ -414,8 +450,24 @@ def _build_candidate_facts_inner(
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in filter_rows:
-        identity = str(row.get("outcome_candidate_key") or row.get("candidate_key") or row.get("id"))
-        grouped[identity].append(row)
+        grouped[_identity(row)].append(row)
+    if epoch_start_us is not None:
+        grouped = {
+            identity: rows
+            for identity, rows in grouped.items()
+            if (
+                first_us := min(
+                    (
+                        value_us
+                        for row in rows
+                        if (value_us := _instant_us(row.get("evaluated_at"))) is not None
+                    ),
+                    default=None,
+                )
+            )
+            is not None
+            and epoch_start_us <= first_us <= cutoff_us
+        }
 
     outcomes = _rows(
         source,
