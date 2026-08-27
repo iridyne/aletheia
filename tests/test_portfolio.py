@@ -51,6 +51,49 @@ def test_short_position_pnl(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=90.0,
+        execution_mode="paper_internal",
+    ))
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="short",
+        quantity=1.0,
+        entry_price=90.0,
+        execution_mode="paper_internal",
+    ))
+    repo.insert_position(Position(
+        symbol="ETHUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    ))
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda s, mt, *, venue: 100.0,
+    )
+
+    summary = compute_portfolio()
+
+    assert summary["positions_count"] == 3
+    assert summary["unrealized_pnl"] == 0.0
+    assert summary["unrealized_by_symbol"] == {
+        "BTCUSDT": 0.0,
+        "ETHUSDT": 0.0,
+    }
+    assert round(sum(summary["unrealized_by_symbol"].values()), 4) == summary["unrealized_pnl"]
+    reset_db()
+
+
 def test_mark_to_market_updates_every_open_position_beyond_display_limit(
     tmp_path, monkeypatch,
 ):
@@ -114,6 +157,67 @@ def test_portfolio_snapshots_return_latest_window_in_ascending_order(tmp_path, m
     assert rows[-1]["total_value_usdt"] == 1060
     assert [row["snapshot_at"] for row in rows] == sorted(row["snapshot_at"] for row in rows)
     assert repo.get_latest_portfolio_snapshot()["total_value_usdt"] == 1060
+    reset_db()
+
+
+def test_snapshot_day_windows_compare_iso_instants(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    fixed_now = datetime(2026, 8, 22, 15, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo, "datetime", FixedDatetime)
+    before = fixed_now - timedelta(days=7, seconds=1)
+    cutoff = fixed_now - timedelta(days=7)
+    after_fractional = fixed_now - timedelta(days=7) + timedelta(microseconds=1)
+    for snapshot_at, value in (
+        (before.isoformat(), 1.0),
+        (cutoff.isoformat().replace("+00:00", "Z"), 2.0),
+        (after_fractional.isoformat(), 3.0),
+    ):
+        repo.insert_portfolio_snapshot(
+            PortfolioSnapshot(total_value_usdt=value, snapshot_at=snapshot_at)
+        )
+
+    rows = repo.list_portfolio_snapshots(days=7)
+
+    assert [row["total_value_usdt"] for row in rows] == [2.0, 3.0]
+    reset_db()
+
+
+def test_account_equity_day_windows_compare_iso_instants(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    fixed_now = datetime(2026, 8, 22, 15, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo, "datetime", FixedDatetime)
+    before = fixed_now - timedelta(days=7, seconds=1)
+    cutoff = fixed_now - timedelta(days=7)
+    after_fractional = fixed_now - timedelta(days=7) + timedelta(microseconds=1)
+    for snapshot_at, value in (
+        (before.isoformat(), 1.0),
+        (cutoff.isoformat().replace("+00:00", "Z"), 2.0),
+        (after_fractional.isoformat(), 3.0),
+    ):
+        repo.insert_portfolio_snapshot(
+            PortfolioSnapshot(
+                total_value_usdt=value,
+                account_equity_usdt=value,
+                execution_mode="paper_internal",
+                snapshot_at=snapshot_at,
+            )
+        )
+
+    rows = repo.list_account_equity_snapshots("paper_internal", days=7)
+
+    assert [row["account_equity_usdt"] for row in rows] == [2.0, 3.0]
     reset_db()
 
 

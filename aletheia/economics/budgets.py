@@ -355,9 +355,8 @@ def list_recent_would_block_events(
     `/api/economics/budgets/would-block` endpoint.
 
     `scope` filters to events where at least one observation targets the
-    given scope. Filtering is done in Python (SQLite's JSON1 predicates
-    against nested arrays require complex WHERE clauses; a small per-page
-    filter here is simpler and correct).
+    given scope before pagination is applied, so `limit` caps matching rows
+    rather than a mixed-scope pre-filter page.
     """
     ensure_economics_schema()
     from datetime import datetime, timedelta, timezone
@@ -367,14 +366,29 @@ def list_recent_would_block_events(
     from aletheia.economics.schema import ensure_economics_schema as _ensure
 
     db = _ensure()
+    limit_value = max(1, min(int(limit), 5_000))
+    params: list[Any] = [start.isoformat()]
+    scope_clause = ""
+    if scope:
+        if scope not in _VALID_SCOPES:
+            return []
+        scope_clause = """
+             AND EXISTS (
+                 SELECT 1
+                 FROM json_each(json_extract(runtime_cost_events.metadata_json,'$.would_block')) AS wb
+                 WHERE json_extract(wb.value,'$.scope') = ?
+             )"""
+        params.append(scope)
+    params.append(limit_value)
     rows = db.execute(
-        """SELECT * FROM runtime_cost_events
+        f"""SELECT * FROM runtime_cost_events
            WHERE replace(started_at,' ','T') >= replace(?,' ','T')
              AND json_valid(metadata_json)
              AND json_extract(metadata_json,'$.would_block') IS NOT NULL
+             {scope_clause}
            ORDER BY started_at DESC
            LIMIT ?""",
-        (start.isoformat(), max(1, min(int(limit), 5_000))),
+        tuple(params),
     ).fetchall()
     results: list[dict[str, Any]] = []
     for row in rows:
@@ -386,8 +400,6 @@ def list_recent_would_block_events(
             observations = metadata.get("would_block") or []
         except Exception:
             observations = []
-        if scope and not any(obs.get("scope") == scope for obs in observations):
-            continue
         entry["would_block"] = observations
         results.append(entry)
     return results

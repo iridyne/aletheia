@@ -1550,6 +1550,19 @@ class UniverseConfig(BaseModel):
         return v
 
 
+class FastTriggerConfig(BaseModel):
+    """Bounded Momentum trigger; the safe default observes without executing."""
+
+    # Shadow prewarms/records the trigger path without granting order authority;
+    # execution remains an explicit opt-in.
+    mode: Literal["off", "shadow", "execute"] = "shadow"
+    max_setups: int = Field(default=10, ge=1, le=10)
+    authorization_ttl_minutes: int = Field(default=60, ge=1, le=60)
+    trigger_behavior_version: Literal["momentum-fast-trigger/v1"] = (
+        "momentum-fast-trigger/v1"
+    )
+
+
 class RegimeConfig(BaseModel):
     enabled: bool = True
     min_hold_periods: int = Field(default=3, ge=1, le=20)
@@ -1922,6 +1935,7 @@ class AletheiaConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    fast_trigger: FastTriggerConfig = Field(default_factory=FastTriggerConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     strategy_factory: StrategyFactoryConfig = Field(default_factory=StrategyFactoryConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)

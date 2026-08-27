@@ -215,7 +215,7 @@ async def test_graceful_degradation_when_codex_absent(monkeypatch, tmp_path):
 
 @pytest.mark.anyio
 async def test_subprocess_passes_create_no_window_on_windows(monkeypatch):
-    """All asyncio.create_subprocess_exec calls must pass creationflags on Windows."""
+    """Windows CLI subprocesses must pass creationflags through the sync worker."""
     monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: "/usr/bin/codex")
     import aletheia.gateway.pidfile as pidfile
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
@@ -225,8 +225,18 @@ async def test_subprocess_passes_create_no_window_on_windows(monkeypatch):
         b'{"type":"turn.completed","usage":{}}\n'
     )
     captured = []
-    procs = {"exec": _FakeProc(stdout=stdout, returncode=0)}
-    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec_factory(captured, procs))
+
+    class _SyncProc:
+        returncode = 0
+
+        def communicate(self, data=None, timeout=None):
+            return stdout, b""
+
+    def fake_popen(args, **kwargs):
+        captured.append({"argv": list(args), "kwargs": kwargs})
+        return _SyncProc()
+
+    monkeypatch.setattr("aletheia.model_provider.cli_harness.subprocess.Popen", fake_popen)
 
     from aletheia.model_provider.base import ModelRequest
     provider = CodexCLIProvider(enabled=True)
