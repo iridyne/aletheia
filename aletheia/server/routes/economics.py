@@ -9,6 +9,7 @@ public GitHub catalog and persists explicitly estimated snapshots.
 See `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
 §4 Phase 1 for the original read-side constraints.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -52,7 +53,7 @@ router = APIRouter(prefix="/api/economics", tags=["economics"])
 @router.get("/usage-insights")
 def usage_insights(
     days: int = Query(1),
-    group: Literal["summary", "operations", "analysis"] | None = None,
+    group: Literal["summary", "operations"] = "summary",
 ) -> dict:
     """Exact aggregate-only usage projection; never reads prompts or responses."""
     if days not in {1, 7, 30, 90}:
@@ -209,8 +210,7 @@ def viability_reports(
     rows = [
         dict(row)
         for row in db.execute(
-            f"SELECT * FROM viability_reports {where_sql} "
-            f"ORDER BY window_end DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM viability_reports {where_sql} ORDER BY window_end DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
     ]
@@ -277,8 +277,7 @@ def pricing() -> dict:
     models = [
         dict(row)
         for row in db.execute(
-            "SELECT * FROM pricing_snapshots "
-            "ORDER BY effective_from DESC, created_at DESC LIMIT 200"
+            "SELECT * FROM pricing_snapshots ORDER BY effective_from DESC, created_at DESC LIMIT 200"
         ).fetchall()
     ]
     # Compatibility key: provider-native tool rates are columns on each model

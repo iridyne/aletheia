@@ -25,6 +25,7 @@ from aletheia.model_provider.router import (
 
 def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -35,6 +36,7 @@ def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
+
     cfg = load_config()
     cfg.models.providers["openai_compatible"] = ProviderConfig(
         type="openai_compatible",
@@ -55,6 +57,7 @@ def test_router_returns_openai_by_default(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
@@ -63,7 +66,8 @@ def test_router_returns_openai_by_default(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.models.default_provider = "openai_compatible"
     cfg.models.providers["openai_compatible"] = ProviderConfig(
-        type="openai_compatible", base_url="http://localhost:8000/v1",
+        type="openai_compatible",
+        base_url="http://localhost:8000/v1",
         enabled=True,
     )
     save_config(cfg)
@@ -78,6 +82,7 @@ def test_router_returns_anthropic(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
@@ -129,6 +134,7 @@ def test_router_returns_codex(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
@@ -146,6 +152,7 @@ def test_router_raises_clear_error_when_no_provider_configured(tmp_path, monkeyp
     """Fresh install ships blank (default_provider=''). get_provider() must raise a
     human-actionable error, not a confusing 'Unknown provider: ' with an empty name."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
@@ -291,11 +298,20 @@ async def test_openai_healthcheck_no_server():
     import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, **k): raise httpx.ConnectError("refused")
-        async def post(self, url, **k): raise httpx.ConnectError("refused")
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **k):
+            raise httpx.ConnectError("refused")
+
+        async def post(self, url, **k):
+            raise httpx.ConnectError("refused")
 
     provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="test")
     with patch("aletheia.model_provider.openai_compatible.httpx_client", FailClient):
@@ -317,9 +333,15 @@ async def test_inline_candidate_key_used_in_healthcheck():
             return {"data": [{"id": "m"}]}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
         async def get(self, url, headers=None):
             seen["headers"] = headers or {}
             return FakeResp()
@@ -342,14 +364,53 @@ async def test_openai_complete_mock():
     class FakeResponse:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
-        def json(self): return mock_response
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return mock_response
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
         resp = await provider.complete(req)
         assert resp.content == "Hello world"
         assert resp.model == "test"
+
+
+@pytest.mark.anyio
+async def test_openai_native_stream_requests_and_preserves_final_usage():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        async def aiter_lines(self):
+            yield 'data: {"model":"gpt-actual","choices":[{"delta":{"content":"ok"}}]}'
+            yield 'data: {"model":"gpt-actual","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}'
+            yield "data: [DONE]"
+
+    class StreamContext:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def stream(self, method, url, **kwargs):
+            captured["payload"] = kwargs["json"]
+            return StreamContext()
+
+    provider = OpenAINativeProvider(model="gpt-requested")
+    provider._get_http_client = lambda _factory: FakeClient()
+    chunks = [chunk async for chunk in provider.stream(ModelRequest(messages=[]))]
+
+    assert captured["payload"]["stream_options"] == {"include_usage": True}
+    assert chunks[-1].usage == {"prompt_tokens": 10, "completion_tokens": 5}
+    assert chunks[-1].model == "gpt-actual"
+    assert sum(chunk.done for chunk in chunks) == 1
 
 
 def test_openai_chat_missing_choices_is_provider_response_error():
@@ -368,8 +429,12 @@ async def test_openai_complete_missing_choices_raises_provider_response_error():
     class FakeResponse:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
-        def json(self): return {"id": "cmpl-glm"}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "cmpl-glm"}
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
         with pytest.raises(ProviderResponseError, match="openai_chat_missing_choices"):
@@ -399,9 +464,7 @@ async def test_openai_complete_sends_explicit_reasoning_effort_only_when_request
                 reasoning_effort="none",
             )
         )
-        await provider.complete(
-            ModelRequest(messages=[{"role": "user", "content": "hello"}])
-        )
+        await provider.complete(ModelRequest(messages=[{"role": "user", "content": "hello"}]))
 
     first_payload = post.await_args_list[0].kwargs["json"]
     second_payload = post.await_args_list[1].kwargs["json"]
@@ -480,8 +543,12 @@ async def test_anthropic_complete_mock():
     class FakeResponse:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
-        def json(self): return mock_response
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return mock_response
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
@@ -494,6 +561,7 @@ async def test_anthropic_complete_mock():
 # paste the AI-Gateway URL (…/ai-gateway/anthropic) into the Workspace URL field,
 # but the provider builds its own /serving-endpoints and /api/2.0 paths, so the
 # extra path segment must be stripped to the host root or every request 404s.
+
 
 def test_databricks_normalizes_gateway_url_to_workspace_root():
     root = "https://adb-123.azuredatabricks.net"
@@ -510,8 +578,7 @@ def test_databricks_builds_invocations_url_from_normalized_root():
     )
     assert p.workspace_url == "https://adb-123.azuredatabricks.net"
     assert p.base_url == (
-        "https://adb-123.azuredatabricks.net"
-        "/serving-endpoints/databricks-claude-opus-4-8/invocations"
+        "https://adb-123.azuredatabricks.net/serving-endpoints/databricks-claude-opus-4-8/invocations"
     )
 
 
@@ -525,7 +592,10 @@ async def test_databricks_complete_omits_temperature():
     class FakeResponse:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
+
+        def raise_for_status(self):
+            pass
+
         def json(self):
             return {"choices": [{"message": {"content": "OK"}}], "model": "m", "usage": {}}
 
@@ -541,20 +611,29 @@ async def test_databricks_complete_omits_temperature():
 
 # ── list_models tests ───────────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_openai_list_models_parses_data_array():
     provider = OpenAICompatibleProvider(base_url="http://gw/v1", model="m")
 
     class FakeResp:
         status_code = 200
+
         def json(self):
             return {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -568,10 +647,17 @@ async def test_openai_list_models_returns_empty_on_failure():
     import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, **k): raise httpx.ConnectError("refused")
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **k):
+            raise httpx.ConnectError("refused")
 
     provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="m")
     with patch("httpx.AsyncClient", FailClient):
@@ -585,14 +671,22 @@ async def test_anthropic_list_models_parses_data_array():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
             return {"data": [{"id": "claude-sonnet-4-20250514"}, {"id": "claude-haiku-4-5-20251001"}]}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -607,14 +701,22 @@ async def test_anthropic_list_models_handles_plain_list():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
             return ["claude-opus-4", "claude-sonnet-4"]
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -627,10 +729,17 @@ async def test_anthropic_list_models_returns_empty_on_failure():
     import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, **k): raise httpx.ConnectError("refused")
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **k):
+            raise httpx.ConnectError("refused")
 
     provider = AnthropicCompatibleProvider(base_url="http://localhost:19999", model="m")
     with patch("httpx.AsyncClient", FailClient):
@@ -644,17 +753,27 @@ async def test_databricks_list_models_parses_endpoints():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
-            return {"endpoints": [
-                {"name": "databricks-claude-opus-4-8", "state": {"ready": "READY"}},
-                {"name": "databricks-meta-llama-3", "state": {"ready": "NOT_READY"}},
-            ]}
+            return {
+                "endpoints": [
+                    {"name": "databricks-claude-opus-4-8", "state": {"ready": "READY"}},
+                    {"name": "databricks-meta-llama-3", "state": {"ready": "NOT_READY"}},
+                ]
+            }
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await p.list_models()
@@ -676,10 +795,17 @@ async def test_databricks_list_models_returns_empty_on_failure():
     import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, **k): raise httpx.ConnectError("refused")
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **k):
+            raise httpx.ConnectError("refused")
 
     p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
     with patch("httpx.AsyncClient", FailClient):
@@ -712,8 +838,12 @@ async def test_anthropic_native_complete_mock():
     class FakeResponse:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
-        def json(self): return mock_response
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return mock_response
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
@@ -728,17 +858,27 @@ async def test_anthropic_native_list_models():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
-            return {"data": [
-                {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "type": "model"},
-                {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "type": "model"},
-            ]}
+            return {
+                "data": [
+                    {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "type": "model"},
+                    {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "type": "model"},
+                ]
+            }
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -754,14 +894,22 @@ async def test_anthropic_native_healthcheck_success():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
             return {"data": [{"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"}]}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         health = await provider.healthcheck()
@@ -774,10 +922,17 @@ async def test_anthropic_native_healthcheck_failure():
     import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, **k): raise httpx.ConnectError("refused")
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **k):
+            raise httpx.ConnectError("refused")
 
     provider = AnthropicNativeProvider(model="claude-sonnet-4-6")
     with patch("httpx.AsyncClient", FailClient):
@@ -809,8 +964,12 @@ async def test_openai_native_complete_mock():
     class FakeResponse:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
-        def json(self): return mock_response
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return mock_response
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
@@ -825,20 +984,30 @@ async def test_openai_native_list_models_filters_chat_models():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
-            return {"data": [
-                {"id": "gpt-4o"},
-                {"id": "gpt-4o-mini"},
-                {"id": "dall-e-3"},
-                {"id": "text-embedding-3-large"},
-                {"id": "o3-mini"},
-            ]}
+            return {
+                "data": [
+                    {"id": "gpt-4o"},
+                    {"id": "gpt-4o-mini"},
+                    {"id": "dall-e-3"},
+                    {"id": "text-embedding-3-large"},
+                    {"id": "o3-mini"},
+                ]
+            }
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -856,14 +1025,22 @@ async def test_openai_native_healthcheck_success():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
             return {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         health = await provider.healthcheck()
@@ -876,10 +1053,17 @@ async def test_openai_native_healthcheck_failure():
     import httpx  # pyright: ignore[reportMissingImports]
 
     class FailClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, **k): raise httpx.ConnectError("refused")
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **k):
+            raise httpx.ConnectError("refused")
 
     provider = OpenAINativeProvider(model="gpt-4o")
     with patch("httpx.AsyncClient", FailClient):
@@ -889,6 +1073,7 @@ async def test_openai_native_healthcheck_failure():
 
 def test_router_returns_anthropic_native(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -898,9 +1083,11 @@ def test_router_returns_anthropic_native(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
+
     cfg = load_config()
     cfg.models.providers["anthropic_native"] = ProviderConfig(
-        type="anthropic_native", model="claude-sonnet-4-6",
+        type="anthropic_native",
+        model="claude-sonnet-4-6",
         api_key_secret_ref="model.anthropic_native.api_key",
         enabled=True,
     )
@@ -916,6 +1103,7 @@ def test_router_returns_anthropic_native(tmp_path, monkeypatch):
 
 def test_router_returns_openai_native(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -925,9 +1113,11 @@ def test_router_returns_openai_native(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
+
     cfg = load_config()
     cfg.models.providers["openai_native"] = ProviderConfig(
-        type="openai_native", model="gpt-4o",
+        type="openai_native",
+        model="gpt-4o",
         api_key_secret_ref="model.openai_native.api_key",
         enabled=True,
     )
@@ -952,37 +1142,50 @@ async def test_anthropic_native_stream():
     provider = AnthropicNativeProvider(model="claude-sonnet-4-6", api_key="sk-test")
 
     sse_lines = [
-        'event: content_block_start',
+        "event: content_block_start",
         'data: {"type":"content_block_start","index":0}',
-        '',
-        'event: content_block_delta',
+        "",
+        "event: content_block_delta",
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
-        '',
-        'event: content_block_delta',
+        "",
+        "event: content_block_delta",
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}',
-        '',
-        'event: message_delta',
+        "",
+        "event: message_delta",
         'data: {"type":"message_delta","usage":{"output_tokens":5}}',
-        '',
-        'event: message_stop',
+        "",
+        "event: message_stop",
         'data: {"type":"message_stop"}',
-        '',
+        "",
     ]
 
     class FakeStreamResp:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
+
+        def raise_for_status(self):
+            pass
+
         async def aiter_lines(self):
             for line in sse_lines:
                 yield line
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
         def stream(self, method, url, json=None, headers=None):  # noqa: F811
             return FakeStreamResp()
 
@@ -1005,23 +1208,36 @@ async def test_openai_native_stream():
     sse_lines = [
         'data: {"choices":[{"delta":{"content":"Hi"}}]}',
         'data: {"choices":[{"delta":{"content":" there"}}]}',
-        'data: [DONE]',
+        "data: [DONE]",
     ]
 
     class FakeStreamResp:
         status_code = 200
         is_success = True
-        def raise_for_status(self): pass
+
+        def raise_for_status(self):
+            pass
+
         async def aiter_lines(self):
             for line in sse_lines:
                 yield line
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
         def stream(self, method, url, json=None, headers=None):  # noqa: F811
             return FakeStreamResp()
 
@@ -1056,24 +1272,35 @@ async def test_base_stream_fallback():
 
 # ── Enriched model metadata tests ────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_anthropic_native_list_models_enriched():
     provider = AnthropicNativeProvider(api_key="sk-test")
 
     class FakeResp:
         status_code = 200
+
         def json(self):
-            return {"data": [
-                {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "created_at": "2025-05-01"},
-                {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"},
-                {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5"},
-            ]}
+            return {
+                "data": [
+                    {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "created_at": "2025-05-01"},
+                    {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"},
+                    {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5"},
+                ]
+            }
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -1094,18 +1321,28 @@ async def test_openai_native_list_models_enriched():
 
     class FakeResp:
         status_code = 200
+
         def json(self):
-            return {"data": [
-                {"id": "gpt-4o", "created": 1700000000},
-                {"id": "gpt-4o-mini", "created": 1700000001},
-                {"id": "o3-mini", "created": 1700000002},
-            ]}
+            return {
+                "data": [
+                    {"id": "gpt-4o", "created": 1700000000},
+                    {"id": "gpt-4o-mini", "created": 1700000001},
+                    {"id": "o3-mini", "created": 1700000002},
+                ]
+            }
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, url, headers=None): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResp()
 
     with patch("httpx.AsyncClient", FakeClient):
         models = await provider.list_models()
@@ -1127,9 +1364,7 @@ async def test_openai_native_list_models_enriched():
 
 def test_anthropic_native_oauth_headers():
     """OAuth token takes priority over api_key and uses Bearer scheme."""
-    provider = AnthropicNativeProvider(
-        model="claude-sonnet-4-6", api_key="sk-ant-key", oauth_token="oat_token123"
-    )
+    provider = AnthropicNativeProvider(model="claude-sonnet-4-6", api_key="sk-ant-key", oauth_token="oat_token123")
     headers = provider._headers()
     assert headers["Authorization"] == "Bearer oat_token123"
     assert "x-api-key" not in headers
@@ -1145,6 +1380,7 @@ def test_openai_native_oauth_headers():
 def test_router_passes_oauth_token_to_provider(tmp_path, monkeypatch):
     """When auth_type=oauth and oauth_token_ref is set, router passes oauth_token."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -1154,10 +1390,13 @@ def test_router_passes_oauth_token_to_provider(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
+
     cfg = load_config()
     cfg.models.providers["anthropic_native"] = ProviderConfig(
-        type="anthropic_native", model="claude-sonnet-4-6",
-        auth_type="oauth", oauth_token_ref="model.anthropic_native.oauth_token",
+        type="anthropic_native",
+        model="claude-sonnet-4-6",
+        auth_type="oauth",
+        oauth_token_ref="model.anthropic_native.oauth_token",
         enabled=True,
     )
     save_config(cfg)
@@ -1173,6 +1412,7 @@ def test_router_passes_oauth_token_to_provider(tmp_path, monkeypatch):
 def test_router_oauth_token_takes_priority_over_api_key(tmp_path, monkeypatch):
     """When both api_key and oauth_token are configured, oauth_token wins."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -1182,11 +1422,14 @@ def test_router_oauth_token_takes_priority_over_api_key(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
+
     cfg = load_config()
     cfg.models.providers["openai_native"] = ProviderConfig(
-        type="openai_native", model="gpt-4o",
+        type="openai_native",
+        model="gpt-4o",
         api_key_secret_ref="model.openai_native.api_key",
-        auth_type="oauth", oauth_token_ref="model.openai_native.oauth_token",
+        auth_type="oauth",
+        oauth_token_ref="model.openai_native.oauth_token",
         enabled=True,
     )
     save_config(cfg)
@@ -1204,6 +1447,7 @@ def test_router_oauth_token_takes_priority_over_api_key(tmp_path, monkeypatch):
 async def test_healthcheck_all_includes_oauth_provider(tmp_path, monkeypatch):
     """OAuth providers must NOT be skipped by healthcheck_all()."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -1214,10 +1458,14 @@ async def test_healthcheck_all_includes_oauth_provider(tmp_path, monkeypatch):
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
     from aletheia.model_provider.router import healthcheck_all
+
     cfg = load_config()
     cfg.models.providers["openai_native"] = ProviderConfig(
-        type="openai_native", model="gpt-4o", enabled=True,
-        auth_type="oauth", oauth_token_ref="model.openai_native.oauth_token",
+        type="openai_native",
+        model="gpt-4o",
+        enabled=True,
+        auth_type="oauth",
+        oauth_token_ref="model.openai_native.oauth_token",
     )
     save_config(cfg)
     set_secret("model.openai_native.oauth_token", "oat_test")
@@ -1237,7 +1485,8 @@ def test_resolve_oauth_token_preserves_old_token_on_async_skip(monkeypatch):
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
 
     pcfg = ProviderConfig(
-        type="openai_native", auth_type="oauth",
+        type="openai_native",
+        auth_type="oauth",
         oauth_token_ref="model.openai_native.oauth_token",
         oauth_refresh_ref="model.openai_native.oauth_refresh",
         oauth_expires_at=int(time.time() * 1000) - 1000,  # already expired
@@ -1249,6 +1498,7 @@ def test_resolve_oauth_token_preserves_old_token_on_async_skip(monkeypatch):
     )
 
     import asyncio
+
     async def _test():
         return _resolve_oauth_token("openai_native", pcfg)
 
@@ -1259,6 +1509,7 @@ def test_resolve_oauth_token_preserves_old_token_on_async_skip(monkeypatch):
 def test_persist_openai_oauth_sets_default_model(tmp_path, monkeypatch):
     """_persist_openai_oauth sets model=gpt-4o when current is 'default'."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -1266,11 +1517,13 @@ def test_persist_openai_oauth_sets_default_model(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
+
     cfg = load_config()
     cfg.models.providers["openai_native"] = ProviderConfig(type="openai_native", model="default")
     save_config(cfg)
 
     from aletheia.server.routes.model import _persist_openai_oauth
+
     _persist_openai_oauth({"api_key": "sk-oauth-key", "refresh_token": "rt", "expires_at": 999999})
 
     cfg = load_config()
@@ -1282,6 +1535,7 @@ def test_persist_openai_oauth_sets_default_model(tmp_path, monkeypatch):
 def test_persist_claude_oauth_sets_default_model(tmp_path, monkeypatch):
     """_persist_claude_oauth sets model=claude-sonnet-4-6 when current is 'default'."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -1289,11 +1543,13 @@ def test_persist_claude_oauth_sets_default_model(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
+
     cfg = load_config()
     cfg.models.providers["anthropic_native"] = ProviderConfig(type="anthropic_native", model="default")
     save_config(cfg)
 
     from aletheia.server.routes.model import _persist_claude_oauth
+
     _persist_claude_oauth({"access_token": "at", "refresh_token": "rt", "expires_at": 999999})
 
     cfg = load_config()
@@ -1305,6 +1561,7 @@ def test_persist_claude_oauth_sets_default_model(tmp_path, monkeypatch):
 def test_persist_oauth_does_not_override_user_model(tmp_path, monkeypatch):
     """If user already selected a model, persist should not overwrite it."""
     import aletheia.config.loader as loader
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
@@ -1312,15 +1569,18 @@ def test_persist_oauth_does_not_override_user_model(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
+
     cfg = load_config()
     cfg.models.providers["openai_native"] = ProviderConfig(type="openai_native", model="o3-mini")
     save_config(cfg)
 
     from aletheia.server.routes.model import _persist_openai_oauth
+
     _persist_openai_oauth({"api_key": "sk-oauth-key", "refresh_token": "rt", "expires_at": 999999})
 
     cfg = load_config()
     assert cfg.models.providers["openai_native"].model == "o3-mini"
+
 
 def test_router_returns_databricks_with_workspace_protocol(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -1346,6 +1606,7 @@ def test_router_returns_databricks_with_workspace_protocol(tmp_path, monkeypatch
     assert provider.databricks_protocol == "responses"
     assert provider.model == "research-model"
     clear_cache()
+
 
 @pytest.mark.anyio
 async def test_databricks_ai_gateway_anthropic_request_shape():
@@ -1387,6 +1648,7 @@ async def test_databricks_ai_gateway_anthropic_request_shape():
     assert sent["payload"]["system"] == "be concise"
     assert "temperature" not in sent["payload"]
 
+
 @pytest.mark.anyio
 async def test_databricks_ai_gateway_responses_omits_temperature():
     p = DatabricksProvider(
@@ -1418,6 +1680,7 @@ async def test_databricks_ai_gateway_responses_omits_temperature():
     assert response.content == "OK"
     assert sent["url"].endswith("/ai-gateway/openai/v1/responses")
     assert "temperature" not in sent["payload"]
+
 
 @pytest.mark.anyio
 async def test_databricks_health_is_honest_when_configured_endpoint_is_missing(monkeypatch):

@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Usage v2 production read model and workspace](usage_v2_workspace.md):
+  event-time fail-closed cost semantics and one typed, read-only Usage page for
+  overview, trend, attribution, reliability, and configured budgets.
 - [Position replay and profit-gradient evidence](position_replay_profit_gradient.md):
   exact candidate/Position facts, frozen hypotheses, prefix-only analysis, and
   seven-layer unique-winner gates without trading authority.
