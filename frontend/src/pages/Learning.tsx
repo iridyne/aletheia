@@ -1,6 +1,7 @@
-import { useDeferredValue, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useDeferredValue, useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
+import { useSearchParams } from 'react-router-dom'
 import { api, type DreamingSummary, type KnowledgeCatalogResponse, type LearningContributionProjection } from '../api/client'
 import type { KnowledgeItem } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
@@ -26,8 +27,27 @@ import { learningPulseValue, learningReadState, optionalBooleanLabel, type Learn
  * Enum values (confidence, severity, status) are humanized for display but never relabeled.
  */
 
+const LEARNING_TABS = ['overview', 'contribution', 'dreaming', 'knowledge', 'operations'] as const
+type LearningTab = typeof LEARNING_TABS[number]
+function isLearningTab(tab: string | null): tab is LearningTab {
+  return !!tab && LEARNING_TABS.includes(tab as LearningTab)
+}
+
 export default function Learning() {
-  const [tab, setTab] = useState('overview')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const tab = isLearningTab(requestedTab) ? requestedTab : 'overview'
+  useEffect(() => {
+    if (requestedTab === tab) return
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', tab)
+    setSearchParams(next, { replace: true })
+  }, [requestedTab, searchParams, setSearchParams, tab])
+  const setTab = (nextTab: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', isLearningTab(nextTab) ? nextTab : 'overview')
+    setSearchParams(next)
+  }
   return (
     <div>
       <PageHeader
