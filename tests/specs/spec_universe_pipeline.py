@@ -468,6 +468,9 @@ def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
     assert calls == [
         {"symbol": "BTC/USDT", "exchange": "bitget", "market_type": "perp", "limit": 1}
     ]
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="", now=datetime.now(timezone.utc),
+    ) is False
 
 
 def test_snapshot_freshness_requires_exchange(monkeypatch):
@@ -483,6 +486,54 @@ def test_snapshot_freshness_requires_exchange(monkeypatch):
     assert has_fresh_market_snapshot(
         "BTC/USDT", "perp", now=datetime.now(timezone.utc),
     ) is False
+
+
+def test_snapshot_freshness_is_exact_venue_scoped(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="stale-binance-btc-perp",
+        symbol="BTC/USDT",
+        exchange="binance",
+        market_type="perp",
+        price=60_000.0,
+        snapshot_at=(now - timedelta(hours=3)).isoformat(),
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="fresh-bitget-btc-perp",
+        symbol="BTC/USDT",
+        exchange="bitget",
+        market_type="perp",
+        price=60_100.0,
+        snapshot_at=(now - timedelta(minutes=5)).isoformat(),
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="fresh-binance-btc-spot",
+        symbol="BTC/USDT",
+        exchange="binance",
+        market_type="spot",
+        price=59_900.0,
+        snapshot_at=(now - timedelta(minutes=5)).isoformat(),
+    ))
+
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="binance", now=now,
+    ) is False
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="bitget", now=now,
+    ) is True
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "spot", exchange="binance", now=now,
+    ) is True
 
 
 def test_snapshot_freshness_is_exchange_scoped(monkeypatch):

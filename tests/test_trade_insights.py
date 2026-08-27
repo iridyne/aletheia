@@ -369,3 +369,39 @@ def test_r_multiple_distribution_meta_all_keys_present():
     }, f"meta keys changed: {set(meta.keys())}"
     assert meta["unavailable_r_multiple_count"] == 3
     assert meta["unavailability_reasons"]["position_not_found"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #1931 — Symbol-direction matrix keeps physical market identity
+# ---------------------------------------------------------------------------
+
+def test_symbol_direction_matrix_does_not_merge_spot_and_futures_singletons():
+    from aletheia.analytics.trade_insights import _symbol_direction_matrix
+
+    rows = [
+        _make_row(id="spot", symbol="BTCUSDT", market_type="spot", realized_pnl=1.0),
+        _make_row(id="fut", symbol="BTC/USDT", market_type="usdt_futures", realized_pnl=-1.0),
+    ]
+
+    assert _symbol_direction_matrix(rows) == []
+
+
+def test_symbol_direction_matrix_reports_market_type_per_cell():
+    from aletheia.analytics.trade_insights import _symbol_direction_matrix
+
+    rows = [
+        _make_row(id="spot-1", symbol="BTCUSDT", market_type="spot", realized_pnl=1.0),
+        _make_row(id="spot-2", symbol="BTC/USDT", market_type="spot", realized_pnl=2.0),
+        _make_row(id="fut-1", symbol="BTCUSDT", market_type="futures", realized_pnl=-1.0),
+        _make_row(id="fut-2", symbol="BTC/USDT", market_type="usdt_futures", realized_pnl=-2.0),
+    ]
+
+    by_market = {r["market_type"]: r for r in _symbol_direction_matrix(rows)}
+
+    assert set(by_market) == {"spot", "usdt_futures"}
+    assert by_market["spot"]["symbol"] == "BTC/USDT"
+    assert by_market["spot"]["trade_count"] == 2
+    assert by_market["spot"]["win_rate"] == 100.0
+    assert by_market["usdt_futures"]["symbol"] == "BTC/USDT"
+    assert by_market["usdt_futures"]["trade_count"] == 2
+    assert by_market["usdt_futures"]["win_rate"] == 0.0

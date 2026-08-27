@@ -26,6 +26,13 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.strip().encode()).hexdigest()[:16]
 
 
+def _trade_case_position_hash(metadata: dict | None) -> str:
+    position_id = str((metadata or {}).get("position_id") or "").strip()
+    if not position_id:
+        raise ValueError("trade_case_study requires metadata.position_id")
+    return _content_hash(f"trade-case-position:{position_id}")
+
+
 def _is_quality_pass(content: str) -> bool:
     """Reject placeholder or near-empty content."""
     if len(content.strip()) < _MIN_CONTENT_LENGTH:
@@ -229,7 +236,7 @@ def create_trade_case_study(
         # problem (too short, placeholder) — distinguishable from normal dedup.
         logger.warning("knowledge_skipped:quality_gate item_type=trade_case_study len=%d title=%r", len(content), title)
         return None
-    ch = _content_hash(content)
+    ch = _trade_case_position_hash(metadata)
     path = write_trade_case_study(title, content, metadata)
     item = KnowledgeItem(
         item_type="trade_case_study",

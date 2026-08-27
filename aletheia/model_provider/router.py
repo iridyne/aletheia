@@ -19,6 +19,7 @@ from aletheia.model_provider.base import (
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.databricks import DatabricksProvider
+from aletheia.model_provider.registry import provider_config_protocol
 from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider.codex_cli import CodexCLIProvider
@@ -133,7 +134,7 @@ def provider_configuration_identity(
         "type": str(getattr(pcfg, "type", "") or name),
         "base_url": str(getattr(pcfg, "base_url", "") or ""),
         "workspace_url": str(getattr(pcfg, "workspace_url", "") or ""),
-        "protocol": str(getattr(pcfg, "protocol", "") or ""),
+        "protocol": provider_config_protocol(str(getattr(pcfg, "type", "") or name), pcfg),
         "model": str(getattr(pcfg, "model", "") or ""),
         "auth_scheme": str(getattr(pcfg, "auth_scheme", "") or ""),
         "auth_type": str(getattr(pcfg, "auth_type", "") or ""),
@@ -442,24 +443,28 @@ def get_provider(name: str | None = None) -> ModelProvider:
     ptype = _resolve_type(name, pcfg)
 
     if ptype == "openai_compatible":
+        protocol = provider_config_protocol(ptype, pcfg)
         provider = OpenAICompatibleProvider(
             base_url=pcfg.base_url,
             model=pcfg.model,
-            protocol=pcfg.protocol,
+            protocol=protocol,
             api_key=api_key,
         )
     elif ptype == "anthropic_compatible":
+        protocol = provider_config_protocol(ptype, pcfg)
         provider = AnthropicCompatibleProvider(
             base_url=pcfg.base_url,
             model=pcfg.model,
             api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
+            protocol=protocol,
         )
     elif ptype == "databricks":
+        protocol = provider_config_protocol(ptype, pcfg)
         provider = DatabricksProvider(
             workspace_url=pcfg.workspace_url or pcfg.base_url,
             model=pcfg.model,
-            protocol=pcfg.protocol or "serving_endpoint",
+            protocol=protocol,
             api_key=api_key,
         )
     elif ptype == "codex_cli":
@@ -569,24 +574,28 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
     ptype = _resolve_type(name, pcfg)
 
     if ptype == "openai_compatible":
+        protocol = provider_config_protocol(ptype, pcfg)
         provider = OpenAICompatibleProvider(
             base_url=pcfg.base_url,
             model=pcfg.model,
-            protocol=pcfg.protocol,
+            protocol=protocol,
             api_key=api_key,
         )
     elif ptype == "anthropic_compatible":
+        protocol = provider_config_protocol(ptype, pcfg)
         provider = AnthropicCompatibleProvider(
             base_url=pcfg.base_url,
             model=pcfg.model,
             api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
+            protocol=protocol,
         )
     elif ptype == "databricks":
+        protocol = provider_config_protocol(ptype, pcfg)
         provider = DatabricksProvider(
             workspace_url=pcfg.workspace_url or pcfg.base_url,
             model=pcfg.model,
-            protocol=pcfg.protocol or "serving_endpoint",
+            protocol=protocol,
             api_key=api_key,
         )
     elif ptype == "codex_cli":

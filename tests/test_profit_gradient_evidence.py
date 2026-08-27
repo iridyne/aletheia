@@ -236,6 +236,40 @@ def test_candidate_source_hash_includes_exclusion_identity(monkeypatch):
     assert first["source_hash"] != second["source_hash"]
 
 
+def test_candidate_loader_threads_epoch_bounds_into_source_identity(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _report(**kwargs):
+        captured.update(kwargs)
+        return {
+            "contract_version": "profit_loop_fact/v1",
+            "fixed_horizon": "24h",
+            "epoch_start_at": kwargs["epoch_start_at"],
+            "as_of_at": kwargs["as_of_at"],
+            "candidate_count": 0,
+            "settled_outcome_count": 0,
+            "unavailable_count": 0,
+            "unavailable_reasons": {},
+            "exclusions": [],
+            "facts": [],
+        }
+
+    monkeypatch.setattr(evidence, "build_candidate_facts", _report)
+
+    cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
+    epoch_start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    source, facts = evidence._load_candidates(
+        sqlite3.connect(":memory:"),
+        cutoff,
+        epoch_start,
+    )
+
+    assert captured["epoch_start_at"] == "2026-08-01T00:00:00+00:00"
+    assert source["as_of_at"] == "2026-08-14T00:00:00+00:00"
+    assert source["epoch_start_at"] == "2026-08-01T00:00:00+00:00"
+    assert facts == []
+
+
 def test_layer_compilation_keeps_temporal_reason_when_cost_source_is_unavailable():
     _, stats = evidence._add_layer_samples(
         db=sqlite3.connect(":memory:"),

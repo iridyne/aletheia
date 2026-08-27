@@ -163,6 +163,31 @@ def test_setup_fingerprint_changes_with_breakout_structure():
     assert one.material_fingerprint != two.material_fingerprint
 
 
+def test_build_momentum_setup_preserves_funding_observed_at():
+    from aletheia.universe.fast_trigger import build_momentum_setup
+
+    observed_at = "2026-08-26T11:45:00+00:00"
+    setup = build_momentum_setup(
+        snapshot_id="snapshot-1",
+        member_id="member-1",
+        asset_id="asset-1",
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        regime_tag="bull",
+        rank=1,
+        material_fingerprint="fingerprint-1",
+        atr_15m_pct=1.0,
+        candles=_bars("long"),
+        funding_rate=0.0004,
+        funding_observed_at=observed_at,
+        now=datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert setup.funding_observed_at == observed_at
+
+
 def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
@@ -645,6 +670,91 @@ def test_fast_trigger_hot_path_has_no_llm_or_provider_calls():
     ).lower()
     assert "llm_" not in source
     assert "provider" not in source
+
+
+@pytest.mark.asyncio
+async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import FastMarketEvent, FastStreamHealth
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    first = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+    second = InstrumentId.from_parts("bitget", "ETH/USDT", "perp")
+
+    class Engine:
+        def __init__(self, instrument):
+            self.instrument = instrument
+            self.state = "armed"
+
+        def confirm_subscription(self):
+            pass
+
+        def observe(self, _event):
+            return None
+
+    class BusyStream:
+        def __init__(self):
+            self.subscriptions = []
+
+        async def connect(self):
+            pass
+
+        async def set_instruments(self, instruments):
+            self.subscriptions.append(frozenset(instruments))
+            if second in instruments:
+                watch._stop_event.set()
+
+        def health(self):
+            return FastStreamHealth(connected=True, subscriptions_confirmed=True)
+
+        async def close(self):
+            pass
+
+        async def _events(self):
+            sequence = 0
+            while True:
+                await asyncio.sleep(0.001)
+                sequence += 1
+                yield FastMarketEvent(
+                    event_type="quote",
+                    instrument=first,
+                    exchange_timestamp_ms=sequence,
+                    received_timestamp_ms=sequence,
+                    sequence=sequence,
+                    bid=100.0,
+                    ask=100.1,
+                )
+
+        def events(self):
+            return self._events()
+
+    stream = BusyStream()
+    load_count = 0
+
+    async def load_watchers(_cfg, existing=None):
+        nonlocal load_count
+        load_count += 1
+        engines = {"first": existing.get("first", Engine(first)) if existing else Engine(first)}
+        if load_count > 1:
+            engines["second"] = existing.get("second", Engine(second)) if existing else Engine(second)
+        return {key: object() for key in engines}, engines
+
+    monkeypatch.setattr(watch, "_WATCHER_RELOAD_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(watch, "_stop_event", asyncio.Event())
+    monkeypatch.setattr(watch, "_configured_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(watch, "_load_watchers", load_watchers)
+    monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
+    monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
+
+    await asyncio.wait_for(watch._watch_loop(cfg), timeout=1.0)
+
+    assert frozenset({first, second}) in stream.subscriptions
+    assert load_count >= 2
 
 
 def test_authorization_refuses_non_2r_target_and_cross_venue(tmp_path, monkeypatch):

@@ -12,16 +12,26 @@ from aletheia.model_provider.base import (
     StructuredModelRequest,
     model_json_schema_payload,
 )
+from aletheia.model_provider.registry import validate_provider_protocol
 
 
 class AnthropicCompatibleProvider(ModelProvider):
     name = "anthropic_compatible"
 
-    def __init__(self, base_url: str, model: str = "default", api_key: str | None = None,
-                 auth_scheme: str = "x-api-key"):
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "default",
+        api_key: str | None = None,
+        auth_scheme: str = "x-api-key",
+        protocol: str = "anthropic_messages",
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        self.protocol = validate_provider_protocol(
+            "anthropic_compatible", protocol, explicit=True
+        )
         # Native Anthropic uses the x-api-key header. Gateway-fronted Anthropic
         # endpoints (e.g. Databricks AI Gateway /ai-gateway/anthropic, which issues
         # a `dapi…` PAT) authenticate with `Authorization: Bearer` instead and reject

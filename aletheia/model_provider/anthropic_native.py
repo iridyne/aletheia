@@ -40,8 +40,7 @@ def _infer_context(model_id: str) -> int | None:
 class AnthropicNativeProvider(ModelProvider):
     name = "anthropic_native"
 
-    def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None,
-                 oauth_token: str | None = None):
+    def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None, oauth_token: str | None = None):
         self.model = model
         self.api_key = api_key
         self.oauth_token = oauth_token
@@ -67,9 +66,7 @@ class AnthropicNativeProvider(ModelProvider):
         if request.system:
             payload["system"] = request.system
         client = self._get_http_client(httpx_client)
-        resp = await client.post(
-            f"{BASE_URL}/v1/messages", json=payload, headers=self._headers()
-        )
+        resp = await client.post(f"{BASE_URL}/v1/messages", json=payload, headers=self._headers())
         raise_for_status_without_secrets(resp)
         data = resp.json()
         content = ""
@@ -94,9 +91,13 @@ class AnthropicNativeProvider(ModelProvider):
         if request.system:
             payload["system"] = request.system
         client = self._get_http_client(httpx_client)
+        usage: dict = {}
+        actual_model = self.model
         async with client.stream(
-                "POST", f"{BASE_URL}/v1/messages",
-                json=payload, headers=self._headers(),
+            "POST",
+            f"{BASE_URL}/v1/messages",
+            json=payload,
+            headers=self._headers(),
         ) as resp:
             raise_for_status_without_secrets(resp)
             async for line in resp.aiter_lines():
@@ -104,26 +105,28 @@ class AnthropicNativeProvider(ModelProvider):
                     continue
                 data = json.loads(line[6:])
                 event_type = data.get("type", "")
-                if event_type == "content_block_delta":
+                if event_type == "message_start":
+                    message = data.get("message") or {}
+                    actual_model = message.get("model") or actual_model
+                    usage.update(message.get("usage") or {})
+                elif event_type == "content_block_delta":
                     delta = data.get("delta", {})
                     if delta.get("type") == "text_delta":
-                        yield StreamChunk(content=delta.get("text", ""))
+                        yield StreamChunk(content=delta.get("text", ""), model=actual_model)
                 elif event_type == "message_stop":
-                    yield StreamChunk(content="", done=True)
+                    yield StreamChunk(content="", done=True, usage=usage or None, model=actual_model)
                 elif event_type == "message_delta":
-                    usage = data.get("usage")
-                    if usage:
-                        yield StreamChunk(content="", done=True, usage=usage)
+                    usage.update(data.get("usage") or {})
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
         messages = list(request.messages)
-        schema_json = json.dumps(
-            model_json_schema_payload(schema)
+        schema_json = json.dumps(model_json_schema_payload(schema))
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Respond with valid JSON matching this schema: {schema_json}",
+            }
         )
-        messages.append({
-            "role": "user",
-            "content": f"Respond with valid JSON matching this schema: {schema_json}",
-        })
         mr = ModelRequest(
             messages=messages,
             system=request.system,
@@ -137,9 +140,7 @@ class AnthropicNativeProvider(ModelProvider):
         try:
             client = self._get_http_client(httpx_client)
             async with asyncio.timeout(10):
-                resp = await client.get(
-                    f"{BASE_URL}/v1/models", headers=self._headers()
-                )
+                resp = await client.get(f"{BASE_URL}/v1/models", headers=self._headers())
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -150,14 +151,16 @@ class AnthropicNativeProvider(ModelProvider):
             if isinstance(item, dict) and item.get("id"):
                 mid = item["id"]
                 display = item.get("display_name", mid)
-                models.append({
-                    "slug": mid,
-                    "display_name": display,
-                    "tier": _infer_tier(mid),
-                    "context_window": _infer_context(mid),
-                    "capabilities": list(_CAPABILITIES),
-                    "created_at": item.get("created_at"),
-                })
+                models.append(
+                    {
+                        "slug": mid,
+                        "display_name": display,
+                        "tier": _infer_tier(mid),
+                        "context_window": _infer_context(mid),
+                        "capabilities": list(_CAPABILITIES),
+                        "created_at": item.get("created_at"),
+                    }
+                )
         return models
 
     async def healthcheck(self) -> ModelHealth:
@@ -166,12 +169,15 @@ class AnthropicNativeProvider(ModelProvider):
             if models:
                 slugs = [m["slug"] for m in models]
                 return ModelHealth(
-                    provider=self.name, available=True,
-                    model=self.model, models=slugs,
+                    provider=self.name,
+                    available=True,
+                    model=self.model,
+                    models=slugs,
                     model_metadata=models,
                 )
             return ModelHealth(
-                provider=self.name, available=False,
+                provider=self.name,
+                available=False,
                 error="model catalogue unavailable; use explicit Ping to test inference",
             )
         except Exception as e:

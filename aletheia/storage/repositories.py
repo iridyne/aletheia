@@ -8821,6 +8821,32 @@ def list_open_learning_outcome_candidate_keys(
     }
 
 
+def list_open_learning_target_horizons(path_ids: tuple[str, ...]) -> set[tuple[str, str]]:
+    """Return distinct measured horizons referenced by active open Learning exposures."""
+    if not path_ids:
+        return set()
+    placeholders = ", ".join("?" for _ in path_ids)
+    rows = get_db().execute(
+        "SELECT DISTINCT h.path_id, h.target_horizon "
+        "FROM learning_exposures le "
+        "JOIN learning_experiments e "
+        "  ON e.experiment_id=le.experiment_id AND e.status='active' "
+        "JOIN learning_hypotheses h ON h.hypothesis_id=le.hypothesis_id "
+        "JOIN learning_policy_epochs pe "
+        "  ON pe.epoch_id=le.concurrent_policy_epoch AND pe.ended_at IS NULL "
+        f"WHERE h.path_id IN ({placeholders}) "
+        "AND pe.epoch_kind=('decision_policy:' || h.path_id) "
+        "AND le.outcome_candidate_key IS NOT NULL "
+        "AND TRIM(h.target_horizon) <> ''",
+        path_ids,
+    ).fetchall()
+    return {
+        (str(row["path_id"]), str(row["target_horizon"]))
+        for row in rows
+        if row["path_id"] and row["target_horizon"]
+    }
+
+
 def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
     """Return exact horizon-qualified keys for unsettled Task-6 outcomes.
 

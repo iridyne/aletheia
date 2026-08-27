@@ -20,10 +20,7 @@ from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_catalog_pricing_snapshot
 
 
-LITELLM_PRICE_MAP_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
-    "model_prices_and_context_window.json"
-)
+LITELLM_PRICE_MAP_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 _MIN_MODEL_COUNT = 50
 _MIN_RELATIVE_SIZE = 0.5
 _SOURCE_PREFIX = "litellm_public_median:"
@@ -51,16 +48,27 @@ def _build_price_index(
             continue
         if _rate(entry.get("input_cost_per_token")) is None or _rate(entry.get("output_cost_per_token")) is None:
             continue
-        names = [key.split("/")[-1]]
+        names = _catalog_names(key)
         aliases = entry.get("aliases")
         if isinstance(aliases, list):
-            names.extend(alias for alias in aliases if isinstance(alias, str))
+            for alias in aliases:
+                if isinstance(alias, str):
+                    names.extend(_catalog_names(alias))
         for name in names:
             bucket = index.setdefault(_normalize(name), [])
             candidate = (key, entry)
             if candidate not in bucket:
                 bucket.append(candidate)
     return index
+
+
+def _catalog_names(name: str) -> list[str]:
+    tail = name.split("/")[-1]
+    names = [tail]
+    parts = tail.split(".")
+    if len(parts) >= 3:
+        names.append(".".join(parts[2:]))
+    return names
 
 
 def _family_match(needle: str, stem: str) -> bool:
@@ -71,9 +79,9 @@ def _family_match(needle: str, stem: str) -> bool:
     suffixes, but rejects semantic variants such as ``mini`` and ``thinking``.
     """
     if stem.startswith(needle):
-        suffix = stem[len(needle):]
+        suffix = stem[len(needle) :]
     elif needle.startswith(stem):
-        suffix = needle[len(stem):]
+        suffix = needle[len(stem) :]
     else:
         return False
     return bool(suffix) and (suffix[0].isdigit() or suffix.startswith(_FAMILY_SUFFIXES))
@@ -87,14 +95,22 @@ def _match_entries(
     needle = _normalize(model)
     matches: list[tuple[str, dict[str, Any]]] = []
     seen: set[str] = set()
+    exact = index.get(needle, [])
+    if exact:
+        for key, entry in exact:
+            if key not in seen:
+                seen.add(key)
+                matches.append((key, entry))
+        return matches
     for stem, entries in index.items():
-        if stem != needle and not _family_match(needle, stem):
+        if not _family_match(needle, stem):
             continue
         for key, entry in entries:
             if key not in seen:
                 seen.add(key)
                 matches.append((key, entry))
     return matches
+
 
 _state_lock = threading.Lock()
 _worker: threading.Thread | None = None
@@ -190,13 +206,13 @@ def _representative_rates(
     }
     for source_key, target_key in (
         ("cache_read_input_token_cost", "cached_input_usd_per_million"),
+        (
+            "cache_creation_input_token_cost",
+            "cache_creation_input_usd_per_million",
+        ),
         ("output_cost_per_reasoning_token", "reasoning_usd_per_million"),
     ):
-        values = [
-            rate
-            for _, _, entry in paired
-            if (rate := _rate(entry.get(source_key))) is not None
-        ]
+        values = [rate for _, _, entry in paired if (rate := _rate(entry.get(source_key))) is not None]
         if values:
             result[target_key] = median(values) * 1_000_000
     search_rates: list[float] = []
@@ -274,19 +290,18 @@ def refresh_pricing(
             input_usd_per_million=float(rates["input_usd_per_million"]),
             output_usd_per_million=float(rates["output_usd_per_million"]),
             reasoning_usd_per_million=(
-                float(rates["reasoning_usd_per_million"])
-                if "reasoning_usd_per_million" in rates
-                else None
+                float(rates["reasoning_usd_per_million"]) if "reasoning_usd_per_million" in rates else None
             ),
             cached_input_usd_per_million=(
-                float(rates["cached_input_usd_per_million"])
-                if "cached_input_usd_per_million" in rates
+                float(rates["cached_input_usd_per_million"]) if "cached_input_usd_per_million" in rates else None
+            ),
+            cache_creation_input_usd_per_million=(
+                float(rates["cache_creation_input_usd_per_million"])
+                if "cache_creation_input_usd_per_million" in rates
                 else None
             ),
             web_search_usd_per_request=(
-                float(rates["web_search_usd_per_request"])
-                if "web_search_usd_per_request" in rates
-                else None
+                float(rates["web_search_usd_per_request"]) if "web_search_usd_per_request" in rates else None
             ),
             effective_from=effective_from,
             source=source,

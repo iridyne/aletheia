@@ -127,6 +127,7 @@ def build_momentum_setup(
     candles: list[dict],
     motive_evidence: dict | None = None,
     funding_rate: float | None = None,
+    funding_observed_at: str | None = None,
     now: datetime | None = None,
     ttl_minutes: int = 60,
 ) -> UniverseSetup:
@@ -216,7 +217,7 @@ def build_momentum_setup(
             motive_evidence or {}, sort_keys=True, separators=(",", ":")
         ),
         funding_rate=funding_rate,
-        funding_observed_at=current.isoformat() if funding_rate is not None else None,
+        funding_observed_at=funding_observed_at if funding_rate is not None else None,
         regime_tag=regime_tag,
         breakout_level=level,
         atr=atr,

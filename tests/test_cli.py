@@ -538,6 +538,45 @@ def test_strategy_parameters_write_path_requires_json_object(cli_db):
     assert exc.value.reason == "not_json_object"
 
 
+def test_inspect_factor_feedback_formats_win_rate_ratio_as_percent(monkeypatch):
+    import json as json_mod
+
+    from aletheia.analytics import factor_feedback as factor_feedback_module
+
+    rows = [
+        {"factor_key": "zero", "total_trades": 2, "win_rate": 0, "expectancy": 0, "profit_factor": 0, "status": "watch"},
+        {"factor_key": "third", "total_trades": 3, "win_rate": 0.3333, "expectancy": 1, "profit_factor": 1, "status": "watch"},
+        {"factor_key": "half", "total_trades": 2, "win_rate": 0.5, "expectancy": 1, "profit_factor": 1, "status": "watch"},
+        {"factor_key": "three-quarters", "total_trades": 4, "win_rate": 0.75, "expectancy": 1, "profit_factor": 2, "status": "active"},
+        {"factor_key": "all", "total_trades": 2, "win_rate": 1.0, "expectancy": 1, "profit_factor": 9, "status": "preferred"},
+        {"factor_key": "missing", "total_trades": 2, "win_rate": None, "expectancy": 1, "profit_factor": 1, "status": "watch"},
+    ]
+    monkeypatch.setattr(
+        factor_feedback_module,
+        "build_factor_feedback",
+        lambda *, limit, min_trades: rows,
+    )
+
+    result = runner.invoke(app, ["inspect", "factor-feedback", "--limit", "10"])
+
+    assert result.exit_code == 0, result.output
+    for key, rendered in [
+        ("zero", "0%"),
+        ("third", "33%"),
+        ("half", "50%"),
+        ("three-quarters", "75%"),
+        ("all", "100%"),
+        ("missing", "n/a"),
+    ]:
+        assert any(key in line and rendered in line for line in result.output.splitlines())
+
+    raw = runner.invoke(app, ["inspect", "factor-feedback", "--limit", "10", "--json"])
+    assert raw.exit_code == 0, raw.output
+    payload = json_mod.loads(raw.output)
+    assert payload[3]["factor_key"] == "three-quarters"
+    assert payload[3]["win_rate"] == 0.75
+
+
 def test_inspect_equity_uses_current_account_equity_series(cli_db):
     import json as json_mod
 

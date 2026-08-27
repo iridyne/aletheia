@@ -85,6 +85,7 @@ def test_archive_synthetic_trade_case_studies_archives_and_deindexes(tmp_path, m
             "BTC/USDT long was closed by reconciled_gone during state reconciliation. "
             "This synthetic close reason should not teach the learning loop a trade lesson."
         ),
+        metadata={"position_id": "synthetic-reconciled-gone"},
         confidence="high_confidence",
     )
     real = create_trade_case_study(
@@ -93,6 +94,7 @@ def test_archive_synthetic_trade_case_studies_archives_and_deindexes(tmp_path, m
             "ETH/USDT long stopped out after momentum failed. This is a real closed trade "
             "case study and should stay active for the learning loop."
         ),
+        metadata={"position_id": "real-stop-loss"},
         confidence="high_confidence",
     )
 
@@ -125,6 +127,7 @@ def test_archive_synthetic_trade_case_studies_dry_run_and_idempotent(tmp_path, m
             "SOL/USDT short was closed by demo_validation_cleanup during validation cleanup. "
             "This synthetic close reason must be archived rather than used as experience."
         ),
+        metadata={"position_id": "synthetic-demo-cleanup"},
         confidence="medium_confidence",
     )
 
@@ -154,6 +157,7 @@ def test_archive_synthetic_trade_case_studies_uses_shared_close_reason_list(tmp_
                 f"ETH/USDT short was closed by {reason}. This administrative close "
                 "reason is not a genuine trade outcome and must leave active Learning."
             ),
+            metadata={"position_id": f"synthetic-{reason}"},
             confidence="high_confidence",
         )
 
@@ -224,6 +228,7 @@ def test_downgrade_unattributed_trade_case_studies(tmp_path, monkeypatch):
         ),
         metadata={
             "type": "Trade Case Study",
+            "position_id": "unattributed-doge",
             "symbol": "DOGE/USDT",
             "direction": "short",
             "outcome": "win",
@@ -239,6 +244,7 @@ def test_downgrade_unattributed_trade_case_studies(tmp_path, monkeypatch):
         ),
         metadata={
             "type": "Trade Case Study",
+            "position_id": "attributed-btc",
             "symbol": "BTC/USDT",
             "direction": "long",
             "outcome": "loss",
