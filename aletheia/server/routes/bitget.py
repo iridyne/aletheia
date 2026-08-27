@@ -413,11 +413,15 @@ async def uta_state():
 
     # Fallback is valid only for the Bitget demo account that owns this legacy
     # cache.  Never present it as the selected OKX/Binance account.
-    if load_config().exchange.paper_execution_mode != "bitget_demo":
+    cfg = load_config()
+    if (
+        cfg.exchange.paper_execution_mode != "bitget_demo"
+        or cfg.exchange.uta_read_boundary_for("bitget_demo") == "uta_v1"
+    ):
         return {
-            "total_equity_usdt": 0,
-            "total_available_usdt": 0,
-            "total_unrealized_pnl": 0,
+            "total_equity_usdt": None,
+            "total_available_usdt": None,
+            "total_unrealized_pnl": None,
             "accounts": [],
             "positions": [],
             "errors": [],
@@ -437,7 +441,7 @@ async def uta_state():
             "total_unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
             "accounts": [{
                 "broker_id": "bitget_demo",
-                "bitget_profile": load_config().exchange.bitget_profile,
+                "bitget_profile": cfg.exchange.bitget_profile,
                 "display_name": "Bitget Demo",
                 "equity_usdt": bitget.get("equity_usdt", 0),
                 "available_usdt": bitget.get("available_usdt", 0),
@@ -454,9 +458,9 @@ async def uta_state():
         }
 
     return {
-        "total_equity_usdt": 0,
-        "total_available_usdt": 0,
-        "total_unrealized_pnl": 0,
+        "total_equity_usdt": None,
+        "total_available_usdt": None,
+        "total_unrealized_pnl": None,
         "accounts": [],
         "positions": [],
         "errors": [],

@@ -157,8 +157,9 @@ async def test_unified_state_one_broker_fails(monkeypatch):
 
     state: UnifiedState = await get_unified_state()
 
-    # Healthy broker still contributes
-    assert state.total_equity_usdt == 5000.0
+    # The healthy row remains visible, but an incomplete multi-account total is
+    # unavailable rather than a silently understated 5000.
+    assert state.total_equity_usdt is None
     assert len(state.accounts) == 1
     assert len(state.errors) == 1
     assert "binance_testnet" in state.errors[0]

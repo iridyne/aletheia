@@ -980,7 +980,7 @@ class TestAutoDeposit:
 
     def test_uses_available_not_equity(self, db, monkeypatch):
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
-        from aletheia.portfolio.uta import manager as uta_mgr
+        from aletheia.uta import manager as uta_mgr
         from dataclasses import dataclass
 
         @dataclass
@@ -1024,7 +1024,7 @@ class TestAutoDeposit:
 
     def test_falls_back_to_equity_when_available_zero(self, db, monkeypatch):
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
-        from aletheia.portfolio.uta import manager as uta_mgr
+        from aletheia.uta import manager as uta_mgr
         from dataclasses import dataclass
 
         @dataclass
@@ -1065,7 +1065,7 @@ class TestAutoDeposit:
 
     def test_no_duplicate_deposit_on_repeat_sync(self, db, monkeypatch):
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
-        from aletheia.portfolio.uta import manager as uta_mgr
+        from aletheia.uta import manager as uta_mgr
         from dataclasses import dataclass
 
         @dataclass

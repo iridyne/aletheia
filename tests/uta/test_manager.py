@@ -1,0 +1,228 @@
+import asyncio
+from datetime import datetime, timezone
+
+import pytest
+
+from aletheia.config.schema import ExchangeConfig
+from aletheia.portfolio.uta.broker_protocol import AccountInfo
+from aletheia.uta.manager import get_unified_state
+from aletheia.uta.models import (
+    AccountSnapshot,
+    PositionListReport,
+    QueryScope,
+    ReadCompleteness,
+    UTAAccountIdentity,
+)
+from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
+
+
+NOW = datetime(2026, 8, 27, tzinfo=timezone.utc)
+
+
+def _identity(generation=7):
+    return UTAAccountIdentity(
+        account_id="okx_demo",
+        execution_mode="okx_demo",
+        venue="okx",
+        environment="demo",
+        profile="okx_demo",
+        credential_generation=generation,
+        adapter_implementation="CCXTUTAAdapter",
+        adapter_version="1",
+        ccxt_version="4.5.56",
+    )
+
+
+class FakeUTAAdapter:
+    def __init__(self, identity, *, position_completeness=ReadCompleteness.COMPLETE):
+        self.identity = identity
+        self.position_completeness = position_completeness
+        self.connected = False
+        self.closed = False
+
+    async def connect(self):
+        self.connected = True
+
+    async def close(self):
+        self.closed = True
+
+    async def get_account(self):
+        return AccountSnapshot(
+            identity=self.identity,
+            completeness=ReadCompleteness.COMPLETE,
+            scope=QueryScope(),
+            received_at=NOW,
+            profile_version="1",
+            settlement_currency="USDT",
+            equity="0",
+            available="0",
+            frozen="0",
+        )
+
+    async def get_positions(self):
+        return PositionListReport(
+            identity=self.identity,
+            completeness=self.position_completeness,
+            scope=QueryScope(),
+            received_at=NOW,
+            reason_code=(
+                None
+                if self.position_completeness is ReadCompleteness.COMPLETE
+                else "private_positions_unavailable"
+            ),
+            profile_version="1",
+        )
+
+
+def _cfg(boundary):
+    return type(
+        "Config",
+        (),
+        {"exchange": ExchangeConfig(uta_read_boundaries={"okx_demo": boundary})},
+    )()
+
+
+def _registry(adapter, boundary):
+    registry = UTARegistry()
+    registry.register(
+        UTAAdapterConfig(identity=adapter.identity, boundary=boundary),
+        lambda _config: adapter,
+    )
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_uta_v1_zero_projection_uses_no_legacy_client(monkeypatch):
+    adapter = FakeUTAAdapter(_identity())
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry",
+        lambda _cfg: _registry(adapter, "uta_v1"),
+    )
+    calls = []
+    monkeypatch.setattr(
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: calls.append(modes) or {},
+    )
+
+    state = await get_unified_state(_cfg("uta_v1"))
+
+    assert calls == [()]
+    assert state.total_equity_usdt == 0.0
+    assert state.total_unrealized_pnl == 0.0
+    assert state.connected_brokers == ["okx_demo"]
+    assert state.accounts[0]["identity"]["credential_generation"] == 7
+    assert state.accounts[0]["boundary"] == "uta_v1"
+    assert adapter.connected is True and adapter.closed is True
+
+
+@pytest.mark.asyncio
+async def test_incomplete_uta_position_view_keeps_account_but_revokes_totals(monkeypatch):
+    adapter = FakeUTAAdapter(
+        _identity(), position_completeness=ReadCompleteness.UNAVAILABLE
+    )
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry",
+        lambda _cfg: _registry(adapter, "uta_v1"),
+    )
+    monkeypatch.setattr("aletheia.uta.manager._legacy_brokers", lambda modes=None: {})
+
+    state = await get_unified_state(_cfg("uta_v1"))
+
+    assert state.total_equity_usdt is None
+    assert state.accounts[0]["position_completeness"] == "unavailable"
+    assert state.connected_brokers == []
+    assert state.errors == ["okx_demo:incomplete_read"]
+
+
+@pytest.mark.asyncio
+async def test_multi_account_reads_start_concurrently(monkeypatch):
+    second_identity = _identity().model_copy(
+        update={
+            "account_id": "binance_testnet",
+            "execution_mode": "binance_testnet",
+            "venue": "binance",
+            "environment": "testnet",
+            "profile": "binance_testnet",
+        }
+    )
+    started = 0
+    both_started = asyncio.Event()
+
+    class BlockingAdapter(FakeUTAAdapter):
+        async def get_account(self):
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+            return await super().get_account()
+
+    adapters = [BlockingAdapter(_identity()), BlockingAdapter(second_identity)]
+    registry = UTARegistry()
+    for adapter in adapters:
+        registry.register(
+            UTAAdapterConfig(identity=adapter.identity, boundary="uta_v1"),
+            lambda _config, adapter=adapter: adapter,
+        )
+    cfg = type(
+        "Config",
+        (),
+        {
+            "exchange": ExchangeConfig(
+                uta_read_boundaries={
+                    "okx_demo": "uta_v1",
+                    "binance_testnet": "uta_v1",
+                }
+            )
+        },
+    )()
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
+    monkeypatch.setattr("aletheia.uta.manager._legacy_brokers", lambda modes=None: {})
+
+    state = await get_unified_state(cfg)
+
+    assert started == 2
+    assert state.connected_brokers == ["okx_demo", "binance_testnet"]
+
+
+class FakeLegacyBroker:
+    broker_id = "okx_demo"
+    display_name = "OKX Demo"
+
+    async def get_account(self):
+        return AccountInfo(100.0, 80.0, 20.0, 0.0)
+
+    async def get_positions(self):
+        return []
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_shadow_read_never_changes_legacy_authority(monkeypatch):
+    adapter = FakeUTAAdapter(_identity())
+
+    async def different_account():
+        account = await FakeUTAAdapter.get_account(adapter)
+        return account.model_copy(
+            update={"equity": account.equity + 1, "available": 80, "unrealized_pnl": 0}
+        )
+
+    adapter.get_account = different_account
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry",
+        lambda _cfg: _registry(adapter, "shadow_read"),
+    )
+    monkeypatch.setattr(
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: {"okx_demo": FakeLegacyBroker()},
+    )
+
+    state = await get_unified_state(_cfg("shadow_read"))
+
+    assert state.total_equity_usdt == 100.0
+    assert state.accounts[0]["identity"]["adapter_implementation"] == "FakeLegacyBroker"
+    assert state.accounts[0]["identity"]["adapter_version"] == "legacy"
+    assert state.accounts[0]["shadow_differences"] == ["equity"]
+    assert state.shadow_errors == []

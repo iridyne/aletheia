@@ -522,7 +522,7 @@ def _pre_order_entry_reservations(
     return reservations
 
 
-def _cached_available_balance_usdt(execution_mode: str) -> float | None:
+def _cached_available_balance_usdt(execution_mode: str, cfg=None) -> float | None:
     """Return the cached available USDT for the account used by an order.
 
     Risk evaluation must stay local and deterministic: it never calls an exchange
@@ -544,9 +544,9 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
             # authority itself.  Its absence cannot be replaced by config capital.
             return None
 
+    cfg = cfg or load_config()
     if _is_live(execution_mode):
         try:
-            cfg = load_config()
             from aletheia.config.exchanges import live_execution_mode_for_exchange
             from aletheia.trust.live_unlock import evidence_matches_config
 
@@ -567,11 +567,19 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
             get_unified_cached_state,
         )
 
-        if execution_mode.startswith("bitget_"):
+        use_legacy_bitget = execution_mode.startswith("bitget_") and (
+            _is_live(execution_mode)
+            or cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        )
+        if use_legacy_bitget:
             state = get_cached_state("live" if _is_live(execution_mode) else "demo")
+            if not _external_account_cache_is_healthy(state):
+                return None
             value = account_available_value(state)
         else:
             unified = get_unified_cached_state() or {}
+            if not _external_account_cache_is_healthy(unified):
+                return None
             account = next(
                 (
                     item for item in (unified.get("accounts") or [])
@@ -579,6 +587,8 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
                 ),
                 None,
             )
+            if not _external_account_row_is_healthy(account):
+                return None
             value = account_available_value(account)
         available = float(value)
         return max(0.0, available)
@@ -2437,7 +2447,9 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
                     return equity
             return None
 
-        if execution_mode.startswith("bitget_"):
+        if execution_mode.startswith("bitget_") and (
+            cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        ):
             cached = get_cached_state("demo") or {}
             if not _external_account_cache_is_healthy(cached):
                 return None
@@ -2491,8 +2503,7 @@ def account_available_for_execution(execution_mode: str, cfg=None) -> float | No
     fail closed on ``None``: configured capital is never a substitute for an
     unavailable account authority.
     """
-    del cfg  # accepted for signature symmetry; the resolver reads config itself
-    return _cached_available_balance_usdt(execution_mode)
+    return _cached_available_balance_usdt(execution_mode, cfg or load_config())
 
 
 def _derive_per_symbol_cap(

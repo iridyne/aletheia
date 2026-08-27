@@ -73,6 +73,8 @@ def _release_file_lock(fd: "int | None") -> None:
         os.close(fd)
 
 _SERVICE_NAME = "aletheia-trading-os"
+_CREDENTIAL_GENERATIONS_KEY = "__aletheia_exchange_credential_generations__"
+_EXCHANGE_CREDENTIAL_FIELDS = {"api_key", "api_secret", "passphrase"}
 
 # These fragments are matched after key names are case/separator-normalized,
 # so ``api_key``, ``ApiKey``, and ``api-key`` share one trust-boundary rule.
@@ -100,6 +102,56 @@ def is_secret_key(key: object) -> bool:
     """Return whether a mapping key can carry a credential-like value."""
     normalized = normalize_secret_key(key)
     return any(fragment in normalized for fragment in SECRET_KEY_FRAGMENTS)
+
+
+def _exchange_credential_scope(key: str) -> str | None:
+    parts = key.split(".")
+    if (
+        len(parts) == 3
+        and parts[0] in {"binance", "okx", "bitget"}
+        and parts[1] in {"demo", "testnet", "live"}
+        and parts[2] in _EXCHANGE_CREDENTIAL_FIELDS
+    ):
+        return ".".join(parts[:2])
+    return None
+
+
+def _advance_credential_generation(data: dict, key: str) -> None:
+    scope = _exchange_credential_scope(key)
+    if scope is None:
+        return
+    generations = data.get(_CREDENTIAL_GENERATIONS_KEY)
+    if generations is None:
+        generations = {}
+    if not isinstance(generations, dict):
+        raise RuntimeError("invalid exchange credential generation metadata")
+    previous = generations.get(scope, 0)
+    if isinstance(previous, bool) or not isinstance(previous, int) or previous < 0:
+        raise RuntimeError("invalid exchange credential generation metadata")
+    generations[scope] = previous + 1
+    data[_CREDENTIAL_GENERATIONS_KEY] = generations
+
+
+def get_credential_generation(scope: str) -> int:
+    """Return the durable non-secret generation for one venue environment."""
+    if is_preview_mode():
+        return 0
+    path = _fallback_path()
+    if not path.exists():
+        return 0
+    try:
+        import json
+
+        data = json.loads(_get_fernet().decrypt(path.read_bytes()).decode())
+    except Exception as exc:
+        raise RuntimeError("failed to read exchange credential generation") from exc
+    generations = data.get(_CREDENTIAL_GENERATIONS_KEY, {})
+    if not isinstance(generations, dict):
+        raise RuntimeError("invalid exchange credential generation metadata")
+    value = generations.get(scope, 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RuntimeError("invalid exchange credential generation metadata")
+    return value
 
 
 class PreviewSecretAccessError(RuntimeError):
@@ -170,7 +222,7 @@ def delete_secret(key: str) -> None:
             existing = kr.get_password(_SERVICE_NAME, key)
         except Exception as exc:
             raise RuntimeError("failed to inspect secret in OS keyring") from exc
-    _file_delete(key)
+    _file_delete(key, force_generation=existing is not None)
     if kr and existing is not None:
         try:
             kr.delete_password(_SERVICE_NAME, key)
@@ -206,6 +258,7 @@ def _file_set(key: str, value: str) -> None:
                 except Exception as exc:
                     raise RuntimeError("failed to read encrypted secret store") from exc
             data[key] = value
+            _advance_credential_generation(data, key)
             tmp = path.with_name(path.name + ".tmp")
             try:
                 tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
@@ -229,24 +282,26 @@ def _file_get(key: str) -> str | None:
         return None
 
 
-def _file_delete(key: str) -> None:
+def _file_delete(key: str, *, force_generation: bool = False) -> None:
     import json
     path = _fallback_path()
-    if not path.exists():
+    if not path.exists() and not force_generation:
         return
     with _write_lock:
         fd = _acquire_file_lock()
         try:
             fernet = _get_fernet()
-            if not path.exists():
-                return  # re-check under lock
-            try:
-                data = json.loads(fernet.decrypt(path.read_bytes()).decode())
-            except Exception as exc:
-                raise RuntimeError("failed to read encrypted secret store") from exc
-            if key not in data:
+            data = {}
+            if path.exists():
+                try:
+                    data = json.loads(fernet.decrypt(path.read_bytes()).decode())
+                except Exception as exc:
+                    raise RuntimeError("failed to read encrypted secret store") from exc
+            existed = key in data
+            if not existed and not force_generation:
                 return
-            del data[key]
+            data.pop(key, None)
+            _advance_credential_generation(data, key)
             tmp = path.with_name(path.name + ".tmp")
             try:
                 tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))

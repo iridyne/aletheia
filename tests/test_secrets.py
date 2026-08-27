@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest  # pyright: ignore[reportMissingImports]
 from aletheia.config.secrets import (
     delete_secret,
+    get_credential_generation,
     get_secret,
     is_secret_key,
     redact,
@@ -71,6 +72,30 @@ def test_file_fallback_roundtrip(tmp_path):
         val = get_secret("test.key")
         assert val == "super_secret_value"
         assert get_secret("nonexistent") is None
+
+
+def test_exchange_credential_mutations_advance_isolated_generation(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        assert get_credential_generation("bitget.demo") == 0
+        set_secret("bitget.demo.api_key", "first")
+        assert get_credential_generation("bitget.demo") == 1
+        set_secret("bitget.demo.api_key", "second")
+        assert get_credential_generation("bitget.demo") == 2
+        set_secret("okx.demo.api_key", "other")
+        assert get_credential_generation("bitget.demo") == 2
+        assert get_credential_generation("okx.demo") == 1
+        delete_secret("bitget.demo.api_key")
+        assert get_credential_generation("bitget.demo") == 3
+
+
+def test_corrupt_credential_generation_fails_closed(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        set_secret("bitget.demo.api_key", "first")
+        (tmp_path / "secrets.enc").write_bytes(b"corrupt")
+        with pytest.raises(RuntimeError, match="credential generation"):
+            get_credential_generation("bitget.demo")
 
 
 def test_empty_keyring_falls_through_to_authoritative_file_copy(tmp_path):

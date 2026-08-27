@@ -68,6 +68,8 @@ class CCXTUTAAdapter:
         self._exchange: Any | None = None
         self._session: Any | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._connect_lock: asyncio.Lock | None = None
+        self._ready = False
 
     @property
     def identity(self) -> UTAAccountIdentity:
@@ -98,8 +100,16 @@ class CCXTUTAAdapter:
         loop = asyncio.get_running_loop()
         if self._loop is not None and self._loop is not loop:
             raise UTAError(UTAErrorCode.CONFIG, "cross_loop_adapter_reuse")
-        if self._exchange is not None:
+        if self._ready:
             return
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+        async with self._connect_lock:
+            if self._ready:
+                return
+            await self._connect_on_current_loop(loop)
+
+    async def _connect_on_current_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         if self._identity.ccxt_version not in {None, version("ccxt")}:
             raise UTAError(UTAErrorCode.CONFIG, "ccxt_version_mismatch")
         from aletheia.net import make_ccxt
@@ -115,6 +125,7 @@ class CCXTUTAAdapter:
             self._profile.configure_before_request(exchange)
             async with asyncio.timeout(self._request_timeout):
                 await exchange.load_markets()
+            self._ready = True
         except TimeoutError as exc:
             await self.close()
             raise UTAError(
@@ -138,6 +149,7 @@ class CCXTUTAAdapter:
         exchange, session = self._exchange, self._session
         self._exchange = None
         self._session = None
+        self._ready = False
         for resource in (exchange, session):
             if resource is None or getattr(resource, "closed", False):
                 continue
