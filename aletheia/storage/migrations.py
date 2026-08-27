@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v46"
+SCHEMA_VERSION = "aletheia-sqlite-v47"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3706,6 +3706,18 @@ _OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
         repr(_OPPORTUNITY_GENERATION_V2_COLUMNS)
         + _OPPORTUNITY_GENERATION_V2_SQL
         + "\nopportunity_generation_v3"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_DRAFT_SKILL_LINEAGE_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_skills_source_lesson_unique
+ON ps_skills(source_lesson_id)
+WHERE source_lesson_id IS NOT NULL;
+"""
+_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM = hashlib.sha256(
+    (
+        _LEARNING_DRAFT_SKILL_LINEAGE_SQL
+        + "\nlearning_draft_skill_lineage_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5321,6 +5333,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260827_0045_learning_failed_window_v46": (
         "persist failed daily Learning input watermark for retry/audit visibility"
     ),
+    "20260827_0046_learning_draft_skill_lineage_v47": (
+        "typed lesson lineage and one generated draft skill per lesson"
+    ),
 }
 
 
@@ -5533,6 +5548,71 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
+
+
+def _apply_learning_draft_skill_lineage_v47(db: sqlite3.Connection) -> None:
+    """Add typed lesson lineage and enforce one generated draft skill per lesson."""
+
+    tables = {
+        str(row["name"])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('ps_skills', 'ps_lessons')"
+        ).fetchall()
+    }
+    if {"ps_skills", "ps_lessons"} - tables:
+        return
+
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(ps_skills)").fetchall()
+    }
+    if "source_lesson_id" not in columns:
+        db.execute(
+            "ALTER TABLE ps_skills ADD COLUMN source_lesson_id "
+            "TEXT REFERENCES ps_lessons(lesson_id)"
+        )
+
+    ambiguous = db.execute(
+        "SELECT substr(s.name, 8) AS lesson_id, COUNT(*) AS count "
+        "FROM ps_skills s "
+        "JOIN ps_lessons l ON l.lesson_id = substr(s.name, 8) "
+        "WHERE s.source_lesson_id IS NULL AND s.name LIKE 'lesson:%' "
+        "GROUP BY substr(s.name, 8) HAVING COUNT(*) > 1"
+    ).fetchall()
+    if ambiguous:
+        ids = ", ".join(f"{row['lesson_id']}({row['count']})" for row in ambiguous[:10])
+        raise sqlite3.IntegrityError(
+            f"ambiguous lesson-generated skill lineage for lesson ids: {ids}"
+        )
+
+    rows = db.execute(
+        "SELECT s.skill_id, substr(s.name, 8) AS lesson_id "
+        "FROM ps_skills s "
+        "JOIN ps_lessons l ON l.lesson_id = substr(s.name, 8) "
+        "WHERE s.source_lesson_id IS NULL AND s.name LIKE 'lesson:%'"
+    ).fetchall()
+    for row in rows:
+        lesson_id = str(row["lesson_id"])
+        db.execute(
+            "UPDATE ps_skills SET source_lesson_id = ?, "
+            "created_from_lessons_json = COALESCE(created_from_lessons_json, ?) "
+            "WHERE skill_id = ?",
+            (lesson_id, f'["{lesson_id}"]', row["skill_id"]),
+        )
+
+    existing_duplicates = db.execute(
+        "SELECT source_lesson_id, COUNT(*) AS count FROM ps_skills "
+        "WHERE source_lesson_id IS NOT NULL "
+        "GROUP BY source_lesson_id HAVING COUNT(*) > 1"
+    ).fetchall()
+    if existing_duplicates:
+        ids = ", ".join(f"{row['source_lesson_id']}({row['count']})" for row in existing_duplicates[:10])
+        raise sqlite3.IntegrityError(
+            f"duplicate source_lesson_id rows in ps_skills: {ids}"
+        )
+
+    db.executescript(_LEARNING_DRAFT_SKILL_LINEAGE_SQL)
+    db.execute("PRAGMA optimize")
 
 
 def _apply_learning_failed_window_v46(db: sqlite3.Connection) -> None:
@@ -6398,6 +6478,12 @@ _MIGRATIONS = (
         checksum=_LEARNING_FAILED_WINDOW_CHECKSUM,
         schema_version="aletheia-sqlite-v46",
         apply=_apply_learning_failed_window_v46,
+    ),
+    MigrationStep(
+        migration_id="20260827_0046_learning_draft_skill_lineage_v47",
+        checksum=_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM,
+        schema_version="aletheia-sqlite-v47",
+        apply=_apply_learning_draft_skill_lineage_v47,
     ),
 )
 
