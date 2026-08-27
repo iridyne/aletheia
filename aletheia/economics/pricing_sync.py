@@ -120,6 +120,10 @@ _state: dict[str, Any] = {
 }
 
 
+class PricingRefreshStartError(RuntimeError):
+    """Raised when the background pricing refresh worker cannot be admitted."""
+
+
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -308,7 +312,20 @@ def refresh_pricing(
 
 def pricing_refresh_status() -> dict[str, Any]:
     with _state_lock:
+        _reconcile_worker_state_locked()
         return dict(_state)
+
+
+def _reconcile_worker_state_locked() -> None:
+    if _state.get("status") != "running":
+        return
+    if _worker is not None and _worker.is_alive():
+        return
+    _state.update(
+        status="failed",
+        completed_at=_state.get("completed_at") or _utcnow(),
+        error=_state.get("error") or "worker_not_running",
+    )
 
 
 def _refresh_worker(trigger: str) -> None:
@@ -358,6 +375,7 @@ def start_pricing_refresh(*, trigger: str) -> dict[str, Any]:
     """Start one bounded daemon worker; repeated calls share the active refresh."""
     global _worker
     with _state_lock:
+        _reconcile_worker_state_locked()
         if _worker is not None and _worker.is_alive():
             return dict(_state)
         _state.update(
@@ -373,5 +391,14 @@ def start_pricing_refresh(*, trigger: str) -> dict[str, Any]:
             name="aletheia-pricing-refresh",
             daemon=True,
         )
-        _worker.start()
+        try:
+            _worker.start()
+        except Exception as exc:
+            _worker = None
+            _state.update(
+                status="failed",
+                completed_at=_utcnow(),
+                error="worker_start_failed",
+            )
+            raise PricingRefreshStartError("worker_start_failed") from exc
         return dict(_state)

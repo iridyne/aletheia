@@ -299,7 +299,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
                 if quantity > 0 and not position.get("broker_id"):
                     positions_identified = False
                     break
-            if age is not None and age < 600 and positions_identified:
+            if exchange_sync.status_for(unified) == "ok" and positions_identified:
                 cached = {
                     "positions": [
                         position for position in unified_positions

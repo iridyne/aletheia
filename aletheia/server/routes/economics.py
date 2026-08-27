@@ -25,6 +25,7 @@ from aletheia.economics.context_artifacts import (
     summarize_context_artifacts,
 )
 from aletheia.economics.pricing_sync import (
+    PricingRefreshStartError,
     pricing_refresh_status,
     start_pricing_refresh,
 )
@@ -304,4 +305,14 @@ def pricing_refresh() -> dict:
             "message": "Operator requested a LiteLLM estimated-price refresh.",
         }
     )
-    return start_pricing_refresh(trigger="dashboard")
+    try:
+        return start_pricing_refresh(trigger="dashboard")
+    except PricingRefreshStartError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "pricing_refresh_worker_start_failed",
+                "message": "Pricing refresh worker could not be started.",
+                "retryable": True,
+            },
+        ) from exc

@@ -36,6 +36,21 @@ def test_gateway_restart_reports_pending_readiness_after_timeout(monkeypatch):
     assert "Readiness is still pending." in result.output
 
 
+def test_gateway_restart_propagates_start_readiness_exit(monkeypatch):
+    import typer
+    from typer.testing import CliRunner
+    from aletheia.cli import gateway as gateway_cli
+    from aletheia.gateway import lifecycle
+
+    monkeypatch.setattr(gateway_cli, "_maybe_configure_windows_lan_firewall", lambda **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "do_stop", lambda: None)
+    monkeypatch.setattr(lifecycle, "do_start", lambda **_kwargs: (_ for _ in ()).throw(typer.Exit(2)))
+
+    result = CliRunner().invoke(gateway_cli.gateway_app, ["restart"])
+
+    assert result.exit_code == 2
+
+
 def test_interactive_gateway_start_onboarding_requests_uac(monkeypatch):
     from aletheia.cli import gateway as gateway_cli
     from aletheia.config import loader

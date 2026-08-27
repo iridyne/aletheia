@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from aletheia.economics import pricing_sync
@@ -7,6 +9,27 @@ from aletheia.economics.pricing_sync import (
     _normalize,
     _representative_rates,
 )
+
+
+def _reset_pricing_refresh_state():
+    with pricing_sync._state_lock:
+        pricing_sync._worker = None
+        pricing_sync._state.clear()
+        pricing_sync._state.update(
+            {
+                "status": "idle",
+                "started_at": None,
+                "completed_at": None,
+                "last_success_at": None,
+                "error": None,
+                "source_url": pricing_sync.LITELLM_PRICE_MAP_URL,
+                "version": None,
+                "fetched_model_count": None,
+                "matched_model_count": 0,
+                "snapshots_created": 0,
+                "unmatched_models": [],
+            }
+        )
 
 
 # ── unit tests for the auto-discovery helpers ────────────────────────────────
@@ -211,3 +234,80 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
     assert written[0]["web_search_usd_per_request"] == pytest.approx(0.02)
     assert written[0]["source"].startswith("litellm_public_median:")
     assert written[0]["version"].startswith("catalog-model-family-v2:sha256:")
+
+
+def test_pricing_refresh_start_failure_publishes_failed_status_and_allows_retry(
+    monkeypatch,
+):
+    _reset_pricing_refresh_state()
+    original_thread = pricing_sync.threading.Thread
+    refresh_calls = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            self._target = kwargs.get("target")
+
+        def is_alive(self):
+            return False
+
+        def start(self):
+            raise RuntimeError("raw thread detail")
+
+    def _refresh_pricing():
+        refresh_calls.append(True)
+        return {
+            "version": "test-version",
+            "fetched_model_count": 1,
+            "matched_model_count": 0,
+            "snapshots_created": 0,
+            "unmatched_models": [],
+            "samples": {},
+        }
+
+    monkeypatch.setattr(pricing_sync.threading, "Thread", FailingThread)
+    monkeypatch.setattr(pricing_sync, "refresh_pricing", _refresh_pricing)
+
+    with pytest.raises(pricing_sync.PricingRefreshStartError):
+        pricing_sync.start_pricing_refresh(trigger="dashboard")
+
+    status = pricing_sync.pricing_refresh_status()
+    assert status["status"] == "failed"
+    assert status["error"] == "worker_start_failed"
+    assert status["completed_at"] is not None
+    assert "raw thread detail" not in status["error"]
+    assert refresh_calls == []
+
+    monkeypatch.setattr(pricing_sync.threading, "Thread", original_thread)
+    retry = pricing_sync.start_pricing_refresh(trigger="dashboard")
+    assert retry["status"] == "running"
+
+    for _ in range(100):
+        status = pricing_sync.pricing_refresh_status()
+        if status["status"] != "running":
+            break
+        time.sleep(0.01)
+    assert status["status"] == "succeeded"
+    assert refresh_calls == [True]
+
+
+def test_pricing_refresh_status_reconciles_dead_running_worker():
+    _reset_pricing_refresh_state()
+
+    class DeadWorker:
+        def is_alive(self):
+            return False
+
+    with pricing_sync._state_lock:
+        pricing_sync._worker = DeadWorker()
+        pricing_sync._state.update(
+            status="running",
+            started_at="2026-08-27T00:00:00+00:00",
+            completed_at=None,
+            error=None,
+        )
+
+    status = pricing_sync.pricing_refresh_status()
+
+    assert status["status"] == "failed"
+    assert status["error"] == "worker_not_running"
+    assert status["completed_at"] is not None

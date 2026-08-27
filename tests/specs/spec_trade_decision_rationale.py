@@ -87,12 +87,13 @@ def test_proposal_rationale_carries_final_parameter_snapshot(tmp_path, monkeypat
         "aletheia.trading.instruments.get_max_leverage", lambda *_a, **_kw: 3,
     )
 
-    def capture_proposal(**kwargs):
-        captured.update(kwargs)
+    def capture_proposal(proposal):
+        captured["agent_rationale"] = proposal.agent_rationale
         return {"status": "executed", "proposal_id": "tdr-proposal"}
 
     monkeypatch.setattr(
-        "aletheia.execution.paper_tools.create_paper_proposal", capture_proposal,
+        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
+        capture_proposal,
     )
 
     decision = TradingDecision(

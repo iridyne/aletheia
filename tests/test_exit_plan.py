@@ -59,6 +59,24 @@ def test_to_columns_and_back_lossless():
     assert reloaded == plan
 
 
+def test_invalid_durable_exit_intent_is_not_defaulted():
+    bad_horizon = load_exit_plan(
+        {
+            "entry_price": 100.0,
+            "direction": "long",
+            "expected_horizon_hours": float("nan"),
+            "stop_source": "human",
+        }
+    )
+
+    assert bad_horizon.provenance == "invalid"
+    assert bad_horizon.expected_horizon_hours is None
+    assert bad_horizon.invalid_reasons == (
+        "invalid_expected_horizon_hours",
+        "invalid_stop_source",
+    )
+
+
 def test_db_roundtrip():
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import _select_one
