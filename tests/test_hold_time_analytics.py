@@ -88,6 +88,46 @@ def test_trade_stats_hold_averages_use_measurable_denominator(monkeypatch):
     assert sum(b["count"] for b in result["hold_distribution"]) == 1
 
 
+def test_trade_stats_even_hold_samples_use_conventional_median(monkeypatch):
+    import aletheia.analytics.family_scorecard as family_scorecard
+    import aletheia.analytics.trade_stats as trade_stats
+    import aletheia.storage.repositories as repo
+
+    rows = [
+        _row(
+            id="one-hour",
+            opened_at="2026-08-01T00:00:00+00:00",
+            closed_at="2026-08-01T01:00:00+00:00",
+        ),
+        _row(
+            id="one-hundred-one-hours",
+            opened_at="2026-08-01T00:00:00+00:00",
+            closed_at="2026-08-05T05:00:00+00:00",
+        ),
+    ]
+    monkeypatch.setattr(
+        trade_stats.outcome_integrity,
+        "eligible_strategy_outcomes",
+        lambda **_kwargs: rows,
+    )
+    monkeypatch.setattr(trade_stats, "execution_mode_identity", lambda _mode: {})
+    monkeypatch.setattr(trade_stats, "outcome_window_metadata", lambda: {})
+    monkeypatch.setattr(
+        repo,
+        "list_strategies",
+        lambda limit=10_000: [{"id": "strategy-1", "parameters": "{}"}],
+    )
+    monkeypatch.setattr(
+        family_scorecard,
+        "compute_family_scorecard",
+        lambda **_kwargs: [],
+    )
+
+    result = trade_stats.build_trade_stats()
+
+    assert result["totals"]["median_hold_hours"] == 51.0
+
+
 def test_trade_insights_direction_hold_averages_use_measurable_denominator():
     from aletheia.analytics.trade_insights import _by_direction, _hold_duration_buckets
 
