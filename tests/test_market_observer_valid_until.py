@@ -6,7 +6,10 @@ import json
 
 import pytest
 
-from tests.observer_admission_fixture import crypto_background
+from tests.observer_admission_fixture import (
+    crypto_background,
+    insert_universe_opportunity_generation,
+)
 
 
 @pytest.mark.asyncio
@@ -18,11 +21,11 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
     from aletheia.agents import market_observer as observer
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+    from aletheia.storage.repositories import get_opportunity
 
     init_tool_registry()
     from aletheia.data.symbols import instrument_analysis_context
-    expiry = "2026-07-22T23:00:00+00:00"
+    expiry = "2099-07-22T23:00:00+00:00"
     background = crypto_background("BTC/USDT", "perp")
     opportunity = Opportunity(
         id="scanner-expiry-owner",
@@ -56,7 +59,11 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
             },
         }),
     )
-    insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue="fixture",
+        market_type="perp",
+    )
     record_filter_decision(
         candidate_key="universe_member:member-expiry",
         candidate_kind="universe_member",
@@ -138,7 +145,7 @@ async def test_stock_linked_owner_skips_crypto_observer_context(tmp_path, monkey
         instrument_analysis_context,
     )
     from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+    from aletheia.storage.repositories import get_opportunity
 
     background = build_instrument_background(
         symbol="SOXL/USDT:USDT",
@@ -183,7 +190,11 @@ async def test_stock_linked_owner_skips_crypto_observer_context(tmp_path, monkey
         execution_eligible=True,
         metadata=metadata,
     )
-    insert_opportunity(opportunity)
+    insert_universe_opportunity_generation(
+        opportunity,
+        venue="binance",
+        market_type="perp",
+    )
     record_filter_decision(
         candidate_key="universe_member:member-soxl",
         candidate_kind="universe_member",

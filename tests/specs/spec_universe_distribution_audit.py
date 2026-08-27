@@ -20,7 +20,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "L2b",
         "A full UniverseService.refresh() on an isolated DB produces a diversified "
         "member pool, keeps preferred perp over higher-scoring spot duplicates, "
-        "persists regime_tag, and emits derivatives context into opportunities.",
+        "persists regime_tag, and preserves derivatives context in armed setups.",
         status="implemented",
     ),
 )
@@ -222,13 +222,13 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
         f"regime_tag not propagated to every member: {members}"
     )
 
-    opps = repo.list_opportunities(limit=50)
-    assert len(opps) == 6, f"each selected member should emit one opportunity, got {len(opps)}"
-    perp_opps = [o for o in opps if o["market"] == "usdt_futures"]
-    assert perp_opps, f"expected perp opportunities, got {opps}"
+    setups = conn.execute("SELECT * FROM universe_setups").fetchall()
+    assert len(setups) == 6, f"each selected member should arm one setup, got {len(setups)}"
+    perp_setups = [dict(row) for row in setups if row["market_type"] == "perp"]
+    assert perp_setups, f"expected perp setups, got {[dict(row) for row in setups]}"
     assert any(
-        o["funding_rate"] is not None
-        and o["open_interest"] is not None
-        and o["oi_delta_1h"] is not None
-        for o in perp_opps
-    ), f"perp opportunities lost derivatives context: {perp_opps}"
+        row["funding_rate"] is not None
+        and json.loads(row["motive_evidence"]).get("open_interest") is not None
+        and json.loads(row["motive_evidence"]).get("oi_delta_1h") is not None
+        for row in perp_setups
+    ), f"perp setups lost derivatives context: {perp_setups}"

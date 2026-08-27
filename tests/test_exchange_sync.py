@@ -7,8 +7,10 @@ Governance under test:
 - CACHED: HTTP path reads cache only; never blocks on Bitget.
 """
 
+import json
 import sqlite3
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -171,6 +173,52 @@ def test_status_stale_when_cache_too_old(tmp_path, monkeypatch):
     assert es.status_for(cached) == "stale"
 
 
+def test_future_account_timestamp_is_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import exchange_sync as es
+
+    es._store(es.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=100.0,
+        available_usdt=100.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    cached = es.get_cached_state("demo")
+    assert cached is not None
+    assert cached["age_seconds"] < 0
+    assert es.status_for(cached) == "stale"
+    assert es.status_for({"age_seconds": float("nan")}) == "stale"
+    assert es.status_for({"age_seconds": float("inf")}) == "stale"
+
+
+@pytest.mark.asyncio
+async def test_uta_state_uses_canonical_future_timestamp_status(monkeypatch):
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.server.routes import bitget
+
+    monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
+        "total_equity_usdt": 100.0,
+        "total_available_usdt": 100.0,
+        "total_unrealized_pnl": 0.0,
+        "accounts": [],
+        "positions": [],
+        "errors": [],
+        "fetched_at": "future",
+        "age_seconds": -5.0,
+    })
+
+    payload = await bitget.uta_state()
+
+    assert payload["sync_status"] == "stale"
+
+
 # --- portfolio integration: new fields exposed ---
 
 def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
@@ -195,6 +243,166 @@ def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
     # view is live — not the locally-managed notional. With no local positions
     # the notional is 0, so this proves the override (not just a fallthrough).
     assert out["total_value_usdt"] == 10000.0
+
+
+def test_account_equity_projection_preserves_zero():
+    from aletheia.portfolio import exchange_sync as es
+
+    assert es.account_equity_value(
+        {"equity_usdt": 0, "total_equity_usdt": 99.0}
+    ) == 0.0
+    assert es.account_equity_value({"total_equity_usdt": 0}) == 0.0
+    assert es.account_available_value(
+        {"available_usdt": 0, "total_available_usdt": 88.0}
+    ) == 0.0
+    assert es.account_equity_value({}) is None
+    assert es.account_equity_value({"equity_usdt": float("nan")}) is None
+
+
+def test_fresh_zero_exchange_equity_reaches_portfolio_and_context(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync as es
+
+    cfg = load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    es._store(es.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=0.0,
+        available_usdt=0.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
+    from aletheia.portfolio.pnl import compute_portfolio
+
+    portfolio = compute_portfolio()
+    assert portfolio["exchange_equity_usdt"] == 0.0
+    assert portfolio["account_equity_usdt"] == 0.0
+    assert portfolio["total_value_usdt"] == 0.0
+
+    balance = _build_layer1_snapshot()["balance"]
+    assert balance["equity_usdt"] == 0.0
+    assert balance["available_usdt"] == 0.0
+
+
+def test_inspect_status_preserves_zero_exchange_equity(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from typer.testing import CliRunner
+
+    from aletheia.cli.inspect_cmd import inspect_app
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync as es
+
+    cfg = load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    es._store(es.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=0.0,
+        available_usdt=0.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    monkeypatch.setattr("aletheia.portfolio.pnl.mark_positions_to_market", lambda persist=False: [])
+    monkeypatch.setattr(
+        "aletheia.analytics.outcome_integrity.build_outcome_cohort_summary",
+        lambda **_kwargs: {
+            "eligible_realized_pnl": 0.0,
+            "raw_event_count": 0,
+            "eligible_outcome_count": 0,
+            "excluded_outcome_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_stats.compute_rolling_trade_stats",
+        lambda **_kwargs: {
+            "days": 7,
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": None,
+            "total_pnl": None,
+            "avg_pnl": None,
+            "best_win": None,
+            "worst_loss": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_stats.compute_order_stats",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "aletheia.maintenance.historical_accounting.historical_accounting_summary",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr("aletheia.data.price_feed.cache_stats", lambda: {})
+    monkeypatch.setattr(repo, "get_active_universe_snapshot", lambda: None)
+    monkeypatch.setattr(repo, "get_active_universe_members", lambda limit=5: [])
+
+    result = CliRunner().invoke(inspect_app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["portfolio"]["equity_usdt"] == 0.0
+
+
+def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync as es
+    import aletheia.portfolio.uta.manager as manager
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    save_config(cfg)
+    monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "get_unified_state_sync",
+        lambda: SimpleNamespace(
+            total_equity_usdt=123.45,
+            total_available_usdt=120.0,
+            total_unrealized_pnl=3.45,
+            accounts=[{"broker_id": "okx_demo", "equity_usdt": 123.45, "available_usdt": 120.0}],
+            positions=[],
+            errors=[],
+            connected_brokers=["okx_demo"],
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+    payload = es.sync_all_exchanges()
+    cached = es.get_unified_cached_state()
+
+    assert payload is not None
+    assert cached is not None
+    assert cached["connected_brokers"] == ["okx_demo"]
+    assert cached["sync_status"] == "ok"
+    assert cached["sync_complete"] is True
+
+    from aletheia.portfolio.pnl import compute_portfolio
+    out = compute_portfolio()
+    assert out["uta_state"]["connected_brokers"] == ["okx_demo"]
+    assert out["uta_state"]["sync_status"] == "ok"
+    assert out["total_value_usdt"] == 123.45
 
 
 def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):

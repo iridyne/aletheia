@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 from statistics import fmean
 from typing import Any
 
-from aletheia.analytics.outcome_semantics import validated_outcome_economics
+from aletheia.learning.outcomes import assess_candidate_outcome
 from aletheia.storage.sqlite import get_db
 
 
@@ -21,7 +22,12 @@ def _longest_days(days: set[date]) -> int:
     return longest
 
 
-def _outcomes(keys: set[str], horizon: str) -> dict[str, dict[str, Any]]:
+def _outcomes(
+    keys: set[str],
+    horizon: str,
+    *,
+    as_of_at: str,
+) -> dict[str, dict[str, Any]]:
     if not keys:
         return {}
     db = get_db()
@@ -41,6 +47,7 @@ def _outcomes(keys: set[str], horizon: str) -> dict[str, dict[str, Any]]:
 def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
     """Evaluate complete scanner runs; candidates inside a run are not IID."""
 
+    as_of_at = datetime.now(timezone.utc).isoformat()
     batches = [
         dict(row)
         for row in get_db()
@@ -65,7 +72,9 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         "consecutive_eligible_utc_days": 0,
         "blocking_reasons": [],
         "invalid_reasons": [],
+        "outcome_exclusion_counts": {},
         "verdict": "insufficient_data",
+        "as_of_at": as_of_at,
     }
     if not batches:
         report["blocking_reasons"] = ["no_prospective_clusters"]
@@ -114,9 +123,10 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
             for record in records
             if record.get("assigned_policy_selected") and record.get("outcome_candidate_key")
         )
-    outcomes = _outcomes(keys, str(first.get("primary_horizon") or ""))
+    outcomes = _outcomes(keys, str(first.get("primary_horizon") or ""), as_of_at=as_of_at)
     utilities = {"treatment": [], "control": []}
     eligible_days: set[date] = set()
+    outcome_exclusions: Counter[str] = Counter()
     incomplete = unavailable = 0
     for batch, records in parsed:
         if not batch.get("available"):
@@ -124,16 +134,17 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
             continue
         selected = [record for record in records if record.get("assigned_policy_selected")]
         selected_rows = [outcomes.get(str(record.get("outcome_candidate_key"))) for record in selected]
-        selected_economics = [
-            validated_outcome_economics(row) if row is not None else None
-            for row in selected_rows
-        ]
-        if any(
-            row is None
-            or row.get("status") != "settled"
-            or economics is None
-            for row, economics in zip(selected_rows, selected_economics, strict=True)
-        ):
+        selected_assessments = []
+        for row in selected_rows:
+            if row is None:
+                selected_assessments.append(None)
+                outcome_exclusions["missing_outcome"] += 1
+                continue
+            assessment = assess_candidate_outcome(row, as_of_at=as_of_at)
+            selected_assessments.append(assessment)
+            if not assessment.eligible:
+                outcome_exclusions[assessment.reason] += 1
+        if any(assessment is None or not assessment.eligible for assessment in selected_assessments):
             incomplete += 1
             continue
         arm = str(batch.get("assignment_arm"))
@@ -146,9 +157,9 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
             continue
         utilities[arm].append(
             sum(
-                economics["net_return_pct"]
-                for economics in selected_economics
-                if economics is not None
+                economics.net_return_pct
+                for economics in selected_assessments
+                if economics is not None and economics.net_return_pct is not None
             )
             / denominator
         )
@@ -183,6 +194,7 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         consecutive_eligible_utc_days=consecutive_days,
         blocking_reasons=sorted(blockers),
         invalid_reasons=sorted(invalid),
+        outcome_exclusion_counts=dict(sorted(outcome_exclusions.items())),
         verdict="invalid"
         if invalid
         else (

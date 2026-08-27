@@ -13,18 +13,22 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import (
     AgentRun,
     AgentRunArtifact,
     AuditEvent,
+    ConditionalEntryAuthorization,
     ExitBreakevenShadowAssignment,
     ExitBreakevenShadowOutcome,
     Fill,
+    FastTriggerMarketSnapshot,
     KnowledgeItem,
     Opportunity,
+    OpportunityEntryValidityAssessment,
+    OpportunityGenerationV2,
     Order,
     OutcomeHookJob,
     PaperAccountEvent,
@@ -45,6 +49,7 @@ from aletheia.storage.models import (
     SerenityTheme,
     StrategyRecord,
     TradeProposal,
+    UniverseSetup,
 )
 from aletheia.storage.sqlite import (
     SQLITE_PYTHON_STRIP_CHARS_SQL,
@@ -532,11 +537,259 @@ def get_agent_run(run_id: str) -> dict | None:
 
 
 def insert_opportunity(opp: Opportunity) -> None:
+    if (
+        (opp.asset_class == "crypto" or opp.asset_subclass == "stock_linked_perp")
+        and opp.execution_eligible
+        and opp.source_agent in {"fast_trigger", "universe_scanner"}
+        and opp.generation_version != "opportunity-generation/v2"
+    ):
+        raise ValueError("execution-eligible producer requires OpportunityGenerationV2")
     _insert("opportunities", _stamp_provenance(opp.model_dump()))
+
+
+OPPORTUNITY_GENERATION_VERSION = "opportunity-generation/v2"
+
+
+def canonical_opportunity_generation(
+    generation: OpportunityGenerationV2,
+) -> tuple[str, str]:
+    """Return canonical JSON plus SHA-256 for one frozen generation."""
+
+    payload = json.dumps(
+        generation.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return payload, hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def insert_opportunity_generation(
+    opportunity: Opportunity,
+    generation: OpportunityGenerationV2,
+) -> Opportunity:
+    """Validate and insert one complete, immutable tradeable generation."""
+
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.trading.instruments import instrument_market_to_db_market
+
+    identity = generation.instrument_identity
+    instrument = InstrumentId.from_parts(
+        identity.venue, identity.symbol, identity.market_type
+    )
+    stock_linked_perp = opportunity.asset_subclass == "stock_linked_perp"
+    if (
+        not opportunity.execution_eligible
+        or (opportunity.asset_class != "crypto" and not stock_linked_perp)
+    ):
+        raise ValueError("Opportunity generation requires execution-eligible asset")
+    expected_market = (
+        instrument.market_type
+        if stock_linked_perp
+        else instrument_market_to_db_market(instrument.market_type)
+    )
+    if (
+        opportunity.symbol != instrument.symbol
+        or opportunity.market != expected_market
+        or opportunity.direction_bias != generation.direction
+        or opportunity.scanner_family != generation.family
+        or opportunity.valid_until != generation.valid_until
+    ):
+        raise ValueError("Opportunity generation projection mismatch")
+    try:
+        zone = tuple(float(value) for value in json.loads(opportunity.entry_zone or ""))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Opportunity generation entry zone is invalid") from exc
+    if zone != tuple(generation.entry_zone):
+        raise ValueError("Opportunity generation entry zone mismatch")
+    payload, digest = canonical_opportunity_generation(generation)
+    stored = opportunity.model_copy(
+        update={
+            "generation_version": OPPORTUNITY_GENERATION_VERSION,
+            "generation_json": payload,
+            "generation_hash": digest,
+        }
+    )
+    _insert("opportunities", _stamp_provenance(stored.model_dump()))
+    return stored
+
+
+def insert_opportunity_validity_assessment(
+    assessment: OpportunityEntryValidityAssessment,
+) -> bool:
+    """Append one immutable assessment; an exact replay is idempotent."""
+
+    try:
+        evidence = json.loads(assessment.evidence_json)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Opportunity validity evidence is invalid") from exc
+    canonical = json.dumps(
+        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if canonical != assessment.evidence_json or expected != assessment.evidence_hash:
+        raise ValueError("Opportunity validity evidence hash mismatch")
+    data = assessment.model_dump()
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    cursor = execute_write(
+        f"INSERT OR IGNORE INTO opportunity_entry_validity_assessments "
+        f"({columns}) VALUES ({placeholders})",
+        tuple(data.values()),
+    )
+    return cursor.rowcount == 1
+
+
+def list_opportunity_validity_assessments(opportunity_id: str) -> list[dict]:
+    return _select_all(
+        "opportunity_entry_validity_assessments",
+        where="opportunity_id=?",
+        params=(opportunity_id,),
+        order="observed_at ASC, rowid ASC",
+        limit=1_000,
+    )
 
 
 def list_opportunities(limit: int = 50) -> list[dict]:
     return _select_all("opportunities", limit=limit)
+
+
+def get_opportunity_by_setup(setup_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM opportunities WHERE setup_id=? LIMIT 1", (setup_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+# --- Universe setups / conditional entry authority ---
+
+
+def insert_universe_setup(setup: UniverseSetup) -> dict:
+    """Insert one material setup generation, returning its idempotent owner."""
+
+    data = _stamp_provenance(setup.model_dump())
+    db = get_db()
+    was_in_tx = db.in_transaction
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    execute_write(
+        f"INSERT OR IGNORE INTO universe_setups ({columns}) VALUES ({placeholders})",
+        tuple(data.values()),
+    )
+    row = db.execute(
+        "SELECT * FROM universe_setups WHERE venue=? AND symbol=? AND market_type=? "
+        "AND direction=? AND material_fingerprint=?",
+        (
+            setup.venue,
+            setup.symbol,
+            setup.market_type,
+            setup.direction,
+            setup.material_fingerprint,
+        ),
+    ).fetchone()
+    if not was_in_tx:
+        db.commit()
+    if row is None:
+        raise RuntimeError("universe setup insert did not persist")
+    return dict(row)
+
+
+def get_universe_setup(setup_id: str) -> dict | None:
+    return _select_one("universe_setups", setup_id)
+
+
+def list_watchable_universe_setups(limit: int = 10) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    return _select_all(
+        "universe_setups",
+        where=(
+            "state IN ('armed','pullback_seen') AND valid_until>? "
+            "AND trigger_spec_version='momentum-retrace-reclaim/v1'"
+        ),
+        params=(now,),
+        order="rank ASC, created_at ASC",
+        limit=limit,
+    )
+
+
+def list_pending_authorization_setups(limit: int = 1) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    return _select_all(
+        "universe_setups",
+        where="state='pending_authorization' AND valid_until>?",
+        params=(now,),
+        order="rank ASC, created_at ASC",
+        limit=limit,
+    )
+
+
+def expire_universe_setups(now: datetime | None = None) -> int:
+    """Terminalize expired, not-yet-claimed setup generations."""
+
+    instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        cur = execute_write(
+            "UPDATE universe_setups SET state='expired', updated_at=? "
+            "WHERE valid_until<=? AND state IN "
+            "('pending_authorization','armed','pullback_seen')",
+            (instant, instant),
+        )
+    return max(0, cur.rowcount or 0)
+
+
+def transition_universe_setup(
+    setup_id: str,
+    *,
+    expected_states: Sequence[str],
+    state: str,
+    **fields,
+) -> bool:
+    """Compare-and-swap one setup state without widening its authority."""
+
+    allowed = {
+        "pending_authorization", "armed", "pullback_seen", "triggering",
+        "executed", "refused", "expired", "invalidated",
+    }
+    expected = tuple(str(value) for value in expected_states)
+    if not expected or state not in allowed or any(value not in allowed for value in expected):
+        raise ValueError("invalid universe setup transition")
+    updates = {**fields, "state": state, "updated_at": datetime.now(timezone.utc).isoformat()}
+    sets = ", ".join(f"{column}=?" for column in updates)
+    placeholders = ",".join("?" for _ in expected)
+    result = execute_write(
+        f"UPDATE universe_setups SET {sets} WHERE id=? AND state IN ({placeholders})",
+        (*updates.values(), setup_id, *expected),
+    )
+    return result.rowcount == 1
+
+
+def insert_conditional_entry_authorization(
+    authorization: ConditionalEntryAuthorization,
+) -> None:
+    _insert(
+        "conditional_entry_authorizations",
+        _stamp_provenance(authorization.model_dump()),
+    )
+
+
+def get_conditional_entry_authorization(setup_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM conditional_entry_authorizations WHERE setup_id=? LIMIT 1",
+        (setup_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def insert_fast_trigger_market_snapshot(snapshot: FastTriggerMarketSnapshot) -> None:
+    _insert("fast_trigger_market_snapshots", snapshot.model_dump())
+
+
+def get_fast_trigger_market_snapshot(setup_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM fast_trigger_market_snapshots WHERE setup_id=? LIMIT 1",
+        (setup_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 def list_opportunity_instruments() -> list[dict]:
     """Return one latest-state summary for each exact Opportunity instrument."""
@@ -602,7 +855,18 @@ def list_open_opportunities(limit: int = 50) -> list[dict]:
     )
 
 
-_OPEN_TRADE_ASSET_PREDICATE = "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
+_OPEN_TRADE_ASSET_PREDICATE = """
+COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')
+AND COALESCE(execution_eligible, 1)=1
+AND NOT (
+    COALESCE(NULLIF(asset_class, ''), 'crypto')='crypto'
+    AND COALESCE(source_agent, '') IN ('fast_trigger', 'universe_scanner')
+    AND (
+        COALESCE(generation_version, '')!='opportunity-generation/v2'
+        OR setup_id IS NULL
+    )
+)
+"""
 _OPEN_TRADE_UNRANKED_SQL = f"""
     SELECT * FROM opportunities
     INDEXED BY idx_opportunities_trade_unranked_rotation
@@ -2121,6 +2385,25 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
     return sha256_json(payload)[:16]
 
 
+def validate_trade_proposal_commit_hash(
+    proposal: TradeProposal | Mapping[str, object],
+) -> str:
+    """Return the stored Proposal hash only if immutable content still matches it."""
+    try:
+        stored = (
+            proposal
+            if isinstance(proposal, TradeProposal)
+            else TradeProposal.model_validate(proposal)
+        )
+    except ValidationError as exc:
+        raise ValueError("stored proposal content cannot be validated") from exc
+    if stored.commit_hash is None:
+        raise ValueError("stored proposal has no commit hash")
+    if _compute_proposal_hash(stored) != stored.commit_hash:
+        raise ValueError("stored proposal content does not match commit hash")
+    return stored.commit_hash
+
+
 def insert_trade_proposal(
     p: TradeProposal,
     *,
@@ -2195,7 +2478,9 @@ def update_trade_proposal(pid: str, **kwargs) -> None:
     _update("trade_proposals", pid, kwargs)
 
 
-def list_trade_proposals(limit: int = 50) -> list[dict]:
+def list_trade_proposals(limit: int = 50, status: str | None = None) -> list[dict]:
+    if status:
+        return _select_all("trade_proposals", where="status = ?", params=(status,), limit=limit)
     return _select_all("trade_proposals", limit=limit)
 
 
@@ -2509,7 +2794,14 @@ def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
         return stored, True
 
 
-def list_risk_decisions(limit: int = 50) -> list[dict]:
+def list_risk_decisions(limit: int = 50, approved: bool | None = None) -> list[dict]:
+    if approved is not None:
+        return _select_all(
+            "risk_decisions",
+            where="approved = ?",
+            params=(int(approved),),
+            limit=limit,
+        )
     return _select_all("risk_decisions", limit=limit)
 
 
@@ -2751,7 +3043,9 @@ def finalize_exchange_acknowledgement(
     }
 
 
-def list_orders(limit: int = 100) -> list[dict]:
+def list_orders(limit: int = 100, status: str | None = None) -> list[dict]:
+    if status:
+        return _select_all("orders", where="status = ?", params=(status,), limit=limit)
     return _select_all("orders", limit=limit)
 
 
@@ -2926,7 +3220,9 @@ def insert_fill(f: Fill) -> None:
     _insert("fills", _stamp_provenance(f.model_dump()))
 
 
-def list_fills(limit: int = 100) -> list[dict]:
+def list_fills(limit: int = 100, order_id: str | None = None) -> list[dict]:
+    if order_id:
+        return _select_all("fills", where="order_id = ?", params=(order_id,), limit=limit)
     return _select_all("fills", limit=limit)
 
 
@@ -4787,6 +5083,50 @@ def insert_knowledge_item(k: KnowledgeItem) -> None:
     _insert("knowledge_items", k.model_dump())
 
 
+def insert_knowledge_item_if_absent(
+    k: KnowledgeItem,
+    *,
+    title_window_hours: int | None = None,
+) -> tuple[bool, str | None, str | None]:
+    """Atomically insert a knowledge item unless its semantic identity exists."""
+
+    db = get_db()
+    content_hash = str(k.content_hash or "").strip()
+    with transaction(immediate=True):
+        if title_window_hours is not None:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=title_window_hours)
+            ).isoformat()
+            existing = db.execute(
+                """
+                SELECT id FROM knowledge_items
+                WHERE item_type = ? AND title = ?
+                  AND replace(created_at, ' ', 'T') > replace(?, ' ', 'T')
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (k.item_type, k.title, cutoff),
+            ).fetchone()
+            if existing is not None:
+                return False, str(existing["id"]), "title_window"
+
+        if content_hash:
+            existing = db.execute(
+                """
+                SELECT id FROM knowledge_items
+                WHERE item_type = ? AND content_hash = ?
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT 1
+                """,
+                (k.item_type, content_hash),
+            ).fetchone()
+            if existing is not None:
+                return False, str(existing["id"]), "duplicate"
+
+        _insert("knowledge_items", k.model_dump())
+    return True, None, None
+
+
 def update_knowledge_item(kid: str, **kwargs) -> None:
     _update("knowledge_items", kid, kwargs)
 
@@ -4920,6 +5260,15 @@ def knowledge_title_exists_within(item_type: str, title: str, hours: int = 6) ->
 
 def insert_serenity_theme(t: SerenityTheme) -> None:
     _insert("serenity_themes", t.model_dump())
+
+
+def insert_serenity_theme_with_claim_links(
+    theme: SerenityTheme,
+    links: list[tuple[str, str, float | None]],
+) -> None:
+    with transaction(savepoint=True):
+        insert_serenity_theme(theme)
+        insert_serenity_theme_claims_bulk(links)
 
 
 def get_serenity_theme(theme_id: str) -> dict | None:
@@ -5586,6 +5935,30 @@ def finish_serenity_research_run(run_id: str, status: str, **kwargs) -> bool:
     return cursor.rowcount == 1
 
 
+def finish_serenity_research_run_with_event(run_id: str, status: str, event, **kwargs) -> bool:
+    """Commit a terminal run transition and its terminal event atomically."""
+    if status not in {"completed", "completed_empty", "failed", "rate_limited"}:
+        raise ValueError(f"invalid Serenity terminal status: {status}")
+    allowed = {
+        "stage", "finished_at", "updated_at", "artifact_counts", "error_type",
+        "error_message", "error_stage", "next_retry_at",
+    }
+    unknown = set(kwargs) - allowed
+    if unknown:
+        raise ValueError(f"invalid Serenity terminal fields: {sorted(unknown)}")
+    values = {"status": status, **kwargs}
+    sets = ", ".join(f"{key} = ?" for key in values)
+    with transaction(savepoint=True):
+        cursor = execute_write(
+            f"UPDATE serenity_research_runs SET {sets} WHERE id = ? AND status = 'running'",
+            [*values.values(), run_id],
+        )
+        if cursor.rowcount != 1:
+            return False
+        insert_serenity_run_event(event)
+    return True
+
+
 def get_active_serenity_research_run() -> dict | None:
     rows = list_active_serenity_research_runs(limit=1)
     return rows[0] if rows else None
@@ -5692,7 +6065,6 @@ def get_serenity_claim(claim_id: str) -> dict | None:
 def insert_serenity_claims_bulk(claims: list) -> None:
     if not claims:
         return
-    db = get_db()
     with transaction():
         for c in claims:
             data = c.model_dump()
@@ -5719,26 +6091,20 @@ def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None 
 
 
 def insert_serenity_theme_claim(theme_id: str, claim_id: str, relevance_score: float | None = None) -> None:
-    db = get_db()
-    was_in_tx = db.in_transaction
-    execute_write(
-        "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
-        (theme_id, claim_id, relevance_score),
-    )
-    if not was_in_tx:
-        db.commit()
-
-
-def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]) -> None:
-    db = get_db()
-    was_in_tx = db.in_transaction
-    for theme_id, claim_id, relevance_score in links:
+    with transaction(savepoint=True):
         execute_write(
             "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
             (theme_id, claim_id, relevance_score),
         )
-    if not was_in_tx:
-        db.commit()
+
+
+def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]) -> None:
+    with transaction(savepoint=True):
+        for theme_id, claim_id, relevance_score in links:
+            execute_write(
+                "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
+                (theme_id, claim_id, relevance_score),
+            )
 
 
 def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict]:
@@ -5843,6 +6209,10 @@ def insert_portfolio_snapshot(snap) -> None:
     _insert("portfolio_snapshots", snap.model_dump())
 
 
+def _snapshot_cutoff_us(days: int) -> int:
+    return iso_instant_us((datetime.now(timezone.utc) - timedelta(days=days)).isoformat()) or 0
+
+
 def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) -> list[dict]:
     """Return the latest snapshot window in chronological order.
 
@@ -5855,30 +6225,32 @@ def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) 
     from the newest end of the full series (default 100 rows).
     """
     db = get_db()
+    register_instant_us(db)
     if days is not None and days > 0:
+        cutoff_us = _snapshot_cutoff_us(days)
         if limit and limit > 0:
             rows = db.execute(
                 """
                 SELECT * FROM (
                     SELECT *
                     FROM portfolio_snapshots
-                    WHERE snapshot_at >= datetime('now', ?)
-                    ORDER BY snapshot_at DESC, id DESC
+                    WHERE aletheia_instant_us(snapshot_at) >= ?
+                    ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                     LIMIT ?
                 )
-                ORDER BY snapshot_at ASC, id ASC
+                ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
                 """,
-                (f"-{days} days", limit),
+                (cutoff_us, limit),
             ).fetchall()
         else:
             rows = db.execute(
                 """
                 SELECT *
                 FROM portfolio_snapshots
-                WHERE snapshot_at >= datetime('now', ?)
-                ORDER BY snapshot_at ASC, id ASC
+                WHERE aletheia_instant_us(snapshot_at) >= ?
+                ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
                 """,
-                (f"-{days} days",),
+                (cutoff_us,),
             ).fetchall()
     else:
         cap = limit if (limit and limit > 0) else 100
@@ -5888,10 +6260,10 @@ def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) 
             FROM (
                 SELECT *
                 FROM portfolio_snapshots
-                ORDER BY snapshot_at DESC, id DESC
+                ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             (cap,),
         ).fetchall()
@@ -5917,21 +6289,22 @@ def list_account_equity_snapshots(
     the oldest. The default is None (no cap) so all range selectors remain distinct.
     """
     db = get_db()
+    register_instant_us(db)
     params: list[object] = [execution_mode]
     where = "execution_mode = ? AND account_equity_usdt IS NOT NULL"
     if days is not None and days > 0:
-        where += " AND snapshot_at >= datetime('now', ?)"
-        params.append(f"-{days} days")
+        where += " AND aletheia_instant_us(snapshot_at) >= ?"
+        params.append(_snapshot_cutoff_us(days))
     if limit and limit > 0:
         rows = db.execute(
             f"""
             SELECT * FROM (
                 SELECT * FROM portfolio_snapshots
                 WHERE {where}
-                ORDER BY snapshot_at DESC, id DESC
+                ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             (*params, limit),
         ).fetchall()
@@ -5940,7 +6313,7 @@ def list_account_equity_snapshots(
             f"""
             SELECT * FROM portfolio_snapshots
             WHERE {where}
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             params,
         ).fetchall()
@@ -6274,6 +6647,115 @@ def _delete_by_rowid_batches(
     return total
 
 
+def _filter_outcome_loss_event(
+    *,
+    cutoff: str,
+    retention_days: int,
+    pending_rows: Sequence,
+) -> AuditEvent:
+    outcome_ids = [str(row[1]) for row in pending_rows]
+    outcome_keys = [str(row[4]) for row in pending_rows]
+    by_horizon: dict[str, int] = {}
+    for row in pending_rows:
+        horizon = str(row[2])
+        by_horizon[horizon] = by_horizon.get(horizon, 0) + 1
+    digest = hashlib.sha256(
+        json.dumps(
+            {"cutoff": cutoff, "outcome_ids": outcome_ids},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    dropped = len(pending_rows)
+    return AuditEvent(
+        id=f"filter-outcome-prune-{digest[:32]}",
+        actor="system",
+        source="prune_filter_candidate_outcomes",
+        event_type="filter_outcome_evidence_dropped_unmeasured",
+        entity_type="filter_candidate_outcomes",
+        entity_id=f"{cutoff}:{digest[:16]}",
+        after_state=json.dumps({
+            "batch_digest": digest,
+            "dropped_unmeasured": dropped,
+            "by_horizon": by_horizon,
+            "cutoff": cutoff,
+            "retention_days": retention_days,
+            "outcome_ids": outcome_ids,
+            "outcome_candidate_keys": outcome_keys,
+        }, sort_keys=True),
+        message=(
+            f"{dropped} filter-outcome rows were deleted at the {cutoff} "
+            f"retention cutoff while still 'pending'. Their counterfactual "
+            f"returns were never measured, so Learning contribution and filter "
+            f"feedback over any window containing them are computed on an "
+            f"incomplete population."
+        ),
+    )
+
+
+def _prune_filter_candidate_outcomes_batches(
+    *,
+    cutoff: str,
+    retention_days: int,
+    batch_size: int = 5_000,
+) -> int:
+    db = get_db()
+    total = 0
+    size = max(1, int(batch_size))
+    while True:
+        started = time.monotonic()
+        pending_rows: list = []
+        pending_by_horizon: dict[str, int] = {}
+        with transaction():
+            rows = db.execute(
+                "SELECT rowid, id, horizon, status, outcome_candidate_key "
+                "FROM filter_candidate_outcomes "
+                "WHERE entry_ts < ? ORDER BY rowid LIMIT ?",
+                (cutoff, size),
+            ).fetchall()
+            if not rows:
+                break
+            pending_rows = [row for row in rows if row[3] == "pending"]
+            if pending_rows:
+                event = _filter_outcome_loss_event(
+                    cutoff=cutoff,
+                    retention_days=retention_days,
+                    pending_rows=pending_rows,
+                )
+                pending_by_horizon = json.loads(event.after_state or "{}").get("by_horizon", {})
+                if not insert_audit_event_once(event):
+                    raise RuntimeError(
+                        "filter_candidate_outcomes prune batch audit already exists while rows remain"
+                    )
+            rowids = [int(row[0]) for row in rows]
+            placeholders = ",".join("?" for _ in rowids)
+            cur = execute_write(
+                f"DELETE FROM filter_candidate_outcomes WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+            deleted = max(0, cur.rowcount or 0)
+            if deleted != len(rowids):
+                raise RuntimeError(
+                    "filter_candidate_outcomes prune deleted "
+                    f"{deleted} rows after selecting {len(rowids)}"
+                )
+        duration_ms = (time.monotonic() - started) * 1000
+        _record_retention_batch("filter_candidate_outcomes", deleted, duration_ms)
+        total += deleted
+        if pending_rows:
+            _sqlite_logger.warning(
+                "prune_filter_candidate_outcomes: %d filter-outcome rows reached the "
+                "%s retention cutoff still unmeasured (%s) — the canonical settler is "
+                "not keeping up; deleting them and recording the loss in audit_events",
+                len(pending_rows),
+                cutoff,
+                " ".join(f"{k}={v}" for k, v in sorted(pending_by_horizon.items())),
+            )
+        if len(rows) < size or deleted == 0:
+            break
+    return total
+
+
 def _delete_market_ohlcv_batches(
     where: str,
     params: tuple = (),
@@ -6486,47 +6968,12 @@ def prune_filter_candidate_outcomes(
     #
     # Deletion still has to happen — retention is what keeps the file bounded, and
     # a row this old is past the settler's reach anyway (the 1m/5m bars its window
-    # needs expired days earlier). What must not happen is the silence. So record
-    # the loss in audit_events, which is deliberately outside _PRUNABLE and never
-    # pruned, before the rows go.
-    unmeasured = get_db().execute(
-        "SELECT horizon, COUNT(*) FROM filter_candidate_outcomes "
-        "WHERE status = 'pending' AND entry_ts < ? GROUP BY horizon",
-        (cutoff,),
-    ).fetchall()
-    dropped = sum(row[1] for row in unmeasured)
-    if dropped:
-        by_horizon = {str(row[0]): int(row[1]) for row in unmeasured}
-        _sqlite_logger.warning(
-            "prune_filter_candidate_outcomes: %d filter-outcome rows reached the "
-            "%s retention cutoff still unmeasured (%s) — the canonical settler is "
-            "not keeping up; deleting them and recording the loss in audit_events",
-            dropped,
-            cutoff,
-            " ".join(f"{k}={v}" for k, v in sorted(by_horizon.items())),
-        )
-        insert_audit_event(AuditEvent(
-            actor="system",
-            source="prune_filter_candidate_outcomes",
-            event_type="filter_outcome_evidence_dropped_unmeasured",
-            entity_type="filter_candidate_outcomes",
-            entity_id=cutoff,
-            after_state=json.dumps({
-                "dropped_unmeasured": dropped,
-                "by_horizon": by_horizon,
-                "cutoff": cutoff,
-                "retention_days": days,
-            }, sort_keys=True),
-            message=(
-                f"{dropped} filter-outcome rows were deleted at the {cutoff} "
-                f"retention cutoff while still 'pending'. Their counterfactual "
-                f"returns were never measured, so Learning contribution and filter "
-                f"feedback over any window containing them are computed on an "
-                f"incomplete population."
-            ),
-        ))
-    return _delete_by_rowid_batches(
-        "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
+    # needs expired days earlier). What must not happen is the silence or a
+    # forecast audit. Each short batch records the exact pending rows it deletes in
+    # the same SQLite transaction as the DELETE.
+    return _prune_filter_candidate_outcomes_batches(
+        cutoff=cutoff,
+        retention_days=days,
     )
 
 
@@ -7695,6 +8142,9 @@ def insert_universe_member(member: UniverseMember) -> None:
     _insert("universe_members", member.model_dump())
 
 
+insert_candidate = insert_universe_member
+
+
 def insert_universe_members_batch(members: list[UniverseMember]) -> int:
     if not members:
         return 0
@@ -7714,20 +8164,23 @@ def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
     )
 
 
+list_candidates = list_universe_members
+
+
 def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, int]:
-    """Slide expires_at forward on every member of a reused snapshot, and mirror
-    onto linked open or queued opportunities' valid_until.
+    """Slide Candidate expires_at forward on every reused snapshot member.
 
     Used by universe refresh's change-suppression branch (service._atomic_universe_publication
     is skipped when the allocation fingerprint is unchanged). Without this slide,
-    the members' original expiry — `member.created_at + ttl_sec` — lapses even
+    the Candidates' original expiry — `member.created_at + ttl_sec` — lapses even
     though the allocation is still confirmed valid. The subsequent ranker scan
-    then hard-rejects every carrier with skip_reason=ttl_expired.
+    then hard-rejects every Candidate-derived carrier with skip_reason=ttl_expired.
 
     Only slides forward (`WHERE expires_at < new_expires_at`) so a legitimate
-    longer expiry set elsewhere is never shortened. Queued rows are included
-    because reuse of the same active source snapshot is explicit revalidation;
-    expired/reviewed rows remain terminal.
+    longer expiry set elsewhere is never shortened. For backward compatibility,
+    only legacy NULL-generation Opportunity carriers linked to the same member
+    receive a mirrored valid_until slide; triggered V2 Opportunities keep their
+    own lease.
 
     Returns (members_updated, opportunities_updated).
     """
@@ -7760,6 +8213,7 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
             cur_o = execute_write(
                 "UPDATE opportunities SET valid_until = ? "
                 "WHERE universe_member_id = ? AND status IN ('open','queued') "
+                "AND generation_version IS NULL "
                 "AND (valid_until IS NULL OR valid_until < ?)",
                 (new_expires, m["id"], new_expires),
             )
@@ -7777,6 +8231,9 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
 
 def get_universe_member(member_id: str) -> dict | None:
     return _select_one("universe_members", member_id)
+
+
+get_candidate = get_universe_member
 
 
 def get_active_universe_members(limit: int = 20) -> list[dict]:
@@ -7799,7 +8256,11 @@ def get_latest_feature_snapshot(asset_id: str) -> dict | None:
 def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
     return _select_all(
         "opportunities",
-        where="universe_member_id = ?",
+        where=(
+            "universe_member_id = ? "
+            "AND setup_id IS NOT NULL "
+            "AND generation_version='opportunity-generation/v2'"
+        ),
         params=(member_id,),
         order="created_at DESC",
         limit=limit,
@@ -9617,12 +10078,25 @@ def insert_coingecko_top_rows(rows: list[dict]) -> int:
 
 
 def latest_coingecko_top(top_n: int = 50) -> list[dict]:
-    """Return the most recent batch's top_n rows, all sharing one observed_at.
+    """Return the most recent batch's top_n rows.
 
-    Two-step read pins to MAX(observed_at) first — otherwise a top_n=50 read
-    could mix two adjacent batches if 100 rows landed in one tick (per spec MS-C04).
+    New rows are pinned by batch_id so mixed provider source times cannot split
+    one acquisition batch. Legacy rows fall back to the original observed_at pin.
     """
     db = get_db()
+    batch_row = db.execute(
+        "SELECT batch_id FROM coingecko_top_snapshots "
+        "WHERE batch_id IS NOT NULL AND batch_id != '' "
+        "ORDER BY acquired_at DESC, observed_at DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    if batch_row and batch_row["batch_id"]:
+        return _select_all(
+            "coingecko_top_snapshots",
+            where="batch_id = ?",
+            params=(batch_row["batch_id"],),
+            order="market_cap_rank ASC",
+            limit=top_n,
+        )
     latest_row = db.execute("SELECT MAX(observed_at) AS m FROM coingecko_top_snapshots").fetchone()
     if not latest_row or not latest_row["m"]:
         return []

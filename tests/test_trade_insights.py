@@ -216,6 +216,77 @@ def test_cohort_metadata_keys_present():
     assert meta["unavailability_reasons"] == {}
 
 
+def test_temporal_trade_insight_buckets_normalize_offsets_to_utc():
+    from aletheia.analytics.trade_insights import (
+        _by_day_of_week,
+        _by_hour,
+        _equity_curve,
+        _hour_day_heatmap,
+        _trade_frequency,
+    )
+
+    rows = [
+        _make_row(
+            id="utc-crossing",
+            closed_at="2026-01-01T19:30:00-05:00",
+            opened_at="2026-01-02T08:30:00+08:00",
+        ),
+    ]
+
+    by_hour = {row["hour"]: row for row in _by_hour(rows)}
+    by_day = {row["day"]: row for row in _by_day_of_week(rows)}
+    heatmap = {
+        (row["day"], row["hour"]): row
+        for row in _hour_day_heatmap(rows)
+        if row["trade_count"]
+    }
+
+    assert by_hour[0]["trade_count"] == 1
+    assert by_hour[19]["trade_count"] == 0
+    assert by_day["Fri"]["trade_count"] == 1
+    assert by_day["Thu"]["trade_count"] == 0
+    assert heatmap == {(4, 0): {"day": 4, "hour": 0, "avg_pnl_pct": 1.0, "trade_count": 1}}
+    assert _trade_frequency(rows)[0]["date"] == "2026-01-02"
+    assert _equity_curve(rows)[0]["time"] == "01/02"
+
+
+def test_temporal_trade_insight_buckets_exclude_naive_and_malformed_times():
+    import aletheia.analytics.outcome_integrity as oi
+    from aletheia.analytics import trade_insights
+
+    rows = [
+        _make_row(id="aware", closed_at="2026-01-02T00:30:00Z", opened_at="2026-01-02T00:00:00Z"),
+        _make_row(id="naive", closed_at="2026-01-02T00:30:00", opened_at="2026-01-02T00:00:00"),
+        _make_row(id="bad", closed_at="not-a-date", opened_at="not-a-date"),
+    ]
+    fake_r_dist: dict = {
+        "bins": [],
+        "eligible_r_multiple_count": 0,
+        "unavailable_r_multiple_count": 0,
+        "unavailability_reasons": {},
+    }
+
+    with (
+        patch.object(oi, "eligible_strategy_outcomes", return_value=rows),
+        patch.object(oi, "raw_account_events", return_value=rows),
+        patch.object(oi, "build_outcome_cohort_summary", return_value={}),
+        patch(
+            "aletheia.analytics.trade_insights._r_multiple_distribution",
+            return_value=fake_r_dist,
+        ),
+    ):
+        result = trade_insights.build_trade_insights()
+
+    assert result["by_hour"][0]["trade_count"] == 1
+    assert result["by_day_of_week"][4]["trade_count"] == 1
+    assert result["trade_frequency"] == [{
+        "date": "2026-01-02",
+        "trades": [{"pnl_pct": 1.0, "direction": "long"}],
+    }]
+    assert result["temporal_unbucketed_count"] == 2
+    assert result["heatmap_unbucketed_count"] == 2
+
+
 # ---------------------------------------------------------------------------
 # #2061 — r_multiple_distribution wire-shape contract
 #
