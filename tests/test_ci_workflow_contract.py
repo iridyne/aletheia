@@ -344,7 +344,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
 
 def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata_repairs() -> None:
     shepherd = _shepherd_workflow()
-    assert shepherd["concurrency"]["cancel-in-progress"] == "true"
+    assert "concurrency" not in shepherd
     assert shepherd["on"]["workflow_run"] == {
         "workflows": ["Aletheia CI", "Aletheia Change Contract gate"],
         "types": ["completed"],
@@ -373,6 +373,10 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "createComment" not in metadata_branch  # uses the existing postComment helper
 
     recovery = shepherd["jobs"]["metadata-ci-recovery"]
+    assert recovery["concurrency"] == {
+        "group": "codex-shepherd-metadata-recovery-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
+    }
     assert recovery["permissions"] == {
         "actions": "write",
         "checks": "read",
@@ -392,6 +396,16 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "createWorkflowDispatch" not in recovery_script
     assert "metadata recovery job owns any required same-head CI rerun" in metadata_branch
     assert script.count("failure.category === 'preflight_metadata'") == 2
+
+    reconciliation = shepherd["jobs"]["shepherd"]
+    assert reconciliation["concurrency"] == {
+        "group": (
+            "codex-shepherd-reconcile-${{ github.event.pull_request.number || "
+            "github.event.issue.number || github.event.workflow_run.pull_requests[0].number || "
+            "github.run_id }}"
+        ),
+        "cancel-in-progress": "true",
+    }
 
 
 def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:
@@ -556,11 +570,11 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     job = workflow["jobs"]["refresh"]
     assert job["if"] == (
         "github.event.workflow_run.conclusion == 'success' && "
-        "github.event.workflow_run.event == 'workflow_run'"
+        "github.event.workflow_run.event == 'repository_dispatch'"
     )
     assert workflow["concurrency"] == {
-        "group": "refresh-release-candidate",
-        "cancel-in-progress": "true",
+        "group": "refresh-release-candidate-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
     }
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
