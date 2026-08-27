@@ -225,6 +225,145 @@ def test_candidate_facts_epoch_start_excludes_pre_epoch_malformed_batches():
     assert contaminated["exclusions"][0]["source_batch_id"] == "old-bad"
 
 
+def test_candidate_facts_epoch_start_uses_subsecond_batch_boundary():
+    db = sq.get_db()
+    lower = datetime(2026, 8, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    upper = datetime(2026, 8, 1, 0, 0, 0, 900000, tzinfo=timezone.utc)
+    _batch(db, "old-bad", "2026-08-01T00:00:00.100000+00:00", "{not-json")
+    _batch(
+        db,
+        "boundary-good",
+        lower.isoformat(),
+        [
+            {
+                "candidate_key": "cand-boundary",
+                "outcome_candidate_key": "cand-boundary",
+                "evaluated_at": lower.isoformat(),
+                "decision": "passed",
+            }
+        ],
+    )
+
+    epoch_report = candidate_facts.build_candidate_facts(
+        horizon="24h",
+        as_of_at=upper.isoformat(),
+        epoch_start_at=lower.isoformat(),
+        db=db,
+    )
+    assert epoch_report["unavailable_count"] == 0
+    assert [fact["fact_id"] for fact in epoch_report["facts"]] == ["cand-boundary"]
+
+    forensic_report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at=upper.isoformat(), db=db
+    )
+    assert forensic_report["unavailable_count"] == 1
+    assert forensic_report["exclusions"][0]["source_batch_id"] == "old-bad"
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db, horizon="24h", lower=lower, upper=upper
+    )
+    assert counts["candidate_units"] == 1
+    assert counts["unavailable_units"] == 0
+
+
+def test_candidate_facts_epoch_start_uses_global_explicit_first_exposure():
+    db = sq.get_db()
+    lower = datetime(2026, 8, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    upper = datetime(2026, 8, 1, 0, 0, 0, 900000, tzinfo=timezone.utc)
+    _decision(
+        db,
+        "old",
+        "2026-08-01T00:00:00.100000+00:00",
+        outcome_key="cand-reused",
+    )
+    _decision(
+        db,
+        "new",
+        "2026-08-01T00:00:00.600000+00:00",
+        outcome_key="cand-reused",
+    )
+    _decision(
+        db,
+        "boundary",
+        lower.isoformat(),
+        outcome_key="cand-boundary",
+        candidate_key="cand-boundary",
+    )
+
+    epoch_report = candidate_facts.build_candidate_facts(
+        horizon="24h",
+        as_of_at=upper.isoformat(),
+        epoch_start_at=lower.isoformat(),
+        db=db,
+    )
+    assert [fact["fact_id"] for fact in epoch_report["facts"]] == ["cand-boundary"]
+
+    forensic_report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at=upper.isoformat(), db=db
+    )
+    assert {fact["fact_id"] for fact in forensic_report["facts"]} == {
+        "cand-boundary",
+        "cand-reused",
+    }
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db, horizon="24h", lower=lower, upper=upper
+    )
+    assert counts["candidate_units"] == 1
+
+
+def test_candidate_facts_epoch_start_uses_global_batch_first_exposure():
+    db = sq.get_db()
+    lower = datetime(2026, 8, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    upper = datetime(2026, 8, 1, 0, 0, 0, 900000, tzinfo=timezone.utc)
+    _batch(
+        db,
+        "old-batch",
+        "2026-08-01T00:00:00.100000+00:00",
+        [
+            {
+                "candidate_key": "cand-reused",
+                "evaluated_at": "2026-08-01T00:00:00.100000+00:00",
+            }
+        ],
+    )
+    _batch(
+        db,
+        "new-batch",
+        "2026-08-01T00:00:00.600000+00:00",
+        [
+            {
+                "candidate_key": "cand-reused",
+                "evaluated_at": "2026-08-01T00:00:00.600000+00:00",
+            }
+        ],
+    )
+    _batch(
+        db,
+        "fresh-batch",
+        "2026-08-01T00:00:00.700000+00:00",
+        [
+            {
+                "candidate_key": "cand-fresh",
+                "evaluated_at": "2026-08-01T00:00:00.700000+00:00",
+            }
+        ],
+    )
+
+    epoch_report = candidate_facts.build_candidate_facts(
+        horizon="24h",
+        as_of_at=upper.isoformat(),
+        epoch_start_at=lower.isoformat(),
+        db=db,
+    )
+    assert [fact["fact_id"] for fact in epoch_report["facts"]] == ["cand-fresh"]
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db, horizon="24h", lower=lower, upper=upper
+    )
+    assert counts["candidate_units"] == 1
+
+
 def test_settled_outcome_intersection():
     db = sq.get_db()
     _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
