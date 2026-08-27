@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import statistics
 
 # Reference eligible_strategy_outcomes through the module (not a copied name) so
 # monkeypatching aletheia.analytics.outcome_integrity.eligible_strategy_outcomes
@@ -210,13 +211,12 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
 
     hold_distribution = _bucket_hold_times(all_hold_hours)
     total_count = len(rows)
-    sorted_hold = sorted(all_hold_hours)
 
     totals = {
         "trade_count": total_count,
         "win_rate": round(total_wins / total_count * 100, 1) if total_count else None,
         "avg_hold_hours": round(sum(all_hold_hours) / len(all_hold_hours), 1) if all_hold_hours else None,
-        "median_hold_hours": round(sorted_hold[len(sorted_hold) // 2], 2) if sorted_hold else None,
+        "median_hold_hours": round(statistics.median(all_hold_hours), 2) if all_hold_hours else None,
         "hold_time_available_count": len(all_hold_hours),
         "hold_time_unavailable_count": total_count - len(all_hold_hours),
         "total_pnl": round(total_pnl, 4) if total_count else None,
