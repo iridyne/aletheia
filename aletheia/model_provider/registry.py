@@ -108,3 +108,43 @@ OAUTH_PROVIDER_TYPES = frozenset(
 def provider_kind(provider_type: str) -> str:
     definition = PROVIDER_TYPES.get(provider_type)
     return definition.category if definition else "unknown"
+
+
+def default_protocol_for_provider_type(provider_type: str) -> str:
+    definition = PROVIDER_TYPES.get(provider_type)
+    return definition.protocols[0] if definition and definition.protocols else ""
+
+
+def validate_provider_protocol(
+    provider_type: str,
+    protocol: str | None,
+    *,
+    explicit: bool,
+) -> str:
+    definition = PROVIDER_TYPES.get(provider_type)
+    if definition is None or not definition.protocols:
+        return str(protocol or "")
+
+    value = str(protocol or "").strip()
+    if not explicit:
+        if value and value != "chat_completions" and value in definition.protocols:
+            return value
+        return default_protocol_for_provider_type(provider_type)
+    if value in definition.protocols:
+        return value
+    allowed = ", ".join(definition.protocols)
+    raise ValueError(
+        f"Unsupported {provider_type} protocol: {value or '<empty>'}. Choose from: {allowed}"
+    )
+
+
+def provider_config_protocol(provider_type: str, pcfg) -> str:
+    fields_set = getattr(pcfg, "model_fields_set", set())
+    protocol = getattr(pcfg, "protocol", None)
+    if provider_type == "anthropic_compatible" and protocol == "chat_completions":
+        return default_protocol_for_provider_type(provider_type)
+    return validate_provider_protocol(
+        provider_type,
+        protocol,
+        explicit="protocol" in fields_set,
+    )

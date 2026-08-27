@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v45"
+SCHEMA_VERSION = "aletheia-sqlite-v47"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3464,6 +3464,16 @@ ALTER TABLE paper_account_events_v41 RENAME TO paper_account_events;
 CREATE INDEX idx_paper_account_events_created
     ON paper_account_events(created_at DESC);
 """
+
+_CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS = (
+    ("cost_model_version", "controller_recommendations", "TEXT"),
+)
+_CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM = hashlib.sha256(
+    (
+        repr(_CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS)
+        + "\ncontroller_recommendation_cost_model_v1"
+    ).encode("utf-8")
+).hexdigest()
 _PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS = (
     ("invalidated_at", "shadow_trades", "TEXT"),
     ("invalidation_reason", "shadow_trades", "TEXT"),
@@ -3708,6 +3718,16 @@ _LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM = hashlib.sha256(
     (
         _LEARNING_DRAFT_SKILL_LINEAGE_SQL
         + "\nlearning_draft_skill_lineage_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_FAILED_WINDOW_COLUMNS = (
+    ("failed_input_watermark", "learning_job_health", "TEXT"),
+)
+_LEARNING_FAILED_WINDOW_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_FAILED_WINDOW_COLUMNS)
+        + "\nlearning_failed_window_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5307,7 +5327,13 @@ _MIGRATION_DESCRIPTIONS = {
     "20260826_0043_coingecko_source_time_v44": (
         "CoinGecko provider source-time provenance"
     ),
-    "20260827_0044_learning_draft_skill_lineage_v45": (
+    "20260827_0044_controller_recommendation_cost_model_v45": (
+        "controller recommendation cost-model evidence identity"
+    ),
+    "20260827_0045_learning_failed_window_v46": (
+        "persist failed daily Learning input watermark for retry/audit visibility"
+    ),
+    "20260827_0046_learning_draft_skill_lineage_v47": (
         "typed lesson lineage and one generated draft skill per lesson"
     ),
 }
@@ -5524,7 +5550,7 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
 
 
-def _apply_learning_draft_skill_lineage_v45(db: sqlite3.Connection) -> None:
+def _apply_learning_draft_skill_lineage_v47(db: sqlite3.Connection) -> None:
     """Add typed lesson lineage and enforce one generated draft skill per lesson."""
 
     tables = {
@@ -5589,6 +5615,17 @@ def _apply_learning_draft_skill_lineage_v45(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_learning_failed_window_v46(db: sqlite3.Connection) -> None:
+    """Persist the daily Learning window that failed before a later retry/success."""
+
+    for column, table, column_type in _LEARNING_FAILED_WINDOW_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
     """Add provider source-time provenance without rewriting legacy rows."""
 
@@ -5597,6 +5634,23 @@ def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
         for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     for column, table, column_type in _COINGECKO_SOURCE_TIME_COLUMNS:
+        if table not in tables:
+            continue
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_controller_recommendation_cost_model_v45(db: sqlite3.Connection) -> None:
+    """Persist the cost-model identity behind each controller evidence row."""
+
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    for column, table, column_type in _CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS:
         if table not in tables:
             continue
         existing = {
@@ -6414,10 +6468,22 @@ _MIGRATIONS = (
         apply=_apply_coingecko_source_time_v44,
     ),
     MigrationStep(
-        migration_id="20260827_0044_learning_draft_skill_lineage_v45",
-        checksum=_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM,
+        migration_id="20260827_0044_controller_recommendation_cost_model_v45",
+        checksum=_CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM,
         schema_version="aletheia-sqlite-v45",
-        apply=_apply_learning_draft_skill_lineage_v45,
+        apply=_apply_controller_recommendation_cost_model_v45,
+    ),
+    MigrationStep(
+        migration_id="20260827_0045_learning_failed_window_v46",
+        checksum=_LEARNING_FAILED_WINDOW_CHECKSUM,
+        schema_version="aletheia-sqlite-v46",
+        apply=_apply_learning_failed_window_v46,
+    ),
+    MigrationStep(
+        migration_id="20260827_0046_learning_draft_skill_lineage_v47",
+        checksum=_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM,
+        schema_version="aletheia-sqlite-v47",
+        apply=_apply_learning_draft_skill_lineage_v47,
     ),
 )
 

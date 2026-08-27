@@ -36,6 +36,10 @@ jobs:
       pull-requests: read
     # Metadata-only control plane; do not contend with scarce self-hosted test runners.
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 5
+    concurrency:
+      group: auto-merge-schedule-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+      cancel-in-progress: true
     steps:
       - name: Dispatch trusted auto-merge update
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -119,6 +123,7 @@ jobs:
       statuses: write
     # Metadata-only control plane; do not contend with scarce self-hosted test runners.
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
     steps:
       - name: Release the verified candidate hold
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7

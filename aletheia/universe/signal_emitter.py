@@ -219,6 +219,7 @@ def _build_setup(
         "reasons": [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]],
         "regime": regime_tag,
         "funding_rate": feature.get("funding_rate"),
+        "funding_observed_at": feature.get("funding_observed_at"),
         "open_interest": feature.get("open_interest"),
         "oi_delta_1h": feature.get("oi_delta_1h"),
     }
@@ -246,7 +247,7 @@ def _build_setup(
         scanner_family=family,
         motive_evidence=_json(motive),
         funding_rate=feature.get("funding_rate"),
-        funding_observed_at=datetime.now(timezone.utc).isoformat()
+        funding_observed_at=feature.get("funding_observed_at")
         if feature.get("funding_rate") is not None else None,
         regime_tag=regime_tag,
         breakout_level=compatibility_price,
@@ -270,9 +271,6 @@ def _materialize_trigger_opportunity(
     instrument_background: dict,
     analysis_context: dict | None,
 ) -> Opportunity:
-    from aletheia.universe.features import persist_feature_snapshot_for_emission
-
-    persist_feature_snapshot_for_emission(feature)
     price = float(market_fact["price"])
     entry_zone = (price, price)
     detected_at = datetime.now(timezone.utc).isoformat()
@@ -563,6 +561,7 @@ def emit_deterministic_opportunities(
     from aletheia.agent_shell.trading_context import (
         material_fingerprint_from_features as _material_fingerprint,
     )
+    from aletheia.universe.features import persist_feature_snapshot_for_emission
 
     for member_index, m in enumerate(members):
         symbol = m.get("symbol", "")
@@ -777,6 +776,7 @@ def emit_deterministic_opportunities(
             )
             continue
 
+        persist_feature_snapshot_for_emission(feat)
         current_material_fingerprint = _material_fingerprint(
             symbol=symbol,
             direction=direction,

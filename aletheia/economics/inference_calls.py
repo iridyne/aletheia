@@ -202,6 +202,8 @@ def record_inference_finished(
                 metadata = {}
             metadata["structured_failure"] = safe_diagnostics
             metadata_json = _json(metadata)
+        final_provider = fallback.get("provider") or call.resolved_provider or call.requested_provider
+        final_model = fallback.get("final_model") or getattr(response, "model", None) or call.last_attempted_model
         db.execute(
             """UPDATE llm_inference_calls SET
                 status=?,parse_valid=?,schema_valid=?,attempt_count=?,retry_count=?,
@@ -214,11 +216,9 @@ def record_inference_finished(
                 None if schema_valid is None else int(schema_valid),
                 attempt_count,
                 max(0, attempt_count - 1),
-                None
-                if not fallback
-                else int(bool(fallback.get("fallback_used"))),
-                fallback.get("provider") or call.requested_provider,
-                fallback.get("final_model") or getattr(response, "model", None),
+                None if not fallback else int(bool(fallback.get("fallback_used"))),
+                final_provider,
+                final_model,
                 str(error_type)[:160] if error_type else None,
                 finished_at or _utcnow(),
                 metadata_json,
@@ -239,10 +239,14 @@ def inference_duration_ms(logical_call_id: str | None) -> int | None:
     try:
         from aletheia.storage.sqlite import get_db
 
-        row = get_db().execute(
-            "SELECT started_at,finished_at FROM llm_inference_calls WHERE logical_call_id=?",
-            (logical_call_id,),
-        ).fetchone()
+        row = (
+            get_db()
+            .execute(
+                "SELECT started_at,finished_at FROM llm_inference_calls WHERE logical_call_id=?",
+                (logical_call_id,),
+            )
+            .fetchone()
+        )
         if row is None or not row["started_at"] or not row["finished_at"]:
             return None
         started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
@@ -250,6 +254,50 @@ def inference_duration_ms(logical_call_id: str | None) -> int | None:
         return max(0, int((finished - started).total_seconds() * 1000))
     except Exception:
         return None
+
+
+def reconcile_interrupted_inferences(
+    current_runtime_session_id: str | None,
+    *,
+    finished_at: str | None = None,
+) -> int:
+    """Finalize logical calls stranded by a previous Gateway process."""
+    db = ensure_economics_schema()
+    rows = db.execute(
+        "SELECT logical_call_id FROM llm_inference_calls WHERE status='running' "
+        "AND (? IS NULL OR runtime_session_id IS NULL OR runtime_session_id<>?)",
+        (current_runtime_session_id, current_runtime_session_id),
+    ).fetchall()
+    if not rows:
+        return 0
+    was_in_tx = db.in_transaction
+    ended = finished_at or _utcnow()
+    for row in rows:
+        logical_call_id = str(row[0])
+        attempts = db.execute(
+            "SELECT provider,model_or_tool FROM runtime_cost_events "
+            "WHERE event_type='llm' AND call_id=? "
+            "ORDER BY attempt_index DESC,rowid DESC",
+            (logical_call_id,),
+        ).fetchall()
+        final = attempts[0] if attempts else None
+        attempt_count = len(attempts)
+        db.execute(
+            "UPDATE llm_inference_calls SET status='error',attempt_count=?,retry_count=?,"
+            "final_provider=?,final_model=?,error_type='interrupted',finished_at=? "
+            "WHERE logical_call_id=? AND status='running'",
+            (
+                attempt_count,
+                max(0, attempt_count - 1),
+                final[0] if final else None,
+                final[1] if final else None,
+                ended,
+                logical_call_id,
+            ),
+        )
+    if not was_in_tx:
+        db.commit()
+    return len(rows)
 
 
 def list_inference_calls(
@@ -267,16 +315,12 @@ def list_inference_calls(
         where.append("caller = ?")
         params.append(caller)
     if evaluation_pair_id:
-        where.append(
-            "json_valid(metadata_json) AND json_extract(metadata_json,'$.evaluation_pair_id') = ?"
-        )
+        where.append("json_valid(metadata_json) AND json_extract(metadata_json,'$.evaluation_pair_id') = ?")
         params.append(evaluation_pair_id)
     params.append(max(1, min(int(limit), 5_000)))
     db = ensure_economics_schema()
     rows = db.execute(
-        "SELECT * FROM llm_inference_calls WHERE "
-        + " AND ".join(where)
-        + " ORDER BY started_at DESC LIMIT ?",
+        "SELECT * FROM llm_inference_calls WHERE " + " AND ".join(where) + " ORDER BY started_at DESC LIMIT ?",
         tuple(params),
     ).fetchall()
     result: list[dict[str, Any]] = []

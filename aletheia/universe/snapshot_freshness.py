@@ -21,16 +21,17 @@ def has_fresh_market_snapshot(
 ) -> bool:
     """Return whether this exact instrument has a recent price snapshot.
 
-    There is deliberately no symbol-only fallback. A fresh spot quote cannot
-    establish that a perpetual contract is executable, or vice versa.
+    There is deliberately no symbol-only or venue-agnostic fallback. A fresh
+    spot quote cannot establish that a perpetual contract is executable, and a
+    fresh quote from one exchange cannot make another exchange tradable.
     """
     storage_market_type = _snapshot_market_type(market_type)
-    venue = str(exchange or "").strip()
-    if not symbol or not storage_market_type or not venue:
+    storage_exchange = str(exchange or "").strip().lower()
+    if not symbol or not storage_market_type or not storage_exchange:
         return False
     snapshots = list_market_snapshots(
         symbol=symbol,
-        exchange=venue,
+        exchange=storage_exchange,
         market_type=storage_market_type,
         limit=1,
     )

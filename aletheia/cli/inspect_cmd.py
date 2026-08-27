@@ -5,6 +5,7 @@ modify config, or trigger side effects. Designed for Agent / developer use.
 """
 
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -39,12 +40,72 @@ def _output(data, json_output: bool) -> None:
                 typer.echo(f"{k}: {v}")
 
 
+def _format_ratio_percent(value) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if not math.isfinite(ratio):
+        return "n/a"
+    return f"{ratio:.0%}"
+
+
 def _with_flow_hint(text: str, hours: int) -> str:
     return (
         f"{text}\n\n"
         "Also summarized in the opportunity ledger:\n"
         f"  uv run aletheia flow audit --hours {max(1, int(hours or 24))}"
     )
+
+
+def _first_present(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _exchange_account_projection() -> dict:
+    try:
+        from aletheia.portfolio.exchange_sync import (
+            active_broker_view_complete,
+            get_cached_state,
+            status_for,
+        )
+
+        cached = get_cached_state()
+        status = status_for(cached)
+        complete, completeness_reason = active_broker_view_complete()
+        equity = _first_present(
+            cached.get("equity_usdt") if cached else None,
+            cached.get("total_equity_usdt") if cached else None,
+        )
+        reason = None
+        if status == "unconfigured":
+            reason = "no_exchange_account_cache"
+        elif status == "stale":
+            reason = "cache_stale"
+        elif not complete:
+            reason = "active_broker_view_incomplete"
+        return {
+            "status": status,
+            "equity_usdt": equity,
+            "age_sec": cached.get("age_seconds") if cached else None,
+            "complete": complete,
+            "completeness_reason": completeness_reason,
+            "reason": reason,
+        }
+    except Exception:
+        return {
+            "status": "error",
+            "equity_usdt": None,
+            "age_sec": None,
+            "complete": False,
+            "completeness_reason": "read_failed",
+            "reason": "read_failed",
+        }
 
 
 def _parse_age(snapshot_at: str) -> tuple:
@@ -531,16 +592,25 @@ def strategies(
 ):
     """List strategy records with key parameters."""
     from aletheia.storage.repositories import list_strategies
+    from aletheia.storage.models import (
+        StrategyParametersInvalid,
+        decode_strategy_parameters,
+    )
     rows = list_strategies(limit=limit)
     if state != "all":
         rows = [r for r in rows if r.get("state") == state]
     result = []
+    invalid_rows = 0
     for r in rows:
-        params = {}
+        params: dict = {}
+        parameters_status = "available"
+        parameters_error = None
         try:
-            params = json.loads(r.get("parameters") or "{}")
-        except Exception:
-            pass
+            params = decode_strategy_parameters(r.get("parameters"))
+        except StrategyParametersInvalid as exc:
+            invalid_rows += 1
+            parameters_status = "invalid"
+            parameters_error = exc.reason
         result.append({
             "id": r.get("id"),
             "name": r.get("name"),
@@ -551,9 +621,18 @@ def strategies(
             "paper_trading_paused": r.get("paper_trading_paused"),
             "under_review": r.get("under_review"),
             "symbol": params.get("symbol"),
-            "has_ruleset": bool(params.get("ruleset")),
+            "has_ruleset": bool(params.get("ruleset")) if parameters_error is None else None,
+            "parameters_status": parameters_status,
+            "parameters_error": parameters_error,
             "created_at": r.get("created_at"),
         })
+    if json_output:
+        _output({
+            "availability": "partial" if invalid_rows else "available",
+            "invalid_parameters_count": invalid_rows,
+            "rows": result,
+        }, json_output)
+        return
     _output(result, json_output)
 
 
@@ -913,22 +992,12 @@ def status(
         ],
     }
 
-    # Exchange equity (best-effort)
-    try:
-        from aletheia.portfolio.exchange_sync import (
-            account_equity_value,
-            get_cached_state,
-            status_for,
-        )
-        cached = get_cached_state()
-        if cached and status_for(cached) in ("ok", "stale"):
-            # get_cached_state may return the unified (multi-broker) cache, which
-            # uses total_equity_usdt instead of the Bitget-specific equity_usdt —
-            # fall back so non-Bitget paper accounts show real equity, not None.
-            portfolio_section["equity_usdt"] = account_equity_value(cached)
-            portfolio_section["exchange_age_sec"] = cached.get("age_seconds")
-    except Exception:
-        pass
+    exchange_account = _exchange_account_projection()
+    portfolio_section["exchange_account"] = exchange_account
+    if exchange_account["equity_usdt"] is not None:
+        portfolio_section["equity_usdt"] = exchange_account["equity_usdt"]
+    if exchange_account["age_sec"] is not None:
+        portfolio_section["exchange_age_sec"] = exchange_account["age_sec"]
 
     # PnL
     today_start = datetime.now(timezone.utc).date().isoformat()
@@ -975,6 +1044,9 @@ def status(
     data_section = cache_stats()
 
     result = {
+        "availability": "available" if (
+            exchange_account["status"] == "ok" and exchange_account["complete"]
+        ) else "partial",
         "portfolio": portfolio_section,
         "pnl": pnl_section,
         "orders": order_section,
@@ -989,8 +1061,17 @@ def status(
     # Human-readable output
     typer.echo("=== Portfolio ===")
     eq = portfolio_section.get("equity_usdt")
-    equity_label = eq if eq is not None else "?"
-    typer.echo(f"  equity: {equity_label} USDT  |  open_positions: {portfolio_section['open_positions']}")
+    account = portfolio_section["exchange_account"]
+    typer.echo(
+        f"  equity: {eq if eq is not None else '?'} USDT "
+        f"[exchange_account: {account['status']}]  |  "
+        f"open_positions: {portfolio_section['open_positions']}"
+    )
+    if account["status"] != "ok" or not account["complete"]:
+        typer.echo(
+            "  exchange_account: "
+            f"{account['reason'] or account['completeness_reason'] or account['status']}"
+        )
     for p in portfolio_section["positions"]:
         typer.echo(f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} uPnL={p['unrealized_pnl']}")
 
@@ -1386,11 +1467,11 @@ def factor_feedback(
     for r in rows:
         key = (r.get("factor_key") or r.get("scanner") or "?")[:30]
         trades = r.get("total_trades") or r.get("n") or 0
-        wr = r.get("win_rate", 0)
+        wr = _format_ratio_percent(r.get("win_rate"))
         exp = r.get("expectancy", 0)
         pf = r.get("profit_factor", 0)
         st = r.get("status", "?")
-        typer.echo(f"  {key:<30s} {trades:>6d} {wr:>4.0f}% {exp:>+6.2f} {pf:>5.2f} {st:<18s}")
+        typer.echo(f"  {key:<30s} {trades:>6d} {wr:>5s} {exp:>+6.2f} {pf:>5.2f} {st:<18s}")
 
 
 @inspect_app.command("microstructure")

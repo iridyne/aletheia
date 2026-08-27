@@ -8,6 +8,8 @@ import math
 import os
 import re
 import threading
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
@@ -20,15 +22,29 @@ from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_catalog_pricing_snapshot
 
 
-LITELLM_PRICE_MAP_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
-    "model_prices_and_context_window.json"
-)
+LITELLM_PRICE_MAP_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 _MIN_MODEL_COUNT = 50
 _MIN_RELATIVE_SIZE = 0.5
 _SOURCE_PREFIX = "litellm_public_median:"
 _MATCH_VERSION = "catalog-model-family-v2"
 _FAMILY_SUFFIXES = ("instruct", "chat")
+_REFRESH_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+@dataclass(frozen=True)
+class CatalogObservation:
+    """Content-addressed catalog evidence captured before a provider attempt."""
+
+    content: bytes
+    catalog_sha256: str
+    observed_at: str
+    entry_count: int
+    source_url: str
+    match_version: str
+
+    def price_map(self) -> dict[str, Any]:
+        parsed = json.loads(self.content)
+        return parsed if isinstance(parsed, dict) else {}
 
 
 def _normalize(s: str) -> str:
@@ -51,16 +67,27 @@ def _build_price_index(
             continue
         if _rate(entry.get("input_cost_per_token")) is None or _rate(entry.get("output_cost_per_token")) is None:
             continue
-        names = [key.split("/")[-1]]
+        names = _catalog_names(key)
         aliases = entry.get("aliases")
         if isinstance(aliases, list):
-            names.extend(alias for alias in aliases if isinstance(alias, str))
+            for alias in aliases:
+                if isinstance(alias, str):
+                    names.extend(_catalog_names(alias))
         for name in names:
             bucket = index.setdefault(_normalize(name), [])
             candidate = (key, entry)
             if candidate not in bucket:
                 bucket.append(candidate)
     return index
+
+
+def _catalog_names(name: str) -> list[str]:
+    tail = name.split("/")[-1]
+    names = [tail]
+    parts = tail.split(".")
+    if len(parts) >= 3:
+        names.append(".".join(parts[2:]))
+    return names
 
 
 def _family_match(needle: str, stem: str) -> bool:
@@ -71,9 +98,9 @@ def _family_match(needle: str, stem: str) -> bool:
     suffixes, but rejects semantic variants such as ``mini`` and ``thinking``.
     """
     if stem.startswith(needle):
-        suffix = stem[len(needle):]
+        suffix = stem[len(needle) :]
     elif needle.startswith(stem):
-        suffix = needle[len(stem):]
+        suffix = needle[len(stem) :]
     else:
         return False
     return bool(suffix) and (suffix[0].isdigit() or suffix.startswith(_FAMILY_SUFFIXES))
@@ -87,8 +114,15 @@ def _match_entries(
     needle = _normalize(model)
     matches: list[tuple[str, dict[str, Any]]] = []
     seen: set[str] = set()
+    exact = index.get(needle, [])
+    if exact:
+        for key, entry in exact:
+            if key not in seen:
+                seen.add(key)
+                matches.append((key, entry))
+        return matches
     for stem, entries in index.items():
-        if stem != needle and not _family_match(needle, stem):
+        if not _family_match(needle, stem):
             continue
         for key, entry in entries:
             if key not in seen:
@@ -96,8 +130,11 @@ def _match_entries(
                 matches.append((key, entry))
     return matches
 
+
 _state_lock = threading.Lock()
 _worker: threading.Thread | None = None
+_active_catalog: CatalogObservation | None = None
+_negative_refresh: dict[tuple[str, str, str], float] = {}
 _state: dict[str, Any] = {
     "status": "idle",
     "started_at": None,
@@ -125,6 +162,10 @@ def _cache_path() -> Path:
     return get_data_dir() / "cache" / "litellm" / "model_prices_and_context_window.json"
 
 
+def _cache_metadata_path() -> Path:
+    return _cache_path().with_suffix(".metadata.json")
+
+
 def _load_cached_count() -> int | None:
     try:
         value = json.loads(_cache_path().read_text(encoding="utf-8"))
@@ -133,12 +174,113 @@ def _load_cached_count() -> int | None:
     return len(value) if isinstance(value, dict) else None
 
 
-def _save_cache(content: bytes) -> None:
-    path = _cache_path()
+def _atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_bytes(content)
     os.replace(temporary, path)
+
+
+def _observation(content: bytes, observed_at: str) -> CatalogObservation:
+    parsed = json.loads(content)
+    if not isinstance(parsed, dict):
+        raise ValueError("LiteLLM cached price map is invalid")
+    return CatalogObservation(
+        content=content,
+        catalog_sha256=hashlib.sha256(content).hexdigest(),
+        observed_at=observed_at,
+        entry_count=len(parsed),
+        source_url=LITELLM_PRICE_MAP_URL,
+        match_version=_MATCH_VERSION,
+    )
+
+
+def _metadata(observation: CatalogObservation) -> bytes:
+    return json.dumps(
+        {
+            "catalog_sha256": observation.catalog_sha256,
+            "observed_at": observation.observed_at,
+            "entry_count": observation.entry_count,
+            "source_url": observation.source_url,
+            "match_version": observation.match_version,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+
+def _activate(observation: CatalogObservation) -> CatalogObservation:
+    global _active_catalog
+    with _state_lock:
+        _active_catalog = observation
+    return observation
+
+
+def _save_cache(content: bytes, observed_at: str | None = None) -> CatalogObservation:
+    observation = _observation(content, observed_at or _utcnow())
+    _atomic_write(_cache_path(), content)
+    # Metadata is written last: a crash can leave an untrusted raw file, never a
+    # trusted receipt for bytes that were not durably installed.
+    _atomic_write(_cache_metadata_path(), _metadata(observation))
+    return _activate(observation)
+
+
+def _legacy_observed_at(catalog_sha256: str) -> str | None:
+    """Recover old cache trust only from an already-persisted matching snapshot."""
+    try:
+        row = (
+            ensure_economics_schema()
+            .execute(
+                "SELECT effective_from FROM pricing_snapshots "
+                "WHERE source LIKE ? AND version LIKE ? "
+                "ORDER BY datetime(effective_from),rowid LIMIT 1",
+                (_SOURCE_PREFIX + "%", f"%{catalog_sha256}%"),
+            )
+            .fetchone()
+        )
+    except Exception:
+        return None
+    return str(row[0]) if row else None
+
+
+def activate_cached_catalog() -> CatalogObservation | None:
+    """Synchronously activate only a hash-, size-, source-verified local cache."""
+    try:
+        content = _cache_path().read_bytes()
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict) or len(parsed) < _MIN_MODEL_COUNT:
+            return None
+        digest = hashlib.sha256(content).hexdigest()
+        try:
+            metadata = json.loads(_cache_metadata_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            metadata = {}
+        if metadata:
+            if (
+                metadata.get("catalog_sha256") != digest
+                or metadata.get("entry_count") != len(parsed)
+                or metadata.get("source_url") != LITELLM_PRICE_MAP_URL
+                or metadata.get("match_version") != _MATCH_VERSION
+            ):
+                return None
+            observed_at = str(metadata.get("observed_at") or "")
+        else:
+            observed_at = _legacy_observed_at(digest) or ""
+            if observed_at:
+                recovered = _observation(content, observed_at)
+                _atomic_write(_cache_metadata_path(), _metadata(recovered))
+        if not observed_at:
+            return None
+        # Validate the timestamp before it becomes event-time evidence.
+        datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        return _activate(_observation(content, observed_at))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def capture_catalog_observation() -> CatalogObservation | None:
+    with _state_lock:
+        return _active_catalog
 
 
 def _fetch_price_map() -> tuple[dict[str, Any], bytes]:
@@ -190,13 +332,13 @@ def _representative_rates(
     }
     for source_key, target_key in (
         ("cache_read_input_token_cost", "cached_input_usd_per_million"),
+        (
+            "cache_creation_input_token_cost",
+            "cache_creation_input_usd_per_million",
+        ),
         ("output_cost_per_reasoning_token", "reasoning_usd_per_million"),
     ):
-        values = [
-            rate
-            for _, _, entry in paired
-            if (rate := _rate(entry.get(source_key))) is not None
-        ]
+        values = [rate for _, _, entry in paired if (rate := _rate(entry.get(source_key))) is not None]
         if values:
             result[target_key] = median(values) * 1_000_000
     search_rates: list[float] = []
@@ -218,13 +360,121 @@ def _representative_rates(
 
 def _runtime_models() -> list[tuple[str, str]]:
     db = ensure_economics_schema()
-    return [
+    models = {
         (str(row[0]), str(row[1]))
         for row in db.execute(
             "SELECT DISTINCT provider,model_or_tool FROM runtime_cost_events "
             "WHERE event_type='llm' AND provider IS NOT NULL AND model_or_tool IS NOT NULL"
         ).fetchall()
-    ]
+    }
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.model_provider.fallback import _parse_fallback_entry
+
+        for provider, config in load_config().models.providers.items():
+            model = str(getattr(config, "model", "") or "").strip()
+            if model and model != "default":
+                models.add((provider, model))
+            for fallback in getattr(config, "fallback_models", ()) or ():
+                fallback_provider, fallback_model = _parse_fallback_entry(str(fallback), provider)
+                if fallback_model:
+                    models.add((fallback_provider, fallback_model))
+    except Exception:
+        pass
+    return sorted(models)
+
+
+def _rate_vector_version(catalog_sha256: str, rates: dict[str, float | int]) -> str:
+    vector = {
+        key: rates.get(key)
+        for key in (
+            "input_usd_per_million",
+            "output_usd_per_million",
+            "reasoning_usd_per_million",
+            "cached_input_usd_per_million",
+            "cache_creation_input_usd_per_million",
+            "web_search_usd_per_request",
+        )
+    }
+    vector_hash = hashlib.sha256(json.dumps(vector, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return f"{_MATCH_VERSION}:catalog-sha256:{catalog_sha256}:rates-sha256:{vector_hash}"
+
+
+def resolve_pricing_from_observation(
+    provider: str,
+    model: str,
+    started_at: str,
+    observation: CatalogObservation | None,
+    *,
+    use_existing: bool = True,
+) -> tuple[dict[str, Any] | None, str]:
+    """Resolve event-time pricing, binding an actual model to pre-attempt evidence."""
+    from aletheia.economics.tracing import resolve_pricing_snapshot
+
+    if use_existing:
+        existing = resolve_pricing_snapshot(provider, model, started_at)
+        if existing is not None:
+            return existing, "formula_priced"
+    if observation is None:
+        return None, "pricing_snapshot_missing"
+    try:
+        observed = datetime.fromisoformat(observation.observed_at.replace("Z", "+00:00"))
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None, "pricing_snapshot_missing"
+    if observed > started:
+        return None, "catalog_observed_after_event"
+    entries = _match_entries(_build_price_index(observation.price_map()), model)
+    rates = _representative_rates(entries) if entries else None
+    if rates is None:
+        request_model_pricing_refresh(provider, model, observation.catalog_sha256)
+        return None, "model_unmatched"
+    version = _rate_vector_version(observation.catalog_sha256, rates)
+    snapshot = add_catalog_pricing_snapshot(
+        provider=provider,
+        model=model,
+        input_usd_per_million=float(rates["input_usd_per_million"]),
+        output_usd_per_million=float(rates["output_usd_per_million"]),
+        reasoning_usd_per_million=(
+            float(rates["reasoning_usd_per_million"]) if "reasoning_usd_per_million" in rates else None
+        ),
+        cached_input_usd_per_million=(
+            float(rates["cached_input_usd_per_million"]) if "cached_input_usd_per_million" in rates else None
+        ),
+        cache_creation_input_usd_per_million=(
+            float(rates["cache_creation_input_usd_per_million"])
+            if "cache_creation_input_usd_per_million" in rates
+            else None
+        ),
+        web_search_usd_per_request=(
+            float(rates["web_search_usd_per_request"]) if "web_search_usd_per_request" in rates else None
+        ),
+        effective_from=observation.observed_at,
+        source=_SOURCE_PREFIX + observation.source_url,
+        version=version,
+    )
+    return snapshot, "formula_priced"
+
+
+def request_model_pricing_refresh(provider: str, model: str, catalog_sha256: str) -> bool:
+    """Single-flight unmatched refresh with a six-hour per-catalog negative cache."""
+    key = (provider, model, catalog_sha256)
+    now = time.monotonic()
+    with _state_lock:
+        if _negative_refresh.get(key, 0) > now:
+            return False
+        _negative_refresh[key] = now + _REFRESH_INTERVAL_SECONDS
+    try:
+        start_pricing_refresh(trigger="model_unmatched")
+        return True
+    except Exception:
+        with _state_lock:
+            _negative_refresh.pop(key, None)
+        return False
 
 
 def _may_write_catalog_snapshot(provider: str, model: str, version: str) -> bool:
@@ -248,9 +498,12 @@ def refresh_pricing(
     a public-market median and never labelled provider-billed or known cost.
     """
     price_map, content = fetcher()
-    _save_cache(content)
-    version = _MATCH_VERSION + ":sha256:" + hashlib.sha256(content).hexdigest()
+    if json.loads(content) != price_map:
+        raise ValueError("LiteLLM parsed price map does not match cached bytes")
     effective_from = _utcnow()
+    observation = _save_cache(content) or _observation(content, effective_from)
+    effective_from = observation.observed_at
+    catalog_version = _MATCH_VERSION + ":catalog-sha256:" + observation.catalog_sha256
     source = _SOURCE_PREFIX + LITELLM_PRICE_MAP_URL
     created = matched = 0
     unmatched: list[str] = []
@@ -266,6 +519,7 @@ def refresh_pricing(
             continue
         matched += 1
         samples[f"{provider}/{model}"] = rates
+        version = _rate_vector_version(observation.catalog_sha256, rates)
         if not _may_write_catalog_snapshot(provider, model, version):
             continue
         add_catalog_pricing_snapshot(
@@ -274,19 +528,18 @@ def refresh_pricing(
             input_usd_per_million=float(rates["input_usd_per_million"]),
             output_usd_per_million=float(rates["output_usd_per_million"]),
             reasoning_usd_per_million=(
-                float(rates["reasoning_usd_per_million"])
-                if "reasoning_usd_per_million" in rates
-                else None
+                float(rates["reasoning_usd_per_million"]) if "reasoning_usd_per_million" in rates else None
             ),
             cached_input_usd_per_million=(
-                float(rates["cached_input_usd_per_million"])
-                if "cached_input_usd_per_million" in rates
+                float(rates["cached_input_usd_per_million"]) if "cached_input_usd_per_million" in rates else None
+            ),
+            cache_creation_input_usd_per_million=(
+                float(rates["cache_creation_input_usd_per_million"])
+                if "cache_creation_input_usd_per_million" in rates
                 else None
             ),
             web_search_usd_per_request=(
-                float(rates["web_search_usd_per_request"])
-                if "web_search_usd_per_request" in rates
-                else None
+                float(rates["web_search_usd_per_request"]) if "web_search_usd_per_request" in rates else None
             ),
             effective_from=effective_from,
             source=source,
@@ -294,7 +547,7 @@ def refresh_pricing(
         )
         created += 1
     return {
-        "version": version,
+        "version": catalog_version,
         "fetched_model_count": len(price_map),
         "matched_model_count": matched,
         "snapshots_created": created,

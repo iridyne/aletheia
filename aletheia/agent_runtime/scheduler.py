@@ -39,6 +39,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "data_collector_context",
     "connectivity_monitor",
     "portfolio_snapshot",
+    "pricing_reference_refresh",
     "price_feed",
     "position_manager",
     "position_path_observer",
@@ -1145,6 +1146,16 @@ def _initial_learning_evaluator_run_time(
     return min(durable_due, default_run)
 
 
+def _run_pricing_reference_refresh() -> None:
+    try:
+        from aletheia.economics.pricing_sync import start_pricing_refresh
+
+        start_pricing_refresh(trigger="periodic")
+    except Exception as exc:
+        logger.warning("pricing_reference_refresh job failed: %s", exc)
+        _record_job_failure("pricing_reference_refresh", str(exc))
+
+
 def init_scheduler() -> BackgroundScheduler | None:
     """Initialize and start the background scheduler.
 
@@ -1268,6 +1279,17 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
         id="confidence_calibration", misfire_grace_time=300, executor="io",
+    )
+    _scheduler.add_job(
+        _guarded(
+            "pricing_reference_refresh",
+            _run_pricing_reference_refresh,
+        ),
+        "interval",
+        hours=6,
+        id="pricing_reference_refresh",
+        misfire_grace_time=300,
+        executor="io",
     )
     _scheduler.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
@@ -3642,16 +3664,77 @@ _DAILY_LEARNING_CATCHUP_JOBS = (
     ("insight_synthesizer", _run_insight_synthesizer),
     ("lesson_reviewer", _run_lesson_reviewer),
 )
+_LEARNING_STARTUP_CATCHUP_RETRY_JOB_ID = "learning_startup_catchup_retry"
+_LEARNING_STARTUP_CATCHUP_RETRY_DELAY = timedelta(minutes=10)
+
+
+def _schedule_learning_startup_catchup_retry(remaining_due: list[str]) -> bool:
+    scheduler = _scheduler
+    if scheduler is None:
+        return False
+    try:
+        scheduler.add_job(
+            _guarded("learning_startup_catchup", _run_learning_startup_catchup),
+            "date",
+            run_date=datetime.now() + _LEARNING_STARTUP_CATCHUP_RETRY_DELAY,
+            id=_LEARNING_STARTUP_CATCHUP_RETRY_JOB_ID,
+            replace_existing=True,
+            misfire_grace_time=None,
+            executor="agents",
+        )
+        logger.warning(
+            "learning_startup_catchup incomplete for %s; retry scheduled",
+            ",".join(remaining_due),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("learning_startup_catchup retry scheduling failed: %s", exc)
+        return False
+
+
+def _clear_learning_startup_catchup_retry() -> None:
+    scheduler = _scheduler
+    if scheduler is None:
+        return
+    try:
+        if scheduler.get_job(_LEARNING_STARTUP_CATCHUP_RETRY_JOB_ID) is not None:
+            scheduler.remove_job(_LEARNING_STARTUP_CATCHUP_RETRY_JOB_ID)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("learning_startup_catchup retry cleanup failed: %s", exc)
 
 
 def _run_learning_startup_catchup():
-    """Run each latest missed daily Learning window once, in dependency order."""
+    """Run each latest missed daily Learning window and retry incomplete work."""
     try:
         from aletheia.learning.control import daily_catchup_due
 
+        results = []
+        remaining_due: list[str] = []
+
         for job_id, fn in _DAILY_LEARNING_CATCHUP_JOBS:
+            if not daily_catchup_due(job_id):
+                results.append({"job_id": job_id, "status": "not_due"})
+                continue
+            _run_job_guarded(job_id, fn)
             if daily_catchup_due(job_id):
-                _run_job_guarded(job_id, fn)
+                results.append({"job_id": job_id, "status": "failed"})
+                remaining_due.append(job_id)
+            else:
+                results.append({"job_id": job_id, "status": "succeeded"})
+        retry_scheduled = False
+        if remaining_due:
+            retry_scheduled = _schedule_learning_startup_catchup_retry(remaining_due)
+            _record_job_failure(
+                "learning_startup_catchup",
+                f"incomplete_children:{','.join(remaining_due)}",
+            )
+        else:
+            _clear_learning_startup_catchup_retry()
+        return {
+            "children": results,
+            "remaining_due": remaining_due,
+            "retry_scheduled": retry_scheduled,
+        }
     except Exception as e:
         logger.warning("learning_startup_catchup failed: %s", e)
         _record_job_failure("learning_startup_catchup", str(e))
