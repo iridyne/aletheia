@@ -2,11 +2,12 @@
 
 import hashlib
 import logging
+from pathlib import Path
 
 from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
-    insert_knowledge_item, update_knowledge_item, list_knowledge_items,
-    knowledge_hash_exists, knowledge_title_exists_within,
+    insert_knowledge_item, insert_knowledge_item_if_absent, update_knowledge_item,
+    list_knowledge_items,
 )
 
 logger = logging.getLogger("aletheia.knowledge.manager")
@@ -76,6 +77,36 @@ def _index(item, content: str) -> None:
         logger.warning("_index failed for %s: %s", getattr(item, "id", "?"), e)
 
 
+def _publish_idempotent(
+    item: KnowledgeItem,
+    content: str,
+    path: Path,
+    *,
+    title_window_hours: int | None = None,
+) -> KnowledgeItem | None:
+    try:
+        created, existing_id, reason = insert_knowledge_item_if_absent(
+            item,
+            title_window_hours=title_window_hours,
+        )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    if not created:
+        path.unlink(missing_ok=True)
+        logger.info(
+            "knowledge_skipped:%s item_type=%s existing_id=%s hash=%s title=%s",
+            reason or "duplicate",
+            item.item_type,
+            existing_id,
+            item.content_hash,
+            item.title,
+        )
+        return None
+    _index(item, content)
+    return item
+
+
 def create_research_note(title: str, content: str, confidence: str = "medium_confidence", metadata: dict | None = None) -> KnowledgeItem | None:
     if confidence not in VALID_CONFIDENCES:
         raise ValueError(f"Invalid confidence: {confidence}")
@@ -83,9 +114,6 @@ def create_research_note(title: str, content: str, confidence: str = "medium_con
         logger.info("knowledge_skipped:quality_gate item_type=research_note len=%d", len(content))
         return None
     ch = _content_hash(content)
-    if knowledge_hash_exists("research_note", ch):
-        logger.info("knowledge_skipped:duplicate item_type=research_note hash=%s", ch)
-        return None
     path = write_research_note(title, content, metadata)
     item = KnowledgeItem(
         item_type="research_note",
@@ -97,26 +125,14 @@ def create_research_note(title: str, content: str, confidence: str = "medium_con
         confidence=confidence,
         content_hash=ch,
     )
-    try:
-        insert_knowledge_item(item)
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
-    _index(item, content)
-    return item
+    return _publish_idempotent(item, content, path)
 
 
 def create_dreaming_log(title: str, content: str) -> KnowledgeItem | None:
     if not _is_quality_pass(content):
         logger.info("knowledge_skipped:quality_gate item_type=dreaming_log len=%d", len(content))
         return None
-    if knowledge_title_exists_within("dreaming_log", title, hours=6):
-        logger.info("knowledge_skipped:title_window item_type=dreaming_log title=%s", title)
-        return None
     ch = _content_hash(content)
-    if knowledge_hash_exists("dreaming_log", ch):
-        logger.info("knowledge_skipped:duplicate item_type=dreaming_log hash=%s", ch)
-        return None
     path = write_dreaming_log(title, content)
     item = KnowledgeItem(
         item_type="dreaming_log",
@@ -126,13 +142,7 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem | None:
         confidence="high_confidence",
         content_hash=ch,
     )
-    try:
-        insert_knowledge_item(item)
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
-    _index(item, content)
-    return item
+    return _publish_idempotent(item, content, path, title_window_hours=6)
 
 
 def create_daily_review(title: str, content: str) -> KnowledgeItem | None:
@@ -171,9 +181,6 @@ def create_post_trade_review(
         logger.info("knowledge_skipped:quality_gate item_type=post_trade_review len=%d", len(content))
         return None
     ch = _content_hash(content)
-    if knowledge_hash_exists("post_trade_review", ch):
-        logger.info("knowledge_skipped:duplicate item_type=post_trade_review hash=%s", ch)
-        return None
     path = write_post_trade_review(title, content, metadata)
     item = KnowledgeItem(
         item_type="post_trade_review",
@@ -185,13 +192,7 @@ def create_post_trade_review(
         content_hash=ch,
         tags=_json.dumps(tags or [], ensure_ascii=False),
     )
-    try:
-        insert_knowledge_item(item)
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
-    _index(item, content)
-    return item
+    return _publish_idempotent(item, content, path)
 
 
 def create_strategy_memory(strategy_id: str, title: str, content: str) -> KnowledgeItem:
@@ -229,9 +230,6 @@ def create_trade_case_study(
         logger.warning("knowledge_skipped:quality_gate item_type=trade_case_study len=%d title=%r", len(content), title)
         return None
     ch = _content_hash(content)
-    if knowledge_hash_exists("trade_case_study", ch):
-        logger.info("knowledge_skipped:duplicate item_type=trade_case_study hash=%s", ch)
-        return None
     path = write_trade_case_study(title, content, metadata)
     item = KnowledgeItem(
         item_type="trade_case_study",
@@ -242,13 +240,7 @@ def create_trade_case_study(
         confidence=confidence,
         content_hash=ch,
     )
-    try:
-        insert_knowledge_item(item)
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
-    _index(item, content)
-    return item
+    return _publish_idempotent(item, content, path)
 
 
 def create_trading_guard(

@@ -1324,7 +1324,7 @@ def _observer_assessment_from_metadata(value: Any) -> dict | None:
     assessment = metadata.get("observer_assessment") if isinstance(metadata, dict) else None
     if not isinstance(assessment, dict):
         return None
-    return {
+    rendered = {
         "version": assessment.get("version"),
         "direction_bias": assessment.get("direction_bias"),
         "confidence": assessment.get("confidence"),
@@ -1338,6 +1338,11 @@ def _observer_assessment_from_metadata(value: Any) -> dict | None:
         "scanner_direction": assessment.get("scanner_direction"),
         "direction_conflict": bool(assessment.get("direction_conflict")),
     }
+    if assessment.get("inference_call_id") is not None:
+        rendered["inference_call_id"] = assessment.get("inference_call_id")
+    if assessment.get("technical_context") is not None:
+        rendered["technical_context"] = assessment.get("technical_context")
+    return rendered
 
 
 def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -1824,9 +1829,10 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 account_available_value,
                 account_equity_value,
                 get_cached_state,
+                status_for,
             )
             state = get_cached_state()
-            if state and state.get("age_seconds", 999) < 300:
+            if status_for(state, max_age_sec=300) == "ok":
                 layer["balance"] = {
                     "equity_usdt": account_equity_value(state),
                     "available_usdt": account_available_value(state),

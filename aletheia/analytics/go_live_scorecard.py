@@ -309,7 +309,7 @@ def _check_exchange_connectivity(live_evidence: dict | None = None) -> dict:
         if selected_mode == "paper_internal":
             return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "internal paper account")
 
-        from aletheia.portfolio.exchange_sync import get_unified_cached_state
+        from aletheia.portfolio.exchange_sync import get_unified_cached_state, status_for
 
         state = get_unified_cached_state()
         connected = set(state.get("connected_brokers") or []) if state else set()
@@ -318,7 +318,7 @@ def _check_exchange_connectivity(live_evidence: dict | None = None) -> dict:
                 str(account.get("broker_id") or "")
                 for account in (state.get("accounts") or [])
             }
-        if state and state.get("age_seconds", 999) < 300 and selected_mode in connected:
+        if status_for(state, max_age_sec=300) == "ok" and selected_mode in connected:
             return _criterion(
                 "exchange_ok", "Exchange Connected", 100, 0.09,
                 f"{selected_mode} connected",

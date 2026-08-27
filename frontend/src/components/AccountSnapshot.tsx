@@ -7,7 +7,11 @@ import { positionFreshness, positionKeys } from '../lib/queryKeys'
 
 export default function AccountSnapshot() {
   const navigate = useNavigate()
-  const { data: portfolio, isError: portfolioError } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  const {
+    data: portfolio,
+    isError: portfolioError,
+    dataUpdatedAt: portfolioUpdatedAt,
+  } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   const { data: positions, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
   const { data: proposals, isError: proposalsError } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
 
@@ -19,20 +23,30 @@ export default function AccountSnapshot() {
     : []
 
   const p = portfolio as any
+  const portfolioAvailable = p != null
+  const cachedPortfolioAgeSec = portfolioAvailable && portfolioUpdatedAt > 0
+    ? Math.max(0, Math.round((Date.now() - portfolioUpdatedAt) / 1000))
+    : null
+  const portfolioReadFailureCaveat = portfolioError
+    ? portfolioAvailable
+      ? `cached · portfolio read failed · ${cachedPortfolioAgeSec ?? 0}s old`
+      : 'portfolio read failed'
+    : null
 
   // total_value_usdt already prefers UTA unified > exchange_equity > local notional
   const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
   const utaStatus: string | undefined = p?.uta_state?.sync_status
   const displayValue = fmtNum(p?.total_value_usdt)
   const syncCaveat =
-    p?.uta_state != null
+    portfolioReadFailureCaveat ??
+    (p?.uta_state != null
       ? utaStatus === 'ok' ? 'unified · live' : utaStatus === 'stale' ? 'unified · data stale' : utaStatus === 'error' ? 'unified · sync error' : 'unified · not configured'
       : p?.exchange_equity_usdt != null
         ? syncStatus === 'stale' ? 'exchange · data stale' : 'exchange · live'
       : syncStatus === 'not_applicable' ? 'local paper · no exchange'
       : syncStatus === 'unconfigured' ? 'exchange not configured'
         : syncStatus === 'error' ? 'exchange sync error'
-        : 'exchange sync pending'
+        : 'exchange sync pending')
 
   // "Today PnL" prefers the real day figure. #56 fix (2026-07-08): the
   // backend's `today_pnl` field is a legacy misnomer — it's actually
@@ -66,6 +80,7 @@ export default function AccountSnapshot() {
         value={`${todayPnlText} USDT`}
         tone={todayPnlTone}
         caveat={
+          portfolioReadFailureCaveat ??
           !todayRealizedComplete ? 'funding or close economics unavailable' :
           usingUnrealizedFallback ? 'unrealized · today figure unavailable' :
           // #56: the legacy today_pnl includes lifetime uPnL of open positions.

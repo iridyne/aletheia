@@ -307,9 +307,50 @@ def test_machine_service_start_has_one_migration_owner_before_service(tmp_path, 
         "start",
         lambda **_kwargs: events.append("service_start") or {"ok": True},
     )
+    monkeypatch.setattr(
+        lifecycle,
+        "_verify_started",
+        lambda _cfg: events.append("readiness") or True,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_auto_start_tunnel",
+        lambda _cfg: events.append("tunnel"),
+    )
 
-    assert lifecycle.do_start(no_browser=True) is False
-    assert events == ["migrate", "service_start"]
+    assert lifecycle.do_start(no_browser=True) is True
+    assert events == ["migrate", "service_start", "readiness", "tunnel"]
+
+
+def test_machine_service_start_exits_when_readiness_is_unproven(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    events: list[str] = []
+    monkeypatch.setattr(service_control, "is_machine_selected", lambda: True)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(
+        lifecycle,
+        "_apply_gateway_migrations",
+        lambda: events.append("migrate") or True,
+    )
+    monkeypatch.setattr(
+        service_control,
+        "start",
+        lambda **_kwargs: events.append("service_start") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_verify_started",
+        lambda _cfg: events.append("readiness") or False,
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        lifecycle.do_start(no_browser=True)
+
+    assert exc.value.exit_code == 2
+    assert events == ["migrate", "service_start", "readiness"]
 
 
 def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch, capsys):

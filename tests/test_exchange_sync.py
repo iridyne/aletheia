@@ -173,6 +173,52 @@ def test_status_stale_when_cache_too_old(tmp_path, monkeypatch):
     assert es.status_for(cached) == "stale"
 
 
+def test_future_account_timestamp_is_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import exchange_sync as es
+
+    es._store(es.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=100.0,
+        available_usdt=100.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    cached = es.get_cached_state("demo")
+    assert cached is not None
+    assert cached["age_seconds"] < 0
+    assert es.status_for(cached) == "stale"
+    assert es.status_for({"age_seconds": float("nan")}) == "stale"
+    assert es.status_for({"age_seconds": float("inf")}) == "stale"
+
+
+@pytest.mark.asyncio
+async def test_uta_state_uses_canonical_future_timestamp_status(monkeypatch):
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.server.routes import bitget
+
+    monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
+        "total_equity_usdt": 100.0,
+        "total_available_usdt": 100.0,
+        "total_unrealized_pnl": 0.0,
+        "accounts": [],
+        "positions": [],
+        "errors": [],
+        "fetched_at": "future",
+        "age_seconds": -5.0,
+    })
+
+    payload = await bitget.uta_state()
+
+    assert payload["sync_status"] == "stale"
+
+
 # --- portfolio integration: new fields exposed ---
 
 def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):

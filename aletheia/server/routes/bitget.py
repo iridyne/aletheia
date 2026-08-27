@@ -408,7 +408,8 @@ async def uta_state():
 
     unified = get_unified_cached_state()
     if unified is not None:
-        return unified
+        sync_status = status_for(unified)
+        return {**unified, "sync_status": sync_status}
 
     # Fallback is valid only for the Bitget demo account that owns this legacy
     # cache.  Never present it as the selected OKX/Binance account.
