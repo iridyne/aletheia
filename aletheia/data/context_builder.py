@@ -267,7 +267,9 @@ def render_enriched_context_md(
 
     # --- Macro ---
     if macro:
-        lines = [f"**Risk regime**: {macro.risk_regime}"]
+        lines = []
+        if macro.risk_regime and macro.risk_regime != "unavailable":
+            lines.append(f"**Risk regime**: {macro.risk_regime}")
         if macro.btc_dominance is not None:
             lines.append(f"BTC.D: {macro.btc_dominance:.1f}%")
         if macro.total_market_cap_usd is not None:
@@ -287,7 +289,8 @@ def render_enriched_context_md(
             lines.append(f"Fear & Greed: {macro.fng_value}{cls}")
         if macro.top_movers_summary:
             lines.append(f"24h movers: {macro.top_movers_summary}")
-        sections.append("### Macro context\n" + "  \n".join(lines))
+        if lines:
+            sections.append("### Macro context\n" + "  \n".join(lines))
 
     # --- On-chain (DefiLlama; zero-key, fills the Glassnode hole) ---
     if onchain:

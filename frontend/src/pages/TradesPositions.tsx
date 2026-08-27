@@ -65,11 +65,12 @@ const TradeInsightsPanel = lazy(() => import("../charts/TradeInsightsPanel"));
 const posCol = createColumnHelper<Position>();
 const ordCol = createColumnHelper<Order>();
 
-const pnlCell = (v: number | null | undefined) => {
+export const pnlCell = (v: number | null | undefined) => {
 	// Null/unknown PnL must not read as a flat green gain — show a muted dash.
 	if (v == null) return <span className="mono text-muted">—</span>;
+	if (v === 0) return <span className="mono">{fmtNum(v)}</span>;
 	return (
-		<span className={`mono ${v >= 0 ? "pnl-positive" : "pnl-negative"}`}>
+		<span className={`mono ${v > 0 ? "pnl-positive" : "pnl-negative"}`}>
 			{fmtSigned(v)}
 		</span>
 	);

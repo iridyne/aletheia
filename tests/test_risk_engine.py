@@ -2,6 +2,7 @@
 
 import pytest
 import json
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from aletheia.storage.sqlite import reset_db
@@ -42,6 +43,127 @@ def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
     result = evaluate_proposal(proposal)
     assert result.approved is True
     assert len(result.violations) == 0
+    reset_db()
+
+
+def test_risk_distinguishes_zero_exchange_equity_from_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync
+    from aletheia.risk import engine
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    exchange_sync._store(exchange_sync.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=0.0,
+        available_usdt=0.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    policy = resolve_risk_policy(cfg, "bitget_demo").policy
+
+    assert engine._account_equity("bitget_demo", cfg) == 0.0
+    assert engine._resolve_capital_base("bitget_demo", policy, cfg) == (
+        None,
+        "account_equity_non_positive:bitget_demo",
+    )
+    reset_db()
+
+
+@pytest.mark.parametrize(
+    "field, value, violation",
+    [
+        ("expected_horizon_hours", 0.0, "invalid_expected_horizon_hours"),
+        ("expected_horizon_hours", -1.0, "invalid_expected_horizon_hours"),
+        ("expected_horizon_hours", float("nan"), "invalid_expected_horizon_hours"),
+        ("expected_horizon_hours", float("inf"), "invalid_expected_horizon_hours"),
+        ("stop_source", "human", "invalid_stop_source"),
+    ],
+)
+def test_risk_rejects_invalid_exit_intent_before_side_effects(
+    tmp_path,
+    monkeypatch,
+    field,
+    value,
+    violation,
+):
+    setup_test_env(tmp_path, monkeypatch)
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **trade,
+    ).model_copy(update={field: value})
+
+    result = evaluate_proposal(proposal, decision_role="preflight")
+
+    assert result.approved is False
+    assert violation in result.violations
+    assert repo.list_orders() == []
+    assert repo.list_positions(status="open") == []
+    reset_db()
+
+
+@pytest.mark.parametrize(
+    "intent, reason_code",
+    [
+        (
+            {"expected_horizon_hours": float("inf"), "stop_source": "operator"},
+            "invalid_expected_horizon_hours",
+        ),
+        (
+            {"expected_horizon_hours": 4.0, "stop_source": "human"},
+            "invalid_stop_source",
+        ),
+    ],
+)
+def test_gateway_rejects_invalid_exit_intent_before_persisting(
+    tmp_path,
+    monkeypatch,
+    intent,
+    reason_code,
+):
+    setup_test_env(tmp_path, monkeypatch)
+
+    result = submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **intent,
+    )
+
+    assert result["status"] == "rejected"
+    assert result["proposal_id"] is None
+    assert result["reason_code"] == reason_code
+    assert repo.list_trade_proposals() == []
     reset_db()
 
 

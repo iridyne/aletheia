@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v44"
+SCHEMA_VERSION = "aletheia-sqlite-v45"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3709,6 +3709,18 @@ _LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM = hashlib.sha256(
         _LEARNING_DRAFT_SKILL_LINEAGE_SQL
         + "\nlearning_draft_skill_lineage_v1"
     ).encode("utf-8")
+).hexdigest()
+
+_COINGECKO_SOURCE_TIME_COLUMNS = (
+    ("source_observed_at", "coingecko_top_snapshots", "TEXT"),
+    ("acquired_at", "coingecko_top_snapshots", "TEXT"),
+    ("batch_id", "coingecko_top_snapshots", "TEXT"),
+    ("source_age_sec", "coingecko_top_snapshots", "INTEGER"),
+)
+_COINGECKO_SOURCE_TIME_CHECKSUM = hashlib.sha256(
+    (repr(_COINGECKO_SOURCE_TIME_COLUMNS) + "\ncoingecko_source_time_v1").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 _LESSON_REVIEWER_ATTEMPTS_SQL = """
@@ -5292,6 +5304,12 @@ _MIGRATION_DESCRIPTIONS = {
     "20260826_0042_opportunity_generation_v43": (
         "immutable Crypto Opportunity generations and entry-validity evidence"
     ),
+    "20260826_0043_coingecko_source_time_v44": (
+        "CoinGecko provider source-time provenance"
+    ),
+    "20260827_0044_learning_draft_skill_lineage_v45": (
+        "typed lesson lineage and one generated draft skill per lesson"
+    ),
 }
 
 
@@ -5506,7 +5524,7 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
 
 
-def _apply_learning_draft_skill_lineage_v44(db: sqlite3.Connection) -> None:
+def _apply_learning_draft_skill_lineage_v45(db: sqlite3.Connection) -> None:
     """Add typed lesson lineage and enforce one generated draft skill per lesson."""
 
     tables = {
@@ -5569,6 +5587,23 @@ def _apply_learning_draft_skill_lineage_v44(db: sqlite3.Connection) -> None:
 
     db.executescript(_LEARNING_DRAFT_SKILL_LINEAGE_SQL)
     db.execute("PRAGMA optimize")
+
+
+def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
+    """Add provider source-time provenance without rewriting legacy rows."""
+
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    for column, table, column_type in _COINGECKO_SOURCE_TIME_COLUMNS:
+        if table not in tables:
+            continue
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
@@ -6373,10 +6408,16 @@ _MIGRATIONS = (
         apply=_apply_opportunity_generation_v42,
     ),
     MigrationStep(
-        migration_id="20260827_0043_learning_draft_skill_lineage_v44",
-        checksum=_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM,
+        migration_id="20260826_0043_coingecko_source_time_v44",
+        checksum=_COINGECKO_SOURCE_TIME_CHECKSUM,
         schema_version="aletheia-sqlite-v44",
-        apply=_apply_learning_draft_skill_lineage_v44,
+        apply=_apply_coingecko_source_time_v44,
+    ),
+    MigrationStep(
+        migration_id="20260827_0044_learning_draft_skill_lineage_v45",
+        checksum=_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM,
+        schema_version="aletheia-sqlite-v45",
+        apply=_apply_learning_draft_skill_lineage_v45,
     ),
 )
 

@@ -17,6 +17,7 @@ from typing import Any
 
 from aletheia.analytics.learning_window import outcome_window_metadata
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.learning.outcomes import assess_candidate_outcome
 from aletheia.storage.repositories import (
     SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
     complete_outcome_economics_sql,
@@ -84,8 +85,9 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
     import aletheia.storage.sqlite as sqlite_store
 
     days = _normalize_days(days)
-    generated_at = _utcnow().isoformat(timespec="seconds")
-    cutoff = (_utcnow() - timedelta(days=days)).isoformat()
+    now = _utcnow()
+    generated_at = now.isoformat(timespec="seconds")
+    cutoff = (now - timedelta(days=days)).isoformat()
 
     if getattr(sqlite_store, "_db_conn", None) is None and not sqlite_store.db_path().exists():
         return _empty_report(generated_at, days, "Database is not initialized; no alpha evidence is available.")
@@ -96,11 +98,23 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         return _empty_report(generated_at, days, "Database could not be opened; no alpha evidence is available.")
 
     verdicts = {
-        "universe": _safe_layer("Universe Alpha", lambda: _universe_alpha(db, cutoff, min_sample_size)),
-        "ranker": _safe_layer("Ranker Alpha", lambda: _ranker_alpha(db, cutoff, min_sample_size)),
-        "system_operator": _safe_layer("System Operator Alpha", lambda: _system_operator_alpha(db, cutoff, min_sample_size)),
+        "universe": _safe_layer(
+            "Universe Alpha",
+            lambda: _universe_alpha(db, cutoff, generated_at, min_sample_size),
+        ),
+        "ranker": _safe_layer(
+            "Ranker Alpha",
+            lambda: _ranker_alpha(db, cutoff, generated_at, min_sample_size),
+        ),
+        "system_operator": _safe_layer(
+            "System Operator Alpha",
+            lambda: _system_operator_alpha(db, cutoff, generated_at, min_sample_size),
+        ),
         "learning": _safe_layer("Learning Alpha", lambda: _learning_alpha(db, cutoff, days, min_sample_size)),
-        "serenity": _safe_layer("Serenity Alpha", lambda: _serenity_alpha(db, cutoff, min_sample_size)),
+        "serenity": _safe_layer(
+            "Serenity Alpha",
+            lambda: _serenity_alpha(db, cutoff, generated_at, min_sample_size),
+        ),
     }
 
     return {
@@ -112,7 +126,12 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "universe_relative_rank_evidence": _universe_relative_rank_evidence(db, cutoff),
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "exit_trailing_qualification": _exit_trailing_qualification(cutoff),
-        "risk_policy_evidence": _risk_policy_evidence(db, cutoff, min_sample_size),
+        "risk_policy_evidence": _risk_policy_evidence(
+            db,
+            cutoff,
+            generated_at,
+            min_sample_size,
+        ),
         "execution_cost_evidence": _execution_cost_evidence(
             db, cutoff, min_sample_size
         ),
@@ -546,7 +565,7 @@ def _empty_risk_policy_evidence(reason: str) -> dict:
     return empty_risk_policy_contribution(reason)
 
 
-def _risk_policy_evidence(db, cutoff: str, min_sample_size: int) -> dict:
+def _risk_policy_evidence(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
     from aletheia.analytics.risk_contribution import (
         build_risk_policy_contribution,
     )
@@ -555,6 +574,7 @@ def _risk_policy_evidence(db, cutoff: str, min_sample_size: int) -> dict:
         return build_risk_policy_contribution(
             db,
             cutoff=cutoff,
+            as_of_at=as_of_at,
             min_sample_size=min_sample_size,
             min_interventions=min_sample_size,
         )
@@ -744,8 +764,15 @@ def render_alpha_audit(report: dict) -> str:
     return "\n".join(lines)
 
 
-def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
-    causal = _causal_control_alpha(db, "universe", "Universe Alpha", cutoff, min_sample_size)
+def _universe_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
+    causal = _causal_control_alpha(
+        db,
+        "universe",
+        "Universe Alpha",
+        cutoff,
+        as_of_at,
+        min_sample_size,
+    )
     if causal is not None:
         return causal
 
@@ -815,9 +842,9 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     )
 
 
-def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
-    contract = db.execute(
-        "SELECT s.policy_epoch_id, fo.cost_model_version "
+def _ranker_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
+    contract_rows = db.execute(
+        "SELECT s.policy_epoch_id, fo.* "
         "FROM shadow_trades s JOIN filter_candidate_outcomes fo "
         "ON fo.outcome_candidate_key=s.outcome_candidate_key "
         "WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id IS NOT NULL "
@@ -833,9 +860,17 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         f"AND julianday(s.created_at)<=julianday(fo.entry_ts, "
         f"'+{SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC} seconds') "
         "AND datetime(fo.entry_ts) >= datetime(?) "
-        "ORDER BY datetime(fo.entry_ts) DESC, datetime(s.created_at) DESC, s.id DESC LIMIT 1",
+        "ORDER BY datetime(fo.entry_ts) DESC, datetime(s.created_at) DESC, s.id DESC",
         (cutoff,),
-    ).fetchone()
+    ).fetchall()
+    contract = next(
+        (
+            dict(row)
+            for row in contract_rows
+            if assess_candidate_outcome(dict(row), as_of_at=as_of_at).eligible
+        ),
+        None,
+    )
     if not contract:
         return _verdict(
             "Ranker Alpha",
@@ -859,8 +894,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
     rows = db.execute(
         "WITH candidates AS ("
-        " SELECT s.batch_id, s.outcome_candidate_key, s.rank, fo.net_return_pct,"
-        " s.created_at AS ranked_at, fo.entry_ts,"
+        " SELECT s.batch_id, s.rank, s.created_at AS ranked_at, fo.*, "
         " ROW_NUMBER() OVER (PARTITION BY s.outcome_candidate_key "
         " ORDER BY julianday(s.created_at) ASC, s.id ASC) AS exposure_rank"
         " FROM shadow_trades s JOIN filter_candidate_outcomes fo"
@@ -876,8 +910,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         " AND (CASE WHEN lower(s.market_type) IN "
         " ('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type"
         " AND datetime(fo.entry_ts) >= datetime(?)"
-        ") SELECT batch_id, outcome_candidate_key, rank, net_return_pct, ranked_at, entry_ts "
-        "FROM candidates WHERE exposure_rank=1",
+        ") SELECT * FROM candidates WHERE exposure_rank=1",
         (
             contract["policy_epoch_id"],
             contract["cost_model_version"],
@@ -888,8 +921,14 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     batches: dict[str, list[dict]] = defaultdict(list)
     temporally_misaligned_candidates = 0
     temporally_misaligned_batch_ids: set[str] = set()
+    outcome_exclusions: dict[str, int] = defaultdict(int)
     for row in rows:
         candidate = dict(row)
+        assessment = assess_candidate_outcome(candidate, as_of_at=as_of_at)
+        if not assessment.eligible:
+            outcome_exclusions[assessment.reason] += 1
+            continue
+        candidate["net_return_pct"] = assessment.net_return_pct
         ranked_at = _parse_dt(candidate.get("ranked_at"))
         entry_at = _parse_dt(candidate.get("entry_ts"))
         if ranked_at is None or entry_at is None:
@@ -940,6 +979,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "temporally_misaligned_candidate_count": temporally_misaligned_candidates,
         "temporally_misaligned_batch_count": len(temporally_misaligned_batch_ids),
         "temporally_mixed_batch_count": temporally_mixed_batches,
+        "candidate_outcome_exclusion_counts": dict(sorted(outcome_exclusions.items())),
         "first_exposure_alignment_max_sec": SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
         "horizon": "24h",
         "statistical_unit": "outcome_candidate_key",
@@ -989,7 +1029,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     )
 
 
-def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
+def _system_operator_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
     first_exposure = (
         "WITH operator_rows AS ("
         " SELECT fd.*, fd.rowid AS source_rowid, pd.action, pd.runtime_session_id,"
@@ -1009,7 +1049,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         ") "
     )
     contract = db.execute(
-        first_exposure + "SELECT fd.producer_commit, fd.behavior_fingerprint, fo.cost_model_version "
+        first_exposure + "SELECT fd.producer_commit, fd.behavior_fingerprint, fo.* "
         "FROM first_rows fd JOIN filter_candidate_outcomes fo "
         "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
         "WHERE fo.horizon='24h' "
@@ -1019,9 +1059,17 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "AND lower(fd.direction)=lower(fo.direction) "
         "AND fd.market_type=fo.market_type "
         "AND datetime(fo.entry_ts) >= datetime(?) "
-        "ORDER BY datetime(fo.entry_ts) DESC, fd.source_rowid DESC LIMIT 1",
+        "ORDER BY datetime(fo.entry_ts) DESC, fd.source_rowid DESC",
         (cutoff,),
-    ).fetchone()
+    ).fetchall()
+    contract = next(
+        (
+            dict(row)
+            for row in contract
+            if assess_candidate_outcome(dict(row), as_of_at=as_of_at).eligible
+        ),
+        None,
+    )
     if not contract:
         return _verdict(
             "System Operator Alpha",
@@ -1043,7 +1091,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         )
 
     rows = db.execute(
-        first_exposure + "SELECT fd.outcome_candidate_key, fd.action, fo.net_return_pct, "
+        first_exposure + "SELECT fd.outcome_candidate_key, fd.action, fo.*, "
         "MAX(CASE WHEN fd.decision='rejected' THEN 1 ELSE 0 END) AS rejected, "
         "MAX(CASE WHEN fd.decision IN ('passed','passed_with_penalty') THEN 1 ELSE 0 END) AS passed "
         "FROM first_rows fd JOIN filter_candidate_outcomes fo "
@@ -1054,7 +1102,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "AND fd.venue=fo.venue AND fd.symbol=fo.symbol "
         "AND lower(fd.direction)=lower(fo.direction) AND fd.market_type=fo.market_type "
         "AND datetime(fo.entry_ts) >= datetime(?) "
-        "GROUP BY fd.outcome_candidate_key, fd.action, fo.net_return_pct",
+        "GROUP BY fd.outcome_candidate_key, fd.action, fo.id",
         (
             contract["producer_commit"],
             contract["behavior_fingerprint"],
@@ -1063,14 +1111,24 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         ),
     ).fetchall()
 
+    outcome_exclusions: dict[str, int] = defaultdict(int)
+    eligible_rows = []
+    for row in rows:
+        candidate = dict(row)
+        assessment = assess_candidate_outcome(candidate, as_of_at=as_of_at)
+        if not assessment.eligible:
+            outcome_exclusions[assessment.reason] += 1
+            continue
+        candidate["net_return_pct"] = assessment.net_return_pct
+        eligible_rows.append(candidate)
     accepted = [
         float(row["net_return_pct"])
-        for row in rows
+        for row in eligible_rows
         if row["action"] == "trade" and not int(row["rejected"] or 0) and int(row["passed"] or 0)
     ]
     rejected = [
         float(row["net_return_pct"])
-        for row in rows
+        for row in eligible_rows
         if row["action"] in {"skip", "portfolio_guard_skip"} and int(row["rejected"] or 0)
     ]
     details = {
@@ -1082,6 +1140,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "producer_commit": contract["producer_commit"],
         "behavior_fingerprint": contract["behavior_fingerprint"],
         "cost_model_version": contract["cost_model_version"],
+        "candidate_outcome_exclusion_counts": dict(sorted(outcome_exclusions.items())),
         "authority_limitations": [
             "operator_assignment_not_randomized",
             "passed_and_rejected_candidate_selection_confounded",
@@ -1290,6 +1349,10 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             )
 
         item = current_paper[0]
+        monitoring_unavailable_reason = _learning_monitoring_unavailable_reason(
+            projection,
+            item,
+        )
         measurement = item.get("measurement") or {}
         samples = item.get("samples") or {}
         integrity = item.get("integrity") or {}
@@ -1309,6 +1372,8 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
         )
         if state_has_delta and not window_compatible:
             status = "insufficient_data"
+        if monitoring_unavailable_reason is not None:
+            status = "insufficient_data"
         sample_size = min(
             int(samples.get("treatment_assignment_units") or 0),
             int(samples.get("control_assignment_units") or 0),
@@ -1322,7 +1387,9 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             measurement.get("delta") if status != "insufficient_data" else None,
             _confidence_label(sample_size, min_sample_size),
             (
-                "Current Paper Learning monitoring window is unavailable or outside the audit window."
+                "Current Paper Learning monitoring evidence is not currently available."
+                if monitoring_unavailable_reason is not None
+                else "Current Paper Learning monitoring window is unavailable or outside the audit window."
                 if state_has_delta and not window_compatible
                 else f"Current Paper Learning monitoring verdict is {state}, but only a consumed "
                 "confirmatory verdict can establish contribution."
@@ -1331,6 +1398,23 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
                 "path_id": item.get("path_id"),
                 "experiment_id": item.get("experiment_id"),
                 "stage": item.get("stage"),
+                "projection_availability": projection.get("availability"),
+                "projection_unavailable_reason": projection.get("unavailable_reason"),
+                "operations_availability": (projection.get("operations") or {}).get(
+                    "availability"
+                ) if isinstance(projection.get("operations"), dict) else None,
+                "evaluator_status": (
+                    ((projection.get("operations") or {}).get("evaluator") or {}).get(
+                        "current_status"
+                    )
+                    if isinstance((projection.get("operations") or {}).get("evaluator"), dict)
+                    else None
+                ),
+                "item_availability": item.get("availability"),
+                "item_freshness": (item.get("data_freshness") or {}).get("state")
+                if isinstance(item.get("data_freshness"), dict)
+                else None,
+                "monitoring_unavailable_reason": monitoring_unavailable_reason,
                 "allocation_pct": item.get("allocation_pct"),
                 "measurement_reason": measurement.get("reason"),
                 "measurement_authority_eligible": bool(measurement.get("authority_eligible")),
@@ -1414,6 +1498,31 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
         evidence_type="dedicated_learning_contribution_verdict",
         causal_grade="strong_prospective_control",
     )
+
+
+def _learning_monitoring_unavailable_reason(projection: dict, item: dict) -> str | None:
+    if projection.get("availability") == "unavailable":
+        return str(projection.get("unavailable_reason") or "projection_unavailable")
+    operations = projection.get("operations")
+    if not isinstance(operations, dict) or operations.get("availability") != "available":
+        return "operations_unavailable"
+    evaluator = operations.get("evaluator")
+    if not isinstance(evaluator, dict):
+        return "evaluator_unavailable"
+    if evaluator.get("current_status") != "healthy":
+        return "evaluator_unhealthy"
+    if int(evaluator.get("consecutive_failures") or 0) > 0:
+        return "evaluator_unhealthy"
+    if bool(evaluator.get("overdue")) or bool(evaluator.get("catchup_due")):
+        return "evaluator_stale"
+    if item.get("availability") != "available":
+        return str(item.get("availability") or "item_unavailable")
+    freshness = item.get("data_freshness")
+    if not isinstance(freshness, dict):
+        return "item_stale"
+    if freshness.get("state") != "fresh":
+        return str(freshness.get("state") or "item_stale")
+    return None
 
 
 def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
@@ -1541,8 +1650,15 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
     )
 
 
-def _serenity_alpha(db, cutoff: str, min_sample_size: int) -> dict:
-    causal = _causal_control_alpha(db, "serenity", "Serenity Alpha", cutoff, min_sample_size)
+def _serenity_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
+    causal = _causal_control_alpha(
+        db,
+        "serenity",
+        "Serenity Alpha",
+        cutoff,
+        as_of_at,
+        min_sample_size,
+    )
     if causal is not None:
         return causal
 
@@ -1795,7 +1911,14 @@ def _deterministic_baseline_returns(
     return returns
 
 
-def _causal_control_alpha(db, layer: str, name: str, cutoff: str, min_sample_size: int) -> dict | None:
+def _causal_control_alpha(
+    db,
+    layer: str,
+    name: str,
+    cutoff: str,
+    as_of_at: str,
+    min_sample_size: int,
+) -> dict | None:
     rows = db.execute(
         "SELECT * FROM alpha_control_observations "
         "WHERE layer = ? AND datetime(entry_ts) >= datetime(?) "
@@ -1810,7 +1933,7 @@ def _causal_control_alpha(db, layer: str, name: str, cutoff: str, min_sample_siz
     by_horizon: dict[str, dict[str, Any]] = {}
 
     for row in rows:
-        ret = _control_observation_return(db, row)
+        ret = _control_observation_return(db, row, as_of_at)
         if ret is None:
             continue
         horizon = row["horizon"]
@@ -1865,17 +1988,22 @@ def _causal_control_alpha(db, layer: str, name: str, cutoff: str, min_sample_siz
     )
 
 
-def _control_observation_return(db, row) -> float | None:
+def _control_observation_return(db, row, as_of_at: str) -> float | None:
     outcome_key = row["outcome_candidate_key"]
     if not outcome_key:
         return None
-    outcome = db.execute(
-        "SELECT net_return_pct FROM filter_candidate_outcomes "
+    outcomes = db.execute(
+        "SELECT * FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key=? AND horizon=? AND status='settled' "
-        f"AND {complete_outcome_economics_sql()} LIMIT 1",
+        f"AND {complete_outcome_economics_sql()} "
+        "ORDER BY datetime(settled_at), rowid",
         (outcome_key, row["horizon"]),
-    ).fetchone()
-    return float(outcome["net_return_pct"]) if outcome else None
+    ).fetchall()
+    for outcome in outcomes:
+        assessment = assess_candidate_outcome(dict(outcome), as_of_at=as_of_at)
+        if assessment.eligible:
+            return assessment.net_return_pct
+    return None
 
 
 def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:

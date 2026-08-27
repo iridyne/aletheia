@@ -265,13 +265,20 @@ def _run_update(*, restart: bool) -> None:
 
     if continuity_state in {"unproven", "pending_restart"}:
         proof_gaps = comparison.get("proof_gaps") or []
+        pending_restart = continuity_state == "pending_restart" and not restart
         typer.echo(
-            "Observer continuity is UNPROVEN; no verified claim was emitted.",
+            (
+                "Observer continuity is PENDING RESTART; no verified claim was emitted."
+                if pending_restart
+                else "Observer continuity is UNPROVEN; no verified claim was emitted."
+            ),
             err=True,
         )
         if proof_gaps:
             for item in proof_gaps:
                 typer.echo(f"  · {_desc(str(item))}", err=True)
+        if not pending_restart:
+            raise typer.Exit(2)
         return
 
     if result.get("continuity_verified") is True:

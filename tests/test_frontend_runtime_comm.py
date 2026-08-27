@@ -80,6 +80,14 @@ def test_routes_recover_inside_shell_and_redirect_legacy_paths():
     assert '<Route path="*" element={<NotFound />} />' in src
 
 
+def test_account_snapshot_uses_unified_sync_status_not_presence():
+    src = _read("components/AccountSnapshot.tsx")
+
+    assert "const utaStatus: string | undefined = p?.uta_state?.sync_status" in src
+    assert "utaStatus === 'ok' ? 'unified · live'" in src
+    assert "p?.uta_state != null\n      ? 'unified · live'" not in src
+
+
 def test_shared_page_header_and_table_expose_accessible_semantics():
     header = _read("components/PageHeader.tsx")
     table = _read("components/DataTable.tsx")

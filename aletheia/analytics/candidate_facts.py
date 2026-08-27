@@ -292,15 +292,18 @@ def candidate_coverage_counts(
 
     settled_keys: set[str] = set()
     outcome_cursor = db.execute(
-        "SELECT outcome_candidate_key FROM filter_candidate_outcomes "
+        "SELECT * FROM filter_candidate_outcomes "
         "WHERE horizon=? AND status='settled' "
-        "AND datetime(entry_ts) <= datetime(?) "
-        "AND (settled_at IS NULL OR datetime(settled_at) <= datetime(?))",
-        (horizon, upper_iso, upper_iso),
+        "AND datetime(entry_ts) <= datetime(?)",
+        (horizon, upper_iso),
     )
     for row in outcome_cursor:
-        key = str(row[0])
-        if key in identities:
+        record = dict(row)
+        key = str(record.get("outcome_candidate_key") or "")
+        if (
+            key in identities
+            and candidate_outcome_temporal_reason(record, as_of_at=upper) is None
+        ):
             settled_keys.add(key)
 
     candidate_count = len(identities)
