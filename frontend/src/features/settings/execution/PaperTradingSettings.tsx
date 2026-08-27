@@ -13,6 +13,7 @@ import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import type { SettingsDirtyProps } from '../types'
 
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
+type PaperCashAction = 'credit' | 'debit' | 'set'
 
 export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQueryClient>; onDirty?: (id: string, isDirty: boolean) => void }) {
   const confirm = useConfirm()
@@ -20,6 +21,7 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
+  const [operationPending, setOperationPending] = useState(false)
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['paper-account'] })
     qc.invalidateQueries({ queryKey: positionKeys.all })
@@ -27,21 +29,43 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
     qc.invalidateQueries({ queryKey: ['account-equity-history'] })
   }
   const mutate = useMutation({
-    mutationFn: ({ action, value }: { action: 'credit' | 'debit' | 'set'; value: number }) => {
+    mutationFn: ({ action, value, note }: { action: PaperCashAction; value: number; amountSnapshot: string; noteSnapshot: string; note: string }) => {
       if (action === 'credit') return api.creditPaperAccount(value, note)
       if (action === 'debit') return api.debitPaperAccount(value, note)
       return api.setPaperAccountBalance(value, note)
     },
-    onSuccess: () => { setMsg('Saved local paper account change'); setAmount(''); setNote(''); refresh() },
+    onSuccess: (_result, variables) => {
+      setMsg('Saved local paper account change')
+      setAmount(current => current === variables.amountSnapshot ? '' : current)
+      setNote(current => current === variables.noteSnapshot ? '' : current)
+      refresh()
+    },
     onError: (error: any) => setMsg(error.message || 'Account change failed'),
+    onSettled: () => setOperationPending(false),
   })
   const closeMutation = useMutation({
     mutationFn: (spotOnly: boolean) => spotOnly ? api.closePaperSpotPositions() : api.closeAllPaperPositions(),
     onSuccess: (result) => { setMsg(`Closed ${result.closed_position_ids?.length ?? 0} local position(s)`); refresh() },
     onError: (error: any) => setMsg(error.message || 'Could not close positions'),
+    onSettled: () => setOperationPending(false),
   })
   const value = Number(amount)
   const valid = Number.isFinite(value) && value >= 0
+  const accountActionPending = operationPending || mutate.isPending || closeMutation.isPending
+  const submitCash = (action: PaperCashAction) => {
+    setOperationPending(true)
+    mutate.mutate({
+      action,
+      value,
+      note,
+      amountSnapshot: amount,
+      noteSnapshot: note,
+    })
+  }
+  const submitClose = (spotOnly: boolean) => {
+    setOperationPending(true)
+    closeMutation.mutate(spotOnly)
+  }
   useSettingsDraftLifecycle({
     id: 'paper-account',
     dirty: amount !== '' || note !== '',
@@ -78,22 +102,22 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
       <Row label="Amount" hint="Add, remove, or set local simulated cash. Setting cash to 0 is preserved and blocks new local paper orders until funded again.">
         <input type="number" min="0" step="0.01" value={amount} onChange={e => { setAmount(e.target.value); setMsg(null) }} placeholder="200" />
         <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason (shown to agent)" style={{ minWidth: '180px' }} />
-        <button disabled={!valid || mutate.isPending} onClick={() => mutate.mutate({ action: 'credit', value })}>Add funds</button>
-        <button className="secondary" disabled={!valid || value <= 0 || mutate.isPending} onClick={() => mutate.mutate({ action: 'debit', value })}>Remove funds</button>
-        <button className="secondary" disabled={!valid || mutate.isPending} onClick={async () => {
-          if (await confirm({ title: 'Set local paper cash balance?', description: `${value.toFixed(2)} USDT`, confirmLabel: 'Set balance' })) mutate.mutate({ action: 'set', value })
+        <button disabled={!valid || accountActionPending} onClick={() => submitCash('credit')}>Add funds</button>
+        <button className="secondary" disabled={!valid || value <= 0 || accountActionPending} onClick={() => submitCash('debit')}>Remove funds</button>
+        <button className="secondary" disabled={!valid || accountActionPending} onClick={async () => {
+          if (await confirm({ title: 'Set local paper cash balance?', description: `${value.toFixed(2)} USDT`, confirmLabel: 'Set balance' })) submitCash('set')
         }}>Set balance</button>
       </Row>
       <div className="danger-zone" style={{ marginTop: '1rem' }}>
         <div className="danger-zone-header">Position Management</div>
         <Row label="Close local spot positions" hint="Closes every open local paper spot position at its last stored market price. Trade history remains intact.">
-          <button className="secondary" disabled={closeMutation.isPending} onClick={async () => {
-            if (await confirm({ title: 'Close local spot positions?', description: 'Every open local paper spot position will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) closeMutation.mutate(true)
+          <button className="secondary" disabled={accountActionPending} onClick={async () => {
+            if (await confirm({ title: 'Close local spot positions?', description: 'Every open local paper spot position will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) submitClose(true)
           }}>Close local spot positions</button>
         </Row>
         <Row label="Close all local positions" hint="Closes every open local paper position, including futures, at its last stored market price.">
-          <button disabled={closeMutation.isPending} onClick={async () => {
-            if (await confirm({ title: 'Close all local positions?', description: 'Every open local paper position, including futures, will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) closeMutation.mutate(false)
+          <button disabled={accountActionPending} onClick={async () => {
+            if (await confirm({ title: 'Close all local positions?', description: 'Every open local paper position, including futures, will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) submitClose(false)
           }}>Close all local positions</button>
         </Row>
       </div>
