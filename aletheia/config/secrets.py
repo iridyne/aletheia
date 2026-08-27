@@ -194,6 +194,9 @@ def get_secret(key: str) -> str | None:
     """Retrieve a secret. Returns None if not found."""
     if is_preview_mode():
         return None
+    value = _file_get(key)
+    if value is not None:
+        return value
     kr = _get_keyring()
     if kr:
         try:
@@ -202,7 +205,7 @@ def get_secret(key: str) -> str | None:
                 return value
         except Exception:
             pass
-    return _file_get(key)
+    return None
 
 
 def delete_secret(key: str) -> None:
@@ -369,8 +372,9 @@ def migrate_keyring_to_file() -> int:
     for key, value in pairs:
         if not value:
             continue
-        # Only write if the file store doesn't already have this value.
-        if _file_get(key) != value:
+        # The encrypted file is the read authority. Migration only fills a
+        # missing value; a stale keyring copy must never overwrite it.
+        if _file_get(key) is None:
             _file_set(key, value)
             migrated += 1
     return migrated

@@ -7,6 +7,7 @@ from aletheia.config.secrets import (
     get_credential_generation,
     get_secret,
     is_secret_key,
+    migrate_keyring_to_file,
     redact,
     set_secret,
 )
@@ -109,6 +110,24 @@ def test_empty_keyring_falls_through_to_authoritative_file_copy(tmp_path):
     with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
          patch("aletheia.config.secrets._get_keyring", return_value=EmptyKeyring()):
         assert get_secret("model.profile.alpha.api_key") == "file-only-secret"
+
+
+def test_stale_keyring_cannot_override_generation_bound_file_value(tmp_path):
+    class StaleKeyring:
+        def get_password(self, _service, key):
+            return "old-keyring-value" if key == "bitget.demo.api_key" else None
+
+        def set_password(self, _service, _key, _value):
+            raise RuntimeError("keyring write unavailable")
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=StaleKeyring()):
+        set_secret("bitget.demo.api_key", "new-file-value")
+
+        assert get_secret("bitget.demo.api_key") == "new-file-value"
+        assert get_credential_generation("bitget.demo") == 1
+        assert migrate_keyring_to_file() == 0
+        assert get_secret("bitget.demo.api_key") == "new-file-value"
 
 
 def test_preview_mode_never_reads_or_writes_secrets(monkeypatch):

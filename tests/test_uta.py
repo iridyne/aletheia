@@ -113,6 +113,18 @@ def test_create_broker_unknown_returns_none():
     assert b is None
 
 
+def test_selective_create_initializes_legacy_registry(monkeypatch):
+    from aletheia.portfolio.uta import registry
+
+    monkeypatch.setattr(registry, "_registered", False)
+    monkeypatch.setattr(registry, "_BROKER_REGISTRY", {})
+
+    assert registry.create_broker("__nonexistent__") is None
+    assert {"bitget_demo", "binance_testnet", "okx_demo"} <= set(
+        registry._BROKER_REGISTRY
+    )
+
+
 def test_create_broker_failing_constructor_returns_none(monkeypatch):
     def _fail():
         raise RuntimeError("creds missing")

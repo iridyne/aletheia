@@ -1,11 +1,13 @@
 import asyncio
 from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
 from aletheia.config.schema import ExchangeConfig
 from aletheia.portfolio.uta.broker_protocol import AccountInfo
-from aletheia.uta.manager import get_unified_state
+from aletheia.uta.manager import _shadow_differences, get_unified_state
 from aletheia.uta.models import (
     AccountSnapshot,
     PositionListReport,
@@ -226,3 +228,47 @@ async def test_shadow_read_never_changes_legacy_authority(monkeypatch):
     assert state.accounts[0]["identity"]["adapter_version"] == "legacy"
     assert state.accounts[0]["shadow_differences"] == ["equity"]
     assert state.shadow_errors == []
+
+
+def test_shadow_read_compares_exact_position_facts_not_only_count():
+    account = SimpleNamespace(
+        equity_usdt=100.0,
+        available_usdt=80.0,
+        unrealized_pnl=0.0,
+    )
+    uta_account = SimpleNamespace(
+        equity=Decimal("100"),
+        available=Decimal("80"),
+        unrealized_pnl=Decimal("0"),
+    )
+    legacy_position = SimpleNamespace(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        side="long",
+        quantity=1,
+        entry_price=60_000,
+        mark_price=60_100,
+        leverage=2,
+        unrealized_pnl=100,
+    )
+    uta_position = SimpleNamespace(
+        instrument=SimpleNamespace(
+            canonical_symbol="ETH/USDT", market_type="usdt_futures"
+        ),
+        side="long",
+        quantity=Decimal("1"),
+        entry_price=Decimal("60000"),
+        mark_price=Decimal("60100"),
+        leverage=Decimal("2"),
+        unrealized_pnl=Decimal("100"),
+    )
+
+    differences = _shadow_differences(
+        account,
+        [legacy_position],
+        uta_account,
+        SimpleNamespace(positions=[uta_position]),
+    )
+
+    assert "position_count" not in differences
+    assert "positions" in differences

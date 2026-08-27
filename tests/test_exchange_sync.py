@@ -220,6 +220,34 @@ async def test_uta_state_uses_canonical_future_timestamp_status(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_uta_state_offloads_credential_bound_cache_validation(monkeypatch):
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.server.routes import bitget
+
+    calls = []
+
+    async def run_in_thread(function, *args):
+        calls.append(function)
+        return function(*args)
+
+    monkeypatch.setattr(bitget.asyncio, "to_thread", run_in_thread)
+    monkeypatch.setattr(
+        es,
+        "get_unified_cached_state",
+        lambda: {
+            "total_equity_usdt": 0.0,
+            "age_seconds": 0.0,
+            "sync_status": "ok",
+        },
+    )
+
+    payload = await bitget.uta_state()
+
+    assert payload["total_equity_usdt"] == 0.0
+    assert calls == [es.get_unified_cached_state]
+
+
+@pytest.mark.asyncio
 async def test_uta_state_unconfigured_is_null_not_zero(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

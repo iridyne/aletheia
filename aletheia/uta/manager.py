@@ -327,15 +327,49 @@ def _uta_projection(boundary, account, positions):
 
 
 def _shadow_differences(legacy_account, legacy_positions, uta_account, uta_positions):
+    def decimal_value(value):
+        return None if value is None else Decimal(str(value))
+
+    legacy_position_facts = [
+        (
+            getattr(position, "position_id", None),
+            str(position.symbol),
+            str(position.market_type),
+            str(position.side).lower(),
+            decimal_value(position.quantity),
+            decimal_value(position.entry_price),
+            decimal_value(position.mark_price),
+            decimal_value(position.leverage),
+            decimal_value(position.unrealized_pnl),
+        )
+        for position in legacy_positions
+    ]
+    uta_position_facts = [
+        (
+            getattr(position, "venue_position_id", None),
+            position.instrument.canonical_symbol,
+            position.instrument.market_type,
+            str(position.side).lower(),
+            position.quantity,
+            position.entry_price,
+            position.mark_price,
+            position.leverage,
+            position.unrealized_pnl,
+        )
+        for position in uta_positions.positions
+    ]
+    legacy_position_facts.sort(key=repr)
+    uta_position_facts.sort(key=repr)
     differences = []
     comparisons = {
         "equity": (legacy_account.equity_usdt, uta_account.equity),
         "available": (legacy_account.available_usdt, uta_account.available),
         "unrealized_pnl": (legacy_account.unrealized_pnl, uta_account.unrealized_pnl),
         "position_count": (len(legacy_positions), len(uta_positions.positions)),
+        "positions": (legacy_position_facts, uta_position_facts),
     }
     for field, (legacy_value, uta_value) in comparisons.items():
-        if field == "position_count":
+        if field in {"position_count", "positions"}:
             equal = legacy_value == uta_value
         else:
             equal = uta_value is not None and Decimal(str(legacy_value)) == uta_value
