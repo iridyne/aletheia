@@ -60,6 +60,54 @@ def _with_flow_hint(text: str, hours: int) -> str:
     )
 
 
+def _first_present(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _exchange_account_projection() -> dict:
+    try:
+        from aletheia.portfolio.exchange_sync import (
+            active_broker_view_complete,
+            get_cached_state,
+            status_for,
+        )
+
+        cached = get_cached_state()
+        status = status_for(cached)
+        complete, completeness_reason = active_broker_view_complete()
+        equity = _first_present(
+            cached.get("equity_usdt") if cached else None,
+            cached.get("total_equity_usdt") if cached else None,
+        )
+        reason = None
+        if status == "unconfigured":
+            reason = "no_exchange_account_cache"
+        elif status == "stale":
+            reason = "cache_stale"
+        elif not complete:
+            reason = "active_broker_view_incomplete"
+        return {
+            "status": status,
+            "equity_usdt": equity,
+            "age_sec": cached.get("age_seconds") if cached else None,
+            "complete": complete,
+            "completeness_reason": completeness_reason,
+            "reason": reason,
+        }
+    except Exception:
+        return {
+            "status": "error",
+            "equity_usdt": None,
+            "age_sec": None,
+            "complete": False,
+            "completeness_reason": "read_failed",
+            "reason": "read_failed",
+        }
+
+
 def _parse_age(snapshot_at: str) -> tuple:
     """Return (age_seconds, is_stale) for a snapshot_at ISO string."""
     try:
@@ -944,22 +992,12 @@ def status(
         ],
     }
 
-    # Exchange equity (best-effort)
-    try:
-        from aletheia.portfolio.exchange_sync import (
-            account_equity_value,
-            get_cached_state,
-            status_for,
-        )
-        cached = get_cached_state()
-        if cached and status_for(cached) in ("ok", "stale"):
-            # get_cached_state may return the unified (multi-broker) cache, which
-            # uses total_equity_usdt instead of the Bitget-specific equity_usdt —
-            # fall back so non-Bitget paper accounts show real equity, not None.
-            portfolio_section["equity_usdt"] = account_equity_value(cached)
-            portfolio_section["exchange_age_sec"] = cached.get("age_seconds")
-    except Exception:
-        pass
+    exchange_account = _exchange_account_projection()
+    portfolio_section["exchange_account"] = exchange_account
+    if exchange_account["equity_usdt"] is not None:
+        portfolio_section["equity_usdt"] = exchange_account["equity_usdt"]
+    if exchange_account["age_sec"] is not None:
+        portfolio_section["exchange_age_sec"] = exchange_account["age_sec"]
 
     # PnL
     today_start = datetime.now(timezone.utc).date().isoformat()
@@ -1006,6 +1044,9 @@ def status(
     data_section = cache_stats()
 
     result = {
+        "availability": "available" if (
+            exchange_account["status"] == "ok" and exchange_account["complete"]
+        ) else "partial",
         "portfolio": portfolio_section,
         "pnl": pnl_section,
         "orders": order_section,
@@ -1020,8 +1061,17 @@ def status(
     # Human-readable output
     typer.echo("=== Portfolio ===")
     eq = portfolio_section.get("equity_usdt")
-    equity_label = eq if eq is not None else "?"
-    typer.echo(f"  equity: {equity_label} USDT  |  open_positions: {portfolio_section['open_positions']}")
+    account = portfolio_section["exchange_account"]
+    typer.echo(
+        f"  equity: {eq if eq is not None else '?'} USDT "
+        f"[exchange_account: {account['status']}]  |  "
+        f"open_positions: {portfolio_section['open_positions']}"
+    )
+    if account["status"] != "ok" or not account["complete"]:
+        typer.echo(
+            "  exchange_account: "
+            f"{account['reason'] or account['completeness_reason'] or account['status']}"
+        )
     for p in portfolio_section["positions"]:
         typer.echo(f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} uPnL={p['unrealized_pnl']}")
 
