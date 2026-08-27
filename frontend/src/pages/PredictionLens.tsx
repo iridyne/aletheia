@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { PredictionMarket, PredictionStatus, PredictionObserverRun, PredictionClaim } from '../types'
 import PageHeader from '../components/PageHeader'
@@ -430,11 +431,38 @@ function SerenityLinksSection({ marketId }: { marketId: string }) {
         <div key={e.id} className="pred-serenity-link">
           <Badge tone="green">evidence</Badge>
           <span>{e.title}</span>
-          <a href="/serenity-lens" className="lens-cross-link">→ View in Serenity Lens</a>
+          {typeof e.theme_id === 'string' && e.theme_id.trim()
+            ? (
+              <Link to={`/serenity-lens?tab=themes&theme_id=${encodeURIComponent(e.theme_id.trim())}`} className="lens-cross-link">
+                → View in Serenity Lens
+              </Link>
+            )
+            : <span className="text-muted">Theme ID unavailable; no fallback theme opened.</span>}
         </div>
       ))}
     </DrawerSection>
   )
+}
+
+function marketFromExactDetail(raw: any, marketId: string): PredictionMarket {
+  return {
+    id: String(raw?.id ?? marketId),
+    event_title: String(raw?.event_title ?? raw?.question ?? marketId),
+    yes_probability: raw?.yes_probability ?? null,
+    probability_change_24h: raw?.probability_change_24h ?? null,
+    volume_24h: raw?.volume_24h ?? null,
+    liquidity: raw?.liquidity ?? null,
+    resolution_at: raw?.resolution_at ?? raw?.ends_at ?? null,
+    category: raw?.category ?? '',
+    direction_bias: raw?.direction_bias ?? null,
+    confidence: raw?.confidence ?? null,
+    confidence_score: raw?.confidence_score ?? null,
+    status: raw?.status ?? null,
+    created_at: raw?.created_at ?? raw?.updated_at ?? null,
+    market_id: String(raw?.market_id ?? raw?.id ?? marketId),
+    enable_orderbook: Boolean(raw?.enable_orderbook),
+    source: raw?.source ?? 'polymarket',
+  }
 }
 
 // --- Market Detail Drawer Content ---
@@ -552,8 +580,9 @@ function readCachedEnabled(): boolean | undefined {
 // --- Main Page ---
 export default function PredictionLens() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = useState<Tab>('radar')
-  const [selected, setSelected] = useState<PredictionMarket | null>(null)
+  const selectedMarketId = searchParams.get('market_id')?.trim() || null
 
   const statusQuery = useQuery({
     queryKey: ['prediction-status'],
@@ -583,8 +612,16 @@ export default function PredictionLens() {
     queryFn: api.getPredictionRuns,
     enabled: statusView.enabled === true,
   })
+  const exactMarketQuery = useQuery({
+    queryKey: ['prediction-market-detail', selectedMarketId],
+    queryFn: () => api.getPredictionMarketDetail(selectedMarketId!),
+    enabled: !!selectedMarketId,
+  })
   const markets = marketsQuery.data ?? []
   const runs = runsQuery.data ?? []
+  const exactMarket = selectedMarketId && exactMarketQuery.data
+    ? marketFromExactDetail(exactMarketQuery.data, selectedMarketId)
+    : null
   const marketsState = statusView.state === 'unavailable'
     ? 'unavailable'
     : statusView.state === 'loading'
@@ -601,6 +638,16 @@ export default function PredictionLens() {
     : 'Preferences'
 
   const { toast } = useToast()
+  const openMarket = (market: PredictionMarket) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('market_id', market.market_id)
+    setSearchParams(next)
+  }
+  const closeMarket = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('market_id')
+    setSearchParams(next)
+  }
   const refresh = useMutation({
     mutationFn: api.refreshPrediction,
     onSuccess: () => {
@@ -637,9 +684,9 @@ export default function PredictionLens() {
         tabs={([
           ...(showOperationalTabs ? [
             { id: 'radar', label: 'Market Radar', badge: markets.length > 0 ? markets.length : undefined,
-              render: () => <MarketRadarTab markets={markets} state={marketsState} onSelect={setSelected} /> },
+              render: () => <MarketRadarTab markets={markets} state={marketsState} onSelect={openMarket} /> },
             { id: 'movers', label: 'Probability Movers',
-              render: () => <ProbabilityMoversTab markets={markets} state={marketsState} onSelect={setSelected} /> },
+              render: () => <ProbabilityMoversTab markets={markets} state={marketsState} onSelect={openMarket} /> },
             { id: 'runs', label: 'Observer Runs', badge: runs.length > 0 ? runs.length : undefined,
               render: () => <ObserverRunsTab runs={runs} state={runsState} /> },
           ] : []),
@@ -647,8 +694,14 @@ export default function PredictionLens() {
         ]) as TabDef[]}
       />
 
-      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Prediction Market Detail">
-        {selected && <MarketDetailContent market={selected} />}
+      <DetailDrawer open={!!exactMarket || !!selectedMarketId} onClose={closeMarket} title="Prediction Market Detail">
+        {exactMarket && <MarketDetailContent market={exactMarket} />}
+        {!exactMarket && selectedMarketId && exactMarketQuery.isPending && (
+          <p className="text-muted">Loading prediction market {selectedMarketId}…</p>
+        )}
+        {!exactMarket && selectedMarketId && exactMarketQuery.isError && (
+          <DataStateMessage state="unavailable" message={`Prediction market ${selectedMarketId} unavailable. No fallback market was opened.`} />
+        )}
       </DetailDrawer>
     </div>
   )
