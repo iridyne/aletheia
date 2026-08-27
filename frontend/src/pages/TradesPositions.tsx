@@ -41,6 +41,7 @@ import {
 	marketBadgeTone,
 	isPerpMarket,
 } from "../lib/format";
+import { orderIntent, orderIntentLabel, type OrderIntent } from "../lib/orderIntent";
 import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import { bootApi } from "../api/boot";
 import TradeAnalyticsPanel from "../charts/TradeAnalyticsPanel";
@@ -95,6 +96,14 @@ const pnlSourceBadge = (source: string | undefined) => {
 			? "muted"
 			: "yellow";
 	return <Badge tone={tone}>{humanize(value)}</Badge>;
+};
+
+const intentTone = (intent: OrderIntent) =>
+	intent === "close" ? "yellow" : intent === "entry" ? "blue" : "muted";
+
+const orderIntentBadge = (order: Order) => {
+	const intent = orderIntent(order);
+	return <Badge tone={intentTone(intent)}>{orderIntentLabel(intent)}</Badge>;
 };
 
 const openColumns = [
@@ -226,6 +235,11 @@ const closedColumns = [
 ];
 
 const orderColumns = [
+	ordCol.display({
+		id: "intent",
+		header: "Intent",
+		cell: ({ row }) => orderIntentBadge(row.original),
+	}),
 	ordCol.accessor("symbol", {
 		header: "Symbol",
 		cell: (info) => (
@@ -813,9 +827,12 @@ function OrderDetail({
 	order: Order;
 	navigate: (p: string) => void;
 }) {
+	const intent = orderIntent(order);
+	const showCloseIdentity = intent !== "entry";
 	return (
 		<>
 			<DrawerSection label="Order">
+				<DrawerField label="Intent" value={orderIntentBadge(order)} />
 				<DrawerField
 					label="Symbol"
 					value={fmtSymbol(order.symbol, order.market_type)}
@@ -832,6 +849,25 @@ function OrderDetail({
 				{order.error_reason && (
 					<DrawerField label="Error Reason" value={order.error_reason} />
 				)}
+				{showCloseIdentity && (
+					<>
+						<DrawerField
+							label="Linked Position"
+							value={order.position_id || "unavailable"}
+							mono
+						/>
+						<DrawerField
+							label="Close Reason"
+							value={
+								order.close_reason ? humanize(order.close_reason) : "unavailable"
+							}
+						/>
+					</>
+				)}
+				<DrawerField
+					label="Provenance"
+					value={order.source ? humanize(order.source) : null}
+				/>
 			</DrawerSection>
 			<DrawerSection label="Execution">
 				<DrawerField label="Quantity" value={order.quantity} mono />
