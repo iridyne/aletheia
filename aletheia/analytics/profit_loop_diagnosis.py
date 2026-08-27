@@ -296,6 +296,11 @@ def _candidate_kind(fact: Mapping[str, Any]) -> str:
 
 def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     facts = [fact for fact in report.get("facts", []) if isinstance(fact, Mapping)]
+    unavailable_count = int(report.get("unavailable_count") or 0)
+    unavailable_reasons = report.get("unavailable_reasons")
+    if not isinstance(unavailable_reasons, Mapping):
+        unavailable_reasons = {}
+    exclusions = [item for item in report.get("exclusions", []) if isinstance(item, Mapping)]
     comparisons = {
         "Selection": (
             _group_returns(
@@ -366,16 +371,28 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         }
         total_eligible_all += layer_eligible
         total_excluded_all += layer_excluded
+    directional = any(layer["status"] == "directional" for layer in layers.values())
     return {
         "contract_version": DIAGNOSIS_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
         "read_only": True,
         "behavior_changed": False,
+        "status": (
+            "unavailable"
+            if unavailable_count
+            else "directional"
+            if directional
+            else "insufficient_data"
+        ),
         "as_of_at": report.get("as_of_at"),
         "fixed_horizon": report.get("fixed_horizon"),
         "raw_count": len(facts),
         "eligible_count": total_eligible_all,
         "excluded_count": total_excluded_all,
+        "unavailable_count": unavailable_count,
+        "unavailable_reasons": dict(unavailable_reasons),
+        "exclusions": exclusions,
+        "limitations": ["candidate_source_unavailable"] if unavailable_count else [],
         "coverage": report.get("outcome_coverage"),
         "layers": layers,
     }

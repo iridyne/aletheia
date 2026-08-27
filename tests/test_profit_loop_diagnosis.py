@@ -172,6 +172,53 @@ def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
     assert result["layers"]["Selection"]["delta_pct"] == 3.0
     assert result["layers"]["Selection"]["statistical_unit"] == "outcome_candidate_key"
     assert result["layers"]["Selection"]["economic_unit"] == "fixed_horizon_net_return_pct"
+    assert result["status"] == "directional"
+    assert result["unavailable_count"] == 0
+    assert result["limitations"] == []
+
+
+def test_candidate_diagnosis_preserves_source_unavailable_exclusions():
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "settled_outcome_count": 2,
+        "outcome_coverage": 1.0,
+        "unavailable_count": 1,
+        "unavailable_reasons": {"candidate_fact_count_mismatch": 1},
+        "exclusions": [
+            {
+                "source_table": "filter_decision_batches",
+                "source_batch_id": "batch-bad",
+                "unavailable_reason": "candidate_fact_count_mismatch",
+            }
+        ],
+        "facts": [
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="filtered",
+                net_return_pct=-1.0,
+                fact_id="filtered",
+                outcome_candidate_key="key-filtered",
+            ),
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=2.0,
+                fact_id="traded",
+                outcome_candidate_key="key-traded",
+            ),
+        ],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert result["status"] == "unavailable"
+    assert result["unavailable_count"] == 1
+    assert result["unavailable_reasons"] == {"candidate_fact_count_mismatch": 1}
+    assert result["exclusions"][0]["source_batch_id"] == "batch-bad"
+    assert result["limitations"] == ["candidate_source_unavailable"]
+    assert result["layers"]["Selection"]["status"] == "directional"
+    assert result["layers"]["Selection"]["delta_pct"] == 3.0
 
 
 def test_candidate_layers_compare_only_their_matching_populations():
