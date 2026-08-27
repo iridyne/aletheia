@@ -43,33 +43,10 @@ def _setup_db(tmp_path, monkeypatch):
 
 
 def _patch_bitget_history(monkeypatch, fill_rows, *, open_ids=()):
-    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history
 
-    async def _open_orders(self, market_type="spot"):
-        return [{"orderId": order_id} for order_id in open_ids]
-
-    async def _fills(self, symbol=None, market_type="spot"):
-        return list(fill_rows)
-
-    async def _order_fills(
-        self, *, order_id, symbol, market_type="usdt_futures"
-    ):
-        return [
-            row for row in fill_rows
-            if str(row.get("orderId") or "") == str(order_id)
-        ]
-
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "get_open_orders",
-        _open_orders,
-    )
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _fills)
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "get_order_fills",
-        _order_fills,
-    )
+    patch_private_history(monkeypatch, reconciliation, fill_rows, open_ids=open_ids)
 
 
 def _private_fill(
@@ -256,8 +233,8 @@ def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.reconciliation import reconcile
-    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history
 
     private_fill = _private_fill(
         "EX-XM-AGED-OUT",
@@ -267,23 +244,24 @@ def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
         fee=0.0468,
         filled_at_ms=1_784_075_000_000,
     )
-    requested_symbols: list[str | None] = []
-
-    async def _open_orders(self, market_type="spot"):
-        return []
-
-    async def _fills(self, symbol=None, market_type="spot"):
-        requested_symbols.append(symbol)
-        return [private_fill] if symbol == "BTCUSDT" else []
-
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _open_orders)
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _fills)
+    calls = []
+    patch_private_history(
+        monkeypatch,
+        reconciliation,
+        [private_fill],
+        calls=calls,
+        unscoped_fill_rows=[],
+    )
     _, _, _, order = _seed_native_chain(exchange_order_id="EX-XM-AGED-OUT")
 
-    result = reconcile()
+    result = reconciliation.reconcile()
 
     assert result["filled"] == 1
-    assert requested_symbols == [None, "BTCUSDT"]
+    assert [
+        query.scope.instrument.canonical_symbol if query.scope.instrument else None
+        for method, _, query in calls
+        if method == "get_fills"
+    ] == [None, "BTC/USDT"]
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
     ).fetchone()[0] == 1
