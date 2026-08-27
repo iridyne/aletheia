@@ -1,10 +1,11 @@
 """Pydantic models for storage entities."""
 
+import json
 import math
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from uuid import uuid4
 
 
@@ -14,6 +15,24 @@ def new_id() -> str:
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+class StrategyParametersInvalid(ValueError):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+def decode_strategy_parameters(parameters: str | None) -> dict:
+    if not isinstance(parameters, str) or not parameters.strip():
+        raise StrategyParametersInvalid("parameters_missing")
+    try:
+        parsed = json.loads(parameters)
+    except json.JSONDecodeError as exc:
+        raise StrategyParametersInvalid("invalid_json") from exc
+    if not isinstance(parsed, dict):
+        raise StrategyParametersInvalid("not_json_object")
+    return parsed
 
 
 EXIT_INTENT_STOP_SOURCES = frozenset({"operator", "default"})
@@ -909,6 +928,12 @@ class StrategyRecord(BaseModel):
     execution_venue: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
+
+    @field_validator("parameters")
+    @classmethod
+    def _parameters_must_be_json_object(cls, value: str) -> str:
+        decode_strategy_parameters(value)
+        return value
 
 
 class KnowledgeItem(BaseModel):
