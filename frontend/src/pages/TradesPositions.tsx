@@ -273,8 +273,8 @@ const orderColumns = [
 ];
 
 type Selection =
-	| { kind: "order"; order: Order }
-	| { kind: "position"; position: Position }
+	| { kind: "order"; id: string }
+	| { kind: "position"; id: string }
 	| null;
 
 /**
@@ -387,6 +387,14 @@ export default function TradesPositions() {
 	const open = allPos.filter((p) => p.status === "open");
 	const closed = allPos.filter((p) => p.status !== "open");
 	const orderRows = ordersArray as Order[];
+	const selectedOrder =
+		sel?.kind === "order"
+			? orderRows.find((order) => order.id === sel.id) ?? null
+			: null;
+	const selectedPosition =
+		sel?.kind === "position"
+			? allPos.find((position) => position.id === sel.id) ?? null
+			: null;
 
 	useEffect(() => {
 		if (requestedTab === activeTab) return;
@@ -510,17 +518,17 @@ export default function TradesPositions() {
 										<Card>
 											<p className="text-muted text-sm">No open positions.</p>
 										</Card>
-									) : (
-										<Card>
-											<DataTable
-												data={open}
-												columns={openColumnsWithExposure}
-												onRowClick={(p) =>
-													setSel({ kind: "position", position: p })
-												}
-												columnToggle
-												tableId="open-positions"
-												noWrap
+										) : (
+											<Card>
+												<DataTable
+													data={open}
+													columns={openColumnsWithExposure}
+													onRowClick={(p) =>
+														setSel({ kind: "position", id: p.id })
+													}
+													columnToggle
+													tableId="open-positions"
+													noWrap
 												state={positionsState}
 											/>
 										</Card>
@@ -562,15 +570,15 @@ export default function TradesPositions() {
 												Export CSV
 											</a>
 										</div>
-										<Card>
-											<DataTable
-												data={orderRows}
-												columns={orderColumns}
-												onRowClick={(o) => setSel({ kind: "order", order: o })}
-												state={ordersState}
-												emptyMessage="No orders yet."
-											/>
-										</Card>
+											<Card>
+												<DataTable
+													data={orderRows}
+													columns={orderColumns}
+													onRowClick={(o) => setSel({ kind: "order", id: o.id })}
+													state={ordersState}
+													emptyMessage="No orders yet."
+												/>
+											</Card>
 									</div>
 
 									{closed.length > 0 && (
@@ -578,15 +586,15 @@ export default function TradesPositions() {
 											<div className="blotter-section-head">
 												<h3>Closed Positions</h3>
 											</div>
-											<Card>
-												<DataTable
-													data={closed}
-													columns={closedColumns}
-													onRowClick={(p) =>
-														setSel({ kind: "position", position: p })
-													}
-												/>
-											</Card>
+												<Card>
+													<DataTable
+														data={closed}
+														columns={closedColumns}
+														onRowClick={(p) =>
+															setSel({ kind: "position", id: p.id })
+														}
+													/>
+												</Card>
 										</div>
 									)}
 								</div>
@@ -617,22 +625,48 @@ export default function TradesPositions() {
 				]}
 			/>
 
-			<DetailDrawer
-				open={!!sel}
-				onClose={() => setSel(null)}
-				title={sel?.kind === "order" ? "Order Detail" : "Position Detail"}
-			>
-				{sel?.kind === "order" && (
-					<OrderDetail order={sel.order} navigate={navigate} />
-				)}
-				{sel?.kind === "position" && (
-					<PositionDetail
-						position={sel.position}
-						onClose={() => setSel(null)}
-					/>
-				)}
-			</DetailDrawer>
+				<DetailDrawer
+					open={!!sel}
+					onClose={() => setSel(null)}
+					title={sel?.kind === "order" ? "Order Detail" : "Position Detail"}
+				>
+					{sel?.kind === "order" && (
+						ordersAvailable && selectedOrder ? (
+							<OrderDetail order={selectedOrder} navigate={navigate} />
+						) : (
+							<SelectionUnavailable kind="order" unavailable={!ordersAvailable} />
+						)
+					)}
+					{sel?.kind === "position" && (
+						positionsAvailable && selectedPosition ? (
+							<PositionDetail
+								position={selectedPosition}
+								onClose={() => setSel(null)}
+							/>
+						) : (
+							<SelectionUnavailable kind="position" unavailable={!positionsAvailable} />
+						)
+					)}
+				</DetailDrawer>
 		</div>
+	);
+}
+
+function SelectionUnavailable({
+	kind,
+	unavailable,
+}: {
+	kind: "order" | "position";
+	unavailable: boolean;
+}) {
+	return (
+		<DrawerSection label="Current Record">
+			<p className="text-muted text-sm">
+				{unavailable
+					? `Current ${kind} facts are unavailable; the drawer is not showing the last clicked snapshot.`
+					: `Selected ${kind} is no longer in the current query result.`}
+			</p>
+		</DrawerSection>
 	);
 }
 
