@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
@@ -12,6 +12,7 @@ import { safeErrorText } from '../lib/mutationErrors'
 import ThesisText from '../components/ThesisText'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
+const SERENITY_TABS: Tab[] = ['overview', 'runs', 'themes', 'evidence', 'profile']
 
 // U1: verdict recommendation tone mapping (AI Berkshire forced-verdict)
 const VERDICT_TONE: Record<string, StatusTone> = {
@@ -458,11 +459,26 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
 export function ThemesTab() {
   const qc = useQueryClient()
   const { toast } = useToast()
-  const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedTheme = searchParams.get('theme_id')?.trim() || null
   const [statusFilter, setStatusFilter] = useState<string>('active')
   const [promoteErrors, setPromoteErrors] = useState<Record<string, string>>({})
   const restoreThemeId = useRef<string | null>(null)
   const themeListFallback = useRef<HTMLButtonElement>(null)
+
+  const openTheme = (themeId: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'themes')
+    next.set('theme_id', themeId)
+    setSearchParams(next)
+  }
+
+  const closeTheme = () => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'themes')
+    next.delete('theme_id')
+    setSearchParams(next)
+  }
 
   useEffect(() => {
     if (selectedTheme) {
@@ -527,7 +543,7 @@ export function ThemesTab() {
   })
 
   if (selectedTheme) {
-    return <ThemeDetailPanel themeId={selectedTheme} onBack={() => setSelectedTheme(null)} />
+    return <ThemeDetailPanel themeId={selectedTheme} onBack={closeTheme} />
   }
 
   const STATUS_FILTERS = ['active', 'watching', 'dismissed', 'promoted'] as const
@@ -564,7 +580,7 @@ export function ThemesTab() {
               <Button
                 type="button"
                 className="lens-theme-open"
-                onClick={() => setSelectedTheme(t.id)}
+                onClick={() => openTheme(t.id)}
                 aria-label={`Open theme ${t.name} details`}
                 data-serenity-theme-id={t.id}
               >
@@ -695,12 +711,24 @@ export function OpportunityRow({
 
 // --- Theme Detail Panel ---
 function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => void }) {
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ['serenity-theme-detail', themeId],
     queryFn: () => api.getSerenityThemeDetail(themeId),
   })
 
-  if (!data) return <p>Loading…</p>
+  if (isError) {
+    return (
+      <Card>
+        <div className="card-head card-head-space">
+          <Button variant="secondary" onClick={onBack}>← Back</Button>
+          <h3>Theme unavailable</h3>
+        </div>
+        <p className="text-muted">Theme {themeId} could not be loaded. No fallback theme was opened.</p>
+      </Card>
+    )
+  }
+
+  if (!data) return <p>Loading theme {themeId}…</p>
 
   const { theme, claims, evidence, feedback, opportunities } = data
 
@@ -869,27 +897,33 @@ function EvidenceTab() {
             </tr>
           </thead>
           <tbody>
-            {evidence.map((e: any) => (
-              <tr key={e.id}>
-                <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
-                <td>
-                  {e.title}
-                  {e.source === 'prediction_market' && (
-                    <Link to="/prediction-markets" className="lens-cross-link" title="View in Prediction Lens">
-                      → Prediction Lens
-                    </Link>
-                  )}
-                </td>
-                <td>{e.tier}</td>
-                <td>
-                  {e.source === 'prediction_market'
-                    ? <Badge tone="blue">prediction</Badge>
-                    : e.source}
-                </td>
-                <td>{e.confidence || '—'}</td>
-                <td>{shortDate(e.created_at)}</td>
-              </tr>
-            ))}
+            {evidence.map((e: any) => {
+              const marketId = typeof e.source_ref === 'string' ? e.source_ref.trim() : ''
+              return (
+                <tr key={e.id}>
+                  <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
+                  <td>
+                    {e.title}
+                    {e.source === 'prediction_market' && marketId && (
+                      <Link to={`/prediction-markets?market_id=${encodeURIComponent(marketId)}`} className="lens-cross-link" title={`View prediction market ${marketId}`}>
+                        → Prediction Lens
+                      </Link>
+                    )}
+                    {e.source === 'prediction_market' && !marketId && (
+                      <span className="text-muted"> Prediction market ID unavailable</span>
+                    )}
+                  </td>
+                  <td>{e.tier}</td>
+                  <td>
+                    {e.source === 'prediction_market'
+                      ? <Badge tone="blue">prediction</Badge>
+                      : e.source}
+                  </td>
+                  <td>{e.confidence || '—'}</td>
+                  <td>{shortDate(e.created_at)}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </TableWrap>
@@ -1007,7 +1041,15 @@ function ProfileTab() {
 
 // --- Main Page ---
 export default function SerenityLens() {
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab') as Tab | null
+  const activeTab = requestedTab && SERENITY_TABS.includes(requestedTab) ? requestedTab : 'overview'
+  const setActiveTab = (tab: Tab) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', tab)
+    if (tab !== 'themes') next.delete('theme_id')
+    setSearchParams(next)
+  }
 
   return (
     <div>
