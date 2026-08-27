@@ -1,6 +1,7 @@
 """Stable, sanitized UTA error taxonomy."""
 
 from enum import Enum
+import re
 
 from aletheia.uta.models import CommandEvidence
 
@@ -36,6 +37,10 @@ class UTAError(Exception):
         command_evidence: CommandEvidence | None = None,
         retryable: bool = False,
     ) -> None:
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,127}", reason):
+            raise ValueError("UTA error reason must be a bounded stable reason code")
+        if command_evidence is CommandEvidence.AMBIGUOUS and retryable:
+            raise ValueError("ambiguous UTA commands cannot be retryable")
         self.code = code
         self.reason = reason
         self.command_evidence = command_evidence
