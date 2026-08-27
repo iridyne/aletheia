@@ -95,7 +95,14 @@ def _registered_test_cohort(tmp_path, monkeypatch):
         "stopping_rule": counterfactual._STOPPING_RULE,
     }
     import json
+    from aletheia.learning.policy_epochs import build_policy_epoch
 
+    epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        values,
+        affected_path_ids=("profit_loop_observability",),
+        safety_required=False,
+    )
     get_db().execute(
         "INSERT INTO learning_policy_epochs "
         "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
@@ -104,8 +111,8 @@ def _registered_test_cohort(tmp_path, monkeypatch):
         (
             "profit-epoch",
             "evidence_anchor:profit_loop_observability",
-            "test-hash",
-            json.dumps(values, sort_keys=True),
+            epoch.epoch_hash,
+            json.dumps(epoch.effective_values, sort_keys=True),
             '["profit_loop_observability"]',
             0,
             "2026-08-13T05:34:28+00:00",
@@ -345,15 +352,22 @@ def test_registry_rejects_mismatched_behavior_fingerprint():
 
 def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
     import json
+    from aletheia.learning.policy_epochs import build_policy_epoch
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     row = db.execute("SELECT effective_values_json FROM learning_policy_epochs").fetchone()
     values = json.loads(row["effective_values_json"])
     values["registry_hash"] = "0" * 64
+    epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        values,
+        affected_path_ids=("profit_loop_observability",),
+        safety_required=False,
+    )
     db.execute(
-        "UPDATE learning_policy_epochs SET effective_values_json=?",
-        (json.dumps(values, sort_keys=True),),
+        "UPDATE learning_policy_epochs SET effective_values_hash=?, effective_values_json=?",
+        (epoch.epoch_hash, json.dumps(epoch.effective_values, sort_keys=True)),
     )
     db.commit()
     assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
@@ -361,19 +375,31 @@ def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
     )
 
     values["registry_hash"] = counterfactual.profit_loop_registry_hash()
+    epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        values,
+        affected_path_ids=("profit_loop_observability",),
+        safety_required=False,
+    )
     db.execute(
-        "UPDATE learning_policy_epochs SET effective_values_json=?",
-        (json.dumps(values, sort_keys=True),),
+        "UPDATE learning_policy_epochs SET effective_values_hash=?, effective_values_json=?",
+        (epoch.epoch_hash, json.dumps(epoch.effective_values, sort_keys=True)),
     )
     duplicate_values = {**values, "registry_hash": "f" * 64}
+    duplicate_epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        duplicate_values,
+        affected_path_ids=("profit_loop_observability",),
+        safety_required=False,
+    )
     db.execute(
         "INSERT INTO learning_policy_epochs "
         "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
         "affected_path_ids_json, safety_required, started_at, created_at) "
         "VALUES ('duplicate-epoch','evidence_anchor:profit_loop_observability',?,?,?,0,?,?)",
         (
-            "duplicate-hash",
-            json.dumps(duplicate_values, sort_keys=True),
+            duplicate_epoch.epoch_hash,
+            json.dumps(duplicate_epoch.effective_values, sort_keys=True),
             '["profit_loop_observability"]',
             "2026-08-13T05:34:28.000001+00:00",
             "2026-08-13T05:34:28.000001+00:00",
@@ -389,6 +415,75 @@ def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
     db.commit()
     assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
         "registered_epoch_ended_before_cutoff"
+    )
+
+
+def test_registry_rejects_tampered_epoch_hash_path_and_safety():
+    import json
+    from aletheia.learning.policy_epochs import build_policy_epoch
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    row = db.execute("SELECT effective_values_json FROM learning_policy_epochs").fetchone()
+    values = json.loads(row["effective_values_json"])
+    values["duration_days"] = 1
+    db.execute(
+        "UPDATE learning_policy_epochs SET effective_values_json=?",
+        (json.dumps(values, sort_keys=True),),
+    )
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_epoch_hash_mismatch"
+    )
+
+    epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        values,
+        affected_path_ids=("profit_loop_observability",),
+        safety_required=False,
+    )
+    db.execute(
+        "UPDATE learning_policy_epochs SET effective_values_hash=?, effective_values_json=?",
+        (epoch.epoch_hash, json.dumps(epoch.effective_values, sort_keys=True)),
+    )
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_epoch_values_mismatch"
+    )
+
+    values["duration_days"] = 30
+    epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        values,
+        affected_path_ids=("profit_loop_observability", "other_path"),
+        safety_required=False,
+    )
+    db.execute(
+        "UPDATE learning_policy_epochs SET effective_values_hash=?, effective_values_json=?, affected_path_ids_json=?",
+        (
+            epoch.epoch_hash,
+            json.dumps(epoch.effective_values, sort_keys=True),
+            '["profit_loop_observability","other_path"]',
+        ),
+    )
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_epoch_path_mismatch"
+    )
+
+    epoch = build_policy_epoch(
+        "evidence_anchor:profit_loop_observability",
+        values,
+        affected_path_ids=("profit_loop_observability",),
+        safety_required=True,
+    )
+    db.execute(
+        "UPDATE learning_policy_epochs SET effective_values_hash=?, affected_path_ids_json=?, safety_required=1",
+        (epoch.epoch_hash, '["profit_loop_observability"]'),
+    )
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_epoch_safety_mismatch"
     )
 
 

@@ -173,12 +173,14 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
     fingerprint = fingerprints[0]
 
     try:
+        from aletheia.learning.policy_epochs import build_policy_epoch
         from aletheia.storage.sqlite import get_db
 
         rows = (
             get_db()
             .execute(
-                "SELECT epoch_id, effective_values_json, started_at, ended_at "
+                "SELECT epoch_id, effective_values_hash, effective_values_json, "
+                "affected_path_ids_json, safety_required, started_at, ended_at "
                 "FROM learning_policy_epochs WHERE epoch_kind=? "
                 "ORDER BY started_at, rowid",
                 ("evidence_anchor:profit_loop_observability",),
@@ -196,6 +198,31 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
             return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
         if not isinstance(values, Mapping):
             return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
+        try:
+            affected_paths = json.loads(row["affected_path_ids_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
+        if not isinstance(affected_paths, list) or tuple(map(str, affected_paths)) != ("profit_loop_observability",):
+            return {"status": "not_evaluable", "reason": "registered_epoch_path_mismatch"}
+        epoch = build_policy_epoch(
+            "evidence_anchor:profit_loop_observability",
+            dict(values),
+            affected_path_ids=tuple(map(str, affected_paths)),
+            safety_required=bool(row["safety_required"]),
+        )
+        if row["effective_values_hash"] != epoch.epoch_hash:
+            return {"status": "not_evaluable", "reason": "registered_epoch_hash_mismatch"}
+        if bool(row["safety_required"]):
+            return {"status": "not_evaluable", "reason": "registered_epoch_safety_mismatch"}
+        if (
+            values.get("path_id") != "profit_loop_observability"
+            or values.get("behavior_contract") != COUNTERFACTUAL_CONTRACT_VERSION
+            or values.get("duration_days") != _DURATION_DAYS
+            or values.get("assignment_unit") != _ASSIGNMENT_UNIT
+            or values.get("eligibility") != _ELIGIBILITY
+            or values.get("stopping_rule") != _STOPPING_RULE
+        ):
+            return {"status": "not_evaluable", "reason": "registered_epoch_values_mismatch"}
         if values.get("deploy_commit") == commit and values.get("behavior_fingerprint") == fingerprint:
             identity_matches.append((row, values))
     if not identity_matches:
