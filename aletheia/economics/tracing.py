@@ -253,7 +253,24 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         return None
 
     top_level_reasoning = token("reasoning_tokens")
-    cached_from_details = detail(prompt_details, "cached_tokens", "cached_input_tokens")
+    top_level_cache_read = token("cache_read_input_tokens")
+    cache_read = (
+        top_level_cache_read
+        if top_level_cache_read is not None
+        else detail(prompt_details, "cached_tokens", "cached_input_tokens", "cache_read_input_tokens")
+    )
+    top_level_cache_creation = token("cache_creation_input_tokens", "cache_write_input_tokens")
+    cache_creation = (
+        top_level_cache_creation
+        if top_level_cache_creation is not None
+        else detail(
+            prompt_details,
+            "cache_creation_input_tokens",
+            "cache_creation_tokens",
+            "cache_write_input_tokens",
+            "cache_write_tokens",
+        )
+    )
     web_search_requests = detail(prompt_details, "web_search_requests")
     if web_search_requests is None:
         web_search_requests = detail(server_tool_use, "web_search_requests")
@@ -271,11 +288,9 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         # providers (incl. sensenova) put them at the top level as
         # cache_read_input_tokens. Fall back so both shapes normalize to
         # cached_input_tokens instead of silently zeroing the counter.
-        "cached_input_tokens": (
-            cached_from_details if cached_from_details is not None else token("cache_read_input_tokens")
-        ),
-        "provider_cache_read_input_tokens": token("cache_read_input_tokens"),
-        "provider_cache_creation_input_tokens": token("cache_creation_input_tokens"),
+        "cached_input_tokens": (cache_read),
+        "provider_cache_read_input_tokens": cache_read,
+        "provider_cache_creation_input_tokens": cache_creation,
         "web_search_requests": web_search_requests,
     }
 
@@ -304,7 +319,7 @@ def estimate_llm_cost(
     cache_creation = usage.get("provider_cache_creation_input_tokens")
     web_search_requests = usage.get("web_search_requests") or 0
     if input_tokens is None or output_tokens is None:
-        return None, "unknown", {"reason": "billable_token_usage_incomplete"}
+        return None, "unknown", {"reason": "usage_incomplete"}
     cache_read_tokens = cache_read or 0
     cache_creation_tokens = cache_creation or 0
     if cache_read_tokens + cache_creation_tokens > input_tokens:
@@ -317,15 +332,17 @@ def estimate_llm_cost(
     cache_creation_rate = _float(pricing.get("cache_creation_input_usd_per_million"))
     web_search_rate = _float(pricing.get("web_search_usd_per_request"))
     if input_rate is None or output_rate is None:
-        return None, "unknown", {"reason": "required_pricing_rate_missing"}
-    if cache_read is not None and cached_rate is None:
-        return None, "unknown", {"reason": "cache_read_pricing_missing"}
-    if cache_creation is not None and cache_creation_rate is None:
-        return None, "unknown", {"reason": "cache_creation_pricing_missing"}
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "base_tokens"}
+    if cache_read_tokens > 0 and cached_rate is None:
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "cache_read"}
+    if cache_creation_tokens > 0 and cache_creation_rate is None:
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "cache_creation"}
     if reasoning_tokens > output_tokens:
         return None, "unknown", {"reason": "reasoning_tokens_exceed_output_tokens"}
+    if reasoning_tokens > 0 and reasoning_rate is None:
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "reasoning"}
     if web_search_requests and web_search_rate is None:
-        return None, "unknown", {"reason": "web_search_pricing_missing"}
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "web_search"}
 
     ordinary_input = input_tokens - cache_read_tokens - cache_creation_tokens
     ordinary_output = output_tokens - reasoning_tokens if reasoning_rate is not None else output_tokens
@@ -340,6 +357,7 @@ def estimate_llm_cost(
         round(cost, 12),
         "estimated",
         {
+            "reason": "formula_priced",
             "ordinary_input_tokens": ordinary_input,
             "ordinary_output_tokens": ordinary_output,
             "cache_read_input_tokens": cache_read_tokens,
@@ -392,6 +410,7 @@ def record_llm_attempt(
     raw_usage: Any = None,
     error_type: str | None = None,
     metadata: dict[str, Any] | None = None,
+    pricing_observation: Any = None,
 ) -> str | None:
     """Persist one physical provider attempt. Measurement failure never blocks trading."""
     if not tracing_enabled():
@@ -399,15 +418,35 @@ def record_llm_attempt(
     try:
         usage = normalize_usage(raw_usage)
         provider_cost = provider_reported_cost_usd(raw_usage)
-        pricing = resolve_pricing_snapshot(provider, model, started_at)
         if provider_cost is not None:
             estimated_cost, cost_status = provider_cost, "known"
-            cost_meta = {"reason": "provider_reported_usd"}
+            cost_meta = {"reason": "provider_reported"}
+            pricing = resolve_pricing_snapshot(provider, model, started_at)
         else:
+            from aletheia.economics.pricing_sync import resolve_pricing_from_observation
+
+            pricing, pricing_reason = resolve_pricing_from_observation(provider, model, started_at, pricing_observation)
             estimated_cost, cost_status, cost_meta = estimate_llm_cost(usage, pricing)
+            if (
+                estimated_cost is None
+                and cost_meta.get("reason") == "positive_special_rate_missing"
+                and pricing_observation is not None
+            ):
+                catalog_pricing, _ = resolve_pricing_from_observation(
+                    provider,
+                    model,
+                    started_at,
+                    pricing_observation,
+                    use_existing=False,
+                )
+                if catalog_pricing is not None:
+                    pricing = catalog_pricing
+                    estimated_cost, cost_status, cost_meta = estimate_llm_cost(usage, pricing)
+            if pricing is None:
+                cost_meta = {"reason": pricing_reason}
         if status != "success" and not raw_usage:
             estimated_cost, cost_status = None, "unknown"
-            cost_meta = {"reason": "failed_attempt_usage_unavailable"}
+            cost_meta = {"reason": "usage_incomplete"}
         event_id = "cost_" + uuid4().hex[:16]
         provenance = _current_provenance()
         row = (

@@ -67,8 +67,18 @@ def _build_user_prompt(symbol: str, market_type: str, data: dict[str, Any]) -> s
 
     # Price & Trend
     price_data = {}
-    for key in ["last_price", "sma20", "sma50", "rsi14", "rsi4h", "bb_pct",
-                "mom10", "return_1h", "return_4h", "return_24h"]:
+    for key in [
+        "last_price",
+        "sma20",
+        "sma50",
+        "rsi14",
+        "rsi4h",
+        "bb_pct",
+        "mom10",
+        "return_1h",
+        "return_4h",
+        "return_24h",
+    ]:
         if data.get(key) is not None:
             price_data[key] = data[key]
     if price_data:
@@ -222,7 +232,7 @@ def _parse_llm_json(text: str) -> dict[str, Any] | None:
     # Case 5: Try to fix common JSON issues (trailing commas, single quotes)
     try:
         # Remove trailing commas before } or ]
-        fixed = re.sub(r',\s*([}\]])', r'\1', text)
+        fixed = re.sub(r",\s*([}\]])", r"\1", text)
         result = json.loads(fixed)
         if isinstance(result, dict):
             logger.debug("Parsed JSON after trailing-comma fix")
@@ -234,6 +244,7 @@ def _parse_llm_json(text: str) -> dict[str, Any] | None:
 
 
 # --- Main Analysis Function ---
+
 
 async def analyze_with_llm(
     symbol: str,
@@ -261,7 +272,20 @@ async def analyze_with_llm(
         Dict with direction, confidence, reasoning, evidence, risks, etc.
         or None if all LLM attempts failed.
     """
+    inference_call = None
+    inference_finished = False
+
+    def finish(*, status: str, response=None, **kwargs: Any) -> None:
+        nonlocal inference_finished
+        if inference_call is None or inference_finished:
+            return
+        from aletheia.economics.inference_calls import record_inference_finished
+
+        record_inference_finished(inference_call, status=status, response=response, **kwargs)
+        inference_finished = True
+
     try:
+        from aletheia.economics.inference_calls import record_inference_started
         from aletheia.model_provider.fallback import complete_with_fallback
         from aletheia.model_provider.base import ModelRequest
         from aletheia.model_provider.inference_contract import build_inference_call
@@ -281,6 +305,7 @@ async def analyze_with_llm(
             temperature=0.1,
             max_tokens=1500,
         )
+        record_inference_started(inference_call)
         req = ModelRequest(
             messages=messages,
             system=_SYSTEM_PROMPT,
@@ -305,7 +330,16 @@ async def analyze_with_llm(
             # Log FIRST 200 chars of raw response for diagnosis
             logger.warning(
                 "LLM JSON parse failed for %s (provider=%s): %.200s",
-                symbol, provider_name, text,
+                symbol,
+                provider_name,
+                text,
+            )
+            finish(
+                status="error",
+                response=resp,
+                parse_valid=False,
+                schema_valid=None,
+                error_type="structured_parse_error",
             )
             return None
 
@@ -313,52 +347,71 @@ async def analyze_with_llm(
         if "direction" not in result:
             logger.warning(
                 "LLM missing direction for %s: keys=%s raw=%.100s",
-                symbol, list(result.keys()), text,
+                symbol,
+                list(result.keys()),
+                text,
+            )
+            finish(
+                status="error",
+                response=resp,
+                parse_valid=True,
+                schema_valid=False,
+                error_type="structured_schema_invalid",
             )
             return None
 
         # Log success with key fields
         logger.info(
             "LLM OK %s: dir=%s conf=%s keys=%s",
-            symbol, result.get("direction"), result.get("confidence"), list(result.keys()),
+            symbol,
+            result.get("direction"),
+            result.get("confidence"),
+            list(result.keys()),
         )
 
-        # Validate required fields
-        if "direction" not in result:
-            logger.warning("LLM response missing direction for %s", symbol)
-            return None
-
         # Log which model actually served the request (useful for debugging)
-        fallback_meta = getattr(resp, 'raw', {})
+        fallback_meta = getattr(resp, "raw", {})
         model_meta: dict[str, Any] = {}
         if isinstance(fallback_meta, dict):
-            fb = fallback_meta.get('aletheia_model_fallback', {})
+            fb = fallback_meta.get("aletheia_model_fallback", {})
             model_meta = {
-                "requested_model": fb.get('requested_model'),
-                "final_model": fb.get('final_model'),
-                "fallback_used": bool(fb.get('fallback_used')),
+                "requested_model": fb.get("requested_model"),
+                "final_model": fb.get("final_model"),
+                "fallback_used": bool(fb.get("fallback_used")),
             }
-            if fb.get('fallback_used'):
+            if fb.get("fallback_used"):
                 logger.info(
                     "LLM fallback used for %s: %s → %s",
                     symbol,
-                    fb.get('requested_model', '?'),
-                    fb.get('final_model', '?'),
+                    fb.get("requested_model", "?"),
+                    fb.get("final_model", "?"),
                 )
 
         # Underscore-prefixed metadata: routing provenance for persistence,
         # never part of the LLM's own structured output contract.
         result["_model_meta"] = model_meta
 
+        finish(
+            status="success",
+            response=resp,
+            parse_valid=True,
+            schema_valid=True,
+        )
         return result
 
+    except asyncio.CancelledError:
+        finish(status="error", error_type="cancelled")
+        raise
     except asyncio.TimeoutError:
+        finish(status="error", error_type="TimeoutError")
         logger.warning("LLM call timed out for %s", symbol)
         return None
     except json.JSONDecodeError as exc:
+        finish(status="error", error_type="JSONDecodeError")
         logger.warning("LLM JSON parse error for %s: %s", symbol, exc)
         return None
     except Exception as exc:
+        finish(status="error", error_type=type(exc).__name__)
         # Catch-all for provider errors (including "all models cooling down")
         logger.warning("LLM call failed for %s: %s: %s", symbol, type(exc).__name__, exc)
         return None

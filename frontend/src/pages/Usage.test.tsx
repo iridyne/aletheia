@@ -48,6 +48,7 @@ describe('Usage v2', () => {
     for (const label of ['Cost', 'Total tokens', 'LLM calls', 'Success rate', 'Avg cost / call']) expect(html).toContain(label)
     expect(html).toContain('title="1,590,000"')
     expect(html).toContain('N/A')
+    expect(html).toContain('N/A for selected window')
   })
 
   it('shows observed zero token subtypes and hides never-provided subtypes', () => {
