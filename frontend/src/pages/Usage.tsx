@@ -109,7 +109,7 @@ export default function Usage() {
   const fetching = queries.some(query => query.isFetching)
   const error = queries.find(query => query.error)?.error
   const { data: pricingRefresh } = useQuery({ queryKey: ['pricing-refresh-status'], queryFn: api.getPricingRefreshStatus, refetchInterval: query => query.state.data?.status === 'running' ? 2_000 : false })
-  const refreshPricing = useMutation({ mutationFn: api.refreshPricing, onSuccess: status => queryClient.setQueryData(['pricing-refresh-status'], status), onError: error => toast('error', `Pricing refresh failed: ${error.message}`) })
+  const refreshPricing = useMutation({ mutationFn: api.refreshPricing, onSuccess: status => queryClient.setQueryData(['pricing-refresh-status'], status), onError: error => { queryClient.invalidateQueries({ queryKey: ['pricing-refresh-status'] }); toast('error', `Pricing refresh failed: ${error.message}`) } })
   const handledRefresh = useRef<string | null>(null)
 
   useEffect(() => {
