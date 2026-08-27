@@ -6,7 +6,7 @@ are consistent across the Analytics tab and Trade Insights panel.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from aletheia.analytics.temporal import parse_utc_instant
 
 from aletheia.data.symbols import to_canonical
 from aletheia.analytics.holding_time import holding_hours
@@ -62,6 +62,8 @@ def build_trade_insights(*, execution_mode: str | None = None) -> dict:
         "hold_vs_pnl":            _hold_vs_pnl(rows),
         "hour_day_heatmap":       _hour_day_heatmap(rows),
         "trade_frequency":        _trade_frequency(rows),
+        "temporal_unbucketed_count": _time_unbucketed_count(rows),
+        "heatmap_unbucketed_count": _time_unbucketed_count(rows, field="opened_at"),
         "symbol_direction_matrix": _symbol_direction_matrix(rows),
         "hold_duration_buckets":  _hold_duration_buckets(rows),
         # #2061: _r_multiple_distribution returns a dict with a "bins" list plus
@@ -93,11 +95,12 @@ def _hold_hours(row) -> float | None:
 
 def _fmt_time(iso: str) -> str:
     """Shorten ISO timestamp for chart x-axis labels."""
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.strftime("%m/%d")
-    except Exception:
-        return iso[:10]
+    dt = parse_utc_instant(iso)
+    return dt.strftime("%m/%d") if dt else iso[:10]
+
+
+def _time_unbucketed_count(rows, *, field: str = "closed_at") -> int:
+    return sum(1 for row in rows if parse_utc_instant(row.get(field)) is None)
 
 
 # ---------------------------------------------------------------------------
@@ -215,11 +218,10 @@ _DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 def _by_day_of_week(rows) -> list[dict]:
     buckets: dict[int, dict] = {i: {"trade_count": 0, "wins": 0, "total_pnl_pct": 0.0} for i in range(7)}
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00"))
-            dow = dt.weekday()  # 0=Mon
-        except Exception:
+        dt = parse_utc_instant(r.get("closed_at"))
+        if dt is None:
             continue
+        dow = dt.weekday()  # 0=Mon
         b = buckets[dow]
         b["trade_count"] += 1
         pnl = r["realized_pnl"] or 0.0
@@ -243,13 +245,10 @@ def _by_day_of_week(rows) -> list[dict]:
 def _by_hour(rows) -> list[dict]:
     buckets: dict[int, dict] = {h: {"trade_count": 0, "wins": 0, "total_pnl_pct": 0.0} for h in range(24)}
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            hour = dt.hour
-        except Exception:
+        dt = parse_utc_instant(r.get("closed_at"))
+        if dt is None:
             continue
+        hour = dt.hour
         b = buckets[hour]
         b["trade_count"] += 1
         if (r["realized_pnl"] or 0.0) > 0:
@@ -390,13 +389,10 @@ def _hour_day_heatmap(rows) -> list[dict]:
 
     cells: dict[tuple[int, int], list[float]] = defaultdict(list)
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["opened_at"]).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            cells[(dt.weekday(), dt.hour)].append(_pnl_pct(r))
-        except (ValueError, TypeError):
+        dt = parse_utc_instant(r.get("opened_at"))
+        if dt is None:
             continue
+        cells[(dt.weekday(), dt.hour)].append(_pnl_pct(r))
 
     result = []
     for day in range(7):
@@ -414,11 +410,10 @@ def _trade_frequency(rows) -> list[dict]:
 
     by_date: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00"))
-            date_str = dt.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
+        dt = parse_utc_instant(r.get("closed_at"))
+        if dt is None:
             continue
+        date_str = dt.strftime("%Y-%m-%d")
         by_date[date_str].append({
             "pnl_pct": round(_pnl_pct(r), 2),
             "direction": r["direction"] or "unknown",
