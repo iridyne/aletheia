@@ -73,6 +73,28 @@ def test_signal_pending_future_valid_until_is_counted():
     assert pending_stats["count"] >= 1
 
 
+def test_signal_pending_oldest_uses_unresolved_queue_predicate():
+    """Historical pending rows do not set the live queue oldest timestamp."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    expired_until = (now - timedelta(hours=2)).isoformat()
+    future_until = (now + timedelta(hours=2)).isoformat()
+    stale_created = (now - timedelta(hours=3)).isoformat()
+    live_created = (now - timedelta(minutes=5)).isoformat()
+
+    _insert_opp(db, "opp-old-expired", valid_until=expired_until, created_at=stale_created)
+    _insert_pi(db, "pi-old-expired", "opp-old-expired", created_at=stale_created)
+    _insert_opp(db, "opp-live-oldest", valid_until=future_until, created_at=live_created)
+    _insert_pi(db, "pi-live-oldest", "opp-live-oldest", created_at=live_created)
+    db.commit()
+
+    pending_stats = summarize(hours=12).get("signal_pending")
+
+    assert pending_stats is not None
+    assert pending_stats["count"] == 1
+    assert pending_stats["oldest_created_at"] == live_created
+
+
 def test_signal_pending_deferred_not_counted():
     """Active deferred decision does NOT count against queue depth."""
     db = get_db()

@@ -409,6 +409,7 @@ def test_requeued_generation_remains_visible_after_older_queue_eviction(
             "opportunity_id": "requeued-active",
             "symbol": "BTC/USDT",
             "conviction": 0,
+            "created_at": requeue_at,
         }
     ]
     current_carriers = repo.list_pending_pi_decisions_for_opportunity(
