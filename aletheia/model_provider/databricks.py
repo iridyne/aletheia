@@ -13,14 +13,10 @@ from urllib.parse import urlparse
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.base import ModelHealth, ModelResponse
+from aletheia.model_provider.registry import PROVIDER_TYPES, validate_provider_protocol
 
 
-DATABRICKS_PROTOCOLS = {
-    "serving_endpoint",
-    "chat_completions",
-    "responses",
-    "anthropic_messages",
-}
+DATABRICKS_PROTOCOLS = set(PROVIDER_TYPES["databricks"].protocols)
 
 
 def _normalize_workspace_url(raw: str) -> str:
@@ -57,8 +53,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
         protocol: str = "serving_endpoint",
         api_key: str | None = None,
     ):
-        if protocol not in DATABRICKS_PROTOCOLS:
-            raise ValueError(f"Unsupported Databricks protocol: {protocol}")
+        protocol = validate_provider_protocol("databricks", protocol, explicit=True)
 
         workspace_url = validate_workspace_url(workspace_url)
         if protocol == "serving_endpoint":

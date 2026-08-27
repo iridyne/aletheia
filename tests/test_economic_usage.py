@@ -117,7 +117,7 @@ def test_anthropic_usage_preserves_provider_cache_fields():
     assert usage["cached_input_tokens"] == 70
 
 
-def test_unpriced_provider_cache_usage_is_unknown_not_undercounted():
+def test_invalid_provider_cache_usage_is_unknown_not_undercounted():
     usage = normalize_usage(
         {
             "input_tokens": 100,
@@ -136,4 +136,4 @@ def test_unpriced_provider_cache_usage_is_unknown_not_undercounted():
 
     assert cost is None
     assert status == "unknown"
-    assert metadata["reason"] == "provider_cache_pricing_contract_unsupported"
+    assert metadata["reason"] == "cache_tokens_exceed_input_tokens"

@@ -202,6 +202,12 @@ def record_inference_finished(
                 metadata = {}
             metadata["structured_failure"] = safe_diagnostics
             metadata_json = _json(metadata)
+        final_provider = fallback.get("provider") or call.resolved_provider or call.requested_provider
+        final_model = (
+            fallback.get("final_model")
+            or getattr(response, "model", None)
+            or call.last_attempted_model
+        )
         db.execute(
             """UPDATE llm_inference_calls SET
                 status=?,parse_valid=?,schema_valid=?,attempt_count=?,retry_count=?,
@@ -217,8 +223,8 @@ def record_inference_finished(
                 None
                 if not fallback
                 else int(bool(fallback.get("fallback_used"))),
-                fallback.get("provider") or call.requested_provider,
-                fallback.get("final_model") or getattr(response, "model", None),
+                final_provider,
+                final_model,
                 str(error_type)[:160] if error_type else None,
                 finished_at or _utcnow(),
                 metadata_json,

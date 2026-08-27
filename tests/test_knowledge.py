@@ -9,7 +9,7 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.knowledge.manager import (
     create_daily_review, create_post_trade_review, create_research_note,
-    create_dreaming_log, create_strategy_memory,
+    create_dreaming_log, create_strategy_memory, create_trade_case_study,
     archive_item, deprecate_item, delete_item, detect_contradictions,
 )
 from aletheia.agents.post_trade_reviewer import run_post_trade_reviewer
@@ -373,12 +373,51 @@ def test_dedup_rejects_identical_content(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_trade_case_dedup_is_position_keyed(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    first = create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        _VALID_CONTENT,
+        metadata={"position_id": "pos-1", "symbol": "BTC/USDT"},
+        confidence="high_confidence",
+    )
+    second = create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        _VALID_CONTENT,
+        metadata={"position_id": "pos-2", "symbol": "BTC/USDT"},
+        confidence="high_confidence",
+    )
+    retry = create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        _VALID_CONTENT + " Extra retry prose with the same durable Position identity.",
+        metadata={"position_id": "pos-1", "symbol": "BTC/USDT"},
+        confidence="high_confidence",
+    )
+
+    assert first is not None
+    assert second is not None
+    assert retry is None
+    assert first.content_hash != second.content_hash
+    assert len(repo.list_knowledge_items(item_type="trade_case_study")) == 2
+    reset_db()
+
+
+def test_trade_case_requires_position_identity(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="metadata.position_id"):
+        create_trade_case_study(
+            "Case: missing identity",
+            _VALID_CONTENT,
+            metadata={"symbol": "BTC/USDT"},
+            confidence="high_confidence",
+        )
+
+
 @pytest.mark.parametrize(
     ("create_name", "writer_name", "subdir", "kwargs"),
     [
         ("create_research_note", "write_research_note", "research_notes", {"confidence": "high_confidence"}),
         ("create_post_trade_review", "write_post_trade_review", "post_trade_reviews", {}),
-        ("create_trade_case_study", "write_trade_case_study", "case_studies", {}),
     ],
 )
 def test_concurrent_content_hash_dedup_removes_loser_artifact(

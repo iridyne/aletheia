@@ -460,12 +460,17 @@ def _resolve_cost_model(
     }
 
 
-def _load_candidates(db: Any, cutoff: datetime) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _load_candidates(
+    db: Any,
+    cutoff: datetime,
+    epoch_start: datetime | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
     try:
         report = build_candidate_facts(
             horizon=_FIXED_CANDIDATE_HORIZON,
             as_of_at=_iso(cutoff),
+            epoch_start_at=_iso(epoch_start) if epoch_start is not None else None,
             db=db,
         )
     except (Exception,):  # source errors become unavailable evidence, never zero economics
@@ -476,6 +481,8 @@ def _load_candidates(db: Any, cutoff: datetime) -> tuple[dict[str, Any], list[di
         "status": "available",
         "contract_version": report.get("contract_version"),
         "fixed_horizon": report.get("fixed_horizon"),
+        "epoch_start_at": report.get("epoch_start_at"),
+        "as_of_at": report.get("as_of_at"),
         "candidate_count": len(facts),
         "settled_outcome_count": report.get("settled_outcome_count"),
         "unavailable_count": report.get("unavailable_count", 0),
@@ -483,6 +490,8 @@ def _load_candidates(db: Any, cutoff: datetime) -> tuple[dict[str, Any], list[di
             {
                 "contract_version": report.get("contract_version"),
                 "fixed_horizon": report.get("fixed_horizon"),
+                "epoch_start_at": report.get("epoch_start_at"),
+                "as_of_at": report.get("as_of_at"),
                 "candidate_count": report.get("candidate_count"),
                 "settled_outcome_count": report.get("settled_outcome_count"),
                 "unavailable_count": report.get("unavailable_count", 0),
@@ -2094,7 +2103,7 @@ def build_profit_gradient_evidence(
             registration = _resolve_registration(db, evidence_epoch_id, cutoff)
             epoch_start = _time(registration.get("started_at")) if registration.get("status") == "available" else cutoff
             assert epoch_start is not None
-            candidate_source, candidate_facts = _load_candidates(db, cutoff)
+            candidate_source, candidate_facts = _load_candidates(db, cutoff, epoch_start)
             position_source, position_facts = _load_positions(db, cutoff)
             cost_source = _resolve_cost_model(
                 db,

@@ -386,6 +386,109 @@ def test_post_cutoff_invalid_row_cannot_change_confirmatory_fixed_look():
     assert latest_safety["verdict_id"] == monitoring[0].verdict_id
 
 
+def test_latest_measurement_verdict_orders_by_exact_created_instant():
+    from aletheia.learning.ledger import (
+        get_latest_measurement_verdict,
+        insert_record,
+    )
+    from aletheia.learning.models import LearningContributionVerdict
+
+    hypothesis, experiment = _experiment()
+    common = dict(
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        stage=experiment.stage,
+        window_start="2026-08-25T00:00:00+00:00",
+        window_end="2026-08-25T01:00:00+00:00",
+        unique_treatment_n=10,
+        unique_control_n=10,
+        policy_epoch="epoch-a",
+        target_horizon="4h",
+        outcome_contract_version="v1",
+        metric_version="clean_net_delta_v1",
+        behavior_contract_hash="behavior-v1",
+        inference_role="monitoring",
+        harm_metrics_json=json.dumps({"harm_state": "clear"}),
+    )
+    assert insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        verdict_id="zz-older",
+        verdict="positive",
+        reason="older",
+        created_at="2026-08-25T00:00:00.100000+00:00",
+        **common,
+    ))
+    assert insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        verdict_id="aa-newer",
+        verdict="negative",
+        reason="newer",
+        created_at="2026-08-25T00:00:00.900000+00:00",
+        **common,
+    ))
+
+    latest = get_latest_measurement_verdict(
+        experiment.experiment_id,
+        policy_epoch="epoch-a",
+        stage=experiment.stage,
+        hypothesis_id=hypothesis.hypothesis_id,
+        target_horizon="4h",
+        outcome_contract_version="v1",
+        metric_version="clean_net_delta_v1",
+        behavior_contract_hash="behavior-v1",
+        inference_role="monitoring",
+    )
+
+    assert latest is not None
+    assert latest["verdict_id"] == "aa-newer"
+
+
+def test_latest_measurement_verdict_treats_offset_equivalent_instants_as_ties():
+    from aletheia.learning.ledger import (
+        get_latest_measurement_verdict,
+        insert_record,
+    )
+    from aletheia.learning.models import LearningContributionVerdict
+
+    hypothesis, experiment = _experiment(path_id="ranker_factor_filter")
+    common = dict(
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        stage=experiment.stage,
+        window_start="2026-08-25T00:00:00+00:00",
+        window_end="2026-08-25T01:00:00+00:00",
+        unique_treatment_n=10,
+        unique_control_n=10,
+        policy_epoch="epoch-a",
+        target_horizon="4h",
+        outcome_contract_version="v1",
+        metric_version="clean_net_delta_v1",
+        behavior_contract_hash="behavior-v1",
+        inference_role="monitoring",
+        harm_metrics_json=json.dumps({"harm_state": "clear"}),
+    )
+    assert insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        verdict_id="aa-same-instant",
+        verdict="positive",
+        reason="same instant lower id",
+        created_at="2026-08-25T08:00:00+08:00",
+        **common,
+    ))
+    assert insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        verdict_id="zz-same-instant",
+        verdict="neutral",
+        reason="same instant higher id",
+        created_at="2026-08-25T00:00:00+00:00",
+        **common,
+    ))
+
+    latest = get_latest_measurement_verdict(
+        experiment.experiment_id,
+        inference_role="monitoring",
+    )
+
+    assert latest is not None
+    assert latest["verdict_id"] == "zz-same-instant"
+
+
 def _filter_outcome_matrix(
     candidate: str,
     *,
