@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: http.connectTimeout
+  GIT_CONFIG_VALUE_0: "30"
+  GIT_HTTP_LOW_SPEED_LIMIT: "1000"
+  GIT_HTTP_LOW_SPEED_TIME: "30"
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -38,7 +45,10 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
+          # The parser resolves changed files from the synthetic merge's first
+          # parent; two commits are sufficient and deep history is not needed
+          # until Review core.
+          fetch-depth: 2
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -251,7 +261,8 @@ jobs:
             echo "restored gitleaks $version from $cached"
           else
             curl --fail --location --silent --show-error \
-              --retry 3 --retry-delay 2 \
+              --connect-timeout 15 --max-time 60 \
+              --retry 3 --retry-delay 2 --retry-max-time 180 \
               "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
               --output "$archive"
             if mkdir -p "$(dirname "$cached")" 2>/dev/null; then

@@ -63,8 +63,10 @@ def test_reindex_all_backfills_missing(tmp_path, monkeypatch):
 
     # Create items normally (they get indexed)
     create_trade_case_study("Case A", "ETH breakout above key resistance with strong volume confirmation; entry at breakout candle, stop below support, target at prior highs.",
+                            metadata={"position_id": "fts-case-a"},
                             confidence="high_confidence")
     create_trade_case_study("Case B", "SOL mean reversion trade from oversold RSI on daily chart; position sized conservatively given macro uncertainty and thin liquidity.",
+                            metadata={"position_id": "fts-case-b"},
                             confidence="high_confidence")
 
     # Simulate historical gap: delete FTS entries directly
@@ -102,6 +104,7 @@ def test_retrieve_lessons_returns_results_after_reindex(tmp_path, monkeypatch):
     create_trade_case_study("Momentum breakout ETH",
                             "ETH broke above 200MA with volume confirmation. "
                             "Entry at breakout, stop placed below support level.",
+                            metadata={"position_id": "fts-momentum-eth"},
                             confidence="high_confidence")
 
     # Clear FTS to simulate the historical gap
@@ -130,6 +133,7 @@ def test_retrieve_lessons_structured_filters_trade_case_metadata(tmp_path, monke
         "should teach the learning loop about this exact symbol, long direction, "
         "and momentum scanner family.",
         metadata={
+            "position_id": "fts-btc-long",
             "symbol": "BTC/USDT",
             "direction": "long",
             "scanner_family": "momentum",
@@ -143,6 +147,7 @@ def test_retrieve_lessons_structured_filters_trade_case_metadata(tmp_path, monke
         "should teach the learning loop about this exact symbol, long direction, "
         "and momentum scanner family.",
         metadata={
+            "position_id": "fts-sol-long",
             "symbol": "SOL/USDT",
             "direction": "long",
             "scanner_family": "momentum",
@@ -156,6 +161,7 @@ def test_retrieve_lessons_structured_filters_trade_case_metadata(tmp_path, monke
         "should teach the learning loop about this exact symbol, short direction, "
         "and momentum scanner family.",
         metadata={
+            "position_id": "fts-btc-short",
             "symbol": "BTC/USDT",
             "direction": "short",
             "scanner_family": "momentum",

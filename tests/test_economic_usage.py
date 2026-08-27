@@ -1,5 +1,7 @@
 """Provider-agnostic runtime usage normalization."""
 
+import pytest
+
 from aletheia.economics.tracing import estimate_llm_cost, normalize_usage
 
 
@@ -46,7 +48,7 @@ def test_openai_usage_details_preserve_cached_tokens():
         "total_tokens": 150,
         "reasoning_tokens": 12,
         "cached_input_tokens": 80,
-        "provider_cache_read_input_tokens": None,
+        "provider_cache_read_input_tokens": 80,
         "provider_cache_creation_input_tokens": None,
         "web_search_requests": None,
     }
@@ -95,7 +97,7 @@ def test_web_search_usage_without_catalog_rate_is_unknown():
 
     assert cost is None
     assert status == "unknown"
-    assert metadata["reason"] == "web_search_pricing_missing"
+    assert metadata == {"reason": "positive_special_rate_missing", "field": "web_search"}
 
 
 def test_anthropic_usage_preserves_provider_cache_fields():
@@ -117,7 +119,40 @@ def test_anthropic_usage_preserves_provider_cache_fields():
     assert usage["cached_input_tokens"] == 70
 
 
-def test_unpriced_provider_cache_usage_is_unknown_not_undercounted():
+def test_zero_special_usage_does_not_require_special_rates():
+    usage = normalize_usage(
+        {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "reasoning_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        }
+    )
+
+    cost, status, metadata = estimate_llm_cost(
+        usage,
+        {"input_usd_per_million": 1.0, "output_usd_per_million": 2.0},
+    )
+
+    assert cost == pytest.approx(0.00014)
+    assert status == "estimated"
+    assert metadata["reason"] == "formula_priced"
+
+
+def test_positive_reasoning_usage_requires_its_special_rate():
+    usage = normalize_usage({"input_tokens": 100, "output_tokens": 20, "reasoning_tokens": 5})
+
+    cost, status, metadata = estimate_llm_cost(
+        usage,
+        {"input_usd_per_million": 1.0, "output_usd_per_million": 2.0},
+    )
+
+    assert cost is None and status == "unknown"
+    assert metadata == {"reason": "positive_special_rate_missing", "field": "reasoning"}
+
+
+def test_invalid_provider_cache_usage_is_unknown_not_undercounted():
     usage = normalize_usage(
         {
             "input_tokens": 100,
@@ -136,4 +171,4 @@ def test_unpriced_provider_cache_usage_is_unknown_not_undercounted():
 
     assert cost is None
     assert status == "unknown"
-    assert metadata["reason"] == "provider_cache_pricing_contract_unsupported"
+    assert metadata["reason"] == "cache_tokens_exceed_input_tokens"

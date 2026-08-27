@@ -176,7 +176,7 @@ def test_entry_ttl_reads_config_override(cfg):
 
 
 def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatch):
-    item = _scored_item("BTC/USDT", "momentum", 80, market_type="perp", venue="bitget")
+    item = _scored_item("BTC/USDT", "momentum", 80, market_type="perp", venue="okx")
     seen: list[tuple[str, str, str | None]] = []
 
     def _fresh(symbol: str, market_type: str, *, exchange: str | None = None) -> bool:
@@ -187,7 +187,7 @@ def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatc
 
     result = allocate_universe([item], cfg)
 
-    assert seen == [("BTC/USDT", "perp", "bitget")]
+    assert seen == [("BTC/USDT", "perp", "okx")]
     assert result[0]["execution_eligible"] is False
 
 

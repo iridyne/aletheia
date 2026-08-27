@@ -473,6 +473,217 @@ def test_inspect_status_json(cli_db):
     assert "orders" in data
 
 
+def test_inspect_status_json_reports_fresh_zero_exchange_account(cli_db, monkeypatch):
+    """Zero equity is a real value, not a missing exchange-account fact."""
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_cached_state",
+        lambda: {"equity_usdt": 0.0, "age_seconds": 3.0},
+    )
+    monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "ok")
+    monkeypatch.setattr(exchange_sync, "active_broker_view_complete", lambda: (True, "okx_demo connected"))
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "available"
+    assert data["portfolio"]["equity_usdt"] == 0.0
+    assert data["portfolio"]["exchange_account"] == {
+        "status": "ok",
+        "equity_usdt": 0.0,
+        "age_sec": 3.0,
+        "complete": True,
+        "completeness_reason": "okx_demo connected",
+        "reason": None,
+    }
+
+
+def test_inspect_status_labels_stale_exchange_account(cli_db, monkeypatch):
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_cached_state",
+        lambda: {"total_equity_usdt": 123.45, "age_seconds": 999.0},
+    )
+    monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "stale")
+    monkeypatch.setattr(exchange_sync, "active_broker_view_complete", lambda: (True, "okx_demo connected"))
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+    human = runner.invoke(app, ["inspect", "status"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "partial"
+    assert data["portfolio"]["equity_usdt"] == 123.45
+    assert data["portfolio"]["exchange_account"]["status"] == "stale"
+    assert data["portfolio"]["exchange_account"]["reason"] == "cache_stale"
+    assert human.exit_code == 0, human.output
+    assert "[exchange_account: stale]" in human.output
+    assert "exchange_account: cache_stale" in human.output
+
+
+def test_inspect_status_reports_exchange_account_read_failure(cli_db, monkeypatch):
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    def fail_read():
+        raise RuntimeError("secret backend path leaked")
+
+    monkeypatch.setattr(exchange_sync, "get_cached_state", fail_read)
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "partial"
+    account = data["portfolio"]["exchange_account"]
+    assert account["status"] == "error"
+    assert account["reason"] == "read_failed"
+    assert "secret backend path leaked" not in result.output
+
+
+def test_inspect_status_marks_incomplete_active_broker_view_partial(cli_db, monkeypatch):
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_cached_state",
+        lambda: {"equity_usdt": 1000.0, "age_seconds": 1.0},
+    )
+    monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "ok")
+    monkeypatch.setattr(
+        exchange_sync,
+        "active_broker_view_complete",
+        lambda: (False, "okx_demo not connected (have ['bitget_demo'])"),
+    )
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "partial"
+    account = data["portfolio"]["exchange_account"]
+    assert account["status"] == "ok"
+    assert account["complete"] is False
+    assert account["reason"] == "active_broker_view_incomplete"
+    assert account["completeness_reason"] == "okx_demo not connected (have ['bitget_demo'])"
+
+
+def test_inspect_strategies_marks_malformed_parameters_partial(cli_db):
+    import json as json_mod
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("valid-strategy", "Valid Strategy", "draft", '{"symbol":"BTC/USDT","ruleset":{"entry":"x"}}'),
+    )
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("empty-strategy", "Empty Strategy", "draft", "{}"),
+    )
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("bad-strategy", "Bad Strategy", "draft", "{broken"),
+    )
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("non-object-strategy", "Non Object Strategy", "draft", "[]"),
+    )
+    db.commit()
+
+    result = runner.invoke(app, ["inspect", "strategies", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json_mod.loads(result.output)
+    assert payload["availability"] == "partial"
+    assert payload["invalid_parameters_count"] == 2
+    rows = {row["id"]: row for row in payload["rows"]}
+    assert rows["valid-strategy"]["parameters_status"] == "available"
+    assert rows["valid-strategy"]["symbol"] == "BTC/USDT"
+    assert rows["valid-strategy"]["has_ruleset"] is True
+    assert rows["empty-strategy"]["parameters_status"] == "available"
+    assert rows["empty-strategy"]["has_ruleset"] is False
+    assert rows["bad-strategy"]["parameters_status"] == "invalid"
+    assert rows["bad-strategy"]["parameters_error"] == "invalid_json"
+    assert rows["bad-strategy"]["has_ruleset"] is None
+    assert rows["non-object-strategy"]["parameters_error"] == "not_json_object"
+
+    human = runner.invoke(app, ["inspect", "strategies"])
+    assert human.exit_code == 0, human.output
+    assert "id=bad-strategy" in human.output
+    assert "parameters_status=invalid" in human.output
+    assert "{broken" not in human.output
+
+
+def test_strategy_parameters_write_path_requires_json_object(cli_db):
+    from pydantic import ValidationError
+
+    from aletheia.storage.models import StrategyParametersInvalid, StrategyRecord
+    from aletheia.storage.repositories import insert_strategy, update_strategy
+
+    with pytest.raises(ValidationError):
+        StrategyRecord(name="Malformed", parameters="{broken")
+
+    strategy = StrategyRecord(id="strategy-1", name="Valid", parameters="{}")
+    insert_strategy(strategy)
+
+    with pytest.raises(StrategyParametersInvalid) as exc:
+        update_strategy("strategy-1", parameters='["not", "an", "object"]')
+    assert exc.value.reason == "not_json_object"
+
+
+def test_inspect_factor_feedback_formats_win_rate_ratio_as_percent(monkeypatch):
+    import json as json_mod
+
+    from aletheia.analytics import factor_feedback as factor_feedback_module
+
+    rows = [
+        {"factor_key": "zero", "total_trades": 2, "win_rate": 0, "expectancy": 0, "profit_factor": 0, "status": "watch"},
+        {"factor_key": "third", "total_trades": 3, "win_rate": 0.3333, "expectancy": 1, "profit_factor": 1, "status": "watch"},
+        {"factor_key": "half", "total_trades": 2, "win_rate": 0.5, "expectancy": 1, "profit_factor": 1, "status": "watch"},
+        {"factor_key": "three-quarters", "total_trades": 4, "win_rate": 0.75, "expectancy": 1, "profit_factor": 2, "status": "active"},
+        {"factor_key": "all", "total_trades": 2, "win_rate": 1.0, "expectancy": 1, "profit_factor": 9, "status": "preferred"},
+        {"factor_key": "missing", "total_trades": 2, "win_rate": None, "expectancy": 1, "profit_factor": 1, "status": "watch"},
+    ]
+    monkeypatch.setattr(
+        factor_feedback_module,
+        "build_factor_feedback",
+        lambda *, limit, min_trades: rows,
+    )
+
+    result = runner.invoke(app, ["inspect", "factor-feedback", "--limit", "10"])
+
+    assert result.exit_code == 0, result.output
+    for key, rendered in [
+        ("zero", "0%"),
+        ("third", "33%"),
+        ("half", "50%"),
+        ("three-quarters", "75%"),
+        ("all", "100%"),
+        ("missing", "n/a"),
+    ]:
+        assert any(key in line and rendered in line for line in result.output.splitlines())
+
+    raw = runner.invoke(app, ["inspect", "factor-feedback", "--limit", "10", "--json"])
+    assert raw.exit_code == 0, raw.output
+    payload = json_mod.loads(raw.output)
+    assert payload[3]["factor_key"] == "three-quarters"
+    assert payload[3]["win_rate"] == 0.75
+
+
 def test_inspect_equity_uses_current_account_equity_series(cli_db):
     import json as json_mod
 

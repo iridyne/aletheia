@@ -244,11 +244,7 @@ async def _llm_startup_gate(cfg) -> None:
     # sentinel so this task can never wildcard-release a newer owner.
     before_probe = _load_config()
     llm_lease = before_probe.runtime.pause_owners.get(LLM_STARTUP_OWNER)
-    llm_generation = (
-        llm_lease.generation
-        if llm_lease is not None and llm_lease.generation is not None
-        else ""
-    )
+    llm_generation = llm_lease.generation if llm_lease is not None and llm_lease.generation is not None else ""
     try:
         from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
 
@@ -282,17 +278,13 @@ async def _llm_startup_gate(cfg) -> None:
             source="llm_startup_gate",
         )
         if release.resume_failed:
-            logger.warning(
-                "LLM startup gate: scheduler resume failed — pause owner retained for retry"
-            )
+            logger.warning("LLM startup gate: scheduler resume failed — pause owner retained for retry")
             from aletheia.agent_runtime.auto_resume import start_auto_resume_task
             from aletheia.config.loader import load_config as _load_config
 
             fresh = _load_config()
             if fresh.health.auto_resume_enabled:
-                start_auto_resume_task(
-                    interval_sec=fresh.health.auto_resume_interval_sec
-                )
+                start_auto_resume_task(interval_sec=fresh.health.auto_resume_interval_sec)
         return
 
     # No provider could complete a real inference call — pause the loop.
@@ -502,6 +494,19 @@ async def lifespan(app: FastAPI):
             runtime_session = start_runtime_session(cfg, runtime_context)
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
+        try:
+            from aletheia.economics.inference_calls import reconcile_interrupted_inferences
+
+            current_session_id = (
+                str(runtime_session.get("session_id"))
+                if runtime_session and runtime_session.get("durable") is True
+                else None
+            )
+            interrupted = reconcile_interrupted_inferences(current_session_id)
+            if interrupted:
+                logger.warning("Marked %d interrupted logical inference call(s)", interrupted)
+        except Exception as e:
+            logger.warning("Inference startup reconciliation failed (non-fatal): %s", e)
         if runtime_session and runtime_session.get("durable") is True:
             try:
                 from aletheia.learning.evidence_epoch import (
@@ -520,9 +525,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("Evidence epoch registration failed (non-fatal): %s", e)
         else:
-            logger.warning(
-                "Evidence epoch registration skipped: runtime session is not durable"
-            )
+            logger.warning("Evidence epoch registration skipped: runtime session is not durable")
         try:
             from aletheia.storage.event_store import get_event_store
 
@@ -532,6 +535,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Event JSONL mirror reconciliation failed (non-fatal): %s", e)
     stage_started = _log_startup_stage("runtime_reconciliation", stage_started, startup_started)
+    try:
+        from aletheia.economics.pricing_sync import activate_cached_catalog
+
+        activate_cached_catalog()
+    except Exception as e:
+        logger.warning("Pricing cache activation failed (non-fatal): %s", e)
     init_tool_registry()
     from aletheia.agent_runtime.job_queue import get_agent_job_manager
 

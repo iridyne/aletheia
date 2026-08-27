@@ -61,8 +61,7 @@ def _infer_capabilities(model_id: str) -> list[str]:
 class OpenAINativeProvider(ModelProvider):
     name = "openai_native"
 
-    def __init__(self, model: str = "gpt-4o", api_key: str | None = None,
-                 oauth_token: str | None = None):
+    def __init__(self, model: str = "gpt-4o", api_key: str | None = None, oauth_token: str | None = None):
         self.model = model
         self.api_key = api_key
         self.oauth_token = oauth_token
@@ -85,9 +84,7 @@ class OpenAINativeProvider(ModelProvider):
             "max_tokens": request.max_tokens,
         }
         client = self._get_http_client(httpx_client)
-        resp = await client.post(
-            f"{BASE_URL}/chat/completions", json=payload, headers=self._headers()
-        )
+        resp = await client.post(f"{BASE_URL}/chat/completions", json=payload, headers=self._headers())
         raise_for_status_without_secrets(resp)
         data = resp.json()
         choice = data["choices"][0]
@@ -108,11 +105,15 @@ class OpenAINativeProvider(ModelProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         client = self._get_http_client(httpx_client)
+        usage_emitted = False
         async with client.stream(
-                "POST", f"{BASE_URL}/chat/completions",
-                json=payload, headers=self._headers(),
+            "POST",
+            f"{BASE_URL}/chat/completions",
+            json=payload,
+            headers=self._headers(),
         ) as resp:
             raise_for_status_without_secrets(resp)
             async for line in resp.aiter_lines():
@@ -120,32 +121,36 @@ class OpenAINativeProvider(ModelProvider):
                     continue
                 payload_str = line[6:]
                 if payload_str.strip() == "[DONE]":
-                    yield StreamChunk(content="", done=True)
+                    if not usage_emitted:
+                        yield StreamChunk(content="", done=True)
                     break
                 data = json.loads(payload_str)
+                actual_model = data.get("model")
                 choices = data.get("choices", [])
                 if choices:
                     delta = choices[0].get("delta", {})
                     content = delta.get("content", "")
                     if content:
-                        yield StreamChunk(content=content)
+                        yield StreamChunk(content=content, model=actual_model)
                 usage = data.get("usage")
                 if usage:
-                    yield StreamChunk(content="", done=True, usage=usage)
+                    usage_emitted = True
+                    yield StreamChunk(content="", done=True, usage=usage, model=actual_model)
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
         messages = list(request.messages)
         if request.system:
             messages.insert(0, {"role": "system", "content": request.system})
-        schema_json = json.dumps(
-            model_json_schema_payload(schema)
+        schema_json = json.dumps(model_json_schema_payload(schema))
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Respond with valid JSON matching this schema: {schema_json}",
+            }
         )
-        messages.append({
-            "role": "user",
-            "content": f"Respond with valid JSON matching this schema: {schema_json}",
-        })
         mr = ModelRequest(
-            messages=messages, temperature=request.temperature,
+            messages=messages,
+            temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
         resp = await self.complete(mr)
@@ -155,9 +160,7 @@ class OpenAINativeProvider(ModelProvider):
         try:
             client = self._get_http_client(httpx_client)
             async with asyncio.timeout(10):
-                resp = await client.get(
-                    f"{BASE_URL}/models", headers=self._headers()
-                )
+                resp = await client.get(f"{BASE_URL}/models", headers=self._headers())
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -172,14 +175,16 @@ class OpenAINativeProvider(ModelProvider):
                 continue
             if any(mid.startswith(p) for p in _CHAT_MODEL_PREFIXES):
                 created = item.get("created")
-                models.append({
-                    "slug": mid,
-                    "display_name": mid,
-                    "tier": _infer_tier(mid),
-                    "context_window": _infer_context(mid),
-                    "capabilities": _infer_capabilities(mid),
-                    "created_at": created,
-                })
+                models.append(
+                    {
+                        "slug": mid,
+                        "display_name": mid,
+                        "tier": _infer_tier(mid),
+                        "context_window": _infer_context(mid),
+                        "capabilities": _infer_capabilities(mid),
+                        "created_at": created,
+                    }
+                )
         return sorted(models, key=lambda m: m["slug"])
 
     async def healthcheck(self) -> ModelHealth:
@@ -188,12 +193,15 @@ class OpenAINativeProvider(ModelProvider):
             if models:
                 slugs = [m["slug"] for m in models]
                 return ModelHealth(
-                    provider=self.name, available=True,
-                    model=self.model, models=slugs,
+                    provider=self.name,
+                    available=True,
+                    model=self.model,
+                    models=slugs,
                     model_metadata=models,
                 )
             return ModelHealth(
-                provider=self.name, available=False,
+                provider=self.name,
+                available=False,
                 error="model catalogue unavailable; use explicit Ping to test inference",
             )
         except Exception as e:

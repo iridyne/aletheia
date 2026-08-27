@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from aletheia.analytics.temporal import parse_utc_instant
 
+from aletheia.data.symbols import to_canonical
 from aletheia.analytics.holding_time import holding_hours
 
 # Keep in sync with aletheia/server/routes/analytics.py _ROUND1_START_UTC
@@ -423,29 +424,38 @@ def _trade_frequency(rows) -> list[dict]:
     return [{"date": d, "trades": by_date[d]} for d in sorted_dates]
 
 
+def _matrix_market_type(value) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"perp", "futures", "swap"}:
+        return "usdt_futures"
+    return raw or "unknown"
+
+
 def _symbol_direction_matrix(rows) -> list[dict]:
-    """Symbol × Direction win rate matrix."""
+    """Symbol × Market Type × Direction win rate matrix."""
     from collections import defaultdict
 
-    cells: dict[tuple[str, str], list[float]] = defaultdict(list)
+    cells: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for r in rows:
-        sym = r["symbol"] or "unknown"
-        direction = r["direction"] or "unknown"
-        cells[(sym, direction)].append(r["realized_pnl"] or 0.0)
+        raw_symbol = str(r.get("symbol") or "").strip()
+        sym = to_canonical(raw_symbol) if raw_symbol else "unknown"
+        market_type = _matrix_market_type(r.get("market_type"))
+        direction = str(r.get("direction") or "unknown").strip().lower() or "unknown"
+        cells[(sym, market_type, direction)].append(r)
 
     result = []
-    for (sym, direction), pnls in cells.items():
-        tc = len(pnls)
+    for (sym, market_type, direction), cell_rows in cells.items():
+        tc = len(cell_rows)
         if tc < 2:
             continue
+        pnls = [r["realized_pnl"] or 0.0 for r in cell_rows]
         wins = sum(1 for p in pnls if p > 0)
         result.append({
             "symbol": sym,
+            "market_type": market_type,
             "direction": direction,
             "win_rate": round(wins / tc * 100, 1),
-            "avg_pnl_pct": round(sum(_pnl_pct(r) for r in rows
-                                      if (r["symbol"] or "") == sym and (r["direction"] or "") == direction)
-                                  / tc, 2),
+            "avg_pnl_pct": round(sum(_pnl_pct(r) for r in cell_rows) / tc, 2),
             "trade_count": tc,
         })
     # Sort by trade_count desc

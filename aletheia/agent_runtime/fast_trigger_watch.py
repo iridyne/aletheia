@@ -34,6 +34,7 @@ _status: dict[str, object] = {
     "reason": "fast_trigger_disabled",
     "watched_setups": 0,
 }
+_WATCHER_RELOAD_INTERVAL_SEC = 2.0
 
 
 async def _prewarm_market_structure(
@@ -267,20 +268,25 @@ async def _watch_loop(cfg) -> None:
             }
             iterator = stream.events().__aiter__()
             subscribed = instruments
-            next_config_check = asyncio.get_running_loop().time() + 2.0
+            loop = asyncio.get_running_loop()
+            next_config_check = loop.time() + 2.0
+            next_watcher_reload = loop.time() + _WATCHER_RELOAD_INTERVAL_SEC
             while not stop.is_set():
                 if event_task is None:
                     event_task = asyncio.create_task(anext(iterator))
-                done, _ = await asyncio.wait({event_task}, timeout=2.0)
-                if asyncio.get_running_loop().time() >= next_config_check:
+                now = loop.time()
+                timeout = max(0.0, min(next_config_check, next_watcher_reload) - now)
+                done, _ = await asyncio.wait({event_task}, timeout=timeout)
+                now = loop.time()
+                if now >= next_config_check:
                     current_cfg = await asyncio.to_thread(
                         load_config, persist_migrations=False
                     )
                     if _watch_config_identity(current_cfg) != _watch_config_identity(cfg):
                         cfg = current_cfg
                         break
-                    next_config_check = asyncio.get_running_loop().time() + 2.0
-                if not done:
+                    next_config_check = now + 2.0
+                if now >= next_watcher_reload:
                     fresh_setups, fresh_engines = await _load_watchers(cfg, engines)
                     fresh_instruments = {
                         engine.instrument for engine in fresh_engines.values()
@@ -296,6 +302,8 @@ async def _watch_loop(cfg) -> None:
                         for engine in engines.values():
                             engine.confirm_subscription()
                     _status["watched_setups"] = len(setups)
+                    next_watcher_reload = now + _WATCHER_RELOAD_INTERVAL_SEC
+                if not done:
                     continue
                 try:
                     event = event_task.result()

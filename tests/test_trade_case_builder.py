@@ -290,6 +290,15 @@ class TestBuildCaseStudies:
         result = build_case_studies(since_hours=9999)
         assert result == {"created": [], "failed": []}
 
+    @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
+    @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
+    def test_missing_position_id_is_failed_not_silently_skipped(self, mock_rows, mock_existing):
+        mock_existing.return_value = set()
+        mock_rows.return_value = [_make_row(position_id="")]
+
+        result = build_case_studies(since_hours=9999)
+        assert result == {"created": [], "failed": [{"position_id": None, "error": "missing_position_id"}]}
+
     @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
     @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
     @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")

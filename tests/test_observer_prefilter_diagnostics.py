@@ -34,6 +34,7 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
         record_filter_decision,
     )
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     now = datetime.now(timezone.utc)
     common = {
@@ -89,8 +90,9 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
         "estimated_funding_pct=0, net_return_pct = "
         "CASE WHEN outcome_candidate_key='observer:first:rsi' THEN -1.0 ELSE 2.0 END, "
         "min_tradable_edge_pct=0.05, settlement_price_source='horizon_ohlcv', "
-        "settlement_lag_sec=0, cost_model_version='test-v1' "
-        "WHERE outcome_candidate_key IN ('observer:first:rsi','observer:first:neither')"
+        "settlement_lag_sec=0, cost_model_version=? "
+        "WHERE outcome_candidate_key IN ('observer:first:rsi','observer:first:neither')",
+        (COST_MODEL_VERSION,),
     )
     db.commit()
     before = db.total_changes
@@ -183,6 +185,7 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.counterfactual.filter_replay import build_observer_pre_filter_replay
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     now = datetime.now(timezone.utc)
     common = {
@@ -257,9 +260,10 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
         "estimated_funding_pct=0, net_return_pct = "
         "CASE WHEN outcome_candidate_key='observer:replay:control' THEN -1.0 ELSE 2.0 END, "
         "min_tradable_edge_pct=0.05, settlement_price_source='horizon_ohlcv', "
-        "settlement_lag_sec=0, cost_model_version='test-v1' "
+        "settlement_lag_sec=0, cost_model_version=? "
         "WHERE outcome_candidate_key IN "
-        "('observer:replay:control','observer:replay:admit')"
+        "('observer:replay:control','observer:replay:admit')",
+        (COST_MODEL_VERSION,),
     )
     db.commit()
     before = db.total_changes
@@ -347,6 +351,7 @@ def test_stale_persistent_observer_version_cannot_trigger_replay(monkeypatch):
             market_type="perp",
             horizon="24h",
             filter_version="stale-v1",
+            cost_model_version="v1",
             consecutive_suspect_runs=10,
             runs_analyzed=10,
             first_suspect_at="2026-07-20T00:00:00+00:00",
