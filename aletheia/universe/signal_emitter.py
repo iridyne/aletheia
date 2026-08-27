@@ -271,9 +271,6 @@ def _materialize_trigger_opportunity(
     instrument_background: dict,
     analysis_context: dict | None,
 ) -> Opportunity:
-    from aletheia.universe.features import persist_feature_snapshot_for_emission
-
-    persist_feature_snapshot_for_emission(feature)
     price = float(market_fact["price"])
     entry_zone = (price, price)
     detected_at = datetime.now(timezone.utc).isoformat()
@@ -564,6 +561,7 @@ def emit_deterministic_opportunities(
     from aletheia.agent_shell.trading_context import (
         material_fingerprint_from_features as _material_fingerprint,
     )
+    from aletheia.universe.features import persist_feature_snapshot_for_emission
 
     for member_index, m in enumerate(members):
         symbol = m.get("symbol", "")
@@ -778,6 +776,7 @@ def emit_deterministic_opportunities(
             )
             continue
 
+        persist_feature_snapshot_for_emission(feat)
         current_material_fingerprint = _material_fingerprint(
             symbol=symbol,
             direction=direction,
