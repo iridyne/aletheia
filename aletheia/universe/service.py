@@ -1169,8 +1169,7 @@ class UniverseService:
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 snapshot_id=snap.id,
             )
-            if planning_generations_created:
-                _notify_operator_feature_refresh("candidate_planning_generation_created")
+            _notify_operator_feature_refresh("universe_refresh_new_snapshot")
             logger.info(
                 "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",
                 len(assets),
