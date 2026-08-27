@@ -1,4 +1,4 @@
-"""Read-only, aggregate-only projection backing the Usage insights page."""
+"""Typed, aggregate-only read model for the Usage v2 page."""
 
 from __future__ import annotations
 
@@ -9,1061 +9,574 @@ import math
 import sqlite3
 from typing import Any, Iterable
 
-from aletheia.economics.agent_roles import role_for_logical_agent
 from aletheia.economics.tracing import estimate_llm_cost, normalize_usage
 from aletheia.model_provider.fallback import get_model_health_snapshot
 from aletheia.storage.sqlite import readonly_db
 
-
 _WINDOW_DAYS = {1, 7, 30, 90}
-_GROUPS = {"summary", "operations", "analysis"}
-_ERROR_CATEGORY_LIMIT = 8
-_BASELINE_MIN_FULL_DAYS = 7
-_ANOMALY_Z_THRESHOLD = 3.0
+_GROUPS = {"summary", "operations"}
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _as_utc(value: datetime) -> datetime:
+def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def _iso(value: object) -> datetime | None:
-    if not value:
-        return None
+def _instant(value: object) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
-    return _as_utc(parsed)
+    return _utc(parsed)
 
 
-def _count(value: object) -> int:
-    return int(value or 0)
+def _json(value: object) -> dict[str, Any]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
-def _number(value: object) -> float:
-    return round(float(value or 0), 12)
+def _text(value: object) -> str | None:
+    result = str(value).strip() if value is not None else ""
+    return result or None
+
+
+def _number(value: object) -> float | None:
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) and result >= 0 else None
 
 
 def _pct(numerator: int, denominator: int) -> float | None:
     return round(numerator * 100 / denominator, 4) if denominator else None
 
 
-def _status(denominator: int, numerator: int) -> str:
-    if denominator == 0 or numerator == 0:
-        return "not_available"
-    return "available" if numerator == denominator else "partial"
-
-
-def _lineage_status(referenced: int, covered: int, legacy_retired: int = 0) -> str:
-    active_references = referenced - legacy_retired
-    if active_references == 0:
-        return "not_observed"
-    return "available" if covered == active_references else "partial"
-
-
-def _section(status: str, reason: str | None, **fields: Any) -> dict[str, Any]:
-    return {"status": status, "reason": reason, **fields}
-
-
-def _table_names(db: sqlite3.Connection) -> set[str]:
-    return {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-
-
-def _columns(db: sqlite3.Connection, table: str) -> set[str]:
-    return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
-
-
-def _window_sql(column: str) -> str:
-    return f"replace({column},' ','T') >= replace(?,' ','T') AND replace({column},' ','T') <= replace(?,' ','T')"
-
-
-def _query_rows(db: sqlite3.Connection, sql: str, params: Iterable[object]) -> list[dict[str, Any]]:
-    return [dict(row) for row in db.execute(sql, tuple(params)).fetchall()]
-
-
-def _metadata(raw: object) -> dict[str, Any]:
-    try:
-        value = json.loads(str(raw or "{}"))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
-def _text(value: object) -> str | None:
-    text = str(value).strip() if value is not None else ""
-    return text or None
-
-
-def _cost_known(row: dict[str, Any]) -> bool:
-    return row.get("estimated_cost_usd") is not None and row.get("cost_status") == "known"
-
-
-def _cost_estimated(row: dict[str, Any]) -> bool:
-    return row.get("estimated_cost_usd") is not None and row.get("cost_status") == "estimated"
-
-
-def _cost_priced(row: dict[str, Any]) -> bool:
-    return _cost_known(row) or _cost_estimated(row)
-
-
-def _cost_value(row: dict[str, Any]) -> float:
-    return _number(row.get("estimated_cost_usd")) if _cost_known(row) else 0.0
-
-
-def _estimated_cost_value(row: dict[str, Any]) -> float:
-    return _number(row.get("estimated_cost_usd")) if _cost_estimated(row) else 0.0
-
-
-def _quantile(values: list[float], probability: float) -> float | None:
-    if not values:
-        return None
+def _quantile(values: Iterable[float], probability: float) -> float | None:
     ordered = sorted(values)
+    if not ordered:
+        return None
     index = (len(ordered) - 1) * probability
-    lower = math.floor(index)
-    upper = math.ceil(index)
+    lower, upper = math.floor(index), math.ceil(index)
     value = ordered[lower] if lower == upper else ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
     return round(value, 3)
 
 
-def _error_categories(rows: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
-    counts = Counter(
-        _text(row.get("error_type")) or "not_available"
-        for row in rows
-        if row.get("status") != "success"
-    )
-    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    visible = ordered[:_ERROR_CATEGORY_LIMIT]
-    return ([{"error_type": name, "event_count": count} for name, count in visible], sum(count for _, count in ordered[_ERROR_CATEGORY_LIMIT:]))
+def _rows(db: sqlite3.Connection, sql: str, params: Iterable[object] = ()) -> list[dict[str, Any]]:
+    return [dict(row) for row in db.execute(sql, tuple(params)).fetchall()]
 
 
-def _empty(days: int, end: datetime, reason: str) -> dict[str, Any]:
-    start = end - timedelta(days=days)
-    unavailable = lambda **fields: _section("not_available", reason, **fields)
-    axes = [
-        {"id": key, "label": label, "status": "not_available", "coverage_pct": None, "reason": reason}
-        for key, label in (
-            ("consumption", "Consumption"), ("pricing", "Pricing"),
-            ("attribution", "Attribution"), ("tools", "Tools"),
-            ("reliability", "Reliability"), ("budgets", "Budgets"),
-            ("trends", "Trends"), ("research_yield", "Research yield"),
-        )
-    ]
-    return {
-        "window": {"days": days, "started_at": start.isoformat(), "ended_at": end.isoformat(), "as_of": end.isoformat(), "timezone": "UTC"},
-        "coverage": unavailable(axes=axes),
-        "token_mix": unavailable(input_tokens=None, output_tokens=None, total_tokens=None, reasoning_tokens=None, cached_tokens=None, event_count=None),
-        "pricing": unavailable(known_cost_usd=None, known_event_count=None, estimated_cost_usd=None, estimated_event_count=None, unknown_event_count=None, pricing_coverage_pct=None, gaps=[]),
-        "attribution": unavailable(rows=[]),
-        "tools": unavailable(rows=[], timing_coverage_pct=None, pricing_coverage_pct=None),
-        "reliability": unavailable(
-            logical={},
-            physical={},
-            current_model_cooldown=_current_model_cooldown(end.isoformat()),
-        ),
-        "budgets": unavailable(rows=[]),
-        "trends": unavailable(
-            daily=[],
-            baseline=None,
-            trace_coverage=unavailable(
-                session_count=0,
-                traced_session_count=0,
-                legacy_or_untraced_session_count=0,
-                full_day_count=0,
-                trace_covered_full_day_count=0,
-                observed_zero_day_count=0,
-                unavailable_zero_day_count=0,
-            ),
-        ),
-        "research_yield": unavailable(artifacts=[], lineage=[]),
-    }
+def _tables(db: sqlite3.Connection) -> set[str]:
+    return {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def _runtime_rows(db: sqlite3.Connection, window: tuple[str, str]) -> list[dict[str, Any]]:
-    return _query_rows(
+def _window_rows(db: sqlite3.Connection, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    return _rows(
         db,
-        "SELECT id,event_type,run_id,runtime_session_id,opportunity_id,decision_id,proposal_id,call_id,provider,model_or_tool,requested_model,attempt_index,status,started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,cost_status,error_type,metadata_json "
-        "FROM runtime_cost_events WHERE " + _window_sql("started_at"),
-        window,
+        "SELECT * FROM runtime_cost_events WHERE event_type='llm' "
+        "AND replace(started_at,' ','T') >= replace(?,' ','T') "
+        "AND replace(started_at,' ','T') < replace(?,' ','T') "
+        "ORDER BY replace(started_at,' ','T'),rowid",
+        (start.isoformat(), end.isoformat()),
     )
 
 
-def _project_latest_litellm_estimates(
-    db: sqlite3.Connection, runtime_rows: list[dict[str, Any]]
-) -> None:
-    """Estimate otherwise-unknown LLM rows in memory without rewriting history."""
-    snapshots: dict[tuple[str, str], dict[str, Any]] = {}
-    for snapshot in _query_rows(
-        db,
-        "SELECT * FROM pricing_snapshots WHERE source LIKE 'litellm_public_median:%' "
-        "ORDER BY datetime(effective_from) DESC,rowid DESC",
-        (),
-    ):
-        snapshots.setdefault((str(snapshot["provider"]), str(snapshot["model"])), snapshot)
-
-    for row in runtime_rows:
-        if row.get("event_type") == "tool":
-            # agent_tool_calls are local orchestration operations. Provider-native
-            # tool charges (for example web search) are priced on the LLM event
-            # from catalog usage counters, so any legacy/manual local-tool price
-            # is ignored in this projection to prevent double counting.
-            row["estimated_cost_usd"] = 0.0
-            row["cost_status"] = "estimated"
-            continue
-        if row.get("event_type") != "llm" or _cost_priced(row):
-            continue
-        pricing = snapshots.get((str(row.get("provider") or ""), str(row.get("model_or_tool") or "")))
-        if pricing is None:
-            continue
-        try:
-            envelope = json.loads(str(row.get("usage_json") or "{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        normalized = envelope.get("normalized") if isinstance(envelope, dict) else None
-        usage = normalized if isinstance(normalized, dict) else normalize_usage(envelope)
-        cost, status, _ = estimate_llm_cost(usage, pricing)
-        if cost is not None and status == "estimated":
-            row["estimated_cost_usd"] = cost
-            row["cost_status"] = status
-
-
-def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
-    fields = ("input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens")
-    totals: dict[str, float] = {field: 0.0 for field in fields}
-    available: dict[str, int] = {field: 0 for field in fields}
-    usable_rows = 0
-    for row in llm_rows:
-        try:
-            envelope = json.loads(str(row.get("usage_json") or "{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            envelope = {}
-        normalized = envelope.get("normalized") if isinstance(envelope, dict) else None
-        if not isinstance(normalized, dict):
-            normalized = normalize_usage(envelope) if isinstance(envelope, dict) else {}
-        if any(isinstance(normalized.get(key), (int, float)) and normalized.get(key) >= 0 for key in ("input_tokens", "output_tokens", "reasoning_tokens", "cached_input_tokens", "provider_cache_read_input_tokens")):
-            usable_rows += 1
-        values = {
-            "input_tokens": normalized.get("input_tokens"),
-            "output_tokens": normalized.get("output_tokens"),
-            "reasoning_tokens": normalized.get("reasoning_tokens"),
-            "cached_tokens": normalized.get("cached_input_tokens") if normalized.get("cached_input_tokens") is not None else normalized.get("provider_cache_read_input_tokens"),
-        }
-        for field, value in values.items():
-            if isinstance(value, (int, float)) and value >= 0:
-                totals[field] += value
-                available[field] += 1
-    total = len(llm_rows)
-    field_coverage = {field: _pct(available[field], total) for field in fields}
-    # Status reflects only the core fields (input + output); reasoning and cached
-    # are optional sub-fields that most models never report, so excluding them from
-    # the status denominator prevents a permanent spurious Partial badge.
-    core_min = min(available["input_tokens"], available["output_tokens"])
-    status = _status(total, core_min)
-    if status == "available":
-        reason = None
-    elif total == 0 or usable_rows == 0:
-        reason = "No normalized token usage is recorded in this window."
-    else:
-        reason = "Some displayed token fields are absent from one or more LLM events."
-    # total_tokens: sum whatever input+output rows we have; failed attempts
-    # legitimately carry no usage, so we do not require 100% row coverage.
-    has_input = available["input_tokens"] > 0
-    has_output = available["output_tokens"] > 0
-    total_tokens: float | None
-    if has_input and has_output:
-        total_tokens = _number(totals["input_tokens"] + totals["output_tokens"])
-    else:
-        total_tokens = None
-    return (
-        _section(
-            status,
-            reason,
-            input_tokens=_number(totals["input_tokens"]) if has_input else None,
-            output_tokens=_number(totals["output_tokens"]) if has_output else None,
-            total_tokens=total_tokens,
-            reasoning_tokens=_number(totals["reasoning_tokens"]) if available["reasoning_tokens"] else None,
-            cached_tokens=_number(totals["cached_tokens"]) if available["cached_tokens"] else None,
-            event_count=total or None,
-            field_coverage_pct=field_coverage,
-        ),
-        usable_rows,
+def _usage(row: dict[str, Any]) -> dict[str, int | None]:
+    envelope = _json(row.get("usage_json"))
+    normalized = envelope.get("normalized")
+    if not isinstance(normalized, dict):
+        return normalize_usage(envelope.get("raw", envelope))
+    fields = (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+        "cached_input_tokens",
+        "provider_cache_read_input_tokens",
+        "provider_cache_creation_input_tokens",
+        "web_search_requests",
     )
+    result: dict[str, int | None] = {}
+    for field in fields:
+        value = normalized.get(field)
+        result[field] = value if isinstance(value, int) and value >= 0 else None
+    return result
 
 
-def _pricing(runtime_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
-    known = estimated = 0.0
-    priced = known_count = estimated_count = 0
-    gaps: Counter[tuple[str, str, str]] = Counter()
-    for row in runtime_rows:
-        value = _number(row.get("estimated_cost_usd")) if _cost_priced(row) else 0.0
-        if _cost_priced(row):
-            priced += 1
-            if row.get("cost_status") == "known":
-                known_count += 1
-                known += value
-            else:
-                estimated_count += 1
-                estimated += value
-        else:
-            gaps[(str(row.get("event_type") or "not_available"), _text(row.get("provider")) or "not_available", _text(row.get("model_or_tool")) or "not_available")] += 1
-    total = len(runtime_rows)
-    status = _status(total, priced)
-    reason = None if status == "available" else "No cost events are recorded in this window." if total == 0 else "Some cost events have no effective price record."
-    return (
-        _section(
-            status,
-            reason,
-            known_cost_usd=_number(known) if priced else None,
-            known_event_count=known_count if total else None,
-            estimated_cost_usd=_number(estimated) if priced else None,
-            estimated_event_count=estimated_count if total else None,
-            unknown_event_count=total - priced if total else None,
-            pricing_coverage_pct=_pct(priced, total),
-            gaps=[{"event_type": event_type, "provider": provider, "model_or_tool": model, "event_count": count} for (event_type, provider, model), count in sorted(gaps.items())],
-        ),
-        priced,
-    )
+def _price_index(db: sqlite3.Connection) -> dict[tuple[str, str], list[tuple[datetime, dict[str, Any]]]]:
+    index: dict[tuple[str, str], list[tuple[datetime, dict[str, Any]]]] = defaultdict(list)
+    for row in _rows(db, "SELECT * FROM pricing_snapshots"):
+        effective = _instant(row.get("effective_from"))
+        if effective:
+            index[(str(row.get("provider") or ""), str(row.get("model") or ""))].append((effective, row))
+    for snapshots in index.values():
+        snapshots.sort(key=lambda item: item[0], reverse=True)
+    return index
 
 
-def _attribution(db: sqlite3.Connection, llm_rows: list[dict[str, Any]], tables: set[str]) -> tuple[dict[str, Any], int]:
-    run_names = {
-        str(row["id"]): row.get("agent_name")
-        for row in _query_rows(db, "SELECT id,agent_name FROM agent_runs", ())
-    } if "agent_runs" in tables else {}
-    buckets: dict[tuple[str, tuple[tuple[str, str], ...]], dict[str, Any]] = {}
-
-    def add(axis: str, values: dict[str, str], row: dict[str, Any]) -> None:
-        key = (axis, tuple(sorted(values.items())))
-        bucket = buckets.setdefault(key, {"axis": axis, **values, "event_count": 0, "known_cost_usd": 0.0, "unknown_cost_event_count": 0})
-        bucket["event_count"] += 1
-        if _cost_known(row):
-            bucket["known_cost_usd"] += _cost_value(row)
-        elif _cost_estimated(row):
-            bucket.setdefault("estimated_cost_usd", 0.0)
-            bucket["estimated_cost_usd"] += _estimated_cost_value(row)
-        else:
-            bucket["unknown_cost_event_count"] += 1
-
-    attributable = 0
-    for row in llm_rows:
-        metadata = _metadata(row.get("metadata_json"))
-        run_id = _text(row.get("run_id"))
-        logical_agent = _text(metadata.get("logical_agent"))
-        direct_values = {
-            key: value for key in ("evaluation_id", "trigger")
-            if (value := _text(metadata.get(key))) is not None
-        }
-        for key in ("opportunity_id", "decision_id", "proposal_id"):
-            value = _text(row.get(key)) or _text(metadata.get(key))
-            if value is not None:
-                direct_values[key] = value
-        has_direct = bool(direct_values)
-        if run_id or logical_agent or has_direct:
-            attributable += 1
-        if run_id:
-            add("agent_run", {"agent_run_id": run_id, "agent_name": _text(run_names.get(run_id)) or "not_available"}, row)
-        if logical_agent:
-            add("logical_agent", {"logical_agent": logical_agent}, row)
-            add("role", {"role": role_for_logical_agent(logical_agent).value}, row)
-        if has_direct:
-            add("direct_tags", direct_values, row)
-    rows = []
-    for bucket in buckets.values():
-        bucket["known_cost_usd"] = _number(bucket["known_cost_usd"])
-        if "estimated_cost_usd" in bucket:
-            bucket["estimated_cost_usd"] = _number(bucket["estimated_cost_usd"])
-        rows.append(bucket)
-    rows.sort(key=lambda row: (str(row["axis"]), json.dumps(row, sort_keys=True, default=str)))
-    total = len(llm_rows)
-    status = _status(total, attributable)
-    reason = None if status == "available" else "No LLM usage is recorded in this window." if total == 0 else "Some LLM events have no durable run, logical-agent, or direct attribution tag."
-    return _section(status, reason, rows=rows), attributable
-
-
-def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str, Any]], window: tuple[str, str]) -> tuple[dict[str, Any], int, int]:
-    if "agent_tool_calls" not in tables:
-        return _section("not_available", "The agent tool-call ledger is not available.", rows=[], timing_coverage_pct=None, pricing_coverage_pct=None), 0, 0
-    columns = _columns(db, "agent_tool_calls")
-    duration = "duration_ms" if "duration_ms" in columns else "NULL AS duration_ms"
-    calls = _query_rows(
-        db,
-        "SELECT id,tool_name,tool_class,permitted,created_at," + duration + " FROM agent_tool_calls WHERE " + _window_sql("created_at"),
-        window,
-    )
-    runtime_by_call = {str(row.get("call_id")): row for row in runtime_rows if row.get("event_type") == "tool" and row.get("call_id")}
-    buckets: dict[tuple[str, str], dict[str, Any]] = {}
-    priced_calls = timed_calls = 0
-    for call in calls:
-        name = _text(call.get("tool_name")) or "not_available"
-        tool_class = _text(call.get("tool_class")) or "not_available"
-        bucket = buckets.setdefault((name, tool_class), {"tool_name": name, "tool_class": tool_class, "event_count": 0, "permitted_count": 0, "denied_count": 0, "priced_event_count": 0, "known_cost_usd": 0.0, "timed_event_count": 0, "durations": []})
-        bucket["event_count"] += 1
-        bucket["permitted_count" if call.get("permitted") else "denied_count"] += 1
-        event = runtime_by_call.get("tool_" + str(call["id"]))
-        # Local orchestration tools have zero external marginal cost. Any
-        # provider-native built-in tool charge is included on its LLM event from
-        # LiteLLM catalog usage counters, never duplicated here.
-        price = _number(event.get("estimated_cost_usd")) if event and _cost_priced(event) else 0.0
-        priced_calls += 1
-        bucket["priced_event_count"] += 1
-        bucket["known_cost_usd"] += price
-        duration_ms = call.get("duration_ms")
-        if isinstance(duration_ms, (int, float)) and duration_ms >= 0:
-            timed_calls += 1
-            bucket["timed_event_count"] += 1
-            bucket["durations"].append(float(duration_ms))
-    rows = []
-    for bucket in buckets.values():
-        total = bucket.pop("event_count")
-        durations = bucket.pop("durations")
-        rows.append({
-            **bucket,
-            "event_count": total,
-            "known_cost_usd": _number(bucket["known_cost_usd"]),
-            "pricing_coverage_pct": _pct(bucket["priced_event_count"], total),
-            "timing_coverage_pct": _pct(bucket["timed_event_count"], total),
-            "p50_duration_ms": _quantile(durations, 0.5),
-            "p95_duration_ms": _quantile(durations, 0.95),
-        })
-    rows.sort(key=lambda row: (str(row["tool_name"]), str(row["tool_class"])))
-    total = len(calls)
-    if not total:
-        return _section("not_available", "No tool calls are recorded in this window.", rows=[], timing_coverage_pct=None, pricing_coverage_pct=None), 0, 0
-    status = "available" if timed_calls == total else "partial"
-    reason = None if status == "available" else "The nullable duration field is absent or incomplete."
-    return _section(status, reason, rows=rows, timing_coverage_pct=_pct(timed_calls, total), pricing_coverage_pct=_pct(priced_calls, total)), priced_calls, timed_calls
-
-
-def _logical_reliability(db: sqlite3.Connection, tables: set[str], window: tuple[str, str]) -> dict[str, Any]:
-    if "llm_inference_calls" not in tables:
-        return {"status": "not_available", "reason": "The logical-inference ledger is not available."}
-    rows = _query_rows(db, "SELECT logical_call_id,status,parse_valid,schema_valid,attempt_count,retry_count,fallback_used,started_at,finished_at,error_type FROM llm_inference_calls WHERE " + _window_sql("started_at"), window)
-    durations = []
+def _resolve(rows: list[dict[str, Any]], prices: dict) -> list[dict[str, Any]]:
     for row in rows:
-        started, finished = _iso(row.get("started_at")), _iso(row.get("finished_at"))
-        if started and finished and finished >= started:
-            durations.append((finished - started).total_seconds() * 1000)
-    total = len(rows)
-    errors, other = _error_categories(rows)
+        usage = _usage(row)
+        stored = _number(row.get("estimated_cost_usd"))
+        cost = stored if row.get("cost_status") == "known" and stored is not None else None
+        if cost is None:
+            started = _instant(row.get("started_at"))
+            key = (str(row.get("provider") or ""), str(row.get("model_or_tool") or ""))
+            price = next((item for effective, item in prices.get(key, []) if started and effective <= started), None)
+            cost, _, _ = estimate_llm_cost(usage, price)
+        row["_usage"], row["_cost_usd"] = usage, cost
+    return rows
+
+
+def _groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        result[_text(row.get("call_id")) or str(row.get("id"))].append(row)
+    return result
+
+
+def _metrics(rows: list[dict[str, Any]], *, observed_zero: bool) -> dict[str, Any]:
+    groups = _groups(rows)
+    calls = len(groups)
+    success = sum(any(row.get("status") == "success" for row in group) for group in groups.values())
+    token_complete = bool(rows) and all(
+        row["_usage"].get("input_tokens") is not None and row["_usage"].get("output_tokens") is not None for row in rows
+    )
+    cost_complete = bool(rows) and all(row.get("_cost_usd") is not None for row in rows)
+    tokens = (
+        sum(int(row["_usage"]["input_tokens"]) + int(row["_usage"]["output_tokens"]) for row in rows)
+        if token_complete
+        else 0
+        if not rows and observed_zero
+        else None
+    )
+    cost = (
+        round(sum(float(row["_cost_usd"]) for row in rows), 12)
+        if cost_complete
+        else 0.0
+        if not rows and observed_zero
+        else None
+    )
+    llm_calls = calls if rows or observed_zero else None
     return {
-        "status": _status(total, len(durations)),
-        "reason": None if total and len(durations) == total else "No logical inferences are recorded in this window." if not total else "Some logical inferences lack a completed duration.",
-        "call_count": total,
-        "success_count": sum(row.get("status") == "success" for row in rows),
-        "error_count": sum(row.get("status") == "error" for row in rows),
-        "retry_count": sum(_count(row.get("retry_count")) for row in rows),
-        "fallback_count": sum(row.get("fallback_used") == 1 for row in rows),
-        "parse_valid_count": sum(row.get("parse_valid") == 1 for row in rows),
-        "parse_invalid_count": sum(row.get("parse_valid") == 0 for row in rows),
-        "parse_not_available_count": sum(row.get("parse_valid") is None for row in rows),
-        "schema_valid_count": sum(row.get("schema_valid") == 1 for row in rows),
-        "schema_invalid_count": sum(row.get("schema_valid") == 0 for row in rows),
-        "schema_not_available_count": sum(row.get("schema_valid") is None for row in rows),
-        "timing_coverage_pct": _pct(len(durations), total),
-        "p50_duration_ms": _quantile(durations, 0.5),
-        "p95_duration_ms": _quantile(durations, 0.95),
-        "error_categories": errors,
-        "other_error_count": other,
+        "cost_usd": cost,
+        "total_tokens": tokens,
+        "llm_calls": llm_calls,
+        "success_rate_pct": _pct(success, calls),
+        "avg_cost_per_call_usd": round(cost / calls, 12) if cost is not None and calls else None,
+        "_complete": cost is not None and tokens is not None and llm_calls is not None,
     }
 
 
-def _physical_reliability(llm_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    durations = [float(row["latency_ms"]) for row in llm_rows if isinstance(row.get("latency_ms"), (int, float)) and row["latency_ms"] >= 0]
-    providers: dict[str, set[str]] = defaultdict(set)
-    for row in llm_rows:
-        call_id, provider = _text(row.get("call_id")), _text(row.get("provider"))
-        if call_id and provider:
-            providers[call_id].add(provider)
-    total = len(llm_rows)
-    errors, other = _error_categories(llm_rows)
-    return {
-        "status": _status(total, len(durations)),
-        "reason": None if total and len(durations) == total else "No physical LLM attempts are recorded in this window." if not total else "Some physical attempts lack measured latency.",
-        "attempt_count": total,
-        "logical_call_count": len({_text(row.get("call_id")) for row in llm_rows if _text(row.get("call_id"))}),
-        "success_count": sum(row.get("status") == "success" for row in llm_rows),
-        "failure_count": sum(row.get("status") != "success" for row in llm_rows),
-        "retry_attempt_count": sum(_count(row.get("attempt_index")) > 0 for row in llm_rows),
-        "fallback_call_count": sum(len(values) > 1 for values in providers.values()),
-        "timing_coverage_pct": _pct(len(durations), total),
-        "p50_duration_ms": _quantile(durations, 0.5),
-        "p95_duration_ms": _quantile(durations, 0.95),
-        "error_categories": errors,
-        "other_error_count": other,
-    }
-
-
-def _current_model_cooldown(as_of: str) -> dict[str, Any]:
-    """Expose only sanitized, in-process health facts; they are not history."""
-    rows = [
-        {
-            "provider": item["provider"],
-            "model": item["model"],
-            "cooling_down": item["cooling_down"],
-            "cooldown_remaining_sec": item["cooldown_remaining_sec"],
-            "consecutive_failures": item["consecutive_failures"],
-            "last_failure_at": item["last_failure_at"],
-            "last_success_at": item["last_success_at"],
-        }
-        for item in get_model_health_snapshot()
-    ]
-    status = "available" if rows else "not_available"
-    reason = "Current in-process model health has no observed models." if not rows else "Current in-process state; it is not a historical cooldown ledger."
-    return _section(
-        status,
-        reason,
-        current=True,
-        fact_scope="current_in_process",
-        as_of=as_of,
-        rows=rows,
-        cooling_down_count=sum(row["cooling_down"] for row in rows),
-    )
-
-
-def _reliability(db: sqlite3.Connection, tables: set[str], llm_rows: list[dict[str, Any]], window: tuple[str, str], as_of: str) -> tuple[dict[str, Any], int]:
-    logical = _logical_reliability(db, tables, window)
-    physical = _physical_reliability(llm_rows)
-    statuses = {logical["status"], physical["status"]}
-    status = "available" if statuses == {"available"} else "not_available" if statuses == {"not_available"} else "partial"
-    reason = None if status == "available" else "No logical or physical inference facts are recorded in this window." if status == "not_available" else "Logical and physical reliability coverage differ."
-    return _section(
-        status,
-        reason,
-        logical=logical,
-        physical=physical,
-        current_model_cooldown=_current_model_cooldown(as_of),
-    ), sum(isinstance(row.get("latency_ms"), (int, float)) for row in llm_rows)
-
-
-def _active_budget_session(end: datetime) -> tuple[str | None, datetime | None, str | None]:
-    try:
-        from aletheia.agent_runtime.runtime_session import (
-            current_session,
-            current_session_durable,
-        )
-    except Exception:
-        return None, None, "The active runtime session is not available."
-    if not current_session_durable():
-        return None, None, "The active runtime session is not durably persisted."
-    session = current_session()
-    session_id = _text(session.get("session_id") if session else None)
-    started = _iso(session.get("started_at") if session else None)
-    if not session_id or started is None:
-        return None, None, "The active runtime session identity is unavailable."
-    if started > end:
-        return None, None, "The active runtime session starts after this usage window."
-    return session_id, started, None
-
-
-def _scope_events(policy: dict[str, Any], events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]] | None, str | None]:
-    scope, subject = str(policy.get("scope") or ""), _text(policy.get("subject"))
-    if scope == "system":
-        return events, None
-    if scope == "agent_run" and subject:
-        return [row for row in events if _text(row.get("run_id")) == subject], None
-    if scope == "provider" and subject:
-        return [row for row in events if _text(row.get("provider")) == subject], None
-    if scope == "logical_agent" and subject:
-        return [row for row in events if _text(_metadata(row.get("metadata_json")).get("logical_agent")) == subject], None
-    if scope == "provider_tier":
-        return None, "Provider tiers are not persisted on historical cost events."
-    return None, "The budget subject is not recorded on historical cost events."
-
-
-def _policy_events(
-    policy: dict[str, Any],
-    events: list[dict[str, Any]],
-    *,
-    active_session_id: str | None = None,
-    active_session_reason: str | None = None,
-) -> tuple[list[dict[str, Any]] | None, str | None]:
-    if str(policy.get("window")) == "session":
-        if not active_session_id:
-            return None, active_session_reason or "The active runtime session is not available."
-        events = [
-            row for row in events
-            if _text(row.get("runtime_session_id")) == active_session_id
-        ]
-    return _scope_events(policy, events)
-
-
-def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[dict[str, Any], int, int]:
-    if "economics_budgets" not in tables:
-        return _section("not_available", "The economics budget ledger is not available.", rows=[]), 0, 0
-    policies = _query_rows(db, "SELECT id,scope,subject,usd_cap,window,enabled FROM economics_budgets ORDER BY id", ())
-    if not policies:
-        return _section("not_configured", "No budget policies are declared.", rows=[]), 0, 0
-    weekly_start = end - timedelta(days=7)
-    active_session_id, active_session_start, active_session_reason = (
-        _active_budget_session(end)
-        if any(str(policy.get("window")) == "session" for policy in policies)
-        else (None, None, None)
-    )
-    event_start = (
-        min(weekly_start, active_session_start)
-        if active_session_start is not None else weekly_start
-    )
-    events = _runtime_rows(db, (event_start.isoformat(), end.isoformat()))
-    _project_latest_litellm_estimates(db, events)
-    rows, calculable = [], 0
-    for policy in policies:
-        is_session = str(policy.get("window")) == "session"
-        duration = None if is_session else timedelta(days=1 if policy.get("window") == "daily" else 7)
-        start = active_session_start if is_session else end - duration
-        scoped_events = (
-            []
-            if start is None else
-            [row for row in events if _iso(row.get("started_at")) and _iso(row["started_at"]) >= start]
-        )
-        window_events, unavailable_reason = _policy_events(
-            policy,
-            scoped_events,
-            active_session_id=active_session_id,
-            active_session_reason=active_session_reason,
-        )
-        base = {"policy_id": policy["id"], "scope": policy["scope"], "subject": policy.get("subject"), "window": policy["window"], "usd_cap": _number(policy["usd_cap"]), "enabled": bool(policy["enabled"]), "window_started_at": start.isoformat() if start is not None else None}
-        if window_events is None:
-            rows.append({**base, "status": "not_available", "reason": unavailable_reason, "known_spent_usd": None, "unknown_event_count": None, "headroom_usd": None, "forecast_status": "not_available", "forecast_reason": unavailable_reason, "forecast_usd": None, "forecast_headroom_usd": None})
-            continue
-        known = sum(_cost_value(row) for row in window_events)
-        estimated = sum(_estimated_cost_value(row) for row in window_events)
-        non_known = sum(not _cost_known(row) for row in window_events)
-        elapsed = max((end - start).total_seconds(), 1)
-        forecast_reason = None
-        forecast = None
-        if non_known:
-            forecast_reason = "Estimated or unknown-price events prevent an honest forecast."
-        elif not window_events:
-            forecast_reason = "No priced events are recorded for this rolling window."
-        elif duration is None:
-            forecast_reason = "Session budgets have no fixed duration forecast."
-        else:
-            forecast = known * duration.total_seconds() / elapsed
-        status = "available" if not non_known else "partial"
-        reason = None if not non_known else "Known spend excludes estimated and unknown-price events."
-        calculable += 1
-        rows.append({**base, "status": status, "reason": reason, "known_spent_usd": _number(known), "estimated_spent_usd": _number(estimated), "unknown_event_count": sum(not _cost_priced(row) for row in window_events), "headroom_usd": _number(float(policy["usd_cap"]) - known) if not non_known else None, "forecast_status": "available" if forecast is not None else "not_available", "forecast_reason": forecast_reason, "forecast_usd": _number(forecast) if forecast is not None else None, "forecast_headroom_usd": _number(float(policy["usd_cap"]) - forecast) if forecast is not None else None})
-    status = "available" if calculable == len(policies) else "partial" if calculable else "not_available"
-    reason = None if status == "available" else "Some budget scopes cannot be reconstructed from durable history." if calculable else "No budget scope can be reconstructed from durable history."
-    return _section(status, reason, rows=rows), calculable, len(policies)
-
-
-def _traced_intervals(db: sqlite3.Connection, tables: set[str], start: datetime, end: datetime) -> tuple[list[tuple[datetime, datetime]], dict[str, Any]]:
-    if "runtime_sessions" not in tables:
-        return [], {"status": "not_available", "reason": "The runtime-session ledger is not available.", "session_count": 0, "traced_session_count": 0, "legacy_or_untraced_session_count": 0}
-    if "economics_tracing_enabled" not in _columns(db, "runtime_sessions"):
-        return [], {"status": "not_available", "reason": "Runtime sessions predate the tracing-state snapshot.", "session_count": 0, "traced_session_count": 0, "legacy_or_untraced_session_count": 0}
-    intervals: list[tuple[datetime, datetime]] = []
-    session_count = traced = legacy_or_untraced = 0
+def _trace_intervals(
+    db: sqlite3.Connection, tables: set[str], start: datetime, end: datetime
+) -> list[tuple[datetime, datetime]]:
+    if "runtime_sessions" not in tables or "economics_tracing_enabled" not in {
+        str(row[1]) for row in db.execute("PRAGMA table_info(runtime_sessions)")
+    }:
+        return []
     try:
         from aletheia.agent_runtime.runtime_session import current_session_id
-        active_session_id = current_session_id()
+
+        active = current_session_id()
     except Exception:
-        active_session_id = None
-    rows = _query_rows(
+        active = None
+    result = []
+    for row in _rows(
         db,
-        "SELECT session.session_id,session.started_at,session.ended_at,"
-        "session.economics_tracing_enabled,"
-        "MAX(COALESCE(event.finished_at,event.started_at)) AS last_cost_at,"
-        "COUNT(event.id) AS cost_event_count "
-        "FROM runtime_sessions session "
-        "LEFT JOIN runtime_cost_events event ON event.runtime_session_id=session.session_id "
-        "WHERE replace(session.started_at,' ','T') < replace(?,' ','T') "
-        "AND (session.ended_at IS NULL OR replace(session.ended_at,' ','T') > replace(?,' ','T')) "
-        "GROUP BY session.session_id,session.started_at,session.ended_at,session.economics_tracing_enabled",
+        "SELECT session_id,started_at,ended_at,economics_tracing_enabled FROM runtime_sessions "
+        "WHERE replace(started_at,' ','T') < replace(?,' ','T') AND (ended_at IS NULL OR replace(ended_at,' ','T') > replace(?,' ','T'))",
         (end.isoformat(), start.isoformat()),
+    ):
+        if row.get("economics_tracing_enabled") != 1:
+            continue
+        begun, finished = _instant(row.get("started_at")), _instant(row.get("ended_at"))
+        if finished is None and row.get("session_id") == active:
+            finished = end
+        if begun and finished:
+            result.append((max(start, begun), min(end, finished)))
+    return sorted(result)
+
+
+def _covered(intervals: list[tuple[datetime, datetime]], start: datetime, end: datetime) -> bool:
+    cursor = start
+    for begun, finished in intervals:
+        if begun > cursor:
+            return False
+        cursor = max(cursor, finished)
+        if cursor >= end:
+            return True
+    return False
+
+
+def _comparison(current: dict[str, Any], previous: dict[str, Any], complete: bool) -> dict[str, Any]:
+    result: dict[str, Any] = {"complete": complete}
+    for key in ("cost_usd", "total_tokens", "llm_calls", "avg_cost_per_call_usd"):
+        before, now = previous.get(key), current.get(key)
+        result[f"{key}_change_pct"] = (
+            round((now - before) * 100 / before, 4)
+            if complete and now is not None and before not in (None, 0)
+            else None
+        )
+    result["success_rate_change_pct_points"] = (
+        round(current["success_rate_pct"] - previous["success_rate_pct"], 4)
+        if complete and current.get("success_rate_pct") is not None and previous.get("success_rate_pct") is not None
+        else None
     )
-    for row in rows:
-        started_at = _iso(row.get("started_at"))
-        ended_at = _iso(row.get("ended_at"))
-        has_cost_events = _count(row.get("cost_event_count")) > 0
-        if ended_at is None:
-            if row.get("session_id") == active_session_id:
-                ended_at = end
-            else:
-                # A stale open session ended no later than its final cost event.
-                # Using the query window end would invent continuous trace coverage
-                # after a crashed process stopped emitting facts.
-                ended_at = _iso(row.get("last_cost_at")) if has_cost_events else None
-        if started_at is None or ended_at is None or ended_at <= start or started_at >= end:
-            continue
-        session_count += 1
-        tracing_flag = row.get("economics_tracing_enabled")
-        if tracing_flag == 1 or (tracing_flag is None and has_cost_events):
-            # NULL is promoted only with event-level evidence that tracing ran.
-            intervals.append((max(started_at, start), min(ended_at, end)))
-            traced += 1
-        else:
-            legacy_or_untraced += 1
-    status = "available" if traced else "not_available"
-    reason = None if traced else "No trace-enabled runtime session overlaps this window." if session_count == 0 else "Overlapping runtime sessions are legacy or economics tracing was disabled."
-    return intervals, {"status": status, "reason": reason, "session_count": session_count, "traced_session_count": traced, "legacy_or_untraced_session_count": legacy_or_untraced}
+    return result
 
 
-def _covered_seconds(intervals: Iterable[tuple[datetime, datetime]], start: datetime, end: datetime) -> float:
-    merged: list[list[datetime]] = []
-    for interval_start, interval_end in sorted(intervals):
-        interval_start, interval_end = max(interval_start, start), min(interval_end, end)
-        if interval_end <= interval_start:
-            continue
-        if merged and interval_start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], interval_end)
-        else:
-            merged.append([interval_start, interval_end])
-    return sum((interval_end - interval_start).total_seconds() for interval_start, interval_end in merged)
-
-
-def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str, Any]], start: datetime, end: datetime) -> tuple[dict[str, Any], int, int]:
-    by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in runtime_rows:
-        occurred = _iso(row.get("started_at"))
-        if occurred:
-            by_date[occurred.date().isoformat()].append(row)
-    intervals, trace = _traced_intervals(db, tables, start, end)
-    days = []
-    cursor = start.date()
-    while cursor <= end.date():
-        day_start = datetime.combine(cursor, datetime.min.time(), tzinfo=timezone.utc)
-        day_end = day_start + timedelta(days=1)
-        entries = by_date.get(cursor.isoformat(), [])
-        llm_entries = [row for row in entries if row.get("event_type") == "llm"]
-        input_tokens = output_tokens = 0
-        token_rows = 0
-        for entry in llm_entries:
-            try:
-                envelope = json.loads(str(entry.get("usage_json") or "{}"))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                continue
-            normalized = envelope.get("normalized") if isinstance(envelope, dict) else None
-            usage = normalized if isinstance(normalized, dict) else normalize_usage(envelope)
-            input_value, output_value = usage.get("input_tokens"), usage.get("output_tokens")
-            if isinstance(input_value, (int, float)) and isinstance(output_value, (int, float)):
-                input_tokens += int(input_value)
-                output_tokens += int(output_value)
-                token_rows += 1
-        priced = sum(_cost_priced(row) for row in entries)  # known + estimated
-        total = len(entries)
-        full = start <= day_start and end >= day_end
-        traced_seconds = _covered_seconds(intervals, day_start, day_end)
-        trace_coverage_pct = round(traced_seconds * 100 / 86_400, 4)
-        if total:
-            zero_status, zero_reason = "not_applicable", "Recorded runtime cost events exist for this day."
-        elif full and traced_seconds >= 86_400:
-            zero_status, zero_reason = "observed_zero", "Trace-enabled runtime sessions cover the full UTC day."
-        elif traced_seconds:
-            zero_status, zero_reason = "partial", "Trace-enabled runtime sessions cover only part of this UTC day."
-        elif not full:
-            zero_status, zero_reason = "not_available", "This UTC day is only partially inside the requested window."
-        else:
-            zero_status, zero_reason = "not_available", trace["reason"]
-        days.append({"date": cursor.isoformat(), "event_count": total, "llm_event_count": len(llm_entries), "token_covered_event_count": token_rows, "input_tokens": input_tokens if token_rows else None, "output_tokens": output_tokens if token_rows else None, "total_tokens": input_tokens + output_tokens if token_rows else None, "known_cost_usd": _number(sum(_cost_value(row) for row in entries)), "estimated_cost_usd": _number(sum(_estimated_cost_value(row) for row in entries)), "unknown_event_count": total - sum(_cost_priced(row) for row in entries), "pricing_coverage_pct": _pct(sum(_cost_priced(row) for row in entries), total), "known_pricing_coverage_pct": _pct(sum(_cost_known(row) for row in entries), total), "full_window_day": full, "trace_coverage_pct": trace_coverage_pct, "zero_observation_status": zero_status, "zero_observation_reason": zero_reason, "anomaly_eligible": False, "cost_anomaly_z_score": None, "cost_anomaly": None})
-        cursor += timedelta(days=1)
-    full_days = [row for row in days if row["full_window_day"]]
-    # Trend availability, baseline eligibility, and pricing completeness are
-    # separate facts. The rolling 1d window normally contains no full UTC day,
-    # so section status must use coverage of the selected window rather than
-    # baseline-day count.
-    _TRACE_COVERAGE_THRESHOLD = 99.99
-    _PRICING_COVERAGE_THRESHOLD = 99.0
-    window_seconds = max((end - start).total_seconds(), 1)
-    window_traced_seconds = _covered_seconds(intervals, start, end)
-    window_trace_coverage_pct = round(window_traced_seconds * 100 / window_seconds, 4)
-    trace_days = [row for row in full_days if row["trace_coverage_pct"] >= _TRACE_COVERAGE_THRESHOLD]
-    baseline_days = [
-        row for row in trace_days
-        if (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
-    ]
-    baseline = None
-    if len(baseline_days) >= _BASELINE_MIN_FULL_DAYS:
-        # Use total cost (known + estimated) as the anomaly signal so that the
-        # baseline is consistent with how cost is surfaced to users.
-        values = [float(row["known_cost_usd"]) + float(row["estimated_cost_usd"]) for row in baseline_days]
-        mean = sum(values) / len(values)
-        variance = sum((value - mean) ** 2 for value in values) / len(values)
-        deviation = math.sqrt(variance)
-        baseline = {"full_day_count": len(values), "mean_total_cost_usd": _number(mean), "stddev_total_cost_usd": _number(deviation), "anomaly_threshold_z": _ANOMALY_Z_THRESHOLD}
-        if deviation > 0:
-            for row in days:
-                if (
-                    row["full_window_day"]
-                    and row["trace_coverage_pct"] >= _TRACE_COVERAGE_THRESHOLD
-                    and (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
-                ):
-                    day_cost = float(row["known_cost_usd"]) + float(row["estimated_cost_usd"])
-                    score = (day_cost - mean) / deviation
-                    row["anomaly_eligible"] = True
-                    row["cost_anomaly_z_score"] = round(score, 4)
-                    row["cost_anomaly"] = abs(score) >= _ANOMALY_Z_THRESHOLD
-    event_count = len(runtime_rows)
-    priced = sum(_cost_priced(row) for row in runtime_rows)  # known + estimated
-    trace_complete = window_trace_coverage_pct >= _TRACE_COVERAGE_THRESHOLD
-    if event_count and trace_complete and priced == event_count:
-        status = "available"
-        reason = None
-    elif event_count:
-        status = "partial"
-        reason = "Selected window lacks complete trace-enabled runtime coverage." if not trace_complete else "Some cost events lack prices."
-    else:
-        status = "not_available"
-        reason = trace["reason"]
-    observed_zero_days = sum(row["zero_observation_status"] == "observed_zero" for row in full_days)
-    trace_status = "available" if trace_complete else "partial" if window_traced_seconds else "not_available"
-    trace_reason = None if trace_complete else trace["reason"] or "Selected window lacks complete trace-enabled runtime coverage."
-    trace_coverage = {
-        **trace,
-        "status": trace_status,
-        "reason": trace_reason,
-        "window_coverage_pct": window_trace_coverage_pct,
-        "full_day_count": len(full_days),
-        "trace_covered_full_day_count": len(trace_days),
-        "baseline_eligible_full_day_count": len(baseline_days),
-        "observed_zero_day_count": observed_zero_days,
-        "unavailable_zero_day_count": sum(row["zero_observation_status"] == "not_available" for row in full_days),
+def _composition(rows: list[dict[str, Any]], total: int | None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "input_tokens": sum(int(row["_usage"]["input_tokens"]) for row in rows)
+        if total is not None and rows
+        else 0
+        if total == 0
+        else None,
+        "output_tokens": sum(int(row["_usage"]["output_tokens"]) for row in rows)
+        if total is not None and rows
+        else 0
+        if total == 0
+        else None,
     }
-    return _section(status, reason, daily=days, baseline=baseline, trace_coverage=trace_coverage), round(window_traced_seconds), round(window_seconds)
+    for source, target in (
+        ("provider_cache_read_input_tokens", "cache_read_tokens"),
+        ("provider_cache_creation_input_tokens", "cache_write_tokens"),
+        ("reasoning_tokens", "reasoning_tokens"),
+    ):
+        values = [row["_usage"].get(source) for row in rows]
+        if any(value is not None for value in values):
+            result[target] = sum(int(value or 0) for value in values)
+    if "cache_read_tokens" not in result:
+        values = [row["_usage"].get("cached_input_tokens") for row in rows]
+        if any(value is not None for value in values):
+            result["cache_read_tokens"] = sum(int(value or 0) for value in values)
+    return result
 
 
-def _lineage_row(db: sqlite3.Connection, artifact_type: str, table: str, stage: str, tables: set[str], window: tuple[str, str], target_key: str = "id") -> dict[str, Any]:
-    if table not in tables:
-        return {"stage": stage, "artifact_type": artifact_type, "status": "not_available", "reason": f"The {table} table is not available.", "referenced_count": 0, "factual_record_count": None, "covered_reference_count": None, "legacy_retired_reference_count": None, "missing_record_count": None}
-    artifact_columns = _columns(db, "agent_run_artifacts")
-    legacy_retired = (
-        f"SUM(CASE WHEN artifact.reference_version='v1' AND target.{target_key} IS NULL "
-        "THEN 1 ELSE 0 END) AS legacy_retired_reference_count"
-        if artifact_type == "pi_decision" and "reference_version" in artifact_columns
-        else "0 AS legacy_retired_reference_count"
-    )
-    row = db.execute(
-        f"SELECT COUNT(*) AS referenced_count, COUNT(target.{target_key}) AS factual_record_count, {legacy_retired} "
-        "FROM agent_run_artifacts artifact JOIN agent_runs run ON run.id=artifact.run_id "
-        f"LEFT JOIN {table} target ON target.{target_key}=artifact.artifact_id "
-        "WHERE artifact.artifact_type=? AND " + _window_sql("run.started_at"),
-        (artifact_type, *window),
-    ).fetchone()
-    referenced, factual = _count(row["referenced_count"]), _count(row["factual_record_count"])
-    legacy = _count(row["legacy_retired_reference_count"])
-    covered = factual + legacy
-    status = _lineage_status(referenced, factual, legacy)
-    if not referenced:
-        reason = "No typed references of this stage were observed in this window."
-    elif referenced == legacy:
-        reason = "Historical transient PI carrier references predate durable linkage and remain audit-only."
-    elif status != "available":
-        reason = "Some typed artifact references no longer resolve to a factual record."
-    elif legacy:
-        reason = "Historical transient PI carrier references are retained as audit-only compatibility evidence."
-    else:
-        reason = None
-    return {"stage": stage, "artifact_type": artifact_type, "status": status, "reason": reason, "referenced_count": referenced, "factual_record_count": factual, "covered_reference_count": covered, "legacy_retired_reference_count": legacy, "missing_record_count": referenced - covered}
-
-
-def _decision_proposal_lineage(db: sqlite3.Connection, tables: set[str], window: tuple[str, str]) -> list[dict[str, Any]]:
-    stages = ("proposal", "order", "fill", "position")
-    sources, parameters = [], []
-    for artifact_type, table in (("filter_decision", "filter_decisions"), ("pi_decision", "pi_decisions")):
-        if table in tables:
-            sources.append(
-                "SELECT decision.proposal_id FROM agent_run_artifacts artifact "
-                "JOIN agent_runs run ON run.id=artifact.run_id "
-                f"JOIN {table} decision ON decision.id=artifact.artifact_id "
-                "WHERE artifact.artifact_type=? AND " + _window_sql("run.started_at")
-            )
-            parameters.extend((artifact_type, *window))
-    if not sources:
-        reason = "No typed decision table is available."
-        return [{"stage": stage, "artifact_type": "decision_proposal", "status": "not_available", "reason": reason, "referenced_count": 0, "factual_record_count": None, "missing_record_count": None} for stage in stages]
-    references = " UNION ALL ".join(sources)
-    reference_count = _count(db.execute(
-        f"SELECT COUNT(DISTINCT proposal_id) FROM ({references}) WHERE proposal_id IS NOT NULL",
-        parameters,
-    ).fetchone()[0])
-    if reference_count == 0:
-        reason = "No durable decision artifacts refer to a proposal in this window."
-        return [{"stage": stage, "artifact_type": "decision_proposal", "status": "not_observed", "reason": reason, "referenced_count": 0, "factual_record_count": 0, "covered_reference_count": 0, "missing_record_count": 0} for stage in stages]
-    if "trade_proposals" not in tables:
-        reason = "The trade-proposals table is not available."
-        return [{"stage": stage, "artifact_type": "decision_proposal", "status": "not_available", "reason": reason, "referenced_count": reference_count, "factual_record_count": None, "missing_record_count": None} for stage in stages]
-
-    def factual_row(stage: str, sql: str, missing_reason: str) -> dict[str, Any]:
-        row = db.execute(sql, parameters).fetchone()
-        referenced, record_count, covered = (_count(row[key]) for key in ("referenced_count", "factual_record_count", "covered_reference_count"))
-        status = _lineage_status(referenced, covered)
-        reason = None if status == "available" else "No typed decision artifacts refer to a proposal in this window." if not referenced else missing_reason
-        return {"stage": stage, "artifact_type": "decision_proposal", "status": status, "reason": reason, "referenced_count": referenced, "factual_record_count": record_count, "covered_reference_count": covered, "missing_record_count": referenced - covered}
-
-    proposal_row = factual_row(
-        "proposal",
-        "SELECT COUNT(DISTINCT reference.proposal_id) AS referenced_count, COUNT(DISTINCT proposal.id) AS factual_record_count, COUNT(DISTINCT CASE WHEN proposal.id IS NOT NULL THEN reference.proposal_id END) AS covered_reference_count "
-        f"FROM ({references}) reference LEFT JOIN trade_proposals proposal ON proposal.id=reference.proposal_id WHERE reference.proposal_id IS NOT NULL",
-        "Some decision-linked proposals no longer resolve to factual records.",
-    )
-
-    def unavailable(stage: str, table: str) -> dict[str, Any]:
-        return {"stage": stage, "artifact_type": "decision_proposal", "status": "not_available", "reason": f"The {table} table is not available.", "referenced_count": reference_count, "factual_record_count": None, "missing_record_count": None}
-
-    if "orders" not in tables:
-        return [proposal_row, unavailable("order", "orders"), unavailable("fill", "fills"), unavailable("position", "positions")]
-    order_row = factual_row(
-        "order",
-        "SELECT COUNT(DISTINCT reference.proposal_id) AS referenced_count, COUNT(DISTINCT orders.id) AS factual_record_count, COUNT(DISTINCT CASE WHEN orders.id IS NOT NULL THEN reference.proposal_id END) AS covered_reference_count "
-        f"FROM ({references}) reference LEFT JOIN orders ON orders.proposal_id=reference.proposal_id WHERE reference.proposal_id IS NOT NULL",
-        "Some decision-linked proposals have no direct order record.",
-    )
-    if "fills" not in tables:
-        fill_row = unavailable("fill", "fills")
-    else:
-        fill_row = factual_row(
-            "fill",
-            "SELECT COUNT(DISTINCT reference.proposal_id) AS referenced_count, COUNT(DISTINCT fills.id) AS factual_record_count, COUNT(DISTINCT CASE WHEN fills.id IS NOT NULL THEN reference.proposal_id END) AS covered_reference_count "
-            f"FROM ({references}) reference LEFT JOIN orders ON orders.proposal_id=reference.proposal_id LEFT JOIN fills ON fills.order_id=orders.id WHERE reference.proposal_id IS NOT NULL",
-            "Some decision-linked proposals have no direct fill record.",
+def _trend(
+    rows: list[dict[str, Any]], intervals: list[tuple[datetime, datetime]], start: datetime, end: datetime, days: int
+) -> list[dict[str, Any]]:
+    cursor = start.replace(minute=0, second=0, microsecond=0)
+    step = timedelta(hours=1)
+    if days != 1:
+        cursor, step = cursor.replace(hour=0), timedelta(days=7 if days == 90 else 1)
+        if days == 90:
+            cursor -= timedelta(days=cursor.weekday())
+    result = []
+    while cursor < end:
+        begun, finished = max(cursor, start), min(cursor + step, end)
+        bucket = [row for row in rows if (at := _instant(row.get("started_at"))) and begun <= at < finished]
+        metrics = _metrics(bucket, observed_zero=_covered(intervals, begun, finished))
+        complete = metrics["total_tokens"] is not None
+        result.append(
+            {
+                "started_at": begun.isoformat(),
+                "cost_usd": metrics["cost_usd"],
+                "input_tokens": sum(int(row["_usage"]["input_tokens"]) for row in bucket)
+                if complete and bucket
+                else 0
+                if complete
+                else None,
+                "output_tokens": sum(int(row["_usage"]["output_tokens"]) for row in bucket)
+                if complete and bucket
+                else 0
+                if complete
+                else None,
+                "llm_calls": metrics["llm_calls"],
+            }
         )
-    if "positions" not in tables:
-        position_row = unavailable("position", "positions")
-    else:
-        position_row = factual_row(
-            "position",
-            "SELECT COUNT(DISTINCT reference.proposal_id) AS referenced_count, COUNT(DISTINCT positions.id) AS factual_record_count, COUNT(DISTINCT CASE WHEN positions.id IS NOT NULL THEN reference.proposal_id END) AS covered_reference_count "
-            f"FROM ({references}) reference LEFT JOIN positions ON positions.proposal_id=reference.proposal_id WHERE reference.proposal_id IS NOT NULL",
-            "Some decision-linked proposals have no factual position.",
-        )
-    return [proposal_row, order_row, fill_row, position_row]
+        cursor += step
+    return result
 
 
-def _research_yield(db: sqlite3.Connection, tables: set[str], window: tuple[str, str]) -> tuple[dict[str, Any], int, int]:
-    if not {"agent_run_artifacts", "agent_runs"}.issubset(tables):
-        return _section("not_available", "Typed agent-run artifacts are not available in this database.", artifacts=[], lineage=[]), 0, 0
-    artifacts = _query_rows(
-        db,
-        "SELECT artifact.run_id,run.agent_name,artifact.artifact_type,COUNT(*) AS artifact_count "
-        "FROM agent_run_artifacts artifact JOIN agent_runs run ON run.id=artifact.run_id WHERE "
-        + _window_sql("run.started_at") + " GROUP BY artifact.run_id,run.agent_name,artifact.artifact_type ORDER BY artifact.run_id,artifact.artifact_type",
-        window,
+def _bucket_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    groups = _groups(rows)
+    complete_tokens = all(
+        row["_usage"].get("input_tokens") is not None and row["_usage"].get("output_tokens") is not None for row in rows
     )
-    lineage = [
-        _lineage_row(db, artifact_type, table, stage, tables, window, target_key)
-        for artifact_type, table, stage, target_key in (
-            ("opportunity", "opportunities", "opportunity", "id"),
-            ("filter_decision", "filter_decisions", "decision", "id"),
-            ("pi_decision", "pi_decisions", "decision", "id"),
-            ("serenity_evidence", "serenity_evidence", "serenity_evidence", "id"),
-            ("research_note", "knowledge_items", "research_note", "id"),
-            ("portfolio_snapshot", "portfolio_snapshots", "portfolio_snapshot", "id"),
-            ("post_trade_review", "knowledge_items", "post_trade_review", "id"),
-            ("lesson", "ps_lessons", "lesson", "lesson_id"),
-            ("dreaming_log", "knowledge_items", "dreaming_log", "id"),
-            ("daily_review", "knowledge_items", "daily_review", "id"),
-            ("policy_version", "ps_policy_versions", "policy_version", "policy_version_id"),
-            ("draft_skill", "ps_skills", "draft_skill", "skill_id"),
+    complete_cost = all(row.get("_cost_usd") is not None for row in rows)
+    latencies = [value for row in rows if (value := _number(row.get("latency_ms"))) is not None]
+    calls = len(groups)
+    return {
+        "calls": calls,
+        "success_rate_pct": _pct(
+            sum(any(row.get("status") == "success" for row in group) for group in groups.values()), calls
+        ),
+        "input_tokens": sum(int(row["_usage"]["input_tokens"]) for row in rows) if complete_tokens else None,
+        "output_tokens": sum(int(row["_usage"]["output_tokens"]) for row in rows) if complete_tokens else None,
+        "tokens": sum(int(row["_usage"]["input_tokens"]) + int(row["_usage"]["output_tokens"]) for row in rows)
+        if complete_tokens
+        else None,
+        "cost_usd": round(sum(float(row["_cost_usd"]) for row in rows), 12) if complete_cost else None,
+        "p95_latency_ms": _quantile(latencies, 0.95),
+    }
+
+
+def _sort_cost(rows: list[dict[str, Any]], label: str) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.get("cost_usd") is None,
+            -(float(row["cost_usd"]) if row.get("cost_usd") is not None else 0),
+            str(row.get(label) or ""),
+        ),
+    )
+
+
+def _breakdowns(
+    db: sqlite3.Connection, tables: set[str], rows: list[dict[str, Any]], start: datetime, end: datetime
+) -> dict[str, list[dict[str, Any]]]:
+    run_names = (
+        {str(row["id"]): _text(row.get("agent_name")) for row in _rows(db, "SELECT id,agent_name FROM agent_runs")}
+        if "agent_runs" in tables
+        else {}
+    )
+    agents: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    models: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    providers: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        metadata, run_id = _json(row.get("metadata_json")), _text(row.get("run_id"))
+        agent = run_names.get(run_id or "") or _text(metadata.get("logical_agent")) or "Unattributed"
+        provider, model = (
+            _text(row.get("provider")) or "Unattributed",
+            _text(row.get("model_or_tool")) or "Unattributed",
         )
+        agents[agent].append(row)
+        models[(model, provider)].append(row)
+        providers[provider].append(row)
+    agent_rows = [
+        {
+            "agent": name,
+            "runs": len({_text(row.get("run_id")) for row in bucket if _text(row.get("run_id"))}),
+            **{
+                key: value
+                for key, value in _bucket_metrics(bucket).items()
+                if key not in {"input_tokens", "output_tokens"}
+            },
+        }
+        for name, bucket in agents.items()
     ]
-    lineage.extend(_decision_proposal_lineage(db, tables, window))
-    referenced = sum(_count(row.get("referenced_count")) for row in lineage)
-    legacy_retired = sum(_count(row.get("legacy_retired_reference_count")) for row in lineage)
-    active_referenced = referenced - legacy_retired
-    factual = sum(_count(row.get("factual_record_count")) for row in lineage)
-    status = "not_observed" if not active_referenced else "available" if factual == active_referenced else "partial"
-    reason = (
-        None
-        if status == "available"
-        else "Historical transient PI carrier references remain as audit-only compatibility evidence."
-        if referenced and referenced == legacy_retired
-        else "No typed artifacts were observed in this window."
-        if not artifacts
-        else "Typed artifacts exist, but some factual stage links are unavailable or unresolved."
-    )
-    return _section(status, reason, artifacts=artifacts, lineage=lineage), factual, active_referenced
+    model_rows = [
+        {
+            "model": model,
+            "provider": provider,
+            **{key: value for key, value in _bucket_metrics(bucket).items() if key != "tokens"},
+        }
+        for (model, provider), bucket in models.items()
+    ]
+    provider_rows = [
+        {
+            "provider": name,
+            "models": len({_text(row.get("model_or_tool")) for row in bucket if _text(row.get("model_or_tool"))}),
+            **{
+                key: value
+                for key, value in _bucket_metrics(bucket).items()
+                if key not in {"input_tokens", "output_tokens"}
+            },
+        }
+        for name, bucket in providers.items()
+    ]
+    tools = []
+    if "agent_tool_calls" in tables:
+        buckets: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in _rows(
+            db,
+            "SELECT tool_name,tool_class,permitted,duration_ms FROM agent_tool_calls WHERE replace(created_at,' ','T') >= replace(?,' ','T') AND replace(created_at,' ','T') < replace(?,' ','T')",
+            (start.isoformat(), end.isoformat()),
+        ):
+            buckets[
+                (_text(row.get("tool_name")) or "Unattributed", _text(row.get("tool_class")) or "Unattributed")
+            ].append(row)
+        for (name, klass), bucket in buckets.items():
+            durations = [value for row in bucket if (value := _number(row.get("duration_ms"))) is not None]
+            tools.append(
+                {
+                    "tool": name,
+                    "class": klass,
+                    "permitted": sum(bool(row.get("permitted")) for row in bucket),
+                    "denied": sum(not bool(row.get("permitted")) for row in bucket),
+                    "calls": len(bucket),
+                    "p50_latency_ms": _quantile(durations, 0.5),
+                    "p95_latency_ms": _quantile(durations, 0.95),
+                }
+            )
+    tools.sort(key=lambda row: (-int(row["calls"]), str(row["tool"])))
+    return {
+        "agents": _sort_cost(agent_rows, "agent"),
+        "models": _sort_cost(model_rows, "model"),
+        "providers": _sort_cost(provider_rows, "provider"),
+        "tools": tools,
+    }
 
 
-def _coverage(axes: list[dict[str, Any]]) -> dict[str, Any]:
-    statuses = {axis["status"] for axis in axes}
-    status = "available" if statuses == {"available"} else "not_available" if statuses == {"not_available"} else "partial"
-    if statuses == {"not_configured"}:
-        status = "not_configured"
-    elif statuses == {"not_observed"}:
-        status = "not_observed"
-    reason = (
-        None
-        if status == "available"
-        else "No coverage axis is measurable in this window."
-        if status == "not_available"
-        else "No owner-declared policy is configured for this coverage group."
-        if status == "not_configured"
-        else "No durable observations were recorded in this coverage group."
-        if status == "not_observed"
-        else "Some coverage axes are incomplete or unavailable."
-    )
-    return _section(status, reason, axes=axes)
+def _reliability(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    groups = _groups(rows)
+    latencies = [value for row in rows if (value := _number(row.get("latency_ms"))) is not None]
+    failed = [group for group in groups.values() if not any(row.get("status") == "success" for row in group)]
+    errors = len(failed)
+    result: dict[str, Any] = {
+        "attempts": len(rows),
+        "errors": errors,
+        "retries": sum(max(0, len(group) - 1) for group in groups.values()),
+        "fallbacks": sum(
+            len({(row.get("provider"), row.get("model_or_tool")) for row in group}) > 1 for group in groups.values()
+        ),
+        "p50_latency_ms": _quantile(latencies, 0.5),
+        "p95_latency_ms": _quantile(latencies, 0.95),
+    }
+    if errors:
+        categories = Counter(_text(group[-1].get("error_type")) or "Uncategorized" for group in failed)
+        result["error_categories"] = [
+            {"category": name, "count": count}
+            for name, count in sorted(categories.items(), key=lambda item: (-item[1], item[0]))
+        ]
+    return result
 
 
-def build_usage_insights(
-    *, days: int, as_of: datetime | None = None, group: str | None = None
-) -> dict[str, Any]:
-    """Build the exact Usage-page contract without writes, caches, or raw content."""
+def _cooldowns() -> list[dict[str, Any]]:
+    try:
+        return [
+            {
+                "provider": row.get("provider"),
+                "model": row.get("model"),
+                "remaining_seconds": row.get("cooldown_remaining_sec"),
+            }
+            for row in get_model_health_snapshot()
+            if row.get("cooling_down")
+        ]
+    except Exception:
+        return []
+
+
+def _period_start(period: str, end: datetime) -> datetime | None:
+    if period in {"daily", "weekly"}:
+        return end - timedelta(days=1 if period == "daily" else 7)
+    try:
+        from aletheia.agent_runtime.runtime_session import current_session, current_session_durable
+
+        return (
+            _instant((current_session() or {}).get("started_at"))
+            if period == "session" and current_session_durable()
+            else None
+        )
+    except Exception:
+        return None
+
+
+def _budgets(db: sqlite3.Connection, tables: set[str], prices: dict, end: datetime) -> list[dict[str, Any]]:
+    if "economics_budgets" not in tables:
+        return []
+    result = []
+    for policy in _rows(
+        db, "SELECT scope,subject,usd_cap,window FROM economics_budgets WHERE enabled=1 ORDER BY scope,subject,window"
+    ):
+        start = _period_start(str(policy["window"]), end)
+        events = _resolve(_window_rows(db, start, end), prices) if start else []
+        scope, subject = str(policy["scope"]), _text(policy.get("subject"))
+        if scope == "agent_run":
+            events = [row for row in events if _text(row.get("run_id")) == subject]
+        elif scope == "provider":
+            events = [row for row in events if _text(row.get("provider")) == subject]
+        elif scope == "logical_agent":
+            events = [row for row in events if _text(_json(row.get("metadata_json")).get("logical_agent")) == subject]
+        elif scope != "system":
+            start = None
+        complete = start is not None and all(row.get("_cost_usd") is not None for row in events)
+        spend = round(sum(float(row["_cost_usd"]) for row in events), 12) if complete else None
+        limit = float(policy["usd_cap"])
+        result.append(
+            {
+                "limit_usd": limit,
+                "spend_usd": spend,
+                "remaining_usd": round(limit - spend, 12) if spend is not None else None,
+                "utilization_pct": round(spend * 100 / limit, 4) if spend is not None else None,
+                "period": policy["window"],
+            }
+        )
+    return result
+
+
+def _window(days: int, start: datetime, end: datetime) -> dict[str, Any]:
+    return {
+        "days": days,
+        "started_at": start.isoformat(),
+        "ended_at": end.isoformat(),
+        "updated_at": end.isoformat(),
+        "timezone": "UTC",
+        "granularity": "hour" if days == 1 else "week" if days == 90 else "day",
+    }
+
+
+def _empty(days: int, start: datetime, end: datetime, group: str) -> dict[str, Any]:
+    base = {"contract_version": 2, "window": _window(days, start, end)}
+    if group == "summary":
+        return {
+            **base,
+            "overview": {
+                key: None
+                for key in ("cost_usd", "total_tokens", "llm_calls", "success_rate_pct", "avg_cost_per_call_usd")
+            },
+            "comparison": {"complete": False},
+            "token_composition": {"input_tokens": None, "output_tokens": None},
+            "trend": [],
+        }
+    return {
+        **base,
+        "breakdowns": {"agents": [], "models": [], "providers": [], "tools": []},
+        "reliability": {
+            "attempts": 0,
+            "errors": 0,
+            "retries": 0,
+            "fallbacks": 0,
+            "p50_latency_ms": None,
+            "p95_latency_ms": None,
+        },
+        "active_cooldowns": [],
+        "budgets": [],
+    }
+
+
+def build_usage_insights(*, days: int, as_of: datetime | None = None, group: str = "summary") -> dict[str, Any]:
+    """Build Usage contract v2 without writes, caches, or raw content."""
     if days not in _WINDOW_DAYS:
         raise ValueError("days must be one of 1, 7, 30, or 90")
-    if group is not None and group not in _GROUPS:
-        raise ValueError("group must be summary, operations, or analysis")
-    end = _as_utc(as_of or _utcnow())
+    if group not in _GROUPS:
+        raise ValueError("group must be summary or operations")
+    end = _utc(as_of or datetime.now(timezone.utc))
     start = end - timedelta(days=days)
-    window = (start.isoformat(), end.isoformat())
     try:
         with readonly_db() as db:
-            tables = _table_names(db)
-            if "runtime_cost_events" not in tables:
-                return _empty(days, end, "The runtime cost ledger is not available.")
-            runtime_rows = _runtime_rows(db, window)
-            _project_latest_litellm_estimates(db, runtime_rows)
-            llm_rows = [row for row in runtime_rows if row.get("event_type") == "llm"]
-            result: dict[str, Any] = {
-                "window": {"days": days, "started_at": window[0], "ended_at": window[1], "as_of": end.isoformat(), "timezone": "UTC"},
-            }
-            axes: list[dict[str, Any]] = []
-            if group in (None, "summary"):
-                token_mix, token_usable = _token_mix(llm_rows)
-                pricing, priced_events = _pricing(runtime_rows)
-                reliability, measured_latency = _reliability(
-                    db, tables, llm_rows, window, end.isoformat()
-                )
-                result.update(
-                    token_mix=token_mix, pricing=pricing, reliability=reliability
-                )
-                axes.extend([
-                    {"id": "consumption", "label": "Consumption", "status": _status(len(llm_rows), token_usable), "coverage_pct": _pct(token_usable, len(llm_rows)), "reason": token_mix["reason"]},
-                    {"id": "pricing", "label": "Pricing", "status": _status(len(runtime_rows), priced_events), "coverage_pct": _pct(priced_events, len(runtime_rows)), "reason": pricing["reason"]},
-                    {"id": "reliability", "label": "Reliability", "status": _status(len(llm_rows), measured_latency), "coverage_pct": _pct(measured_latency, len(llm_rows)), "reason": reliability["reason"]},
-                ])
-            if group in (None, "operations"):
-                attribution, attributable_events = _attribution(db, llm_rows, tables)
-                tools, priced_tools, timed_tools = _tools(db, tables, runtime_rows, window)
-                budgets, calculable_budgets, total_budgets = _budgets(db, tables, end)
-                trends, trace_covered_trend_days, full_trend_days = _trends(db, tables, runtime_rows, start, end)
-                result.update(attribution=attribution, tools=tools, budgets=budgets, trends=trends)
-                tool_total = sum(_count(row.get("event_count")) for row in tools["rows"])
-                axes.extend([
-                    {"id": "attribution", "label": "Attribution", "status": _status(len(llm_rows), attributable_events), "coverage_pct": _pct(attributable_events, len(llm_rows)), "reason": attribution["reason"]},
-                    {"id": "tools", "label": "Tools", "status": _status(tool_total, min(priced_tools, timed_tools)), "coverage_pct": _pct(min(priced_tools, timed_tools), tool_total), "reason": tools["reason"]},
-                    {"id": "budgets", "label": "Budgets", "status": budgets["status"], "coverage_pct": _pct(calculable_budgets, total_budgets), "reason": budgets["reason"]},
-                    {"id": "trends", "label": "Trends", "status": trends["status"], "coverage_pct": _pct(trace_covered_trend_days, full_trend_days), "reason": trends["reason"]},
-                ])
-            if group in (None, "analysis"):
-                research_yield, factual_stages, referenced_stages = _research_yield(db, tables, window)
-                result.update(research_yield=research_yield)
-                axes.extend([
-                    {"id": "research_yield", "label": "Research yield", "status": research_yield["status"], "coverage_pct": _pct(factual_stages, referenced_stages), "reason": research_yield["reason"]},
-                ])
-            if group is None:
-                order = {
-                    name: index
-                    for index, name in enumerate(
-                        ("consumption", "pricing", "attribution", "tools", "reliability", "budgets", "trends", "research_yield")
-                    )
+            tables = _tables(db)
+            if not {"runtime_cost_events", "pricing_snapshots"}.issubset(tables):
+                return _empty(days, start, end, group)
+            prices = _price_index(db)
+            rows = _resolve(_window_rows(db, start, end), prices)
+            base = {"contract_version": 2, "window": _window(days, start, end)}
+            if group == "operations":
+                return {
+                    **base,
+                    "breakdowns": _breakdowns(db, tables, rows, start, end),
+                    "reliability": _reliability(rows),
+                    "active_cooldowns": _cooldowns(),
+                    "budgets": _budgets(db, tables, prices, end),
                 }
-                axes.sort(key=lambda axis: order[str(axis["id"])])
-            result["coverage"] = _coverage(axes)
-            return result
+            previous_start = start - timedelta(days=days)
+            intervals = _trace_intervals(db, tables, previous_start, end)
+            overview = _metrics(rows, observed_zero=_covered(intervals, start, end))
+            previous = _metrics(
+                _resolve(_window_rows(db, previous_start, start), prices),
+                observed_zero=_covered(intervals, previous_start, start),
+            )
+            complete = bool(previous["_complete"] and _covered(intervals, previous_start, start))
+            return {
+                **base,
+                "overview": {key: value for key, value in overview.items() if not key.startswith("_")},
+                "comparison": _comparison(overview, previous, complete),
+                "token_composition": _composition(rows, overview["total_tokens"]),
+                "trend": _trend(rows, intervals, start, end, days),
+            }
     except (FileNotFoundError, sqlite3.Error):
-        return _empty(days, end, "The usage-insights read model is not available.")
+        return _empty(days, start, end, group)

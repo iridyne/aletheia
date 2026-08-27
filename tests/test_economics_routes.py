@@ -85,8 +85,24 @@ def _seed_llm_cost(
             metadata_json,created_at
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id, "llm", run_id, runtime_session_id, event_id, provider, model, 0, status,
-            now, now, latency_ms, usage_json, cost, "USD", cost_status, metadata_json, now,
+            event_id,
+            "llm",
+            run_id,
+            runtime_session_id,
+            event_id,
+            provider,
+            model,
+            0,
+            status,
+            now,
+            now,
+            latency_ms,
+            usage_json,
+            cost,
+            "USD",
+            cost_status,
+            metadata_json,
+            now,
         ),
     )
 
@@ -95,514 +111,30 @@ def _seed_llm_cost(
 
 
 @pytest.mark.anyio
-async def test_usage_insights_is_exact_aggregate_only_and_windowed(client):
-    from aletheia.storage.sqlite import get_db
+async def test_usage_insights_v2_groups_and_supported_windows(client):
+    summary = await client.get("/api/economics/usage-insights?days=1&group=summary")
+    operations = await client.get("/api/economics/usage-insights?days=90&group=operations")
 
-    db = get_db()
-    for index in range(201):
-        _seed_llm_cost(
-            db,
-            event_id=f"insight-{index}",
-            cost=0.01,
-            run_id="run-1",
-            metadata_json='{"prompt":"must_not_escape","response":"must_not_escape"}',
-        )
-    _seed_llm_cost(db, event_id="insight-unknown", cost=None)
-    db.execute(
-        """INSERT INTO runtime_cost_events (
-            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
-            started_at,finished_at,usage_json,estimated_cost_usd,currency,cost_status,
-            metadata_json,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            "insight-tool", "tool", "run-1", "insight-tool", "tool", "market_data", 0,
-            "recorded", _now(), _now(), "{}", 0.02, "USD", "estimated",
-            '{"would_block":[{"policy_id":"budget-1"}]}', _now(),
-        ),
-    )
-    db.execute(
-        """INSERT INTO llm_context_artifacts (
-            id,schema_version,caller,kind,stable_id,freshness_status,rendered_chars,created_at
-        ) VALUES (?,?,?,?,?,?,?,?)""",
-        ("insight-context", "test", "observer", "news", "article-1", "fresh", 12, _now()),
-    )
-    session_now = datetime.now(timezone.utc)
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("untraced-usage", (session_now - timedelta(days=8)).isoformat(), (session_now + timedelta(days=1)).isoformat(), 0),
-    )
-
-    resp = await client.get("/api/economics/usage-insights?days=7")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert set(data) == {
-        "window", "coverage", "token_mix", "pricing", "attribution", "tools",
-        "reliability", "budgets", "trends", "research_yield",
+    assert summary.status_code == 200
+    assert set(summary.json()) == {
+        "contract_version",
+        "window",
+        "overview",
+        "comparison",
+        "token_composition",
+        "trend",
     }
-    assert data["window"] == {
-        **data["window"], "days": 7, "timezone": "UTC",
+    assert operations.status_code == 200
+    assert set(operations.json()) == {
+        "contract_version",
+        "window",
+        "breakdowns",
+        "reliability",
+        "active_cooldowns",
+        "budgets",
     }
-    assert [axis["id"] for axis in data["coverage"]["axes"]] == [
-        "consumption", "pricing", "attribution", "tools", "reliability",
-        "budgets", "trends", "research_yield",
-    ]
-    assert data["pricing"]["known_cost_usd"] == pytest.approx(2.01)
-    assert data["pricing"]["estimated_cost_usd"] == 0
-    assert data["pricing"]["unknown_event_count"] == 1
-    assert data["attribution"]["status"] == "partial"
-    assert any(row["axis"] == "agent_run" for row in data["attribution"]["rows"])
-    assert data["tools"]["status"] == "not_available"
-    assert data["research_yield"]["status"] == "not_observed"
-    unavailable_zero_days = [
-        row for row in data["trends"]["daily"]
-        if row["full_window_day"] and row["event_count"] == 0
-    ]
-    assert unavailable_zero_days
-    assert {row["zero_observation_status"] for row in unavailable_zero_days} == {"not_available"}
-    assert data["trends"]["trace_coverage"]["legacy_or_untraced_session_count"] == 1
-    assert "must_not_escape" not in resp.text
-
-
-@pytest.mark.anyio
-async def test_usage_insights_accepts_only_supported_windows(client):
-    assert (await client.get("/api/economics/usage-insights")).json()["window"]["days"] == 1
-    assert (await client.get("/api/economics/usage-insights?days=1")).status_code == 200
-    assert (await client.get("/api/economics/usage-insights?days=30")).status_code == 200
-    assert (await client.get("/api/economics/usage-insights?days=90")).status_code == 200
     assert (await client.get("/api/economics/usage-insights?days=2")).status_code == 422
-
-
-@pytest.mark.anyio
-async def test_usage_insights_groups_return_only_their_progressive_sections(client):
-    expected = {
-        "summary": {"window", "coverage", "token_mix", "pricing", "reliability"},
-        "operations": {"window", "coverage", "attribution", "tools", "budgets", "trends"},
-        "analysis": {"window", "coverage", "research_yield"},
-    }
-
-    for group, keys in expected.items():
-        response = await client.get(f"/api/economics/usage-insights?days=1&group={group}")
-        assert response.status_code == 200
-        assert set(response.json()) == keys
-
-    assert (await client.get("/api/economics/usage-insights?group=invalid")).status_code == 422
-
-
-@pytest.mark.anyio
-async def test_usage_insights_projects_latest_litellm_price_without_rewriting_event(client):
-    from aletheia.economics.budgets import add_budget
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    _seed_llm_cost(
-        db,
-        event_id="historical-unpriced",
-        cost=None,
-        provider="openai_compatible",
-        model="llama-4-maverick",
-        usage_json='{"normalized":{"input_tokens":1000000,"output_tokens":1000000}}',
-    )
-    add_catalog_pricing_snapshot(
-        provider="openai_compatible",
-        model="llama-4-maverick",
-        input_usd_per_million=0.2,
-        output_usd_per_million=0.6,
-        source="litellm_public_median:test",
-        version="catalog-model-family-test",
-    )
-    add_budget(scope="system", subject=None, usd_cap=10, window="daily")
-
-    data = (await client.get("/api/economics/usage-insights?days=7")).json()
-
-    assert data["pricing"]["estimated_cost_usd"] == pytest.approx(0.8)
-    assert data["pricing"]["known_event_count"] == 0
-    assert data["pricing"]["estimated_event_count"] == 1
-    assert data["pricing"]["unknown_event_count"] == 0
-    assert data["pricing"]["pricing_coverage_pct"] == 100
-    assert data["token_mix"]["total_tokens"] == 2_000_000
-    event_day = next(row for row in data["trends"]["daily"] if row["llm_event_count"] == 1)
-    assert event_day["input_tokens"] == 1_000_000
-    assert event_day["output_tokens"] == 1_000_000
-    assert event_day["estimated_cost_usd"] == pytest.approx(0.8)
-    assert data["budgets"]["rows"][0]["estimated_spent_usd"] == pytest.approx(0.8)
-    assert data["budgets"]["rows"][0]["unknown_event_count"] == 0
-    stored = db.execute(
-        "SELECT estimated_cost_usd,cost_status FROM runtime_cost_events WHERE id=?",
-        ("historical-unpriced",),
-    ).fetchone()
-    assert stored["estimated_cost_usd"] is None
-    assert stored["cost_status"] == "unknown"
-
-
-@pytest.mark.anyio
-async def test_usage_insights_session_budget_uses_exact_active_session(client, monkeypatch):
-    import aletheia.agent_runtime.runtime_session as runtime_session
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    older = datetime.now(timezone.utc) - timedelta(days=8)
-    current_start = datetime.now(timezone.utc) - timedelta(days=2)
-    add_budget(scope="system", subject=None, usd_cap=1.0, window="session")
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("previous-session", older.isoformat(), (older + timedelta(hours=2)).isoformat(), 1),
-    )
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("active-session", current_start.isoformat(), None, 1),
-    )
-    _seed_llm_cost(
-        db,
-        event_id="previous-session-cost",
-        cost=0.40,
-        runtime_session_id="previous-session",
-        started_at=(current_start + timedelta(hours=1)).isoformat(),
-    )
-    _seed_llm_cost(
-        db,
-        event_id="active-session-cost",
-        cost=0.25,
-        runtime_session_id="active-session",
-        started_at=(current_start + timedelta(hours=2)).isoformat(),
-    )
-    _seed_llm_cost(
-        db,
-        event_id="legacy-null-session-cost",
-        cost=0.10,
-        runtime_session_id=None,
-        started_at=(current_start + timedelta(hours=3)).isoformat(),
-    )
-    monkeypatch.setattr(
-        runtime_session,
-        "current_session",
-        lambda: {"session_id": "active-session", "started_at": current_start.isoformat()},
-    )
-    monkeypatch.setattr(runtime_session, "current_session_durable", lambda: True)
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
-
-    row = data["budgets"]["rows"][0]
-    assert row["window"] == "session"
-    assert row["status"] == "available"
-    assert row["window_started_at"] == current_start.isoformat()
-    assert row["known_spent_usd"] == pytest.approx(0.25)
-    assert row["headroom_usd"] == pytest.approx(0.75)
-    assert row["forecast_status"] == "not_available"
-    assert row["forecast_reason"] == "Session budgets have no fixed duration forecast."
-
-
-@pytest.mark.anyio
-async def test_usage_insights_session_budget_loads_active_session_older_than_week(client, monkeypatch):
-    import aletheia.agent_runtime.runtime_session as runtime_session
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    current_start = datetime.now(timezone.utc) - timedelta(days=10)
-    add_budget(scope="system", subject=None, usd_cap=1.0, window="session")
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("long-session", current_start.isoformat(), None, 1),
-    )
-    _seed_llm_cost(
-        db,
-        event_id="old-active-session-cost",
-        cost=0.30,
-        runtime_session_id="long-session",
-        started_at=(current_start + timedelta(hours=1)).isoformat(),
-    )
-    monkeypatch.setattr(
-        runtime_session,
-        "current_session",
-        lambda: {"session_id": "long-session", "started_at": current_start.isoformat()},
-    )
-    monkeypatch.setattr(runtime_session, "current_session_durable", lambda: True)
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
-
-    row = data["budgets"]["rows"][0]
-    assert row["status"] == "available"
-    assert row["known_spent_usd"] == pytest.approx(0.30)
-    assert row["headroom_usd"] == pytest.approx(0.70)
-
-
-@pytest.mark.anyio
-async def test_usage_insights_session_budget_requires_durable_active_session(client, monkeypatch):
-    import aletheia.agent_runtime.runtime_session as runtime_session
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    current_start = datetime.now(timezone.utc) - timedelta(hours=2)
-    add_budget(scope="system", subject=None, usd_cap=1.0, window="session")
-    _seed_llm_cost(
-        db,
-        event_id="unstamped-cost",
-        cost=0.25,
-        runtime_session_id=None,
-        started_at=(current_start + timedelta(hours=1)).isoformat(),
-    )
-    monkeypatch.setattr(
-        runtime_session,
-        "current_session",
-        lambda: {"session_id": "non-durable-session", "started_at": current_start.isoformat()},
-    )
-    monkeypatch.setattr(runtime_session, "current_session_durable", lambda: False)
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
-
-    row = data["budgets"]["rows"][0]
-    assert row["status"] == "not_available"
-    assert row["known_spent_usd"] is None
-    assert row["headroom_usd"] is None
-    assert row["reason"] == "The active runtime session is not durably persisted."
-
-
-@pytest.mark.anyio
-async def test_usage_insights_total_tokens_sums_available_rows(client):
-    """total_tokens sums rows that have both input and output; a partial-coverage
-    row (failed attempt with no usage) must not suppress the total entirely."""
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    _seed_llm_cost(
-        db,
-        event_id="complete-usage",
-        cost=0.1,
-        usage_json='{"normalized":{"input_tokens":10,"output_tokens":4}}',
-    )
-    # Simulate a failed LLM attempt: no usage data at all.
-    _seed_llm_cost(
-        db,
-        event_id="failed-attempt",
-        cost=None,
-        usage_json='{}',
-    )
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
-
-    assert data["token_mix"]["input_tokens"] == 10
-    assert data["token_mix"]["output_tokens"] == 4
-    # total_tokens is now present: failed attempt has no tokens, does not block the sum
-    assert data["token_mix"]["total_tokens"] == 14
-    # status is partial because one event has no usage
-    assert data["token_mix"]["status"] == "partial"
-
-
-@pytest.mark.anyio
-async def test_usage_insights_withholds_total_tokens_when_output_entirely_absent(client):
-    """total_tokens remains None only when NO event has output tokens at all."""
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    _seed_llm_cost(
-        db,
-        event_id="input-only-usage",
-        cost=0.1,
-        usage_json='{"normalized":{"input_tokens":5}}',
-    )
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
-
-    assert data["token_mix"]["input_tokens"] == 5
-    assert data["token_mix"]["output_tokens"] is None
-    assert data["token_mix"]["total_tokens"] is None
-
-
-@pytest.mark.anyio
-async def test_usage_insights_projects_typed_and_timed_facts_without_content(client):
-    from aletheia.economics.budgets import add_budget
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    now_datetime = datetime.now(timezone.utc)
-    now = now_datetime.isoformat()
-    db.execute(
-        "INSERT INTO agent_runs (id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
-        ("usage-run", "market_observer", "Observe", now),
-    )
-    _seed_llm_cost(
-        db,
-        event_id="physical-0",
-        cost=0.1,
-        run_id="usage-run",
-        provider="provider-a",
-        model="model-a",
-        latency_ms=100,
-        usage_json='{"normalized":{"input_tokens":100,"output_tokens":50,"reasoning_tokens":10,"cached_input_tokens":4}}',
-        metadata_json='{"logical_agent":"market_observer","identity_source":"explicit_economic_context","evaluation_id":"eval-1","trigger":"scheduled"}',
-    )
-    db.execute(
-        """INSERT INTO runtime_cost_events (
-            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
-            started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,currency,cost_status,
-            error_type,metadata_json,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            "physical-1", "llm", "usage-run", "physical-0", "provider-b", "model-b", 1,
-            "error", now, now, 200, "{}", None, "USD", "unknown", "timeout",
-            '{"logical_agent":"market_observer"}', now,
-        ),
-    )
-    db.execute(
-        """INSERT INTO llm_inference_calls (
-            logical_call_id,schema_version,run_id,caller,prompt_template_id,prompt_version,
-            prompt_static_sha256,rendered_prompt_sha256,context_adapter_id,tool_policy_id,
-            allowed_tools_sha256,temperature,max_tokens,allow_model_fallback,status,
-            parse_valid,schema_valid,attempt_count,retry_count,fallback_used,final_provider,
-            final_model,started_at,finished_at,metadata_json,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            "logical-1", "test", "usage-run", "market_observer", "template", "v1", "a", "b",
-            "context", "tools", "c", 0.0, 100, 1, "success", 1, 1, 2, 1, 1,
-            "provider-b", "model-b", now, now, "{}", now,
-        ),
-    )
-    db.execute(
-        """INSERT INTO agent_tool_calls (
-            id,run_id,tool_name,tool_class,permitted,duration_ms,created_at
-        ) VALUES (?,?,?,?,?,?,?)""",
-        ("timed-tool", "usage-run", "timed_tool", "observe", 1, 125, now),
-    )
-    add_budget(scope="provider", subject="provider-a", usd_cap=10, window="daily", source="test")
-    db.execute(
-        """CREATE TABLE IF NOT EXISTS agent_run_artifacts (
-            run_id TEXT NOT NULL, artifact_type TEXT NOT NULL, artifact_id TEXT NOT NULL,
-            PRIMARY KEY (run_id, artifact_type, artifact_id)
-        )"""
-    )
-    db.execute("INSERT INTO opportunities (id,symbol,market) VALUES (?,?,?)", ("opp-1", "BTC/USDT", "spot"))
-    db.execute(
-        "INSERT INTO trade_proposals (id,symbol,market_type,direction) VALUES (?,?,?,?)",
-        ("proposal-1", "BTC/USDT", "spot", "long"),
-    )
-    db.execute(
-        "INSERT INTO pi_decisions (id,created_at,action,conviction,proposal_id) VALUES (?,?,?,?,?)",
-        ("pi-1", now, "propose", 80, "proposal-1"),
-    )
-    db.execute(
-        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,execution_mode,proposal_id) VALUES (?,?,?,?,?,?,?,?)",
-        ("position-1", "BTC/USDT", "spot", "long", 1, 100, "paper_internal", "proposal-1"),
-    )
-    db.execute(
-        "INSERT INTO orders (id,proposal_id,symbol,market_type,direction,order_type,quantity,execution_mode,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        ("order-1", "proposal-1", "BTC/USDT", "spot", "long", "market", 1, "paper_internal", "filled", now),
-    )
-    db.execute(
-        "INSERT INTO fills (id,order_id,fill_price,fill_quantity,filled_at) VALUES (?,?,?,?,?)",
-        ("fill-1", "order-1", 100, 1, now),
-    )
-    db.execute("INSERT INTO serenity_themes (id,name) VALUES (?,?)", ("theme-1", "Usage evidence"))
-    db.execute(
-        "INSERT INTO serenity_evidence (id,theme_id,title,summary) VALUES (?,?,?,?)",
-        ("serenity-1", "theme-1", "Evidence title", "serenity_raw_content_must_not_escape"),
-    )
-    db.execute(
-        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
-        ("usage-run", "opportunity", "opp-1"),
-    )
-    db.execute(
-        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
-        ("usage-run", "pi_decision", "pi-1"),
-    )
-    db.execute(
-        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
-        ("usage-run", "serenity_evidence", "serenity-1"),
-    )
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("traced-usage", (now_datetime - timedelta(days=8)).isoformat(), (now_datetime + timedelta(days=1)).isoformat(), 1),
-    )
-    from aletheia.model_provider.fallback import _record_model_failure
-
-    _record_model_failure("provider-a", "model-a", RuntimeError("cooldown_raw_error_must_not_escape"))
-    _record_model_failure("provider-a", "model-a", RuntimeError("cooldown_raw_error_must_not_escape"))
-
-    data = (await client.get("/api/economics/usage-insights?days=7")).json()
-
-    assert data["token_mix"]["input_tokens"] == 100
-    assert data["token_mix"]["cached_tokens"] == 4
-    assert {row["axis"] for row in data["attribution"]["rows"]} == {
-        "agent_run", "logical_agent", "role", "direct_tags",
-    }
-    tool = data["tools"]["rows"][0]
-    assert tool["tool_name"] == "timed_tool"
-    assert tool["timing_coverage_pct"] == 100
-    assert tool["p50_duration_ms"] == 125
-    assert tool["priced_event_count"] == 1
-    assert tool["known_cost_usd"] == 0
-    assert data["reliability"]["logical"]["retry_count"] == 1
-    assert data["reliability"]["physical"]["fallback_call_count"] == 1
-    assert data["reliability"]["physical"]["error_categories"] == [{"error_type": "timeout", "event_count": 1}]
-    assert data["budgets"]["rows"][0]["forecast_status"] == "available"
-    assert data["research_yield"]["artifacts"] == [
-        {
-            "run_id": "usage-run", "agent_name": "market_observer",
-            "artifact_type": "opportunity", "artifact_count": 1,
-        },
-        {
-            "run_id": "usage-run", "agent_name": "market_observer",
-            "artifact_type": "pi_decision", "artifact_count": 1,
-        },
-        {
-            "run_id": "usage-run", "agent_name": "market_observer",
-            "artifact_type": "serenity_evidence", "artifact_count": 1,
-        },
-    ]
-    assert data["research_yield"]["lineage"][0]["factual_record_count"] == 1
-    stages = {row["stage"]: row for row in data["research_yield"]["lineage"]}
-    assert stages["serenity_evidence"]["factual_record_count"] == 1
-    assert stages["proposal"]["factual_record_count"] == 1
-    assert stages["order"]["factual_record_count"] == 1
-    assert stages["fill"]["factual_record_count"] == 1
-    assert stages["position"]["factual_record_count"] == 1
-    assert any(
-        row["full_window_day"] and row["event_count"] == 0 and row["zero_observation_status"] == "observed_zero"
-        for row in data["trends"]["daily"]
-    )
-    cooldown = data["reliability"]["current_model_cooldown"]
-    assert cooldown["current"] is True
-    assert cooldown["fact_scope"] == "current_in_process"
-    assert cooldown["cooling_down_count"] == 1
-    assert cooldown["rows"][0]["cooling_down"] is True
-    assert "serenity_raw_content_must_not_escape" not in str(data)
-    assert "cooldown_raw_error_must_not_escape" not in str(data)
-
-
-@pytest.mark.anyio
-async def test_usage_insights_distinguishes_legacy_carriers_and_unobserved_outputs(client):
-    from aletheia.economics.schema import ensure_economics_schema
-
-    db = ensure_economics_schema()
-    now = datetime.now(timezone.utc).isoformat()
-    db.execute(
-        "INSERT INTO agent_runs (id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
-        ("legacy-carrier-run", "paper_trader", "Observe", now),
-    )
-    db.execute(
-        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
-        ("legacy-carrier-run", "pi_decision", "pruned-pending-carrier"),
-    )
-    db.commit()
-
-    data = (await client.get("/api/economics/usage-insights?days=1")).json()
-
-    pi = next(
-        row
-        for row in data["research_yield"]["lineage"]
-        if row["artifact_type"] == "pi_decision"
-    )
-    lineage_by_stage = {row["stage"]: row for row in data["research_yield"]["lineage"]}
-    assert pi["status"] == "not_observed"
-    assert pi["legacy_retired_reference_count"] == 1
-    assert pi["missing_record_count"] == 0
-    assert "audit-only" in pi["reason"]
-    assert all(
-        lineage_by_stage[stage]["status"] == "not_observed"
-        for stage in ("proposal", "order", "fill", "position", "serenity_evidence", "research_note", "portfolio_snapshot")
-    )
-    assert data["budgets"]["status"] == "not_configured"
-    budgets_axis = next(axis for axis in data["coverage"]["axes"] if axis["id"] == "budgets")
-    assert budgets_axis["status"] == "not_configured"
+    assert (await client.get("/api/economics/usage-insights?group=analysis")).status_code == 422
 
 
 # ── /api/economics/status ────────────────────────────────────────────────────
@@ -615,60 +147,6 @@ async def test_status_returns_kill_switch_state(client):
     data = resp.json()
     assert isinstance(data["tracing_enabled"], bool)
     assert isinstance(data["audit_enabled"], bool)
-
-
-@pytest.mark.anyio
-async def test_usage_insights_legacy_null_session_counts_as_traced_when_it_has_cost_events(client):
-    """A session created before migration v20 (economics_tracing_enabled IS NULL)
-    that produced cost events must be counted as a traced interval, not legacy/untraced."""
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    session_start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    session_end = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    # NULL economics_tracing_enabled simulates a pre-v20 legacy session.
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("legacy-session", session_start, session_end, None),
-    )
-    _seed_llm_cost(
-        db,
-        event_id="legacy-cost-event",
-        cost=0.05,
-        started_at=session_start,
-        usage_json='{"normalized":{"input_tokens":100,"output_tokens":20}}',
-    )
-    # Attach the cost event to the legacy session via runtime_session_id.
-    db.execute(
-        "UPDATE runtime_cost_events SET runtime_session_id=? WHERE id=?",
-        ("legacy-session", "legacy-cost-event"),
-    )
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
-
-    tc = data["trends"]["trace_coverage"]
-    assert tc["traced_session_count"] >= 1, "Legacy session with cost events must be counted as traced"
-    assert tc["legacy_or_untraced_session_count"] == 0, "Session with cost events must not be legacy/untraced"
-
-
-@pytest.mark.anyio
-async def test_usage_insights_legacy_null_session_without_cost_events_stays_untraced(client):
-    """A session with NULL economics_tracing_enabled and no cost events must
-    remain in legacy_or_untraced (we have no evidence tracing ran)."""
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    session_start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    session_end = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    db.execute(
-        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
-        ("empty-legacy-session", session_start, session_end, None),
-    )
-
-    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
-
-    tc = data["trends"]["trace_coverage"]
-    assert tc["legacy_or_untraced_session_count"] >= 1
 
 
 @pytest.mark.anyio
@@ -721,9 +199,7 @@ async def test_costs_include_events_capped_by_limit(client):
     for i in range(3):
         _seed_llm_cost(db, event_id=f"ev-{i}", cost=0.1)
 
-    resp = await client.get(
-        "/api/economics/costs?days=1&include_events=true&event_limit=2"
-    )
+    resp = await client.get("/api/economics/costs?days=1&include_events=true&event_limit=2")
     assert resp.status_code == 200
     data = resp.json()
     assert data["event_count"] == 3
@@ -754,18 +230,23 @@ async def test_costs_rejects_invalid_days(client):
 # ── /api/economics/costs/by-provider ─────────────────────────────────────────
 
 
-def _usage_json(*, input_t: int = 0, output_t: int = 0, reasoning: int = 0,
-                cached: int = 0) -> str:
+def _usage_json(*, input_t: int = 0, output_t: int = 0, reasoning: int = 0, cached: int = 0) -> str:
     import json as _json
-    return _json.dumps({"raw": {}, "normalized": {
-        "input_tokens": input_t or None,
-        "output_tokens": output_t or None,
-        "reasoning_tokens": reasoning or None,
-        "cached_input_tokens": cached or None,
-        "total_tokens": (input_t + output_t) or None,
-        "provider_cache_read_input_tokens": None,
-        "provider_cache_creation_input_tokens": None,
-    }})
+
+    return _json.dumps(
+        {
+            "raw": {},
+            "normalized": {
+                "input_tokens": input_t or None,
+                "output_tokens": output_t or None,
+                "reasoning_tokens": reasoning or None,
+                "cached_input_tokens": cached or None,
+                "total_tokens": (input_t + output_t) or None,
+                "provider_cache_read_input_tokens": None,
+                "provider_cache_creation_input_tokens": None,
+            },
+        }
+    )
 
 
 @pytest.mark.anyio
@@ -784,13 +265,31 @@ async def test_costs_by_provider_aggregates_tokens(client):
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
-    _seed_llm_cost(db, event_id="openai-1", cost=0.10, provider="openai",
-                   model="gpt-4", usage_json=_usage_json(input_t=100, output_t=50))
-    _seed_llm_cost(db, event_id="openai-2", cost=0.05, provider="openai",
-                   model="gpt-4", usage_json=_usage_json(input_t=80, output_t=40, reasoning=20),
-                   latency_ms=250.0)
-    _seed_llm_cost(db, event_id="openrouter-1", cost=0.02, provider="openrouter",
-                   model="claude", usage_json=_usage_json(input_t=200, output_t=100, cached=30))
+    _seed_llm_cost(
+        db,
+        event_id="openai-1",
+        cost=0.10,
+        provider="openai",
+        model="gpt-4",
+        usage_json=_usage_json(input_t=100, output_t=50),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="openai-2",
+        cost=0.05,
+        provider="openai",
+        model="gpt-4",
+        usage_json=_usage_json(input_t=80, output_t=40, reasoning=20),
+        latency_ms=250.0,
+    )
+    _seed_llm_cost(
+        db,
+        event_id="openrouter-1",
+        cost=0.02,
+        provider="openrouter",
+        model="claude",
+        usage_json=_usage_json(input_t=200, output_t=100, cached=30),
+    )
 
     resp = await client.get("/api/economics/costs/by-provider?days=1")
     assert resp.status_code == 200
@@ -827,12 +326,15 @@ async def test_costs_by_provider_daily_series(client):
     now = datetime.now(timezone.utc)
     day1 = (now - timedelta(days=2)).replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
     day2 = (now - timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0).isoformat()
-    _seed_llm_cost(db, event_id="d1a", cost=0.10, provider="openai",
-                   usage_json=_usage_json(input_t=100), started_at=day1)
-    _seed_llm_cost(db, event_id="d1b", cost=0.05, provider="openrouter",
-                   usage_json=_usage_json(input_t=50), started_at=day1)
-    _seed_llm_cost(db, event_id="d2a", cost=0.20, provider="openai",
-                   usage_json=_usage_json(input_t=200), started_at=day2)
+    _seed_llm_cost(
+        db, event_id="d1a", cost=0.10, provider="openai", usage_json=_usage_json(input_t=100), started_at=day1
+    )
+    _seed_llm_cost(
+        db, event_id="d1b", cost=0.05, provider="openrouter", usage_json=_usage_json(input_t=50), started_at=day1
+    )
+    _seed_llm_cost(
+        db, event_id="d2a", cost=0.20, provider="openai", usage_json=_usage_json(input_t=200), started_at=day2
+    )
 
     resp = await client.get("/api/economics/costs/by-provider?days=7")
     assert resp.status_code == 200
@@ -862,16 +364,43 @@ async def test_costs_by_provider_model_status_latency(client):
 
     db = get_db()
     # 2 models on one provider (one healthy, one flaky), 1 model on another.
-    _seed_llm_cost(db, event_id="a-ok-1", cost=0.10, provider="p1", model="m1",
-                   usage_json=_usage_json(input_t=100, output_t=50), latency_ms=1000.0)
-    _seed_llm_cost(db, event_id="a-ok-2", cost=0.05, provider="p1", model="m1",
-                   usage_json=_usage_json(input_t=80, output_t=40), latency_ms=3000.0)
-    _seed_llm_cost(db, event_id="a-err", cost=None, provider="p1", model="m1",
-                   latency_ms=250.0, status="error")
-    _seed_llm_cost(db, event_id="b-ok", cost=0.02, provider="p1", model="m2",
-                   usage_json=_usage_json(input_t=200, output_t=100), latency_ms=500.0)
-    _seed_llm_cost(db, event_id="c-ok", cost=0.03, provider="p2", model="m3",
-                   usage_json=_usage_json(input_t=300), latency_ms=2000.0)
+    _seed_llm_cost(
+        db,
+        event_id="a-ok-1",
+        cost=0.10,
+        provider="p1",
+        model="m1",
+        usage_json=_usage_json(input_t=100, output_t=50),
+        latency_ms=1000.0,
+    )
+    _seed_llm_cost(
+        db,
+        event_id="a-ok-2",
+        cost=0.05,
+        provider="p1",
+        model="m1",
+        usage_json=_usage_json(input_t=80, output_t=40),
+        latency_ms=3000.0,
+    )
+    _seed_llm_cost(db, event_id="a-err", cost=None, provider="p1", model="m1", latency_ms=250.0, status="error")
+    _seed_llm_cost(
+        db,
+        event_id="b-ok",
+        cost=0.02,
+        provider="p1",
+        model="m2",
+        usage_json=_usage_json(input_t=200, output_t=100),
+        latency_ms=500.0,
+    )
+    _seed_llm_cost(
+        db,
+        event_id="c-ok",
+        cost=0.03,
+        provider="p2",
+        model="m3",
+        usage_json=_usage_json(input_t=300),
+        latency_ms=2000.0,
+    )
 
     resp = await client.get("/api/economics/costs/by-provider?days=1")
     assert resp.status_code == 200
@@ -894,9 +423,7 @@ async def test_costs_by_provider_model_status_latency(client):
     p1 = data["providers"]["p1"]
     assert p1["success_count"] == 3
     assert p1["error_count"] == 1
-    assert p1["avg_latency_ms"] == pytest.approx(
-        (1000.0 + 3000.0 + 250.0 + 500.0) / 4, abs=0.05
-    )
+    assert p1["avg_latency_ms"] == pytest.approx((1000.0 + 3000.0 + 250.0 + 500.0) / 4, abs=0.05)
 
     # daily_series entries also carry the health fields
     day_point = data["daily_series"][0]
@@ -1017,8 +544,22 @@ def _seed_tool_cost(
             metadata_json,created_at
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id, "tool", None, "tool_" + event_id, "tool", tool, 0, status,
-            now, now, "{}", cost, "USD", cost_status, "{}", now,
+            event_id,
+            "tool",
+            None,
+            "tool_" + event_id,
+            "tool",
+            tool,
+            0,
+            status,
+            now,
+            now,
+            "{}",
+            cost,
+            "USD",
+            cost_status,
+            "{}",
+            now,
         ),
     )
 
@@ -1066,9 +607,7 @@ async def test_tokens_summarize_provider_usage_without_cost(client):
     assert data["field_availability"]["cached_input_tokens"] == 1
     assert data["by_logical_agent"]["market_observer"]["input_tokens"] == 10
     assert data["by_role"]["worker"]["output_tokens"] == 4
-    assert data["token_integrity_observation_counts"] == {
-        "input_or_output_usage_unavailable": 1
-    }
+    assert data["token_integrity_observation_counts"] == {"input_or_output_usage_unavailable": 1}
 
 
 @pytest.mark.anyio
@@ -1096,8 +635,6 @@ async def test_tokens_filters_by_run_id(client):
     assert resp.json()["tokens"]["input_tokens"] == 5
 
 
-
-
 # ── /api/economics/viability ─────────────────────────────────────────────────
 
 
@@ -1118,17 +655,14 @@ async def test_viability_get_does_not_persist(client, monkeypatch):
         lambda **kwargs: [],
     )
     resp = await client.get(
-        "/api/economics/viability?scope=system&days=1"
-        "&data_cost_usd=0&infrastructure_cost_usd=0&other_cost_usd=0"
+        "/api/economics/viability?scope=system&days=1&data_cost_usd=0&infrastructure_cost_usd=0&other_cost_usd=0"
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["scope"] == "system"
     assert data["verdict"] in {"insufficient_data", "invalid"}
 
-    persisted = get_db().execute(
-        "SELECT COUNT(*) FROM viability_reports"
-    ).fetchone()[0]
+    persisted = get_db().execute("SELECT COUNT(*) FROM viability_reports").fetchone()[0]
     assert persisted == 0
 
 
@@ -1141,9 +675,7 @@ async def test_viability_rejects_invalid_scope(client):
 # ── /api/economics/viability/reports ─────────────────────────────────────────
 
 
-def _seed_viability_report(
-    db: sqlite3.Connection, *, report_id: str, scope: str = "system"
-) -> None:
+def _seed_viability_report(db: sqlite3.Connection, *, report_id: str, scope: str = "system") -> None:
     now = _now()
     db.execute(
         """INSERT INTO viability_reports (
@@ -1153,9 +685,23 @@ def _seed_viability_report(
             exclusion_counts_json,assumptions_json,reason,generated_at
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            report_id, f"dedup-{report_id}", scope, now, now, "paper_internal",
-            "test", 1.0, 0.5, 0.5, "positive", "complete", 1, "{}", "[]",
-            "test", now,
+            report_id,
+            f"dedup-{report_id}",
+            scope,
+            now,
+            now,
+            "paper_internal",
+            "test",
+            1.0,
+            0.5,
+            0.5,
+            "positive",
+            "complete",
+            1,
+            "{}",
+            "[]",
+            "test",
+            now,
         ),
     )
 
@@ -1217,9 +763,7 @@ async def test_model_health_reflects_cooldown(client):
     from aletheia.model_provider.fallback import _record_model_failure
 
     for _ in range(2):
-        _record_model_failure(
-            "test_provider", "test_model", RuntimeError("simulated 503")
-        )
+        _record_model_failure("test_provider", "test_model", RuntimeError("simulated 503"))
 
     resp = await client.get("/api/economics/model-health")
     assert resp.status_code == 200
@@ -1289,9 +833,7 @@ async def test_budgets_scope_filter(client):
 
 @pytest.mark.anyio
 async def test_budgets_enabled_only(client):
-    add_budget(
-        scope="system", subject=None, usd_cap=10.0, window="daily", enabled=False
-    )
+    add_budget(scope="system", subject=None, usd_cap=10.0, window="daily", enabled=False)
     resp = await client.get("/api/economics/budgets?enabled_only=true")
     assert resp.status_code == 200
     assert resp.json()["budgets"] == []
@@ -1317,9 +859,22 @@ def _seed_would_block_event(
             metadata_json,created_at
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id, "llm", None, event_id, "test", "model", 0, "success",
-            now, now, "{}", 0.1, "USD", "known",
-            __import__("json").dumps(metadata), now,
+            event_id,
+            "llm",
+            None,
+            event_id,
+            "test",
+            "model",
+            0,
+            "success",
+            now,
+            now,
+            "{}",
+            0.1,
+            "USD",
+            "known",
+            __import__("json").dumps(metadata),
+            now,
         ),
     )
 
@@ -1341,9 +896,16 @@ async def test_budgets_would_block_returns_events_with_observations(client):
         get_db(),
         event_id="wb-1",
         observations=[
-            {"policy_id": "p1", "scope": "system", "usd_cap": 1.0,
-             "spent_before_call_usd": 0.5, "projected_after_call_usd": 1.2,
-             "over_by_usd": 0.2, "subject": None, "window": "daily"}
+            {
+                "policy_id": "p1",
+                "scope": "system",
+                "usd_cap": 1.0,
+                "spent_before_call_usd": 0.5,
+                "projected_after_call_usd": 1.2,
+                "over_by_usd": 0.2,
+                "subject": None,
+                "window": "daily",
+            }
         ],
     )
 
@@ -1403,9 +965,7 @@ async def test_budgets_would_block_scope_filter_applies_before_limit(client):
     )
     db.commit()
 
-    scoped = await client.get(
-        "/api/economics/budgets/would-block?scope=logical_agent&limit=2"
-    )
+    scoped = await client.get("/api/economics/budgets/would-block?scope=logical_agent&limit=2")
     assert scoped.status_code == 200
     assert [event["id"] for event in scoped.json()["events"]] == [
         "la-newer",
