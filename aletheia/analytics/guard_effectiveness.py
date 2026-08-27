@@ -111,6 +111,7 @@ def _blocked_candidate_stats_by_guard(
     """
     from aletheia.learning.outcomes import assess_candidate_outcome
     from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.filter_evidence import current_cost_model_sql
     from datetime import datetime, timezone, timedelta
 
     as_of_at = datetime.now(timezone.utc)
@@ -126,6 +127,7 @@ def _blocked_candidate_stats_by_guard(
             "FROM filter_decisions fd "
             "LEFT JOIN filter_candidate_outcomes fo "
             "  ON fo.outcome_candidate_key = fd.outcome_candidate_key AND fo.horizon = ? "
+            f" AND {current_cost_model_sql('fo')} "
             "WHERE fd.filter_name = 'guard_candidate_block' "
             "  AND fd.decision = 'rejected' "
             "  AND fd.outcome_candidate_key IS NOT NULL "

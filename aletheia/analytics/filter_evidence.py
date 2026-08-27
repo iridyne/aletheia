@@ -25,6 +25,7 @@ from aletheia.storage.models import (
     FilterDecision,
     FilterDecisionBatch,
 )
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 logger = logging.getLogger("aletheia.analytics.filter_evidence")
 
@@ -65,6 +66,21 @@ FIRST_EXPOSURE_CTE_SQL = (
     "   AND fd.outcome_candidate_key IS NOT NULL"
     ") "
 )
+
+
+def current_cost_model_sql(table_alias: str = "") -> str:
+    """Return the current outcome cost-model identity predicate."""
+    prefix = f"{table_alias}." if table_alias else ""
+    version = COST_MODEL_VERSION.replace("'", "''")
+    return f"{prefix}cost_model_version = '{version}'"
+
+
+def current_cost_model_complete_outcome_sql(table_alias: str = "") -> str:
+    """Return the decision-grade net-outcome predicate for the current cost model."""
+    return (
+        f"{repo.complete_outcome_economics_sql(table_alias)} "
+        f"AND {current_cost_model_sql(table_alias)}"
+    )
 
 
 @contextmanager
@@ -474,15 +490,13 @@ def filter_feedback_stats(
     # rejection incorrectly becomes the candidate's first exposure.
     time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
     params = (evaluated_since,) if evaluated_since else ()
-    complete_net = (
-        "fo.status='settled' AND " + repo.complete_outcome_economics_sql("fo")
-    )
+    complete_net = "fo.status='settled' AND " + current_cost_model_complete_outcome_sql("fo")
     rows = get_db().execute(
         FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
         "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
-        "fd.direction, fd.market_type, fo.horizon, "
+        "fd.direction, fd.market_type, fo.horizon, fo.cost_model_version, "
         "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
         f"COUNT(DISTINCT CASE WHEN {complete_net} "
         "  THEN fd.outcome_candidate_key END) AS n_net, "
@@ -505,9 +519,10 @@ def filter_feedback_stats(
         f"{time_clause} "
         "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
-        "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, fo.horizon "
+        "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, "
+        "fo.horizon, fo.cost_model_version "
         "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
-        "fd.direction, fd.market_type, fo.horizon, fd.decision",
+        "fd.direction, fd.market_type, fo.horizon, fo.cost_model_version, fd.decision",
         params,
     ).fetchall()
     raw = [dict(row) for row in rows]
@@ -635,8 +650,8 @@ def observer_pre_filter_diagnostics(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
         "fd.direction, fd.market_type, fd.input_snapshot, "
-        "fo.horizon, fo.status, fo.net_return_pct, "
-        f"CASE WHEN {repo.complete_outcome_economics_sql('fo')} "
+        "fo.horizon, fo.status, fo.net_return_pct, fo.cost_model_version, "
+        f"CASE WHEN {current_cost_model_complete_outcome_sql('fo')} "
         "THEN 1 ELSE 0 END AS economics_complete "
         "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "
@@ -682,6 +697,7 @@ def observer_pre_filter_diagnostics(
             row.get("direction"),
             row.get("market_type"),
             row.get("horizon"),
+            row.get("cost_model_version"),
         )
         group_key = (
             *cell_key,
@@ -698,6 +714,7 @@ def observer_pre_filter_diagnostics(
                 "direction": cell_key[2],
                 "market_type": cell_key[3],
                 "horizon": cell_key[4],
+                "cost_model_version": cell_key[5],
                 "decision": row.get("decision"),
                 "rule_cohort": rule_cohort,
                 "rsi_deviation_bucket": rsi_bucket,
@@ -721,7 +738,7 @@ def observer_pre_filter_diagnostics(
 
     cohorts: list[dict[str, Any]] = []
     for group_key, group in grouped.items():
-        cell_key = group_key[:5]
+        cell_key = group_key[:6]
         prior_values = cell_priors.get(cell_key) or []
         prior = sum(prior_values) / len(prior_values) if prior_values else 0.0
         n_net = int(group["n_net"])
@@ -1379,6 +1396,7 @@ def _cohort_key(row: dict[str, Any]) -> tuple:
         row.get("direction"),
         row.get("market_type"),
         row.get("horizon"),
+        row.get("cost_model_version"),
     )
 
 

@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 45)
+        f"aletheia-sqlite-v{version}" for version in range(2, 46)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v44"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v45"
     connection.close()
 
 
@@ -754,8 +754,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260826_0043_coingecko_source_time_v44",
-        "aletheia-sqlite-v44",
+        "20260827_0044_controller_recommendation_cost_model_v45",
+        "aletheia-sqlite-v45",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")

@@ -62,6 +62,7 @@ class FilterRecommendation:
     market_type: str | None = None
     horizon: str | None = None
     filter_version: str | None = None
+    cost_model_version: str | None = None
     passed_n: int = 0
     rejected_n: int = 0
     passed_shrunk_avg_net: float | None = None
@@ -92,6 +93,7 @@ class PersistentRecommendation:
     market_type: str | None
     horizon: str | None
     filter_version: str | None
+    cost_model_version: str | None
     consecutive_suspect_runs: int
     runs_analyzed: int
     first_suspect_at: str  # ISO — the OLDEST end of the current streak
@@ -118,8 +120,12 @@ def _batch_scanner_weights_quota_stats(
     the observational signal survives the migration (dual-decode).
     """
     try:
-        from aletheia.analytics.filter_evidence import decode_filter_decision_batch
-        from aletheia.storage.repositories import complete_outcome_economics_sql
+        from aletheia.analytics.filter_evidence import (
+            COST_MODEL_VERSION,
+            current_cost_model_complete_outcome_sql,
+            current_cost_model_sql,
+            decode_filter_decision_batch,
+        )
         from aletheia.storage.sqlite import get_db
     except Exception:
         return []
@@ -194,10 +200,12 @@ def _batch_scanner_weights_quota_stats(
             placeholders = ",".join("?" for _ in chunk)
             cursor = db.execute(
                 "SELECT outcome_candidate_key, horizon, status, net_return_pct, "
-                f"CASE WHEN {complete_outcome_economics_sql()} "
+                "cost_model_version, "
+                f"CASE WHEN {current_cost_model_complete_outcome_sql()} "
                 "THEN 1 ELSE 0 END AS economics_complete "
                 "FROM filter_candidate_outcomes "
-                f"WHERE outcome_candidate_key IN ({placeholders})",
+                f"WHERE {current_cost_model_sql()} "
+                f"AND outcome_candidate_key IN ({placeholders})",
                 tuple(chunk),
             )
             for raw in cursor:
@@ -235,13 +243,30 @@ def _batch_scanner_weights_quota_stats(
     for aggregate_key, bucket in aggregated_buckets.items():
         cohort_key = aggregate_key[:-1]
         horizon = aggregate_key[-1]
-        (filter_name, stage, version, param_snap, family, direction,
-         market_type, decision) = cohort_key
+        (
+            filter_name,
+            stage,
+            version,
+            param_snap,
+            family,
+            direction,
+            market_type,
+            decision,
+        ) = cohort_key
         n_total = len(bucket["candidates"])
         settled = bucket["settled"]
         n_net = len(settled)
         avg_net = (sum(settled) / n_net) if n_net else 0.0
-        row_key = (filter_name, stage, version, param_snap, family, direction, market_type, horizon)
+        row_key = (
+            filter_name,
+            stage,
+            version,
+            param_snap,
+            family,
+            direction,
+            market_type,
+            horizon,
+        )
         total, weighted = priors.get(row_key, (0, 0.0))
         priors[row_key] = (total + n_net, weighted + n_net * avg_net)
         aggregated.append({
@@ -254,6 +279,7 @@ def _batch_scanner_weights_quota_stats(
             "direction": direction,
             "market_type": market_type,
             "horizon": horizon,
+            "cost_model_version": COST_MODEL_VERSION,
             "n_total": n_total,
             "n_net": n_net,
             "n": n_net,
@@ -332,6 +358,7 @@ def compute_filter_feedback(
             row.get("direction"),
             row.get("market_type"),
             row.get("horizon"),
+            row.get("cost_model_version"),
         )
         grouped.setdefault(key, {})[str(row.get("decision"))] = row
 
@@ -360,7 +387,16 @@ def compute_filter_feedback(
             ))
             continue
         for key, cells in sorted(matching, key=lambda item: str(item[0])):
-            _, evidence_stage, version, family, direction, market_type, horizon = key
+            (
+                _,
+                evidence_stage,
+                version,
+                family,
+                direction,
+                market_type,
+                horizon,
+                cost_model_version,
+            ) = key
             passed = cells.get("passed")
             rejected = cells.get("rejected")
             evidence = passed or rejected or {}
@@ -435,6 +471,7 @@ def compute_filter_feedback(
                 market_type=market_type,
                 horizon=horizon,
                 filter_version=version,
+                cost_model_version=cost_model_version,
                 passed_n=pass_n,
                 rejected_n=reject_n,
                 passed_shrunk_avg_net=pass_mean,
@@ -452,10 +489,11 @@ def compute_persistent_recommendations(
     """Detect (filter × cell) keys stably flagged overrestrictive_suspect across runs.
 
     Reads the persisted controller_recommendations table and, for each
-    (filter_name, scanner_family, direction, market_type, horizon, filter_version)
-    cell, counts consecutive most-recent runs whose row for that cell has
-    evidence_verdict='overrestrictive_suspect'. Cells with a streak of at least
-    ``min_consecutive_runs`` are returned, sorted by streak length descending.
+    (filter_name, scanner_family, direction, market_type, horizon, filter_version,
+    cost_model_version) cell, counts consecutive most-recent runs whose row for
+    that cell has evidence_verdict='overrestrictive_suspect'. Cells with a
+    streak of at least ``min_consecutive_runs`` are returned, sorted by streak
+    length descending.
 
     A cell that does NOT appear in a run (implicit absence — e.g. dropped back to
     insufficient_data or the batch never emitted a row for that cell) breaks the
@@ -491,7 +529,7 @@ def compute_persistent_recommendations(
     placeholders = ",".join("?" for _ in ordered_run_ids)
     rows = db.execute(
         f"SELECT id, run_id, created_at, filter_name, scanner_family, "
-        f"direction, market_type, horizon, filter_version, "
+        f"direction, market_type, horizon, filter_version, cost_model_version, "
         f"COALESCE(evidence_verdict, verdict) AS effective_verdict, "
         f"error_signal, reasoning "
         f"FROM controller_recommendations "
@@ -510,6 +548,7 @@ def compute_persistent_recommendations(
             row["market_type"],
             row["horizon"],
             row["filter_version"],
+            row["cost_model_version"],
         )
         run_id = str(row["run_id"])
         existing = by_cell[cell_key].get(run_id)
@@ -551,6 +590,7 @@ def compute_persistent_recommendations(
             market_type=cell_key[3],
             horizon=cell_key[4],
             filter_version=cell_key[5],
+            cost_model_version=cell_key[6],
             consecutive_suspect_runs=consecutive,
             runs_analyzed=len(ordered_run_ids),
             first_suspect_at=str(oldest["created_at"]),
@@ -724,6 +764,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
                     "evidence_verdict": r.verdict,
                     "evidence_direction": r.suggested_direction,
                     "filter_version": r.filter_version,
+                    "cost_model_version": r.cost_model_version,
                     "direction": r.direction,
                     "market_type": r.market_type,
                     "horizon": r.horizon,
@@ -757,6 +798,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
                     "evidence_verdict": "insufficient_data",
                     "evidence_direction": "n/a",
                     "filter_version": None,
+                    "cost_model_version": None,
                     "direction": None,
                     "market_type": None,
                     "horizon": None,
