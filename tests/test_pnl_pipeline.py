@@ -1121,6 +1121,7 @@ class TestTodayRawClosedRealizedPnl:
         position_id: str,
         realized_pnl: float,
         execution_mode: str = "paper_internal",
+        symbol: str = "BTC/USDT",
     ) -> None:
         """Insert a spot close with fully-reproducible economics today (UTC)."""
         from tests.test_outcome_closure import _insert_closed_position_via_producer
@@ -1128,7 +1129,7 @@ class TestTodayRawClosedRealizedPnl:
         today = datetime.now(timezone.utc).isoformat()
         _insert_closed_position_via_producer(
             position_id=position_id,
-            symbol="BTC/USDT",
+            symbol=symbol,
             market_type="spot",
             direction="long",
             quantity=1.0,
@@ -1143,6 +1144,7 @@ class TestTodayRawClosedRealizedPnl:
         position_id: str,
         *,
         execution_mode: str = "paper_internal",
+        symbol: str = "ETH/USDT",
     ) -> None:
         """Insert a futures close with NULL funding (economics incomplete)."""
         from aletheia.storage.models import Position
@@ -1151,7 +1153,7 @@ class TestTodayRawClosedRealizedPnl:
         closed_at = datetime.now(timezone.utc).isoformat()
         repo.insert_position(Position(
             id=position_id,
-            symbol="ETH/USDT",
+            symbol=symbol,
             market_type="usdt_futures",
             direction="long",
             quantity=0.1,
@@ -1230,3 +1232,26 @@ class TestTodayRawClosedRealizedPnl:
         assert portfolio["today_realized_pnl_unavailable_count"] == 1
         # partial sum still surfaces in the structured result
         assert portfolio["today_realized_pnl"] == pytest.approx(-5.0)
+
+    def test_today_pnl_by_symbol_mixed_symbol_returns_unavailable(self, db):
+        """Per-symbol projection has no completeness field, so mixed rows are None."""
+        from aletheia.portfolio.pnl import today_pnl_by_symbol
+
+        self._insert_complete_spot_close(
+            position_id="btc-complete",
+            realized_pnl=-5.0,
+            symbol="BTC/USDT",
+        )
+        self._insert_incomplete_close("btc-incomplete", symbol="BTC/USDT")
+        self._insert_complete_spot_close(
+            position_id="eth-complete-zero",
+            realized_pnl=0.0,
+            symbol="ETH/USDT",
+        )
+        self._insert_incomplete_close("sol-incomplete", symbol="SOL/USDT")
+
+        result = today_pnl_by_symbol()
+
+        assert result["BTC/USDT"] is None
+        assert result["ETH/USDT"] == pytest.approx(0.0)
+        assert result["SOL/USDT"] is None

@@ -826,7 +826,7 @@ def emit_deterministic_opportunities(
             now=current,
         )
         if market_fact is None and has_fresh_market_snapshot(
-            symbol, market_type, now=current
+            symbol, market_type, exchange=setup.venue, now=current
         ):
             market_fact = _feature_market_fact(
                 member=m,

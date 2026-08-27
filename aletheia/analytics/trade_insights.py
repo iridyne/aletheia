@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from aletheia.analytics.temporal import parse_utc_instant
 
+from aletheia.analytics.holding_time import holding_hours
+
 # Keep in sync with aletheia/server/routes/analytics.py _ROUND1_START_UTC
 _SINCE_UTC = "2026-06-22"
 
@@ -87,11 +89,7 @@ def _pnl_pct(row) -> float:
 
 
 def _hold_hours(row) -> float | None:
-    o = parse_utc_instant(row.get("opened_at"))
-    c = parse_utc_instant(row.get("closed_at"))
-    if o is None or c is None:
-        return None
-    return max(0.0, (c - o).total_seconds() / 3600.0)
+    return holding_hours(row.get("opened_at"), row.get("closed_at"))
 
 
 def _fmt_time(iso: str) -> str:
@@ -144,7 +142,8 @@ def _by_direction(rows) -> dict:
         d = r["direction"] or "unknown"
         if d not in buckets:
             buckets[d] = {"trade_count": 0, "wins": 0, "total_pnl": 0.0,
-                          "total_pnl_pct": 0.0, "total_hold": 0.0}
+                          "total_pnl_pct": 0.0, "total_hold": 0.0,
+                          "hold_time_available_count": 0}
         b = buckets[d]
         b["trade_count"] += 1
         pnl = r["realized_pnl"] or 0.0
@@ -155,16 +154,20 @@ def _by_direction(rows) -> dict:
         h = _hold_hours(r)
         if h is not None:
             b["total_hold"] += h
+            b["hold_time_available_count"] += 1
 
     result = {}
     for d, b in buckets.items():
         tc = b["trade_count"]
+        hold_count = b["hold_time_available_count"]
         result[d] = {
             "trade_count": tc,
             "win_rate": round(b["wins"] / tc * 100, 1) if tc else 0.0,
             "total_pnl": round(b["total_pnl"], 4),
             "avg_pnl_pct": round(b["total_pnl_pct"] / tc, 2) if tc else 0.0,
-            "avg_hold_hours": round(b["total_hold"] / tc, 1) if tc else 0.0,
+            "avg_hold_hours": round(b["total_hold"] / hold_count, 1) if hold_count else None,
+            "hold_time_available_count": hold_count,
+            "hold_time_unavailable_count": tc - hold_count,
         }
     return result
 

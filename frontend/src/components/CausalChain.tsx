@@ -27,6 +27,15 @@ type Anchor =
 
 type NodeState = 'present' | 'empty' | 'missing'
 type JsonRecord = Record<string, unknown>
+type RiskDecisionData = {
+  order_id?: string
+  proposal_id: string | null
+  risk_decision_id?: string | null
+  status: string
+  reason_code: string | null
+  decision: any
+  preflight_decision?: any
+}
 
 const ENTRY_PARAMETER_LABELS: Array<[string, string]> = [
   ['entry_price', 'Entry price'],
@@ -153,19 +162,28 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   })
   const proposal = (proposalFromList ?? proposalById ?? null) as TradeProposal | null
 
-  const { data: riskData } = useQuery({
-    queryKey: ['risk-decision', proposalId],
-    queryFn: () => api.getProposalRiskDecision(proposalId as string),
-    enabled: !!proposalId,
-  })
-  const risk = riskData?.decision
-
   const resolvedOrder: Order | null = anchor.kind === 'position' && anchor.position.order_id
     ? (orders as Order[]).find(o => o.id === anchor.position.order_id) ?? null
     : null
   const resolvedPosition: Position | null = anchor.kind === 'position'
     ? anchor.position
     : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
+  const exactOrder = anchor.kind === 'order' ? anchor.order : resolvedOrder
+  const riskDecisionId = exactOrder?.risk_decision_id ?? null
+
+  const { data: riskData } = useQuery<RiskDecisionData>({
+    queryKey: riskDecisionId
+      ? ['order-risk-decision', exactOrder?.id, riskDecisionId]
+      : ['risk-decision', proposalId],
+    queryFn: async () => riskDecisionId && exactOrder
+      ? api.getOrderRiskDecision(exactOrder.id)
+      : api.getProposalRiskDecision(proposalId as string),
+    enabled: !!((riskDecisionId && exactOrder) || proposalId),
+  })
+  const risk = riskData?.decision
+  const riskGap = riskData?.reason_code ?? (
+    riskData?.status === 'advisory_only' ? 'advisory preflight only' : undefined
+  )
 
   const strategyId = anchor.kind === 'order'
     ? proposal?.strategy_id ?? null
@@ -201,8 +219,8 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
         : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
 
       {risk
-        ? <CausalNode stage="Risk Decision" state="present" facts={<>{anchor.kind === 'order' && anchor.order.risk_decision_id && <div className="mono cc-id">{anchor.order.risk_decision_id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? 'approved' : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
-        : <CausalNode stage="Risk Decision" state="empty" />}
+        ? <CausalNode stage="Risk Decision" state="present" facts={<>{risk.id && <div className="mono cc-id">{risk.id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? 'approved' : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
+        : <CausalNode stage="Risk Decision" state={riskData ? 'missing' : 'empty'} note={riskGap} />}
 
       {anchor.kind === 'order'
         ? <CausalNode stage="Order" state="present" facts={<><div className="mono cc-id">{anchor.order.id}</div><div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div></>} />

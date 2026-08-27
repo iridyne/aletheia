@@ -159,6 +159,108 @@ class TestSignalReaderConsumeObserverOutput:
         assert ctx.confidence_score == 78
         assert ctx.source_opportunity_id == newest.id
 
+    def test_future_signal_does_not_shadow_recent_exact_signal(self, e2e_db):
+        now = datetime.now(timezone.utc)
+        _seed_instrument(
+            e2e_db,
+            asset_id="asset-future-shadow",
+            member_id="member-future-shadow",
+            symbol="SOL/USDT",
+            venue="binance",
+            market_type="perp",
+        )
+        current = _insert_signal(
+            member_id="member-future-shadow",
+            symbol="SOL/USDT",
+            market_type="perp",
+            direction="long",
+            score=55,
+            created_at=now - timedelta(minutes=3),
+        )
+        _insert_signal(
+            member_id="member-future-shadow",
+            symbol="SOL/USDT",
+            market_type="perp",
+            direction="short",
+            score=90,
+            created_at=now + timedelta(minutes=10),
+        )
+        request = MarketSignalRequest.from_parts("binance", "SOL/USDT", "perp")
+
+        ctx = get_market_signals_for_positions([request])[request]
+
+        assert ctx.source_opportunity_id == current.id
+        assert ctx.direction_bias == "long"
+        assert ctx.signal_age_min is not None
+        assert ctx.signal_age_min > 0
+
+    def test_future_only_signal_fails_closed(self, e2e_db):
+        _seed_instrument(
+            e2e_db,
+            asset_id="asset-future-only",
+            member_id="member-future-only",
+            symbol="SOL/USDT",
+            venue="binance",
+            market_type="perp",
+        )
+        _insert_signal(
+            member_id="member-future-only",
+            symbol="SOL/USDT",
+            market_type="perp",
+            direction="short",
+            score=90,
+            created_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        )
+        request = MarketSignalRequest.from_parts("binance", "SOL/USDT", "perp")
+
+        assert request not in get_market_signals_for_positions([request])
+
+    def test_small_clock_skew_signal_is_allowed_explicitly(self, e2e_db):
+        _seed_instrument(
+            e2e_db,
+            asset_id="asset-small-skew",
+            member_id="member-small-skew",
+            symbol="SOL/USDT",
+            venue="binance",
+            market_type="perp",
+        )
+        skewed = _insert_signal(
+            member_id="member-small-skew",
+            symbol="SOL/USDT",
+            market_type="perp",
+            direction="short",
+            score=88,
+            created_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+        )
+        request = MarketSignalRequest.from_parts("binance", "SOL/USDT", "perp")
+
+        ctx = get_market_signals_for_positions([request])[request]
+
+        assert ctx.source_opportunity_id == skewed.id
+        assert ctx.signal_age_min == 0.0
+
+    def test_naive_signal_timestamp_fails_closed(self, e2e_db):
+        _seed_instrument(
+            e2e_db,
+            asset_id="asset-naive-signal",
+            member_id="member-naive-signal",
+            symbol="SOL/USDT",
+            venue="binance",
+            market_type="perp",
+        )
+        _insert_signal(
+            member_id="member-naive-signal",
+            symbol="SOL/USDT",
+            market_type="perp",
+            direction="short",
+            score=90,
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            valid_until=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        request = MarketSignalRequest.from_parts("binance", "SOL/USDT", "perp")
+
+        assert request not in get_market_signals_for_positions([request])
+
     def test_spot_and_perp_signals_are_independent(self, e2e_db):
         now = datetime.now(timezone.utc)
         _seed_instrument(
@@ -351,6 +453,43 @@ class TestSignalReaderConsumeObserverOutput:
         assert ctx.feature_snapshot_id == "feature-spot"
         assert ctx.feature_asset_id == "asset-feature-spot"
         assert ctx.evidence_status == "exact_signal_and_features"
+
+    def test_future_feature_snapshot_does_not_shadow_recent_feature(self, e2e_db):
+        now = datetime.now(timezone.utc)
+        _seed_instrument(
+            e2e_db,
+            asset_id="asset-feature-future",
+            member_id="member-feature-future",
+            symbol="BTC/USDT",
+            venue="binance",
+            market_type="spot",
+        )
+        _insert_signal(
+            member_id="member-feature-future",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            score=70,
+        )
+        e2e_db.execute(
+            "INSERT INTO universe_feature_snapshots "
+            "(id, asset_id, ts, rsi_14, return_1h, return_4h, atr_pct, funding_rate) "
+            "VALUES ('feature-current', 'asset-feature-future', ?, 45.0, -0.5, 2.1, 1.5, NULL)",
+            ((now - timedelta(minutes=1)).isoformat(),),
+        )
+        e2e_db.execute(
+            "INSERT INTO universe_feature_snapshots "
+            "(id, asset_id, ts, rsi_14, return_1h, return_4h, atr_pct, funding_rate) "
+            "VALUES ('feature-future', 'asset-feature-future', ?, 99.0, 9.0, 9.0, 9.0, 0.01)",
+            ((now + timedelta(minutes=10)).isoformat(),),
+        )
+        request = MarketSignalRequest.from_parts("binance", "BTC/USDT", "spot")
+
+        ctx = get_market_signals_for_positions([request])[request]
+
+        assert ctx.feature_snapshot_id == "feature-current"
+        assert ctx.rsi_14 == 45.0
+        assert ctx.atr_pct == 1.5
 
 
 class TestExitRulesConsumeSignal:

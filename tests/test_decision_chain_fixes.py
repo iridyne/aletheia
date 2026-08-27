@@ -905,11 +905,14 @@ def test_submit_decision_reads_snapshot_for_final_market_type(tmp_path, monkeypa
     ))
     captured: dict = {}
 
-    def create(**kwargs):
-        captured.update(kwargs)
+    def submit_prepared(proposal):
+        captured.update(proposal.model_dump())
         return {"status": "pending"}
 
-    monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", create)
+    monkeypatch.setattr(
+        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
+        submit_prepared,
+    )
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot_json",
         lambda _symbol: None,
@@ -960,8 +963,8 @@ def test_submit_decision_replaces_invalid_protection_with_defaults(
     ))
     captured: dict = {}
     monkeypatch.setattr(
-        "aletheia.execution.paper_tools.create_paper_proposal",
-        lambda **kwargs: captured.update(kwargs) or {"status": "pending"},
+        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
+        lambda proposal: captured.update(proposal.model_dump()) or {"status": "pending"},
     )
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot_json",
@@ -987,6 +990,94 @@ def test_submit_decision_replaces_invalid_protection_with_defaults(
     entry_parameters = json.loads(captured["agent_rationale"].split("\n---\n", 1)[1])["entry_parameters"]
     assert entry_parameters["stop_loss"]["value_source"] == "default_config"
     assert entry_parameters["take_profit"]["value_source"] == "default_config"
+
+
+def test_submit_decision_persists_exact_prepared_proposal_identity(tmp_path, monkeypatch):
+    """Compatibility submit must not rebuild a weaker Proposal after preparation."""
+    import asyncio
+    import json
+    import aletheia.agent_shell.trading_decision as td
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot, Opportunity
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+
+    venue = load_config().market_data.ccxt_exchange or "binance"
+    repo.insert_opportunity(Opportunity(
+        id="opportunity-1837",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=80,
+        source_agent="market_observer",
+        execution_eligible=True,
+        status="open",
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="spot", exchange=venue, price=200.0,
+    ))
+    exact_attribution = {
+        "market_context": {
+            "instrument": {
+                "symbol": "BTC/USDT",
+                "exchange": venue,
+                "market_type": "spot",
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
+        lambda *_args, **_kwargs: exact_attribution,
+    )
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda verdicts: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *args: None)
+    real_prepare = td.prepare_decision_as_proposal
+    captured: dict = {}
+
+    async def capture_prepare(decision, execution_mode):
+        prepared = await real_prepare(decision, execution_mode)
+        captured.update(prepared["proposal"].model_dump())
+        return prepared
+
+    monkeypatch.setattr(td, "prepare_decision_as_proposal", capture_prepare)
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=80,
+        reasoning="exact prepared proposal identity",
+        position_size_usdt=20.0,
+        market_type="spot",
+        strategy_id="strategy-1837",
+        opportunity_id="opportunity-1837",
+        signal_source="system_operator",
+        expected_horizon_hours=24.0,
+        stop_price=190.0,
+        take_profit=220.0,
+    )
+
+    result = asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
+
+    assert result["proposal_id"] == captured["id"]
+    stored = repo.get_trade_proposal(captured["id"])
+    assert stored is not None
+    assert stored["strategy_id"] == "strategy-1837"
+    assert stored["expected_horizon_hours"] == 24.0
+    assert stored["stop_source"] == "operator"
+    stored_attribution = json.loads(stored["attribution_snapshot"])
+    assert stored_attribution["market_context"]["instrument"] == (
+        exact_attribution["market_context"]["instrument"]
+    )
+    position = repo._select_one("positions", result["position_id"])
+    assert position["expected_horizon_hours"] == 24.0
+    assert position["stop_source"] == "operator"
 
 
 def test_parsed_operator_trade_never_defaults_invalid_authored_geometry(
