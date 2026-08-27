@@ -249,12 +249,14 @@ class ModelProvider:
                         "_aletheia_requested_model",
                         requested_model,
                     )
+                provider_name = _configured_provider_name(self)
+                if inference is not None:
+                    inference.record_attempt_identity(provider_name, model)
                 metadata = _cost_metadata(self, request=cost_request)
                 if _ACTIVE_STRUCTURED_REQUEST.get() is not None:
                     metadata["structured"] = True
                 if _ACTIVE_STREAM_REQUEST.get() is not None:
                     metadata["stream"] = True
-                provider_name = _configured_provider_name(self)
                 started_dt = datetime.now(timezone.utc)
                 started_mono = time.perf_counter()
                 try:
