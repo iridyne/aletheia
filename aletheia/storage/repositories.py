@@ -5070,6 +5070,50 @@ def insert_knowledge_item(k: KnowledgeItem) -> None:
     _insert("knowledge_items", k.model_dump())
 
 
+def insert_knowledge_item_if_absent(
+    k: KnowledgeItem,
+    *,
+    title_window_hours: int | None = None,
+) -> tuple[bool, str | None, str | None]:
+    """Atomically insert a knowledge item unless its semantic identity exists."""
+
+    db = get_db()
+    content_hash = str(k.content_hash or "").strip()
+    with transaction(immediate=True):
+        if title_window_hours is not None:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=title_window_hours)
+            ).isoformat()
+            existing = db.execute(
+                """
+                SELECT id FROM knowledge_items
+                WHERE item_type = ? AND title = ?
+                  AND replace(created_at, ' ', 'T') > replace(?, ' ', 'T')
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (k.item_type, k.title, cutoff),
+            ).fetchone()
+            if existing is not None:
+                return False, str(existing["id"]), "title_window"
+
+        if content_hash:
+            existing = db.execute(
+                """
+                SELECT id FROM knowledge_items
+                WHERE item_type = ? AND content_hash = ?
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT 1
+                """,
+                (k.item_type, content_hash),
+            ).fetchone()
+            if existing is not None:
+                return False, str(existing["id"]), "duplicate"
+
+        _insert("knowledge_items", k.model_dump())
+    return True, None, None
+
+
 def update_knowledge_item(kid: str, **kwargs) -> None:
     _update("knowledge_items", kid, kwargs)
 
