@@ -525,6 +525,37 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     return {"status": "cancelled", "entry_plan_id": plan_id}
 
 
+def close_exchange_position(
+    position_id: str,
+    reason: str,
+    *,
+    close_reasoning: str | None = None,
+) -> dict:
+    """Gateway-owned close dispatch; rollout selection is configuration-only."""
+    from aletheia.storage import repositories as repo
+
+    row = repo.get_position(position_id)
+    if row is None:
+        raise ValueError(f"position not found: {position_id}")
+    mode = row.get("execution_mode")
+    if (
+        mode == "binance_testnet"
+        and load_config().exchange.uta_read_boundary_for(mode) == "uta_v1"
+    ):
+        from aletheia.execution.coordinator import close_position
+
+        return close_position(
+            position_id, reason=reason, close_reasoning=close_reasoning
+        )
+    if mode in {"binance_testnet", "binance_live_limited"}:
+        from aletheia.execution.binance_broker import close_testnet_position
+
+        return close_testnet_position(
+            position_id, reason=reason, close_reasoning=close_reasoning
+        )
+    raise ValueError(f"Gateway close route does not support mode {mode!r}")
+
+
 _EXECUTION_MODE_TO_VENUE = _venue_capabilities.EXECUTION_MODE_TO_VENUE
 # Compatibility alias retained for existing execution specs that clear the
 # authoritative shared cache between cases.
@@ -1466,7 +1497,10 @@ def _execute_proposal(
             # remains semantically trade_school=proposal.trade_school.
             try:
                 if allowed_mode == "binance_testnet":
-                    from aletheia.execution.binance_broker import execute_live_order
+                    if cfg.exchange.uta_read_boundary_for(allowed_mode) == "uta_v1":
+                        from aletheia.execution.coordinator import execute_order as execute_live_order
+                    else:
+                        from aletheia.execution.binance_broker import execute_live_order
                 elif allowed_mode == "okx_demo":
                     from aletheia.execution.okx_broker import execute_live_order
                 else:

@@ -82,12 +82,12 @@ def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     SpecClaim(
         "UTA-S04",
         "uta_boundary",
-        "§4 Phase 2 account read cutover",
+        "§4 selected account cutover",
         "L2b",
-        "Account reads route through the canonical UTA manager while uta_v1 prevents legacy private reads and mutations remain disabled.",
+        "Account reads route through the canonical UTA manager; only qualified per-mode uta_v1 selection may enable a mutation profile.",
     )
 )
-def test_phase_two_reads_use_canonical_manager_without_mutation_cutover():
+def test_selected_reads_use_canonical_manager_and_unmigrated_mutations_stay_disabled():
     adapter = (UTA_ROOT / "ccxt_adapter.py").read_text(encoding="utf-8")
     manager = (UTA_ROOT / "manager.py").read_text(encoding="utf-8")
     exchange_sync = (ROOT / "aletheia" / "portfolio" / "exchange_sync.py").read_text(
@@ -105,6 +105,45 @@ def test_phase_two_reads_use_canonical_manager_without_mutation_cutover():
     assert "from aletheia.uta.manager import get_unified_state_sync" in exchange_sync
     assert 'uta_read_boundary_for("bitget_demo") != "uta_v1"' in exchange_sync
     assert "from aletheia.uta.manager import" in compatibility
+
+
+@spec_claim(
+    SpecClaim(
+        "UTA-S06",
+        "uta_boundary",
+        "§6 Binance testnet execution slice",
+        "L2b",
+        "Gateway selects the coordinator only for binance_testnet uta_v1; the coordinator is the sole production caller of UTA mutation commands and owns no concrete venue client.",
+    )
+)
+def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
+    coordinator_path = ROOT / "aletheia" / "execution" / "coordinator.py"
+    coordinator = coordinator_path.read_text(encoding="utf-8")
+    gateway = (ROOT / "aletheia" / "execution" / "gateway.py").read_text(
+        encoding="utf-8"
+    )
+    manager = (ROOT / "aletheia" / "portfolio" / "position_manager.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'uta_read_boundary_for(allowed_mode) == "uta_v1"' in gateway
+    assert "aletheia.execution.coordinator import execute_order" in gateway
+    assert "aletheia.execution.gateway import close_exchange_position" in manager
+    assert "finalize_exchange_acknowledgement" in coordinator
+    assert "create_uta_adapter" in coordinator
+    assert "aletheia.exchanges" not in coordinator
+    assert "binance_broker" not in coordinator
+
+    command_importers = []
+    for path in (ROOT / "aletheia").rglob("*.py"):
+        if path.is_relative_to(UTA_ROOT) or path == coordinator_path:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(name in text for name in (
+            "SubmitOrderCommand", "ModifyOrderCommand", "CancelOrderCommand"
+        )):
+            command_importers.append(str(path.relative_to(ROOT)))
+    assert command_importers == []
 
 
 @spec_claim(

@@ -47,8 +47,12 @@ from aletheia.uta.models import (
 from aletheia.uta.profiles.base import CCXTProfile
 
 
+class _AmbiguousAcknowledgementError(RuntimeError):
+    pass
+
+
 class CCXTUTAAdapter:
-    """Common crypto driver. Phase 1 exposes reads and refuses every mutation."""
+    """Common loop-owned crypto driver for normalized UTA reads and commands."""
 
     def __init__(
         self,
@@ -81,6 +85,7 @@ class CCXTUTAAdapter:
 
     @property
     def capabilities(self) -> UTACapabilities:
+        profile = self._profile
         return UTACapabilities(
             account_read=CapabilitySupport.SUPPORTED,
             position_read=CapabilitySupport.SUPPORTED,
@@ -88,10 +93,14 @@ class CCXTUTAAdapter:
             fill_read=CapabilitySupport.SUPPORTED,
             funding_ledger=CapabilitySupport.SUPPORTED,
             verified_exit=CapabilitySupport.SUPPORTED,
-            market_order=CapabilitySupport.UNSUPPORTED,
-            limit_order=CapabilitySupport.UNSUPPORTED,
-            modify_order=CapabilitySupport.UNSUPPORTED,
-            cancel_order=CapabilitySupport.UNSUPPORTED,
+            market_order=self._support(profile.mutation_market_order),
+            limit_order=self._support(profile.mutation_limit_order),
+            modify_order=self._support(profile.mutation_modify_order),
+            cancel_order=self._support(profile.mutation_cancel_order),
+            reduce_only=self._support(profile.mutation_reduce_only),
+            leverage=self._support(profile.mutation_leverage),
+            post_only=self._support(profile.mutation_post_only),
+            client_order_id=self._support(profile.mutation_client_order_id),
             trading_permission=CapabilitySupport.UNKNOWN,
             supported_market_types=self._profile.supported_market_types,
             private_order_history_bounds="90_days",
@@ -99,6 +108,10 @@ class CCXTUTAAdapter:
             environment_available=True,
             source=f"{self._identity.venue}_{self._identity.profile}_profile_v1",
         )
+
+    @staticmethod
+    def _support(enabled: bool) -> CapabilitySupport:
+        return CapabilitySupport.SUPPORTED if enabled else CapabilitySupport.UNSUPPORTED
 
     async def connect(self) -> None:
         loop = asyncio.get_running_loop()
@@ -1010,34 +1023,291 @@ class CCXTUTAAdapter:
             capability_version="1",
         )
 
-    def _not_sent(self, command, report_type):
-        identity_match = command.expected_account == self.identity
-        return report_type(
+    def _command_report(
+        self,
+        command,
+        report_type,
+        evidence,
+        *,
+        venue_order_id=None,
+        error_code=None,
+        reason_code=None,
+        order=None,
+    ):
+        values = dict(
             identity=self.identity,
             command_id=command.command_id,
-            evidence=CommandEvidence.NOT_SENT,
+            evidence=evidence,
             received_at=self._now(),
             client_order_id=getattr(command, "client_order_id", None)
             or getattr(command, "target_client_order_id", None),
-            venue_order_id=getattr(command, "target_venue_order_id", None),
+            venue_order_id=venue_order_id
+            or getattr(command, "target_venue_order_id", None),
+            error_code=error_code,
+            reason_code=reason_code,
+            profile_version=self._profile_version,
+        )
+        if report_type is SubmissionReport:
+            values["order"] = order
+        return report_type(**values)
+
+    def _not_sent(
+        self,
+        command,
+        report_type,
+        *,
+        reason="read_only_shadow_mutation_disabled",
+        error_code=UTAErrorCode.NOT_SUPPORTED,
+    ):
+        identity_match = command.expected_account == self.identity
+        return self._command_report(
+            command,
+            report_type,
+            CommandEvidence.NOT_SENT,
             error_code=(
-                UTAErrorCode.NOT_SUPPORTED.value
+                error_code.value
                 if identity_match
                 else UTAErrorCode.ACCOUNT_IDENTITY_MISMATCH.value
             ),
             reason_code=(
-                "read_only_shadow_mutation_disabled"
+                reason
                 if identity_match
                 else "account_identity_mismatch"
             ),
-            profile_version=self._profile_version,
         )
 
+    @staticmethod
+    def _venue_error_code(exc: BaseException) -> UTAErrorCode:
+        names = {item.__name__ for item in type(exc).__mro__}
+        if "AuthenticationError" in names:
+            return UTAErrorCode.AUTH
+        if "PermissionDenied" in names:
+            return UTAErrorCode.PERMISSION
+        if "InsufficientFunds" in names:
+            return UTAErrorCode.INSUFFICIENT_FUNDS
+        if names & {"InvalidOrder", "BadSymbol"}:
+            return UTAErrorCode.INVALID_ORDER
+        if "RateLimitExceeded" in names:
+            return UTAErrorCode.RATE_LIMIT
+        return UTAErrorCode.VENUE_REJECTED
+
+    @staticmethod
+    def _command_error_kind(exc: BaseException) -> str:
+        """Classify a driver error without importing that concrete driver."""
+        current: BaseException | None = exc
+        while current is not None:
+            names = {item.__name__ for item in type(current).__mro__}
+            lowered = {name.lower() for name in names}
+            if (
+                names & {
+                    "BadResponse",
+                    "NetworkError",
+                    "RateLimitExceeded",
+                    "_AmbiguousAcknowledgementError",
+                }
+                or any(
+                    marker in name
+                    for name in lowered
+                    for marker in (
+                        "timeout",
+                        "connection",
+                        "transport",
+                        "network",
+                        "brokenpipe",
+                        "protocolerror",
+                    )
+                )
+            ):
+                return "ambiguous"
+            if "ExchangeError" in names:
+                return "rejected"
+            current = current.__cause__ or current.__context__
+        return "unknown"
+
+    def _mutation_failure(self, command, report_type, exc, *, request_started):
+        error_kind = self._command_error_kind(exc)
+        if request_started and error_kind != "rejected":
+            return self._command_report(
+                command,
+                report_type,
+                CommandEvidence.AMBIGUOUS,
+                error_code=UTAErrorCode.AMBIGUOUS_COMMAND.value,
+                reason_code="command_acknowledgement_unknown",
+            )
+        if request_started:
+            code = self._venue_error_code(exc)
+            return self._command_report(
+                command,
+                report_type,
+                CommandEvidence.VENUE_REJECTED,
+                error_code=code.value,
+                reason_code="venue_rejected_command",
+            )
+        code = (
+            self._venue_error_code(exc)
+            if error_kind == "rejected"
+            else UTAErrorCode.TIMEOUT
+            if isinstance(exc, TimeoutError)
+            else UTAErrorCode.NETWORK
+        )
+        return self._command_report(
+            command,
+            report_type,
+            CommandEvidence.NOT_SENT,
+            error_code=code.value,
+            reason_code="command_not_sent",
+        )
+
+    def _validate_mutation(self, command, report_type, capability: bool):
+        if command.expected_account != self.identity:
+            return self._not_sent(command, report_type)
+        if command.instrument.market_type not in self._profile.supported_market_types:
+            return self._not_sent(
+                command, report_type, reason="instrument_market_type_unsupported"
+            )
+        if not capability:
+            return self._not_sent(command, report_type)
+        return None
+
     async def submit_order(self, command: SubmitOrderCommand) -> SubmissionReport:
-        return self._not_sent(command, SubmissionReport)
+        capability = (
+            self._profile.mutation_market_order
+            if command.order_type == "market"
+            else self._profile.mutation_limit_order
+            if command.order_type == "limit"
+            else False
+        )
+        denied = self._validate_mutation(command, SubmissionReport, capability)
+        if denied:
+            return denied
+        if command.order_type == "limit" and command.limit_price is None:
+            return self._not_sent(
+                command,
+                SubmissionReport,
+                reason="limit_price_required",
+                error_code=UTAErrorCode.INVALID_ORDER,
+            )
+        if (
+            command.leverage is not None
+            and self._profile.integer_leverage
+            and command.leverage != command.leverage.to_integral_value()
+        ):
+            return self._not_sent(
+                command,
+                SubmissionReport,
+                reason="integer_leverage_required",
+                error_code=UTAErrorCode.INVALID_ORDER,
+            )
+        exchange = None
+        try:
+            exchange = await self._connected_exchange()
+            await self._request(self._profile.prepare_submit(exchange, command))
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(
+                command, SubmissionReport, exc, request_started=False
+            )
+        request_started = False
+        try:
+            args = self._profile.submit_request(command)
+            request_started = True
+            raw = await self._request(exchange.create_order(*args))
+            if not isinstance(raw, dict):
+                raise _AmbiguousAcknowledgementError
+            venue_order_id = str(raw.get("id") or "").strip()
+            if not venue_order_id:
+                raise _AmbiguousAcknowledgementError
+            try:
+                order = self._profile.order(
+                    {
+                        **raw,
+                        "symbol": raw.get("symbol")
+                        or command.instrument.venue_symbol,
+                    },
+                    exchange.markets or {},
+                    self.identity,
+                    self._now(),
+                )
+            except (TypeError, ValueError):
+                # A stable venue id proves acknowledgement, but malformed
+                # aggregate economics never become Fill or Order facts.
+                order = None
+            return self._command_report(
+                command,
+                SubmissionReport,
+                CommandEvidence.ACKNOWLEDGED,
+                venue_order_id=venue_order_id,
+                order=order,
+            )
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(
+                command, SubmissionReport, exc, request_started=request_started
+            )
 
     async def modify_order(self, command: ModifyOrderCommand) -> CommandReport:
-        return self._not_sent(command, CommandReport)
+        denied = self._validate_mutation(
+            command, CommandReport, self._profile.mutation_modify_order
+        )
+        if denied:
+            return denied
+        try:
+            exchange = await self._connected_exchange()
+            exact = await self.get_order(OrderQuery(
+                scope=QueryScope(instrument=command.instrument),
+                client_order_id=command.target_client_order_id,
+                venue_order_id=command.target_venue_order_id,
+            ))
+            if exact.completeness is not ReadCompleteness.COMPLETE or exact.found is None:
+                return self._not_sent(
+                    command, CommandReport, reason="modify_target_unavailable"
+                )
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(
+                command, CommandReport, exc, request_started=False
+            )
+        request_started = False
+        try:
+            args = self._profile.modify_request(command, exact.found)
+            request_started = True
+            raw = await self._request(exchange.edit_order(*args))
+            if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
+                raise _AmbiguousAcknowledgementError
+            return self._command_report(
+                command,
+                CommandReport,
+                CommandEvidence.ACKNOWLEDGED,
+                venue_order_id=str(raw["id"]),
+            )
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(
+                command, CommandReport, exc, request_started=request_started
+            )
 
     async def cancel_order(self, command: CancelOrderCommand) -> CommandReport:
-        return self._not_sent(command, CommandReport)
+        denied = self._validate_mutation(
+            command, CommandReport, self._profile.mutation_cancel_order
+        )
+        if denied:
+            return denied
+        try:
+            exchange = await self._connected_exchange()
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(
+                command, CommandReport, exc, request_started=False
+            )
+        request_started = False
+        try:
+            args = self._profile.cancel_request(command)
+            request_started = True
+            raw = await self._request(exchange.cancel_order(*args))
+            if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
+                raise _AmbiguousAcknowledgementError
+            return self._command_report(
+                command,
+                CommandReport,
+                CommandEvidence.ACKNOWLEDGED,
+                venue_order_id=str(raw["id"]),
+            )
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(
+                command, CommandReport, exc, request_started=request_started
+            )

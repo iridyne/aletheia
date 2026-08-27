@@ -9,15 +9,18 @@ from pathlib import Path
 from time import monotonic
 import time
 
+import ccxt
 import pytest
 
 from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
+    CancelOrderCommand,
     CommandEvidence,
     FillQuery,
     FundingLedgerQuery,
     InstrumentIdentity,
+    ModifyOrderCommand,
     OrderQuery,
     QueryScope,
     ReadCompleteness,
@@ -88,6 +91,10 @@ class FakeExchange:
                 "inverse": False,
             },
         }
+        self.create_response = None
+        self.edit_response = None
+        self.cancel_response = None
+        self.leverage_response = None
 
     def set_sandbox_mode(self, enabled):
         self.events.append(("sandbox", enabled))
@@ -134,6 +141,30 @@ class FakeExchange:
     async def fetch_ledger(self, code=None, since=None, limit=None, params=None):
         self.events.append(("fetch_ledger", dict(params or {})))
         return list(self.ledger)
+
+    async def set_leverage(self, leverage, symbol):
+        self.events.append(("set_leverage", leverage, symbol))
+        if isinstance(self.leverage_response, Exception):
+            raise self.leverage_response
+        return self.leverage_response
+
+    async def create_order(self, *args):
+        self.events.append(("create_order", args))
+        if isinstance(self.create_response, Exception):
+            raise self.create_response
+        return self.create_response
+
+    async def edit_order(self, *args):
+        self.events.append(("edit_order", args))
+        if isinstance(self.edit_response, Exception):
+            raise self.edit_response
+        return self.edit_response
+
+    async def cancel_order(self, *args):
+        self.events.append(("cancel_order", args))
+        if isinstance(self.cancel_response, Exception):
+            raise self.cancel_response
+        return self.cancel_response
 
     async def close(self):
         self.closed = True
@@ -685,8 +716,8 @@ async def test_expired_private_history_window_fails_closed_without_network(monke
 
 
 @pytest.mark.asyncio
-async def test_shadow_adapter_refuses_mutation_before_send(monkeypatch):
-    profile = _profile("binance")
+async def test_unmigrated_profile_refuses_mutation_before_send(monkeypatch):
+    profile = _profile("okx")
     exchange = FakeExchange()
     _session, calls = _install(monkeypatch, exchange)
     identity = _identity(profile)
@@ -715,6 +746,163 @@ async def test_shadow_adapter_refuses_mutation_before_send(monkeypatch):
     assert report.evidence is CommandEvidence.NOT_SENT
     assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
     assert calls == []
+
+
+def _binance_command(identity, **updates):
+    values = dict(
+        command_id="command-1",
+        expected_account=identity,
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        purpose="entry",
+        client_order_id="client-1",
+        side="buy",
+        quantity="0.01",
+        order_type="market",
+        leverage="2",
+    )
+    values.update(updates)
+    return SubmitOrderCommand(**values)
+
+
+@pytest.mark.asyncio
+async def test_binance_submit_acknowledges_without_fabricating_fill(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "venue-1",
+        "clientOrderId": "client-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "market",
+        "amount": "1",
+        "filled": "0",
+        "remaining": "1",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_binance_command(identity))
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    assert report.venue_order_id == "venue-1"
+    assert report.order is not None and report.order.filled_quantity == 0
+    assert [event[0] for event in exchange.events] == [
+        "sandbox", "load_markets", "set_leverage", "create_order"
+    ]
+
+
+@pytest.mark.parametrize(
+    "response,evidence",
+    [
+        (TimeoutError(), CommandEvidence.AMBIGUOUS),
+        ({"status": "open"}, CommandEvidence.AMBIGUOUS),
+        (ccxt.InvalidOrder("rejected"), CommandEvidence.VENUE_REJECTED),
+    ],
+)
+@pytest.mark.asyncio
+async def test_binance_submit_classifies_post_send_outcome(
+    monkeypatch, response, evidence
+):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.create_response = response
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_binance_command(identity))
+
+    assert report.evidence is evidence
+
+
+@pytest.mark.asyncio
+async def test_binance_leverage_failure_is_not_sent(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.leverage_response = TimeoutError()
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_binance_command(identity))
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert not any(event[0] == "create_order" for event in exchange.events)
+
+
+@pytest.mark.asyncio
+async def test_binance_leverage_rejection_keeps_structured_not_sent_code(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.leverage_response = ccxt.InvalidOrder("invalid leverage")
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_binance_command(identity))
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert report.error_code == UTAErrorCode.INVALID_ORDER.value
+    assert not any(event[0] == "create_order" for event in exchange.events)
+
+
+@pytest.mark.asyncio
+async def test_binance_fractional_leverage_is_rejected_before_connect(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    _session, calls = _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(
+        _binance_command(identity, leverage="1.5")
+    )
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert report.error_code == UTAErrorCode.INVALID_ORDER.value
+    assert report.reason_code == "integer_leverage_required"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_binance_modify_and_cancel_return_normalized_evidence(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.exact_order = {
+        "id": "venue-1", "clientOrderId": "client-1",
+        "symbol": "BTC/USDT:USDT", "side": "buy", "type": "limit",
+        "amount": "1", "filled": "0", "remaining": "1", "price": "100",
+        "status": "open",
+    }
+    exchange.edit_response = {"id": "venue-1"}
+    exchange.cancel_response = {"id": "venue-1"}
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    instrument = _binance_command(identity).instrument
+
+    modified = await adapter.modify_order(ModifyOrderCommand(
+        command_id="modify-1", expected_account=identity, instrument=instrument,
+        purpose="entry", target_venue_order_id="venue-1", limit_price="101",
+    ))
+    cancelled = await adapter.cancel_order(CancelOrderCommand(
+        command_id="cancel-1", expected_account=identity, instrument=instrument,
+        purpose="entry", target_venue_order_id="venue-1", reason="operator_cancel",
+    ))
+
+    assert modified.evidence is CommandEvidence.ACKNOWLEDGED
+    assert cancelled.evidence is CommandEvidence.ACKNOWLEDGED
+    assert [event[0] for event in exchange.events].count("edit_order") == 1
+    assert [event[0] for event in exchange.events].count("cancel_order") == 1
 
 
 def test_profile_rejects_missing_credentials_without_exposing_values():

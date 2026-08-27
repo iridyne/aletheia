@@ -64,6 +64,15 @@ class CCXTProfile:
     ledger_requests: tuple[dict[str, object], ...] = ({},)
     supported_market_types: tuple[str, ...] = ("usdt_futures",)
     private_history_retention_days = 90
+    mutation_market_order = False
+    mutation_limit_order = False
+    mutation_modify_order = False
+    mutation_cancel_order = False
+    mutation_reduce_only = False
+    mutation_leverage = False
+    mutation_post_only = False
+    mutation_client_order_id = False
+    integer_leverage = False
 
     def __init__(self, **client_options: object) -> None:
         credential_fields = (
@@ -101,6 +110,21 @@ class CCXTProfile:
     def configure_before_request(self, exchange: Any) -> None:
         if self.sandbox:
             exchange.set_sandbox_mode(True)
+
+    async def prepare_submit(self, exchange: Any, command: Any) -> None:
+        """Apply profile-owned pre-send settings; the base profile is read-only."""
+        raise NotImplementedError
+
+    def submit_request(self, command: Any) -> tuple[str, str, str, object, object, dict]:
+        raise NotImplementedError
+
+    def modify_request(
+        self, command: Any, current: Any
+    ) -> tuple[object, str, str, str, object, object, dict]:
+        raise NotImplementedError
+
+    def cancel_request(self, command: Any) -> tuple[object, str, dict]:
+        raise NotImplementedError
 
     def account_values(
         self, balances: list[dict[str, object]]
