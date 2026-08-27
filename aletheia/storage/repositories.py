@@ -50,6 +50,7 @@ from aletheia.storage.models import (
     StrategyRecord,
     TradeProposal,
     UniverseSetup,
+    decode_strategy_parameters,
 )
 from aletheia.storage.sqlite import (
     SQLITE_PYTHON_STRIP_CHARS_SQL,
@@ -5061,10 +5062,14 @@ def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None
 
 
 def insert_strategy(s: StrategyRecord) -> None:
-    _insert("strategy_records", s.model_dump())
+    data = s.model_dump()
+    decode_strategy_parameters(data.get("parameters"))
+    _insert("strategy_records", data)
 
 
 def update_strategy(sid: str, **kwargs) -> None:
+    if "parameters" in kwargs:
+        decode_strategy_parameters(kwargs["parameters"])
     _update("strategy_records", sid, kwargs)
 
 
