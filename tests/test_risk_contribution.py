@@ -260,3 +260,28 @@ def test_risk_policy_value_rejects_noncanonical_cost_economics():
         "incomplete_risk_outcome_economics": 1,
         "risk_outcome_economics_mismatch": 3,
     }
+
+
+def test_risk_policy_value_excludes_settlement_after_report_as_of():
+    from aletheia.analytics.risk_contribution import build_risk_policy_contribution
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_candidate(db, 0, approved=False, net_return_pct=-1.0)
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settled_at=? WHERE id='risk-outcome-0'",
+        ("2026-08-10T00:00:00+00:00",),
+    )
+
+    evidence = build_risk_policy_contribution(
+        db,
+        cutoff="2026-08-01T00:00:00+00:00",
+        as_of_at="2026-08-09T12:00:00+00:00",
+        min_sample_size=1,
+        min_interventions=1,
+    )
+
+    assert evidence["eligible_count"] == 0
+    assert evidence["exclusion_counts"] == {
+        "risk_outcome_settlement_after_as_of": 1,
+    }

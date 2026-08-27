@@ -326,6 +326,114 @@ async def test_coinalyze_liquidations_isolate_invalid_rows(monkeypatch):
     ]
 
 
+@pytest.mark.asyncio
+async def test_coinalyze_open_interest_batches_all_requested_symbols(monkeypatch):
+    import aletheia.data.collectors.coinalyze as mod
+
+    requested = [f"S{i:02d}/USDT" for i in range(30)]
+    calls: list[str] = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def __init__(self, symbols: str):
+            self.symbols = symbols
+
+        def json(self):
+            return [
+                {"symbol": symbol, "open_interest_usd": 100.0}
+                for symbol in self.symbols.split(",")
+            ]
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            symbols = kwargs["params"]["symbols"]
+            calls.append(symbols)
+            return Response(symbols)
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    coverage = mod._coverage(requested)
+
+    rows = await mod._fetch_open_interest(
+        "unused",
+        requested,
+        [mod._to_coinalyze_symbol(symbol) for symbol in requested],
+        coverage=coverage,
+    )
+
+    assert [len(call.split(",")) for call in calls] == [20, 10]
+    assert {row.symbol for row in rows} == set(requested)
+    assert coverage["attempted"] == requested
+    assert coverage["rejected"] == []
+
+
+@pytest.mark.asyncio
+async def test_coinalyze_collect_rotates_liquidation_budget_and_reports_deferred(
+    monkeypatch,
+):
+    import aletheia.data.collectors.coinalyze as mod
+    import aletheia.learning.opportunity_information_policy as policy
+    from aletheia.data.collector_health import classify_collector_result
+
+    unique_requested = [f"s{i:02d}/usdt" for i in range(30)]
+    requested = unique_requested + ["S00/USDT", "s01/usdt"]
+    liquidation_attempts: list[str] = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def __init__(self, endpoint: str, symbols: str):
+            self.endpoint = endpoint
+            self.symbols = symbols
+
+        def json(self):
+            if self.endpoint.endswith("/open-interest"):
+                return [
+                    {"symbol": symbol, "open_interest_usd": 100.0}
+                    for symbol in self.symbols.split(",")
+                ]
+            return []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            symbols = kwargs["params"]["symbols"]
+            if url.endswith("/liquidation-history"):
+                liquidation_attempts.append(symbols)
+            return Response(url, symbols)
+
+    monkeypatch.setattr(mod, "_load_api_key", lambda: "configured")
+    monkeypatch.setattr(policy, "ensure_opportunity_information_policy_epoch", lambda: None)
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    mod._LIQUIDATION_CURSORS.clear()
+
+    results = [await mod.CoinalyzeCollector().collect(requested) for _ in range(3)]
+    attempted = {
+        canonical
+        for result in results
+        for canonical in result["coverage"]["liquidations"]["attempted"]
+    }
+
+    assert attempted == {symbol.upper() for symbol in unique_requested}
+    assert [classify_collector_result(result) for result in results] == ["partial"] * 3
+    assert all("liquidations_deferred" in result["errors"] for result in results)
+    assert all(len(result["coverage"]["liquidations"]["deferred"]) == 20 for result in results)
+    assert [len(call.split(",")) for call in liquidation_attempts] == [1] * 30
+
+
 # ---------------------------------------------------------------------------
 # macro.py
 # ---------------------------------------------------------------------------
@@ -347,7 +455,7 @@ def test_classify_risk_regime_neutral():
     from aletheia.data.collectors.macro import _classify_risk_regime
 
     assert _classify_risk_regime(vix=20.0, cap_change=0.5) == "neutral"
-    assert _classify_risk_regime(vix=None, cap_change=None) == "neutral"
+    assert _classify_risk_regime(vix=None, cap_change=None) is None
 
 
 @pytest.mark.asyncio
@@ -505,6 +613,23 @@ def test_render_enriched_context_md_with_data():
     assert "Macro" in md
     assert "BTC/USDT" in md
     assert "neutral" in md
+
+
+def test_render_enriched_context_md_skips_unavailable_risk_regime():
+    from aletheia.data.context_builder import render_enriched_context_md
+    from aletheia.data.models import MacroSnapshot
+
+    macro = MacroSnapshot(
+        fng_value=15,
+        fng_classification="Extreme Fear",
+        risk_regime="unavailable",
+        observed_at="2026-06-14T00:00:00+00:00",
+    )
+
+    md = render_enriched_context_md(["BTC/USDT"], {}, {}, macro)
+
+    assert "**Risk regime**" not in md
+    assert "Fear & Greed: 15 (Extreme Fear)" in md
 
 
 def test_render_enriched_context_md_with_perp_structure():
