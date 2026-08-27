@@ -2,6 +2,8 @@
 """Tests for aletheia.analytics.temporal (time-of-day / weekday PnL)."""
 from __future__ import annotations
 
+from datetime import timezone
+
 from aletheia.analytics import temporal as T
 
 
@@ -18,13 +20,26 @@ def _o(symbol, pnl, when):
 def test_parse_closed_at_z_suffix():
     dt = T._parse_closed_at("2026-07-20T10:30:00Z")
     assert dt is not None
+    assert dt.tzinfo is timezone.utc
     assert dt.hour == 10
     assert dt.minute == 30
 
 
-def test_parse_closed_at_naive_and_none():
-    dt = T._parse_closed_at("2026-07-20T22:00:00")
-    assert dt is not None and dt.hour == 22
+def test_parse_closed_at_normalizes_offsets_to_utc():
+    values = [
+        "2026-01-02T00:30:00Z",
+        "2026-01-02T00:30:00+00:00",
+        "2026-01-01T19:30:00-05:00",
+        "2026-01-02T08:30:00+08:00",
+    ]
+
+    parsed = [T._parse_closed_at(value) for value in values]
+
+    assert {dt.isoformat() for dt in parsed if dt} == {"2026-01-02T00:30:00+00:00"}
+
+
+def test_parse_closed_at_rejects_naive_and_invalid_values():
+    assert T._parse_closed_at("2026-07-20T22:00:00") is None
     assert T._parse_closed_at(None) is None
     assert T._parse_closed_at("") is None
     assert T._parse_closed_at("not-a-date") is None
@@ -32,9 +47,9 @@ def test_parse_closed_at_naive_and_none():
 
 def test_bucket_by_hour_and_weekday():
     outcomes = [
-        _o("BTC", 1.0, "2026-07-20T09:00:00"),  # Mon 09
-        _o("ETH", 2.0, "2026-07-20T09:30:00"),  # Mon 09
-        _o("BTC", -1.0, "2026-07-21T15:00:00"),  # Tue 15
+        _o("BTC", 1.0, "2026-07-20T09:00:00Z"),  # Mon 09
+        _o("ETH", 2.0, "2026-07-20T09:30:00+00:00"),  # Mon 09
+        _o("BTC", -1.0, "2026-07-21T15:00:00Z"),  # Tue 15
     ]
     by_hour = T.bucket_by_hour(outcomes)
     assert sorted(by_hour.keys()) == [9, 15]
@@ -46,7 +61,8 @@ def test_bucket_by_hour_and_weekday():
 
 def test_bucket_skips_missing_closed_at():
     outcomes = [
-        _o("BTC", 1.0, "2026-07-20T09:00:00"),
+        _o("BTC", 1.0, "2026-07-20T09:00:00Z"),
+        _o("SOL", 1.0, "2026-07-20T09:00:00"),
         {"symbol": "ETH", "realized_pnl": -1.0},  # no closed_at
     ]
     by_hour = T.bucket_by_hour(outcomes)
@@ -55,9 +71,9 @@ def test_bucket_skips_missing_closed_at():
 
 def test_temporal_summary_shape_and_best_worst():
     outcomes = [
-        _o("BTC", 5.0, "2026-07-20T09:00:00"),   # Mon 09, +5
-        _o("ETH", -3.0, "2026-07-20T09:30:00"),  # Mon 09, -3  -> hour 9 net +2
-        _o("BTC", -4.0, "2026-07-21T15:00:00"),  # Tue 15, -4
+        _o("BTC", 5.0, "2026-07-20T09:00:00Z"),   # Mon 09, +5
+        _o("ETH", -3.0, "2026-07-20T09:30:00Z"),  # Mon 09, -3  -> hour 9 net +2
+        _o("BTC", -4.0, "2026-07-21T15:00:00Z"),  # Tue 15, -4
     ]
     s = T.temporal_summary(outcomes)
     assert s["outcome_count"] == 3
@@ -83,9 +99,9 @@ def test_temporal_summary_empty():
 
 def test_report_wires_temporal_section(monkeypatch):
     fake = [
-        _o("BTC", 5.0, "2026-07-20T09:00:00"),
-        _o("ETH", -3.0, "2026-07-20T09:30:00"),
-        _o("BTC", -4.0, "2026-07-21T15:00:00"),
+        _o("BTC", 5.0, "2026-07-20T09:00:00Z"),
+        _o("ETH", -3.0, "2026-07-20T09:30:00Z"),
+        _o("BTC", -4.0, "2026-07-21T15:00:00Z"),
     ]
     import performance_report as pr
 
