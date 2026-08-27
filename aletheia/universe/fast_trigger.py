@@ -11,6 +11,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from aletheia.data.market_structure import (
+    COMPAT_ALGORITHM_VERSION,
+    CORE_ALGORITHM_VERSION,
+)
 from aletheia.data.symbols import InstrumentId
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -1167,7 +1171,8 @@ def materialize_trigger(
         },
     )
     structure = trigger.market_structure or {
-        "algorithm_version": "market-structure/v1",
+        "algorithm_version": COMPAT_ALGORITHM_VERSION,
+        "core_algorithm_version": CORE_ALGORITHM_VERSION,
         "verdict": "unavailable",
         "reason": "not_preloaded",
     }
@@ -1178,7 +1183,9 @@ def materialize_trigger(
         authority="shadow",
         verdict=structure.get("verdict", "unavailable"),
         observed_at=trigger.observed_at,
-        algorithm_version=str(structure.get("algorithm_version") or "market-structure/v1"),
+        algorithm_version=str(
+            structure.get("algorithm_version") or COMPAT_ALGORITHM_VERSION
+        ),
         evidence=structure,
     )
     with repo.transaction(immediate=True):
