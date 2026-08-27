@@ -368,8 +368,10 @@ function StreakSummary({ data }: { data: TradeInsights['streaks'] }) {
           </div>
         </div>
         <div className="analytics-metric-tile">
-          <div className="analytics-metric-label">W / L Total</div>
-          <div className="analytics-metric-value mono">{data.total_wins} / {data.total_losses}</div>
+          <div className="analytics-metric-label">W / L / Flat Total</div>
+          <div className="analytics-metric-value mono">
+            {data.total_wins} / {data.total_losses} / {data.total_flats}
+          </div>
         </div>
       </div>
     </Card>

@@ -287,6 +287,45 @@ def test_temporal_trade_insight_buckets_exclude_naive_and_malformed_times():
     assert result["heatmap_unbucketed_count"] == 2
 
 
+def test_streaks_keep_break_even_outcomes_neutral():
+    from aletheia.analytics.trade_insights import _streaks
+
+    rows = [
+        _make_row(id="win", realized_pnl=1.0),
+        _make_row(id="flat-1", realized_pnl=0.0),
+        _make_row(id="flat-2", realized_pnl=0.0),
+    ]
+
+    assert _streaks(rows) == {
+        "max_consecutive_wins": 1,
+        "max_consecutive_losses": 0,
+        "current_streak": 2,
+        "current_streak_type": "flat",
+        "total_wins": 1,
+        "total_losses": 0,
+        "total_flats": 2,
+    }
+
+
+def test_streaks_flats_break_loss_runs():
+    from aletheia.analytics.trade_insights import _streaks
+
+    rows = [
+        _make_row(id="loss-1", realized_pnl=-1.0),
+        _make_row(id="flat", realized_pnl=0.0),
+        _make_row(id="loss-2", realized_pnl=-1.0),
+    ]
+
+    result = _streaks(rows)
+
+    assert result["max_consecutive_losses"] == 1
+    assert result["current_streak"] == 1
+    assert result["current_streak_type"] == "loss"
+    assert result["total_wins"] == 0
+    assert result["total_losses"] == 2
+    assert result["total_flats"] == 1
+
+
 # ---------------------------------------------------------------------------
 # #2061 — r_multiple_distribution wire-shape contract
 #

@@ -3177,6 +3177,7 @@ export interface StreakData {
 	current_streak_type: string;
 	total_wins: number;
 	total_losses: number;
+	total_flats: number;
 }
 
 export interface HoldPnlPoint {
