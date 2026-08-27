@@ -219,6 +219,7 @@ def _build_setup(
         "reasons": [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]],
         "regime": regime_tag,
         "funding_rate": feature.get("funding_rate"),
+        "funding_observed_at": feature.get("funding_observed_at"),
         "open_interest": feature.get("open_interest"),
         "oi_delta_1h": feature.get("oi_delta_1h"),
     }
@@ -246,7 +247,7 @@ def _build_setup(
         scanner_family=family,
         motive_evidence=_json(motive),
         funding_rate=feature.get("funding_rate"),
-        funding_observed_at=datetime.now(timezone.utc).isoformat()
+        funding_observed_at=feature.get("funding_observed_at")
         if feature.get("funding_rate") is not None else None,
         regime_tag=regime_tag,
         breakout_level=compatibility_price,
