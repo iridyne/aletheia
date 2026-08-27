@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v45"
+SCHEMA_VERSION = "aletheia-sqlite-v46"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3706,6 +3706,16 @@ _OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
         repr(_OPPORTUNITY_GENERATION_V2_COLUMNS)
         + _OPPORTUNITY_GENERATION_V2_SQL
         + "\nopportunity_generation_v3"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_FAILED_WINDOW_COLUMNS = (
+    ("failed_input_watermark", "learning_job_health", "TEXT"),
+)
+_LEARNING_FAILED_WINDOW_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_FAILED_WINDOW_COLUMNS)
+        + "\nlearning_failed_window_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5308,6 +5318,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260827_0044_controller_recommendation_cost_model_v45": (
         "controller recommendation cost-model evidence identity"
     ),
+    "20260827_0045_learning_failed_window_v46": (
+        "persist failed daily Learning input watermark for retry/audit visibility"
+    ),
 }
 
 
@@ -5520,6 +5533,17 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
+
+
+def _apply_learning_failed_window_v46(db: sqlite3.Connection) -> None:
+    """Persist the daily Learning window that failed before a later retry/success."""
+
+    for column, table, column_type in _LEARNING_FAILED_WINDOW_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
@@ -6368,6 +6392,12 @@ _MIGRATIONS = (
         checksum=_CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM,
         schema_version="aletheia-sqlite-v45",
         apply=_apply_controller_recommendation_cost_model_v45,
+    ),
+    MigrationStep(
+        migration_id="20260827_0045_learning_failed_window_v46",
+        checksum=_LEARNING_FAILED_WINDOW_CHECKSUM,
+        schema_version="aletheia-sqlite-v46",
+        apply=_apply_learning_failed_window_v46,
     ),
 )
 
