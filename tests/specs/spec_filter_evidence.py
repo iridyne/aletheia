@@ -380,7 +380,8 @@ def test_alpha_attribution_uses_canonical_fixed_horizon_net_outcomes():
     ).read_text(encoding="utf-8")
     assert "JOIN filter_candidate_outcomes fo" in source
     assert "fo.horizon='24h'" in source
-    assert "fo.net_return_pct" in source
+    assert "assess_candidate_outcome" in source
+    assert "as_of_at=as_of_at" in source
     assert "eligible_strategy_outcomes(closed_after=cutoff)" not in source
 
 
@@ -401,7 +402,8 @@ def test_alpha_controls_require_shared_net_outcomes():
         Path(__file__).parents[2] / "aletheia" / "analytics" / "alpha_attribution.py"
     ).read_text(encoding="utf-8")
     assert "outcome_candidate_key" in causal_source
-    assert "SELECT net_return_pct FROM filter_candidate_outcomes" in alpha_source
+    assert "SELECT * FROM filter_candidate_outcomes" in alpha_source
+    assert "assess_candidate_outcome" in alpha_source
 
 
 @spec_claim(

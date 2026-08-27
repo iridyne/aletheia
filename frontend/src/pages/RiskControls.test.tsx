@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import SRC from './RiskControls.tsx?raw'
+import { fmtSymbol } from '../lib/format'
+import { marketTypesFromOpenPositions, openPositionRows, preferPerpMarketType } from './RiskControls'
 
 describe('RiskControls trust-path mutations', () => {
   it('fails closed when authoritative reads are unavailable', () => {
@@ -25,5 +27,38 @@ describe('RiskControls trust-path mutations', () => {
     expect(SRC).toContain("queryKey: ['health']")
     expect(SRC).toContain("const healthState = healthError ? 'unavailable' : String(health?.status || 'unknown')")
     expect(SRC).toContain('riskState, healthState, paused')
+  })
+
+  it('derives live exposure market labels from open positions only', () => {
+    const spotOpenPerpClosed = [
+      { symbol: 'BTC/USDT', market_type: 'spot', status: 'open' },
+      { symbol: 'BTC/USDT', market_type: 'perp', status: 'closed' },
+    ]
+    const perpOpenSpotClosed = [
+      { symbol: 'ETH/USDT', market_type: 'spot', status: 'closed' },
+      { symbol: 'ETH/USDT', market_type: 'perp', status: 'open' },
+    ]
+    const mixedOpen = [
+      { symbol: 'SOL/USDT', market_type: 'perp', status: 'open' },
+      { symbol: 'SOL/USDT', market_type: 'spot', status: 'open' },
+    ]
+
+    const spotTypes = marketTypesFromOpenPositions(spotOpenPerpClosed)
+    expect(fmtSymbol('BTC/USDT', preferPerpMarketType(spotTypes['BTC/USDT']))).toBe('BTC/USDT')
+    expect(spotTypes['BTC/USDT']).toEqual(new Set(['spot']))
+
+    const perpTypes = marketTypesFromOpenPositions(perpOpenSpotClosed)
+    expect(fmtSymbol('ETH/USDT', preferPerpMarketType(perpTypes['ETH/USDT']))).toBe('ETHUSDT')
+    expect(perpTypes['ETH/USDT']).toEqual(new Set(['perp']))
+
+    const mixedTypes = marketTypesFromOpenPositions(mixedOpen)
+    expect(preferPerpMarketType(mixedTypes['SOL/USDT'])).toBe('perp')
+    expect(mixedTypes['SOL/USDT'].size).toBe(2)
+
+    expect(marketTypesFromOpenPositions([
+      { symbol: 'DOGE/USDT', market_type: 'perp', status: 'closed' },
+    ])).toEqual({})
+
+    expect(openPositionRows([...spotOpenPerpClosed].reverse()).map(p => p.market_type)).toEqual(['spot'])
   })
 })

@@ -58,6 +58,7 @@ LIFESPAN_TASK_CATALOG = {
     "startup_exchange_gate": {"owner": "server.lifespan", "failure_policy": "pause_trading"},
     "startup_behavior_gate": {"owner": "server.lifespan", "failure_policy": "pause_ai_and_trading"},
     "pi_daemon": {"owner": "server.lifespan", "failure_policy": "warn"},
+    "fast_trigger_watch": {"owner": "server.lifespan", "failure_policy": "warn"},
     "telegram_polling": {"owner": "server.lifespan", "failure_policy": "warn"},
     "event_loop_lag_monitor": {"owner": "server.lifespan", "failure_policy": "observe"},
     "startup_gate_recheck": {"owner": "startup_behavior_gate", "failure_policy": "retry"},
@@ -76,6 +77,10 @@ def lifecycle_task_snapshot() -> list[dict[str, object]]:
             from aletheia.agent_runtime.pi_daemon import current_daemon_task
 
             task = current_daemon_task()
+        elif task_id == "fast_trigger_watch":
+            from aletheia.agent_runtime.fast_trigger_watch import current_fast_trigger_task
+
+            task = current_fast_trigger_task()
         direct = policy["owner"] == "server.lifespan"
         rows.append(
             {
@@ -634,6 +639,21 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("PI daemon failed to start: %s", e, exc_info=True)
 
+    fast_trigger_task = None
+    if background_services_enabled:
+        from aletheia.agent_runtime.fast_trigger_watch import (
+            register_fast_trigger_lifecycle,
+        )
+
+        register_fast_trigger_lifecycle()
+    if background_services_enabled and gate_permits_pi_daemon:
+        try:
+            from aletheia.agent_runtime.fast_trigger_watch import start_fast_trigger_watch
+
+            fast_trigger_task = start_fast_trigger_watch(asyncio.get_running_loop(), cfg)
+        except Exception as e:
+            logger.warning("Fast Trigger watcher failed to start: %s", e, exc_info=True)
+
     telegram_bot = None
     telegram_task = None
     if background_services_enabled:
@@ -670,6 +690,7 @@ async def lifespan(app: FastAPI):
             "startup_exchange_gate": exchange_gate_task,
             "startup_behavior_gate": behavior_gate_task,
             "pi_daemon": pi_daemon_task,
+            "fast_trigger_watch": fast_trigger_task,
             "telegram_polling": telegram_task,
             "event_loop_lag_monitor": event_loop_lag_task,
         }
@@ -679,6 +700,18 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # Stop producers before consumers so shutdown cannot spawn fresh recovery work.
+        try:
+            from aletheia.agent_runtime.fast_trigger_watch import (
+                current_fast_trigger_task,
+                stop_fast_trigger_watch,
+            )
+
+            fast_trigger_task = current_fast_trigger_task()
+            stop_fast_trigger_watch(release_lifecycle=True)
+            if fast_trigger_task is not None:
+                await _cancel_background_task(fast_trigger_task, "Fast Trigger watcher")
+        except Exception:
+            pass
         if background_services_enabled:
             try:
                 stop_scheduler()

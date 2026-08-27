@@ -1522,6 +1522,8 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         "id": None,
         "strategy_id": "altered-strategy",
         "opportunity_id": "altered-opportunity",
+        "setup_id": "altered-setup",
+        "authorization_id": "altered-authorization",
         "symbol": "ETH/USDT",
         "market_type": "usdt_futures",
         "direction": "short",

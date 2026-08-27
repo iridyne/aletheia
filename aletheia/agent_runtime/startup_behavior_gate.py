@@ -46,6 +46,8 @@ STATE_FILENAME = "startup_gate.json"
 # execution mode outside this set is treated as config drift.
 _KNOWN_EXECUTION_MODES = {"paper_internal", "bitget_demo", "okx_demo", "binance_testnet"}
 
+_IMMEDIATE_CORE_ENTRY_ORDER_STATES = {"submission_unknown", "materialization_missing"}
+
 _SCOPE_PATH = Path(__file__).resolve().parents[2] / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
 
 # Recheck loop task + persistent event loop captured at startup (mirrors the
@@ -231,19 +233,32 @@ def _check_exchange_sync(cfg) -> tuple[bool, str]:
 
 def _check_pending_orders(cfg, state_store) -> tuple[bool, str]:
     """No unexplained pending orders: no order intent stuck in created/submitted,
-    and no order left in the reconciliation-anomalous 'unknown' status."""
+    no order left in the reconciliation-anomalous 'unknown' status, and no
+    authoritative core entry Order that must reconcile before retry/resume."""
     from aletheia.storage import sqlite as _sqlite
+    from aletheia.storage.repositories import list_unresolved_native_entry_orders_for_risk
 
     try:
         unresolved = state_store.get_unresolved_intents()
         unknown = _sqlite.get_db().execute(
             "SELECT count(*) FROM ps_orders WHERE status='unknown'"
         ).fetchone()[0]
+        core_state_counts: dict[str, int] = {}
+        for order in list_unresolved_native_entry_orders_for_risk():
+            status = str(order.get("status") or "")
+            if status in _IMMEDIATE_CORE_ENTRY_ORDER_STATES:
+                core_state_counts[status] = core_state_counts.get(status, 0) + 1
         problems = []
         if unresolved:
             problems.append(f"{len(unresolved)} unresolved order intent(s)")
         if unknown:
             problems.append(f"{unknown} order(s) in 'unknown' status")
+        if core_state_counts:
+            state_summary = ", ".join(
+                f"{state}={core_state_counts[state]}"
+                for state in sorted(core_state_counts)
+            )
+            problems.append(f"core reconciliation-required order(s): {state_summary}")
         if problems:
             return False, "; ".join(problems)
         return True, "no pending orders"
@@ -596,6 +611,12 @@ def _apply_block(verdict: dict, cfg) -> None:
                 stop_pi_daemon()
         except Exception as e:
             logger.warning("startup gate: stop_pi_daemon failed: %s", e)
+        try:
+            from aletheia.agent_runtime.fast_trigger_watch import stop_fast_trigger_watch
+
+            stop_fast_trigger_watch()
+        except Exception as e:
+            logger.warning("startup gate: stop_fast_trigger_watch failed: %s", e)
 
     write_gate_state({
         "paused_by_gate": paused_by_gate,
@@ -649,6 +670,26 @@ def _maybe_start_pi_daemon() -> None:
         logger.debug("startup gate: pi_daemon (re)start skipped: %s", e)
 
 
+def _maybe_start_fast_trigger_watch() -> None:
+    """Apply current Fast Trigger config after the startup gate resumes."""
+
+    try:
+        from aletheia.agent_runtime.fast_trigger_watch import (
+            reconfigure_fast_trigger_watch,
+        )
+        from aletheia.config.loader import load_config
+
+        loop = _uvicorn_loop
+        if loop is None or not getattr(loop, "is_running", lambda: False)():
+            return
+        cfg = load_config()
+        asyncio.run_coroutine_threadsafe(
+            reconfigure_fast_trigger_watch(cfg, loop), loop
+        )
+    except Exception as e:
+        logger.debug("startup gate: fast trigger (re)start skipped: %s", e)
+
+
 def _resume_from_gate(cause: str, *, generation: str | None = None):
     release = _persist_paused(False, generation=generation)
     if release is None:
@@ -675,6 +716,7 @@ def _resume_from_gate(cause: str, *, generation: str | None = None):
     _notify("Aletheia Startup Gate — trading resumed",
             "Startup checks passed; AI decisions and paper trading resumed.")
     _maybe_start_pi_daemon()
+    _maybe_start_fast_trigger_watch()
     return release
 
 
