@@ -87,8 +87,15 @@ def _match_entries(
     needle = _normalize(model)
     matches: list[tuple[str, dict[str, Any]]] = []
     seen: set[str] = set()
+    exact = index.get(needle, [])
+    if exact:
+        for key, entry in exact:
+            if key not in seen:
+                seen.add(key)
+                matches.append((key, entry))
+        return matches
     for stem, entries in index.items():
-        if stem != needle and not _family_match(needle, stem):
+        if not _family_match(needle, stem):
             continue
         for key, entry in entries:
             if key not in seen:
