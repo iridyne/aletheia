@@ -67,12 +67,15 @@ def _parse_age(snapshot_at: str) -> tuple:
 def positions(
     status: str = typer.Option("open", help="Filter: open | closed | all"),
     limit: int = typer.Option(20, "--limit", "-n", help="Max rows to return"),
+    execution_mode: str | None = typer.Option(None, "--execution-mode", help="Filter by execution_mode"),
     json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
 ):
-    """List positions with PnL."""
+    """List positions with verified PnL read-model fields."""
+    from aletheia.portfolio.pnl import position_realized_pnl_view
     from aletheia.storage.repositories import list_positions
     filter_status = None if status == "all" else status
-    rows = list_positions(status=filter_status, limit=limit)
+    rows = list_positions(status=filter_status, limit=limit, execution_mode=execution_mode)
+    rows = [position_realized_pnl_view(row) for row in rows]
     _output(rows, json_output)
 
 
@@ -369,9 +372,7 @@ def proposals(
 ):
     """List trade proposals with approval status."""
     from aletheia.storage.repositories import list_trade_proposals
-    rows = list_trade_proposals(limit=limit)
-    if status != "all":
-        rows = [r for r in rows if r.get("status") == status]
+    rows = list_trade_proposals(limit=limit, status=None if status == "all" else status)
     display_keys = ["id", "symbol", "direction", "execution_mode", "status",
                     "agent_rationale", "strategy_id", "opportunity_id", "created_at"]
     rows = [{k: r.get(k) for k in display_keys} for r in rows]
@@ -390,9 +391,7 @@ def risk(
 ):
     """List risk decisions (enriched with proposal symbol/direction)."""
     from aletheia.storage.repositories import get_trade_proposal, list_risk_decisions
-    rows = list_risk_decisions(limit=limit)
-    if rejected_only:
-        rows = [r for r in rows if not r.get("approved")]
+    rows = list_risk_decisions(limit=limit, approved=False if rejected_only else None)
     result = []
     for r in rows:
         violations = r.get("violations") or "[]"
@@ -463,9 +462,7 @@ def orders(
         return
 
     from aletheia.storage.repositories import list_orders
-    rows = list_orders(limit=limit)
-    if status != "all":
-        rows = [r for r in rows if r.get("status") == status]
+    rows = list_orders(limit=limit, status=None if status == "all" else status)
     display_keys = ["id", "symbol", "direction", "order_type", "quantity", "price",
                     "execution_mode", "status", "exchange_order_id", "filled_at", "error_reason", "created_at"]
     rows = [{k: r.get(k) for k in display_keys} for r in rows]
@@ -918,13 +915,17 @@ def status(
 
     # Exchange equity (best-effort)
     try:
-        from aletheia.portfolio.exchange_sync import get_cached_state, status_for
+        from aletheia.portfolio.exchange_sync import (
+            account_equity_value,
+            get_cached_state,
+            status_for,
+        )
         cached = get_cached_state()
         if cached and status_for(cached) in ("ok", "stale"):
             # get_cached_state may return the unified (multi-broker) cache, which
             # uses total_equity_usdt instead of the Bitget-specific equity_usdt —
             # fall back so non-Bitget paper accounts show real equity, not None.
-            portfolio_section["equity_usdt"] = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+            portfolio_section["equity_usdt"] = account_equity_value(cached)
             portfolio_section["exchange_age_sec"] = cached.get("age_seconds")
     except Exception:
         pass
@@ -988,7 +989,8 @@ def status(
     # Human-readable output
     typer.echo("=== Portfolio ===")
     eq = portfolio_section.get("equity_usdt")
-    typer.echo(f"  equity: {eq or '?'} USDT  |  open_positions: {portfolio_section['open_positions']}")
+    equity_label = eq if eq is not None else "?"
+    typer.echo(f"  equity: {equity_label} USDT  |  open_positions: {portfolio_section['open_positions']}")
     for p in portfolio_section["positions"]:
         typer.echo(f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} uPnL={p['unrealized_pnl']}")
 
@@ -1048,8 +1050,9 @@ def pnl(
     """
     from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     from aletheia.analytics.outcome_integrity import (
+        assess_reportable_outcome,
         build_outcome_cohort_summary,
-        eligible_strategy_outcomes,
+        raw_account_events,
     )
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
@@ -1071,25 +1074,39 @@ def pnl(
 
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
-    closed = eligible_strategy_outcomes(
-        closed_after=today_str, limit=200, execution_mode=mode,
+    tomorrow_str = (
+        datetime.fromisoformat(today_str).replace(tzinfo=timezone.utc)
+        + timedelta(days=1)
+    ).date().isoformat()
+    today_raw = raw_account_events(
+        closed_after=today_str,
+        closed_before=tomorrow_str,
+        limit=10_000,
+        execution_mode=mode,
     )
     today_closed = [
-        p for p in closed
-        if (p.get("closed_at") or "")[:10] == today_str
+        p for p in today_raw
+        if assess_reportable_outcome(p).eligible
     ]
-    today_cohort = build_outcome_cohort_summary(
-        closed_after=today_str, execution_mode=mode,
+    today_total = (
+        round(sum(float(p["realized_pnl"]) for p in today_closed), 8)
+        if today_closed
+        else None
     )
-    today_total = today_cohort["eligible_realized_pnl"]
+    today_sample = today_closed[-200:]
+    today_eligible_count = len(today_closed)
+    today_shown_count = len(today_sample)
+    today_omitted_count = max(0, today_eligible_count - today_shown_count)
     today_detail = [
         {
             "symbol": p["symbol"], "direction": p["direction"],
             "pnl": round(float(p["realized_pnl"]), 2),
             "close_reason": p.get("close_reason", "?"),
         }
-        for p in today_closed
+        for p in today_sample
     ]
+    today_loaded_from = today_raw[0].get("closed_at") if today_raw else None
+    today_loaded_through = today_raw[-1].get("closed_at") if today_raw else None
 
     # Rolling stats
     rolling = compute_rolling_trade_stats(days=days, execution_mode=mode)
@@ -1109,7 +1126,17 @@ def pnl(
     result = {
         "execution_mode": mode,
         "execution_mode_status": "resolved",
-        "today": {"date": today_str, "realized": round(today_total, 2) if today_total is not None else None, "trades": today_detail},
+        "today": {
+            "date": today_str,
+            "realized": round(today_total, 2) if today_total is not None else None,
+            "eligible_count": today_eligible_count,
+            "shown_count": today_shown_count,
+            "omitted_count": today_omitted_count,
+            "cohort_complete": len(today_raw) < 10_000,
+            "loaded_from": today_loaded_from,
+            "loaded_through": today_loaded_through,
+            "trades": today_detail,
+        },
         "rolling": rolling,
         "cohort": build_outcome_cohort_summary(
             closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
@@ -1127,9 +1154,17 @@ def pnl(
     typer.echo(f"execution_mode: {mode}")
     typer.echo(f"=== Today ({today_str} UTC) ===")
     if today_total is None:
-        typer.echo("  realized: unavailable (insufficient verified outcomes)")
+        typer.echo(f"  realized: unavailable ({today_eligible_count} verified outcomes)")
     else:
-        typer.echo(f"  realized: {today_total:.2f} USDT ({len(today_detail)} verified outcomes)")
+        sample_text = (
+            f"; showing newest {today_shown_count}, {today_omitted_count} omitted"
+            if today_omitted_count
+            else ""
+        )
+        typer.echo(
+            f"  realized: {today_total:.2f} USDT "
+            f"({today_eligible_count} verified outcomes{sample_text})"
+        )
     for t in today_detail:
         typer.echo(f"  {t['symbol']} {t['direction']}: {t['pnl']:+.2f} ({t['close_reason']})")
 
@@ -1236,9 +1271,7 @@ def fills(
 ):
     """List trade fills with execution details and fees."""
     from aletheia.storage.repositories import list_fills
-    rows = list_fills(limit=limit)
-    if order_id:
-        rows = [r for r in rows if r.get("order_id") == order_id]
+    rows = list_fills(limit=limit, order_id=order_id)
     display = []
     for r in rows:
         display.append({
@@ -1526,31 +1559,46 @@ def agent_runs(
 def equity(
     days: int = typer.Option(7, "--days", "-d", help="Lookback window in days"),
     limit: int = typer.Option(50, "--limit", "-n"),
+    execution_mode: Optional[str] = typer.Option(None, "--execution-mode", help="Account series: paper_internal | exchange_account"),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show portfolio equity time series (from portfolio_snapshots)."""
-    from aletheia.storage.repositories import list_portfolio_snapshots
-    rows = list_portfolio_snapshots(days=days, limit=limit)
+    """Show one explicit account-equity time series."""
+    from aletheia.config.loader import load_config
+    from aletheia.storage.repositories import list_account_equity_snapshots
+
+    if execution_mode is None:
+        cfg = load_config()
+        execution_mode = (
+            "paper_internal"
+            if cfg.exchange.paper_execution_mode == "paper_internal"
+            else "exchange_account"
+        )
+    rows = list_account_equity_snapshots(execution_mode=execution_mode, days=days, limit=limit)
     display = [{
         "snapshot_at": r.get("snapshot_at"),
-        "equity_usdt": r.get("equity_usdt"),
-        "available_usdt": r.get("available_usdt"),
+        "execution_mode": r.get("execution_mode"),
+        "account_equity_usdt": r.get("account_equity_usdt"),
         "unrealized_pnl": r.get("unrealized_pnl"),
-        "realized_pnl_today": r.get("realized_pnl_today"),
-        "open_positions": r.get("open_positions"),
+        "realized_pnl": r.get("realized_pnl"),
+        "positions_count": r.get("positions_count"),
     } for r in rows]
     if json_output:
         _output(display, True)
         return
     if not display:
-        typer.echo("(no portfolio snapshots)")
+        typer.echo(f"(no account-equity snapshots for execution_mode={execution_mode})")
         return
     typer.echo(f"=== Equity Curve ({days}d, {len(display)} snapshots) ===")
     for d in display[:30]:
-        eq = d.get("equity_usdt") or 0
+        eq = d.get("account_equity_usdt")
         upnl = d.get("unrealized_pnl") or 0
-        pos = d.get("open_positions") or 0
-        typer.echo(f"  {d['snapshot_at']}  eq=${eq:.0f}  uPnL={upnl:+.2f}  pos={pos}")
+        pos = d.get("positions_count")
+        eq_text = "not available" if eq is None else f"${eq:.0f}"
+        pos_text = "not available" if pos is None else str(pos)
+        typer.echo(
+            f"  {d['snapshot_at']}  mode={d.get('execution_mode')}  "
+            f"eq={eq_text}  uPnL={upnl:+.2f}  pos={pos_text}"
+        )
 
 
 @inspect_app.command("reflection")

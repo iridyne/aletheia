@@ -592,6 +592,29 @@ async def test_universe_settings_are_visible_and_persisted(client):
 
 
 @pytest.mark.anyio
+async def test_fast_trigger_settings_are_visible_bounded_and_persisted(client):
+    resp = await client.get("/api/settings")
+    assert resp.status_code == 200
+    assert resp.json()["fast_trigger"]["mode"] == "shadow"
+
+    resp = await client.post(
+        "/api/settings/fast-trigger",
+        json={"mode": "off", "max_setups": 7, "authorization_ttl_minutes": 45},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["runtime_status"]["reason"] == "fast_trigger_disabled"
+
+    resp = await client.get("/api/settings")
+    assert resp.json()["fast_trigger"]["max_setups"] == 7
+    assert resp.json()["fast_trigger"]["authorization_ttl_minutes"] == 45
+
+    invalid = await client.post(
+        "/api/settings/fast-trigger", json={"max_setups": 11}
+    )
+    assert invalid.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_learning_lifecycle_defaults_enable_only_the_measured_paper_path(client):
     response = await client.get("/api/settings")
     assert response.status_code == 200
@@ -736,6 +759,7 @@ def test_settings_openapi_exposes_redacted_typed_response_contract():
     settings = schemas["SettingsResponse"]["properties"]
     assert settings["models"]["$ref"] == "#/components/schemas/SettingsModelsResponse"
     assert settings["network"]["$ref"] == "#/components/schemas/NetworkConfig"
+    assert settings["fast_trigger"]["$ref"] == "#/components/schemas/FastTriggerConfig"
     assert "secret" not in schemas["SettingsWebhookResponse"]["properties"]
     assert "credentials_path" not in schemas["SettingsTunnelResponse"]["properties"]
 

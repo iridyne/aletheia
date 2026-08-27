@@ -41,6 +41,9 @@ Proposal as stable decision history.
 - [Universe continuous scoring safety](universe_continuous_scoring_safety.md):
   bounded continuous curves plus raw-evidence, missingness, reversible-feedback,
   and pessimistic-promotion safeguards.
+- [Universe Fast Trigger Watch](universe_fast_trigger_watch.md): Momentum setups,
+  conditional System Operator authorization, and same-venue deterministic T0
+  materialization through the existing Risk and Gateway boundary.
 - [Tokenomics harness phase plan](tokenomics_harness_phase_plan_2026-07-30.md):
   controlled inference-harness rollout.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):

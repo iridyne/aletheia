@@ -29,7 +29,7 @@ def test_gateway_status(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     result = runner.invoke(app, ["gateway", "status"])
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "stopped" in result.output
 
 
@@ -45,7 +45,7 @@ def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeyp
 
     result = runner.invoke(app, ["gateway", "status"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Exchange: Local paper (no external exchange)" in result.output
     assert "Exchange: okx" not in result.output
 
@@ -156,12 +156,309 @@ def test_inspect_pnl(cli_db):
     assert "Rolling" in result.output
 
 
+def test_inspect_pnl_labels_today_sample_as_bounded(monkeypatch):
+    import json as json_mod
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from aletheia.analytics import execution_mode, outcome_integrity, trade_stats
+    from aletheia.maintenance import historical_accounting
+    from aletheia.portfolio import pnl as portfolio_pnl
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = [
+        {
+            "symbol": f"SYM{i}/USDT",
+            "direction": "long",
+            "realized_pnl": -100.0 if i == 0 else 1.0,
+            "close_reason": "strategy_exit",
+            "closed_at": f"{today}T00:{i % 60:02d}:00+00:00",
+        }
+        for i in range(201)
+    ]
+
+    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "paper_internal")
+    monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **_kwargs: rows)
+    monkeypatch.setattr(
+        outcome_integrity,
+        "assess_reportable_outcome",
+        lambda _row: SimpleNamespace(eligible=True),
+    )
+    monkeypatch.setattr(
+        trade_stats,
+        "compute_rolling_trade_stats",
+        lambda **_kwargs: {
+            "total_pnl": None,
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0,
+            "avg_pnl": 0,
+            "best_win": 0,
+            "worst_loss": 0,
+            "per_symbol": [],
+        },
+    )
+    monkeypatch.setattr(portfolio_pnl, "mark_positions_to_market", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        historical_accounting,
+        "historical_accounting_summary",
+        lambda **_kwargs: {
+            "historical_reconciled_pnl": None,
+            "historical_reconciled_count": 0,
+            "historical_reconciliation_unavailable_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        outcome_integrity,
+        "build_outcome_cohort_summary",
+        lambda **_kwargs: {
+            "raw_event_count": 0,
+            "eligible_outcome_count": 0,
+            "excluded_outcome_count": 0,
+            "outcome_exclusion_reasons": {},
+            "eligible_realized_pnl": None,
+        },
+    )
+
+    result = runner.invoke(app, ["inspect", "pnl", "--json"])
+
+    assert result.exit_code == 0
+    today_payload = json_mod.loads(result.output)["today"]
+    assert today_payload["realized"] == 100.0
+    assert today_payload["eligible_count"] == 201
+    assert today_payload["shown_count"] == 200
+    assert today_payload["omitted_count"] == 1
+    assert today_payload["cohort_complete"] is True
+    assert today_payload["loaded_from"] == rows[0]["closed_at"]
+    assert today_payload["loaded_through"] == rows[-1]["closed_at"]
+    assert len(today_payload["trades"]) == 200
+    assert sum(row["pnl"] for row in today_payload["trades"]) == 200.0
+
+    human = runner.invoke(app, ["inspect", "pnl"])
+
+    assert human.exit_code == 0
+    assert "201 verified outcomes; showing newest 200, 1 omitted" in human.output
+    assert "(200 verified outcomes)" not in human.output
+
+
 def test_inspect_orders_stats(cli_db):
     """inspect orders --stats runs without error."""
     result = runner.invoke(app, ["inspect", "orders", "--stats"])
     assert result.exit_code == 0
     assert "Order Stats" in result.output
     assert "fill_rate" in result.output
+
+
+def test_inspect_filtered_proposals_apply_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    repo.insert_trade_proposal(
+        TradeProposal(
+            id="old-pending-proposal",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            status="pending",
+        )
+    )
+    for idx in range(25):
+        repo.insert_trade_proposal(
+            TradeProposal(
+                id=f"new-approved-proposal-{idx}",
+                symbol="ETH/USDT",
+                market_type="spot",
+                direction="short",
+                status="approved",
+            )
+        )
+
+    filtered = runner.invoke(app, ["inspect", "proposals", "--status", "pending", "--limit", "2", "--json"])
+    unfiltered = runner.invoke(app, ["inspect", "proposals", "--status", "all", "--limit", "1", "--json"])
+
+    assert filtered.exit_code == 0
+    assert [row["id"] for row in json_mod.loads(filtered.output)] == ["old-pending-proposal"]
+    assert json_mod.loads(unfiltered.output)[0]["id"].startswith("new-approved-proposal-")
+
+
+def test_inspect_rejected_risk_applies_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision
+
+    repo.insert_risk_decision(RiskDecision(id="old-rejected-risk", proposal_id="proposal-old", approved=False))
+    for idx in range(25):
+        repo.insert_risk_decision(
+            RiskDecision(id=f"new-approved-risk-{idx}", proposal_id=f"proposal-{idx}", approved=True)
+        )
+
+    result = runner.invoke(app, ["inspect", "risk", "--rejected-only", "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert [row["id"] for row in rows] == ["old-rejected-risk"]
+    assert all(not row["approved"] for row in rows)
+
+
+def test_inspect_filtered_orders_apply_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    repo.insert_order(
+        Order(
+            id="old-failed-order",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=1,
+            execution_mode="paper_internal",
+            status="failed",
+            source="adopted",
+        )
+    )
+    for idx in range(25):
+        repo.insert_order(
+            Order(
+                id=f"new-filled-order-{idx}",
+                symbol="ETH/USDT",
+                market_type="spot",
+                direction="short",
+                order_type="market",
+                quantity=1,
+                execution_mode="paper_internal",
+                status="filled",
+                source="adopted",
+            )
+        )
+
+    result = runner.invoke(app, ["inspect", "orders", "--status", "failed", "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert [row["id"] for row in rows] == ["old-failed-order"]
+    assert all(row["status"] == "failed" for row in rows)
+
+
+def test_inspect_filtered_fills_apply_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill
+
+    repo.insert_fill(Fill(id="old-target-fill", order_id="target-order", fill_price=100, fill_quantity=1))
+    for idx in range(25):
+        repo.insert_fill(Fill(id=f"new-other-fill-{idx}", order_id=f"other-order-{idx}", fill_price=100, fill_quantity=1))
+
+    result = runner.invoke(app, ["inspect", "fills", "--order-id", "target-order", "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert [row["id"] for row in rows] == ["old-target-fill"]
+    assert all(row["order_id"] == "target-order" for row in rows)
+
+
+def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
+    """Closed positions must not publish raw realized PnL as verified economics."""
+    import json as json_mod
+
+    from aletheia.storage.models import Position
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import insert_position
+
+    common = {
+        "market_type": "usdt_futures",
+        "direction": "long",
+        "quantity": 1.0,
+        "entry_price": 100.0,
+        "current_price": 110.0,
+        "entry_fee": 0.0,
+        "exit_fee": 0.0,
+        "execution_mode": "paper_internal",
+        "status": "closed",
+        "closed_at": "2026-08-26T00:00:00+00:00",
+    }
+    insert_position(
+        Position(
+            **common,
+            id="verified",
+            symbol="BTC/USDT",
+            realized_pnl=10.0,
+            funding_cost=0.0,
+            funding_source="local_simulation",
+        )
+    )
+    insert_position(
+        Position(
+            **common,
+            id="missing-funding",
+            symbol="ETH/USDT",
+            realized_pnl=10.0,
+            funding_cost=None,
+            funding_source="unavailable",
+            outcome_exclusion_reason="incomplete_funding_economics",
+        )
+    )
+    insert_position(
+        Position(
+            **common,
+            id="mismatched-raw",
+            symbol="SOL/USDT",
+            realized_pnl=999.0,
+            funding_cost=0.0,
+            funding_source="local_simulation",
+            outcome_exclusion_reason="",
+        )
+    )
+    get_db().execute(
+        """INSERT INTO historical_accounting_reconciliations
+           (position_id,reconciliation_version,status,reconstructed_realized_pnl,
+            funding_cost,method,reason,evidence_json,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "mismatched-raw",
+            "historical-local-paper-accounting-v1",
+            "reconstructed",
+            9.5,
+            0.5,
+            "deterministic_test",
+            "legacy",
+            "{}",
+            "2026-08-26T00:00:00+00:00",
+            "2026-08-26T00:00:00+00:00",
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["inspect", "positions", "--status", "closed", "--execution-mode", "paper_internal", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    rows = {row["id"]: row for row in json_mod.loads(result.output)}
+    assert rows["verified"]["realized_pnl"] == 10.0
+    assert rows["verified"]["realized_pnl_complete"] is True
+    assert rows["missing-funding"]["realized_pnl"] is None
+    assert rows["missing-funding"]["realized_pnl_complete"] is False
+    assert (
+        rows["missing-funding"]["realized_pnl_unavailable_reason"]
+        == "incomplete_funding_economics"
+    )
+    assert rows["mismatched-raw"]["realized_pnl"] is None
+    assert rows["mismatched-raw"]["realized_pnl_complete"] is False
+    assert rows["mismatched-raw"]["historical_accounting_pnl"] == 9.5
+
+    human = runner.invoke(app, ["inspect", "positions", "--status", "closed"])
+    assert human.exit_code == 0, human.output
+    assert "realized_pnl=999.0" not in human.output
+    assert "historical_accounting_pnl=9.5" in human.output
+    assert "realized_pnl_complete=False" in human.output
 
 
 def test_inspect_status_json(cli_db):
@@ -174,6 +471,67 @@ def test_inspect_status_json(cli_db):
     assert "portfolio" in data
     assert "pnl" in data
     assert "orders" in data
+
+
+def test_inspect_equity_uses_current_account_equity_series(cli_db):
+    import json as json_mod
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO portfolio_snapshots
+        (id, total_value_usdt, account_equity_usdt, unrealized_pnl, realized_pnl,
+         positions_count, execution_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("legacy", 9999, None, 99, 0, 9, "paper_internal"),
+    )
+    db.execute(
+        """
+        INSERT INTO portfolio_snapshots
+        (id, total_value_usdt, account_equity_usdt, unrealized_pnl, realized_pnl,
+         positions_count, execution_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("paper", 1000, 1000, 12.5, 40, 2, "paper_internal"),
+    )
+    db.execute(
+        """
+        INSERT INTO portfolio_snapshots
+        (id, total_value_usdt, account_equity_usdt, unrealized_pnl, realized_pnl,
+         positions_count, execution_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("exchange", 2000, 2000, -5, 10, 1, "exchange_account"),
+    )
+    db.commit()
+
+    result = runner.invoke(app, ["inspect", "equity", "--json"])
+
+    assert result.exit_code == 0, result.output
+    rows = json_mod.loads(result.output)
+    assert len(rows) == 1
+    assert rows[0]["execution_mode"] == "paper_internal"
+    assert rows[0]["account_equity_usdt"] == 1000
+    assert rows[0]["positions_count"] == 2
+    assert "equity_usdt" not in rows[0]
+    assert "open_positions" not in rows[0]
+
+    exchange = runner.invoke(
+        app,
+        ["inspect", "equity", "--execution-mode", "exchange_account", "--json"],
+    )
+    assert exchange.exit_code == 0, exchange.output
+    assert json_mod.loads(exchange.output)[0]["account_equity_usdt"] == 2000
+
+    human = runner.invoke(app, ["inspect", "equity"])
+    assert human.exit_code == 0, human.output
+    assert "mode=paper_internal" in human.output
+    assert "eq=$1000" in human.output
+    assert "pos=2" in human.output
+    assert "9999" not in human.output
 
 
 def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):

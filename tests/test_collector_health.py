@@ -150,6 +150,11 @@ def test_result_classifier_distinguishes_empty_partial_and_not_configured():
     assert classify_collector_result({"snapshots": [object()], "errors": ["one"]}) == "partial"
     assert classify_collector_result({"snapshots": [], "errors": ["one"]}) == "failed"
     assert classify_collector_result({"errors": ["no_key"]}) == "not_configured"
+    assert classify_collector_result({
+        "snapshots": [],
+        "errors": ["chain_tvl: empty_or_invalid"],
+        "metric_outcomes": {"chain_tvl": "empty_or_invalid"},
+    }) == "failed"
 
 
 def test_report_attributes_cross_source_failures_to_external_connectivity(collector_db):

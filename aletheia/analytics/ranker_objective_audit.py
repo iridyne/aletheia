@@ -15,7 +15,10 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
-from aletheia.analytics.outcome_semantics import validated_outcome_economics
+from aletheia.learning.outcomes import (
+    assess_candidate_outcome,
+    candidate_outcome_temporal_reason,
+)
 
 _HORIZONS = ("15m", "1h", "4h", "24h")
 _ENTRY_ALIGNMENT_MAX_SEC = 60
@@ -48,11 +51,13 @@ def build_ranker_objective_audit(*, hours: int = 24, limit: int = 5000) -> dict:
 
     lookback = max(1, int(hours or 24))
     bounded_limit = max(1, int(limit or 5000))
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback)).isoformat()
-    report = _base_report(lookback, cutoff, bounded_limit)
+    now = datetime.now(timezone.utc)
+    as_of_at = now.isoformat()
+    cutoff = (now - timedelta(hours=lookback)).isoformat()
+    report = _base_report(lookback, cutoff, bounded_limit, as_of_at)
     try:
         with sqlite_store.readonly_db() as db, _query_only(db, report):
-            _populate_report(db, report, cutoff, bounded_limit)
+            _populate_report(db, report, cutoff, as_of_at, bounded_limit)
     except (sqlite3.OperationalError, FileNotFoundError) as exc:
         report["schema_errors"].append(str(exc))
     return report
@@ -79,7 +84,13 @@ def _query_only(db, report: dict):
                 pass
 
 
-def _populate_report(db, report: dict, cutoff: str, bounded_limit: int) -> None:
+def _populate_report(
+    db,
+    report: dict,
+    cutoff: str,
+    as_of_at: str,
+    bounded_limit: int,
+) -> None:
     if not _table_exists(db, "shadow_trades"):
         report["exclusions"]["missing_shadow_trades_table"] = 1
         return
@@ -102,7 +113,11 @@ def _populate_report(db, report: dict, cutoff: str, bounded_limit: int) -> None:
     )
     report["batch_comparison_exclusions"] = required_exclusions
     report["source_counts"]["batch_comparison_rows"] = len(comparison_rows)
-    report["outcome_linkage_exclusions"] = _attach_outcomes(db, comparison_rows)
+    report["outcome_linkage_exclusions"] = _attach_outcomes(
+        db,
+        comparison_rows,
+        as_of_at,
+    )
     _attach_setup_and_late_entry(db, comparison_rows)
     _assign_buckets(comparison_rows)
     report["availability"] = _availability(rows)
@@ -200,7 +215,7 @@ def render_ranker_objective_audit(report: dict) -> str:
     return "\n".join(lines)
 
 
-def _base_report(hours: int, cutoff: str, limit: int) -> dict:
+def _base_report(hours: int, cutoff: str, limit: int, as_of_at: str) -> dict:
     return {
         "read_only": True,
         "behavior_changed": False,
@@ -217,7 +232,7 @@ def _base_report(hours: int, cutoff: str, limit: int) -> dict:
             "partial_data": "persisted shortlist rows exist, but the window is truncated, a cutoff/limit boundary cuts through persisted membership, or at least one reported stratum dimension is unavailable",
             "insufficient_data": "no persisted shortlist rows were available for descriptive analysis",
         },
-        "window": {"hours": hours, "cutoff": cutoff, "limit": limit},
+        "window": {"hours": hours, "cutoff": cutoff, "limit": limit, "as_of_at": as_of_at},
         "source_counts": {"persisted_shortlist_rows": 0},
         "variants": {},
         "populations": {},
@@ -351,9 +366,9 @@ def _eligible_batch_rows(
     }
 
 
-def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
+def _attach_outcomes(db, rows: list[dict], as_of_at: str) -> dict[str, int]:
     required = {
-        "outcome_candidate_key", "horizon", "status", "net_return_pct", "settled_at",
+        "outcome_candidate_key", "horizon", "status", "net_return_pct", "due_at", "settled_at",
         "venue", "symbol", "market_type", "direction", "entry_ts", "cost_model_version",
         "entry_price_usd", "exit_price_usd", "directional_return_pct", "estimated_fee_pct",
         "estimated_spread_slippage_pct", "estimated_funding_pct",
@@ -370,7 +385,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
         return {}
     placeholders = ",".join("?" for _ in keys)
     outcomes = db.execute(
-        "SELECT rowid,outcome_candidate_key,horizon,status,net_return_pct,settled_at,"
+        "SELECT rowid,outcome_candidate_key,horizon,status,net_return_pct,due_at,settled_at,"
         "venue,symbol,market_type,direction,entry_ts,cost_model_version,entry_price_usd,"
         "exit_price_usd,directional_return_pct,estimated_fee_pct,estimated_spread_slippage_pct,"
         "estimated_funding_pct,min_tradable_edge_pct,settlement_price_source,"
@@ -400,7 +415,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
                 reasons = {
                     reason
                     for fact in facts
-                    if (reason := _outcome_linkage_exclusion(row, fact)) is not None
+                        if (reason := _outcome_linkage_exclusion(row, fact, as_of_at)) is not None
                 }
                 reason = sorted(reasons)[0] if reasons else None
                 if reason:
@@ -418,11 +433,11 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
                 if repeated is not first:
                     repeated["outcome_states"][horizon] = "repeated_exposure"
                     exclusions["repeated_exposure"] += 1
-            _apply_outcome_facts(first, horizon, facts)
+            _apply_outcome_facts(first, horizon, facts, as_of_at)
     return dict(sorted(exclusions.items()))
 
 
-def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
+def _outcome_linkage_exclusion(row: dict, outcome: Any, as_of_at: str) -> str | None:
     instrument = (
         row.get("venue"), row.get("symbol"), row.get("market_type"), row.get("direction"),
         outcome["venue"], outcome["symbol"], outcome["market_type"], outcome["direction"],
@@ -451,6 +466,12 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
         and _parse_time(outcome["settled_at"]) is None
     ):
         return "invalid_settled_at"
+    if str(outcome["status"]).lower() == "settled":
+        temporal_reason = candidate_outcome_temporal_reason(dict(outcome), as_of_at=as_of_at)
+        if temporal_reason:
+            if temporal_reason in {"missing_settled_at", "malformed_settled_at"}:
+                return "invalid_settled_at"
+            return temporal_reason
     # Cost semantics belong to the canonical settled outcome. The established
     # shadow writer persists rank-time exposure before settlement economics exist,
     # so requiring its nullable projection would reject production-written rows.
@@ -469,7 +490,7 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
     return None
 
 
-def _apply_outcome_facts(row: dict, horizon: str, facts: list[Any]) -> None:
+def _apply_outcome_facts(row: dict, horizon: str, facts: list[Any], as_of_at: str) -> None:
     settled = [item for item in facts if str(item["status"]).lower() == "settled"]
     settled_values: set[float] = set()
     settled_has_null = False
@@ -479,11 +500,11 @@ def _apply_outcome_facts(row: dict, horizon: str, facts: list[Any]) -> None:
         if raw is None:
             settled_has_null = True
             continue
-        economics = validated_outcome_economics(dict(item))
-        if economics is None:
+        assessment = assess_candidate_outcome(dict(item), as_of_at=as_of_at)
+        if not assessment.eligible or assessment.net_return_pct is None:
             settled_has_malformed = True
             continue
-        settled_values.add(economics["net_return_pct"])
+        settled_values.add(assessment.net_return_pct)
     mixed_statuses = any(str(item["status"]).lower() != "settled" for item in facts)
     if (
         settled_has_malformed

@@ -297,8 +297,8 @@ def test_pi_decision_schema_market_type_and_leverage():
 
 @spec_claim(
     SpecClaim("FL-S13", "futures_leverage", "§13 leverage clamped on submit", "L2b",
-              "submit_decision_as_proposal forwards PI market_type + leverage to "
-              "create_paper_proposal, clamping leverage to the per-tier cap"),
+              "submit_decision_as_proposal preserves PI market_type + leverage on "
+              "the prepared Proposal, clamping leverage to the per-tier cap"),
 )
 async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
     import aletheia.agent_shell.trading_decision as td
@@ -318,13 +318,16 @@ async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
 
     captured = {}
 
-    def _fake_create(**kwargs):
-        captured.update(kwargs)
+    def _fake_submit_prepared(proposal):
+        captured.update(proposal.model_dump())
         return {"status": "executed", "proposal_id": "x"}
 
     # Stub only the gateway-facing boundary + advisory guard chain. Entry pricing
     # deliberately goes through the production exact-venue freshness accessor.
-    monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", _fake_create)
+    monkeypatch.setattr(
+        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
+        _fake_submit_prepared,
+    )
     monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
     monkeypatch.setattr("aletheia.trust.guard_chain.summarize",
                         lambda v: {"blocks": [], "details": ""})

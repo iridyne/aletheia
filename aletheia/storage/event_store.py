@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
+from aletheia.files.jsonl import _exclusive_file_lock
 from aletheia.storage.hashing import canonical_json, sha256_bytes
 from aletheia.storage.models import PSEvent, new_id
 from aletheia.storage.sqlite import get_db
@@ -42,6 +43,18 @@ def _jsonl_path(created_at: str | None = None) -> Path:
         observed = datetime.now(timezone.utc)
     month = observed.astimezone(timezone.utc).strftime("%Y-%m")
     return _events_dir() / f"event_log_{month}.jsonl"
+
+
+def _jsonl_lock_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.lock")
+
+
+class EventJsonlMirrorPayloadMismatch(OSError):
+    """Existing JSONL event identity does not match the authoritative payload."""
+
+
+class EventJsonlMirrorDuplicate(OSError):
+    """Existing JSONL mirror has multiple physical rows for one event identity."""
 
 
 class EventStore:
@@ -295,17 +308,30 @@ class EventStore:
         # ponytail: monthly O(n) scan is enough for local logs; add a side index only
         # if measured mirror retries make startup reconciliation material.
         with _JSONL_LOCK:
-            if path.exists():
-                with path.open("rb") as existing:
-                    for raw in existing:
-                        try:
-                            parsed = json.loads(raw)
-                            if isinstance(parsed, dict) and parsed.get("event_id") == event.event_id:
-                                return
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            continue
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            with _exclusive_file_lock(_jsonl_lock_path(path)):
+                existing_matches = 0
+                if path.exists():
+                    with path.open("rb") as existing:
+                        for raw in existing:
+                            try:
+                                parsed = json.loads(raw)
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                continue
+                            if not isinstance(parsed, dict) or parsed.get("event_id") != event.event_id:
+                                continue
+                            if parsed.get("payload_hash") != event.payload_hash:
+                                raise EventJsonlMirrorPayloadMismatch(
+                                    "event JSONL mirror has same event_id with different payload_hash"
+                                )
+                            existing_matches += 1
+                if existing_matches == 1:
+                    return
+                if existing_matches > 1:
+                    raise EventJsonlMirrorDuplicate(
+                        "event JSONL mirror has duplicate physical rows for event_id"
+                    )
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
 
     def _row_to_event(self, row) -> PSEvent:
         """Convert a sqlite3.Row to PSEvent."""
