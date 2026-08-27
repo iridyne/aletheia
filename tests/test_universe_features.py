@@ -54,6 +54,23 @@ def test_quote_volume_returns_zero_when_it_cannot_be_derived():
     assert _quote_volume_24h(exchange, "BAD/USDT:USDT", ticker) == 0.0
 
 
+def test_funding_observed_at_prefers_source_timestamp():
+    from aletheia.universe.features import _funding_observed_at
+
+    source = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    received = datetime(2026, 8, 26, 12, 15, tzinfo=timezone.utc)
+
+    assert _funding_observed_at(
+        {"timestamp": int(source.timestamp() * 1000)},
+        received_at=received,
+    ) == source.isoformat()
+    assert _funding_observed_at(
+        {"datetime": "2026-08-26T12:00:00Z"},
+        received_at=received,
+    ) == "2026-08-26T12:00:00+00:00"
+    assert _funding_observed_at({}, received_at=received) == received.isoformat()
+
+
 def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
     from aletheia.universe.features import _evaluate_ticker_prefilters
 

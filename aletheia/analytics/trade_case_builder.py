@@ -70,7 +70,10 @@ def build_case_studies(
 
     for row in recent_rows:
         pos_id = row.get("position_id")
-        if not pos_id or pos_id in existing_ids:
+        if not pos_id:
+            failed.append({"position_id": None, "error": "missing_position_id"})
+            continue
+        if pos_id in existing_ids:
             continue
 
         if _is_synthetic_closure(row):

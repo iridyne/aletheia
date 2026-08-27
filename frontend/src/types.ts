@@ -45,6 +45,9 @@ export interface Order {
   created_at: string
   filled_at: string | null
   error_reason: string | null
+  position_id?: string | null
+  close_reason?: string | null
+  source?: string | null
 }
 
 export interface Fill {

@@ -577,6 +577,9 @@ async def complete_with_fallback(
     """
     cfg = load_config()
     resolved_provider_name = provider_name or cfg.models.default_provider
+    inference = getattr(request, "inference", None)
+    if inference is not None:
+        inference.set_resolved_provider(resolved_provider_name)
     provider = provider or provider_router.get_provider(resolved_provider_name)
     _observe_would_block(cfg, request, provider, resolved_provider_name)
     _observe_prompt_guardrail(cfg, request)

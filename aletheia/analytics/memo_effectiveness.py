@@ -29,6 +29,7 @@ from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
 )
+from aletheia.storage.sqlite import iso_instant_us
 
 logger = logging.getLogger("aletheia.analytics.memo_effectiveness")
 
@@ -92,6 +93,9 @@ def evaluate_prior_memo(
         generated_at = memo.get("generated_at")
         if not memo_id or not generated_at:
             return None
+        generated_at_us = iso_instant_us(generated_at)
+        if generated_at_us is None:
+            return None
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -110,7 +114,8 @@ def evaluate_prior_memo(
             return None
         rows = []
         for row in eligible_strategy_outcomes(execution_mode=memo_execution_mode):
-            if str(row.get("opened_at") or "") < str(generated_at):
+            opened_at_us = iso_instant_us(row.get("opened_at"))
+            if opened_at_us is None or opened_at_us < generated_at_us:
                 continue
             # If a learning_manifest_json is available, verify memo exposure
             manifest_raw = row.get("learning_manifest_json") or row.get("decision_learning_manifest")

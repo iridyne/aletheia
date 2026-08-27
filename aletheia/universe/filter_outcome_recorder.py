@@ -108,14 +108,15 @@ async def settle_due_filter_outcomes(
         prologue_started + max(0.0, time_budget_sec) * _PROLOGUE_BUDGET_FRACTION,
     )
     learning_path_ids = ("universe_family_calibration", "ranker_case_score")
+    learning_target_horizons = repo.list_open_learning_target_horizons(learning_path_ids)
     current_behavior_keys: set[str] = set()
-    for path_id in learning_path_ids:
+    for path_id, target_horizon in sorted(learning_target_horizons):
         policy_epoch = current_policy_epoch(path_id)
         behavior_hash = (
             current_behavior_contract_hash(
                 path_id=path_id,
                 policy_epoch=policy_epoch,
-                target_horizon="4h",
+                target_horizon=target_horizon,
                 outcome_contract_version=outcome_contract_version_for_path(path_id),
                 metric_version=metric_version_for_path(path_id),
             )

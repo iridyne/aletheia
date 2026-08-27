@@ -66,6 +66,27 @@ def test_build_price_index_keys_by_last_path_component():
     assert len(index["llama4maverick17b"]) == 1
 
 
+def test_build_price_index_strips_litellm_dotted_catalog_prefix():
+    price_map = {
+        "global.anthropic.claude-sonnet-4-6": {
+            "input_cost_per_token": 3e-6,
+            "output_cost_per_token": 1.5e-5,
+        },
+        "openrouter/anthropic/claude-sonnet-4.6": {
+            "input_cost_per_token": 3e-6,
+            "output_cost_per_token": 1.5e-5,
+        },
+    }
+
+    index = _build_price_index(price_map)
+    hits = _match_entries(index, "claude-sonnet-4-6")
+
+    assert {key for key, _ in hits} == {
+        "global.anthropic.claude-sonnet-4-6",
+        "openrouter/anthropic/claude-sonnet-4.6",
+    }
+
+
 def test_match_entries_exact_stem():
     price_map = {
         "groq/llama-4-maverick": {"input_cost_per_token": 2e-7, "output_cost_per_token": 6e-7},
@@ -74,6 +95,51 @@ def test_match_entries_exact_stem():
     hits = _match_entries(index, "llama-4-maverick")
     assert len(hits) == 1
     assert hits[0][0] == "groq/llama-4-maverick"
+
+
+def test_match_entries_prefers_exact_over_numeric_family_suffix():
+    price_map = {
+        "vendor-a/gpt-5": {
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 10e-6,
+        },
+        "vendor-b/gpt-5.1": {
+            "input_cost_per_token": 5e-6,
+            "output_cost_per_token": 50e-6,
+        },
+    }
+    index = _build_price_index(price_map)
+    hits = _match_entries(index, "gpt-5")
+    rates = _representative_rates(hits)
+
+    assert [key for key, _ in hits] == ["vendor-a/gpt-5"]
+    assert rates is not None
+    assert rates["input_usd_per_million"] == pytest.approx(1.0)
+    assert rates["output_usd_per_million"] == pytest.approx(10.0)
+    assert rates["sample_count"] == 1
+
+
+def test_match_entries_exact_still_medians_across_provider_listings():
+    price_map = {
+        "vendor-a/gpt-5": {
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 10e-6,
+        },
+        "vendor-b/gpt-5": {
+            "input_cost_per_token": 3e-6,
+            "output_cost_per_token": 30e-6,
+        },
+        "vendor-c/gpt-5.1": {
+            "input_cost_per_token": 100e-6,
+            "output_cost_per_token": 300e-6,
+        },
+    }
+    rates = _representative_rates(_match_entries(_build_price_index(price_map), "gpt-5"))
+
+    assert rates is not None
+    assert rates["input_usd_per_million"] == pytest.approx(2.0)
+    assert rates["output_usd_per_million"] == pytest.approx(20.0)
+    assert rates["sample_count"] == 2
 
 
 def test_match_entries_prefix_runtime_shorter():
@@ -155,6 +221,10 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
                 "search_context_size_high": 0.04,
             },
         },
+        "global.anthropic.claude-sonnet-4-6": {
+            "input_cost_per_token": 0.000003,
+            "output_cost_per_token": 0.000015,
+        },
     }
     written = []
     monkeypatch.setattr(pricing_sync, "_save_cache", lambda content: None)
@@ -164,6 +234,7 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
         lambda: [
             ("openai_compatible", "llama-4-maverick"),
             ("existing_catalog_provider", "llama-4-maverick"),
+            ("openai_compatible", "claude-sonnet-4-6"),
         ],
     )
     monkeypatch.setattr(
@@ -181,14 +252,17 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
         fetcher=lambda: (price_map, b'{"version":"test"}')
     )
 
-    assert result["matched_model_count"] == 2
-    assert result["snapshots_created"] == 1
+    assert result["matched_model_count"] == 3
+    assert result["snapshots_created"] == 2
     assert written[0]["provider"] == "openai_compatible"
     assert written[0]["input_usd_per_million"] == pytest.approx(0.2)
     assert written[0]["output_usd_per_million"] == pytest.approx(0.6)
     assert written[0]["web_search_usd_per_request"] == pytest.approx(0.02)
     assert written[0]["source"].startswith("litellm_public_median:")
     assert written[0]["version"].startswith("catalog-model-family-v2:sha256:")
+    claude = next(row for row in written if row["model"] == "claude-sonnet-4-6")
+    assert claude["input_usd_per_million"] == pytest.approx(3.0)
+    assert claude["output_usd_per_million"] == pytest.approx(15.0)
 
 
 def test_pricing_refresh_start_failure_publishes_failed_status_and_allows_retry(
