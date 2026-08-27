@@ -255,8 +255,8 @@ def test_reindex_skips_missing_file_items():
     SpecClaim(
         "KF-C01", _CONTRACT, "§A every manager create_*() calls _index", "L2c",
         "Every create_*() function in manager.py that can produce a "
-        "high_confidence item must call _index(item, content) after "
-        "insert_knowledge_item(). Audit all create_* functions.",
+        "high_confidence item must route successful publication through "
+        "_index(item, content). Audit all create_* functions.",
     ),
 )
 def test_all_manager_create_functions_call_index():
@@ -274,13 +274,13 @@ def test_all_manager_create_functions_call_index():
     violations = []
     for fn in create_fns:
         fn_src = ast.get_source_segment(src, fn) or ""
-        # guard_candidate is explicitly medium_confidence and documents that
-        # _index is called but will skip — that is the expected pattern
-        if "_index(item, content)" not in fn_src:
+        # Some creators call _index directly; deduplicated creators route
+        # through _publish_idempotent(), which indexes only the committed winner.
+        if "_index(item, content)" not in fn_src and "_publish_idempotent(" not in fn_src:
             violations.append(fn.name)
 
     assert not violations, (
-        "These manager.py create_*() functions do not call _index(item, content):\n"
+        "These manager.py create_*() functions do not route to _index(item, content):\n"
         + "\n".join(f"  {v}" for v in violations)
-        + "\nAll create_*() must call _index() — it will silently skip non-high_confidence items."
+        + "\nAll create_*() must index directly or via _publish_idempotent()."
     )

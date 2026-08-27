@@ -1082,7 +1082,7 @@ def _rearm_due_horizon_review(
         except (TypeError, ValueError):
             horizon = None
         opened = _parse_dt(current.get("opened_at"))
-        if not horizon or horizon <= 0 or opened is None:
+        if not horizon or not math.isfinite(horizon) or horizon <= 0 or opened is None:
             return None
         age_hours = (evaluated_at - opened).total_seconds() / 3600.0
         if age_hours < horizon:
@@ -1141,7 +1141,7 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         horizon = float(horizon) if horizon is not None else None
     except (TypeError, ValueError):
         horizon = None
-    if not horizon or horizon <= 0:
+    if not horizon or not math.isfinite(horizon) or horizon <= 0:
         return False
     opened = _parse_dt(position.get("opened_at"))
     if opened is None:
@@ -1158,6 +1158,8 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         if position is None:
             return False
         horizon = float(position["expected_horizon_hours"])
+        if not math.isfinite(horizon) or horizon <= 0:
+            return False
         opened = _parse_dt(position.get("opened_at"))
         if opened is None:
             return False

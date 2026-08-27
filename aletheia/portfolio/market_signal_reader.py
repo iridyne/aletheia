@@ -23,6 +23,8 @@ from aletheia.trading.instruments import instrument_market_to_db_market
 
 logger = logging.getLogger("aletheia.portfolio.market_signal_reader")
 
+_FUTURE_SKEW_ALLOWANCE = timedelta(minutes=5)
+
 
 def _physical_market_type(raw: str) -> str:
     """Normalize stored/configured market names to InstrumentId vocabulary."""
@@ -117,7 +119,18 @@ def _parse_utc(raw: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _within_fresh_window(
+    observed_at: datetime | None,
+    *,
+    cutoff: datetime,
+    latest_allowed: datetime,
+) -> bool:
+    return observed_at is not None and cutoff <= observed_at <= latest_allowed
 
 
 def _row_instrument(row) -> InstrumentId | None:
@@ -196,6 +209,7 @@ def get_market_signals_for_positions(
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=max_signal_age_min)
+    latest_allowed = now + _FUTURE_SKEW_ALLOWANCE
 
     try:
         from aletheia.storage.sqlite import get_db
@@ -229,11 +243,12 @@ def get_market_signals_for_positions(
               AND o.status = 'open'
               AND o.asset_class = 'crypto'
               AND datetime(o.created_at) >= datetime(?)
+              AND datetime(o.created_at) <= datetime(?)
               AND o.valid_until IS NOT NULL
               AND datetime(o.valid_until) >= datetime(?)
             ORDER BY datetime(o.created_at) DESC, o.id DESC
             """,
-            (*symbols, cutoff.isoformat(), now.isoformat()),
+            (*symbols, cutoff.isoformat(), latest_allowed.isoformat(), now.isoformat()),
         ).fetchall()
     except Exception as exc:
         logger.debug("exact opportunity query failed: %s", exc)
@@ -257,7 +272,11 @@ def get_market_signals_for_positions(
         valid_until = _parse_utc(row["valid_until"])
         if created_at is None or valid_until is None:
             continue
-        if created_at < cutoff or valid_until < now:
+        if not _within_fresh_window(
+            created_at,
+            cutoff=cutoff,
+            latest_allowed=latest_allowed,
+        ) or valid_until < now:
             continue
         age = (now - created_at).total_seconds() / 60.0
 
@@ -294,9 +313,10 @@ def get_market_signals_for_positions(
             FROM universe_feature_snapshots
             WHERE asset_id IN ({placeholders})
               AND datetime(ts) >= datetime(?)
+              AND datetime(ts) <= datetime(?)
             ORDER BY asset_id, datetime(ts) DESC, id DESC
             """,
-            (*asset_ids, cutoff.isoformat()),
+            (*asset_ids, cutoff.isoformat(), latest_allowed.isoformat()),
         ).fetchall()
     except Exception as exc:
         logger.debug("exact feature snapshot query failed: %s", exc)
@@ -304,6 +324,13 @@ def get_market_signals_for_positions(
 
     latest_by_asset = {}
     for snapshot in snapshots:
+        observed_at = _parse_utc(snapshot["ts"])
+        if not _within_fresh_window(
+            observed_at,
+            cutoff=cutoff,
+            latest_allowed=latest_allowed,
+        ):
+            continue
         latest_by_asset.setdefault(snapshot["asset_id"], snapshot)
     for request, asset_id in chosen_assets.items():
         snapshot = latest_by_asset.get(asset_id)

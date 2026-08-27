@@ -10,6 +10,7 @@ Claim prefix: DL
 
 import dataclasses
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -6050,6 +6051,12 @@ def test_trade_output_requires_authored_entry_plan_while_skip_does_not():
             DecisionUnavailable, match=f"incomplete_operator_entry_plan:{field}"
         ):
             _parse_decision(invalid)
+
+    for horizon in (0.0, -1.0, math.nan, math.inf):
+        with pytest.raises(
+            DecisionUnavailable, match="invalid_expected_horizon_hours"
+        ):
+            _parse_decision({**trade, "expected_horizon_hours": horizon})
 
     skip = {
         "action": "skip",
