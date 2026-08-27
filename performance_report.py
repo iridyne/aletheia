@@ -25,6 +25,27 @@ from datetime import datetime, timezone
 from aletheia.analytics.streaks import FLAT, LOSS, WIN
 
 
+def _error(section: str, exc: Exception) -> tuple[str, str]:
+    return f"{section}_error", f"{type(exc).__name__}: {exc}"
+
+
+def _add_section(result: dict, name: str, value) -> None:
+    result[name] = value
+    if name not in result["sections"]:
+        result["sections"].append(name)
+
+
+def _finalize(result: dict) -> dict:
+    if result.get("execution_mode_status") == "unavailable":
+        result["completeness"] = "unavailable"
+        result["complete"] = False
+        return result
+    errors = [key for key in result if key.endswith("_error")]
+    result["completeness"] = "partial" if errors else "complete"
+    result["complete"] = not errors
+    return result
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -39,7 +60,6 @@ def _collect() -> dict:
     ``execution_mode_status='unavailable'`` and no metrics.
     """
     from aletheia.analytics.execution_mode import (
-        execution_mode_identity,
         resolve_selected_execution_mode,
     )
 
@@ -54,25 +74,31 @@ def _collect() -> dict:
     )
     if not execution_mode:
         result["unavailable_reason"] = "execution_mode_unresolved"
-        return result
+        return _finalize(result)
 
     # Rolling + full trade stats + order stats (all DB-backed).
-    try:
-        from aletheia.analytics.trade_stats import (
-            build_trade_stats,
-            compute_order_stats,
-            compute_rolling_trade_stats,
-        )
-        result["rolling"] = compute_rolling_trade_stats(
-            days=days, execution_mode=execution_mode,
-        )
-        result["trade_stats"] = build_trade_stats(execution_mode=execution_mode)
-        result["order_stats"] = compute_order_stats(
-            days=days, execution_mode=execution_mode,
-        )
-        result["sections"] += ["rolling", "trade_stats", "order_stats"]
-    except Exception as e:  # pragma: no cover - depends on live DB/runtime
-        result["trade_stats_error"] = f"{type(e).__name__}: {e}"
+    from aletheia.analytics.trade_stats import (
+        build_trade_stats,
+        compute_order_stats,
+        compute_rolling_trade_stats,
+    )
+
+    for name, producer in (
+        (
+            "rolling",
+            lambda: compute_rolling_trade_stats(days=days, execution_mode=execution_mode),
+        ),
+        ("trade_stats", lambda: build_trade_stats(execution_mode=execution_mode)),
+        (
+            "order_stats",
+            lambda: compute_order_stats(days=days, execution_mode=execution_mode),
+        ),
+    ):
+        try:
+            _add_section(result, name, producer())
+        except Exception as e:  # pragma: no cover - depends on live DB/runtime
+            key, value = _error(name, e)
+            result[key] = value
 
     # Equity curve + risk-adjusted metrics from verified outcomes.
     try:
@@ -84,47 +110,59 @@ def _collect() -> dict:
         )
 
         outcomes = eligible_strategy_outcomes(execution_mode=execution_mode)
-        if outcomes:
-            outcomes = sorted(
-                outcomes,
-                key=lambda o: (o.get("closed_at") or ""),
-            )
-            pnls = [float(o.get("realized_pnl") or 0.0) for o in outcomes]
+    except Exception as e:  # pragma: no cover - depends on live DB/runtime
+        key, value = _error("outcomes", e)
+        result[key] = value
+        return _finalize(result)
+
+    if outcomes:
+        outcomes = sorted(
+            outcomes,
+            key=lambda o: (o.get("closed_at") or ""),
+        )
+        pnls = [float(o.get("realized_pnl") or 0.0) for o in outcomes]
+
+        try:
             eq = equity_curve(pnls)
-            merged = consolidate_report(
-                equity=eq,
-                rolling_stats=result.get("rolling"),
-                trade_stats=result.get("trade_stats"),
-                order_stats=result.get("order_stats"),
-            )
+            merged = consolidate_report(equity=eq)
             merged["risk_adjusted"] = summarize(pnls)
             merged["outcome_count"] = len(outcomes)
-            result.update(merged)
+            result.update({k: v for k, v in merged.items() if k != "sections"})
+            _add_section(result, "equity", result["equity_metrics"])
+        except Exception as e:  # pragma: no cover - depends on live DB/runtime
+            key, value = _error("equity", e)
+            result[key] = value
 
-            # Attribution: where does PnL come from (symbol / strategy / reason).
+        # Attribution: where does PnL come from (symbol / strategy / reason).
+        try:
             from aletheia.analytics.attribution import attribute
 
-            attr = attribute(outcomes)
-            result["attribution"] = attr
-            result["sections"].append("attribution")
+            _add_section(result, "attribution", attribute(outcomes))
+        except Exception as e:  # pragma: no cover - depends on live DB/runtime
+            key, value = _error("attribution", e)
+            result[key] = value
 
-            # Streaks: longest / current consecutive win & loss runs.
+        # Streaks: longest / current consecutive win & loss runs.
+        try:
             from aletheia.analytics.streaks import summarize_streaks
 
-            result["streaks"] = summarize_streaks(pnls)
-            result["sections"].append("streaks")
+            _add_section(result, "streaks", summarize_streaks(pnls))
+        except Exception as e:  # pragma: no cover - depends on live DB/runtime
+            key, value = _error("streaks", e)
+            result[key] = value
 
-            # Temporal: when do wins/losses cluster (hour-of-day / weekday).
+        # Temporal: when do wins/losses cluster (hour-of-day / weekday).
+        try:
             from aletheia.analytics.temporal import temporal_summary
 
-            result["temporal"] = temporal_summary(outcomes)
-            result["sections"].append("temporal")
-        else:
-            result["equity_note"] = "no eligible closed outcomes yet"
-    except Exception as e:  # pragma: no cover - depends on live DB/runtime
-        result["equity_error"] = f"{type(e).__name__}: {e}"
+            _add_section(result, "temporal", temporal_summary(outcomes))
+        except Exception as e:  # pragma: no cover - depends on live DB/runtime
+            key, value = _error("temporal", e)
+            result[key] = value
+    else:
+        result["equity_note"] = "no eligible closed outcomes yet"
 
-    return result
+    return _finalize(result)
 
 
 def _render_human(rep: dict) -> str:
@@ -143,6 +181,7 @@ def _render_human(rep: dict) -> str:
             % (rep.get("unavailable_reason") or "unknown")
         )
     out.append("可用分块: %s" % (rep.get("sections") or []))
+    out.append("完整性: %s" % (rep.get("completeness") or "unknown"))
     out.append("=" * 64)
 
     if "trade_stats" in rep:
@@ -237,19 +276,12 @@ def _render_human(rep: dict) -> str:
                 _wd[bd["weekday"]], round(bd.get("total_pnl", 0.0), 2),
                 _wd[wd.get("weekday", 0)], round(wd.get("total_pnl", 0.0), 2)))
 
-    if (
-        rep.get("trade_stats_error")
-        or rep.get("equity_error")
-        or rep.get("attribution_error")
-    ):
+    error_keys = sorted(key for key in rep if key.endswith("_error"))
+    if error_keys:
         out.append("")
         out.append("[注意] 部分数据不可用:")
-        if rep.get("trade_stats_error"):
-            out.append("  trade_stats: %s" % rep["trade_stats_error"])
-        if rep.get("equity_error"):
-            out.append("  equity: %s" % rep["equity_error"])
-        if rep.get("attribution_error"):
-            out.append("  attribution: %s" % rep["attribution_error"])
+        for key in error_keys:
+            out.append("  %s: %s" % (key.removesuffix("_error"), rep[key]))
 
     out.append("=" * 64)
     return "\n".join(out)
