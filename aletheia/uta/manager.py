@@ -14,10 +14,14 @@ from aletheia.portfolio.disappearance_confirmation import logical_account_finger
 from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
 from aletheia.uta.models import ReadCompleteness, UTAAccountIdentity
 from aletheia.uta.profiles import (
+    BinanceLiveProfile,
     BinanceTestnetProfile,
+    BitgetClassicV2LiveProfile,
     BitgetClassicV2Profile,
+    BitgetUTAV3LiveProfile,
     BitgetUTAV3Profile,
     OKXDemoProfile,
+    OKXLiveProfile,
 )
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 
@@ -54,6 +58,24 @@ def _profile_spec(cfg, execution_mode: str):
             ("api_key", "api_secret", "passphrase"),
             OKXDemoProfile,
         )
+    if execution_mode == "binance_live_limited":
+        return (
+            "binance.live",
+            "binance_live",
+            "binance",
+            "live",
+            ("api_key", "api_secret"),
+            BinanceLiveProfile,
+        )
+    if execution_mode == "okx_live_limited":
+        return (
+            "okx.live",
+            "okx_live",
+            "okx",
+            "live",
+            ("api_key", "api_secret", "passphrase"),
+            OKXLiveProfile,
+        )
     if execution_mode == "bitget_demo":
         profile = cfg.exchange.bitget_profile
         profile_type = BitgetUTAV3Profile if profile == "uta_v3" else BitgetClassicV2Profile
@@ -62,6 +84,21 @@ def _profile_spec(cfg, execution_mode: str):
             profile,
             "bitget",
             "demo",
+            ("api_key", "api_secret", "passphrase"),
+            profile_type,
+        )
+    if execution_mode == "bitget_live_limited":
+        profile = cfg.exchange.bitget_profile
+        profile_type = (
+            BitgetUTAV3LiveProfile
+            if profile == "uta_v3"
+            else BitgetClassicV2LiveProfile
+        )
+        return (
+            "bitget.live",
+            profile,
+            "bitget",
+            "live",
             ("api_key", "api_secret", "passphrase"),
             profile_type,
         )
@@ -90,7 +127,14 @@ def build_uta_registry(cfg=None) -> UTARegistry:
     """Build immutable factories from current config; no client/session is created."""
     cfg = cfg or load_config()
     registry = UTARegistry()
-    for execution_mode in ("binance_testnet", "okx_demo", "bitget_demo"):
+    for execution_mode in (
+        "binance_testnet",
+        "okx_demo",
+        "bitget_demo",
+        "binance_live_limited",
+        "okx_live_limited",
+        "bitget_live_limited",
+    ):
         scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
             cfg, execution_mode
         )
@@ -104,6 +148,11 @@ def build_uta_registry(cfg=None) -> UTARegistry:
             venue=venue,
             environment=environment,
             profile=profile_name,
+            account_fingerprint=logical_account_fingerprint(
+                broker_id=execution_mode,
+                account_environment=environment,
+                execution_mode=execution_mode,
+            ),
             credential_generation=generation,
             adapter_implementation="CCXTUTAAdapter",
             adapter_version="1",
@@ -128,6 +177,31 @@ def build_uta_registry(cfg=None) -> UTARegistry:
 
         registry.register(config, factory)
     return registry
+
+
+def create_uta_adapter(execution_mode: str, cfg=None):
+    """Create one loop-local evidence adapter for the exact configured account."""
+    return build_uta_registry(cfg).create(execution_mode)
+
+
+async def query_uta(
+    execution_mode: str,
+    method: str,
+    query=None,
+    *,
+    cfg=None,
+):
+    """Run one bounded UTA read with deterministic loop-local teardown."""
+    adapter = create_uta_adapter(execution_mode, cfg)
+    try:
+        await adapter.connect()
+        operation = getattr(adapter, method)
+        return await operation() if query is None else await operation(query)
+    finally:
+        try:
+            await adapter.close()
+        except Exception:
+            pass
 
 
 def _legacy_brokers(execution_modes: tuple[str, ...] | None = None) -> dict[str, object]:

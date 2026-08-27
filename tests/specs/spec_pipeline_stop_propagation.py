@@ -191,6 +191,10 @@ def _patch_private_fill_history(
             ]
 
         monkeypatch.setattr(broker, "fetch_private_fill_evidence", _evidence)
+        monkeypatch.setattr(
+            "aletheia.execution.reconciliation._fetch_multibroker_evidence",
+            _evidence,
+        )
 
     if hasattr(client_mod, "BitgetClient"):
         client_cls = client_mod.BitgetClient
@@ -201,7 +205,7 @@ def _patch_private_fill_history(
         async def _fills(self, **kwargs):
             from aletheia.execution.reconciliation import _list_unresolved_core_orders
 
-            execution_mode = (
+            execution_mode = getattr(self, "execution_mode", None) or (
                 "bitget_demo" if getattr(self, "mode", "live") == "demo"
                 else "bitget_live_limited"
             )
@@ -241,6 +245,12 @@ def _patch_private_fill_history(
         monkeypatch.setattr(client_cls, "get_open_orders", _open_orders)
         monkeypatch.setattr(client_cls, "get_fills", _fills)
         monkeypatch.setattr(client_cls, "get_order_fills", _order_fills)
+
+        from aletheia.execution.reconciliation import _UTAReconciliationProjection
+
+        monkeypatch.setattr(_UTAReconciliationProjection, "get_open_orders", _open_orders)
+        monkeypatch.setattr(_UTAReconciliationProjection, "get_fills", _fills)
+        monkeypatch.setattr(_UTAReconciliationProjection, "get_order_fills", _order_fills)
 
 
 def _materialize_exchange_result(result: dict) -> str:

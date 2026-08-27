@@ -109,6 +109,45 @@ def test_phase_two_reads_use_canonical_manager_without_mutation_cutover():
 
 @spec_claim(
     SpecClaim(
+        "UTA-S05",
+        "uta_boundary",
+        "§5 Phase 3 evidence consumer cutover",
+        "L2b",
+        "Recovery, reconciliation, funding, verified exit, and Live Trust own no concrete private venue client.",
+    )
+)
+def test_phase_three_evidence_consumers_have_no_concrete_private_client_import():
+    consumers = (
+        "aletheia/execution/reconciliation.py",
+        "aletheia/execution/stale_order_cleanup.py",
+        "aletheia/execution/pending_close_recovery.py",
+        "aletheia/portfolio/disappearance_settlement.py",
+        "aletheia/portfolio/broker_funding_settlement.py",
+        "aletheia/trust/live_unlock.py",
+    )
+    violations = []
+    for relative in consumers:
+        path = ROOT / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name.startswith("aletheia.exchanges") or name in {
+                    "aletheia.execution.okx_broker",
+                    "aletheia.execution.binance_broker",
+                    "aletheia.execution.bitget_broker",
+                }:
+                    violations.append(f"{relative}:{node.lineno}: {name}")
+    assert violations == []
+
+
+@spec_claim(
+    SpecClaim(
         "UTA-S03",
         "uta_boundary",
         "§3 migration evidence",

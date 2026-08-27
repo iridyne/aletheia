@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from importlib.metadata import version
 import json
@@ -14,10 +15,16 @@ from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
     CommandEvidence,
+    FillQuery,
+    FundingLedgerQuery,
     InstrumentIdentity,
+    OrderQuery,
+    QueryScope,
     ReadCompleteness,
     SubmitOrderCommand,
     UTAAccountIdentity,
+    VerifiedExitQuery,
+    VerifiedExitState,
 )
 from aletheia.uta.profiles import (
     BinanceTestnetProfile,
@@ -52,6 +59,10 @@ class FakeExchange:
         self.balance_responses = []
         self.positions = []
         self.order_responses = []
+        self.closed_order_responses = []
+        self.exact_order = None
+        self.trades = []
+        self.ledger = []
         self.balance_params = []
         self.position_calls = []
         self.order_params = []
@@ -104,6 +115,25 @@ class FakeExchange:
         if isinstance(response, Exception):
             raise response
         return response
+
+    async def fetch_closed_orders(self, symbol=None, since=None, limit=None, params=None):
+        response = self.closed_order_responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def fetch_order(self, order_id, symbol=None):
+        if isinstance(self.exact_order, Exception):
+            raise self.exact_order
+        return self.exact_order
+
+    async def fetch_my_trades(self, symbol=None, since=None, limit=None, params=None):
+        self.events.append(("fetch_my_trades", dict(params or {})))
+        return list(self.trades)
+
+    async def fetch_ledger(self, code=None, since=None, limit=None, params=None):
+        self.events.append(("fetch_ledger", dict(params or {})))
+        return list(self.ledger)
 
     async def close(self):
         self.closed = True
@@ -457,13 +487,211 @@ async def test_close_is_bounded_and_idempotent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_exact_order_preserves_stable_cancel_reason(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.exact_order = {
+        "id": "order-1",
+        "clientOrderId": "client-1",
+        "symbol": "BTC/USDT:USDT",
+        "type": "market",
+        "side": "sell",
+        "amount": "1",
+        "filled": "0",
+        "remaining": "1",
+        "status": "canceled",
+        "info": {"cancelReason": "trade_too_many_times_cancel"},
+    }
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_order(OrderQuery(
+        scope=QueryScope(instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        )),
+        venue_order_id="order-1",
+    ))
+
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert report.found is not None and report.found.state.value == "canceled"
+    assert report.reason_code == "trade_too_many_times_cancel"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_client_order_history_distinguishes_complete_not_found(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.order_responses = [[]]
+    exchange.closed_order_responses = [[]]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_order(OrderQuery(
+        scope=QueryScope(
+            start_at=datetime.now(timezone.utc) - timedelta(hours=1)
+        ),
+        client_order_id="missing-client-order",
+    ))
+
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert report.found is None
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
+    monkeypatch,
+):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    timestamp = int((now - timedelta(seconds=1)).timestamp() * 1000)
+    exchange.trades = [{
+        "id": "fill-1",
+        "order": "close-order",
+        "clientOrderId": "close-client",
+        "symbol": "BTC/USDT:USDT",
+        "side": "sell",
+        "amount": "1",
+        "price": "60000.25",
+        "timestamp": timestamp,
+        "fee": {"cost": "0.1", "currency": "USDT"},
+    }]
+    exchange.ledger = [{"info": {
+        "incomeType": "FUNDING_FEE",
+        "tranId": "funding-1",
+        "symbol": "BTCUSDT",
+        "income": "-0.02",
+        "asset": "USDT",
+        "time": timestamp,
+    }}]
+    exchange.positions = []
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    instrument = InstrumentIdentity(
+        canonical_symbol="BTC/USDT",
+        venue_symbol="BTC/USDT:USDT",
+        market_type="usdt_futures",
+        base_currency="BTC",
+        quote_currency="USDT",
+        settlement_currency="USDT",
+    )
+    scope = QueryScope(
+        instrument=instrument,
+        start_at=now - timedelta(hours=1),
+        end_at=now,
+    )
+
+    fills = await adapter.get_fills(FillQuery(
+        scope=scope, venue_order_id="close-order"
+    ))
+    funding = await adapter.get_funding_ledger(FundingLedgerQuery(scope=scope))
+    verified = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity,
+        local_position_id="position-1",
+        instrument=instrument,
+        direction="long",
+        expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1),
+        history_end_at=now,
+        local_order_ids=("entry-order",),
+    ))
+
+    assert fills.completeness is ReadCompleteness.COMPLETE
+    assert fills.fills[0].quantity == Decimal("0.01")
+    assert funding.completeness is ReadCompleteness.COMPLETE
+    assert funding.entries[0].amount == Decimal("-0.02")
+    assert verified.state is VerifiedExitState.VERIFIED_FILL_EXIT
+    assert all(
+        event[1].get("paginate") is True
+        and event[1].get("paginationCalls") == 10
+        for event in exchange.events
+        if event[0] in {"fetch_my_trades", "fetch_ledger"}
+    )
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_private_history_bound_is_partial(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    timestamp = int((datetime.now(timezone.utc) - timedelta(seconds=1)).timestamp() * 1000)
+    exchange.trades = [{
+        "id": "fill-1",
+        "order": "order-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "amount": "1",
+        "price": "1",
+        "timestamp": timestamp,
+        "fee": {"cost": "0", "currency": "USDT"},
+    }] * 1000
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_fills(FillQuery(scope=QueryScope(
+        start_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        limit=1000,
+    )))
+
+    assert report.completeness is ReadCompleteness.PARTIAL
+    assert report.reason_code == "private_fill_history_bound_reached"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_account_authority_probe_binds_authenticated_account(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.balance_responses = [{
+        "total": {"USDT": "1"},
+        "free": {"USDT": "1"},
+        "used": {"USDT": "0"},
+        "info": {"uid": "venue-account-1", "canTrade": True},
+    }]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.probe_account_authority()
+
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert report.authenticated_private_readable is True
+    assert report.trading_permission.value == "supported"
+    assert report.account_fingerprint != adapter.identity.account_fingerprint
+    assert "venue-account-1" not in report.account_fingerprint
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_expired_private_history_window_fails_closed_without_network(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    _session, calls = _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_fills(FillQuery(scope=QueryScope(
+        start_at=datetime.now(timezone.utc) - timedelta(days=91),
+    )))
+
+    assert report.completeness is ReadCompleteness.PARTIAL
+    assert report.reason_code == "private_fill_history_retention_expired"
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_shadow_adapter_refuses_mutation_before_send(monkeypatch):
     profile = _profile("binance")
     exchange = FakeExchange()
     _session, calls = _install(monkeypatch, exchange)
     identity = _identity(profile)
     adapter = CCXTUTAAdapter(identity, profile)
-    assert adapter.capabilities.order_read.value == "unknown"
+    assert adapter.capabilities.order_read.value == "supported"
     instrument = InstrumentIdentity(
         canonical_symbol="BTC/USDT",
         venue_symbol="BTC/USDT:USDT",

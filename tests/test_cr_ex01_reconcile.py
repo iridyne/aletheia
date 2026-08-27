@@ -66,19 +66,20 @@ def _insert_order(db, oid, mode, *, status="submitted", ex_id="ex-1"):
     )
 
 
-def test_reconcile_marks_missing_as_filled(monkeypatch):
+def test_open_list_absence_stays_unresolved(monkeypatch):
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import list_orders, _select_one
 
     db = get_db()
     _insert_order(db, "o1", "okx_live_limited", ex_id="still-open")
     _insert_order(db, "o2", "okx_live_limited", ex_id="gone")
-    # exchange still reports only "still-open" → o2 (gone) converges to filled
+    # Open-list absence alone cannot distinguish fill/cancel/reject/history lag.
     monkeypatch.setattr(recon, "_ccxt_client_for_mode", lambda mode: _FakeClient(open_ids=["still-open"]))
 
     res = recon._reconcile_ccxt_broker("okx_live_limited", list_orders(limit=500))
-    assert res["checked"] == 2 and res["filled"] == 1 and res["unreconciled"] == []
-    assert _select_one("orders", "o2")["status"] == "filled"
+    assert res["checked"] == 2 and res["filled"] == 0
+    assert [order["id"] for order in res["unreconciled"]] == ["o2"]
+    assert _select_one("orders", "o2")["status"] == "submitted"
     assert _select_one("orders", "o1")["status"] == "submitted"
 
 

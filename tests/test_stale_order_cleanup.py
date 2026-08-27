@@ -89,15 +89,13 @@ def _audit_count(oid: str) -> int:
     return int(row["c"])
 
 
-def test_pure_orphan_aged_out_cancelled(monkeypatch):
-    """okx_demo orphan past the hard window, unverifiable → cancelled + audited."""
-    # No exchange reader for okx → verification returns None → aged-out path.
+def test_pure_orphan_aged_out_but_unverifiable_stays_unresolved(monkeypatch):
+    """Age never substitutes for unavailable exact venue evidence."""
     _seed_order(_order(oid="orphan-old", hours_ago=200))
     summary = soc.cleanup_stale_orphan_orders()
-    assert summary["cancelled"] == 1
-    assert _status("orphan-old") == "cancelled"
-    assert repo.get_order("orphan-old")["error_reason"] == "stale_order_unverifiable_aged_out"
-    assert _audit_count("orphan-old") == 1
+    assert summary["cancelled"] == 0
+    assert _status("orphan-old") == "submitted"
+    assert _audit_count("orphan-old") == 0
 
 
 def test_order_with_fill_is_never_cancelled():
@@ -160,7 +158,7 @@ def test_exchange_still_open_is_never_cancelled(monkeypatch):
         oid="still-open", hours_ago=300, execution_mode="bitget_demo",
         exchange_order_id="ex-99",
     ))
-    monkeypatch.setattr(soc, "_exchange_open_order_ids", lambda order: {"ex-99"})
+    monkeypatch.setattr(soc, "_exchange_order_absent_unfilled", lambda order: False)
     summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 0
     assert _status("still-open") == "submitted"
@@ -172,7 +170,7 @@ def test_exchange_confirms_absent_cancels_before_hard_window(monkeypatch):
         oid="gone", hours_ago=72, execution_mode="bitget_demo",
         exchange_order_id="ex-7",
     ))
-    monkeypatch.setattr(soc, "_exchange_open_order_ids", lambda order: {"ex-other"})
+    monkeypatch.setattr(soc, "_exchange_order_absent_unfilled", lambda order: True)
     summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 1
     assert repo.get_order("gone")["error_reason"] == "stale_order_absent_on_exchange"

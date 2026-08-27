@@ -32,7 +32,6 @@ from datetime import datetime, timezone
 import json
 import logging
 
-from aletheia.data.symbols import to_bitget
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
@@ -57,7 +56,6 @@ TRADE_RATE_LIMIT_CANCEL_REASON = "trade_too_many_times_cancel"
 # (which may age out after STALE_PENDING_CLOSE_RELEASE_HOURS).
 VENUE_TRADE_RATE_LIMITED_STATUS = "venue_trade_rate_limited"
 
-_HISTORY_SKIP = object()
 _HISTORY_FAILED = object()
 
 
@@ -120,7 +118,10 @@ _RECOVERABLE_ORDER_STATES = (
     "materialization_missing",
 )
 
-_BITGET_ACCOUNT_MODES = {"bitget_live_limited": "live", "bitget_demo": "demo"}
+_UTA_ACCOUNT_MODES = frozenset({
+    "bitget_live_limited", "bitget_demo", "okx_live_limited", "okx_demo",
+    "binance_live_limited", "binance_testnet",
+})
 
 
 def _run_coro(coro):
@@ -177,34 +178,34 @@ def _local_fill_quantity(order_id: str) -> float:
 
 def _exchange_open_order_ids(order: dict) -> set[str] | None:
     execution_mode = str(order.get("execution_mode") or "")
-    account_mode = _BITGET_ACCOUNT_MODES.get(execution_mode)
-    if account_mode is None:
+    if execution_mode not in _UTA_ACCOUNT_MODES:
         return None
-    market_type = str(order.get("market_type") or "spot")
     try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        from aletheia.uta.compat import scope_from_local
+        from aletheia.uta.manager import query_uta
+        from aletheia.uta.models import OrderQuery, ReadCompleteness
 
-        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
-        rows = _run_coro(client.get_open_orders(market_type=market_type))
+        report = _run_coro(query_uta(
+            execution_mode,
+            "get_open_orders",
+            OrderQuery(scope=scope_from_local(
+                str(order["symbol"]), str(order.get("market_type") or "spot")
+            )),
+        ))
     except Exception as exc:
         logger.warning(
             "pending_close_recovery: open-order query unavailable for %s/%s (%s)",
             execution_mode,
-            market_type,
+            order.get("market_type"),
             type(exc).__name__,
         )
         return None
-    if isinstance(rows, dict):
-        rows = rows.get("orderList") or rows.get("list") or []
-    if not isinstance(rows, list):
+    if report.completeness is not ReadCompleteness.COMPLETE:
         return None
     ids: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        for key in ("orderId", "order_id", "clientOid", "clientOrderId"):
-            value = str(row.get(key) or "").strip()
+    for row in report.orders:
+        for value in (row.venue_order_id, row.client_order_id):
+            value = str(value or "").strip()
             if value:
                 ids.add(value)
     return ids
@@ -220,24 +221,33 @@ def _order_present(order: dict, open_ids: set[str]) -> bool:
 
 def _exchange_fill_rows(order: dict) -> list[dict] | None:
     execution_mode = str(order.get("execution_mode") or "")
-    account_mode = _BITGET_ACCOUNT_MODES.get(execution_mode)
     exchange_order_id = str(order.get("exchange_order_id") or "").strip()
-    if account_mode is None or not exchange_order_id:
-        return []
-    market_type = str(order.get("market_type") or "spot")
+    client_order_id = str(order.get("client_order_id") or "").strip()
+    if execution_mode not in _UTA_ACCOUNT_MODES or not (
+        exchange_order_id or client_order_id
+    ):
+        return None
     try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        from aletheia.uta.compat import scope_from_local
+        from aletheia.uta.manager import query_uta
+        from aletheia.uta.models import FillQuery, ReadCompleteness
 
-        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
-        rows = _run_coro(
-            client.get_order_fills(
-                order_id=exchange_order_id,
-                symbol=to_bitget(str(order["symbol"])),
-                market_type=market_type,
-            )
-        )
-        return _response_rows(rows)
+        report = _run_coro(query_uta(
+            execution_mode,
+            "get_fills",
+            FillQuery(
+                scope=scope_from_local(
+                    str(order["symbol"]),
+                    str(order.get("market_type") or "spot"),
+                    start_at=order.get("created_at"),
+                ),
+                venue_order_id=exchange_order_id or None,
+                client_order_id=client_order_id or None,
+            ),
+        ))
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            return None
+        return [row.model_dump(mode="json") for row in report.fills]
     except Exception as exc:
         logger.warning(
             "pending_close_recovery: exact fill query unavailable for %s (%s)",
@@ -248,30 +258,39 @@ def _exchange_fill_rows(order: dict) -> list[dict] | None:
 
 
 def _uta_history_lookup(order: dict):
-    """UTA order-history probe.
-
-    Returns ``_HISTORY_SKIP`` on classic mix accounts, ``_HISTORY_FAILED`` when
-    the query cannot be trusted, a row dict when found, or ``None`` when the
-    unified history page loaded but this order id is absent.
-    """
+    """Exact UTA order report; partial/unavailable evidence fails closed."""
     execution_mode = str(order.get("execution_mode") or "")
-    account_mode = _BITGET_ACCOUNT_MODES.get(execution_mode)
     exchange_order_id = str(order.get("exchange_order_id") or "").strip()
-    if account_mode is None or not exchange_order_id:
-        return _HISTORY_SKIP
+    client_order_id = str(order.get("client_order_id") or "").strip()
+    if execution_mode not in _UTA_ACCOUNT_MODES or not (exchange_order_id or client_order_id):
+        return _HISTORY_FAILED
     try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        from aletheia.uta.compat import scope_from_local
+        from aletheia.uta.manager import query_uta
+        from aletheia.uta.models import OrderQuery, ReadCompleteness
 
-        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
-        if not _run_coro(client._is_unified()):
-            return _HISTORY_SKIP
-        return _run_coro(
-            client._uta_order_history_row(
-                exchange_order_id,
-                to_bitget(str(order["symbol"])),
-            )
-        )
+        report = _run_coro(query_uta(
+            execution_mode,
+            "get_order",
+            OrderQuery(
+                scope=scope_from_local(
+                    str(order["symbol"]),
+                    str(order.get("market_type") or "spot"),
+                    start_at=order.get("created_at"),
+                ),
+                venue_order_id=exchange_order_id or None,
+                client_order_id=client_order_id or None,
+            ),
+        ))
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            return _HISTORY_FAILED
+        if report.found is None:
+            return None
+        return {
+            "orderStatus": report.found.state.value,
+            "status": report.found.state.value,
+            "cancelReason": report.reason_code or "",
+        }
     except Exception as exc:
         logger.warning(
             "pending_close_recovery: UTA history unavailable for %s (%s)",

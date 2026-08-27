@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+import hashlib
 from importlib.metadata import version
 from typing import Any
 
@@ -16,6 +18,8 @@ from aletheia.uta.models import (
     CommandEvidence,
     CommandReport,
     ExecutionMassStatus,
+    FundingLedgerEntry,
+    FillReport,
     FillListReport,
     FillQuery,
     FundingLedgerQuery,
@@ -80,18 +84,18 @@ class CCXTUTAAdapter:
         return UTACapabilities(
             account_read=CapabilitySupport.SUPPORTED,
             position_read=CapabilitySupport.SUPPORTED,
-            # Open-order lists are implemented in Phase 1; exact order evidence is
-            # still Phase 3, so the aggregate capability cannot claim full support.
-            order_read=CapabilitySupport.UNKNOWN,
-            fill_read=CapabilitySupport.UNSUPPORTED,
-            funding_ledger=CapabilitySupport.UNSUPPORTED,
-            verified_exit=CapabilitySupport.UNSUPPORTED,
+            order_read=CapabilitySupport.SUPPORTED,
+            fill_read=CapabilitySupport.SUPPORTED,
+            funding_ledger=CapabilitySupport.SUPPORTED,
+            verified_exit=CapabilitySupport.SUPPORTED,
             market_order=CapabilitySupport.UNSUPPORTED,
             limit_order=CapabilitySupport.UNSUPPORTED,
             modify_order=CapabilitySupport.UNSUPPORTED,
             cancel_order=CapabilitySupport.UNSUPPORTED,
             trading_permission=CapabilitySupport.UNKNOWN,
             supported_market_types=self._profile.supported_market_types,
+            private_order_history_bounds="90_days",
+            private_fill_history_bounds="90_days",
             environment_available=True,
             source=f"{self._identity.venue}_{self._identity.profile}_profile_v1",
         )
@@ -168,6 +172,11 @@ class CCXTUTAAdapter:
     async def _request(self, awaitable):
         async with asyncio.timeout(self._request_timeout):
             return await awaitable
+
+    @staticmethod
+    def _history_params(params: dict[str, object]) -> dict[str, object]:
+        """Use CCXT's bounded deterministic pagination for private history."""
+        return {**params, "paginate": True, "paginationCalls": 10}
 
     @staticmethod
     def _now() -> datetime:
@@ -446,43 +455,416 @@ class CCXTUTAAdapter:
 
     async def get_order(self, query: OrderQuery) -> OrderQueryReport:
         query.require_exact()
+        received_at = self._now()
+        if query.scope.sub_account_id is not None:
+            return OrderQueryReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.UNSUPPORTED,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="sub_account_read_unsupported",
+                profile_version=self._profile_version,
+            )
+        if not query.venue_order_id and query.scope.start_at is None:
+            return OrderQueryReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="private_order_history_start_required",
+                profile_version=self._profile_version,
+            )
+        if (
+            not query.venue_order_id
+            and query.scope.start_at < received_at - timedelta(
+                days=self._profile.private_history_retention_days
+            )
+        ):
+            return OrderQueryReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="private_order_history_retention_expired",
+                profile_version=self._profile_version,
+            )
+        try:
+            exchange = await self._connected_exchange()
+            symbol = query.scope.instrument.venue_symbol if query.scope.instrument else None
+            rows: list[dict[str, object]] = []
+            failed = False
+            history_bound_reached = False
+            if query.venue_order_id:
+                try:
+                    raw = await self._request(
+                        exchange.fetch_order(query.venue_order_id, symbol)
+                    )
+                    if not isinstance(raw, dict):
+                        raise ValueError("invalid CCXT order")
+                    rows.append(raw)
+                except Exception as exc:
+                    if type(exc).__name__ != "OrderNotFound":
+                        raise
+            else:
+                for method_name, requests in (
+                    ("fetch_open_orders", self._profile.open_order_requests),
+                    ("fetch_closed_orders", self._profile.closed_order_requests),
+                ):
+                    method = getattr(exchange, method_name)
+                    for params in requests:
+                        try:
+                            result = await self._request(
+                                method(
+                                    symbol,
+                                    int(query.scope.start_at.timestamp() * 1000),
+                                    1000,
+                                    self._history_params(dict(params)),
+                                )
+                            )
+                            if not isinstance(result, list):
+                                raise ValueError("invalid CCXT order history")
+                            history_bound_reached = (
+                                history_bound_reached or len(result) >= 1000
+                            )
+                            rows.extend(item for item in result if isinstance(item, dict))
+                        except (Exception, TimeoutError):
+                            failed = True
+            matches = []
+            reasons: dict[tuple[str | None, str | None], str] = {}
+            parse_failed = False
+            for raw in rows:
+                try:
+                    item = self._profile.order(
+                        raw, exchange.markets or {}, self.identity, received_at
+                    )
+                except (TypeError, ValueError):
+                    parse_failed = True
+                    continue
+                if query.client_order_id and item.client_order_id != query.client_order_id:
+                    continue
+                if query.venue_order_id and item.venue_order_id != query.venue_order_id:
+                    continue
+                matches.append(item)
+                reason = self._profile.order_reason(raw)
+                if reason:
+                    reasons[(item.venue_order_id, item.client_order_id)] = reason
+            unique = {
+                (item.venue_order_id, item.client_order_id): item for item in matches
+            }
+            if len(unique) > 1:
+                return OrderQueryReport(
+                    identity=self.identity,
+                    completeness=ReadCompleteness.PARTIAL,
+                    scope=query.scope,
+                    received_at=received_at,
+                    reason_code="ambiguous_exact_order_identity",
+                    profile_version=self._profile_version,
+                )
+            partial = failed or parse_failed or history_bound_reached
+            found = next(iter(unique.values()), None)
+            return OrderQueryReport(
+                identity=self.identity,
+                completeness=(
+                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
+                ),
+                scope=query.scope,
+                received_at=received_at,
+                reason_code=(
+                    "private_order_history_bound_reached"
+                    if history_bound_reached
+                    else "exact_order_surface_partial"
+                    if partial
+                    else reasons.get((found.venue_order_id, found.client_order_id))
+                    if found
+                    else None
+                ),
+                profile_version=self._profile_version,
+                found=found,
+            )
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+        except (Exception, TimeoutError):
+            pass
         return OrderQueryReport(
             identity=self.identity,
-            completeness=ReadCompleteness.UNSUPPORTED,
+            completeness=ReadCompleteness.UNAVAILABLE,
             scope=query.scope,
-            received_at=self._now(),
-            reason_code="phase_three_evidence_unsupported",
+            received_at=received_at,
+            reason_code="private_exact_order_unavailable",
             profile_version=self._profile_version,
         )
 
     async def get_fills(self, query: FillQuery) -> FillListReport:
+        received_at = self._now()
+        if query.scope.sub_account_id is not None:
+            return FillListReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.UNSUPPORTED,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="sub_account_read_unsupported",
+                profile_version=self._profile_version,
+            )
+        if query.scope.start_at is None:
+            return FillListReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="private_fill_history_start_required",
+                profile_version=self._profile_version,
+            )
+        if query.scope.start_at < received_at - timedelta(
+            days=self._profile.private_history_retention_days
+        ):
+            return FillListReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="private_fill_history_retention_expired",
+                profile_version=self._profile_version,
+            )
+        try:
+            exchange = await self._connected_exchange()
+            symbol = query.scope.instrument.venue_symbol if query.scope.instrument else None
+            since = (
+                int(query.scope.start_at.timestamp() * 1000)
+                if query.scope.start_at
+                else None
+            )
+            rows: list[dict[str, object]] = []
+            failed_calls = 0
+            history_bound_reached = False
+            page_limit = query.scope.limit or 1000
+            for params in self._profile.fill_requests:
+                try:
+                    page = await self._request(
+                        exchange.fetch_my_trades(
+                            symbol,
+                            since,
+                            page_limit,
+                            self._history_params(dict(params)),
+                        )
+                    )
+                    if not isinstance(page, list):
+                        raise ValueError("invalid CCXT fills")
+                    history_bound_reached = history_bound_reached or len(page) >= page_limit
+                    rows.extend(item for item in page if isinstance(item, dict))
+                except (Exception, TimeoutError):
+                    failed_calls += 1
+            if failed_calls == len(self._profile.fill_requests):
+                raise RuntimeError("all private fill surfaces unavailable")
+            fills: dict[str, FillReport] = {}
+            failed_records = False
+            for raw in rows:
+                try:
+                    item = self._profile.fill(
+                        raw, exchange.markets or {}, self.identity, received_at
+                    )
+                except (TypeError, ValueError):
+                    failed_records = True
+                    continue
+                if query.scope.end_at and item.executed_at > query.scope.end_at:
+                    continue
+                if query.client_order_id and item.client_order_id != query.client_order_id:
+                    continue
+                if query.venue_order_id and item.venue_order_id != query.venue_order_id:
+                    continue
+                previous = fills.get(item.venue_fill_id)
+                if previous is not None and previous != item:
+                    failed_records = True
+                    continue
+                fills[item.venue_fill_id] = item
+            partial = bool(failed_calls or failed_records or history_bound_reached)
+            return FillListReport(
+                identity=self.identity,
+                completeness=(
+                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
+                ),
+                scope=query.scope,
+                received_at=received_at,
+                reason_code=(
+                    "private_fill_history_bound_reached"
+                    if history_bound_reached
+                    else "private_fill_surface_partial"
+                    if partial
+                    else None
+                ),
+                profile_version=self._profile_version,
+                fills=tuple(sorted(fills.values(), key=lambda item: (item.executed_at, item.venue_fill_id))),
+            )
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+        except (Exception, TimeoutError):
+            pass
         return FillListReport(
             identity=self.identity,
-            completeness=ReadCompleteness.UNSUPPORTED,
+            completeness=ReadCompleteness.UNAVAILABLE,
             scope=query.scope,
-            received_at=self._now(),
-            reason_code="phase_three_evidence_unsupported",
+            received_at=received_at,
+            reason_code="private_fills_unavailable",
             profile_version=self._profile_version,
         )
 
     async def get_mass_status(self, query: ReconciliationQuery) -> ExecutionMassStatus:
+        orders = []
+        order_partial = False
+        for client_order_id in query.client_order_ids:
+            report = await self.get_order(
+                OrderQuery(scope=query.scope, client_order_id=client_order_id)
+            )
+            order_partial = order_partial or report.completeness is not ReadCompleteness.COMPLETE
+            if report.found:
+                orders.append(report.found)
+        for venue_order_id in query.venue_order_ids:
+            report = await self.get_order(
+                OrderQuery(scope=query.scope, venue_order_id=venue_order_id)
+            )
+            order_partial = order_partial or report.completeness is not ReadCompleteness.COMPLETE
+            if report.found:
+                orders.append(report.found)
+        fills, positions = await asyncio.gather(
+            self.get_fills(FillQuery(scope=query.scope)),
+            self.get_positions(PositionQuery(scope=query.scope)),
+        )
+        unresolved = []
+        if order_partial:
+            unresolved.append("orders")
+        if fills.completeness is not ReadCompleteness.COMPLETE:
+            unresolved.append("fills")
+        if positions.completeness is not ReadCompleteness.COMPLETE:
+            unresolved.append("positions")
         return ExecutionMassStatus(
             identity=self.identity,
-            completeness=ReadCompleteness.UNSUPPORTED,
+            completeness=(
+                ReadCompleteness.COMPLETE
+                if not unresolved
+                else ReadCompleteness.PARTIAL
+            ),
             scope=query.scope,
             received_at=self._now(),
-            reason_code="phase_three_evidence_unsupported",
+            reason_code="mass_status_partial" if unresolved else None,
             profile_version=self._profile_version,
-            unsupported_surfaces=("orders", "fills", "positions"),
+            orders=tuple({(item.venue_order_id, item.client_order_id): item for item in orders}.values()),
+            fills=fills.fills,
+            positions=positions.positions,
+            unresolved_surfaces=tuple(unresolved),
         )
 
     async def get_funding_ledger(self, query: FundingLedgerQuery) -> FundingLedgerReport:
+        received_at = self._now()
+        if query.scope.instrument is None:
+            return FundingLedgerReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="funding_instrument_required",
+                profile_version=self._profile_version,
+            )
+        if query.scope.start_at is None:
+            return FundingLedgerReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="funding_history_start_required",
+                profile_version=self._profile_version,
+            )
+        if query.scope.start_at < received_at - timedelta(
+            days=self._profile.private_history_retention_days
+        ):
+            return FundingLedgerReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.PARTIAL,
+                scope=query.scope,
+                received_at=received_at,
+                reason_code="funding_history_retention_expired",
+                profile_version=self._profile_version,
+            )
+        try:
+            exchange = await self._connected_exchange()
+            since = (
+                int(query.scope.start_at.timestamp() * 1000)
+                if query.scope.start_at
+                else None
+            )
+            rows = []
+            failed_calls = 0
+            history_bound_reached = False
+            page_limit = query.scope.limit or 1000
+            for params in self._profile.ledger_requests:
+                try:
+                    page = await self._request(
+                        exchange.fetch_ledger(
+                            "USDT",
+                            since,
+                            page_limit,
+                            self._history_params(dict(params)),
+                        )
+                    )
+                    if not isinstance(page, list):
+                        raise ValueError("invalid CCXT ledger")
+                    history_bound_reached = history_bound_reached or len(page) >= page_limit
+                    rows.extend(item for item in page if isinstance(item, dict))
+                except (Exception, TimeoutError):
+                    failed_calls += 1
+            if failed_calls == len(self._profile.ledger_requests):
+                raise RuntimeError("private funding ledger unavailable")
+            events = self._profile.funding_events(rows)
+            entries = []
+            for event in events:
+                if event["symbol"] != query.scope.instrument.canonical_symbol:
+                    continue
+                settled = datetime.fromtimestamp(
+                    int(event["occurred_at_ms"]) / 1000, tz=timezone.utc
+                )
+                if query.scope.end_at and settled > query.scope.end_at:
+                    continue
+                entries.append(
+                    FundingLedgerEntry(
+                        identity=self.identity,
+                        instrument=query.scope.instrument,
+                        settlement_at=settled,
+                        amount=Decimal(str(event["cash_change"])),
+                        currency=str(event["currency"]),
+                        venue_ledger_id=str(event["event_id"]),
+                        source="broker_ledger",
+                        source_provenance="ccxt_private_ledger",
+                    )
+                )
+            partial = bool(failed_calls or history_bound_reached)
+            return FundingLedgerReport(
+                identity=self.identity,
+                completeness=(
+                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
+                ),
+                scope=query.scope,
+                received_at=received_at,
+                reason_code=(
+                    "funding_history_bound_reached"
+                    if history_bound_reached
+                    else "funding_ledger_partial"
+                    if partial
+                    else None
+                ),
+                profile_version=self._profile_version,
+                entries=tuple(entries),
+            )
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+        except (Exception, TimeoutError, ValueError):
+            pass
         return FundingLedgerReport(
             identity=self.identity,
-            completeness=ReadCompleteness.UNSUPPORTED,
+            completeness=ReadCompleteness.UNAVAILABLE,
             scope=query.scope,
-            received_at=self._now(),
-            reason_code="phase_three_evidence_unsupported",
+            received_at=received_at,
+            reason_code="private_funding_ledger_unavailable",
             profile_version=self._profile_version,
         )
 
@@ -492,28 +874,135 @@ class CCXTUTAAdapter:
                 UTAErrorCode.ACCOUNT_IDENTITY_MISMATCH,
                 "account_identity_mismatch",
             )
+        scope = QueryScope(
+            instrument=query.instrument,
+            start_at=query.history_start_at,
+            end_at=query.history_end_at,
+        )
+        positions, fills = await asyncio.gather(
+            self.get_positions(PositionQuery(scope=scope)),
+            self.get_fills(FillQuery(scope=scope)),
+        )
+        if positions.completeness is ReadCompleteness.COMPLETE and positions.positions:
+            return VerifiedExitReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.COMPLETE,
+                scope=scope,
+                received_at=self._now(),
+                profile_version=self._profile_version,
+                state=VerifiedExitState.POSITION_PRESENT,
+                local_position_id=query.local_position_id,
+                current_position=positions.positions[0],
+            )
+        non_entry_fills = tuple(
+            fill
+            for fill in fills.fills
+            if fill.client_order_id not in query.local_order_ids
+            and fill.venue_order_id not in query.local_order_ids
+        )
+        close_side = "sell" if query.direction.lower() in {"long", "buy"} else "buy"
+        close_fills = tuple(fill for fill in non_entry_fills if fill.side.lower() == close_side)
+        ambiguous = any(fill.side.lower() != close_side for fill in non_entry_fills)
+        if (
+            positions.completeness is ReadCompleteness.COMPLETE
+            and fills.completeness is ReadCompleteness.COMPLETE
+        ):
+            state = (
+                VerifiedExitState.VERIFIED_FILL_EXIT
+                if not ambiguous
+                and close_fills
+                and sum((fill.quantity for fill in close_fills), Decimal(0))
+                >= query.expected_quantity
+                else (
+                    VerifiedExitState.CONFIRMED_ABSENT_WITHOUT_FILL
+                    if not non_entry_fills
+                    else VerifiedExitState.INCONCLUSIVE
+                )
+            )
+            if state is VerifiedExitState.INCONCLUSIVE:
+                return VerifiedExitReport(
+                    identity=self.identity,
+                    completeness=ReadCompleteness.COMPLETE,
+                    scope=scope,
+                    received_at=self._now(),
+                    reason_code="ambiguous_or_partial_exit_fills",
+                    profile_version=self._profile_version,
+                    state=state,
+                    local_position_id=query.local_position_id,
+                )
+            return VerifiedExitReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.COMPLETE,
+                scope=scope,
+                received_at=self._now(),
+                profile_version=self._profile_version,
+                state=state,
+                local_position_id=query.local_position_id,
+                exit_fills=close_fills if state is VerifiedExitState.VERIFIED_FILL_EXIT else (),
+            )
         return VerifiedExitReport(
             identity=self.identity,
-            completeness=ReadCompleteness.UNSUPPORTED,
-            scope=QueryScope(
-                instrument=query.instrument,
-                start_at=query.history_start_at,
-                end_at=query.history_end_at,
-            ),
+            completeness=ReadCompleteness.PARTIAL,
+            scope=scope,
             received_at=self._now(),
-            reason_code="phase_three_evidence_unsupported",
+            reason_code="verified_exit_evidence_incomplete",
             profile_version=self._profile_version,
             state=VerifiedExitState.INCONCLUSIVE,
             local_position_id=query.local_position_id,
         )
 
     async def probe_account_authority(self) -> AccountAuthorityProbeReport:
+        received_at = self._now()
+        try:
+            exchange = await self._connected_exchange()
+            balances = []
+            failed = 0
+            for params in self._profile.balance_requests:
+                try:
+                    raw = await self._request(exchange.fetch_balance(params=dict(params)))
+                    if not isinstance(raw, dict):
+                        raise ValueError("invalid CCXT balance")
+                    balances.append(raw)
+                except (Exception, TimeoutError):
+                    failed += 1
+            if failed == len(self._profile.balance_requests):
+                raise RuntimeError("private account authority unavailable")
+            account_id, permission = self._profile.account_authority(balances)
+            fingerprint = self.identity.account_fingerprint
+            if account_id:
+                fingerprint = "sha256:" + hashlib.sha256(
+                    f"{self.identity.venue}:{self.identity.environment}:{account_id}".encode()
+                ).hexdigest()
+            support = {
+                "granted": CapabilitySupport.SUPPORTED,
+                "denied": CapabilitySupport.UNSUPPORTED,
+            }.get(permission, CapabilitySupport.UNKNOWN)
+            partial = bool(failed)
+            return AccountAuthorityProbeReport(
+                identity=self.identity,
+                completeness=(
+                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
+                ),
+                scope=QueryScope(),
+                received_at=received_at,
+                reason_code="account_authority_partial" if partial else None,
+                profile_version=self._profile_version,
+                authenticated_private_readable=True,
+                trading_permission=support,
+                account_fingerprint=fingerprint,
+                capability_version="1",
+            )
+        except UTAError as exc:
+            if exc.code is UTAErrorCode.CONFIG:
+                raise
+        except (Exception, TimeoutError):
+            pass
         return AccountAuthorityProbeReport(
             identity=self.identity,
-            completeness=ReadCompleteness.UNSUPPORTED,
+            completeness=ReadCompleteness.UNAVAILABLE,
             scope=QueryScope(),
-            received_at=self._now(),
-            reason_code="phase_three_evidence_unsupported",
+            received_at=received_at,
+            reason_code="account_authority_unavailable",
             profile_version=self._profile_version,
             authenticated_private_readable=False,
             trading_permission=CapabilitySupport.UNKNOWN,

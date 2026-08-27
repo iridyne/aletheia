@@ -44,3 +44,17 @@ class BinanceTestnetProfile(CCXTProfile):
         if saw_unrealized:
             values["unrealized_pnl"] = unrealized
         return values, normalized, reason
+
+    def funding_events(self, rows):
+        from aletheia.uta.funding import normalize_binance_funding_rows
+
+        return normalize_binance_funding_rows(
+            row.get("info", row) if isinstance(row, dict) else {} for row in rows
+        )
+
+
+class BinanceLiveProfile(BinanceTestnetProfile):
+    expected_execution_mode = "binance_live_limited"
+    expected_environment = "live"
+    expected_profile = "binance_live"
+    sandbox = False

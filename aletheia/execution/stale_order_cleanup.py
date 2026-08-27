@@ -9,17 +9,14 @@ makes ``reconciliation`` report the same "private fill query unavailable" error
 every cycle (the ``job_consecutive_failure:reconciliation`` alert).
 
 This module is the missing lifecycle end: after an Order has been unresolved long
-enough, verify against the exchange whether it is still open, and if it is
-provably gone — or cannot be verified at all after a hard age cutoff — mark it
-``cancelled`` with a full audit trail.  It is deliberately conservative:
+enough, verify exact order, Fill and Position evidence and mark it ``cancelled``
+only when complete evidence proves absence. It is deliberately conservative:
 
   * It never touches an Order that carries real economics (any local Fill, a
     linked open Position, or an in-flight close for a still-open Position) — those
     belong exclusively to ``reconciliation``'s evidence path.
   * Following ``position_reconciler``'s rule, "cannot see the exchange" is NEVER
-    treated as "the exchange has no such order".  A failed/absent-credential venue
-    query only lets the conservative aged-out fallback act, never the evidence
-    path.
+    treated as "the exchange has no such order".
 
 It lives outside ``reconciliation.py`` (a change-controlled trust-boundary file)
 and is wired into the daily ``_run_cleanup`` scheduler job.
@@ -31,7 +28,6 @@ from datetime import datetime, timezone
 import json
 import logging
 
-from aletheia.data.symbols import to_bitget
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
@@ -49,14 +45,13 @@ _OPEN_LOCAL_STATES = (
 
 # An Order younger than the soft window is still normal in-flight work.  Past it,
 # we may verify against the exchange and cancel a *provably* absent Order.  Only
-# past the hard window will we cancel an Order we cannot verify at all (no
-# credentials / venue unreachable).  Hardcoded like the other _run_cleanup
-# thresholds (prune_*(7/30/90)); no config field, so no Config↔UI obligation.
+# incomplete or unavailable evidence remains unresolved regardless of age.
 _STALE_ORDER_SOFT_HOURS = 48
-_STALE_ORDER_HARD_HOURS = 168  # 7 days
 
-# Venues with a clean open-order reader we can use for evidence-based cancels.
-_BITGET_ACCOUNT_MODES = {"bitget_live_limited": "live", "bitget_demo": "demo"}
+_UTA_ACCOUNT_MODES = frozenset({
+    "bitget_live_limited", "bitget_demo", "okx_live_limited", "okx_demo",
+    "binance_live_limited", "binance_testnet",
+})
 
 
 def _run_coro(coro):
@@ -142,51 +137,42 @@ def _stale_pending_close_position_id(order: dict) -> str | None:
     return str(row["id"]) if row is not None else None
 
 
-def _exchange_open_order_ids(order: dict) -> set[str] | None:
-    """Best-effort set of the venue's currently-open order identities.
-
-    Returns None when we cannot obtain an authoritative open-order view (no clean
-    reader for this venue, missing credentials, or a failed query).  Per
-    position_reconciler's rule, None must NOT be read as "the order is gone".
-    """
+def _exchange_order_absent_unfilled(order: dict) -> bool | None:
+    """Return exact complete UTA absence, never open-list inference."""
     execution_mode = str(order.get("execution_mode") or "")
-    account_mode = _BITGET_ACCOUNT_MODES.get(execution_mode)
-    if account_mode is None:
-        return None  # no clean open-order reader (e.g. okx) → aged-out only
-    market_type = str(order.get("market_type") or "spot")
+    if execution_mode not in _UTA_ACCOUNT_MODES:
+        return None
     try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        from aletheia.uta.compat import scope_from_local
+        from aletheia.uta.manager import query_uta
+        from aletheia.uta.models import ReadCompleteness, ReconciliationQuery
 
-        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
-        rows = _run_coro(client.get_open_orders(market_type=market_type))
+        client_id = str(order.get("client_order_id") or "").strip()
+        venue_id = str(order.get("exchange_order_id") or "").strip()
+        report = _run_coro(query_uta(
+            execution_mode,
+            "get_mass_status",
+            ReconciliationQuery(
+                scope=scope_from_local(
+                    str(order["symbol"]),
+                    str(order.get("market_type") or "spot"),
+                    start_at=order.get("created_at"),
+                ),
+                client_order_ids=(client_id,) if client_id else (),
+                venue_order_ids=(venue_id,) if venue_id else (),
+            ),
+        ))
     except Exception as exc:
         logger.warning(
-            "stale_order_cleanup: open-order query unavailable for %s/%s (%s)",
-            execution_mode, market_type, type(exc).__name__,
+            "stale_order_cleanup: exact UTA evidence unavailable for %s (%s)",
+            execution_mode, type(exc).__name__,
         )
         return None
-    if isinstance(rows, dict):
-        rows = rows.get("orderList") or rows.get("list") or []
-    if not isinstance(rows, list):
+    if report.completeness is not ReadCompleteness.COMPLETE:
         return None
-    ids: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        for key in ("orderId", "order_id", "clientOid", "clientOrderId"):
-            value = str(row.get(key) or "").strip()
-            if value:
-                ids.add(value)
-    return ids
-
-
-def _order_present(order: dict, open_ids: set[str]) -> bool:
-    return any(
-        str(order.get(key) or "").strip() in open_ids
-        for key in ("exchange_order_id", "client_order_id")
-        if str(order.get(key) or "").strip()
-    )
+    if report.fills:
+        return False
+    return not any(item.state.value in {"accepted", "open", "partially_filled", "filled"} for item in report.orders)
 
 
 def _decide(order: dict) -> tuple[str, str] | None:
@@ -206,16 +192,9 @@ def _decide(order: dict) -> tuple[str, str] | None:
     if _stale_pending_close_position_id(order) is not None:
         return ("stale_close_order_position_already_closed", "clear_pending_close")
 
-    open_ids = _exchange_open_order_ids(order)
-    if open_ids is not None:
-        if _order_present(order, open_ids):
-            return None  # exchange still holds it open — never cancel
+    absent_unfilled = _exchange_order_absent_unfilled(order)
+    if absent_unfilled is True:
         return ("stale_order_absent_on_exchange", "cancel")
-
-    # Cannot verify against the venue (no reader / credentials / unreachable).
-    # Only the conservative hard-age fallback may act.
-    if age >= _STALE_ORDER_HARD_HOURS:
-        return ("stale_order_unverifiable_aged_out", "cancel")
     return None
 
 

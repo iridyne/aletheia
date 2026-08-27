@@ -37,7 +37,7 @@ def _position(**kwargs) -> Position:
 
 @pytest.fixture(autouse=True)
 def _skip_uta_history(monkeypatch):
-    monkeypatch.setattr(pcr, "_uta_history_lookup", lambda order: pcr._HISTORY_SKIP)
+    monkeypatch.setattr(pcr, "_uta_history_lookup", lambda order: None)
 
 
 def test_xrp_stale_submitted_close_released_when_absent_on_exchange(monkeypatch):

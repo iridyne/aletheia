@@ -716,6 +716,10 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
         )
 
     monkeypatch.setattr(BitgetClient, "get_funding_ledger", _funding)
+    monkeypatch.setattr(
+        "aletheia.execution.reconciliation._UTAReconciliationProjection.get_funding_ledger",
+        _funding,
+    )
     position = Position(
         symbol="BTC/USDT",
         market_type="usdt_futures",
@@ -780,6 +784,10 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         )
 
     monkeypatch.setattr(BitgetClient, "get_funding_ledger", _funding)
+    monkeypatch.setattr(
+        "aletheia.execution.reconciliation._UTAReconciliationProjection.get_funding_ledger",
+        _funding,
+    )
     target = Position(
         id="immediate-funding-target",
         symbol="BTC/USDT",
