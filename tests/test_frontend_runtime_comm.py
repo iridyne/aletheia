@@ -75,8 +75,9 @@ def test_routes_recover_inside_shell_and_redirect_legacy_paths():
     assert "const Overview = lazy(() => import('./pages/Overview'))" in src
     assert '<Suspense fallback=' in src
     assert '<RouteErrorBoundary key={location.pathname}' in src
-    assert '<Route path="/agent-runs" element={<Navigate to="/agent-activity" replace />} />' in src
-    assert '<Route path="/positions" element={<Navigate to="/trades" replace />} />' in src
+    assert '<Route path="/agent-runs" element={<LegacyRedirect to="/agent-activity" tab="runs" />} />' in src
+    assert '<Route path="/opportunities" element={<LegacyRedirect to="/agent-activity" tab="opps" />} />' in src
+    assert '<Route path="/positions" element={<LegacyRedirect to="/trades" tab="blotter" />} />' in src
     assert '<Route path="*" element={<NotFound />} />' in src
 
 
