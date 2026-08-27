@@ -8,11 +8,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: refresh-release-candidate
+  cancel-in-progress: true
+
 jobs:
   refresh:
     name: Refresh an active release candidate
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_run'
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: write
