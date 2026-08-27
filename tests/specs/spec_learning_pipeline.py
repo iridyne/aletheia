@@ -188,7 +188,7 @@ _GUARDS_MODULE = "aletheia/knowledge/guards.py"
               status="implemented"),
 )
 def test_proposal_carries_opportunity_id():
-    """create_paper_proposal must NOT hard-code opportunity_id=None.
+    """The compatibility submitter must not rebuild away opportunity_id.
 
     That one line severs the attribution chain at the source: market_observer
     already writes scanner_family/universe/confidence into the opportunity, but
@@ -209,8 +209,10 @@ def test_proposal_carries_opportunity_id():
                     if kw.arg == "opportunity_id" and isinstance(kw.value, ast.Constant) \
                             and kw.value.value is None:
                         hardcoded_none = True
+            if name == "submit_prepared_paper_proposal":
+                found = True
 
-    assert found, "create_paper_proposal call not found — refactor likely happened"
+    assert found, "paper proposal submit call not found — refactor likely happened"
     assert not hardcoded_none, (
         "create_paper_proposal(opportunity_id=None) hard-codes None — attribution "
         "chain severed at the source. See round2_week1_decision_chain_fixes.md Fix L-Bug-C"

@@ -750,6 +750,103 @@ def test_dropping_unmeasured_filter_outcomes_is_recorded_in_the_audit_chain():
     assert "never measured" in (events[0]["message"] or "")
 
 
+def test_filter_outcome_loss_audit_rolls_back_when_delete_fails(monkeypatch):
+    """A failed destructive batch must not leave a success-form loss audit."""
+    from aletheia.storage import repositories as repo
+
+    _seed_filter_candidate_outcome(key="unmeasured-100d", entry_ts=_iso(100))
+
+    original_execute_write = repo.execute_write
+
+    def fail_delete(sql, parameters=(), **kwargs):
+        if sql.startswith("DELETE FROM filter_candidate_outcomes"):
+            raise RuntimeError("injected delete failure")
+        return original_execute_write(sql, parameters, **kwargs)
+
+    monkeypatch.setattr(repo, "execute_write", fail_delete)
+
+    with pytest.raises(RuntimeError, match="injected delete failure"):
+        repo.prune_filter_candidate_outcomes(days=30)
+
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='unmeasured-100d'",
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type=?",
+        ("filter_outcome_evidence_dropped_unmeasured",),
+    ).fetchone()[0] == 0
+
+
+def test_filter_outcome_loss_audit_matches_committed_batches(monkeypatch):
+    """Partial failure records only committed row identities; retry converges once."""
+    import json
+
+    from aletheia.storage import repositories as repo
+
+    for key, days_ago in (("batch-a", 100), ("batch-b", 90), ("batch-c", 80)):
+        _seed_filter_candidate_outcome(key=key, entry_ts=_iso(days_ago))
+
+    original_execute_write = repo.execute_write
+    delete_attempts = 0
+
+    def fail_second_delete(sql, parameters=(), **kwargs):
+        nonlocal delete_attempts
+        if sql.startswith("DELETE FROM filter_candidate_outcomes"):
+            delete_attempts += 1
+            if delete_attempts == 2:
+                raise RuntimeError("injected second batch failure")
+        return original_execute_write(sql, parameters, **kwargs)
+
+    monkeypatch.setattr(repo, "execute_write", fail_second_delete)
+
+    cutoff = _iso(30)
+    with pytest.raises(RuntimeError, match="injected second batch failure"):
+        repo._prune_filter_candidate_outcomes_batches(
+            cutoff=cutoff,
+            retention_days=30,
+            batch_size=2,
+        )
+
+    db = get_db()
+    remaining = {
+        row[0]
+        for row in db.execute(
+            "SELECT outcome_candidate_key FROM filter_candidate_outcomes",
+        ).fetchall()
+    }
+    assert remaining == {"batch-c"}
+    events = db.execute(
+        "SELECT id, after_state FROM audit_events WHERE event_type=?",
+        ("filter_outcome_evidence_dropped_unmeasured",),
+    ).fetchall()
+    assert len(events) == 1
+    first_state = json.loads(events[0]["after_state"])
+    assert first_state["dropped_unmeasured"] == 2
+    assert first_state["by_horizon"] == {"1h": 2}
+    assert set(first_state["outcome_candidate_keys"]) == {"batch-a", "batch-b"}
+
+    monkeypatch.setattr(repo, "execute_write", original_execute_write)
+    assert repo._prune_filter_candidate_outcomes_batches(
+        cutoff=cutoff,
+        retention_days=30,
+        batch_size=2,
+    ) == 1
+    final_events = db.execute(
+        "SELECT id, after_state FROM audit_events WHERE event_type=?",
+        ("filter_outcome_evidence_dropped_unmeasured",),
+    ).fetchall()
+    states = [json.loads(row["after_state"]) for row in final_events]
+    assert len({row["id"] for row in final_events}) == 2
+    assert sum(state["dropped_unmeasured"] for state in states) == 3
+    assert {
+        key
+        for state in states
+        for key in state["outcome_candidate_keys"]
+    } == {"batch-a", "batch-b", "batch-c"}
+
+
 def test_pruning_only_measured_filter_outcomes_writes_no_audit_event():
     """The event must mean something. A run with nothing lost must stay quiet."""
     from aletheia.storage.repositories import prune_filter_candidate_outcomes

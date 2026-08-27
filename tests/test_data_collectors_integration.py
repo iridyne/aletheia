@@ -93,6 +93,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
             if "alternative.me" in url:
                 return _FakeResp({"data": [{"value": "15", "value_classification": "Extreme Fear"}]})
             if "coingecko" in url and "markets" in url:
+                last_updated = datetime.now(timezone.utc).isoformat()
                 return _FakeResp([
                     {
                         "id": f"coin{i}", "symbol": f"C{i}", "name": f"Coin {i}",
@@ -101,6 +102,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
                         "price_change_percentage_1h_in_currency": 0.5,
                         "price_change_percentage_24h_in_currency": float(10 - i * 2),
                         "price_change_percentage_7d_in_currency": 1.0,
+                        "last_updated": last_updated,
                     }
                     for i in range(10)
                 ])

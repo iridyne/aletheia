@@ -298,10 +298,9 @@ def get_equity_curve(
         try:
             from aletheia.portfolio import exchange_sync
             unified = exchange_sync.get_unified_cached_state()
-            if unified is not None:
-                uta_age = unified.get("age_seconds")
+            if exchange_sync.status_for(unified) == "ok":
                 uta_upnl = unified.get("total_unrealized_pnl")
-                if uta_age is not None and uta_age < 600 and uta_upnl is not None:
+                if uta_upnl is not None:
                     total_upnl = round(float(uta_upnl), 4)
         except Exception:
             pass
