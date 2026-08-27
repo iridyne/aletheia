@@ -31,6 +31,20 @@ function fmtPnl(v: number | null): string {
   return `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
 }
 
+function fmtHoldCoverage(row: { hold_time_available_count?: number; hold_time_unavailable_count?: number }): string | undefined {
+  const available = row.hold_time_available_count
+  const unavailable = row.hold_time_unavailable_count
+  if (available === undefined || unavailable === undefined || unavailable === 0) return undefined
+  return `${available}/${available + unavailable} timed`
+}
+
+function fmtHoldWithCoverage(
+  hours: number | null,
+  row: { hold_time_available_count?: number; hold_time_unavailable_count?: number },
+): string {
+  return [fmtHours(hours), fmtHoldCoverage(row)].filter(Boolean).join(' · ')
+}
+
 // ── MetricTile ────────────────────────────────────────────────────────────────
 
 function MetricTile({ label, value, sub, tone }: {
@@ -104,7 +118,7 @@ function SourceSection({ rows }: { rows: TradeStatsSource[] }) {
           stats={[
             { label: 'n', value: `${r.trade_count}` },
             { label: 'wr', value: r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}%`, tone: r.win_rate === null ? undefined : r.win_rate >= 50 ? 'pos' : 'neg' },
-            { label: 'hold', value: fmtHours(r.avg_hold_hours) },
+            { label: 'hold', value: fmtHoldWithCoverage(r.avg_hold_hours, r) },
             { label: 'exp', value: r.expectancy_pct === null ? '—' : `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct === null ? undefined : r.expectancy_pct >= 0 ? 'pos' : 'neg' },
           ]}
         />
@@ -138,7 +152,7 @@ function FamilySection({ rows }: { rows: TradeStatsFamily[] }) {
           stats={[
             { label: 'n', value: `${r.trade_count}` },
             { label: 'wr', value: r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}%`, tone: r.win_rate === null ? undefined : r.win_rate >= 50 ? 'pos' : 'neg' },
-            { label: 'hold', value: fmtHours(r.avg_hold_hours) },
+            { label: 'hold', value: fmtHoldWithCoverage(r.avg_hold_hours, r) },
             { label: 'exp', value: r.expectancy_pct === null ? '—' : `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct === null ? undefined : r.expectancy_pct >= 0 ? 'pos' : 'neg' },
           ]}
         />
@@ -230,7 +244,7 @@ export default function TradeAnalyticsPanel({ executionMode }: { executionMode?:
         <MetricTile
           label="Avg Hold Time"
           value={fmtHours(t.avg_hold_hours)}
-          sub={`median ${fmtHours(t.median_hold_hours)}`}
+          sub={[`median ${fmtHours(t.median_hold_hours)}`, fmtHoldCoverage(t)].filter(Boolean).join(' · ')}
         />
       </div>
 

@@ -207,7 +207,8 @@ def test_conflicting_settled_outcomes_are_excluded_deterministically():
         "CREATE TABLE filter_candidate_outcomes (outcome_candidate_key TEXT,horizon TEXT,"
         "status TEXT,net_return_pct REAL,settled_at TEXT,settlement_price_source TEXT,"
         "settlement_lag_sec REAL,venue TEXT,symbol TEXT,market_type TEXT,"
-        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL,exit_price_usd REAL,"
+        "direction TEXT,entry_ts TEXT,due_at TEXT,cost_model_version TEXT,"
+        "entry_price_usd REAL,exit_price_usd REAL,"
         "directional_return_pct REAL,estimated_fee_pct REAL,"
         "estimated_spread_slippage_pct REAL,estimated_funding_pct REAL,"
         "min_tradable_edge_pct REAL)"
@@ -215,9 +216,9 @@ def test_conflicting_settled_outcomes_are_excluded_deterministically():
     db.executemany(
         "INSERT INTO filter_candidate_outcomes VALUES "
         "('key-conflict','15m','settled',?,?, 'horizon_ohlcv',0.0,'bitget','BTC/USDT','spot','long',"
-        "?,'v1',100,?,?,0.1,0.1,0,0.05)",
-        [(1.0, _now(), _now(-0.5), 101.2, 1.2),
-         (-1.0, _now(), _now(-0.5), 99.2, -0.8)],
+        "?,?,'v1',100,?,?,0.1,0.1,0,0.05)",
+        [(1.0, _now(), _now(-0.5), _now(-0.1), 101.2, 1.2),
+         (-1.0, _now(), _now(-0.5), _now(-0.1), 99.2, -0.8)],
     )
     db.commit()
 
@@ -239,7 +240,8 @@ def test_mixed_numeric_and_null_settled_outcomes_conflict():
         "CREATE TABLE filter_candidate_outcomes (outcome_candidate_key TEXT,horizon TEXT,"
         "status TEXT,net_return_pct REAL,settled_at TEXT,settlement_price_source TEXT,"
         "settlement_lag_sec REAL,venue TEXT,symbol TEXT,market_type TEXT,"
-        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL,exit_price_usd REAL,"
+        "direction TEXT,entry_ts TEXT,due_at TEXT,cost_model_version TEXT,"
+        "entry_price_usd REAL,exit_price_usd REAL,"
         "directional_return_pct REAL,estimated_fee_pct REAL,"
         "estimated_spread_slippage_pct REAL,estimated_funding_pct REAL,"
         "min_tradable_edge_pct REAL)"
@@ -247,9 +249,9 @@ def test_mixed_numeric_and_null_settled_outcomes_conflict():
     db.executemany(
         "INSERT INTO filter_candidate_outcomes VALUES "
         "('key-mixed','15m','settled',?,?, 'horizon_ohlcv',0.0,'bitget','BTC/USDT','spot','long',"
-        "?,'v1',100,?,?,0.1,0.1,0,0.05)",
-        [(1.0, _now(), _now(-0.5), 101.2, 1.2),
-         (None, _now(), _now(-0.5), 100.2, 0.2)],
+        "?,?,'v1',100,?,?,0.1,0.1,0,0.05)",
+        [(1.0, _now(), _now(-0.5), _now(-0.1), 101.2, 1.2),
+         (None, _now(), _now(-0.5), _now(-0.1), 100.2, 0.2)],
     )
     db.commit()
 
@@ -334,6 +336,27 @@ def test_settled_outcome_requires_parseable_settlement_timestamp(settled_at):
     assert batch["outcome_states"]["15m"] == {"invalid_settled_at": 1}
     assert batch["horizons"]["15m"]["settled_count"] == 0
     assert report["outcome_linkage_exclusions"] == {"invalid_settled_at": 1}
+
+
+def test_outcome_linkage_rejects_settlement_after_report_as_of():
+    from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_opportunity(db, "opp-future-settlement")
+    _shadow(db, "shadow-future-settlement", "opp-future-settlement", "key-future")
+    _outcome(db, "key-future", "15m", 2.0)
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settled_at='2999-01-01T00:00:00+00:00' "
+        "WHERE outcome_candidate_key='key-future'",
+    )
+    db.commit()
+
+    report = build_ranker_objective_audit()
+    batch = report["variants"]["current_persisted_ranking"]["by_policy_epoch"]["epoch-a"]["by_batch"]["batch-a"]
+    assert batch["outcome_states"]["15m"] == {"settlement_after_as_of": 1}
+    assert batch["horizons"]["15m"]["settled_count"] == 0
+    assert report["outcome_linkage_exclusions"] == {"settlement_after_as_of": 1}
 
 
 @pytest.mark.parametrize(
@@ -705,7 +728,11 @@ def test_production_shadow_and_canonical_outcome_writers_become_audit_eligible(m
     ).fetchone()
     assert shadow["cost_model_version"] is None  # rank-time writer has no settled economics
     key = str(shadow["outcome_candidate_key"])
-    entry_ts = str(shadow["created_at"])
+    entry_ts = _now(-20)
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE id=?",
+        (entry_ts, shadow_ids[0]),
+    )
     record_filter_decision(
         candidate_key=key,
         candidate_kind="opportunity",
@@ -745,7 +772,7 @@ def test_production_shadow_and_canonical_outcome_writers_become_audit_eligible(m
     repo.settle_filter_candidate_outcome(
         str(outcome["id"]),
         exit_price=101.0,
-        settled_at=_now(),
+        settled_at=str(outcome["due_at"]),
         economics=economics,
         settlement_price_source="horizon_ohlcv",
         settlement_lag_sec=0.0,

@@ -27,7 +27,9 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-Provenance = Literal["operator", "default"]
+from aletheia.storage.models import EXIT_INTENT_STOP_SOURCES, exit_intent_violations
+
+Provenance = Literal["operator", "default", "invalid"]
 
 
 @dataclass
@@ -43,6 +45,7 @@ class ExitPlan:
     thesis_invalidation: dict | None = None
     provenance: Provenance = "default"
     version: int = 0
+    invalid_reasons: tuple[str, ...] = ()
 
     def to_columns(self) -> dict[str, Any]:
         """Serialize to the flat ``positions`` columns for ``update_position(**cols)``."""
@@ -90,7 +93,12 @@ def load_exit_plan(position: dict) -> ExitPlan:
     ``version=0`` — never fabricated. Use :func:`effective_exit_plan` when the
     executor needs resolved stop/target with config defaults filled in.
     """
-    provenance = position.get("stop_source") or "default"
+    raw_provenance = position.get("stop_source")
+    violations = exit_intent_violations(
+        expected_horizon_hours=position.get("expected_horizon_hours"),
+        stop_source=raw_provenance if raw_provenance not in (None, "") else None,
+    )
+    provenance = raw_provenance or "default"
     version_raw = position.get("exit_plan_version")
     try:
         version = int(version_raw) if version_raw is not None else 0
@@ -99,11 +107,20 @@ def load_exit_plan(position: dict) -> ExitPlan:
     return ExitPlan(
         stop_price=_as_float(position.get("stop_price")) or None,
         target_price=_as_float(position.get("take_profit_price")) or None,
-        expected_horizon_hours=_as_float(position.get("expected_horizon_hours")),
+        expected_horizon_hours=(
+            None
+            if "invalid_expected_horizon_hours" in violations
+            else _as_float(position.get("expected_horizon_hours"))
+        ),
         trailing=_loads(position.get("trailing_json")),
         thesis_invalidation=_loads(position.get("thesis_invalidation_json")),
-        provenance="operator" if provenance == "operator" else "default",
+        provenance=(
+            provenance
+            if provenance in EXIT_INTENT_STOP_SOURCES
+            else "invalid"
+        ),
         version=version,
+        invalid_reasons=tuple(violations),
     )
 
 
@@ -167,6 +184,17 @@ def effective_exit_plan(position: dict, cfg) -> ExitPlan:
     base = load_exit_plan(position)
     stop, stop_op = _resolve_stop(position, cfg)
     target, target_op = _resolve_target(position, cfg)
+    if base.invalid_reasons:
+        return ExitPlan(
+            stop_price=stop,
+            target_price=target,
+            expected_horizon_hours=base.expected_horizon_hours,
+            trailing=base.trailing,
+            thesis_invalidation=base.thesis_invalidation,
+            provenance="invalid",
+            version=base.version,
+            invalid_reasons=base.invalid_reasons,
+        )
     # Provenance: trust the stored stop_source when present (M2+ positions stamp it at
     # open, so a config-default stop persisted at open correctly stays 'default'); for
     # legacy rows with no stored marker, infer 'operator' from an explicit stop/target.

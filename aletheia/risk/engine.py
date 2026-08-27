@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     _RISK_DECISION_PREFIX,
     _RISK_PROPOSAL_PREFIX,
@@ -33,6 +33,7 @@ from aletheia.storage.repositories import (
     list_unresolved_native_entry_orders_for_risk,
     transaction,
     update_trade_proposal,
+    validate_trade_proposal_commit_hash,
 )
 from aletheia.trading.entry_plan import (
     RISK_REWARD_OUTSIDE_ENVELOPE,
@@ -497,13 +498,14 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
 
     try:
         from aletheia.portfolio.exchange_sync import (
+            account_available_value,
             get_cached_state,
             get_unified_cached_state,
         )
 
         if execution_mode.startswith("bitget_"):
             state = get_cached_state("live" if _is_live(execution_mode) else "demo")
-            value = (state or {}).get("available_usdt")
+            value = account_available_value(state)
         else:
             unified = get_unified_cached_state() or {}
             account = next(
@@ -513,7 +515,7 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
                 ),
                 None,
             )
-            value = (account or {}).get("available_usdt")
+            value = account_available_value(account)
         available = float(value)
         return max(0.0, available)
     except (TypeError, ValueError, AttributeError):
@@ -1399,6 +1401,12 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
             violations.append("invalid_leverage")
     if proposal.execution_mode not in _NATIVE_EXECUTION_MODES:
         violations.append("invalid_execution_mode")
+    violations.extend(
+        exit_intent_violations(
+            expected_horizon_hours=proposal.expected_horizon_hours,
+            stop_source=proposal.stop_source,
+        )
+    )
     return violations
 
 
@@ -1411,12 +1419,10 @@ def _verified_original_proposal_commit_hash(
     row = get_trade_proposal(proposal.id)
     if row is not None:
         stored = TradeProposal.model_validate(row)
-        if stored.commit_hash is None:
-            raise ProposalIntegrityError("stored proposal has no commit hash")
-        if _compute_proposal_hash(stored) != stored.commit_hash:
-            raise ProposalIntegrityError(
-                "stored proposal content does not match commit hash"
-            )
+        try:
+            validate_trade_proposal_commit_hash(stored)
+        except ValueError as exc:
+            raise ProposalIntegrityError(str(exc)) from exc
         if require_evaluated_snapshot_match:
             # Venue preparation may normalize quantity, but every other field
             # covered by the original Proposal hash must remain identical. Put
@@ -2201,8 +2207,10 @@ def _check_account_leverage_ratio(
             weighted_notional += abs(proposal.price * proposal.quantity)
 
         equity = _account_equity(proposal.execution_mode, cfg)
-        if not equity or equity <= 0:
+        if equity is None:
             return [f"account_equity_unavailable:{proposal.execution_mode}"]
+        if equity <= 0:
+            return [f"account_equity_non_positive:{proposal.execution_mode}"]
 
         ratio = weighted_notional / equity
         if ratio > max_ratio:
@@ -2325,6 +2333,7 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
 
     try:
         from aletheia.portfolio.exchange_sync import (
+            account_equity_value,
             get_cached_state,
             get_unified_cached_state,
         )
@@ -2345,16 +2354,15 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
                 if account is not None:
                     if not _external_account_row_is_healthy(account):
                         return None
-                    value = float(account.get("equity_usdt"))
-                    if math.isfinite(value) and value > 0:
+                    value = account_equity_value(account)
+                    if value is not None:
                         return value
             if execution_mode.startswith("bitget_"):
                 cached = get_cached_state("live") or {}
                 if not _external_account_cache_is_healthy(cached):
                     return None
-                value = cached.get("equity_usdt") or cached.get("total_equity_usdt")
-                equity = float(value)
-                if math.isfinite(equity) and equity > 0:
+                equity = account_equity_value(cached)
+                if equity is not None:
                     return equity
             return None
 
@@ -2362,9 +2370,8 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
             cached = get_cached_state("demo") or {}
             if not _external_account_cache_is_healthy(cached):
                 return None
-            value = cached.get("equity_usdt") or cached.get("total_equity_usdt")
-            equity = float(value)
-            if math.isfinite(equity) and equity > 0:
+            equity = account_equity_value(cached)
+            if equity is not None:
                 return equity
             return None
 
@@ -2381,8 +2388,8 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
         )
         if not _external_account_row_is_healthy(account):
             return None
-        equity = float((account or {}).get("equity_usdt"))
-        if math.isfinite(equity) and equity > 0:
+        equity = account_equity_value(account)
+        if equity is not None:
             return equity
     except Exception:
         pass
@@ -2484,6 +2491,8 @@ def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | Non
     equity = _account_equity(execution_mode, cfg)
     if equity is None:
         return None, f"account_equity_unavailable:{execution_mode}"
+    if equity <= 0:
+        return None, f"account_equity_non_positive:{execution_mode}"
     return equity, None
 
 
@@ -2685,9 +2694,14 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
     except Exception:
         equity_value = math.nan
     if not math.isfinite(equity_value) or equity_value <= 0:
+        reason = (
+            f"account_equity_non_positive:{active_mode}"
+            if math.isfinite(equity_value)
+            else f"account_equity_unavailable:{active_mode}"
+        )
         return _unavailable_account_leverage_result(
             cap=max_ratio,
-            reason=f"account_equity_unavailable:{active_mode}",
+            reason=reason,
             positions=positions_detail,
         )
     ratio = weighted_notional / equity_value

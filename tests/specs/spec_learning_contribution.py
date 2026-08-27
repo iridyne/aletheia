@@ -262,7 +262,18 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
 
     db = get_db()
     entry = _iso(1)
+    due_at = (datetime.fromisoformat(entry) + timedelta(hours=4)).isoformat()
     snapshot = json.dumps({"guard_ids": [guard.guard_id]})
+    import aletheia.learning.outcomes as outcomes
+
+    original = outcomes.assess_candidate_outcome
+    as_of_values = []
+
+    def _record(row, *, as_of_at=None):
+        as_of_values.append(as_of_at)
+        return original(row, as_of_at=as_of_at)
+
+    monkeypatch.setattr(outcomes, "assess_candidate_outcome", _record)
     for idx, net in enumerate((-1.0, -2.0, 0.5)):
         key = f"guard-outcome-{idx}"
         db.execute(
@@ -282,7 +293,7 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
             "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, ?, "
             "'horizon_ohlcv', 0, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
             (f"fo-{idx}", key, 100.0 * (1.0 + (net + 0.2) / 100.0),
-             entry, entry, entry, net + 0.2, net),
+             entry, due_at, due_at, net + 0.2, net),
         )
     db.commit()
 
@@ -293,6 +304,8 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
     assert stats[0]["blocked_settled_n"] == 3
     assert stats[0]["blocked_loss_rate"] == pytest.approx(2 / 3, abs=0.0001)
     assert stats[0]["blocked_avg_net_pct"] == -0.8333
+    assert len({value for value in as_of_values}) == 1
+    assert next(iter(as_of_values)).tzinfo is timezone.utc
 
 
 def _iso(days_ago: int) -> str:

@@ -254,7 +254,8 @@ def overview_bootstrap(response: Response):
         "total_value_usdt", "account_equity_usdt", "today_pnl", "today_realized_pnl",
         "today_realized_pnl_complete", "unrealized_pnl", "all_realized_pnl",
         "all_realized_pnl_complete", "all_realized_pnl_unavailable_count", "positions_count",
-        "exchange_mode", "exchange_sync_status",
+        "exchange_mode", "exchange_sync_status", "exchange_equity_usdt", "exchange_state_age_sec",
+        "uta_state",
     )}
     account["exposure_by_symbol"] = dict(list((p.get("exposure_by_symbol") or {}).items())[:8])
     account["exchange_asset_breakdown"] = list((p.get("exchange_asset_breakdown") or [])[:8])
