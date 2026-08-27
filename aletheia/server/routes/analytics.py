@@ -63,6 +63,11 @@ def _safe_pf(gross_profit: float, gross_loss: float) -> dict:
     return {"value": round(gross_profit / gross_loss, 4), "unbounded": False}
 
 
+def _pf_fields(gross_profit: float, gross_loss: float) -> tuple[float | None, bool]:
+    pf = _safe_pf(gross_profit, gross_loss)
+    return pf["value"], bool(pf["unbounded"])
+
+
 def _policy_for_instant(epochs: list[dict], instant: str | None) -> str | None:
     decision_instant = _analytics_instant(instant)
     if decision_instant is None:
@@ -638,7 +643,7 @@ def get_round1_progress():
     gross_profit = float(row["gross_profit"] or 0)
     gross_loss = float(row["gross_loss"] or 0)
     win_rate = round(wins / closed * 100.0, 2) if closed else None
-    profit_factor = _safe_pf(gross_profit, gross_loss)
+    profit_factor, profit_factor_unbounded = _pf_fields(gross_profit, gross_loss)
 
     # by_close_reason breakdown — judgement-critical: lets the UI / a Round 1
     # reviewer distinguish AI-driven exits (stop_loss / take_profit / pi_close /
@@ -677,7 +682,7 @@ def get_round1_progress():
     s_gp = float(strict["gp"])
     s_gl = float(strict["gl"])
     s_wins = int(strict["wins"])
-    strict_pf = _safe_pf(s_gp, s_gl)
+    strict_pf, strict_pf_unbounded = _pf_fields(s_gp, s_gl)
     strict_wr = round(s_wins / s_n * 100.0, 2) if s_n else None
 
     # Half-strict: drop only units_bug_cleanup (Round 1 pre-bug cleanup), keep reconciler.
@@ -694,7 +699,7 @@ def get_round1_progress():
     hs_gp = float(hs["gp"])
     hs_gl = float(hs["gl"])
     hs_wins = int(hs["wins"])
-    hs_pf = _safe_pf(hs_gp, hs_gl)
+    hs_pf, hs_pf_unbounded = _pf_fields(hs_gp, hs_gl)
     hs_wr = round(hs_wins / hs_n * 100.0, 2) if hs_n else None
 
     return {
@@ -708,6 +713,7 @@ def get_round1_progress():
         "win_rate_pct": win_rate,
         "wr_go_line_pct": _WR_GO_LINE,
         "profit_factor": profit_factor,
+        "profit_factor_unbounded": profit_factor_unbounded,
         "pf_go_line": _PF_GO_LINE,
         "first_closed_at": row["first_closed_at"],
         "last_closed_at": row["last_closed_at"],
@@ -715,14 +721,17 @@ def get_round1_progress():
         "cohorts": {
             "raw": {
                 "n": closed, "wr_pct": win_rate, "pf": profit_factor,
+                "pf_unbounded": profit_factor_unbounded,
                 "note": "all close_reason — judgement-noisy",
             },
             "half_strict": {
                 "n": hs_n, "wr_pct": hs_wr, "pf": hs_pf,
+                "pf_unbounded": hs_pf_unbounded,
                 "note": "excludes units_bug_cleanup (pre-Round bug)",
             },
             "strict_ai_driven": {
                 "n": s_n, "wr_pct": strict_wr, "pf": strict_pf,
+                "pf_unbounded": strict_pf_unbounded,
                 "note": f"only {','.join(_AI_REASONS)} — strongest AI-decision signal",
             },
         },
