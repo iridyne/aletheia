@@ -656,6 +656,7 @@ def test_inspect_factor_feedback_formats_win_rate_ratio_as_percent(monkeypatch):
         {"factor_key": "half", "total_trades": 2, "win_rate": 0.5, "expectancy": 1, "profit_factor": 1, "status": "watch"},
         {"factor_key": "three-quarters", "total_trades": 4, "win_rate": 0.75, "expectancy": 1, "profit_factor": 2, "status": "active"},
         {"factor_key": "all", "total_trades": 2, "win_rate": 1.0, "expectancy": 1, "profit_factor": 9, "status": "preferred"},
+        {"factor_key": "unbounded", "trade_count": 3, "win_rate": 1.0, "expectancy": 1, "profit_factor": None, "profit_factor_state": "unbounded_no_losses", "status": "active"},
         {"factor_key": "missing", "total_trades": 2, "win_rate": None, "expectancy": 1, "profit_factor": 1, "status": "watch"},
     ]
     monkeypatch.setattr(
@@ -673,6 +674,7 @@ def test_inspect_factor_feedback_formats_win_rate_ratio_as_percent(monkeypatch):
         ("half", "50%"),
         ("three-quarters", "75%"),
         ("all", "100%"),
+        ("unbounded", "∞"),
         ("missing", "n/a"),
     ]:
         assert any(key in line and rendered in line for line in result.output.splitlines())

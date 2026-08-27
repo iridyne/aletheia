@@ -173,6 +173,64 @@ def test_compute_group_stats_basic():
     assert stats["most_common_close_reason"] in ("take_profit", "stop_loss")
 
 
+def test_compute_group_stats_all_wins_reports_unbounded_state():
+    rows = [
+        {
+            "realized_pnl": 10.0,
+            "holding_hours": 4.0,
+            "close_reason": "take_profit",
+            "closed_at": "2026-06-14T01:00:00",
+        },
+        {
+            "realized_pnl": 8.0,
+            "holding_hours": 6.0,
+            "close_reason": "take_profit",
+            "closed_at": "2026-06-14T02:00:00",
+        },
+        {
+            "realized_pnl": 5.0,
+            "holding_hours": 2.0,
+            "close_reason": "take_profit",
+            "closed_at": "2026-06-14T03:00:00",
+        },
+    ]
+
+    stats = _compute_group_stats("test_key", "exact", rows, min_trades=3)
+
+    assert stats["profit_factor"] is None
+    assert stats["profit_factor_state"] == "unbounded_no_losses"
+    assert "999" not in str(stats)
+    assert "pf=unbounded" in stats["reason"]
+
+
+def test_compute_group_stats_only_losses_reports_finite_zero():
+    rows = [
+        {
+            "realized_pnl": -10.0,
+            "holding_hours": 4.0,
+            "close_reason": "stop_loss",
+            "closed_at": "2026-06-14T01:00:00",
+        },
+        {
+            "realized_pnl": -8.0,
+            "holding_hours": 6.0,
+            "close_reason": "stop_loss",
+            "closed_at": "2026-06-14T02:00:00",
+        },
+        {
+            "realized_pnl": -5.0,
+            "holding_hours": 2.0,
+            "close_reason": "stop_loss",
+            "closed_at": "2026-06-14T03:00:00",
+        },
+    ]
+
+    stats = _compute_group_stats("test_key", "exact", rows, min_trades=3)
+
+    assert stats["profit_factor"] == 0.0
+    assert stats["profit_factor_state"] == "finite"
+
+
 # ---------------------------------------------------------------------------
 # lookup_factor_signal
 # ---------------------------------------------------------------------------
