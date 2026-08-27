@@ -23,11 +23,11 @@ from aletheia.agent_shell.trading_decision import (
 
 def _capture_rationale(monkeypatch, decision: TradingDecision) -> str:
     """Run submit_decision_as_proposal with I/O mocked; return the agent_rationale
-    string passed to create_paper_proposal."""
+    string preserved on the prepared proposal."""
     captured: dict = {}
 
-    def fake_create_paper_proposal(**kwargs):
-        captured["rationale"] = kwargs.get("agent_rationale")
+    def fake_submit_prepared_paper_proposal(proposal):
+        captured["rationale"] = proposal.agent_rationale
         return {"id": "prop-test", "status": "pending"}
 
     # Mock only the I/O boundaries — the rationale-building logic runs for real.
@@ -45,8 +45,8 @@ def _capture_rationale(monkeypatch, decision: TradingDecision) -> str:
         },
     )
     monkeypatch.setattr(
-        "aletheia.execution.paper_tools.create_paper_proposal",
-        fake_create_paper_proposal,
+        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
+        fake_submit_prepared_paper_proposal,
     )
     monkeypatch.setattr(
         "aletheia.trust.guard_chain.run_guards", lambda ctx: []
@@ -136,7 +136,7 @@ def test_direction_overheated_skips_proposal_creation(monkeypatch):
 
     called = {"create": 0}
 
-    def fake_create_paper_proposal(**kwargs):
+    def fake_submit_prepared_paper_proposal(_proposal):
         called["create"] += 1
         return {"id": "unexpected", "status": "pending"}
 
@@ -145,7 +145,10 @@ def test_direction_overheated_skips_proposal_creation(monkeypatch):
         "aletheia.trading.market_data.latest_snapshot",
         lambda symbol, market_type=None: {"price": 100.0},
     )
-    monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", fake_create_paper_proposal)
+    monkeypatch.setattr(
+        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
+        fake_submit_prepared_paper_proposal,
+    )
 
     decision = TradingDecision(
         action="trade",

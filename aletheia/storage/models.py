@@ -1,6 +1,7 @@
 """Pydantic models for storage entities."""
 
 import json
+import math
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -32,6 +33,28 @@ def decode_strategy_parameters(parameters: str | None) -> dict:
     if not isinstance(parsed, dict):
         raise StrategyParametersInvalid("not_json_object")
     return parsed
+
+
+EXIT_INTENT_STOP_SOURCES = frozenset({"operator", "default"})
+
+
+def exit_intent_violations(
+    *,
+    expected_horizon_hours: object = None,
+    stop_source: object = None,
+) -> list[str]:
+    violations: list[str] = []
+    if expected_horizon_hours is not None:
+        try:
+            horizon = float(expected_horizon_hours)
+        except (TypeError, ValueError):
+            horizon = math.nan
+        if not math.isfinite(horizon) or horizon <= 0:
+            violations.append("invalid_expected_horizon_hours")
+    if stop_source is not None:
+        if not isinstance(stop_source, str) or stop_source not in EXIT_INTENT_STOP_SOURCES:
+            violations.append("invalid_stop_source")
+    return violations
 
 
 class _Provenanced(BaseModel):

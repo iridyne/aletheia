@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -73,6 +73,106 @@ def _facts(*, market_type: str = "spot", family: str = "momentum", horizon: floa
         ),
     }
     return opportunity, decision, proposal
+
+
+def _setup_mandate_db(tmp_path, monkeypatch):
+    from aletheia.config import loader
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sqlite_store
+    from aletheia.storage.migrations import apply_migrations
+
+    sqlite_store.reset_db()
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    loader._invalidate_config_cache()
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    sqlite_store._db_conn = db
+    apply_migrations()
+    configured = AletheiaConfig.model_validate(
+        {"trading_mandate": {"enabled": True, **_mandate().model_dump(mode="json")}}
+    )
+    monkeypatch.setattr(loader, "load_config", lambda **_: configured)
+    return repo, sqlite_store, db, configured
+
+
+def _insert_mandate_proposal(
+    repo,
+    proposal_id: str,
+    *,
+    configured: AletheiaConfig,
+    created_at: str | None = None,
+):
+    from aletheia.storage.models import Opportunity, TradeProposal
+
+    opportunity_id = f"{proposal_id}-opp"
+    repo.insert_opportunity(
+        Opportunity(
+            id=opportunity_id,
+            symbol="BTC/USDT",
+            market="spot",
+            scanner_family="momentum",
+        )
+    )
+    proposal = TradeProposal(
+        id=proposal_id,
+        opportunity_id=opportunity_id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        expected_horizon_hours=4.0,
+        attribution_snapshot=json.dumps(
+            {"market_context": {"instrument": {"exchange": "Bitget"}}}
+        ),
+        **({"created_at": created_at} if created_at is not None else {}),
+    )
+    repo.insert_trade_proposal(proposal, mandate_config=configured)
+    return proposal
+
+
+def _tamper_mandate_snapshot(
+    db: sqlite3.Connection,
+    proposal_id: str,
+    tamper: str = "fit_status",
+) -> None:
+    if tamper == "missing_hash":
+        db.execute(
+            "UPDATE trade_proposals SET commit_hash=NULL WHERE id=?",
+            (proposal_id,),
+        )
+        db.commit()
+        return
+    row = db.execute(
+        "SELECT attribution_snapshot FROM trade_proposals WHERE id=?",
+        (proposal_id,),
+    ).fetchone()
+    snapshot = json.loads(row["attribution_snapshot"])
+    fit = dict(snapshot["trading_mandate_fit"])
+    if tamper == "identity":
+        snapshot["trading_mandate_identity"] = {
+            **snapshot["trading_mandate_identity"],
+            "mandate_version": 2,
+        }
+    elif tamper == "fit_checks":
+        fit["checks"] = [{**fit["checks"][0], "reason": "tampered_reason"}]
+    elif tamper == "fit_reasons":
+        fit["reasons"] = ["tampered_reason"]
+    elif tamper == "source_ids":
+        fit["source_identities"] = {
+            **fit["source_identities"],
+            "proposal_id": "tampered-proposal",
+        }
+    else:
+        fit["status"] = "out_of_scope"
+        fit["reasons"] = ["tampered_reason"]
+    snapshot["trading_mandate_fit"] = fit
+    db.execute(
+        "UPDATE trade_proposals SET attribution_snapshot=? WHERE id=?",
+        (json.dumps(snapshot), proposal_id),
+    )
+    db.commit()
 
 
 def test_valid_mandate_normalizes_collections_and_hashes_stably():
@@ -171,13 +271,53 @@ def test_frozen_identity_requires_complete_contract_shape():
             )
 
 
-def test_open_position_duration_uses_report_timestamp():
+def _frozen_mandate_snapshot() -> str:
+    opportunity, decision, proposal = _facts()
+    evidence = build_trading_mandate_provenance(
+        configured=_mandate(),
+        opportunity=opportunity,
+        decision=decision,
+        proposal=proposal,
+    )
+    return json.dumps(evidence)
+
+
+def test_completed_position_duration_requires_genuine_close():
     from aletheia.analytics.trading_mandate_compliance import _duration
 
-    assert _duration(
-        {"opened_at": "2026-01-01T00:00:00+00:00", "closed_at": None},
-        as_of=datetime(2026, 1, 1, 6, tzinfo=timezone.utc),
-    ) == 6.0
+    assert _duration({"opened_at": "2026-01-01T00:00:00+00:00", "closed_at": None}) is None
+    assert _duration({
+        "opened_at": "2026-01-01T00:00:00+00:00",
+        "closed_at": "2026-01-01T06:00:00+00:00",
+    }) == 6.0
+
+
+def test_aggregate_window_bounds_are_inclusive():
+    from aletheia.analytics.trading_mandate_compliance import (
+        _event_window_exclusion,
+    )
+
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    window_to = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    assert _event_window_exclusion(
+        cutoff.isoformat(),
+        cutoff=cutoff,
+        window_to=window_to,
+        field="created_at",
+    ) is None
+    assert _event_window_exclusion(
+        window_to.isoformat(),
+        cutoff=cutoff,
+        window_to=window_to,
+        field="created_at",
+    ) is None
+    assert _event_window_exclusion(
+        (window_to + timedelta(microseconds=1)).isoformat(),
+        cutoff=cutoff,
+        window_to=window_to,
+        field="created_at",
+    ) == "created_at_future"
 
 
 def test_enabled_mandate_round_trips_through_yaml_without_activation_drift(tmp_path, monkeypatch):
@@ -375,4 +515,220 @@ def test_compliance_aggregate_is_read_only_and_keeps_denominators(tmp_path, monk
     assert report["read_only"] is True
     assert report["counts"]["proposals_by_fit_status"]["not_recorded"] == 0
     assert report["denominators"]["proposal_fit_status_denominator"] == 0
+    sqlite_store.reset_db()
+
+
+def test_compliance_aggregate_uses_completed_event_time_cohort(tmp_path, monkeypatch):
+    import aletheia.analytics.trading_mandate_compliance as compliance
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            current = datetime(2026, 1, 2, 12, tzinfo=timezone.utc)
+            return current if tz is not None else current.replace(tzinfo=None)
+
+    repo, sqlite_store, db, configured = _setup_mandate_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(compliance, "datetime", FixedDatetime)
+    now = FixedDatetime.now(timezone.utc)
+    for proposal_id, created_at in (
+        ("proposal-current", now - timedelta(hours=3)),
+        ("proposal-cutoff", now - timedelta(hours=24)),
+        ("proposal-window-end", now),
+        ("proposal-future", now + timedelta(minutes=1)),
+    ):
+        _insert_mandate_proposal(
+            repo,
+            proposal_id,
+            configured=configured,
+            created_at=created_at.isoformat(),
+        )
+    for position_id, opened_at, closed_at, status in (
+        ("position-closed", now - timedelta(hours=3), now - timedelta(hours=1), "closed"),
+        ("position-open", now - timedelta(hours=20), None, "open"),
+        ("position-future-open", now + timedelta(minutes=1), None, "open"),
+        (
+            "position-future-close",
+            now - timedelta(hours=2),
+            now + timedelta(minutes=1),
+            "closed",
+        ),
+        (
+            "position-bad-close",
+            now - timedelta(hours=2),
+            now - timedelta(hours=3),
+            "closed",
+        ),
+    ):
+        db.execute(
+            "INSERT INTO positions "
+            "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
+            "proposal_id,status,opened_at,closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                position_id,
+                "BTC/USDT",
+                "spot",
+                "long",
+                1.0,
+                100.0,
+                "paper_internal",
+                "proposal-current",
+                status,
+                opened_at.isoformat(),
+                closed_at.isoformat() if closed_at else None,
+            ),
+        )
+    db.commit()
+
+    report = compliance.build_mandate_compliance_report(hours=24, db=db)
+
+    assert report["counts"]["proposals_total"] == 3
+    assert report["counts"]["positions_total"] == 4
+    assert report["denominators"]["proposal_fit_status_denominator"] == 3
+    assert report["denominators"]["position_fit_status_denominator"] == 4
+    assert report["exclusions"]["cohort_by_reason"] == {
+        "position_opened_at_future": 1,
+        "proposal_created_at_future": 1,
+    }
+    duration = report["holding_duration_compatibility"]
+    assert duration["declared_horizon_positions"] == 4
+    assert duration["measurable_duration_positions"] == 1
+    assert duration["compatible_count"] == 1
+    assert duration["incompatible_count"] == 0
+    assert duration["not_available_count"] == 3
+    assert duration["not_measurable_by_reason"] == {
+        "closed_at_future": 1,
+        "closed_before_open": 1,
+        "position_open": 1,
+    }
+    overrun = report["horizon_overrun"]
+    assert overrun["declared_max_horizon_positions"] == 4
+    assert overrun["measurable_count"] == 1
+    assert overrun["overrun_count"] == 0
+    assert overrun["not_measurable_count"] == 3
+    assert overrun["not_measurable_by_reason"] == duration["not_measurable_by_reason"]
+    sqlite_store.reset_db()
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["identity", "fit_status", "fit_checks", "fit_reasons", "source_ids", "missing_hash"],
+)
+def test_compliance_rejects_hash_mismatched_frozen_mandate(
+    tmp_path,
+    monkeypatch,
+    tamper,
+):
+    from aletheia.analytics.trading_mandate_compliance import (
+        build_mandate_compliance_report,
+    )
+
+    repo, sqlite_store, db, configured = _setup_mandate_db(tmp_path, monkeypatch)
+    proposal = _insert_mandate_proposal(
+        repo,
+        "proposal-integrity",
+        configured=configured,
+    )
+
+    repo.update_trade_proposal(proposal.id, status="approved")
+    valid = build_mandate_compliance_report(proposal_id=proposal.id, db=db)
+    assert valid["availability"] == "available"
+    assert valid["fit_status"] == "in_scope"
+
+    _tamper_mandate_snapshot(db, proposal.id, tamper)
+    report = build_mandate_compliance_report(proposal_id=proposal.id, db=db)
+
+    assert report["availability"] == "unavailable"
+    assert report["unavailable_reason"] == "proposal_integrity_mismatch"
+    assert report["trading_mandate_identity"] is None
+    assert report["trading_mandate_fit"] is None
+    assert report["fit_status"] == "mandate_unavailable"
+    sqlite_store.reset_db()
+
+
+def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
+    tmp_path,
+    monkeypatch,
+):
+    from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
+    from aletheia.analytics.trading_mandate_compliance import (
+        build_mandate_compliance_report,
+    )
+    from aletheia.storage.models import Order, Position
+
+    repo, sqlite_store, db, configured = _setup_mandate_db(tmp_path, monkeypatch)
+    valid = _insert_mandate_proposal(repo, "proposal-valid", configured=configured)
+    tampered = _insert_mandate_proposal(
+        repo,
+        "proposal-tampered",
+        configured=configured,
+    )
+    for proposal in (valid, tampered):
+        position_id = f"{proposal.id}-position"
+        order_id = f"{proposal.id}-order"
+        repo.insert_order(
+            Order(
+                id=order_id,
+                proposal_id=proposal.id,
+                position_id=position_id,
+                symbol="BTC/USDT",
+                market_type="spot",
+                direction="long",
+                order_type="market",
+                quantity=1.0,
+                price=100.0,
+                execution_mode="paper_internal",
+                status="filled",
+                source="adopted",
+            )
+        )
+        repo.insert_position(
+            Position(
+                id=position_id,
+                proposal_id=proposal.id,
+                order_id=order_id,
+                opportunity_id=proposal.opportunity_id,
+                symbol="BTC/USDT",
+                market_type="spot",
+                direction="long",
+                quantity=1.0,
+                entry_price=100.0,
+                current_price=110.0,
+                realized_pnl=10.0,
+                execution_mode="paper_internal",
+                status="closed",
+                close_category="strategy",
+                entry_price_source="local_fill",
+                entry_fill_verified=True,
+                exit_price_source="local_fill",
+                exit_fill_verified=True,
+                outcome_eligible=True,
+                outcome_exclusion_reason="eligible",
+                outcome_semantics_version=OUTCOME_SEMANTICS_VERSION,
+                funding_cost=0.0,
+                funding_source="not_applicable",
+                entry_fee=0.0,
+                exit_fee=0.0,
+                closed_at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+    _tamper_mandate_snapshot(db, tampered.id)
+
+    report = build_mandate_compliance_report(hours=720, db=db)
+
+    assert report["counts"]["proposals_total"] == 2
+    assert report["counts"]["positions_total"] == 2
+    assert report["counts"]["proposals_by_fit_status"]["in_scope"] == 1
+    assert report["counts"]["positions_by_fit_status"]["in_scope"] == 1
+    assert report["denominators"]["proposal_fit_status_denominator"] == 1
+    assert report["denominators"]["position_fit_status_denominator"] == 1
+    assert report["eligible_genuine_net_outcomes"]["total_eligible_count"] == 1
+    assert report["eligible_genuine_net_outcomes"]["by_fit_status"]["in_scope"] == {
+        "eligible_count": 1,
+        "net_pnl": 10.0,
+    }
+    assert report["exclusions"]["proposal_integrity_mismatches"] == 1
+    assert report["exclusions"]["positions_by_reason"] == {
+        "proposal_integrity_mismatch": 1,
+    }
+    assert "tampered_reason" not in report["reason_code_distribution"]
     sqlite_store.reset_db()

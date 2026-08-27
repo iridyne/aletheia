@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from aletheia.analytics import outcome_integrity
 from aletheia.analytics.execution_mode import execution_mode_identity
+from aletheia.analytics.holding_time import holding_hours
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.family_scorecard")
@@ -95,11 +96,10 @@ def compute_family_scorecard_with_epoch(
             f["alpha_count"] += 1
 
         # Hold time
-        opened = _parse_iso(r.get("opened_at"))
-        closed = _parse_iso(r.get("closed_at"))
-        if opened and closed:
-            hours = (closed - opened).total_seconds() / 3600.0
+        hours = holding_hours(r.get("opened_at"), r.get("closed_at"))
+        if hours is not None:
             f["total_hold_hours"] += hours
+            f["hold_time_available_count"] += 1
 
     # Count shadow candidates per family, deduped by outcome_candidate_key.
     # Epoch guard: only count shadows within a single policy epoch to avoid
@@ -132,7 +132,12 @@ def compute_family_scorecard_with_epoch(
             "trade_count": tc,
             "win_rate": round(f["wins"] / tc * 100.0, 1) if tc > 0 else None,
             "expectancy_pct": round(f["total_pnl_pct"] / tc, 2) if tc > 0 else None,
-            "avg_hold_hours": round(f["total_hold_hours"] / tc, 1) if tc > 0 else None,
+            "avg_hold_hours": (
+                round(f["total_hold_hours"] / f["hold_time_available_count"], 1)
+                if f["hold_time_available_count"] > 0 else None
+            ),
+            "hold_time_available_count": f["hold_time_available_count"],
+            "hold_time_unavailable_count": tc - f["hold_time_available_count"],
             "shadow_count": f["shadow_count"] if shadow_epoch_status != "mixed" else None,
             "alpha_vs_btc_pct": round(f["total_alpha_pct"] / f["alpha_count"], 2) if f["alpha_count"] > 0 else None,
             "outcome_status": "available" if tc else "insufficient",
@@ -156,6 +161,7 @@ def _empty_family(name: str) -> dict:
         "total_alpha_pct": 0.0,
         "alpha_count": 0,
         "total_hold_hours": 0.0,
+        "hold_time_available_count": 0,
         "shadow_count": 0,
     }
 

@@ -221,6 +221,41 @@ def test_settled_outcome_intersection():
     assert counts["outcome_coverage"] == pytest.approx(1 / 3)
 
 
+def test_settled_outcome_units_require_canonical_temporal_validity():
+    db = sq.get_db()
+    _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")
+    _decision(db, "b1", "2026-08-02T00:01:00+00:00", outcome_key="cand-b")
+    _outcome(
+        db,
+        "valid",
+        "cand-a",
+        entry_ts="2026-08-02T00:30:00+00:00",
+        settled_at="2026-08-02T00:31:00+00:00",
+    )
+    _outcome(
+        db,
+        "missing-due",
+        "cand-b",
+        entry_ts="2026-08-02T00:30:00+00:00",
+        settled_at="2026-08-02T00:31:00+00:00",
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET due_at=? WHERE id='missing-due'",
+        ("2026-08-03T00:31:00+00:00",),
+    )
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db,
+        horizon="24h",
+        lower=LOWER,
+        upper=UPPER,
+    )
+
+    assert counts["candidate_units"] == 2
+    assert counts["settled_outcome_units"] == 1
+    assert counts["outcome_coverage"] == pytest.approx(0.5)
+
+
 def test_unknown_timestamp_units_are_table_wide():
     db = sq.get_db()
     _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")

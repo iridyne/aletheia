@@ -66,6 +66,7 @@ def _seed_llm_cost(
     *,
     event_id: str,
     cost: float | None,
+    runtime_session_id: str | None = None,
     run_id: str | None = None,
     started_at: str | None = None,
     provider: str = "test",
@@ -79,12 +80,12 @@ def _seed_llm_cost(
     cost_status = "known" if cost is not None else "unknown"
     db.execute(
         """INSERT INTO runtime_cost_events (
-            id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,status,
+            id,event_type,run_id,runtime_session_id,call_id,provider,model_or_tool,attempt_index,status,
             started_at,finished_at,latency_ms,usage_json,estimated_cost_usd,currency,cost_status,
             metadata_json,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id, "llm", run_id, event_id, provider, model, 0, status,
+            event_id, "llm", run_id, runtime_session_id, event_id, provider, model, 0, status,
             now, now, latency_ms, usage_json, cost, "USD", cost_status, metadata_json, now,
         ),
     )
@@ -229,6 +230,128 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
     ).fetchone()
     assert stored["estimated_cost_usd"] is None
     assert stored["cost_status"] == "unknown"
+
+
+@pytest.mark.anyio
+async def test_usage_insights_session_budget_uses_exact_active_session(client, monkeypatch):
+    import aletheia.agent_runtime.runtime_session as runtime_session
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    older = datetime.now(timezone.utc) - timedelta(days=8)
+    current_start = datetime.now(timezone.utc) - timedelta(days=2)
+    add_budget(scope="system", subject=None, usd_cap=1.0, window="session")
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("previous-session", older.isoformat(), (older + timedelta(hours=2)).isoformat(), 1),
+    )
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("active-session", current_start.isoformat(), None, 1),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="previous-session-cost",
+        cost=0.40,
+        runtime_session_id="previous-session",
+        started_at=(current_start + timedelta(hours=1)).isoformat(),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="active-session-cost",
+        cost=0.25,
+        runtime_session_id="active-session",
+        started_at=(current_start + timedelta(hours=2)).isoformat(),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="legacy-null-session-cost",
+        cost=0.10,
+        runtime_session_id=None,
+        started_at=(current_start + timedelta(hours=3)).isoformat(),
+    )
+    monkeypatch.setattr(
+        runtime_session,
+        "current_session",
+        lambda: {"session_id": "active-session", "started_at": current_start.isoformat()},
+    )
+    monkeypatch.setattr(runtime_session, "current_session_durable", lambda: True)
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    row = data["budgets"]["rows"][0]
+    assert row["window"] == "session"
+    assert row["status"] == "available"
+    assert row["window_started_at"] == current_start.isoformat()
+    assert row["known_spent_usd"] == pytest.approx(0.25)
+    assert row["headroom_usd"] == pytest.approx(0.75)
+    assert row["forecast_status"] == "not_available"
+    assert row["forecast_reason"] == "Session budgets have no fixed duration forecast."
+
+
+@pytest.mark.anyio
+async def test_usage_insights_session_budget_loads_active_session_older_than_week(client, monkeypatch):
+    import aletheia.agent_runtime.runtime_session as runtime_session
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    current_start = datetime.now(timezone.utc) - timedelta(days=10)
+    add_budget(scope="system", subject=None, usd_cap=1.0, window="session")
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("long-session", current_start.isoformat(), None, 1),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="old-active-session-cost",
+        cost=0.30,
+        runtime_session_id="long-session",
+        started_at=(current_start + timedelta(hours=1)).isoformat(),
+    )
+    monkeypatch.setattr(
+        runtime_session,
+        "current_session",
+        lambda: {"session_id": "long-session", "started_at": current_start.isoformat()},
+    )
+    monkeypatch.setattr(runtime_session, "current_session_durable", lambda: True)
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    row = data["budgets"]["rows"][0]
+    assert row["status"] == "available"
+    assert row["known_spent_usd"] == pytest.approx(0.30)
+    assert row["headroom_usd"] == pytest.approx(0.70)
+
+
+@pytest.mark.anyio
+async def test_usage_insights_session_budget_requires_durable_active_session(client, monkeypatch):
+    import aletheia.agent_runtime.runtime_session as runtime_session
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    current_start = datetime.now(timezone.utc) - timedelta(hours=2)
+    add_budget(scope="system", subject=None, usd_cap=1.0, window="session")
+    _seed_llm_cost(
+        db,
+        event_id="unstamped-cost",
+        cost=0.25,
+        runtime_session_id=None,
+        started_at=(current_start + timedelta(hours=1)).isoformat(),
+    )
+    monkeypatch.setattr(
+        runtime_session,
+        "current_session",
+        lambda: {"session_id": "non-durable-session", "started_at": current_start.isoformat()},
+    )
+    monkeypatch.setattr(runtime_session, "current_session_durable", lambda: False)
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    row = data["budgets"]["rows"][0]
+    assert row["status"] == "not_available"
+    assert row["known_spent_usd"] is None
+    assert row["headroom_usd"] is None
+    assert row["reason"] == "The active runtime session is not durably persisted."
 
 
 @pytest.mark.anyio
@@ -1180,8 +1303,9 @@ def _seed_would_block_event(
     event_id: str,
     observations: list[dict],
     scope: str | None = None,
+    started_at: str | None = None,
 ) -> None:
-    now = _now()
+    now = started_at or _now()
     metadata = {"would_block": observations}
     db.execute(
         """INSERT INTO runtime_cost_events (
@@ -1247,6 +1371,50 @@ async def test_budgets_would_block_scope_filter(client):
     events = resp.json()["events"]
     assert len(events) == 1
     assert events[0]["would_block"][0]["policy_id"] == "p_la"
+
+
+@pytest.mark.anyio
+async def test_budgets_would_block_scope_filter_applies_before_limit(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    base = datetime.now(timezone.utc)
+    for index in range(3):
+        _seed_would_block_event(
+            db,
+            event_id=f"sys-new-{index}",
+            observations=[{"policy_id": f"p_sys_{index}", "scope": "system"}],
+            started_at=(base - timedelta(seconds=index)).isoformat(),
+        )
+    _seed_would_block_event(
+        db,
+        event_id="la-newer",
+        observations=[{"policy_id": "p_la_newer", "scope": "logical_agent"}],
+        started_at=(base - timedelta(minutes=5)).isoformat(),
+    )
+    _seed_would_block_event(
+        db,
+        event_id="la-older",
+        observations=[{"policy_id": "p_la_older", "scope": "logical_agent"}],
+        started_at=(base - timedelta(minutes=6)).isoformat(),
+    )
+    db.commit()
+
+    scoped = await client.get(
+        "/api/economics/budgets/would-block?scope=logical_agent&limit=2"
+    )
+    assert scoped.status_code == 200
+    assert [event["id"] for event in scoped.json()["events"]] == [
+        "la-newer",
+        "la-older",
+    ]
+
+    unscoped = await client.get("/api/economics/budgets/would-block?limit=2")
+    assert unscoped.status_code == 200
+    assert [event["id"] for event in unscoped.json()["events"]] == [
+        "sys-new-0",
+        "sys-new-1",
+    ]
 
 
 # ── /api/economics/pricing ───────────────────────────────────────────────────

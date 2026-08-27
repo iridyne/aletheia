@@ -106,6 +106,41 @@ def test_overview_bootstrap_projects_activity_and_account_only():
     assert "full_proposals" not in payload
 
 
+def test_overview_bootstrap_projects_unified_account_metadata(monkeypatch):
+    import aletheia.analytics.execution_mode as execution_mode
+    import aletheia.portfolio.pnl as pnl
+    import aletheia.server.routes.ui as ui
+
+    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "okx_demo")
+    monkeypatch.setattr(ui, "_count_summary", lambda: {"pending_proposals": 0, "open_opportunities": 0, "runs_24h": 0})
+    monkeypatch.setattr(ui, "_compact_activity", lambda: [])
+    monkeypatch.setattr(ui, "_model_provider_usable", lambda _cfg: True)
+    monkeypatch.setattr(ui, "load_config", lambda persist_migrations=False: SimpleNamespace(exchange=SimpleNamespace(mode="demo")))
+    monkeypatch.setattr(
+        pnl,
+        "compute_portfolio",
+        lambda execution_mode: {
+            "total_value_usdt": 123.45,
+            "exchange_sync_status": "ok",
+            "exchange_equity_usdt": 123.45,
+            "exchange_state_age_sec": 1.0,
+            "uta_state": {
+                "sync_status": "ok",
+                "sync_complete": True,
+                "connected_brokers": ["okx_demo"],
+            },
+        },
+    )
+
+    payload = ui.overview_bootstrap(Response())
+    account = payload["account"]
+
+    assert account["uta_state"]["connected_brokers"] == ["okx_demo"]
+    assert account["uta_state"]["sync_status"] == "ok"
+    assert account["exchange_equity_usdt"] == 123.45
+    assert account["execution_mode"] == "okx_demo"
+
+
 def test_overview_bootstrap_fails_closed_before_current_account_reads(monkeypatch):
     import aletheia.analytics.execution_mode as execution_mode
     import aletheia.portfolio.pnl as pnl
