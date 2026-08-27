@@ -22,7 +22,7 @@ import logging
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger("aletheia.committee.llm")
 
@@ -351,6 +351,19 @@ async def analyze_with_llm(
                 list(result.keys()),
                 text,
             )
+            finish(
+                status="error",
+                response=resp,
+                parse_valid=True,
+                schema_valid=False,
+                error_type="structured_schema_invalid",
+            )
+            return None
+
+        try:
+            CommitteeRead.model_validate(result)
+        except ValidationError as exc:
+            logger.warning("LLM schema validation failed for %s: %s", symbol, exc)
             finish(
                 status="error",
                 response=resp,

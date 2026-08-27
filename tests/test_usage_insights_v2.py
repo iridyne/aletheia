@@ -4,6 +4,7 @@ import pytest
 
 from aletheia.economics.tracing import add_catalog_pricing_snapshot, estimate_llm_cost
 from aletheia.economics.usage_insights import build_usage_insights
+from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.inference_calls import (
     record_inference_finished,
@@ -136,6 +137,33 @@ def test_usage_v2_cache_pricing_is_exact_and_fails_closed():
     assert metadata == {"reason": "positive_special_rate_missing", "field": "cache_creation"}
 
 
+def test_usage_v2_prefers_newest_snapshot_at_same_effective_time():
+    effective = "2026-01-01T00:00:00+00:00"
+    _price(effective, 1, "base")
+    add_catalog_pricing_snapshot(
+        provider="provider-a",
+        model="model-a",
+        input_usd_per_million=1,
+        output_usd_per_million=1,
+        cache_creation_input_usd_per_million=2,
+        effective_from=effective,
+        source="litellm_public_median:test",
+        version="catalog-model-family-enriched",
+    )
+    _event(
+        "cached",
+        started_at="2026-01-02T01:00:00+00:00",
+        usage=(
+            '{"normalized":{"input_tokens":1000000,"output_tokens":0,'
+            '"provider_cache_creation_input_tokens":100000}}'
+        ),
+    )
+
+    data = build_usage_insights(days=1, as_of=datetime(2026, 1, 3, tzinfo=timezone.utc))
+
+    assert data["overview"]["cost_usd"] == pytest.approx(1.1)
+
+
 def test_usage_v2_missing_attempt_evidence_invalidates_totals_bucket_and_row():
     _price("2026-01-01T00:00:00+00:00", 1, "v1")
     _event("complete", started_at="2026-01-02T01:00:00+00:00")
@@ -235,6 +263,34 @@ def test_declared_attempt_missing_fails_closed_but_keeps_logical_call_count():
     assert summary["overview"]["success_rate_pct"] == 100
     assert summary["overview"]["cost_usd"] is None
     assert summary["overview"]["total_tokens"] is None
+
+
+def test_missing_attempt_keeps_captured_logical_agent_budget_unknown():
+    from aletheia.agent_runtime.run_context import bind_economic_attribution
+
+    add_budget(scope="logical_agent", subject="market_observer", usd_cap=1, window="daily")
+    with bind_economic_attribution(logical_agent="market_observer"):
+        _logical(
+            started_at="2026-01-02T01:00:00+00:00",
+            status="error",
+            attempts=1,
+        )
+
+    operations = build_usage_insights(
+        days=1,
+        as_of=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        group="operations",
+    )
+
+    assert operations["budgets"] == [
+        {
+            "limit_usd": 1.0,
+            "spend_usd": None,
+            "remaining_usd": None,
+            "utilization_pct": None,
+            "period": "daily",
+        }
+    ]
 
 
 def test_running_logical_call_is_excluded_from_completed_kpis():

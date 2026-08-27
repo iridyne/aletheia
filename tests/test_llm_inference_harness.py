@@ -523,6 +523,32 @@ async def test_committee_records_one_logical_call_and_one_physical_attempt():
 
 
 @pytest.mark.asyncio
+async def test_committee_rejects_invalid_schema_before_recording_success():
+    from aletheia.agents.committee import llm_agent
+    from aletheia.model_provider import fallback
+
+    provider = _RepairProvider([{"direction": "sideways", "evidence": "text"}])
+
+    async def direct(request, **_kwargs):
+        return await provider.complete(request)
+
+    with patch.object(fallback, "complete_with_fallback", direct):
+        result = await llm_agent.analyze_with_llm("BTC/USDT", "perp", {})
+
+    assert result is None
+    logical = get_db().execute(
+        "SELECT status,parse_valid,schema_valid,error_type "
+        "FROM llm_inference_calls WHERE caller='committee.llm_analysis'"
+    ).fetchone()
+    assert dict(logical) == {
+        "status": "error",
+        "parse_valid": 1,
+        "schema_valid": 0,
+        "error_type": "structured_schema_invalid",
+    }
+
+
+@pytest.mark.asyncio
 async def test_context_artifacts_link_to_exact_evaluation_call():
     from aletheia.agents import helpers
 

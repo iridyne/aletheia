@@ -135,13 +135,21 @@ def _usage(row: dict[str, Any]) -> dict[str, int | None]:
 
 def _price_index(db: sqlite3.Connection) -> dict[tuple[str, str], list[tuple[datetime, dict[str, Any]]]]:
     index: dict[tuple[str, str], list[tuple[datetime, dict[str, Any]]]] = defaultdict(list)
-    for row in _rows(db, "SELECT * FROM pricing_snapshots"):
+    for row in _rows(db, "SELECT rowid AS _rowid,* FROM pricing_snapshots"):
         effective = _instant(row.get("effective_from"))
         if effective:
             index[(str(row.get("provider") or ""), str(row.get("model") or ""))].append((effective, row))
     for snapshots in index.values():
-        snapshots.sort(key=lambda item: item[0], reverse=True)
+        snapshots.sort(key=lambda item: (item[0], int(item[1]["_rowid"])), reverse=True)
     return index
+
+
+def _logical_metadata(ledger: dict[str, Any]) -> dict[str, Any]:
+    metadata = _json(ledger.get("metadata_json"))
+    environment = metadata.get("environment")
+    logical_agent = environment.get("logical_agent") if isinstance(environment, dict) else None
+    metadata["logical_agent"] = _text(logical_agent) or ledger.get("caller")
+    return metadata
 
 
 def _resolve(rows: list[dict[str, Any]], prices: dict) -> list[dict[str, Any]]:
@@ -211,8 +219,7 @@ def _project_window(
         attempts = by_call.get(call_id, [])
         expected = int(ledger.get("attempt_count") or 0)
         if expected == 0 and not attempts:
-            metadata = _json(ledger.get("metadata_json"))
-            metadata["logical_agent"] = ledger.get("caller")
+            metadata = _logical_metadata(ledger)
             projected.append(
                 {
                     "id": "logical_zero_" + call_id,
@@ -238,8 +245,7 @@ def _project_window(
                 }
             )
         elif expected > 0 and not attempts:
-            metadata = _json(ledger.get("metadata_json"))
-            metadata["logical_agent"] = ledger.get("caller")
+            metadata = _logical_metadata(ledger)
             projected.append(
                 {
                     "id": "logical_missing_" + call_id,
