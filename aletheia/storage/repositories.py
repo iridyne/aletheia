@@ -6647,6 +6647,115 @@ def _delete_by_rowid_batches(
     return total
 
 
+def _filter_outcome_loss_event(
+    *,
+    cutoff: str,
+    retention_days: int,
+    pending_rows: Sequence,
+) -> AuditEvent:
+    outcome_ids = [str(row[1]) for row in pending_rows]
+    outcome_keys = [str(row[4]) for row in pending_rows]
+    by_horizon: dict[str, int] = {}
+    for row in pending_rows:
+        horizon = str(row[2])
+        by_horizon[horizon] = by_horizon.get(horizon, 0) + 1
+    digest = hashlib.sha256(
+        json.dumps(
+            {"cutoff": cutoff, "outcome_ids": outcome_ids},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    dropped = len(pending_rows)
+    return AuditEvent(
+        id=f"filter-outcome-prune-{digest[:32]}",
+        actor="system",
+        source="prune_filter_candidate_outcomes",
+        event_type="filter_outcome_evidence_dropped_unmeasured",
+        entity_type="filter_candidate_outcomes",
+        entity_id=f"{cutoff}:{digest[:16]}",
+        after_state=json.dumps({
+            "batch_digest": digest,
+            "dropped_unmeasured": dropped,
+            "by_horizon": by_horizon,
+            "cutoff": cutoff,
+            "retention_days": retention_days,
+            "outcome_ids": outcome_ids,
+            "outcome_candidate_keys": outcome_keys,
+        }, sort_keys=True),
+        message=(
+            f"{dropped} filter-outcome rows were deleted at the {cutoff} "
+            f"retention cutoff while still 'pending'. Their counterfactual "
+            f"returns were never measured, so Learning contribution and filter "
+            f"feedback over any window containing them are computed on an "
+            f"incomplete population."
+        ),
+    )
+
+
+def _prune_filter_candidate_outcomes_batches(
+    *,
+    cutoff: str,
+    retention_days: int,
+    batch_size: int = 5_000,
+) -> int:
+    db = get_db()
+    total = 0
+    size = max(1, int(batch_size))
+    while True:
+        started = time.monotonic()
+        pending_rows: list = []
+        pending_by_horizon: dict[str, int] = {}
+        with transaction():
+            rows = db.execute(
+                "SELECT rowid, id, horizon, status, outcome_candidate_key "
+                "FROM filter_candidate_outcomes "
+                "WHERE entry_ts < ? ORDER BY rowid LIMIT ?",
+                (cutoff, size),
+            ).fetchall()
+            if not rows:
+                break
+            pending_rows = [row for row in rows if row[3] == "pending"]
+            if pending_rows:
+                event = _filter_outcome_loss_event(
+                    cutoff=cutoff,
+                    retention_days=retention_days,
+                    pending_rows=pending_rows,
+                )
+                pending_by_horizon = json.loads(event.after_state or "{}").get("by_horizon", {})
+                if not insert_audit_event_once(event):
+                    raise RuntimeError(
+                        "filter_candidate_outcomes prune batch audit already exists while rows remain"
+                    )
+            rowids = [int(row[0]) for row in rows]
+            placeholders = ",".join("?" for _ in rowids)
+            cur = execute_write(
+                f"DELETE FROM filter_candidate_outcomes WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+            deleted = max(0, cur.rowcount or 0)
+            if deleted != len(rowids):
+                raise RuntimeError(
+                    "filter_candidate_outcomes prune deleted "
+                    f"{deleted} rows after selecting {len(rowids)}"
+                )
+        duration_ms = (time.monotonic() - started) * 1000
+        _record_retention_batch("filter_candidate_outcomes", deleted, duration_ms)
+        total += deleted
+        if pending_rows:
+            _sqlite_logger.warning(
+                "prune_filter_candidate_outcomes: %d filter-outcome rows reached the "
+                "%s retention cutoff still unmeasured (%s) — the canonical settler is "
+                "not keeping up; deleting them and recording the loss in audit_events",
+                len(pending_rows),
+                cutoff,
+                " ".join(f"{k}={v}" for k, v in sorted(pending_by_horizon.items())),
+            )
+        if len(rows) < size or deleted == 0:
+            break
+    return total
+
+
 def _delete_market_ohlcv_batches(
     where: str,
     params: tuple = (),
@@ -6859,47 +6968,12 @@ def prune_filter_candidate_outcomes(
     #
     # Deletion still has to happen — retention is what keeps the file bounded, and
     # a row this old is past the settler's reach anyway (the 1m/5m bars its window
-    # needs expired days earlier). What must not happen is the silence. So record
-    # the loss in audit_events, which is deliberately outside _PRUNABLE and never
-    # pruned, before the rows go.
-    unmeasured = get_db().execute(
-        "SELECT horizon, COUNT(*) FROM filter_candidate_outcomes "
-        "WHERE status = 'pending' AND entry_ts < ? GROUP BY horizon",
-        (cutoff,),
-    ).fetchall()
-    dropped = sum(row[1] for row in unmeasured)
-    if dropped:
-        by_horizon = {str(row[0]): int(row[1]) for row in unmeasured}
-        _sqlite_logger.warning(
-            "prune_filter_candidate_outcomes: %d filter-outcome rows reached the "
-            "%s retention cutoff still unmeasured (%s) — the canonical settler is "
-            "not keeping up; deleting them and recording the loss in audit_events",
-            dropped,
-            cutoff,
-            " ".join(f"{k}={v}" for k, v in sorted(by_horizon.items())),
-        )
-        insert_audit_event(AuditEvent(
-            actor="system",
-            source="prune_filter_candidate_outcomes",
-            event_type="filter_outcome_evidence_dropped_unmeasured",
-            entity_type="filter_candidate_outcomes",
-            entity_id=cutoff,
-            after_state=json.dumps({
-                "dropped_unmeasured": dropped,
-                "by_horizon": by_horizon,
-                "cutoff": cutoff,
-                "retention_days": days,
-            }, sort_keys=True),
-            message=(
-                f"{dropped} filter-outcome rows were deleted at the {cutoff} "
-                f"retention cutoff while still 'pending'. Their counterfactual "
-                f"returns were never measured, so Learning contribution and filter "
-                f"feedback over any window containing them are computed on an "
-                f"incomplete population."
-            ),
-        ))
-    return _delete_by_rowid_batches(
-        "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
+    # needs expired days earlier). What must not happen is the silence or a
+    # forecast audit. Each short batch records the exact pending rows it deletes in
+    # the same SQLite transaction as the DELETE.
+    return _prune_filter_candidate_outcomes_batches(
+        cutoff=cutoff,
+        retention_days=days,
     )
 
 
