@@ -372,9 +372,7 @@ def proposals(
 ):
     """List trade proposals with approval status."""
     from aletheia.storage.repositories import list_trade_proposals
-    rows = list_trade_proposals(limit=limit)
-    if status != "all":
-        rows = [r for r in rows if r.get("status") == status]
+    rows = list_trade_proposals(limit=limit, status=None if status == "all" else status)
     display_keys = ["id", "symbol", "direction", "execution_mode", "status",
                     "agent_rationale", "strategy_id", "opportunity_id", "created_at"]
     rows = [{k: r.get(k) for k in display_keys} for r in rows]
@@ -393,9 +391,7 @@ def risk(
 ):
     """List risk decisions (enriched with proposal symbol/direction)."""
     from aletheia.storage.repositories import get_trade_proposal, list_risk_decisions
-    rows = list_risk_decisions(limit=limit)
-    if rejected_only:
-        rows = [r for r in rows if not r.get("approved")]
+    rows = list_risk_decisions(limit=limit, approved=False if rejected_only else None)
     result = []
     for r in rows:
         violations = r.get("violations") or "[]"
@@ -466,9 +462,7 @@ def orders(
         return
 
     from aletheia.storage.repositories import list_orders
-    rows = list_orders(limit=limit)
-    if status != "all":
-        rows = [r for r in rows if r.get("status") == status]
+    rows = list_orders(limit=limit, status=None if status == "all" else status)
     display_keys = ["id", "symbol", "direction", "order_type", "quantity", "price",
                     "execution_mode", "status", "exchange_order_id", "filled_at", "error_reason", "created_at"]
     rows = [{k: r.get(k) for k in display_keys} for r in rows]
@@ -1239,9 +1233,7 @@ def fills(
 ):
     """List trade fills with execution details and fees."""
     from aletheia.storage.repositories import list_fills
-    rows = list_fills(limit=limit)
-    if order_id:
-        rows = [r for r in rows if r.get("order_id") == order_id]
+    rows = list_fills(limit=limit, order_id=order_id)
     display = []
     for r in rows:
         display.append({

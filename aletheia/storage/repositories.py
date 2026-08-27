@@ -2478,7 +2478,9 @@ def update_trade_proposal(pid: str, **kwargs) -> None:
     _update("trade_proposals", pid, kwargs)
 
 
-def list_trade_proposals(limit: int = 50) -> list[dict]:
+def list_trade_proposals(limit: int = 50, status: str | None = None) -> list[dict]:
+    if status:
+        return _select_all("trade_proposals", where="status = ?", params=(status,), limit=limit)
     return _select_all("trade_proposals", limit=limit)
 
 
@@ -2792,7 +2794,14 @@ def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
         return stored, True
 
 
-def list_risk_decisions(limit: int = 50) -> list[dict]:
+def list_risk_decisions(limit: int = 50, approved: bool | None = None) -> list[dict]:
+    if approved is not None:
+        return _select_all(
+            "risk_decisions",
+            where="approved = ?",
+            params=(int(approved),),
+            limit=limit,
+        )
     return _select_all("risk_decisions", limit=limit)
 
 
@@ -3034,7 +3043,9 @@ def finalize_exchange_acknowledgement(
     }
 
 
-def list_orders(limit: int = 100) -> list[dict]:
+def list_orders(limit: int = 100, status: str | None = None) -> list[dict]:
+    if status:
+        return _select_all("orders", where="status = ?", params=(status,), limit=limit)
     return _select_all("orders", limit=limit)
 
 
@@ -3209,7 +3220,9 @@ def insert_fill(f: Fill) -> None:
     _insert("fills", _stamp_provenance(f.model_dump()))
 
 
-def list_fills(limit: int = 100) -> list[dict]:
+def list_fills(limit: int = 100, order_id: str | None = None) -> list[dict]:
+    if order_id:
+        return _select_all("fills", where="order_id = ?", params=(order_id,), limit=limit)
     return _select_all("fills", limit=limit)
 
 
