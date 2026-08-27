@@ -91,6 +91,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "market_observer": 500.0,
     "dreaming_agent": 300.0,
     "paper_trader": 300.0,
+    "fast_trigger_authorizer": 300.0,
     "pi_trading_decision": 300.0,
     "equity_observer": 240.0,
     "stock_observer": 240.0,  # kept for backwards-compat; superseded by equity_observer
@@ -1298,6 +1299,15 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("paper_trader", _run_paper_trader), "interval", minutes=3, id="paper_trader",
         misfire_grace_time=60, executor="agents",
+    )
+    _scheduler.add_job(
+        _guarded("fast_trigger_authorizer", _run_fast_trigger_authorizer),
+        "interval",
+        minutes=1,
+        id="fast_trigger_authorizer",
+        misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=90),
+        executor="agents",
     )
     # pi_trading_decision is the ~15min safety-net fallback (agent_contracts.md row 6).
     # When the daemon is enabled it is the primary path; this scheduled job is only a
@@ -2532,6 +2542,43 @@ def _run_paper_trader():
             with _SCHEDULER_JOB_LOCK:
                 _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = 0.0
                 _arm_paper_trader_job()
+
+
+def _run_fast_trigger_authorizer():
+    """Review at most one ranked Setup; provider failure leaves it unarmed."""
+
+    cfg = load_config(persist_migrations=False)
+    if (
+        cfg.fast_trigger.mode == "off"
+        or cfg.runtime.paused
+        or cfg.runtime.kill_switch_active
+    ):
+        return
+    if cfg.agent.permission_mode not in ("Paper", "Full"):
+        return
+    from aletheia.universe.fast_trigger import authorize_next_setup
+
+    try:
+        result = _run_async_with_timeout(
+            "fast_trigger_authorizer", authorize_next_setup(cfg)
+        )
+        if isinstance(result, dict) and result.get("status") == "pending_authorization":
+            _record_job_failure(
+                "fast_trigger_authorizer",
+                str(result.get("reason_code") or "operator_unavailable"),
+            )
+            logger.warning(
+                "fast_trigger_authorizer unavailable: %s",
+                result.get("reason_code"),
+            )
+    except TimeoutError:
+        _record_job_failure("fast_trigger_authorizer", "timeout", "TimeoutError")
+        logger.warning("fast_trigger_authorizer timed out; setup remains unarmed")
+    except Exception as exc:
+        _record_job_failure(
+            "fast_trigger_authorizer", str(exc), type(exc).__name__
+        )
+        logger.warning("fast_trigger_authorizer failed: %s", type(exc).__name__)
 
 
 def _run_pi_trading_decision():

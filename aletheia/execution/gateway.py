@@ -16,7 +16,7 @@ from aletheia.execution.post_commit_audit import (
 from aletheia.trading.entry_snapshot import (
     capture_attribution_snapshot as capture_paper_attribution_snapshot,
 )
-from aletheia.storage.models import TradeProposal
+from aletheia.storage.models import TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     get_authoritative_risk_decision,
     get_proposal_execution_claim,
@@ -148,6 +148,17 @@ def submit_proposal(
     Flow: Proposal -> Risk Engine -> Permission -> Live State -> Execution -> Fill -> Audit
     """
     _reject_preview_execution()
+    invalid_exit_intent = exit_intent_violations(
+        expected_horizon_hours=expected_horizon_hours,
+        stop_source=stop_source,
+    )
+    if source == "native" and invalid_exit_intent:
+        return {
+            "status": "rejected",
+            "reason_code": "+".join(invalid_exit_intent),
+            "proposal_id": None,
+            "message": "Invalid exit intent; no Proposal was created.",
+        }
     # Private-fill materialization can happen after the broker call returns.
     # Capture the read-only decision-time attribution for every execution mode
     # so that delayed exchange reconciliation does not invent later context or

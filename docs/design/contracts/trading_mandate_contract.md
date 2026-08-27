@@ -155,7 +155,9 @@ Proposal/Position denominators by fit status, reason-code distribution, exact
 holding-duration compatibility, declared-horizon overrun counts, eligible
 genuine net outcomes grouped by fit status, exclusions, and exact cohort/
 behavior identities. Missing economics remain unavailable and are not converted
-to zero.
+to zero. Completed holding-duration compatibility and declared-horizon overrun
+counts require valid opening and closing timestamps inside the report window;
+open, invalid, or future-dated rows remain explicit exclusions.
 
 All reports are observational. They do not emit recommendations, enforcement
 decisions, live Scheme leaderboards, promotion results, or claims that mandate

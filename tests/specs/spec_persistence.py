@@ -250,6 +250,117 @@ def test_event_store_reconciles_failed_jsonl_mirror(tmp_path, monkeypatch):
     assert payload.count(event.event_id.encode()) == 1
 
 
+def test_event_store_jsonl_file_lock_prevents_cross_process_duplicate(
+    tmp_path, monkeypatch
+):
+    import json
+    import os
+    import subprocess
+    import sys
+    import time
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("aletheia.storage.event_store.get_data_dir", lambda: tmp_path)
+
+    from aletheia.files.jsonl import _exclusive_file_lock
+    from aletheia.storage.event_store import (
+        EventStore,
+        _jsonl_lock_path,
+        _jsonl_path,
+        make_event,
+    )
+
+    store = EventStore()
+    event = store._prepare(
+        make_event(
+            "mirror_race",
+            "test",
+            "same",
+            payload={"source": "parent"},
+            idempotency_key="mirror-race",
+        )
+    )
+    path = _jsonl_path(event.created_at)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    event_path = tmp_path / "event.json"
+    marker_path = tmp_path / "child-ready"
+    line = json.dumps(event.model_dump(), ensure_ascii=False)
+    event_path.write_text(line, encoding="utf-8")
+
+    child = (
+        "import json, pathlib, sys\n"
+        "from aletheia.storage.event_store import EventStore\n"
+        "from aletheia.storage.models import PSEvent\n"
+        "event_path = pathlib.Path(sys.argv[1])\n"
+        "marker_path = pathlib.Path(sys.argv[2])\n"
+        "event = PSEvent(**json.loads(event_path.read_text()))\n"
+        "marker_path.write_text('ready')\n"
+        "EventStore()._write_jsonl(event)\n"
+    )
+
+    env = os.environ.copy()
+    env["ALETHEIA_DATA_DIR"] = str(tmp_path)
+    with _exclusive_file_lock(_jsonl_lock_path(path)):
+        proc = subprocess.Popen(
+            [sys.executable, "-c", child, str(event_path), str(marker_path)],
+            cwd=_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 5
+        while not marker_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert marker_path.exists(), "child did not reach mirror attempt"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line + "\n")
+
+    stdout, stderr = proc.communicate(timeout=10)
+    assert proc.returncode == 0, stdout + stderr
+    records = [json.loads(raw) for raw in path.read_text().splitlines() if raw.strip()]
+    assert [record["event_id"] for record in records].count(event.event_id) == 1
+
+
+def test_event_store_jsonl_same_id_different_payload_stays_failed(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("aletheia.storage.event_store.get_data_dir", lambda: tmp_path)
+
+    from aletheia.storage.event_store import EventStore, _jsonl_path, make_event
+    from aletheia.storage.sqlite import get_db
+
+    store = EventStore()
+    event = store._prepare(
+        make_event("mirror_mismatch", "test", "same", payload={"version": 1})
+    )
+    persisted, inserted = store._write_db(event)
+    assert inserted
+
+    bad_record = persisted.model_dump()
+    bad_record["payload_hash"] = "different"
+    path = _jsonl_path(persisted.created_at)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(bad_record, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    assert store._attempt_jsonl_mirror(persisted) is False
+    row = get_db().execute(
+        "SELECT jsonl_mirror_status, jsonl_last_error_class "
+        "FROM ps_event_log WHERE event_id=?",
+        (persisted.event_id,),
+    ).fetchone()
+    assert tuple(row) == ("failed", "EventJsonlMirrorPayloadMismatch")
+    records = [json.loads(raw) for raw in path.read_text().splitlines() if raw.strip()]
+    assert [record["event_id"] for record in records].count(persisted.event_id) == 1
+
+
 @spec_claim(
     SpecClaim(
         "PR-S06", "persistence_recovery_contract",

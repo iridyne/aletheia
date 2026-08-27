@@ -307,9 +307,50 @@ def test_machine_service_start_has_one_migration_owner_before_service(tmp_path, 
         "start",
         lambda **_kwargs: events.append("service_start") or {"ok": True},
     )
+    monkeypatch.setattr(
+        lifecycle,
+        "_verify_started",
+        lambda _cfg: events.append("readiness") or True,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_auto_start_tunnel",
+        lambda _cfg: events.append("tunnel"),
+    )
 
-    assert lifecycle.do_start(no_browser=True) is False
-    assert events == ["migrate", "service_start"]
+    assert lifecycle.do_start(no_browser=True) is True
+    assert events == ["migrate", "service_start", "readiness", "tunnel"]
+
+
+def test_machine_service_start_exits_when_readiness_is_unproven(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    events: list[str] = []
+    monkeypatch.setattr(service_control, "is_machine_selected", lambda: True)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(
+        lifecycle,
+        "_apply_gateway_migrations",
+        lambda: events.append("migrate") or True,
+    )
+    monkeypatch.setattr(
+        service_control,
+        "start",
+        lambda **_kwargs: events.append("service_start") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_verify_started",
+        lambda _cfg: events.append("readiness") or False,
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        lifecycle.do_start(no_browser=True)
+
+    assert exc.value.exit_code == 2
+    assert events == ["migrate", "service_start", "readiness"]
 
 
 def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch, capsys):
@@ -391,6 +432,103 @@ def test_do_status_reports_process_readiness_and_remote_listener(tmp_path, monke
     assert "Front door: ready" in out
     assert "Dashboard: http://127.0.0.1:8787" in out
     assert "Remote dashboard: http://10.42.0.8:8787" in out
+
+
+def test_do_status_machine_service_stopped_exits_unhealthy(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control, tunnel
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "scope": "machine",
+            "backend": "windows_service",
+            "installed": True,
+            "enabled": True,
+            "running": False,
+            "owned": True,
+            "config_valid": True,
+            "data_dir": "C:/ProgramData/Aletheia/runtime",
+            "recovery_scope": "boot_and_failure",
+        },
+    )
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda _cfg: pytest.fail("stopped service must not probe readiness"))
+    monkeypatch.setattr(tunnel, "tunnel_status", lambda: {"enabled": False, "running": False})
+
+    with pytest.raises(typer.Exit) as exc:
+        lifecycle.do_status()
+
+    out = capsys.readouterr().out
+    assert exc.value.exit_code == 1
+    assert "Gateway Windows machine service: stopped" in out
+    assert "Front door: unavailable (gateway stopped)" in out
+    assert "Dashboard: unavailable (gateway stopped)" in out
+    assert "Service: installed=True enabled=True recovery=boot_and_failure" in out
+
+
+def test_do_status_machine_service_running_but_unready_exits_unhealthy(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control, tunnel
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "scope": "machine",
+            "backend": "windows_service",
+            "installed": True,
+            "enabled": True,
+            "running": True,
+            "owned": True,
+            "config_valid": True,
+            "pid": 4242,
+            "data_dir": "C:/ProgramData/Aletheia/runtime",
+            "recovery_scope": "boot_and_failure",
+        },
+    )
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda _cfg: False)
+    monkeypatch.setattr(tunnel, "tunnel_status", lambda: {"enabled": False, "running": False})
+
+    with pytest.raises(typer.Exit) as exc:
+        lifecycle.do_status()
+
+    out = capsys.readouterr().out
+    assert exc.value.exit_code == 1
+    assert "Gateway Windows machine service: running (PID 4242)" in out
+    assert "Front door: not ready" in out
+    assert "Dashboard: unavailable (front door not ready)" in out
+
+
+def test_do_status_machine_service_ready_succeeds(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control, tunnel
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "scope": "machine",
+            "backend": "windows_service",
+            "installed": True,
+            "enabled": True,
+            "running": True,
+            "owned": True,
+            "config_valid": True,
+            "pid": 4242,
+            "data_dir": "C:/ProgramData/Aletheia/runtime",
+            "recovery_scope": "boot_and_failure",
+        },
+    )
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda _cfg: True)
+    monkeypatch.setattr(tunnel, "tunnel_status", lambda: {"enabled": False, "running": False})
+
+    lifecycle.do_status()
+
+    out = capsys.readouterr().out
+    assert "Gateway Windows machine service: running (PID 4242)" in out
+    assert "Front door: ready" in out
+    assert "Dashboard: http://127.0.0.1:8787" in out
 
 
 def test_resume_api_sends_existing_remote_control_token(tmp_path, monkeypatch):

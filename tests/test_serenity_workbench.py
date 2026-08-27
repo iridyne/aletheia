@@ -736,6 +736,93 @@ def test_bulk_theme_claim_linking(db):
     assert len(linked) == 5
 
 
+def test_theme_and_claim_links_commit_as_one_unit(db):
+    run = SerenityResearchRun(status="completed")
+    repo.insert_serenity_research_run(run)
+
+    from aletheia.storage.models import SerenityClaim
+    c1 = SerenityClaim(run_id=run.id, claim_text="Atomic claim 1")
+    c2 = SerenityClaim(run_id=run.id, claim_text="Atomic claim 2")
+    repo.insert_serenity_claim(c1)
+    repo.insert_serenity_claim(c2)
+
+    theme = SerenityTheme(name="Atomic Theme", status="active", run_id=run.id)
+    repo.insert_serenity_theme_with_claim_links(
+        theme,
+        [(theme.id, c1.id, 0.9), (theme.id, c2.id, 0.8)],
+    )
+
+    assert repo.get_serenity_theme(theme.id) is not None
+    assert len(repo.list_serenity_claims_for_theme(theme.id)) == 2
+
+
+def test_theme_and_claim_links_roll_back_link_prefix(db, monkeypatch):
+    run = SerenityResearchRun(status="completed")
+    repo.insert_serenity_research_run(run)
+
+    from aletheia.storage.models import SerenityClaim
+    c1 = SerenityClaim(run_id=run.id, claim_text="Atomic claim 1")
+    c2 = SerenityClaim(run_id=run.id, claim_text="Atomic claim 2")
+    repo.insert_serenity_claim(c1)
+    repo.insert_serenity_claim(c2)
+
+    real_execute_write = repo.execute_write
+    link_writes = 0
+
+    def fail_second_link(sql, parameters=(), *, immediate=False):
+        nonlocal link_writes
+        if "serenity_theme_claims" in sql:
+            link_writes += 1
+            if link_writes == 2:
+                raise RuntimeError("injected link failure")
+        return real_execute_write(sql, parameters, immediate=immediate)
+
+    monkeypatch.setattr(repo, "execute_write", fail_second_link)
+    theme = SerenityTheme(name="Rollback Theme", status="active", run_id=run.id)
+    with pytest.raises(RuntimeError, match="injected link failure"):
+        repo.insert_serenity_theme_with_claim_links(
+            theme,
+            [(theme.id, c1.id, 0.9), (theme.id, c2.id, 0.8)],
+        )
+
+    assert repo.get_serenity_theme(theme.id) is None
+    count = db.execute(
+        "SELECT COUNT(*) FROM serenity_theme_claims WHERE theme_id = ?",
+        (theme.id,),
+    ).fetchone()[0]
+    assert count == 0
+
+
+def test_finish_research_run_with_event_rolls_back_completed_status(db, monkeypatch):
+    run = SerenityResearchRun(status="running")
+    repo.insert_serenity_research_run(run)
+
+    real_execute_write = repo.execute_write
+
+    def fail_event_insert(sql, parameters=(), *, immediate=False):
+        if "serenity_run_events" in sql:
+            raise RuntimeError("injected event failure")
+        return real_execute_write(sql, parameters, immediate=immediate)
+
+    monkeypatch.setattr(repo, "execute_write", fail_event_insert)
+    with pytest.raises(RuntimeError, match="injected event failure"):
+        repo.finish_serenity_research_run_with_event(
+            run.id,
+            "completed",
+            SerenityRunEvent(
+                id=f"{run.id}:run.completed",
+                run_id=run.id,
+                event_type="run.completed",
+            ),
+            finished_at="2026-06-13T00:02:00Z",
+            updated_at="2026-06-13T00:02:00Z",
+            artifact_counts='{"themes":1,"opportunities":0,"evidence":0,"claims":0}',
+        )
+
+    assert repo.get_serenity_research_run(run.id)["status"] == "running"
+    assert repo.list_serenity_run_events(run.id) == []
+
+
 # --- Agent Lock ---
 
 def test_acquire_and_release_lock(db):
@@ -1066,6 +1153,51 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch):
     assert any(t["name"] == "Institutional Adoption" for t in themes)
 
     reset_db()
+
+
+@pytest.mark.anyio
+async def test_research_worker_fails_run_on_required_theme_persistence_error(db, monkeypatch):
+    run = SerenityResearchRun(trigger_type="manual", mode="standard", status="queued")
+    repo.insert_serenity_research_run(run)
+
+    evidence_json = json.dumps([
+        {"title": "ETF inflows", "summary": "BTC ETF inflows rose",
+         "source": "test", "tier": "verified", "confidence": "verified", "supports": True}
+    ])
+    claims_json = json.dumps([
+        {"claim_text": "BTC ETF inflows rose", "confidence": 0.9, "price_relevant": True}
+    ])
+    themes_json = json.dumps([
+        {"name": "Institutional Adoption", "thesis": "ETF demand supports BTC",
+         "claim_indices": [0]}
+    ])
+
+    async def mock_llm_complete(system, user, max_tokens=2000, **kw):
+        text = system.lower()
+        if "evidence collector" in text:
+            return (evidence_json, None)
+        if "claim extractor" in text:
+            return (claims_json, None)
+        if "theme clusterer" in text:
+            return (themes_json, None)
+        return ("[]", None)
+
+    def fail_theme_write(theme, links):
+        raise RuntimeError("injected theme persistence failure")
+
+    monkeypatch.setattr(repo, "insert_serenity_theme_with_claim_links", fail_theme_write)
+    with patch("aletheia.agents.helpers.llm_complete", mock_llm_complete):
+        from aletheia.agents.research_worker import _process_research_run
+        await _process_research_run(run.id)
+
+    updated = repo.get_serenity_research_run(run.id)
+    assert updated["status"] == "failed"
+    assert updated["error_type"] == "artifact_persistence_error"
+    assert updated["error_stage"] == "cluster_themes"
+    assert json.loads(updated["artifact_counts"])["themes"] == 0
+    assert not any(t["name"] == "Institutional Adoption" for t in repo.list_serenity_themes(limit=10))
+    assert any(e["event_type"] == "run.failed" for e in repo.list_serenity_run_events(run.id))
+    assert not any(e["event_type"] == "run.completed" for e in repo.list_serenity_run_events(run.id))
 
 
 @pytest.mark.anyio

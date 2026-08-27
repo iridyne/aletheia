@@ -121,6 +121,31 @@ async def test_llm_complete_rejects_empty_text_response():
 
 
 @pytest.mark.asyncio
+async def test_llm_complete_budget_denial_does_not_record_provider_failure():
+    from aletheia.agents import helpers
+    from aletheia.model_provider.fallback import BudgetExceededError
+
+    async def deny(*_args, **_kwargs):
+        raise BudgetExceededError([])
+
+    finished = []
+
+    def record_finished(_call, **kwargs):
+        finished.append(kwargs)
+
+    with patch.object(helpers, "complete_with_fallback", deny), \
+         patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())), \
+         patch.object(helpers, "_record_call_finished", record_finished), \
+         patch.object(helpers, "_record_llm") as record_llm:
+        content, err = await helpers.llm_complete("sys", "user")
+
+    assert content is None
+    assert err == "llm_budget_exhausted"
+    assert finished[-1]["error_type"] == "llm_budget_exhausted"
+    record_llm.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
     """#161: llm_structured must apply the same fix — its loop calls
     complete_with_fallback and must forward provider_name too."""
@@ -215,6 +240,38 @@ async def test_llm_structured_opt_in_defaults_survive_provider_failure():
 
     assert data == {"count": 0, "items": []}
     assert err == "llm_unavailable: ConnectionError: offline(fallback)"
+
+
+@pytest.mark.asyncio
+async def test_llm_structured_budget_denial_stays_policy_error():
+    from aletheia.agents import helpers
+    from aletheia.model_provider.fallback import BudgetExceededError
+
+    class FallbackSchema:
+        @staticmethod
+        def model_json_schema():
+            return {"type": "object", "properties": {"count": {"type": "integer"}}}
+
+    async def deny(*_args, **_kwargs):
+        raise BudgetExceededError([])
+
+    finished = []
+
+    def record_finished(_call, **kwargs):
+        finished.append(kwargs)
+
+    with patch.object(helpers, "complete_with_fallback", deny), \
+         patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())), \
+         patch.object(helpers, "_record_call_finished", record_finished), \
+         patch.object(helpers, "_record_llm") as record_llm:
+        data, err = await helpers.llm_structured(
+            "sys", "user", schema=FallbackSchema, fallback_to_defaults=True,
+        )
+
+    assert data == {"count": 0}
+    assert err == "llm_budget_exhausted(fallback)"
+    assert finished[-1]["error_type"] == "llm_budget_exhausted"
+    record_llm.assert_not_called()
 
 
 @pytest.mark.asyncio
