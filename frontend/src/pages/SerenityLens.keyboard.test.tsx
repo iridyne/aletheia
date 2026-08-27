@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SRC from './SerenityLens.tsx?raw'
 
@@ -67,7 +68,7 @@ describe('Serenity Lens keyboard interactions', () => {
   })
 
   it('opens a theme from its named button and restores focus after Back', () => {
-    mount(<ThemesTab />)
+    mount(<MemoryRouter initialEntries={['/serenity-lens?tab=themes']}><ThemesTab /></MemoryRouter>)
     const opener = host.querySelector<HTMLButtonElement>('.lens-theme-open')!
     opener.focus()
     act(() => opener.click())
@@ -76,6 +77,12 @@ describe('Serenity Lens keyboard interactions', () => {
     const back = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('Back'))!
     act(() => back.click())
     expect(document.activeElement).toBe(host.querySelector('.lens-theme-open'))
+  })
+
+  it('opens an exact theme from the URL independently of the active list', () => {
+    mount(<MemoryRouter initialEntries={['/serenity-lens?tab=themes&theme_id=theme-1']}><ThemesTab /></MemoryRouter>)
+    expect(host.textContent).toContain('AI supply chain')
+    expect(host.textContent).not.toContain('No active themes')
   })
 
   it('uses a keyboard-accessible Bear Case disclosure', () => {
@@ -108,6 +115,10 @@ describe('Serenity Lens keyboard source contract', () => {
     expect(SRC).toContain("event.key === 'Enter' || event.key === ' '")
     expect(SRC).toContain('className="lens-theme-open"')
     expect(SRC).toContain('data-serenity-theme-id')
+    expect(SRC).toContain("searchParams.get('theme_id')")
+    expect(SRC).toContain("next.set('tab', 'themes')")
+    expect(SRC).toContain('to={`/prediction-markets?market_id=${encodeURIComponent(marketId)}`}')
+    expect(SRC).toContain('Prediction market ID unavailable')
     expect(SRC).toContain('aria-expanded={expanded}')
     expect(SRC).toContain('aria-controls={bearCaseId}')
     expect(SRC).not.toContain('className="clickable" onClick={() => setSelectedTheme(t.id)}')
