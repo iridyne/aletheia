@@ -222,13 +222,11 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
         f"regime_tag not propagated to every member: {members}"
     )
 
-    setups = conn.execute("SELECT * FROM universe_setups").fetchall()
-    assert len(setups) == 6, f"each selected member should arm one setup, got {len(setups)}"
-    perp_setups = [dict(row) for row in setups if row["market_type"] == "perp"]
-    assert perp_setups, f"expected perp setups, got {[dict(row) for row in setups]}"
-    assert any(
-        row["funding_rate"] is not None
-        and json.loads(row["motive_evidence"]).get("open_interest") is not None
-        and json.loads(row["motive_evidence"]).get("oi_delta_1h") is not None
-        for row in perp_setups
-    ), f"perp setups lost derivatives context: {perp_setups}"
+    generations = conn.execute(
+        "SELECT * FROM candidate_planning_generations WHERE is_current=1"
+    ).fetchall()
+    assert len(generations) == 6, (
+        f"each selected Candidate should own one planning generation, got {len(generations)}"
+    )
+    assert {row["market_type"] for row in generations} >= {"spot", "perp"}
+    assert {row["candidate_family"] for row in generations} == set(family_counts)

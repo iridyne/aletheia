@@ -174,6 +174,7 @@ the Contract spec.
 <!-- BEGIN GENERATED CALLER MATRIX -->
 | Caller ID | Prompt template | Version | Output | Model tool interface |
 | --- | --- | --- | --- | --- |
+| `agent_shell.entry_planner` | `agent_shell.entry_planner` | `v1` | `structured` | `none` |
 | `agent_shell.fast_trigger_authorizer` | `agent_shell.fast_trigger_authorizer` | `v1` | `structured` | `none` |
 | `agent_shell.general_query` | `agent_shell.general_query` | `v1` | `text` | `none` |
 | `agent_shell.intent_classification` | `agent_shell.intent_classification` | `v1` | `structured` | `none` |

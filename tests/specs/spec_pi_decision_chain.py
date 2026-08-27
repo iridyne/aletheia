@@ -500,6 +500,14 @@ def test_daemon_evaluation_failures_count_and_real_success_recovers(monkeypatch)
     )
     monkeypatch.setattr(infra_errors, "record_error", lambda **_kwargs: None)
 
+    async def idle_planner():
+        return {"status": "idle"}
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.run_entry_planner_once",
+        idle_planner,
+    )
+
     failure_cases = (
         (asyncio.TimeoutError, "daemon_evaluation_timeout"),
         (RuntimeError, "daemon_evaluation_failed"),
