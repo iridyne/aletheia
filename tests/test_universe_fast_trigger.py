@@ -363,6 +363,14 @@ def test_authorization_and_materialization_are_single_use(tmp_path, monkeypatch)
     assert proposal["take_profit"] == pytest.approx(104.6)
     assert proposal["risk_reward"] == pytest.approx(2.0)
     assert repo.get_universe_setup(setup.id)["state"] == "refused"
+    structure = next(
+        row for row in repo.list_opportunity_validity_assessments(
+            first["opportunity_id"]
+        )
+        if row["check_type"] == "market_structure"
+    )
+    assert structure["authority"] == "shadow"
+    assert structure["algorithm_version"] == "market-structure/v2"
 
 
 def test_generation_is_complete_hash_locked_and_retained(tmp_path, monkeypatch):
@@ -484,15 +492,163 @@ def test_market_structure_is_closed_bar_causal_and_shadow_unqualified():
         })
     result = evaluate_market_structure(candles, direction="long")
 
-    assert result["algorithm_version"] == "market-structure/v1"
-    assert result["last_confirmed_swing_high"]["confirmed_at"] <= result["as_of"]
-    assert result["last_confirmed_swing_low"]["confirmed_at"] <= result["as_of"]
+    assert result["algorithm_version"] == "market-structure/v2"
+    assert result["core_algorithm_version"] == "causal-market-structure/v1"
+    # A K=2 pivot is knowable only when the second right-side bar closes:
+    # pivot open + two later bar opens + the confirming bar duration.
+    assert result["last_confirmed_swing_high"]["confirmed_at"] == (
+        result["last_confirmed_swing_high"]["pivot_at"] + 3 * 60_000
+    )
+    assert result["last_confirmed_swing_low"]["confirmed_at"] == (
+        result["last_confirmed_swing_low"]["pivot_at"] + 3 * 60_000
+    )
     assert hard_gate_decision(result)[0] is False
     assert hard_gate_decision(result)[1].startswith("price_action_gate_unqualified:")
 
     gapped = candles.copy()
     gapped[20] = {**gapped[20], "ts": gapped[20]["ts"] + 1}
     assert evaluate_market_structure(gapped, direction="long")["reason"] == "candle_gap"
+
+
+def test_market_structure_v2_projects_only_final_bar_canonical_events():
+    from aletheia.data.market_structure import derive_market_structure
+    from aletheia.data.providers import Candle
+    from aletheia.universe.market_structure import evaluate_market_structure
+
+    candles = []
+    for index in range(30):
+        high = {3: 110.0, 8: 112.0, 13: 114.0, 23: 118.0}.get(index, 105.0)
+        low = {5: 90.0, 10: 92.0, 15: 94.0}.get(index, 95.0)
+        close = 120.0 if index == 29 else 100.0
+        candles.append({
+            "ts": index * 60_000,
+            "open": 100.0,
+            "high": max(high, close),
+            "low": min(low, close, 100.0),
+            "close": close,
+            "volume": 10.0,
+        })
+    canonical = derive_market_structure([
+        Candle(
+            timestamp=row["ts"], open=row["open"], high=row["high"],
+            low=row["low"], close=row["close"], volume=row["volume"],
+        )
+        for row in candles
+    ], tf_ms=60_000)
+    result = evaluate_market_structure(candles, direction="long")
+
+    assert result["event"] == "bullish_bos"
+    assert result["reason"] == "bullish_bos"
+    assert result["verdict"] == "allow"
+    assert result["input_fingerprint"] == canonical.geometry_fingerprint
+    assert result["last_confirmed_swing_high"]["confirmed_at"] == 26 * 60_000
+
+    # The consumed level cannot repeat on a later final bar.
+    candles.append({**candles[-1], "ts": 30 * 60_000, "close": 121.0,
+                    "high": 122.0})
+    repeated = evaluate_market_structure(candles, direction="long")
+    assert repeated["event"] is None
+
+
+def test_market_structure_v2_state_projection_choch_and_exact_staleness():
+    from aletheia.universe.market_structure import (
+        HARD_GATE_ALLOWLIST,
+        evaluate_market_structure,
+    )
+
+    def fixture(*, count=30, highs=(110.0, 112.0),
+                lows=(90.0, 92.0), latest_high_index=15,
+                final_close=100.0):
+        rows = [{
+            "ts": index * 60_000,
+            "open": 100.0,
+            "high": 105.0,
+            "low": 95.0,
+            "close": 100.0,
+            "volume": 10.0,
+        } for index in range(count)]
+        rows[5]["high"] = highs[0]
+        rows[latest_high_index]["high"] = highs[1]
+        rows[10]["low"] = lows[0]
+        rows[20]["low"] = lows[1]
+        rows[-1].update({
+            "close": final_close,
+            "high": max(rows[-1]["high"], final_close),
+            "low": min(rows[-1]["low"], final_close),
+        })
+        return rows
+
+    bullish = evaluate_market_structure(fixture(), direction="long")
+    bearish = evaluate_market_structure(
+        fixture(highs=(112.0, 110.0), lows=(92.0, 90.0)),
+        direction="short",
+    )
+    ranged = evaluate_market_structure(
+        fixture(highs=(110.0, 112.0), lows=(92.0, 90.0)),
+        direction="long",
+    )
+    choch = evaluate_market_structure(
+        fixture(final_close=90.0), direction="long"
+    )
+    threshold = evaluate_market_structure(
+        fixture(count=120, highs=(110.0, 114.0), latest_high_index=59),
+        direction="long",
+    )
+    stale = evaluate_market_structure(
+        fixture(count=120, highs=(110.0, 114.0), latest_high_index=58),
+        direction="long",
+    )
+
+    assert HARD_GATE_ALLOWLIST == frozenset()
+    assert (bullish["structure_state"], bullish["verdict"]) == (
+        "higher_high_higher_low", "allow"
+    )
+    assert (bearish["structure_state"], bearish["verdict"]) == (
+        "lower_high_lower_low", "allow"
+    )
+    assert (ranged["structure_state"], ranged["verdict"]) == (
+        "range", "unavailable"
+    )
+    assert (choch["event"], choch["verdict"]) == ("bearish_choch", "block")
+    assert threshold["reason"] != "swing_stale"
+    assert stale["reason"] == "swing_stale"
+
+
+def test_market_structure_v2_opposed_choch_blocks_only_as_shadow_evidence(
+    tmp_path, monkeypatch
+):
+    _prepare(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.fast_trigger import materialize_trigger
+
+    now = datetime.now(timezone.utc)
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    setup, _ = _authorized_setup(cfg, now)
+    monkeypatch.setattr(
+        "aletheia.risk.engine.account_available_for_execution",
+        lambda execution_mode, cfg: 1_000.0,
+    )
+    snapshot = _trigger_snapshot(now).model_copy(update={
+        "market_structure": {
+            "algorithm_version": "market-structure/v2",
+            "core_algorithm_version": "causal-market-structure/v1",
+            "verdict": "block",
+            "reason": "bearish_choch",
+        }
+    })
+
+    result = materialize_trigger(setup.id, snapshot, cfg=cfg, now=now)
+    assessments = repo.list_opportunity_validity_assessments(result["opportunity_id"])
+    structure = next(row for row in assessments if row["check_type"] == "market_structure")
+
+    assert result["status"] == "shadow_materialized"
+    assert repo.get_opportunity(result["opportunity_id"]) is not None
+    assert structure["authority"] == "shadow"
+    assert structure["verdict"] == "block"
+    assert structure["algorithm_version"] == "market-structure/v2"
 
 
 def test_local_paper_fast_trigger_executes_without_exchange_order(tmp_path, monkeypatch):
