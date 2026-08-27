@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import (
@@ -2383,6 +2383,25 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
 
     payload = p.model_dump(exclude=_PROPOSAL_HASH_EXCLUDES)
     return sha256_json(payload)[:16]
+
+
+def validate_trade_proposal_commit_hash(
+    proposal: TradeProposal | Mapping[str, object],
+) -> str:
+    """Return the stored Proposal hash only if immutable content still matches it."""
+    try:
+        stored = (
+            proposal
+            if isinstance(proposal, TradeProposal)
+            else TradeProposal.model_validate(proposal)
+        )
+    except ValidationError as exc:
+        raise ValueError("stored proposal content cannot be validated") from exc
+    if stored.commit_hash is None:
+        raise ValueError("stored proposal has no commit hash")
+    if _compute_proposal_hash(stored) != stored.commit_hash:
+        raise ValueError("stored proposal content does not match commit hash")
+    return stored.commit_hash
 
 
 def insert_trade_proposal(
@@ -5062,6 +5081,50 @@ def list_strategies(limit: int = 50) -> list[dict]:
 
 def insert_knowledge_item(k: KnowledgeItem) -> None:
     _insert("knowledge_items", k.model_dump())
+
+
+def insert_knowledge_item_if_absent(
+    k: KnowledgeItem,
+    *,
+    title_window_hours: int | None = None,
+) -> tuple[bool, str | None, str | None]:
+    """Atomically insert a knowledge item unless its semantic identity exists."""
+
+    db = get_db()
+    content_hash = str(k.content_hash or "").strip()
+    with transaction(immediate=True):
+        if title_window_hours is not None:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=title_window_hours)
+            ).isoformat()
+            existing = db.execute(
+                """
+                SELECT id FROM knowledge_items
+                WHERE item_type = ? AND title = ?
+                  AND replace(created_at, ' ', 'T') > replace(?, ' ', 'T')
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (k.item_type, k.title, cutoff),
+            ).fetchone()
+            if existing is not None:
+                return False, str(existing["id"]), "title_window"
+
+        if content_hash:
+            existing = db.execute(
+                """
+                SELECT id FROM knowledge_items
+                WHERE item_type = ? AND content_hash = ?
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT 1
+                """,
+                (k.item_type, content_hash),
+            ).fetchone()
+            if existing is not None:
+                return False, str(existing["id"]), "duplicate"
+
+        _insert("knowledge_items", k.model_dump())
+    return True, None, None
 
 
 def update_knowledge_item(kid: str, **kwargs) -> None:

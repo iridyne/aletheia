@@ -67,12 +67,15 @@ def _parse_age(snapshot_at: str) -> tuple:
 def positions(
     status: str = typer.Option("open", help="Filter: open | closed | all"),
     limit: int = typer.Option(20, "--limit", "-n", help="Max rows to return"),
+    execution_mode: str | None = typer.Option(None, "--execution-mode", help="Filter by execution_mode"),
     json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
 ):
-    """List positions with PnL."""
+    """List positions with verified PnL read-model fields."""
+    from aletheia.portfolio.pnl import position_realized_pnl_view
     from aletheia.storage.repositories import list_positions
     filter_status = None if status == "all" else status
-    rows = list_positions(status=filter_status, limit=limit)
+    rows = list_positions(status=filter_status, limit=limit, execution_mode=execution_mode)
+    rows = [position_realized_pnl_view(row) for row in rows]
     _output(rows, json_output)
 
 

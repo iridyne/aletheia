@@ -840,6 +840,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         "hyperliquid": ["funding-rendered", "oi-rendered"],
         "position_x": ["position-x-rendered"],
         "options_structure": ["options-rendered"],
+        "technical_context": [],
     }
 
     manifest = observer._opportunity_evidence_manifest(
@@ -861,6 +862,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
     assert manifest["policy_epoch"] == "opportunity_information_integrity/v1"
     assert manifest["t0"]["feature_snapshot_id"] == "feature-t0"
     assert manifest["t1"]["sources"] == prefetched.rendered_sources
+    assert manifest["t1"]["technical_context"] == {"status": "unavailable"}
 
 
 def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
@@ -891,6 +893,17 @@ def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
                     {"id": "oi-t1", "kind": "open_interest"},
                 ],
                 "position_x": [{"id": "position-x-t1", "source": "owner_aggregate"}],
+                "technical_context": [{
+                    "id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                    "stable_id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                    "quality_state": "complete",
+                }],
+            },
+            "technical_context": {
+                "status": "available",
+                "source_id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                "stable_id": "technical-context-v1:okx:BTC/USDT:perp:frozen",
+                "quality_state": "complete",
             },
         },
     }
@@ -961,6 +974,9 @@ def test_pi_manifest_copies_opportunity_t0_t1_and_ignores_newer_decoys(
 
     assert manifest["opportunity_t0"] == opportunity_evidence["t0"]
     assert manifest["opportunity_t1"] == opportunity_evidence["t1"]
+    assert manifest["opportunity_t1"]["technical_context"]["source_id"].endswith(
+        ":frozen"
+    )
     assert manifest["system_operator_t1"]["technical_snapshot_id"] == "operator-feature-t1"
     assert "source_identities" not in manifest["system_operator_t1"]
     assert manifest["system_operator_t1"]["opportunity_context"] == {

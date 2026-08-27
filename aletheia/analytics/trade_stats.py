@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 # which under xdist can leak a stub into a later test (see test_outcome_consumers).
 from aletheia.analytics import outcome_integrity
 from aletheia.analytics.execution_mode import execution_mode_identity
+from aletheia.analytics.holding_time import holding_hours
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
@@ -164,6 +165,7 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
             source_agg[src] = {
                 "trade_count": 0, "wins": 0,
                 "total_pnl": 0.0, "total_pnl_pct": 0.0, "total_hold": 0.0,
+                "hold_time_available_count": 0,
             }
         a = source_agg[src]
         a["trade_count"] += 1
@@ -179,20 +181,27 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         a["total_pnl"] += pnl
         a["total_pnl_pct"] += pnl_pct
 
-        hours = _hold_hours(r.get("opened_at"), r.get("closed_at"))
+        hours = holding_hours(r.get("opened_at"), r.get("closed_at"))
         if hours is not None:
             a["total_hold"] += hours
+            a["hold_time_available_count"] += 1
             all_hold_hours.append(hours)
 
     by_source = []
     for src in ("ruleset", "opportunity"):
-        a = source_agg.get(src, {"trade_count": 0, "wins": 0, "total_pnl": 0.0, "total_pnl_pct": 0.0, "total_hold": 0.0})
+        a = source_agg.get(src, {
+            "trade_count": 0, "wins": 0, "total_pnl": 0.0, "total_pnl_pct": 0.0,
+            "total_hold": 0.0, "hold_time_available_count": 0,
+        })
         tc = a["trade_count"]
+        hold_count = a["hold_time_available_count"]
         by_source.append({
             "source_type": src,
             "trade_count": tc,
             "win_rate": round(a["wins"] / tc * 100, 1) if tc else None,
-            "avg_hold_hours": round(a["total_hold"] / tc, 1) if tc else None,
+            "avg_hold_hours": round(a["total_hold"] / hold_count, 1) if hold_count else None,
+            "hold_time_available_count": hold_count,
+            "hold_time_unavailable_count": tc - hold_count,
             "expectancy_pct": round(a["total_pnl_pct"] / tc, 2) if tc else None,
             "total_pnl": round(a["total_pnl"], 4) if tc else None,
         })
@@ -208,6 +217,8 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         "win_rate": round(total_wins / total_count * 100, 1) if total_count else None,
         "avg_hold_hours": round(sum(all_hold_hours) / len(all_hold_hours), 1) if all_hold_hours else None,
         "median_hold_hours": round(sorted_hold[len(sorted_hold) // 2], 2) if sorted_hold else None,
+        "hold_time_available_count": len(all_hold_hours),
+        "hold_time_unavailable_count": total_count - len(all_hold_hours),
         "total_pnl": round(total_pnl, 4) if total_count else None,
     }
 
@@ -222,21 +233,6 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         **outcome_window_metadata(),
         **build_outcome_cohort_summary(execution_mode=execution_mode),
     }
-
-
-def _hold_hours(opened_at, closed_at) -> float | None:
-    if not opened_at or not closed_at:
-        return None
-    try:
-        o = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
-        c = datetime.fromisoformat(str(closed_at).replace("Z", "+00:00"))
-        if o.tzinfo is None:
-            o = o.replace(tzinfo=timezone.utc)
-        if c.tzinfo is None:
-            c = c.replace(tzinfo=timezone.utc)
-        return max(0.0, (c - o).total_seconds() / 3600.0)
-    except (ValueError, TypeError):
-        return None
 
 
 _BUCKETS = [
