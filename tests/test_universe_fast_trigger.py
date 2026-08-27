@@ -36,27 +36,36 @@ def _prepare(tmp_path, monkeypatch):
 def _bars(direction: str) -> list[dict]:
     rows = []
     for index in range(20):
-        rows.append({
-            "ts": index * 900_000,
+        rows.append(
+            {
+                "ts": index * 900_000,
+                "open": 100.0,
+                "high": 110.0 if index == 19 else 109.0,
+                "low": 90.0 if index == 19 else 91.0,
+                "close": 100.0,
+                "volume": 10.0,
+            }
+        )
+    rows.append(
+        {
+            "ts": 20 * 900_000,
             "open": 100.0,
-            "high": 110.0 if index == 19 else 109.0,
-            "low": 90.0 if index == 19 else 91.0,
-            "close": 100.0,
-            "volume": 10.0,
-        })
-    rows.append({
-        "ts": 20 * 900_000,
-        "open": 100.0,
-        "high": 112.0,
-        "low": 88.0,
-        "close": 111.0 if direction == "long" else 89.0,
-        "volume": 20.0,
-    })
+            "high": 112.0,
+            "low": 88.0,
+            "close": 111.0 if direction == "long" else 89.0,
+            "volume": 20.0,
+        }
+    )
     return rows
 
 
 def _authorized_setup(
-    cfg, now, *, market_type="perp", venue="bitget", fingerprint: str | None = None,
+    cfg,
+    now,
+    *,
+    market_type="perp",
+    venue="bitget",
+    fingerprint: str | None = None,
     level: float = 100.0,
 ):
     from aletheia.storage import repositories as repo
@@ -65,16 +74,26 @@ def _authorized_setup(
 
     leverage = 1 if market_type == "spot" else 3
     setup = UniverseSetup(
-        snapshot_id="snapshot-1", member_id="member-1", asset_id="asset-1",
-        venue=venue, symbol="BTC/USDT", market_type=market_type, direction="long",
-        rank=1, material_fingerprint=fingerprint or "f" * 64, trigger_spec_hash="spec",
+        snapshot_id="snapshot-1",
+        member_id="member-1",
+        asset_id="asset-1",
+        venue=venue,
+        symbol="BTC/USDT",
+        market_type=market_type,
+        direction="long",
+        rank=1,
+        material_fingerprint=fingerprint or "f" * 64,
+        trigger_spec_hash="spec",
         motive_evidence='{"reasons":["test momentum setup"],"total_score":75}',
-        breakout_level=level, atr=2.0,
+        breakout_level=level,
+        atr=2.0,
         pullback_band=json.dumps([level - 0.5, level + 0.5]),
-        entry_zone=json.dumps([level, level + 0.5]), invalidation_price=level - 2.0,
+        entry_zone=json.dumps([level, level + 0.5]),
+        invalidation_price=level - 2.0,
         funding_rate=0.0 if market_type == "perp" else None,
         funding_observed_at=now.isoformat() if market_type == "perp" else None,
-        regime_tag="bull", valid_until=(now + timedelta(minutes=45)).isoformat(),
+        regime_tag="bull",
+        valid_until=(now + timedelta(minutes=45)).isoformat(),
     )
     repo.insert_universe_setup(setup)
     authorization = authorize_setup(
@@ -97,15 +116,21 @@ def _trigger_snapshot(now):
 
     timestamp_ms = int(now.timestamp() * 1_000)
     return TriggerSnapshot(
-        observed_at=now.isoformat(), bid=100.1, ask=100.2,
-        spread_bps=9.99, depth_10bps_usd=30_000, taker_buy_ratio=0.7,
+        observed_at=now.isoformat(),
+        bid=100.1,
+        ask=100.2,
+        spread_bps=9.99,
+        depth_10bps_usd=30_000,
+        taker_buy_ratio=0.7,
         quote_exchange_timestamp_ms=timestamp_ms,
         quote_received_timestamp_ms=timestamp_ms,
         trade_exchange_timestamp_ms=timestamp_ms,
         trade_received_timestamp_ms=timestamp_ms,
         depth_exchange_timestamp_ms=timestamp_ms,
         depth_received_timestamp_ms=timestamp_ms,
-        quote_sequence=3, trade_sequence=2, depth_sequence=1,
+        quote_sequence=3,
+        trade_sequence=2,
+        depth_sequence=1,
     )
 
 
@@ -116,9 +141,7 @@ def _trigger_snapshot(now):
         ("short", 90.0, (89.7775, 90.0), 90.89),
     ],
 )
-def test_build_momentum_setup_uses_21_closed_bars(
-    direction, level, zone, invalidation
-):
+def test_build_momentum_setup_uses_21_closed_bars(direction, level, zone, invalidation):
     from aletheia.universe.fast_trigger import build_momentum_setup
 
     setup = build_momentum_setup(
@@ -152,11 +175,18 @@ def test_setup_fingerprint_changes_with_breakout_structure():
     second[19]["high"] = 110.5
     second[-1]["close"] = 111.5
     common = {
-        "snapshot_id": "snapshot-1", "member_id": "member-1",
-        "asset_id": "asset-1", "venue": "bitget", "symbol": "BTC/USDT",
-        "market_type": "perp", "direction": "long", "regime_tag": "bull",
-        "rank": 1, "material_fingerprint": "candidate-fingerprint",
-        "atr_15m_pct": 1.0, "now": datetime(2026, 8, 26, tzinfo=timezone.utc),
+        "snapshot_id": "snapshot-1",
+        "member_id": "member-1",
+        "asset_id": "asset-1",
+        "venue": "bitget",
+        "symbol": "BTC/USDT",
+        "market_type": "perp",
+        "direction": "long",
+        "regime_tag": "bull",
+        "rank": 1,
+        "material_fingerprint": "candidate-fingerprint",
+        "atr_15m_pct": 1.0,
+        "now": datetime(2026, 8, 26, tzinfo=timezone.utc),
     }
     one = build_momentum_setup(candles=first, **common)
     two = build_momentum_setup(candles=second, **common)
@@ -320,8 +350,13 @@ def test_sequence_regression_disarms_trigger():
     )
     engine.confirm_subscription()
     first = FastMarketEvent(
-        event_type="quote", instrument=instrument, exchange_timestamp_ms=1_000,
-        received_timestamp_ms=1_000, sequence=2, bid=100.0, ask=100.01,
+        event_type="quote",
+        instrument=instrument,
+        exchange_timestamp_ms=1_000,
+        received_timestamp_ms=1_000,
+        sequence=2,
+        bid=100.0,
+        ask=100.01,
     )
     second = first.model_copy(update={"received_timestamp_ms": 1_100, "sequence": 1})
     engine.observe(first)
@@ -395,15 +430,23 @@ def test_generation_is_complete_hash_locked_and_retained(tmp_path, monkeypatch):
 
     assert opportunity["generation_version"] == "opportunity-generation/v2"
     assert len(opportunity["generation_hash"]) == 64
-    assert generation["instrument_identity"] == {
-        "venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp"
-    }
+    assert generation["instrument_identity"] == {"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp"}
     assert generation["signal_mark"] == pytest.approx(100.2)
     assert set(generation) == {
-        "instrument_identity", "family", "archetype", "direction",
-        "detected_at", "signal_mark", "motive_evidence", "entry_trigger",
-        "entry_zone", "invalidation", "horizon_hours", "cost_snapshot",
-        "material_fingerprint", "valid_until",
+        "instrument_identity",
+        "family",
+        "archetype",
+        "direction",
+        "detected_at",
+        "signal_mark",
+        "motive_evidence",
+        "entry_trigger",
+        "entry_zone",
+        "invalidation",
+        "horizon_hours",
+        "cost_snapshot",
+        "material_fingerprint",
+        "valid_until",
     }
     with pytest.raises(sqlite3.IntegrityError, match="immutable"):
         repo.get_db().execute(
@@ -414,9 +457,7 @@ def test_generation_is_complete_hash_locked_and_retained(tmp_path, monkeypatch):
         repo.get_db().execute("DELETE FROM opportunities WHERE id=?", (opportunity["id"],))
 
 
-def test_entry_zone_escape_invalidates_without_repricing_generation(
-    tmp_path, monkeypatch
-):
+def test_entry_zone_escape_invalidates_without_repricing_generation(tmp_path, monkeypatch):
     _prepare(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
@@ -434,9 +475,7 @@ def test_entry_zone_escape_invalidates_without_repricing_generation(
         "aletheia.risk.engine.account_available_for_execution",
         lambda execution_mode, cfg: 1_000.0,
     )
-    materialized = materialize_trigger(
-        setup.id, _trigger_snapshot(now), cfg=cfg, now=now, execute_gateway=False
-    )
+    materialized = materialize_trigger(setup.id, _trigger_snapshot(now), cfg=cfg, now=now, execute_gateway=False)
     before = repo.get_opportunity(materialized["opportunity_id"])
 
     at_eleven = _trigger_snapshot(now).model_copy(update={"bid": 100.3, "ask": 100.4})
@@ -451,20 +490,11 @@ def test_entry_zone_escape_invalidates_without_repricing_generation(
     assert json.loads(after["generation_json"])["signal_mark"] == pytest.approx(100.2)
     assert repo.get_universe_setup(setup.id)["state"] == "invalidated"
     assessments = repo.list_opportunity_validity_assessments(after["id"])
-    assert any(
-        row["authority"] == "hard" and row["verdict"] == "block"
-        for row in assessments
-    )
+    assert any(row["authority"] == "hard" and row["verdict"] == "block" for row in assessments)
 
-    setup_2, _ = _authorized_setup(
-        cfg, now, fingerprint="2" * 64, level=125.0
-    )
-    trigger_2 = _trigger_snapshot(now).model_copy(
-        update={"bid": 125.1, "ask": 125.2}
-    )
-    materialized_2 = materialize_trigger(
-        setup_2.id, trigger_2, cfg=cfg, now=now, execute_gateway=False
-    )
+    setup_2, _ = _authorized_setup(cfg, now, fingerprint="2" * 64, level=125.0)
+    trigger_2 = _trigger_snapshot(now).model_copy(update={"bid": 125.1, "ask": 125.2})
+    materialized_2 = materialize_trigger(setup_2.id, trigger_2, cfg=cfg, now=now, execute_gateway=False)
     opportunity_2 = repo.get_opportunity(materialized_2["opportunity_id"])
     assert opportunity_2["id"] != after["id"]
     assert json.loads(opportunity_2["generation_json"])["signal_mark"] == pytest.approx(125.2)
@@ -482,14 +512,16 @@ def test_market_structure_is_closed_bar_causal_and_shadow_unqualified():
     for index in range(40):
         center = 100.0 + index * 0.2
         offset = offsets[index % len(offsets)]
-        candles.append({
-            "ts": index * 60_000,
-            "open": center,
-            "high": center + 2.0 + offset,
-            "low": center - 2.0 - offset,
-            "close": center + 0.1,
-            "volume": 10.0,
-        })
+        candles.append(
+            {
+                "ts": index * 60_000,
+                "open": center,
+                "high": center + 2.0 + offset,
+                "low": center - 2.0 - offset,
+                "close": center + 0.1,
+                "volume": 10.0,
+            }
+        )
     result = evaluate_market_structure(candles, direction="long")
 
     assert result["algorithm_version"] == "market-structure/v2"
@@ -671,7 +703,10 @@ def test_local_paper_fast_trigger_executes_without_exchange_order(tmp_path, monk
     setup, _ = _authorized_setup(cfg, now, market_type="spot")
     repo.insert_market_snapshot(
         MarketSnapshot(
-            symbol="BTC/USDT", market_type="spot", exchange="bitget", price=100.2,
+            symbol="BTC/USDT",
+            market_type="spot",
+            exchange="bitget",
+            price=100.2,
             snapshot_at=now.isoformat(),
         )
     )
@@ -685,9 +720,7 @@ def test_local_paper_fast_trigger_executes_without_exchange_order(tmp_path, monk
     )
     monkeypatch.setattr(
         "aletheia.net.httpx_client",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("local paper fast trigger attempted network I/O")
-        ),
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local paper fast trigger attempted network I/O")),
     )
 
     result = materialize_trigger(setup.id, _trigger_snapshot(now), cfg=cfg, now=now)
@@ -702,8 +735,7 @@ def test_local_paper_fast_trigger_executes_without_exchange_order(tmp_path, monk
     assert order["status"] == "filled"
     assert result["frame_to_gateway_ms"] <= 250.0
     order_latency_ms = (
-        datetime.fromisoformat(order["created_at"].replace("Z", "+00:00"))
-        - now
+        datetime.fromisoformat(order["created_at"].replace("Z", "+00:00")) - now
     ).total_seconds() * 1_000
     assert order_latency_ms <= 300.0
     assert repo.get_universe_setup(setup.id)["state"] == "executed"
@@ -727,18 +759,12 @@ def test_frame_to_gateway_p95_is_within_local_budget(tmp_path, monkeypatch):
         calls.append((proposal_id, execution_mode))
         return {"status": "executed", "proposal_id": proposal_id}
 
-    monkeypatch.setattr(
-        "aletheia.execution.gateway.execute_existing_proposal", _gateway
-    )
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal", _gateway)
     latencies = []
     for index in range(30):
         now = datetime.now(timezone.utc)
-        setup, _ = _authorized_setup(
-            cfg, now, fingerprint=hashlib.sha256(str(index).encode()).hexdigest()
-        )
-        result = materialize_trigger(
-            setup.id, _trigger_snapshot(now), cfg=cfg, now=now
-        )
+        setup, _ = _authorized_setup(cfg, now, fingerprint=hashlib.sha256(str(index).encode()).hexdigest())
+        result = materialize_trigger(setup.id, _trigger_snapshot(now), cfg=cfg, now=now)
         latencies.append(result["frame_to_gateway_ms"])
 
     p95 = statistics.quantiles(latencies, n=20)[18]
@@ -797,9 +823,7 @@ def test_concurrent_trigger_frames_materialize_once(tmp_path, monkeypatch):
         barrier.wait(timeout=5)
         return 1_000.0
 
-    monkeypatch.setattr(
-        "aletheia.risk.engine.account_available_for_execution", available
-    )
+    monkeypatch.setattr("aletheia.risk.engine.account_available_for_execution", available)
     snapshot = _trigger_snapshot(now)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
@@ -818,14 +842,93 @@ def test_concurrent_trigger_frames_materialize_once(tmp_path, monkeypatch):
 
 
 def test_fast_trigger_hot_path_has_no_llm_or_provider_calls():
-    from aletheia.agent_runtime.fast_trigger_watch import _watch_loop
+    from aletheia.agent_runtime.fast_trigger_watch import _prewarm_market_structure, _watch_loop
     from aletheia.universe.fast_trigger import TriggerEngine, materialize_trigger
 
     source = "\n".join(
-        inspect.getsource(value) for value in (TriggerEngine, materialize_trigger, _watch_loop)
+        inspect.getsource(value)
+        for value in (TriggerEngine, materialize_trigger, _prewarm_market_structure, _watch_loop)
     ).lower()
     assert "llm_" not in source
-    assert "provider" not in source
+    assert "get_market_data_provider" not in source
+
+
+@pytest.mark.asyncio
+async def test_superseded_resting_plan_cancels_only_through_gateway(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": "plan-1",
+        "status": "ordered",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+    }
+    calls = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(
+        watch.repo,
+        "get_candidate_planning_generation",
+        lambda _generation_id: {"is_current": 0},
+    )
+    monkeypatch.setattr(
+        watch.EntryPlan,
+        "model_validate_json",
+        lambda _payload: SimpleNamespace(plan_id="plan-1", planning_generation_id="generation-1"),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: calls.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+
+    plans, engines = await watch._load_entry_plan_watchers(
+        SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10))
+    )
+
+    assert plans == {}
+    assert engines == {}
+    assert calls == [("plan-1", "incompatible_planning_generation")]
+
+
+@pytest.mark.asyncio
+async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    transitions = []
+    cancellations = []
+    monkeypatch.setattr(
+        watch.repo,
+        "list_watchable_entry_plans",
+        lambda _limit: [
+            {"id": "waiting-plan", "status": "waiting"},
+            {"id": "ordered-plan", "status": "ordered"},
+        ],
+    )
+    monkeypatch.setattr(
+        watch.repo,
+        "transition_entry_plan",
+        lambda plan_id, **kwargs: transitions.append((plan_id, kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+
+    await watch._cancel_open_entry_plans("fast_trigger_paused")
+
+    assert transitions == [
+        (
+            "waiting-plan",
+            {
+                "expected_status": "waiting",
+                "status": "invalidated",
+                "reason": "fast_trigger_paused",
+            },
+        )
+    ]
+    assert cancellations == [("ordered-plan", "fast_trigger_paused")]
 
 
 @pytest.mark.asyncio
@@ -904,6 +1007,11 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
     monkeypatch.setattr(watch, "_stop_event", asyncio.Event())
     monkeypatch.setattr(watch, "_configured_block_reason", lambda _cfg: None)
     monkeypatch.setattr(watch, "_load_watchers", load_watchers)
+    monkeypatch.setattr(
+        watch,
+        "_load_entry_plan_watchers",
+        lambda _cfg, existing=None: asyncio.sleep(0, result=({}, {})),
+    )
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
 
@@ -925,17 +1033,33 @@ def test_authorization_refuses_non_2r_target_and_cross_venue(tmp_path, monkeypat
     cfg.fast_trigger.mode = "shadow"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     setup = UniverseSetup(
-        snapshot_id="s", member_id="m", asset_id="a", venue="bitget",
-        symbol="BTC/USDT", market_type="perp", direction="long", rank=1,
-        material_fingerprint="fp", trigger_spec_hash="spec", breakout_level=100,
-        atr=2, pullback_band="[99.5,100.5]", entry_zone="[100,100.5]",
-        invalidation_price=98, valid_until=(now + timedelta(minutes=30)).isoformat(),
+        snapshot_id="s",
+        member_id="m",
+        asset_id="a",
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        rank=1,
+        material_fingerprint="fp",
+        trigger_spec_hash="spec",
+        breakout_level=100,
+        atr=2,
+        pullback_band="[99.5,100.5]",
+        entry_zone="[100,100.5]",
+        invalidation_price=98,
+        valid_until=(now + timedelta(minutes=30)).isoformat(),
     )
     repo.insert_universe_setup(setup)
     kwargs = {
-        "reasoning": "bounded", "max_spread_bps": 10,
-        "min_depth_10bps_usd": 25_000, "max_risk_pct": 1,
-        "max_leverage": 3, "expected_horizon_hours": 4, "now": now, "cfg": cfg,
+        "reasoning": "bounded",
+        "max_spread_bps": 10,
+        "min_depth_10bps_usd": 25_000,
+        "max_risk_pct": 1,
+        "max_leverage": 3,
+        "expected_horizon_hours": 4,
+        "now": now,
+        "cfg": cfg,
     }
     with pytest.raises(ValueError, match="target_must_be_2r"):
         authorize_setup(setup.id, target_risk_reward=3, **kwargs)
@@ -966,9 +1090,7 @@ def test_execute_materialization_never_retries_submission_unknown(tmp_path, monk
         calls.append((proposal_id, execution_mode))
         return {"status": "submission_unknown", "proposal_id": proposal_id}
 
-    monkeypatch.setattr(
-        "aletheia.execution.gateway.execute_existing_proposal", _execute
-    )
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal", _execute)
 
     first = materialize_trigger(setup.id, _trigger_snapshot(now), cfg=cfg, now=now)
     second = materialize_trigger(setup.id, _trigger_snapshot(now), cfg=cfg, now=now)
@@ -986,9 +1108,7 @@ def test_execute_materialization_never_retries_submission_unknown(tmp_path, monk
         ("kill_switch_active", "fast_trigger_runtime_paused"),
     ],
 )
-def test_materialization_fails_closed_for_runtime_blocks(
-    tmp_path, monkeypatch, runtime_field, reason
-):
+def test_materialization_fails_closed_for_runtime_blocks(tmp_path, monkeypatch, runtime_field, reason):
     _prepare(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import materialize_trigger
@@ -1017,9 +1137,7 @@ def test_materialization_rejects_stale_t0_snapshot(tmp_path, monkeypatch):
     setup, _ = _authorized_setup(cfg, now)
     stale = _trigger_snapshot(now - timedelta(seconds=2))
 
-    assert materialize_trigger(setup.id, stale, cfg=cfg, now=now)["reason_code"] == (
-        "fast_trigger_quote_stale"
-    )
+    assert materialize_trigger(setup.id, stale, cfg=cfg, now=now)["reason_code"] == ("fast_trigger_quote_stale")
 
 
 def test_shadow_authorization_cannot_become_execute_authority(tmp_path, monkeypatch):
@@ -1049,9 +1167,7 @@ def test_shadow_authorization_cannot_become_execute_authority(tmp_path, monkeypa
         ("zone", "fast_trigger_entry_zone_escaped", "invalidated"),
     ],
 )
-def test_materialization_revalidates_authorization_and_entry_zone(
-    tmp_path, monkeypatch, mutation, reason, terminal
-):
+def test_materialization_revalidates_authorization_and_entry_zone(tmp_path, monkeypatch, mutation, reason, terminal):
     _prepare(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
@@ -1107,9 +1223,7 @@ def test_bitget_parser_and_subscription_ack_are_exact_venue():
         {instrument},
         received_timestamp_ms=4,
     )
-    assert [quote[0].event_type, trade[0].event_type, depth[0].event_type] == [
-        "quote", "trade", "depth"
-    ]
+    assert [quote[0].event_type, trade[0].event_type, depth[0].event_type] == ["quote", "trade", "depth"]
     stream = BitgetFastMarketStream()
     stream._instruments = {instrument}
     for channel in ("ticker", "trade", "books5", "candle1m"):
@@ -1150,12 +1264,8 @@ def test_bitget_candle_updates_use_envelope_sequence_not_bar_open_time():
         },
         "data": [["100", "99", "101", "98", "100", "5"]],
     }
-    first = parse_bitget_message(
-        {**base, "ts": "200"}, {instrument}, received_timestamp_ms=201
-    )[0]
-    second = parse_bitget_message(
-        {**base, "ts": "300"}, {instrument}, received_timestamp_ms=301
-    )[0]
+    first = parse_bitget_message({**base, "ts": "200"}, {instrument}, received_timestamp_ms=201)[0]
+    second = parse_bitget_message({**base, "ts": "300"}, {instrument}, received_timestamp_ms=301)[0]
     assert first.exchange_timestamp_ms == second.exchange_timestamp_ms == 100
     assert first.sequence < second.sequence
 
@@ -1222,21 +1332,34 @@ def test_momentum_emitter_persists_setup_not_opportunity(tmp_path, monkeypatch):
     from aletheia.data.symbols import build_instrument_background
     from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 
-    repo.insert_universe_snapshot(
-        UniverseSnapshot(id="snapshot-momentum", market_type="perp", universe_size=1)
-    )
+    repo.insert_universe_snapshot(UniverseSnapshot(id="snapshot-momentum", market_type="perp", universe_size=1))
     member = UniverseMember(
-        id="member-momentum", snapshot_id="snapshot-momentum", asset_id="asset-1",
-        symbol="BTC/USDT", market_type="perp", rank=1, total_score=75,
-        scanner_family="momentum", scanner_direction="long", venue="bitget",
+        id="member-momentum",
+        snapshot_id="snapshot-momentum",
+        asset_id="asset-1",
+        symbol="BTC/USDT",
+        market_type="perp",
+        rank=1,
+        total_score=75,
+        scanner_family="momentum",
+        scanner_direction="long",
+        venue="bitget",
         expires_at="2099-01-01T00:00:00+00:00",
     )
     repo.insert_universe_member(member)
     feature = {
-        "asset_id": "asset-1", "venue": "bitget", "symbol": "BTC/USDT",
-        "market_type": "perp", "return_1h": 2.0, "return_4h": 3.0,
-        "return_24h": 4.0, "rsi_14": 60.0, "funding_rate": 0.0,
-        "atr_15m_pct": 1.0, "_closed_ohlcv_15m": _bars("long"), "reasons": [],
+        "asset_id": "asset-1",
+        "venue": "bitget",
+        "symbol": "BTC/USDT",
+        "market_type": "perp",
+        "return_1h": 2.0,
+        "return_4h": 3.0,
+        "return_24h": 4.0,
+        "rsi_14": 60.0,
+        "funding_rate": 0.0,
+        "atr_15m_pct": 1.0,
+        "_closed_ohlcv_15m": _bars("long"),
+        "reasons": [],
         "instrument_background": build_instrument_background(
             symbol="BTC/USDT",
             venue="bitget",
@@ -1253,9 +1376,7 @@ def test_momentum_emitter_persists_setup_not_opportunity(tmp_path, monkeypatch):
         lambda *args, **kwargs: {"status": "watch"},
     )
 
-    created = emit_deterministic_opportunities(
-        [member.model_dump()], "snapshot-momentum", [feature]
-    )
+    created = emit_deterministic_opportunities([member.model_dump()], "snapshot-momentum", [feature])
 
     assert created == 0
     assert get_db().execute("SELECT COUNT(*) FROM universe_setups").fetchone()[0] == 1
@@ -1272,7 +1393,6 @@ def test_execute_mode_refuses_unavailable_or_live_stream(mode):
     cfg.exchange.paper_execution_mode = mode
     reason = validate_fast_trigger_execution(cfg)
     expected = (
-        "fast_trigger_live_forbidden"
-        if "live" in mode else f"fast_trigger_stream_unavailable:{mode.split('_')[0]}"
+        "fast_trigger_live_forbidden" if "live" in mode else f"fast_trigger_stream_unavailable:{mode.split('_')[0]}"
     )
     assert reason == expected

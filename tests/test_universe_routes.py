@@ -91,10 +91,45 @@ def test_get_current_uses_service_snapshot_namespace_with_mixed_config(client):
     data = resp.json()
     assert data["snapshot"] == snap
     assert data["members"] == [
-        {**members[0], "setup_state": None, "triggered_opportunity_id": None}
+        {
+            **members[0],
+            "entry_plan_id": None,
+            "entry_plan_status": None,
+            "entry_plan_execution_mode": None,
+            "setup_state": None,
+            "triggered_opportunity_id": None,
+        }
     ]
     assert data["fallback"] is False
     get_snapshot.assert_called_once_with()
+
+
+def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
+    from aletheia.server.routes.universe import _attach_candidate_handoff_state
+
+    db = MagicMock()
+    plan_result = MagicMock()
+    plan_result.fetchall.return_value = [
+        {
+            "last_candidate_id": "candidate-1",
+            "id": "plan-1",
+            "status": "waiting",
+            "execution_mode": "RESTING_MAKER",
+            "created_at": "2026-08-27T00:00:00+00:00",
+            "updated_at": "2026-08-27T00:00:00+00:00",
+        }
+    ]
+    legacy_result = MagicMock()
+    legacy_result.fetchall.return_value = []
+    db.execute.side_effect = [plan_result, legacy_result]
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
+
+    [candidate] = _attach_candidate_handoff_state([{"id": "candidate-1"}])
+
+    assert candidate["entry_plan_id"] == "plan-1"
+    assert candidate["entry_plan_status"] == "waiting"
+    assert candidate["entry_plan_execution_mode"] == "RESTING_MAKER"
+    assert candidate["setup_state"] is None
 
 
 def test_refresh_when_disabled(client, disabled_cfg):
@@ -162,6 +197,7 @@ def test_get_member_found(client):
     assert body["member"]["symbol"] == "BTC/USDT"
     assert body["member"]["setup_state"] is None
     assert body["features"]["rsi_14"] == 55.0
+    assert body["entry_plans"] == []
     assert len(body["opportunities"]) == 1
 
 

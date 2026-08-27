@@ -1,0 +1,67 @@
+"""Executable architecture claims for the canonical Entry Plan lifecycle."""
+
+import inspect
+
+from tests.specs.spec_meta import SpecClaim, spec_claim
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S01",
+        "decision_lifecycle_contract",
+        "§2.1a durable Candidate planning",
+        "L2a",
+        "Universe publication creates durable Candidate Planning Generations and does not emit a parallel executable Opportunity.",
+        status="implemented",
+    )
+)
+def test_universe_publication_has_one_entry_planning_owner():
+    from aletheia.universe.service import UniverseService
+
+    source = inspect.getsource(UniverseService.refresh)
+    assert "ensure_candidate_planning_generation" in source
+    assert "emit_deterministic_opportunities" not in source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S02",
+        "decision_lifecycle_contract",
+        "§1 Triggered hot path",
+        "L2a",
+        "Fast Monitoring consumes local/stream facts without LLM or remote provider calls and routes cancellation through Gateway.",
+        status="implemented",
+    )
+)
+def test_fast_monitoring_is_deterministic_and_gateway_owned():
+    from aletheia.agent_runtime.fast_trigger_watch import (
+        _load_entry_plan_watchers,
+        _prewarm_market_structure,
+        _watch_loop,
+    )
+
+    source = "\n".join(inspect.getsource(value) for value in (_load_entry_plan_watchers, _prewarm_market_structure, _watch_loop))
+    assert "llm_" not in source.lower()
+    assert "get_market_data_provider" not in source
+    assert "cancel_entry_plan_order" in source
+    assert "BitgetClient" not in source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S03",
+        "execution_contract",
+        "§3.0a Entry Plan Order Policy",
+        "L2a",
+        "Entry Plan execution creates one immutable internal Order Intent and delegates Risk and venue execution to the canonical Gateway.",
+        status="implemented",
+    )
+)
+def test_entry_plan_execution_reuses_canonical_gateway():
+    from aletheia.execution import entry_plan_execution
+
+    source = inspect.getsource(entry_plan_execution.execute_entry_plan)
+    assert "get_trade_proposal_by_entry_plan" in source
+    assert "execute_existing_proposal" in source
+    assert "evaluate_proposal" not in source
+    assert "BitgetClient" not in source

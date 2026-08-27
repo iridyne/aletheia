@@ -21,6 +21,8 @@ from aletheia.storage.repositories import (
     _validate_native_entry_order_snapshot,
     acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
+    get_candidate_planning_generation,
+    get_entry_plan,
     get_entry_risk_reservation,
     get_opportunity,
     get_serenity_opportunity,
@@ -36,8 +38,10 @@ from aletheia.storage.repositories import (
     validate_trade_proposal_commit_hash,
 )
 from aletheia.trading.entry_plan import (
+    EntryPlan,
     RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
+    entry_plan_payload,
     entry_plan_risk_reward_is_plausible,
     stop_distance_below_min_floor,
 )
@@ -86,6 +90,66 @@ def _physical_market_type(value: str | None) -> str | None:
     if raw == "futures":
         return "futures"
     return None
+
+
+def _entry_plan_authority_violations(
+    proposal: TradeProposal,
+    *,
+    capital_base: float,
+    resolved_policy,
+) -> list[str]:
+    """Revalidate one bounded Entry Plan envelope inside canonical Risk."""
+
+    if not proposal.entry_plan_id:
+        return []
+    row = get_entry_plan(proposal.entry_plan_id)
+    if row is None:
+        return ["entry_plan_not_found"]
+    try:
+        plan = EntryPlan.model_validate_json(str(row["plan_json"]))
+        _, digest = entry_plan_payload(plan)
+    except Exception:
+        return ["entry_plan_contract_invalid"]
+    violations = []
+    if digest != row.get("plan_hash") or plan.plan_id != proposal.entry_plan_id:
+        violations.append("entry_plan_integrity_failed")
+    generation = get_candidate_planning_generation(plan.planning_generation_id)
+    if generation is None or not bool(generation.get("is_current")):
+        violations.append("entry_plan_generation_superseded")
+    if row.get("status") not in {"waiting", "triggered", "risk_reserved"}:
+        violations.append("entry_plan_lifecycle_not_executable")
+    try:
+        expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
+        if expires_at <= datetime.now(timezone.utc):
+            violations.append("entry_plan_expired")
+    except (TypeError, ValueError):
+        violations.append("entry_plan_expiry_invalid")
+    if (
+        plan.symbol != proposal.symbol
+        or _physical_market_type(plan.market_type) != _physical_market_type(proposal.market_type)
+        or plan.direction != proposal.direction
+        or plan.execution_account_mode != proposal.execution_mode
+    ):
+        violations.append("entry_plan_order_identity_mismatch")
+    policy = resolved_policy.policy
+    if (
+        plan.risk_policy_id != policy.policy_id
+        or plan.risk_policy_revision != policy.revision
+        or plan.risk_policy_hash != resolved_policy.policy_hash
+    ):
+        violations.append("entry_plan_risk_authority_revoked")
+    quantity = float(proposal.quantity or 0.0)
+    price = float(proposal.price or 0.0)
+    if price * quantity > plan.max_notional + 1e-12:
+        violations.append("entry_plan_max_notional_exceeded")
+    if int(proposal.leverage or 1) > plan.max_leverage:
+        violations.append("entry_plan_max_leverage_exceeded")
+    if proposal.stop_price is not None and capital_base > 0:
+        risk_amount = abs(price - float(proposal.stop_price)) * quantity
+        plan_max_risk = capital_base * plan.max_risk_pct / 100.0
+        if risk_amount > plan_max_risk + 1e-12:
+            violations.append("entry_plan_max_risk_exceeded")
+    return violations
 
 
 def _paper_opportunity_identity_violations(proposal: TradeProposal) -> list[str]:
@@ -1102,6 +1166,13 @@ def _evaluate_proposal_locked(
     if capital_base is None:
         violations.append(f"capital_base_unavailable:{capital_base_reason}")
         capital_base = 0.0
+    violations.extend(
+        _entry_plan_authority_violations(
+            proposal,
+            capital_base=capital_base,
+            resolved_policy=resolved_policy,
+        )
+    )
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
     account_loss = authoritative_account_realized_loss(proposal.execution_mode)
     realized = account_loss.realized_pnl_usdt

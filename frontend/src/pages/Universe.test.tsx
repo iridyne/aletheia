@@ -20,6 +20,7 @@ const current: UniverseCurrentResponse = {
     estimated_cost: 2.1, crowding_risk: 11, late_entry_penalty: 3, scanner_family: 'momentum',
     quote_volume_24h: 18_400_000, spread_bps: 4.2, ttl_sec: 3600, expires_at: '2026-08-13T01:00:00Z',
     inclusion_reason: JSON.stringify(['RS24h leads BTC']), risk_flags: '[]', execution_eligible: 1,
+    entry_plan_id: null, entry_plan_status: null, entry_plan_execution_mode: null,
     setup_state: null, triggered_opportunity_id: null,
   }],
 }

@@ -16,7 +16,7 @@ import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDr
 import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../components/ui'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
 import { fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp } from '../lib/format'
-import type { MarketSnapshot, Opportunity, Position, PredictionMarket, UniverseMember } from '../types'
+import type { Candidate, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
 
 const PINNED_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -568,7 +568,7 @@ export default function Charts() {
 
   const groups = useMemo<InstrumentGroup[]>(() => {
     const universeMarket = universe?.snapshot?.market_type || 'spot'
-    const universeItems = (universe?.members || []).map((member: UniverseMember) => {
+    const universeItems = (universe?.members || []).map((member: Candidate) => {
       const instrument = { symbol: member.symbol, exchange: '', marketType: universeMarket }
       const snapshot = snapshotFor(instrument)
       const secondary = `#${member.rank} · ${member.scanner_family || 'Unclassified'}${snapshot?.price != null ? ` · ${fmtNum(snapshot.price)}` : ''}`

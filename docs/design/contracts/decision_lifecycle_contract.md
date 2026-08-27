@@ -5,59 +5,59 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-08-26 (v2.2:Universe Candidate→Setup→Trigger lifecycle) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
+> Last updated: 2026-08-27 (v2.3:Candidate→Entry Plan convergence) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
 
 ---
 
 ## 1. 脊柱全景(开仓方向)
 
-一笔开仓决策跨 10 跳,数据流方向:
+Universe-linked 开仓主路径如下。`Trigger` 只存在于 `TRIGGERED` 分支，不能为了线性展示而给
+`RESTING_MAKER` 合成 Trigger。
 
-```
-跳0 采集    collectors/* → market_snapshots / funding / microstructure 等原始表
-跳0.5 前置门 Universe ticker/tradability → 无方向完整批次证据（不伪造收益）
-跳1 生产    universe/signal_emitter.py → Candidate → UniverseSetup/Armed
-跳1.1 触发  EntryEligibility false→true（现有分数/方向/factor/regime/fresh exact price）
-            → immutable Opportunity
-跳1.2 后续  Ranker → System Operator → Proposal → Risk → Gateway
-跳1.5 增补  market_observer.py:_analyze_symbol → optional LLM → namespaced advisory assessment
-跳2 排序    paper_trader_ranker(纯确定性打分,无LLM) → 前N候选写 PiDecision(action='signal_pending') → notify_pi_daemon
-跳3 唤醒    pi_daemon._run_evaluation(防抖8s/冷却60s/300s兜底) → evaluate_trading_opportunity
-跳4 组装    commands.py:evaluate_trading_opportunity → build_enriched_trading_context (3层Context)
-跳5 定夺    trading_decision.py:evaluate → LLM → TradingDecision  ★唯一开仓决策权★
-            action=trade 的结构化输出必须显式给出 market_type、有限正数 stop_price/take_profit 和五项参数理由；
-            schema 不通过先走 llm_structured 有界重试，语义仍不完整再走一次现有修复，最终失败则 defer。
-            相对推理前精确 mark 的反向保护价或超出 `[1.00, 10.00]` 的价格推导 RR 也走同一次修复；
-            提交前刷新 mark 若已过期/不可用、穿越保护位或使 RR 超出包络，则记入 filter trace 并 typed defer，
-            不改写计划、不消费 carrier。
-            direct skip → 一次有界反事实确认；只有候选特定 adverse evidence 才可终结
-            conviction∈[40,80] 触发 bull/bear debate;conviction<55(初始或 debate 后)是
-            非终态 defer(DL-INV-2 v1.5)——抛 typed DecisionUnavailable，保留 pending
-            载体，由 material fingerprint 变化重新开放评估。
-跳6 提案    prepare_decision_as_proposal → 方向/取价门留下结构化结果 → guard chain(advisory)
-            → 最终 PiDecision + immutable TradeProposal 同一短事务提交 → gateway.execute_existing_proposal
-跳7 风控    risk/engine.py:evaluate_proposal —— 唯一硬门(20关,见 risk_engine_contract)
-跳8 执行    gateway → broker → Order → Fill → Position
-跳9 复盘    平仓后 post_trade_reviewer → knowledge_items(post_trade_review) → 晋级门 + 学习闭环
-旁路结果    universe member → 固定 horizon 的目标 instrument OHLCV → gross/directional/cost/net/MFE/MAE
-            → 只把完整 net 结果送入 scanner 校准、family edge、missed-alpha 与 guard candidate
-筛选旁路    Observer/Ranker/System Operator/Risk → filter_decisions
-            → filter_candidate_outcomes（共享四个固定 horizon）→ 只读分层对照
+```mermaid
+flowchart TD
+    A[Slow Universe Discovery] --> B[Candidate]
+    B --> C{Planning Generation owned?}
+    C -->|Yes| D[No LLM work]
+    C -->|No| E[Durable Planning Claim]
+    E --> F[On-Demand Entry Planner]
+    F --> G{Result}
+    G -->|No Plan| H[Durable No-Plan]
+    G -->|Stale| I[Audit only]
+    G -->|Entry Plan| J[Approved Entry Plan]
+    J --> K{Execution Mode}
+    K -->|RESTING_MAKER| L[Canonical Risk Reservation]
+    L --> M[Post-Only Resting Order]
+    M --> N[Fast Monitoring]
+    K -->|TRIGGERED| O[Fast Monitoring]
+    O --> P{Registered Trigger fires?}
+    P -->|No| O
+    P -->|Invalidated| Q[Terminal No Entry]
+    P -->|Yes| R[Latest Exact State]
+    R --> S[Canonical Risk Reservation]
+    S --> T[Approved Order Tactic]
+    T -->|Maker| U[Post-Only Limit]
+    T -->|Urgent| V[Opposing-BBO IOC Limit]
+    N -->|Invalidated| W[Gateway Cancel]
+    M --> X[Venue Outcome]
+    U --> X
+    V --> X
+    W --> X
+    X -->|No Fill or Cancel| Q
+    X -->|Partial or Full Fill| Y[Fill]
+    Y --> Z[Position]
 ```
 
-这里的 Opportunity 不是单一队列表：producer 每个 snapshot 可产生一个 `open` analysis
+以下 Opportunity 说明仅覆盖独立 producer 与历史兼容路径，不属于 Universe-linked 开仓主路径。
+独立 producer 每个 snapshot 可产生一个 `open` analysis
 generation；只有 Ranker 原子写入 `signal_pending` 后，它才成为 `queued` durable carrier。
 前者服务分析换代和反事实，后者服务 Operator 工作连续性。两者不得共享 snapshot supersede
 终止权或固定 30 分钟队列时钟。
 
-Universe 选出的行是 Candidate。当前物理表仍叫 `universe_members`，这是兼容实现细节；
-它不是 Opportunity population。`Setup` 只能从 Candidate 派生；`Opportunity` 只表示已经出现
-真实 T0 入场触发、带 entry zone、invalidation、cost evidence 与 generation hash 的机会。
-
-Momentum 的 Universe 候选先成为有期限的 `UniverseSetup`，不会进入 Opportunity/Ranker 队列。
-System Operator 只可为精确 setup 发布条件公式授权；Fast Trigger 在授权有效且同 venue 行情满足
-确定性条件时，才物化 Opportunity 与 Proposal，并直接进入既有 Risk/Gateway。该热路径不调用
-LLM，也不扩张其他五个 family 的权限。
+Universe 选出的行是 Candidate；物理表 `universe_members` 仅是兼容实现名。新 Candidate 不再同时
+生成一条可执行 Opportunity。独立 producer 的 Opportunity/Ranker/System Operator 路径仍保留，
+但历史 `universe_scanner` Opportunity、Setup 和 conditional authorization 只能用于审计、恢复或
+在没有 current Entry Plan owner 时的显式 compatibility adapter，不能与 Entry Plan 并行取得权限。
 
 > 固定持有期反事实结果遵循 `docs/design/contracts/opportunity_outcome_contract.md`。历史 gross-only 行、
 > 永续缺 funding、方向未知或过晚 ticker 只能用于解释，不得进入自动学习。
@@ -73,33 +73,36 @@ LLM，也不扩张其他五个 family 的权限。
 
 跨子系统传递的数据结构,其字段语义在此固定(此前只活在代码里):
 
-### 2.1 Opportunity (`storage/models.py:45`)
+### 2.1 Legacy/independent Opportunity compatibility contract (`storage/models.py:45`)
 
 | 字段 | 类型 | 语义 / 值域 |
 |------|------|------------|
 | `market` | `str`(必填) | 机会的市场/场地描述符。跳5 当 PI 未显式选 `market_type` 时由 `_attach_opportunity_context` 作为继承来源(`trading_decision.py:909`)。⚠️ **已知歧义**:`market` 与下游期望的 `market_type` 枚举(`spot`/`usdt_futures`)值域是否一致**需核实并锁定**(报告 A1 design gap)。 |
 | `direction_bias` | `str \| None` | `long` / `short` / `neutral`。跳2 `paper_trader_ranker` 直接读它定方向。 |
 | `confidence` | `str` | **分类**置信度,默认 `speculative`(同 `VALID_CONFIDENCES`)。**不是**数值。字段由 Opportunity 的原始 producer 持有，后续 Observer assessment 不得覆盖。 |
-| `confidence_score` | `int \| None` | Producer-owned 数值信号,跳2 打分用。新的 Universe-linked executable Opportunity 只能由 canonical EntryEligibility Trigger 物化并携带 V2 generation；历史缺少 `setup_id`/V2 generation 的 `universe_scanner` 行只作 legacy/observation carrier。Observer 的 LLM confidence 只进入 namespaced assessment，禁止与 scanner composite score 混合或把它解释成概率。 |
+| `confidence_score` | `int \| None` | Producer-owned 数值信号,跳2 打分用。Universe-linked 新路径不创建 executable Opportunity；历史 `universe_scanner` 行只作 legacy/observation carrier。Observer 的 LLM confidence 只进入 namespaced assessment，禁止与 scanner composite score 混合或把它解释成概率。 |
 | `status` | `str` | 状态机:`open`(每个 snapshot 的可排序分析代次)→ `queued`(已认领为耐久 Operator 载体)→ `reviewed`(Operator 最终决定已落库);Filter 的永久拒绝也可从 `open` 直接进入 `reviewed`。父 snapshot supersede 只终结仍为 `open` 的代次；`queued` 由自身 `valid_until`、Operator 终局或 Proposal claim 终结。跳2 以 oldest-first 有界批次查询 `open` 工作集；top-N 只限制执行候选，不能截掉本批已扫描到的永久拒绝。永久拒绝或 TTL 终态与其原因事实同事务提交，证据失败则保持原状态可重试。 |
 | `scanner_family` | `str \| None` | 来源扫描器族,跳5 透传进归因链(风控 #16 部门集中度解析用)。 |
 | `valid_until` | `str \| None` | 触发后 Opportunity 自身的权威市场失效时间。它不是 Candidate TTL；Candidate TTL 由 Universe refresh/selection 与 `universe_members.expires_at` 管理。`open` 在此后进入 Ranker 的 family soft-TTL 衰减，直到硬顶才终结；`queued` 到此时间立即失去 Proposal 权限。只有缺失/不可解析该字段的历史 queued 载体才使用 pending `created_at + 30min` 兜底。 |
-| `setup_id` / `signal_mark` / `trigger_behavior_version` | `str \| None` | Universe-linked execution-eligible Opportunity 必须携带。`setup_id` 唯一，`signal_mark` 保存同 venue T0 exact market fact，behavior version 划分不可混用的触发代次。 |
-| `generation_version` / `generation_json` / `generation_hash` | `str \| None` | 新的 `execution_eligible` Universe-linked Opportunity 必须为 `opportunity-generation/v2`。canonical JSON 冻结 exact instrument、family/archetype、direction、detected_at、signal mark、motive、entry trigger/zone、invalidation、horizon、cost、material fingerprint 与 valid_until；SHA-256 及 SQLite trigger 禁止改写或删除。NULL 仅用于 legacy/observation carrier。 |
+| `setup_id` / `signal_mark` / `trigger_behavior_version` | `str \| None` | 历史 Universe Setup adapter 的不可变审计字段。新 Candidate → Entry Plan 路径不得写入或依赖这些字段。 |
+| `generation_version` / `generation_json` / `generation_hash` | `str \| None` | 历史 Opportunity Generation V2 审计载荷；新 Candidate → Entry Plan 路径不得以它取得开仓权限。 |
 
-### 2.1a UniverseSetup 与 EntryEligibility Trigger
+### 2.1a Candidate Planning Generation 与 Entry Plan
 
-`UniverseSetup` 固定 snapshot/member/asset 与 `venue + symbol + market_type`、方向、scanner family、
-material fingerprint、TriggerSpec hash、motive evidence、Candidate TTL 与状态。V1 的通用
-`universe-entry-eligibility/v1` 不引入新价格形态规则；它复用现有分数、方向、factor、regime 与
-exact same-venue fresh price/tradability 事实。状态使用 CAS 从 `armed → triggering → executed`，或进入
-`refused/expired/invalidated`；旧 Momentum pullback watcher 的 `pending_authorization/pullback_seen`
-仅属于独立 fast watcher adapter，不是所有 family 的 lifecycle 前置条件。每个 setup 最多一个
-Opportunity，Opportunity 之后仍由 Ranker/System Operator/Proposal/Risk/Execution 原边界处理。
+`candidate_planning_generations` 以 exact instrument、family、direction 和 thesis-level material facts
+建立耐久 planning identity；snapshot/member/rank/score/price churn 不在 ownership identity 中。每代
+最多一个 planning owner；No-Plan 耐久；unavailable 仅有界重试；旧 plan expiry/invalidation 不自动
+重问模型。新 generation 或显式 manual replan 才能重新开放。模型返回必须 CAS 当前 generation；
+stale result 可审计但不可激活。
 
-### 2.2 TradingDecision (`agent_shell/trading_decision.py:56`,dataclass)
+`entry_plans` 是唯一 active plan ledger。不可变 JSON 固定 instrument、generation、方向、thesis、
+execution mode、注册 TriggerSpec、entry/invalidation/stop/target/horizon、风险上限、order tactic、
+maker/taker 权限、timeout/fallback、expiry 和 behavior identity；状态只可单调前进。Momentum 的
+breakout/pullback/reclaim 只在 versioned `TriggerSpec.params` 中，不能成为通用 Entry Plan 字段。
 
-LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
+### 2.2 Legacy/independent TradingDecision compatibility contract (`agent_shell/trading_decision.py:56`,dataclass)
+
+仅独立 producer 与历史恢复路径使用；Universe-linked 开仓由 Entry Planner 直接产生 Entry Plan。
 
 | 字段 | 类型 | 语义 |
 |------|------|------|
@@ -258,7 +261,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 
 ## 4. 不变量
 
-- **DL-INV-1 单一开仓决策权**:普通 Opportunity 仍只允许 `trading_decision.evaluate` 形成开仓意图；Momentum Fast Trigger 只允许 System Operator 对精确 Setup 发布 `action='arm'` 的条件公式授权，随后由确定性 T0 物化 Proposal。两条路径都不得绕过 Risk/Gateway，`paper_trader` 不直接提交 proposal，其他 family 不获得条件授权权限。
+- **DL-INV-1 单一开仓决策权**:Universe-linked Candidate 只由 current Candidate Planning Generation 与 Entry Plan 取得开仓权限；新快照不得同时生成可执行 Opportunity。独立 producer 的 Opportunity 仍只允许 `trading_decision.evaluate` 形成意图。两条路径都必须经过同一个 canonical Risk/Gateway，任何 compatibility adapter 都不得与 current Entry Plan 并行成为 owner。
 - **DL-INV-2 conviction 门**:`conviction < 55`(`_MIN_CONVICTION_TO_TRADE`)不得成为最终 `skip`。它是评估不可用:抛稳定 typed `DecisionUnavailable`,保留 pending 载体,写 `operator_evaluation_events(event_kind=operator_decision_deferred_low_conviction)`,由 material fingerprint 变化(新技术快照/regime tag/catalyst)重新开放评估。改此阈值须同步本契约 + DL-C01;`_DEBATE_RANGE` 与 debate 权重公式同理不得静默变更。
 - **DL-INV-3 guard advisory**:跳6 的 guard chain 只写 `decision_meta['guards']`,**不硬拦**;唯一硬门是风控引擎(见 `execution_contract` guard 澄清段 + spec PI-S02)。
 - **DL-INV-4 归因继承**:`_attach_opportunity_context` 必须按 `signal_source` 把 opportunity_id/strategy_id/scanner_family 回填到 decision,否则学习闭环断链(LEARNING_LOOP_AUDIT §R0)。
@@ -268,7 +271,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
 - **DL-INV-9 提案结果不丢失**:`trade` 是唯一可执行入场意图。确定性方向门拒绝必须成为带稳定原因的 `skip`；报价、必需理由或依赖不可用必须抛稳定 typed reason 并保持队列可重试，禁止写一条 `proposal_id=NULL` 的伪最终 trade。
 - **DL-INV-10 入场计划与参数理由不伪造**:System Operator 的 `trade` 须显式带有限正数 stop/TP 与五项参数理由；schema/语义不完整只能有界修复或 defer。提交时的新鲜精确 mark 是 entry 权威，reward:risk 只按该 mark 与模型原始 stop/TP 确定性计算；不得用 `default_config` 改写模型缺失或几何错误的保护价，再冒充完整 AI 计划，也不得把新 Operator `spot+short` 静默重标为 futures。修复成功的初稿错误以 `error` 审计、不得成为 rejected 学习 cohort；最终正式 exposure 必须首先为 passed，二次仍错才是 rejected。Programmatic/历史对象的兼容 fallback/coercion 不构成新 LLM 交易权限。详见 `trade_decision_rationale_contract.md`。
-- **DL-INV-11 排序后唤醒**:市场机会生产者只落 Opportunity；只有 `paper_trader` 在排序并成功写入 `signal_pending` 后唤醒 System Operator。已有非 pending 最终决策的 `opportunity_id` 不得再次入队。
+- **DL-INV-11 耐久所有权后唤醒**:Universe refresh 只在创建新 Candidate Planning Generation 后唤醒 PI daemon；重复 refresh/heartbeat 不重问。独立 Opportunity producer 仍须由 `paper_trader` 排序并写入 `signal_pending` 后唤醒。两类耐久工作不得相互冒充。
 - **DL-INV-12 公平待处理队列**:只向 Operator 暴露尚无最终决定的信号；必须先去重再限量、最早信号优先，并报告 overflow/过期，禁止用“最新 5 条”静默覆盖旧工作。
 - **DL-INV-13 最终决定幂等**:同 `signal_source + opportunity_id` 的首条非 pending PiDecision 是权威结果；重复唤醒只能恢复该行已绑定的 pending Proposal 或返回终态,不得生成第二份提案或最终决定，也不得把 replay-only 筛选痕迹绑定到原 decision id。
 - **DL-INV-14 可用结果才耐久**:只有完整评估和前置条件得到的 `trade` / `skip` 可以成为最终 PiDecision。评估、必需辩论、精确报价或 Proposal 准备异常一律作为可重试不可用结果返回，零最终 PiDecision/TradeProposal，pending 保持 queued。
@@ -284,12 +287,12 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-24 判词旁路禁止**(2026-07-18 · policy_epoch `system_operator_skip_remediation` v1.5):SIDEWAYS/中性 50/50 regime、neutral funding、单笔近期结果、账户 equity、可选遥测缺失(如 OI delta)、Ranker rank_priority 数值等既不得作为 direct skip 授权(DL-INV-21 已锁),也不得通过 debate/conviction gate 通道降低 candidate conviction。conviction 只能来自候选特定证据(技术结构、funding/OI 信号、catalyst context);上述维度只能出现在 `bear_case` / `risk_factors` 作为顾虑,不能进入决定开仓与否的数值。违反本项在诊断里表现为 `direct_skip_not_confirmed` 或 `operator_low_conviction / debate_not_confirmed` 的诡异重复,均按 defer 处理。
 - **DL-INV-25 分析代次与工作载体分离**:Universe snapshot supersede 只能终结 `open` 分析代次；已写 `signal_pending` 的 `queued` 载体保留不可变的来源 snapshot/member id，并以自身 `valid_until` 继续到 Operator 终局。同一物理 `symbol + market + direction + scanner_family` 已有活跃载体时，新代次记录 `active_operator_carrier`，不得重复入队；spot 与 perp（以及其规范化别名）是不同的 ownership domain。
 - **DL-INV-26 Producer 身份不可被 enrichment 改写**:若读取到历史 `universe_scanner` Opportunity，其 `direction_bias`、`confidence`、`confidence_score`、`thesis`、`valid_until` 与 identity 只保留 legacy producer 语义，不得获得新交易权限。Market Observer 的方向、置信、理由与 observations 只能写入 namespaced `metadata.observer_assessment`；方向相反时必须显式标 `direction_conflict`，不能把同一 carrier 静默翻成反向交易，也不能混合 LLM confidence 与 scanner composite score。
-- **DL-INV-27 Universe producer authority**:Universe refresh 发布 Candidate 并持久化 setup/trigger 边界；`universe_members` 是 Candidate 表的 legacy 物理名，不是 Opportunity population。`source_agent='universe_scanner'` 且缺少 `setup_id`/`opportunity-generation/v2` 的历史 Opportunity 只能用于审计/观察，Ranker、pending selection 与 linked detail API 的新可执行路径默认排除它。新的 Universe-linked 可执行 Opportunity 只能由 setup-linked EntryEligibility Trigger 物化。Observer 只能分析已有 open carrier，不得把 Candidate 或 legacy scanner 行提升为交易权限；其他独立 producer 不受此 Universe 契约扩张。
-- **DL-INV-30 V1 不引入新经验 entry rule**:Universe EntryEligibility V1 只复用现有 scanner/factor/regime/tradability/fresh exact price 事实；不得把 pullback、SMC/ICT、ATR 区间、OFI threshold 或任意确认形态作为 lifecycle refactor 的生产必要条件。
-- **DL-INV-31 Fast Trigger 精确场地与新鲜度**:触发与 T0 必须使用 setup 同一 `venue + symbol + market_type` 的已确认订阅；quote/depth 超过 1 秒、trade 超过 2 秒、sequence 异常、价格越出 entry zone 或 adapter 不可用均停止物化，禁止跨 venue 或 REST 实时替代。
-- **DL-INV-32 Fast Trigger 单次执行**:setup CAS 与唯一索引保证只物化一个 Opportunity/Proposal；Risk 拒绝、价格越界及 `submission_unknown` 均不自动重试。`paper_internal` 的 `execute` 只走本地 paper broker，exchange-backed `execute` 仅允许 `bitget_demo`，Live 恒拒绝；默认 `shadow` 只留事实、不调用 Gateway，`execute` 必须显式开启。
-- **DL-INV-33 Opportunity generation 不可变**:新的 Universe-linked 可执行 Opportunity 必须携带完整 V2 generation 与 hash；`status/last_ranked_at` 可按状态机前进，generation、来源投影及 `valid_until` 不得修改或滑动。历史行不伪造回填，也不得借 NULL generation 获得新交易权限。
-- **DL-INV-34 双硬失效**:订单提交前的同 venue 可执行价一旦越出 entry zone，或 bid/ask 触及 directional structural invalidation，generation 立即进入 `invalidated`，Proposal 不得送入 Risk/Gateway；旧 setup 不得重新 armed。新结构必须以新 material fingerprint 创建新 Setup/Opportunity，旧 signal mark 永不重价。
+- **DL-INV-27 Universe producer authority**:Universe refresh 发布 Candidate 并确保一个 current Planning Generation；`universe_members` 是 legacy 物理表名，不是 Opportunity population。历史 `universe_scanner` Opportunity/Setup 只能审计、恢复或由显式 adapter 消费，不能获得新的并行交易权限。Observer 不得把 Candidate 或 legacy 行提升为 owner；独立 producer 不受此 Universe 合约扩张。
+- **DL-INV-30 TriggerSpec 权限**:Entry Planner 只能选择 registry 中的 spec id/version 并填写 bounded params；Fast Monitoring 不解释模型 prose。新增 Trigger economics/threshold 必须走经济研究权限，不能借 lifecycle refactor 上线。
+- **DL-INV-31 Fast Monitoring 精确场地与新鲜度**:Trigger 与 Order Intent 必须使用 Entry Plan 同一 `venue + symbol + market_type` 的已确认订阅和 latest exact state；stale quote/depth/trade、sequence 异常、越出 envelope 或 adapter 不可用均 fail closed，禁止跨 venue 或 REST 热替代。
+- **DL-INV-32 单次执行与真实 tactic**:Entry Plan 与 Proposal/Order 唯一约束禁止 duplicate execute。Maker 必须为 true Post-Only；Urgent 默认 opposing-BBO IOC Limit 且不得越过 plan envelope；plain GTC Limit 不得标 Maker。V1 exchange tactic 仅 `bitget_demo`，`paper_internal` 不宣称 maker queue fidelity。
+- **DL-INV-33 Entry Plan 不可变与单调**:plan JSON/hash 与 planning generation 不可改写；status 只可前进。rank/score/snapshot refresh 不终结 plan；只有 structural invalidation、incompatible new generation、expiry、permission/pause/kill-switch、Risk revocation、execution completion 或 manual cancel 可终结，终态不得 revive。
+- **DL-INV-34 Gateway 撤单与 Fill 优先**:Fast Monitoring 只决定 invalidation 并向 Gateway 请求 cancel；Gateway 才可调用 broker/adapter。网络调用后必须重查 private Fill/Order facts。完整 Fill 赢得 cancel race；partial fill 保留真实 Position 并只取消 remainder，不得因 cancel acknowledgement 覆盖经济事实或升级为 Taker。
 - **DL-INV-35 Price Action 权限隔离**:`market-structure/v2` 只可将同一 [Market Structure Derived Data Contract](market_structure_contract.md) 的连续、已收盘、同 venue 1m 因果事实投影成 append-only Shadow assessment；历史 v1 行保持不可变。BOS/CHoCH 不得改变 Opportunity、Risk 或 Execution。hard-gate consumer seam 必须对未批准版本及 unavailable 结果 fail closed，生产 allowlist 为空。
 - **DL-INV-36 Universe instrument background**:每个进入 feature/scanner 的 registry 标的必须携带完整的 `instrument-background/v1`，并解析到一个明确支持的 analysis context。当前只支持既有 crypto context 与经核验的 `stock_linked_perp` context；后者只消费 instrument-local 行情、成本与衍生品证据，BTC 相对强弱、全局 crypto regime 和旧 crypto-family prior 明确不适用。`signal_emitter` 将同一 background 与 applicability 冻结进统一 Opportunity；缺失、冲突、未解析或无受支持 context 均 fail closed，完整 equity 身份本身不是拒绝理由。
 - **DL-INV-28 Producer rejection 不是 Operator outcome**:queued carrier 的 immutable producer admission 已确定拒绝时，只写 producer eligibility rejection 并转为 `signal_queue_evicted`；不得生成 `operator_action_assessment`、outcome seed 或 B2 cohort 成员。producer attestation 暂时不可用时保持 typed unavailable 和可重试载体。

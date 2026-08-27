@@ -814,10 +814,15 @@ export interface Candidate {
   risk_flags: string
   execution_eligible: number
   stale?: boolean
+  entry_plan_id?: string | null
+  entry_plan_status?: string | null
+  entry_plan_execution_mode?: 'RESTING_MAKER' | 'TRIGGERED' | null
+  // Backward-compatible API fields for historical setup rows.
   setup_state?: string | null
   triggered_opportunity_id?: string | null
 }
 
+/** @deprecated Compatibility alias for the physical `universe_members` wire row. */
 export type UniverseMember = Candidate
 
 export interface UniverseSnapshot {
@@ -832,7 +837,7 @@ export interface UniverseSnapshot {
 
 export interface UniverseCurrentResponse {
   snapshot: UniverseSnapshot | null
-  members: UniverseMember[]
+  members: Candidate[]
   enabled: boolean
   fallback: boolean
   stale: boolean
@@ -858,11 +863,15 @@ export interface UniverseFeatureSnapshot {
   data_freshness_sec: number | null
 }
 
-export interface UniverseMemberDetail {
-  member: UniverseMember
+export interface CandidateDetail {
+  member: Candidate
   features: UniverseFeatureSnapshot | null
+  entry_plans: Array<{ id: string; status: string; execution_mode: string; created_at: string }>
   opportunities: Array<{ id: string; symbol: string; status: string; direction_bias: string | null; created_at: string }>
 }
+
+/** @deprecated Use CandidateDetail. */
+export type UniverseMemberDetail = CandidateDetail
 
 export interface CalibrationRow {
   scanner_family: string | null

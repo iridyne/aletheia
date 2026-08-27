@@ -67,6 +67,7 @@ class _Provenanced(BaseModel):
       producer_commit      — commit that process booted on
       behavior_fingerprint — fingerprint of the behaviour-affecting config
     """
+
     runtime_session_id: str | None = None
     producer_commit: str | None = None
     behavior_fingerprint: str | None = None
@@ -76,6 +77,7 @@ class RuntimeSession(BaseModel):
     """One Gateway PROCESS lifecycle. runtime_id names the running version;
     session_id names this specific boot (a restart is a new session under the same
     runtime_id). ended_at/shutdown_clean stay unset until a clean shutdown."""
+
     session_id: str = Field(default_factory=new_id)
     runtime_id: str = "runtime-local-current"
     boot_commit: str | None = None
@@ -163,9 +165,7 @@ class OpportunityGenerationV2(BaseModel):
 
     instrument_identity: OpportunityInstrumentIdentity
     family: str = Field(min_length=1)
-    archetype: Literal[
-        "continuation", "reversal", "breakout", "squeeze", "event", "convergence"
-    ]
+    archetype: Literal["continuation", "reversal", "breakout", "squeeze", "event", "convergence"]
     direction: Literal["long", "short"]
     detected_at: str = Field(min_length=1)
     signal_mark: float = Field(gt=0)
@@ -189,10 +189,10 @@ class OpportunityGenerationV2(BaseModel):
                 invalidation_price = float(invalidation_price)
             except (TypeError, ValueError) as exc:
                 raise ValueError("Opportunity generation invalidation is invalid") from exc
-            if invalidation_price <= 0 or (
-                self.direction == "long" and invalidation_price >= self.signal_mark
-            ) or (
-                self.direction == "short" and invalidation_price <= self.signal_mark
+            if (
+                invalidation_price <= 0
+                or (self.direction == "long" and invalidation_price >= self.signal_mark)
+                or (self.direction == "short" and invalidation_price <= self.signal_mark)
             ):
                 raise ValueError("Opportunity generation invalidation is invalid")
         if not self.invalidation:
@@ -206,8 +206,13 @@ class OpportunityGenerationV2(BaseModel):
         if detected.tzinfo is None or deadline.tzinfo is None or deadline <= detected:
             raise ValueError("Opportunity generation validity interval is invalid")
         required_costs = {
-            "cost_model_version", "spread_bps", "estimated_slippage_bps",
-            "funding", "depth_10bps_usd", "target_notional_usd", "capacity_ratio",
+            "cost_model_version",
+            "spread_bps",
+            "estimated_slippage_bps",
+            "funding",
+            "depth_10bps_usd",
+            "target_notional_usd",
+            "capacity_ratio",
         }
         if not required_costs.issubset(self.cost_snapshot):
             raise ValueError("Opportunity generation cost snapshot is incomplete")
@@ -250,8 +255,8 @@ class Opportunity(_Provenanced):
     universe_member_id: str | None = None
     scanner_family: str | None = None
     # Edge Lab: structured execution hints from LLM signal generation
-    valid_until: str | None = None       # ISO timestamp — signal expiry
-    entry_zone: str | None = None        # JSON: {"low": x, "high": y}
+    valid_until: str | None = None  # ISO timestamp — signal expiry
+    entry_zone: str | None = None  # JSON: {"low": x, "high": y}
     stop_loss_hint: float | None = None
     tp_hint: float | None = None
     regime_tag: str | None = None
@@ -479,6 +484,15 @@ class TradeProposal(_Provenanced):
     # immutable Proposal identity and therefore hash-covered when present.
     setup_id: str | None = None
     authorization_id: str | None = None
+    # #2288 active Order Intent fields. NULL keeps historical/compat callers on
+    # their existing semantics; non-NULL fields are hash-covered with Proposal.
+    entry_plan_id: str | None = None
+    order_tactic: str | None = None
+    time_in_force: str | None = None
+    post_only: bool | None = None
+    bbo_reference: str | None = None
+    max_slippage_bps: float | None = None
+    worst_price: float | None = None
 
 
 class RiskDecision(_Provenanced):
@@ -533,6 +547,11 @@ class Order(_Provenanced):
     # submission so a timeout that loses the venue order id can still be
     # reconciled through private order/fill history without resubmitting.
     client_order_id: str | None = None
+    entry_plan_id: str | None = None
+    order_tactic: str | None = None
+    time_in_force: str | None = None
+    post_only: bool | None = None
+    requested_liquidity: str | None = None
     # Direct Position identity for close Orders and for entry Orders after local
     # materialization.  It removes the ambiguous proposal/symbol guesswork when
     # an averaging leg or delayed exchange fill is reconciled later.
@@ -562,6 +581,9 @@ class Fill(_Provenanced):
     # (reconciliation backfilled the exchange's real fillId fee). Defaults estimated
     # so an estimate is never silently mistaken for an actual exchange fee.
     fee_source: str = "estimated"
+    # Venue/private-fill evidence only. NULL means unavailable, never inferred
+    # from limit/post-only request intent.
+    realized_liquidity: str | None = None
     filled_at: str = Field(default_factory=_utcnow)
 
 
@@ -953,9 +975,9 @@ class KnowledgeItem(BaseModel):
 
 class MarketSnapshot(BaseModel):
     id: str = Field(default_factory=new_id)
-    symbol: str        # canonical: BTC/USDT
-    market_type: str   # "spot" | "perp" | "futures"
-    exchange: str = "" # source exchange: "binance", "bybit", "bitget", …
+    symbol: str  # canonical: BTC/USDT
+    market_type: str  # "spot" | "perp" | "futures"
+    exchange: str = ""  # source exchange: "binance", "bybit", "bitget", …
     price: float
     volume_24h: float | None = None
     change_pct_24h: float | None = None
@@ -1082,7 +1104,7 @@ class SerenityRiskGate(BaseModel):
     id: str = Field(default_factory=new_id)
     opportunity_id: str
     gate_name: str
-    status: str = "unknown"      # pass | warn | fail
+    status: str = "unknown"  # pass | warn | fail
     metric: str
     observed: str | float | int | None = None
     threshold: str | float | int | None = None
@@ -1223,6 +1245,7 @@ class SerenityClaim(BaseModel):
 # ====================================================================
 # Persistence / Sync / Recovery Layer Models
 # ====================================================================
+
 
 class PSEvent(BaseModel):
     event_id: str = Field(default_factory=new_id)
@@ -1441,6 +1464,7 @@ class PSPolicyVersion(BaseModel):
 # Universe Generator Models
 # ====================================================================
 
+
 class UniverseAsset(BaseModel):
     id: str = Field(default_factory=new_id)
     venue: str
@@ -1531,6 +1555,9 @@ class UniverseMember(BaseModel):
     id: str = Field(default_factory=new_id)
     snapshot_id: str
     asset_id: str
+    # Additive exact-instrument fact for active Candidate planning. Legacy rows
+    # remain NULL and are unavailable to the planner rather than venue-guessed.
+    venue: str | None = None
     symbol: str
     market_type: str = "spot"
     rank: int
@@ -1560,6 +1587,68 @@ class UniverseMember(BaseModel):
 
 
 Candidate = UniverseMember
+
+
+class CandidatePlanningGeneration(_Provenanced):
+    """Durable ownership/result state for one thesis-level planning generation."""
+
+    id: str = Field(default_factory=new_id)
+    planning_key: str = Field(min_length=64, max_length=64)
+    planning_identity: str = Field(min_length=64, max_length=64)
+    identity_version: Literal["candidate-planning/v1"] = "candidate-planning/v1"
+    candidate_id: str
+    last_candidate_id: str
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    candidate_family: str
+    direction: Literal["long", "short"]
+    is_current: bool = True
+    status: Literal["pending", "planning", "planned", "no_plan", "unavailable", "superseded"] = "pending"
+    result_kind: Literal["entry_plan", "no_plan", "unavailable", "stale_result"] | None = None
+    owner_token: str | None = None
+    claim_expires_at: str | None = None
+    retry_not_before: str | None = None
+    attempt_count: int = Field(default=0, ge=0)
+    result_json: str | None = None
+    entry_plan_id: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+    completed_at: str | None = None
+
+
+class EntryPlanRecord(_Provenanced):
+    """Storage projection for immutable EntryPlan facts plus monotonic lifecycle."""
+
+    id: str
+    planning_generation_id: str
+    candidate_id: str
+    planning_key: str
+    version: Literal["entry-plan/v1"] = "entry-plan/v1"
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    direction: Literal["long", "short"]
+    execution_mode: Literal["RESTING_MAKER", "TRIGGERED"]
+    plan_json: str
+    plan_hash: str = Field(min_length=64, max_length=64)
+    status: Literal[
+        "waiting",
+        "risk_reserved",
+        "triggered",
+        "ordered",
+        "partially_filled",
+        "filled",
+        "invalidated",
+        "expired",
+        "cancelled",
+        "failed",
+    ] = "waiting"
+    order_id: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+    terminal_at: str | None = None
+    terminal_reason: str | None = None
 
 
 class UniverseSetup(_Provenanced):
@@ -1907,6 +1996,7 @@ class CapitalEvent(BaseModel):
 
 class PaperAccountEvent(BaseModel):
     """Immutable cash-account event for the local paper simulator only."""
+
     id: str = Field(default_factory=new_id)
     action: str
     amount_usdt: float
@@ -1924,19 +2014,18 @@ class OnchainSnapshot(BaseModel):
 
     metric_type: "stablecoin_mcap" | "chain_tvl" | "dex_volume"
     """
+
     id: str = Field(default_factory=new_id)
-    source: str                          # "defillama"
-    metric_type: str                     # metric category
-    total_usd: float | None = None       # aggregated USD value
+    source: str  # "defillama"
+    metric_type: str  # metric category
+    total_usd: float | None = None  # aggregated USD value
     change_24h_pct: float | None = None  # 24h % change (None when unavailable)
-    top_entries: str = "[]"              # JSON: list of top-N entries
-    raw_summary: str = "{}"             # JSON: key scalar metrics
+    top_entries: str = "[]"  # JSON: list of top-N entries
+    raw_summary: str = "{}"  # JSON: key scalar metrics
     observed_at: str = Field(default_factory=_utcnow)
 
     @model_validator(mode="after")
     def _finite_nonnegative_total(self):
-        if self.total_usd is not None and (
-            not math.isfinite(float(self.total_usd)) or float(self.total_usd) < 0
-        ):
+        if self.total_usd is not None and (not math.isfinite(float(self.total_usd)) or float(self.total_usd) < 0):
             raise ValueError("onchain total_usd must be finite and non-negative")
         return self
