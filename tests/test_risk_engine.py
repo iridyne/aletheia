@@ -2,6 +2,7 @@
 
 import pytest
 import json
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from aletheia.storage.sqlite import reset_db
@@ -42,6 +43,43 @@ def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
     result = evaluate_proposal(proposal)
     assert result.approved is True
     assert len(result.violations) == 0
+    reset_db()
+
+
+def test_risk_distinguishes_zero_exchange_equity_from_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync
+    from aletheia.risk import engine
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    exchange_sync._store(exchange_sync.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=0.0,
+        available_usdt=0.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    policy = resolve_risk_policy(cfg, "bitget_demo").policy
+
+    assert engine._account_equity("bitget_demo", cfg) == 0.0
+    assert engine._resolve_capital_base("bitget_demo", policy, cfg) == (
+        None,
+        "account_equity_non_positive:bitget_demo",
+    )
     reset_db()
 
 

@@ -404,9 +404,7 @@ async def uta_state():
     Never blocks on a network call.
     """
     from aletheia.config.loader import load_config
-    from aletheia.portfolio.exchange_sync import (
-        get_unified_cached_state, get_cached_state, status_for
-    )
+    from aletheia.portfolio.exchange_sync import get_unified_cached_state, get_cached_state, status_for
 
     unified = get_unified_cached_state()
     if unified is not None:
@@ -423,8 +421,10 @@ async def uta_state():
             "accounts": [],
             "positions": [],
             "errors": [],
+            "connected_brokers": [],
             "fetched_at": None,
             "sync_status": "unconfigured",
+            "sync_complete": False,
         }
 
     # Fallback: wrap the Bitget-only cache in the unified shape
@@ -447,8 +447,10 @@ async def uta_state():
             }],
             "positions": bitget.get("positions", []),
             "errors": [],
+            "connected_brokers": ["bitget_demo"] if sync_status == "ok" else [],
             "fetched_at": bitget.get("fetched_at", ""),
             "sync_status": sync_status,
+            "sync_complete": sync_status == "ok",
         }
 
     return {
@@ -458,6 +460,8 @@ async def uta_state():
         "accounts": [],
         "positions": [],
         "errors": [],
+        "connected_brokers": [],
         "fetched_at": None,
         "sync_status": "unconfigured",
+        "sync_complete": False,
     }
