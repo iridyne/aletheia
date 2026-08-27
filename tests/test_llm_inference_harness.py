@@ -116,17 +116,14 @@ async def test_structured_repair_attempts_share_one_logical_call():
     assert error is None
     assert data == {"value": 7}
     db = get_db()
-    logical = db.execute(
-        "SELECT * FROM llm_inference_calls WHERE caller='market_observer.market_read'"
-    ).fetchone()
+    logical = db.execute("SELECT * FROM llm_inference_calls WHERE caller='market_observer.market_read'").fetchone()
     assert logical is not None
     assert logical["status"] == "success"
     assert logical["parse_valid"] == 1
     assert logical["schema_valid"] == 1
     assert logical["attempt_count"] == 2
     attempts = db.execute(
-        "SELECT call_id,attempt_index FROM runtime_cost_events "
-        "WHERE event_type='llm' ORDER BY attempt_index"
+        "SELECT call_id,attempt_index FROM runtime_cost_events WHERE event_type='llm' ORDER BY attempt_index"
     ).fetchall()
     assert [row["call_id"] for row in attempts] == [
         logical["logical_call_id"],
@@ -315,15 +312,17 @@ def test_pre_provider_denial_does_not_fabricate_final_model():
     )
     call.set_resolved_provider("default-api")
     assert record_inference_started(call)
-    assert record_inference_finished(
-        call, status="error", error_type="llm_budget_exhausted"
-    )
+    assert record_inference_finished(call, status="error", error_type="llm_budget_exhausted")
 
-    logical = get_db().execute(
-        "SELECT status,attempt_count,final_provider,final_model,error_type "
-        "FROM llm_inference_calls WHERE logical_call_id=?",
-        (call.logical_call_id,),
-    ).fetchone()
+    logical = (
+        get_db()
+        .execute(
+            "SELECT status,attempt_count,final_provider,final_model,error_type "
+            "FROM llm_inference_calls WHERE logical_call_id=?",
+            (call.logical_call_id,),
+        )
+        .fetchone()
+    )
     assert dict(logical) == {
         "status": "error",
         "attempt_count": 0,
@@ -337,9 +336,7 @@ def test_pre_provider_denial_does_not_fabricate_final_model():
 async def test_schema_invalid_object_never_becomes_success():
     from aletheia.agents import helpers
 
-    provider = _RepairProvider(
-        [{"value": "wrong"}, {"value": "still-wrong"}, {"value": None}]
-    )
+    provider = _RepairProvider([{"value": "wrong"}, {"value": "still-wrong"}, {"value": None}])
     with (
         patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _physical_complete),
@@ -353,10 +350,14 @@ async def test_schema_invalid_object_never_becomes_success():
 
     assert data is None
     assert error is not None and error.startswith("structured_schema_invalid")
-    logical = get_db().execute(
-        "SELECT status,parse_valid,schema_valid,attempt_count,error_type "
-        "FROM llm_inference_calls WHERE caller='market_observer.market_read'"
-    ).fetchone()
+    logical = (
+        get_db()
+        .execute(
+            "SELECT status,parse_valid,schema_valid,attempt_count,error_type "
+            "FROM llm_inference_calls WHERE caller='market_observer.market_read'"
+        )
+        .fetchone()
+    )
     assert dict(logical) == {
         "status": "error",
         "parse_valid": 1,
@@ -364,11 +365,15 @@ async def test_schema_invalid_object_never_becomes_success():
         "attempt_count": 3,
         "error_type": "structured_schema_invalid",
     }
-    outcomes = get_db().execute(
-        "SELECT structured_attempt_index,outcome FROM llm_structured_attempt_outcomes "
-        "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
-        "WHERE caller='market_observer.market_read') ORDER BY structured_attempt_index"
-    ).fetchall()
+    outcomes = (
+        get_db()
+        .execute(
+            "SELECT structured_attempt_index,outcome FROM llm_structured_attempt_outcomes "
+            "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
+            "WHERE caller='market_observer.market_read') ORDER BY structured_attempt_index"
+        )
+        .fetchall()
+    )
     assert [tuple(row) for row in outcomes] == [
         (0, "schema_invalid"),
         (1, "schema_invalid"),
@@ -404,22 +409,203 @@ async def test_external_cancellation_finalizes_structured_logical_call_and_propa
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    logical = get_db().execute(
-        "SELECT status,finished_at,parse_valid,schema_valid,error_type "
-        "FROM llm_inference_calls WHERE caller='news_analyzer.analysis'"
-    ).fetchone()
+    logical = (
+        get_db()
+        .execute(
+            "SELECT status,finished_at,parse_valid,schema_valid,error_type "
+            "FROM llm_inference_calls WHERE caller='news_analyzer.analysis'"
+        )
+        .fetchone()
+    )
     assert logical is not None
     assert logical["status"] == "error"
     assert logical["finished_at"] is not None
     assert logical["parse_valid"] is None
     assert logical["schema_valid"] is None
     assert logical["error_type"] == "cancelled"
-    outcomes = get_db().execute(
-        "SELECT outcome FROM llm_structured_attempt_outcomes "
-        "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
-        "WHERE caller='news_analyzer.analysis')"
-    ).fetchall()
+    outcomes = (
+        get_db()
+        .execute(
+            "SELECT outcome FROM llm_structured_attempt_outcomes "
+            "WHERE logical_call_id=(SELECT logical_call_id FROM llm_inference_calls "
+            "WHERE caller='news_analyzer.analysis')"
+        )
+        .fetchall()
+    )
     assert [row["outcome"] for row in outcomes] == ["cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_finalizes_complete_logical_call_and_propagates():
+    from aletheia.agents import helpers
+
+    entered_provider = asyncio.Event()
+
+    async def hanging_complete(*_args, **_kwargs):
+        entered_provider.set()
+        await asyncio.Future()
+
+    with (
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())),
+        patch.object(helpers, "complete_with_fallback", hanging_complete),
+    ):
+        task = asyncio.create_task(helpers.llm_complete("system", "user", caller="research_worker.lens"))
+        await entered_provider.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    logical = (
+        get_db()
+        .execute("SELECT status,finished_at,error_type FROM llm_inference_calls WHERE caller='research_worker.lens'")
+        .fetchone()
+    )
+    assert dict(logical) == {
+        "status": "error",
+        "finished_at": logical["finished_at"],
+        "error_type": "cancelled",
+    }
+    assert logical["finished_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_finalizes_stream_logical_call_and_propagates():
+    from aletheia.agents import helpers
+    from aletheia.model_provider import broker
+
+    entered_provider = asyncio.Event()
+
+    async def hanging_stream(*_args, **_kwargs):
+        entered_provider.set()
+        await asyncio.Future()
+        yield None
+
+    async def consume():
+        async for _ in helpers.llm_stream("system", "user", caller="unregistered.stream"):
+            pass
+
+    with (
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())),
+        patch.object(broker, "brokered_stream", hanging_stream),
+    ):
+        task = asyncio.create_task(consume())
+        await entered_provider.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    logical = (
+        get_db()
+        .execute("SELECT status,finished_at,error_type FROM llm_inference_calls WHERE caller='unregistered.stream'")
+        .fetchone()
+    )
+    assert logical["status"] == "error"
+    assert logical["finished_at"] is not None
+    assert logical["error_type"] == "cancelled"
+
+
+def test_startup_reconciliation_finalizes_interrupted_logical_call():
+    from aletheia.economics.inference_calls import (
+        reconcile_interrupted_inferences,
+        record_inference_started,
+    )
+    from aletheia.model_provider.inference_contract import build_inference_call
+
+    call = build_inference_call(
+        caller="unregistered",
+        system="system",
+        messages=[{"role": "user", "content": "user"}],
+        context_adapter_id="none",
+    )
+    record_inference_started(call, started_at="2026-01-01T00:00:00+00:00")
+
+    assert reconcile_interrupted_inferences("new-runtime") == 1
+    logical = (
+        get_db()
+        .execute(
+            "SELECT status,attempt_count,error_type,finished_at FROM llm_inference_calls WHERE logical_call_id=?",
+            (call.logical_call_id,),
+        )
+        .fetchone()
+    )
+    assert logical["status"] == "error"
+    assert logical["attempt_count"] == 0
+    assert logical["error_type"] == "interrupted"
+    assert logical["finished_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_committee_records_one_logical_call_and_one_physical_attempt():
+    from aletheia.agents.committee import llm_agent
+    from aletheia.model_provider import fallback
+
+    provider = _RepairProvider(
+        [
+            {
+                "direction": "neutral",
+                "confidence": "low",
+                "confidence_score": 30,
+                "reasoning": "mixed",
+                "evidence": [],
+                "risks": [],
+                "position_size_factor": 0.3,
+            }
+        ]
+    )
+
+    async def direct(request, **_kwargs):
+        return await provider.complete(request)
+
+    with patch.object(fallback, "complete_with_fallback", direct):
+        result = await llm_agent.analyze_with_llm("BTC/USDT", "perp", {})
+
+    assert result is not None
+    logical = (
+        get_db()
+        .execute(
+            "SELECT logical_call_id,status,attempt_count,final_model "
+            "FROM llm_inference_calls WHERE caller='committee.llm_analysis'"
+        )
+        .fetchone()
+    )
+    assert logical["status"] == "success"
+    assert logical["attempt_count"] == 1
+    assert logical["final_model"] == "fixed-test-model"
+    attempts = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) FROM runtime_cost_events WHERE call_id=?",
+            (logical["logical_call_id"],),
+        )
+        .fetchone()[0]
+    )
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_committee_rejects_invalid_schema_before_recording_success():
+    from aletheia.agents.committee import llm_agent
+    from aletheia.model_provider import fallback
+
+    provider = _RepairProvider([{"direction": "sideways", "evidence": "text"}])
+
+    async def direct(request, **_kwargs):
+        return await provider.complete(request)
+
+    with patch.object(fallback, "complete_with_fallback", direct):
+        result = await llm_agent.analyze_with_llm("BTC/USDT", "perp", {})
+
+    assert result is None
+    logical = get_db().execute(
+        "SELECT status,parse_valid,schema_valid,error_type "
+        "FROM llm_inference_calls WHERE caller='committee.llm_analysis'"
+    ).fetchone()
+    assert dict(logical) == {
+        "status": "error",
+        "parse_valid": 1,
+        "schema_valid": 0,
+        "error_type": "structured_schema_invalid",
+    }
 
 
 @pytest.mark.asyncio
@@ -465,8 +651,7 @@ async def test_context_artifacts_link_to_exact_evaluation_call():
         "WHERE caller='evaluation.learning_b.treatment'"
     ).fetchone()
     artifact = db.execute(
-        "SELECT logical_call_id,evaluation_pair_id,evaluation_arm,fixture_id,rendered_chars "
-        "FROM llm_context_artifacts"
+        "SELECT logical_call_id,evaluation_pair_id,evaluation_arm,fixture_id,rendered_chars FROM llm_context_artifacts"
     ).fetchone()
     assert call["allow_model_fallback"] == 0
     assert dict(artifact) == {
@@ -505,8 +690,7 @@ async def test_operator_inference_records_existing_causal_identity_without_fabri
     assert error is None and data == {"value": 3}
     db = get_db()
     logical = db.execute(
-        "SELECT run_id,metadata_json FROM llm_inference_calls "
-        "WHERE caller='system_operator.assess_opportunity'"
+        "SELECT run_id,metadata_json FROM llm_inference_calls WHERE caller='system_operator.assess_opportunity'"
     ).fetchone()
     assert logical is not None
     assert logical["run_id"] is None
@@ -595,14 +779,10 @@ def test_economics_schema_tolerates_pre_duration_tool_table():
 
     ensure_economics_schema(db)
 
+    assert db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_inference_calls'").fetchone()
     assert db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_inference_calls'"
-    ).fetchone()
-    assert db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' "
-        "AND name='llm_structured_attempt_outcomes'"
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_structured_attempt_outcomes'"
     ).fetchone()
     assert not db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' "
-        "AND name='trg_agent_tool_call_cost_event'"
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_agent_tool_call_cost_event'"
     ).fetchone()

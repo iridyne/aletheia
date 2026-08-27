@@ -25,6 +25,7 @@ from aletheia.economics.tracing import (
     aggregate_agent_run_cost,
     initialize_runtime_tracing,
     normalize_usage,
+    record_llm_attempt,
 )
 from aletheia.model_provider.base import (
     ModelHealth,
@@ -132,7 +133,7 @@ def test_normalize_usage_prompt_details_cache_still_preferred():
         }
     )
     assert usage["cached_input_tokens"] == 40
-    assert usage["provider_cache_read_input_tokens"] is None
+    assert usage["provider_cache_read_input_tokens"] == 40
 
 
 @pytest.mark.asyncio
@@ -183,6 +184,33 @@ async def test_failed_attempt_is_not_assumed_free():
     assert aggregate["unknown_event_count"] == 1
     assert aggregate["cost_complete"] is False
     assert aggregate["cost_estimate_usd"] is None
+
+
+def test_provider_reported_cost_wins_without_model_pricing():
+    event_id = record_llm_attempt(
+        call_id="provider-reported",
+        provider="unknown-provider",
+        model="hidden-model",
+        requested_model="requested-model",
+        attempt_index=0,
+        status="success",
+        started_at="2026-01-01T00:00:00+00:00",
+        finished_at="2026-01-01T00:00:01+00:00",
+        latency_ms=1000,
+        raw_usage={"provider_cost_usd": 0.0123},
+    )
+
+    row = (
+        get_db()
+        .execute(
+            "SELECT estimated_cost_usd,cost_status,metadata_json FROM runtime_cost_events WHERE id=?",
+            (event_id,),
+        )
+        .fetchone()
+    )
+    assert row["estimated_cost_usd"] == pytest.approx(0.0123)
+    assert row["cost_status"] == "known"
+    assert json.loads(row["metadata_json"])["cost_calculation"]["reason"] == "provider_reported"
 
 
 @pytest.mark.asyncio

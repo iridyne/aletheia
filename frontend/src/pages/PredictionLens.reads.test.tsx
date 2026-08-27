@@ -39,9 +39,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function flushQueries() {
+async function waitForText(node: HTMLElement, text: string) {
   await act(async () => {
-    await new Promise(resolve => setTimeout(resolve, 10))
+    await vi.waitFor(() => expect(node.textContent).toContain(text))
   })
 }
 
@@ -80,9 +80,8 @@ describe('Prediction Lens read-state presentation', () => {
     const card = node.querySelector<HTMLElement>('.pred-market-card')
     expect(card).toBeTruthy()
     act(() => card!.click())
-    await flushQueries()
+    await waitForText(node, 'Probability history unavailable')
 
-    expect(node.textContent).toContain('Probability history unavailable')
     expect(node.textContent).toContain('Move explanations unavailable')
     expect(node.textContent).toContain('Linked Serenity evidence unavailable')
     expect(node.textContent).not.toContain('No probability history yet')

@@ -39,6 +39,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "data_collector_context",
     "connectivity_monitor",
     "portfolio_snapshot",
+    "pricing_reference_refresh",
     "price_feed",
     "position_manager",
     "position_path_observer",
@@ -1145,6 +1146,16 @@ def _initial_learning_evaluator_run_time(
     return min(durable_due, default_run)
 
 
+def _run_pricing_reference_refresh() -> None:
+    try:
+        from aletheia.economics.pricing_sync import start_pricing_refresh
+
+        start_pricing_refresh(trigger="periodic")
+    except Exception as exc:
+        logger.warning("pricing_reference_refresh job failed: %s", exc)
+        _record_job_failure("pricing_reference_refresh", str(exc))
+
+
 def init_scheduler() -> BackgroundScheduler | None:
     """Initialize and start the background scheduler.
 
@@ -1268,6 +1279,17 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
         id="confidence_calibration", misfire_grace_time=300, executor="io",
+    )
+    _scheduler.add_job(
+        _guarded(
+            "pricing_reference_refresh",
+            _run_pricing_reference_refresh,
+        ),
+        "interval",
+        hours=6,
+        id="pricing_reference_refresh",
+        misfire_grace_time=300,
+        executor="io",
     )
     _scheduler.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",

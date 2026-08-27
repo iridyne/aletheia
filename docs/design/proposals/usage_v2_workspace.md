@@ -136,3 +136,27 @@ version; stored events and immutable price snapshots require no data rollback.
 
 Implemented: the API reference and data-utilization contract are the normative
 owners. The superseded frontend design remains historical evidence.
+
+## Conformance addendum: trusted catalog fallback
+
+The implemented cost invariants permit delayed binding of an actual provider
+model to an immutable LiteLLM catalog observation captured before the physical
+attempt began. The cached catalog receipt is content-addressed and records its
+trusted observation time, source, entry count, and matching algorithm. A price
+snapshot derived after the response may use that earlier observation time as
+`effective_from`; this adds immutable price evidence and never updates the
+historical usage event.
+
+Catalog snapshot versions bind both the catalog content hash and the normalized
+rate-vector hash. Re-parsing unchanged catalog bytes with newly supported cache
+read, cache creation, reasoning, or provider-native tool rates therefore creates
+a distinct immutable snapshot. A legacy cache without a receipt is historical
+evidence only when an existing snapshot contains the same catalog hash; its
+earliest `effective_from` becomes the recovered observation time.
+
+This fallback never substitutes the requested model for a different actual
+model, never applies a catalog first observed after the event, never treats a
+positive special-use counter as ordinary input or output when its dedicated rate
+is absent, and never assigns zero cost to an issued provider attempt without
+usage evidence. A terminated logical call with zero physical attempts is the
+only inference failure whose zero tokens and zero cost are directly confirmed.

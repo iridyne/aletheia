@@ -26,9 +26,7 @@ logger = logging.getLogger("aletheia.agents")
 # allow 300s for long research generations, but structured calls still need a bounded
 # total across repair attempts so scheduler cancellation never abandons the event loop.
 _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
-_LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar(
-    "aletheia_last_inference_call_id", default=None
-)
+_LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar("aletheia_last_inference_call_id", default=None)
 # Structured trade JSON: keep glm-5.2 in the later fallback pool, not first.
 # News/research stay on the default chain so glm quota is not spent on every call.
 _TRADE_JSON_CALLER_PREFIXES = (
@@ -177,11 +175,7 @@ def _prepare_context_adapter(
     if adapter is None:
         from aletheia.config.loader import load_config
 
-        enabled = (
-            load_config().economics.harness_header_default_on
-            if include is None
-            else include
-        )
+        enabled = load_config().economics.harness_header_default_on if include is None else include
         selected = ContextAdapter.MINIMAL_V1 if enabled else ContextAdapter.NONE
     else:
         selected = ContextAdapter(adapter)
@@ -195,12 +189,16 @@ def _prepare_context_adapter(
         ][:8]
         if not artifact_ids:
             raise ValueError("technical-context-v1 requires a linked technical artifact")
-        return system, selected.value, {
-            "model_visible": True,
-            "adapter_id": selected.value,
-            "placement": "caller_user_context",
-            "artifact_ids": artifact_ids,
-        }
+        return (
+            system,
+            selected.value,
+            {
+                "model_visible": True,
+                "adapter_id": selected.value,
+                "placement": "caller_user_context",
+                "artifact_ids": artifact_ids,
+            },
+        )
     context = build_harness_context()
     return context.render(system), selected.value, context.manifest()
 
@@ -341,16 +339,15 @@ async def llm_complete(
         _record_call_finished(inference_call, status="success", response=resp)
         _record_llm(True)
         return resp.content, None
+    except asyncio.CancelledError:
+        _record_call_finished(inference_call, status="error", error_type="cancelled")
+        raise
     except BudgetExceededError:
-        _record_call_finished(
-            inference_call, status="error", error_type="llm_budget_exhausted"
-        )
+        _record_call_finished(inference_call, status="error", error_type="llm_budget_exhausted")
         return None, "llm_budget_exhausted"
     except Exception as e:
         detail = _exception_detail(e)
-        _record_call_finished(
-            inference_call, status="error", error_type=type(e).__name__
-        )
+        _record_call_finished(inference_call, status="error", error_type=type(e).__name__)
         logger.warning("LLM call failed: %s", detail)
         _record_llm(False)
         return None, f"llm_unavailable: {detail}"
@@ -414,20 +411,13 @@ def _extract_json_object(text: str):
 
 def _known_provider_envelope(value: dict) -> str | None:
     """Classify only fixed public protocol envelopes; never retain their values."""
-    if value.get("object") == "chat.completion" and isinstance(
-        value.get("choices"), list
-    ):
+    if value.get("object") == "chat.completion" and isinstance(value.get("choices"), list):
         return "openai_chat_envelope"
     if value.get("object") == "response" and (
-        isinstance(value.get("output"), list)
-        or isinstance(value.get("output_text"), str)
+        isinstance(value.get("output"), list) or isinstance(value.get("output_text"), str)
     ):
         return "openai_responses_envelope"
-    if (
-        value.get("type") == "message"
-        and value.get("role") == "assistant"
-        and isinstance(value.get("content"), list)
-    ):
+    if value.get("type") == "message" and value.get("role") == "assistant" and isinstance(value.get("content"), list):
         return "anthropic_message_envelope"
     return None
 
@@ -548,9 +538,7 @@ def _validate_json_schema_value(
         errors = []
         for expected_type in expected:
             try:
-                _validate_json_schema_value(
-                    value, {**schema, "type": expected_type}, root=root, path=path
-                )
+                _validate_json_schema_value(value, {**schema, "type": expected_type}, root=root, path=path)
                 return
             except (TypeError, ValueError) as exc:
                 errors.append(exc)
@@ -569,9 +557,7 @@ def _validate_json_schema_value(
         properties = schema.get("properties") or {}
         for name, child_schema in properties.items():
             if name in value and isinstance(child_schema, dict):
-                _validate_json_schema_value(
-                    value[name], child_schema, root=root, path=f"{path}.{name}"
-                )
+                _validate_json_schema_value(value[name], child_schema, root=root, path=f"{path}.{name}")
         if schema.get("additionalProperties") is False:
             extras = set(value) - set(properties)
             if extras:
@@ -587,9 +573,7 @@ def _validate_json_schema_value(
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(value):
-                _validate_json_schema_value(
-                    item, item_schema, root=root, path=f"{path}[{index}]"
-                )
+                _validate_json_schema_value(item, item_schema, root=root, path=f"{path}[{index}]")
         return
     if expected == "string":
         if not isinstance(value, str):
@@ -697,9 +681,7 @@ async def llm_structured(
         nonlocal inference_finished
         if inference_call is not None and not inference_finished:
             failure_diagnostics: dict[str, str] = {}
-            if error.startswith(
-                ("structured_parse_error", "structured_schema_invalid")
-            ):
+            if error.startswith(("structured_parse_error", "structured_schema_invalid")):
                 if last_response_shape:
                     failure_diagnostics["response_shape"] = last_response_shape
                 if error.startswith("structured_schema_invalid"):
@@ -1084,10 +1066,11 @@ async def llm_stream(
             yield chunk
         _record_call_finished(inference_call, status="success")
         _record_llm(True)
+    except asyncio.CancelledError:
+        _record_call_finished(inference_call, status="error", error_type="cancelled")
+        raise
     except Exception as e:
-        _record_call_finished(
-            inference_call, status="error", error_type=type(e).__name__
-        )
+        _record_call_finished(inference_call, status="error", error_type=type(e).__name__)
         logger.warning("LLM stream failed: %s", _exception_detail(e))
         _record_llm(False)
         yield StreamChunk(content="", done=True)
