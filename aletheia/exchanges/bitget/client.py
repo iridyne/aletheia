@@ -66,6 +66,10 @@ class OrderRequest:
     reduce_only: bool = False
     hold_side: str | None = None  # "long" | "short" — required for a hedge-mode close
     leverage: int | None = None   # USDT-futures: set on the exchange before an open
+    # Canonical order policy from EntryPlan/OrderIntent. Values map exactly to
+    # Bitget ``force`` (v2) / ``timeInForce`` (UTA v3).
+    time_in_force: str | None = None  # gtc | ioc | post_only
+    post_only: bool = False
 
 
 def _validated_preset_protection_price(value: float | None) -> str | None:
@@ -76,12 +80,24 @@ def _validated_preset_protection_price(value: float | None) -> str | None:
     try:
         number = float(value)
     except (TypeError, ValueError):
-        raise ValueError(
-            "preset protection price must be finite and positive"
-        ) from None
+        raise ValueError("preset protection price must be finite and positive") from None
     if not math.isfinite(number) or number <= 0:
         raise ValueError("preset protection price must be finite and positive")
     return str(value)
+
+
+def _validated_time_in_force(order: OrderRequest) -> str | None:
+    value = str(order.time_in_force).lower() if order.time_in_force else None
+    if value not in {None, "gtc", "ioc", "post_only"}:
+        raise ValueError("unsupported Bitget time_in_force")
+    if order.order_type == "limit":
+        if order.price is None or not math.isfinite(float(order.price)) or order.price <= 0:
+            raise ValueError("Bitget limit order requires a finite positive price")
+    elif value is not None or order.post_only:
+        raise ValueError("Bitget time_in_force requires a limit order")
+    if order.post_only != (value == "post_only"):
+        raise ValueError("Bitget post_only intent and time_in_force disagree")
+    return value
 
 
 class DemoFundingUnavailable(RuntimeError):
@@ -90,8 +106,6 @@ class DemoFundingUnavailable(RuntimeError):
 
 class ProfileContractError(RuntimeError):
     """Raised when a BitgetClient operation is called on the wrong profile."""
-
-
 
 
 @dataclass
@@ -145,8 +159,7 @@ def _bitget_fill_closes_direction(raw: dict, direction: str) -> bool:
     trade_side = str(raw.get("tradeSide") or "").lower()
     side = str(raw.get("side") or "").lower()
     if direction in trade_side and (
-        "close" in trade_side
-        or trade_side.startswith(("reduce_", "burst_", "delivery_", "dte_sys_adl_"))
+        "close" in trade_side or trade_side.startswith(("reduce_", "burst_", "delivery_", "dte_sys_adl_"))
     ):
         return True
     if trade_side == "close":
@@ -162,9 +175,7 @@ def _bitget_verified_fill(raw: dict):
 
     fill_id = str(raw.get("tradeId") or raw.get("execId") or "")
     price = _bitget_float(raw.get("price") or raw.get("execPrice"))
-    quantity = _bitget_float(
-        raw.get("baseVolume") or raw.get("execQty") or raw.get("size")
-    )
+    quantity = _bitget_float(raw.get("baseVolume") or raw.get("execQty") or raw.get("size"))
     timestamp = _bitget_int(raw.get("cTime") or raw.get("createdTime"))
     if not fill_id or not price or not quantity or timestamp < 1:
         return None
@@ -222,9 +233,7 @@ class BitgetClient:
 
     def __init__(self, mode: str = "demo", profile: str = "classic_v2"):
         if profile not in _KNOWN_PROFILES:
-            raise ValueError(
-                f"unknown Bitget profile {profile!r}; expected one of {sorted(_KNOWN_PROFILES)}"
-            )
+            raise ValueError(f"unknown Bitget profile {profile!r}; expected one of {sorted(_KNOWN_PROFILES)}")
         self.mode = mode
         self.profile = profile
         self.demo = mode == "demo"
@@ -233,15 +242,13 @@ class BitgetClient:
     def _assert_classic_v2(self, operation: str) -> None:
         if self.profile != "classic_v2":
             raise ProfileContractError(
-                f"operation {operation!r} requires classic_v2 profile, "
-                f"configured profile is {self.profile!r}"
+                f"operation {operation!r} requires classic_v2 profile, configured profile is {self.profile!r}"
             )
 
     def _assert_uta_v3(self, operation: str) -> None:
         if self.profile != "uta_v3":
             raise ProfileContractError(
-                f"operation {operation!r} requires uta_v3 profile, "
-                f"configured profile is {self.profile!r}"
+                f"operation {operation!r} requires uta_v3 profile, configured profile is {self.profile!r}"
             )
 
     def _cred_prefix(self) -> str:
@@ -253,7 +260,9 @@ class BitgetClient:
         api_secret = get_secret(f"{prefix}.api_secret")
         passphrase = get_secret(f"{prefix}.passphrase")
         if not all([api_key, api_secret, passphrase]):
-            raise RuntimeError(f"Bitget {self.mode} credentials not configured. Use: aletheia secrets set {prefix}.api_key")
+            raise RuntimeError(
+                f"Bitget {self.mode} credentials not configured. Use: aletheia secrets set {prefix}.api_key"
+            )
         return api_key, api_secret, passphrase
 
     def _headers(self, method: str, path: str, body: str = "") -> dict:
@@ -309,7 +318,9 @@ class BitgetClient:
             change_pct_24h=float(t.get("change24h", t.get("chgUtc", 0))),
         )
 
-    async def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100, market_type: str = "spot") -> list[Candle]:
+    async def get_ohlcv(
+        self, symbol: str, timeframe: str = "1H", limit: int = 100, market_type: str = "spot"
+    ) -> list[Candle]:
         """Get OHLCV candles.
 
         # execution-context only — use aletheia.data.ccxt_provider for market data.
@@ -328,14 +339,16 @@ class BitgetClient:
 
         candles = []
         for c in data.get("data", []):
-            candles.append(Candle(
+            candles.append(
+                Candle(
                 timestamp=int(c[0]),
                 open=float(c[1]),
                 high=float(c[2]),
                 low=float(c[3]),
                 close=float(c[4]),
                 volume=float(c[5]),
-            ))
+                )
+            )
         return candles
 
     async def get_balances(self) -> list[Balance]:
@@ -388,6 +401,7 @@ class BitgetClient:
         uses the /api/v2/ mix endpoint. UTA v3 order placement is enabled after
         Demo end-to-end qualification (#1003).
         """
+        _validated_time_in_force(order)
         if self.profile == "uta_v3":
             return await self._uta_place_order(order)
 
@@ -397,20 +411,17 @@ class BitgetClient:
         # spot/close isolation below decides only whether a valid value is
         # serialized.
         import json
+
         # unconditional when a value is supplied; spot/close isolation below
         # decides only whether a valid value is serialized.
-        preset_stop_loss = _validated_preset_protection_price(
-            order.preset_stop_loss_price
-        )
-        preset_take_profit = _validated_preset_protection_price(
-            order.preset_take_profit_price
-        )
+        preset_stop_loss = _validated_preset_protection_price(order.preset_stop_loss_price)
+        preset_take_profit = _validated_preset_protection_price(order.preset_take_profit_price)
+        time_in_force = _validated_time_in_force(order)
 
         # Futures open: set the intended leverage on the exchange first (skip on a
         # hedge-mode close, which does not change leverage). Fail-closed — set_leverage
         # raises on failure, aborting the order rather than opening at the wrong size.
-        if (order.market_type != "spot" and order.leverage and order.leverage > 1
-                and not order.hold_side):
+        if order.market_type != "spot" and order.leverage and order.leverage > 1 and not order.hold_side:
             await self.set_leverage(order.symbol, order.leverage)
 
         if order.market_type == "spot":
@@ -420,7 +431,7 @@ class BitgetClient:
                 "side": order.side,
                 "orderType": order.order_type,
                 "size": str(order.quantity),
-                "force": "GTC",
+                "force": time_in_force or "GTC",
             }
         else:
             path = "/api/v2/mix/order/place-order"
@@ -439,6 +450,8 @@ class BitgetClient:
                 "orderType": order.order_type,
                 "size": str(order.quantity),
             }
+            if order.order_type == "limit":
+                body_data["force"] = time_in_force or "gtc"
             if order.hold_side:
                 body_data["tradeSide"] = "close"
                 body_data["holdSide"] = order.hold_side
@@ -465,31 +478,20 @@ class BitgetClient:
             resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
             status_code = int(getattr(resp, "status_code", 200) or 0)
             if status_code >= 500:
-                raise SubmissionResponseUnknownError(
-                    "Bitget create-order acknowledgement returned a server error"
-                )
+                raise SubmissionResponseUnknownError("Bitget create-order acknowledgement returned a server error")
             try:
                 data = resp.json()
             except (ValueError, UnicodeError) as exc:
-                raise SubmissionResponseUnknownError(
-                    "Bitget create-order acknowledgement was unreadable"
-                ) from exc
+                raise SubmissionResponseUnknownError("Bitget create-order acknowledgement was unreadable") from exc
 
         if not isinstance(data, dict):
-            raise SubmissionResponseUnknownError(
-                "Bitget create-order acknowledgement was not an object"
-            )
+            raise SubmissionResponseUnknownError("Bitget create-order acknowledgement was not an object")
         response_code = data.get("code")
         if not isinstance(response_code, str) or not response_code.strip():
-            raise SubmissionResponseUnknownError(
-                "Bitget create-order acknowledgement had no response code"
-            )
+            raise SubmissionResponseUnknownError("Bitget create-order acknowledgement had no response code")
         if response_code != "00000":
             response_message = data.get("msg")
-            if (
-                not isinstance(response_message, str)
-                or not response_message.strip()
-            ):
+            if not isinstance(response_message, str) or not response_message.strip():
                 raise SubmissionResponseUnknownError(
                     "Bitget create-order acknowledgement was not a recognizable rejection"
                 )
@@ -497,21 +499,15 @@ class BitgetClient:
             # classic_v2 uses 22002/25227; uta_v3 also adds 45110.
             # Scope this classification to hedge-mode closes.
             if order.hold_side and response_code in profile_close_absent_codes(self.profile):
-                raise ClosePositionAbsentError(
-                    f"Bitget close rejected: no position available (code={response_code})"
-                )
+                raise ClosePositionAbsentError(f"Bitget close rejected: no position available (code={response_code})")
             raise RuntimeError(f"Bitget order error: {response_message}")
 
         response_data = data.get("data")
         if not isinstance(response_data, dict):
-            raise SubmissionResponseUnknownError(
-                "Bitget create-order success acknowledgement had invalid data"
-            )
+            raise SubmissionResponseUnknownError("Bitget create-order success acknowledgement had invalid data")
         raw_order_id = response_data.get("orderId")
         if not isinstance(raw_order_id, str) or not raw_order_id.strip():
-            raise SubmissionResponseUnknownError(
-                "Bitget create-order success acknowledgement had no order id"
-            )
+            raise SubmissionResponseUnknownError("Bitget create-order success acknowledgement had no order id")
         order_id = raw_order_id.strip()
 
         resp_obj = OrderResponse(
@@ -571,19 +567,14 @@ class BitgetClient:
             return d[0] if d else None
         return d if isinstance(d, dict) else None
 
-    async def get_order_detail_by_client_oid(
-        self, client_oid: str, symbol: str
-    ) -> dict | None:
+    async def get_order_detail_by_client_oid(self, client_oid: str, symbol: str) -> dict | None:
         """Recover a Bitget orderId from a stable clientOid when the original
         submission ACK was lost (recovery path for #1779).
 
         Returns {"orderId": ..., "clientOid": ..., "status": ...} or None on
         not-found / ambiguous.  Raises RuntimeError on hard exchange errors.
         """
-        path = (
-            f"/api/v2/mix/order/detail"
-            f"?clientOid={client_oid}&symbol={symbol}&productType=USDT-FUTURES"
-        )
+        path = f"/api/v2/mix/order/detail?clientOid={client_oid}&symbol={symbol}&productType=USDT-FUTURES"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
@@ -594,7 +585,6 @@ class BitgetClient:
         if isinstance(d, list):
             return d[0] if d else None
         return d if isinstance(d, dict) else None
-
 
     async def get_account(self) -> AccountSummary:
         """Get account summary (§19.3)."""
@@ -639,7 +629,8 @@ class BitgetClient:
                 ctime_ms = int(p.get("cTime") or p.get("openTime") or 0) or None
             except (TypeError, ValueError):
                 ctime_ms = None
-            positions.append(Position(
+            positions.append(
+                Position(
                 symbol=p.get("symbol", ""),
                 side=p.get("holdSide", ""),
                 quantity=float(p.get("total", 0) or 0),
@@ -649,7 +640,8 @@ class BitgetClient:
                 mark_price=float(p.get("markPrice", 0) or 0),
                 ctime_ms=ctime_ms,
                 position_id=str(p.get("posId") or p.get("positionId") or p.get("id") or "") or None,
-            ))
+                )
+            )
         return positions
 
     async def get_mix_account(self, product_type: str = "USDT-FUTURES") -> dict:
@@ -672,10 +664,10 @@ class BitgetClient:
             return {}
         return accounts[0]
 
-
     async def transfer(self, amount: float, coin: str = "USDT") -> dict | None:
         """Move `amount` of `coin` from unified/spot wallet into mix (USDT-FUTURES)."""
         import json as _json
+
         try:
             mix = await self.get_mix_account("USDT-FUTURES")
             available = float(mix.get("available") or 0)
@@ -779,7 +771,8 @@ class BitgetClient:
                 ctime_ms = int(p.get("cTime") or p.get("openTime") or 0) or None
             except (TypeError, ValueError):
                 ctime_ms = None
-            positions.append(Position(
+            positions.append(
+                Position(
                 symbol=p.get("symbol", ""),
                 side=p.get("posSide", ""),
                 quantity=self._safe_position_float(p.get("total")),
@@ -791,29 +784,35 @@ class BitgetClient:
                 # position open-time attribution (cTime) — mirror the v2 mapper.
                 position_id=str(p.get("posId") or p.get("positionId") or p.get("id") or "") or None,
                 ctime_ms=ctime_ms,
-            ))
+                )
+            )
         return positions
 
     async def _uta_place_order(self, order: OrderRequest) -> OrderResponse:
         import json as _json
+
         preset_stop_loss = _validated_preset_protection_price(order.preset_stop_loss_price)
         preset_take_profit = _validated_preset_protection_price(order.preset_take_profit_price)
-        if (order.market_type != "spot" and order.leverage and order.leverage > 1
-                and not order.hold_side):
+        time_in_force = _validated_time_in_force(order)
+        if order.market_type != "spot" and order.leverage and order.leverage > 1 and not order.hold_side:
             await self.set_leverage(order.symbol, order.leverage)
         if order.market_type == "spot":
             category = "spot"
             extra = {}
         else:
             category = "USDT-FUTURES"
-            extra = {"marginCoin": "USDT", "leverage": str(int(order.leverage)) if (order.leverage and order.leverage > 1) else "1", "marginMode": "crossed"}
+            extra = {
+                "marginCoin": "USDT",
+                "leverage": str(int(order.leverage)) if (order.leverage and order.leverage > 1) else "1",
+                "marginMode": "crossed",
+            }
         body_data: dict = {
             "category": category,
             "symbol": order.symbol,
             "side": order.side,
             "orderType": order.order_type,
             "qty": str(order.quantity),
-            "timeInForce": "gtc",
+            "timeInForce": time_in_force or "gtc",
         }
         body_data.update(extra)
         if order.market_type != "spot":
@@ -859,14 +858,14 @@ class BitgetClient:
         if response_code != "00000":
             response_message = data.get("msg")
             if not isinstance(response_message, str) or not response_message.strip():
-                raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was not a recognizable rejection")
+                raise SubmissionResponseUnknownError(
+                    "Bitget UTA create-order acknowledgement was not a recognizable rejection"
+                )
             # Error codes meaning "no open position" are profile-specific: uta_v3
             # adds 45110 to the classic_v2 set {22002, 25227}. Scope this
             # classification to hedge-mode closes.
             if order.hold_side and response_code in profile_close_absent_codes(self.profile):
-                raise ClosePositionAbsentError(
-                    f"Bitget close rejected: no position available (code={response_code})"
-                )
+                raise ClosePositionAbsentError(f"Bitget close rejected: no position available (code={response_code})")
             raise RuntimeError(f"Bitget order error: {response_message}")
         response_data = data.get("data")
         if not isinstance(response_data, dict):
@@ -917,6 +916,7 @@ class BitgetClient:
 
     async def _uta_cancel_order(self, order_id, symbol, market_type):
         import json as _json
+
         body = _json.dumps({"orderId": order_id, "symbol": symbol, "category": "USDT-FUTURES", "marginCoin": "USDT"})
         path = "/api/v3/trade/cancel-order"
         headers = self._headers("POST", path, body)
@@ -971,23 +971,17 @@ class BitgetClient:
             rows = data
         if not isinstance(rows, list):
             raise ValueError("Bitget UTA exact private fill history malformed")
-        return [
-            row for row in rows
-            if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
-        ]
+        return [row for row in rows if isinstance(row, dict) and str(row.get("orderId") or "") == order_id]
 
     async def _uta_order_history_row(self, order_id: str, symbol: str) -> dict | None:
-        path = (
-            "/api/v3/trade/history-orders?category=USDT-FUTURES"
-            f"&symbol={symbol}&limit=50"
-        )
+        path = f"/api/v3/trade/history-orders?category=USDT-FUTURES&symbol={symbol}&limit=50"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             payload = resp.json()
         if payload.get("code") != "00000":
             raise RuntimeError("Bitget UTA order history rejected")
-        rows = ((payload.get("data") or {}).get("list") or [])
+        rows = (payload.get("data") or {}).get("list") or []
         for row in rows:
             if isinstance(row, dict) and str(row.get("orderId") or "") == order_id:
                 return row
@@ -995,6 +989,7 @@ class BitgetClient:
 
     async def _uta_set_leverage(self, exchange_symbol, leverage):
         import json as _json
+
         path = "/api/v3/account/set-leverage"
         body_data = {
             "symbol": exchange_symbol,
@@ -1048,6 +1043,7 @@ class BitgetClient:
 
     async def _uta_place_tpsl(self, symbol, plan_type, trigger_price, hold_side, size, execute_price, client_oid):
         import json as _json
+
         body_data: dict = {
             "category": "USDT-FUTURES",
             "symbol": symbol,
@@ -1074,6 +1070,7 @@ class BitgetClient:
 
     async def _uta_cancel_plan(self, symbol, order_id):
         import json as _json
+
         body = _json.dumps({"orderId": order_id, "symbol": symbol, "category": "USDT-FUTURES", "marginCoin": "USDT"})
         path = "/api/v3/trade/cancel-strategy-order"
         headers = self._headers("POST", path, body)
@@ -1126,7 +1123,10 @@ class BitgetClient:
 
     async def cancel_order(self, order_id: str, symbol: str, market_type: str = "spot") -> dict:
         """Cancel an order (§19.3). Returns {cancelled, order_id, [error]}."""
+        if self.profile == "uta_v3" and market_type != "spot":
+            return await self._uta_cancel_order(order_id, symbol, market_type)
         import json as _json
+
         if market_type == "spot":
             path = "/api/v2/spot/trade/cancel-order"
             body_data = {"symbol": symbol, "orderId": order_id}
@@ -1198,8 +1198,7 @@ class BitgetClient:
             if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
                 raise ValueError("Bitget exact private fill history malformed")
             page = [
-                row for row in data["fillList"]
-                if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+                row for row in data["fillList"] if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
             ]
             fills.extend(page)
             if len(data["fillList"]) < 100:
@@ -1227,11 +1226,7 @@ class BitgetClient:
             raise RuntimeError("Bitget UTA exact private fill history rejected")
         data = payload.get("data") or {}
         raw = data.get("list") or []
-        return [
-            row for row in raw
-            if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
-        ]
-
+        return [row for row in raw if isinstance(row, dict) and str(row.get("orderId") or "") == order_id]
 
     async def get_funding_ledger(
         self,
@@ -1305,10 +1300,7 @@ class BitgetClient:
             chunk_start = chunk_end + 1
 
         canonical_symbol = to_canonical(symbol)
-        events = [
-            event for event in normalize_bitget_funding_rows(raw_rows)
-            if event["symbol"] == canonical_symbol
-        ]
+        events = [event for event in normalize_bitget_funding_rows(raw_rows) if event["symbol"] == canonical_symbol]
         return make_complete_ledger(
             broker_id=broker_id,
             account_environment=self.mode,
@@ -1357,8 +1349,12 @@ class BitgetClient:
             )
             if present:
                 return classify_verified_exit(
-                    request, position_absent=False, history_complete=False,
-                    close_fills=(), ambiguous_activity=False, pages=0,
+                    request,
+                    position_absent=False,
+                    history_complete=False,
+                    close_fills=(),
+                    ambiguous_activity=False,
+                    pages=0,
                     source_endpoint=endpoint,
                 )
 
@@ -1406,9 +1402,7 @@ class BitgetClient:
                     ambiguous = True
                     continue
                 remote_order_id = str(raw.get("orderId") or "").strip()
-                closes_direction = _bitget_fill_closes_direction(
-                    raw, request.direction
-                )
+                closes_direction = _bitget_fill_closes_direction(raw, request.direction)
                 if remote_order_id in known_entry_order_ids and not closes_direction:
                     continue
                 if not closes_direction:
@@ -1430,7 +1424,9 @@ class BitgetClient:
             )
         except Exception:
             return inconclusive_verified_exit(
-                request, "broker_query_failed", source_endpoint=endpoint,
+                request,
+                "broker_query_failed",
+                source_endpoint=endpoint,
             )
 
     # ─── TPSL Trigger Orders ─────────────────────────────────────────────────
@@ -1451,6 +1447,7 @@ class BitgetClient:
         Returns the exchange plan order ID.
         """
         import json as _json
+
         path = "/api/v2/mix/order/place-tpsl-order"
         body_data: dict = {
             "symbol": symbol,
@@ -1479,6 +1476,7 @@ class BitgetClient:
     async def cancel_plan_order(self, symbol: str, order_id: str) -> dict:
         """Cancel a pending TP/SL trigger order. Returns {cancelled, order_id}."""
         import json as _json
+
         path = "/api/v2/mix/order/cancel-plan-order"
         body_data = {
             "symbol": symbol,
@@ -1514,10 +1512,7 @@ class BitgetClient:
         Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
         prices are trigger metadata, not private Fill economics.
         """
-        path = (
-            "/api/v2/mix/order/orders-plan-history"
-            "?productType=USDT-FUTURES&planType=profit_loss"
-        )
+        path = "/api/v2/mix/order/orders-plan-history?productType=USDT-FUTURES&planType=profit_loss"
         if symbol:
             path += f"&symbol={symbol}"
         if order_id:

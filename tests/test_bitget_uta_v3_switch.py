@@ -89,12 +89,20 @@ def test_place_order_uta_v3_open_body_contract(monkeypatch):
     http = _FakeHttp()
     monkeypatch.setattr(bg, "httpx_client", http)
     c = _client("uta_v3")
-    resp = asyncio.run(c.place_order(OrderRequest(
-        symbol="BTCUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=0.001,
-        preset_stop_loss_price=59000.0, preset_take_profit_price=65000.0,
+    resp = asyncio.run(
+        c.place_order(
+            OrderRequest(
+                symbol="BTCUSDT",
+                market_type="usdt_futures",
+                side="buy",
+                order_type="market",
+                quantity=0.001,
+                preset_stop_loss_price=59000.0,
+                preset_take_profit_price=65000.0,
         client_oid="p1",
-    )))
+            )
+        )
+    )
     assert resp.order_id == "EX-1"
     assert http.post_paths[-1].endswith("/api/v3/trade/place-order")
     body = http.post_bodies[-1]
@@ -121,10 +129,18 @@ def test_place_order_uta_v3_close_body_opposite_side(monkeypatch):
     http = _FakeHttp()
     monkeypatch.setattr(bg, "httpx_client", http)
     c = _client("uta_v3")
-    asyncio.run(c.place_order(OrderRequest(
-        symbol="BTCUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=0.001, hold_side="long",
-    )))
+    asyncio.run(
+        c.place_order(
+            OrderRequest(
+                symbol="BTCUSDT",
+                market_type="usdt_futures",
+                side="buy",
+                order_type="market",
+                quantity=0.001,
+                hold_side="long",
+            )
+        )
+    )
     body = http.post_bodies[-1]
     assert body["tradeSide"] == "close"
     assert body["posSide"] == "long"
@@ -138,10 +154,18 @@ def test_place_order_uta_v3_close_absent_45110_raises_close_absent(monkeypatch):
     monkeypatch.setattr(bg, "httpx_client", http)
     c = _client("uta_v3")
     with pytest.raises(ClosePositionAbsentError, match="45110"):
-        asyncio.run(c.place_order(OrderRequest(
-            symbol="BTCUSDT", market_type="usdt_futures", side="sell",
-            order_type="market", quantity=0.001, hold_side="short",
-        )))
+        asyncio.run(
+            c.place_order(
+                OrderRequest(
+                    symbol="BTCUSDT",
+                    market_type="usdt_futures",
+                    side="sell",
+                    order_type="market",
+                    quantity=0.001,
+                    hold_side="short",
+                )
+            )
+        )
 
 
 @pytest.mark.real_place_order
@@ -149,15 +173,55 @@ def test_place_order_classic_v2_still_posts_v2(monkeypatch):
     http = _FakeHttp()
     monkeypatch.setattr(bg, "httpx_client", http)
     c = _client("classic_v2")
-    asyncio.run(c.place_order(OrderRequest(
-        symbol="BTCUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=0.001,
-    )))
+    asyncio.run(
+        c.place_order(
+            OrderRequest(
+                symbol="BTCUSDT",
+                market_type="usdt_futures",
+                side="buy",
+                order_type="market",
+                quantity=0.001,
+            )
+        )
+    )
     assert http.post_paths[-1].endswith("/api/v2/mix/order/place-order")
     body = http.post_bodies[-1]
     assert body["productType"] == "USDT-FUTURES"
     assert body["size"] == "0.001"
     assert body["tradeSide"] == "open"
+
+
+@pytest.mark.real_place_order
+@pytest.mark.parametrize(
+    ("profile", "field"),
+    [("classic_v2", "force"), ("uta_v3", "timeInForce")],
+)
+def test_post_only_is_serialized_as_true_venue_semantics(monkeypatch, profile, field):
+    http = _FakeHttp()
+    monkeypatch.setattr(bg, "httpx_client", http)
+    asyncio.run(
+        _client(profile).place_order(
+            OrderRequest(
+                symbol="BTCUSDT",
+                market_type="usdt_futures",
+                side="buy",
+                order_type="limit",
+                quantity=0.001,
+                price=60_000,
+                time_in_force="post_only",
+                post_only=True,
+            )
+        )
+    )
+    assert http.post_bodies[-1][field] == "post_only"
+
+
+def test_uta_cancel_routes_to_v3_contract(monkeypatch):
+    http = _FakeHttp()
+    monkeypatch.setattr(bg, "httpx_client", http)
+    result = asyncio.run(_client("uta_v3").cancel_order("EX-1", "BTCUSDT", "usdt_futures"))
+    assert result["cancelled"] is True
+    assert http.post_paths[-1].endswith("/api/v3/trade/cancel-order")
 
 
 # ─── get_positions routing ────────────────────────────────────────────────────
@@ -166,11 +230,21 @@ def test_place_order_classic_v2_still_posts_v2(monkeypatch):
 def test_get_positions_uta_v3_routes_to_current_position(monkeypatch):
     payload = {
         "code": "00000",
-        "data": {"list": [{
-            "symbol": "BTCUSDT", "posSide": "long", "total": "0.001",
-            "avgPrice": "60000", "unrealisedPnl": "1.5", "leverage": "5",
-            "markPrice": "61000", "posId": "POS-9", "cTime": "1700000000000",
-        }]},
+        "data": {
+            "list": [
+                {
+                    "symbol": "BTCUSDT",
+                    "posSide": "long",
+                    "total": "0.001",
+                    "avgPrice": "60000",
+                    "unrealisedPnl": "1.5",
+                    "leverage": "5",
+                    "markPrice": "61000",
+                    "posId": "POS-9",
+                    "cTime": "1700000000000",
+                }
+            ]
+        },
     }
     http = _FakeHttp(get_payload=payload)
     monkeypatch.setattr(bg, "httpx_client", http)
@@ -214,10 +288,14 @@ def test_is_unified_short_circuits_by_profile(monkeypatch):
 def test_get_funding_ledger_fails_loud_on_uta_v3():
     c = BitgetClient(mode="demo", profile="uta_v3")
     with pytest.raises(ProfileContractError, match="classic_v2"):
-        asyncio.run(c.get_funding_ledger(
-            broker_id="bitget_demo", symbol="BTC/USDT",
-            start_time_ms=1700000000000, end_time_ms=1700086400000,
-        ))
+        asyncio.run(
+            c.get_funding_ledger(
+                broker_id="bitget_demo",
+                symbol="BTC/USDT",
+                start_time_ms=1700000000000,
+                end_time_ms=1700086400000,
+            )
+        )
 
 
 def _verified_exit_request():

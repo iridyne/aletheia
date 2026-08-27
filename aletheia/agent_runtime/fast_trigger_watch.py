@@ -13,6 +13,7 @@ from aletheia.storage.models import (
     ConditionalEntryAuthorization,
     UniverseSetup,
 )
+from aletheia.trading.entry_plan import EntryPlan
 from aletheia.universe.fast_stream import (
     fast_market_data_venue_for_config,
     fast_market_stream_for_config,
@@ -37,9 +38,7 @@ _status: dict[str, object] = {
 _WATCHER_RELOAD_INTERVAL_SEC = 2.0
 
 
-async def _prewarm_market_structure(
-    engine: TriggerEngine, instrument: InstrumentId
-) -> None:
+async def _prewarm_market_structure(engine: TriggerEngine, instrument: InstrumentId) -> None:
     """Best-effort slow-path warmup; missing history stays shadow-unavailable."""
 
     from aletheia.data.ccxt_provider import get_market_data_provider
@@ -51,7 +50,8 @@ async def _prewarm_market_structure(
     )
     try:
         candles = await provider.get_ohlcv(instrument, timeframe="1m", limit=120)
-        engine.preload_closed_candles([
+        engine.preload_closed_candles(
+            [
             {
                 "ts": candle.timestamp,
                 "open": candle.open,
@@ -62,7 +62,8 @@ async def _prewarm_market_structure(
             }
             for candle in candles
             if candle.is_closed and str(candle.exchange or "").lower() == instrument.exchange
-        ])
+            ]
+        )
     except Exception:
         logger.debug(
             "Fast Trigger market-structure warmup unavailable for %s",
@@ -106,11 +107,7 @@ def start_fast_trigger_watch(
 def _configured_block_reason(cfg) -> str | None:
     reason = validate_fast_trigger_stream(cfg)
     if reason is None and (cfg.runtime.paused or cfg.runtime.kill_switch_active):
-        reason = (
-            "fast_trigger_runtime_paused"
-            if cfg.runtime.paused
-            else "fast_trigger_kill_switch_active"
-        )
+        reason = "fast_trigger_runtime_paused" if cfg.runtime.paused else "fast_trigger_kill_switch_active"
     return reason
 
 
@@ -165,22 +162,26 @@ async def _load_watchers(
     existing: dict[str, TriggerEngine] | None = None,
 ) -> tuple[dict[str, UniverseSetup], dict[str, TriggerEngine]]:
     await asyncio.to_thread(repo.expire_universe_setups)
-    rows = await asyncio.to_thread(
-        repo.list_watchable_universe_setups, int(cfg.fast_trigger.max_setups)
-    )
+    rows = await asyncio.to_thread(repo.list_watchable_universe_setups, int(cfg.fast_trigger.max_setups))
     setups: dict[str, UniverseSetup] = {}
     engines: dict[str, TriggerEngine] = {}
     for row in rows:
         setup = UniverseSetup.model_validate(row)
-        authorization_row = await asyncio.to_thread(
-            repo.get_conditional_entry_authorization, setup.id
-        )
+        if await asyncio.to_thread(
+            repo.has_current_entry_plan_for_instrument,
+            setup.venue,
+            setup.symbol,
+            setup.market_type,
+            setup.direction,
+        ):
+            continue
+        authorization_row = await asyncio.to_thread(repo.get_conditional_entry_authorization, setup.id)
         if authorization_row is None:
             continue
         authorization = ConditionalEntryAuthorization.model_validate(authorization_row)
-        if datetime.fromisoformat(
-            authorization.valid_until.replace("Z", "+00:00")
-        ).astimezone(timezone.utc) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(authorization.valid_until.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        ) <= datetime.now(timezone.utc):
             await asyncio.to_thread(
                 repo.transition_universe_setup,
                 setup.id,
@@ -201,8 +202,7 @@ async def _load_watchers(
             or authorization.direction != setup.direction
             or authorization.entry_zone != setup.entry_zone
             or authorization.invalidation_price != setup.invalidation_price
-            or setup.venue.lower()
-            != fast_market_data_venue_for_config(cfg)
+            or setup.venue.lower() != fast_market_data_venue_for_config(cfg)
         ):
             await asyncio.to_thread(
                 repo.transition_universe_setup,
@@ -211,9 +211,7 @@ async def _load_watchers(
                 state="invalidated",
             )
             continue
-        instrument = InstrumentId.from_parts(
-            setup.venue, setup.symbol, setup.market_type
-        )
+        instrument = InstrumentId.from_parts(setup.venue, setup.symbol, setup.market_type)
         if existing is not None and setup.id in existing:
             setups[setup.id] = setup
             engines[setup.id] = existing[setup.id]
@@ -236,6 +234,71 @@ async def _load_watchers(
     return setups, engines
 
 
+async def _load_entry_plan_watchers(
+    cfg,
+    existing: dict[str, TriggerEngine] | None = None,
+) -> tuple[dict[str, EntryPlan], dict[str, TriggerEngine]]:
+    plans: dict[str, EntryPlan] = {}
+    engines: dict[str, TriggerEngine] = {}
+    now = datetime.now(timezone.utc)
+    for row in await asyncio.to_thread(repo.list_watchable_entry_plans, int(cfg.fast_trigger.max_setups)):
+        try:
+            plan = EntryPlan.model_validate_json(row["plan_json"])
+        except Exception:
+            logger.error("Entry Plan %s failed stored-contract validation", row["id"])
+            continue
+        if datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00")) <= now:
+            if row["status"] == "waiting":
+                await asyncio.to_thread(
+                    repo.transition_entry_plan,
+                    plan.plan_id,
+                    expected_status="waiting",
+                    status="expired",
+                    reason="entry_plan_expired",
+                )
+            else:
+                from aletheia.execution.gateway import cancel_entry_plan_order
+
+                await asyncio.to_thread(
+                    cancel_entry_plan_order,
+                    plan.plan_id,
+                    reason="entry_plan_expired",
+                )
+            continue
+        if plan.venue.lower() != fast_market_data_venue_for_config(cfg):
+            continue
+        plans[plan.plan_id] = plan
+        if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
+            continue
+        if existing is not None and plan.plan_id in existing:
+            engines[plan.plan_id] = existing[plan.plan_id]
+            continue
+        params = plan.trigger_params
+        instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+        engine = TriggerEngine(
+            instrument=instrument,
+            direction=plan.direction,
+            breakout_level=float(params["breakout_level"]),
+            pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
+            entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
+            policy=TriggerPolicy(
+                max_spread_bps=float(cfg.universe.max_spread_bps),
+                min_depth_10bps_usd=float(cfg.universe.min_depth_10bps_usd),
+            ),
+        )
+        await _prewarm_market_structure(engine, instrument)
+        engines[plan.plan_id] = engine
+    return plans, engines
+
+
+async def _cancel_open_entry_plans(reason: str) -> None:
+    from aletheia.execution.gateway import cancel_entry_plan_order
+
+    for row in await asyncio.to_thread(repo.list_watchable_entry_plans, 100):
+        if row["status"] in {"ordered", "partially_filled"}:
+            await asyncio.to_thread(cancel_entry_plan_order, row["id"], reason=reason)
+
+
 async def _watch_loop(cfg) -> None:
     global _status
     backoff = 1.0
@@ -248,6 +311,7 @@ async def _watch_loop(cfg) -> None:
         cfg = await asyncio.to_thread(load_config, persist_migrations=False)
         reason = _configured_block_reason(cfg)
         if reason:
+            await _cancel_open_entry_plans(reason)
             _status = {"running": False, "reason": reason, "watched_setups": 0}
             try:
                 await asyncio.wait_for(stop.wait(), timeout=5.0)
@@ -259,12 +323,18 @@ async def _watch_loop(cfg) -> None:
         try:
             await stream.connect()
             setups, engines = await _load_watchers(cfg)
-            instruments = {engine.instrument for engine in engines.values()}
+            plans, plan_engines = await _load_entry_plan_watchers(cfg)
+            instruments = {engine.instrument for engine in (*engines.values(), *plan_engines.values())}
+            instruments.update(
+                InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+                for plan in plans.values()
+                if plan.execution_mode == "RESTING_MAKER"
+            )
             await stream.set_instruments(instruments)
             _status = {
                 "running": True,
                 "reason": None,
-                "watched_setups": len(setups),
+                "watched_setups": len(setups) + len(plans),
             }
             iterator = stream.events().__aiter__()
             subscribed = instruments
@@ -279,29 +349,35 @@ async def _watch_loop(cfg) -> None:
                 done, _ = await asyncio.wait({event_task}, timeout=timeout)
                 now = loop.time()
                 if now >= next_config_check:
-                    current_cfg = await asyncio.to_thread(
-                        load_config, persist_migrations=False
-                    )
+                    current_cfg = await asyncio.to_thread(load_config, persist_migrations=False)
                     if _watch_config_identity(current_cfg) != _watch_config_identity(cfg):
                         cfg = current_cfg
                         break
                     next_config_check = now + 2.0
                 if now >= next_watcher_reload:
                     fresh_setups, fresh_engines = await _load_watchers(cfg, engines)
+                    fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg, plan_engines)
                     fresh_instruments = {
-                        engine.instrument for engine in fresh_engines.values()
+                        engine.instrument for engine in (*fresh_engines.values(), *fresh_plan_engines.values())
                     }
+                    fresh_instruments.update(
+                        InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+                        for plan in fresh_plans.values()
+                        if plan.execution_mode == "RESTING_MAKER"
+                    )
                     if fresh_instruments != subscribed:
                         await stream.set_instruments(fresh_instruments)
                         subscribed = fresh_instruments
                         # A subscription generation change invalidates every
                         # rolling quote/trade/depth window; re-warm from empty.
                         fresh_setups, fresh_engines = await _load_watchers(cfg)
+                        fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg)
                     setups, engines = fresh_setups, fresh_engines
+                    plans, plan_engines = fresh_plans, fresh_plan_engines
                     if stream.health().subscriptions_confirmed:
-                        for engine in engines.values():
+                        for engine in (*engines.values(), *plan_engines.values()):
                             engine.confirm_subscription()
-                    _status["watched_setups"] = len(setups)
+                    _status["watched_setups"] = len(setups) + len(plans)
                     next_watcher_reload = now + _WATCHER_RELOAD_INTERVAL_SEC
                 if not done:
                     continue
@@ -312,8 +388,63 @@ async def _watch_loop(cfg) -> None:
                 finally:
                     event_task = None
                 if stream.health().subscriptions_confirmed:
-                    for engine in engines.values():
+                    for engine in (*engines.values(), *plan_engines.values()):
                         engine.confirm_subscription()
+                if event.event_type == "quote":
+                    for plan_id, plan in tuple(plans.items()):
+                        instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+                        if instrument != event.instrument:
+                            continue
+                        invalidated = (plan.direction == "long" and float(event.bid) <= plan.invalidation_price) or (
+                            plan.direction == "short" and float(event.ask) >= plan.invalidation_price
+                        )
+                        row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
+                        if row is None:
+                            continue
+                        if invalidated:
+                            if row["status"] in {"ordered", "partially_filled"}:
+                                from aletheia.execution.gateway import cancel_entry_plan_order
+
+                                await asyncio.to_thread(
+                                    cancel_entry_plan_order,
+                                    plan_id,
+                                    reason="entry_plan_price_invalidated",
+                                )
+                            elif row["status"] == "waiting":
+                                await asyncio.to_thread(
+                                    repo.transition_entry_plan,
+                                    plan_id,
+                                    expected_status="waiting",
+                                    status="invalidated",
+                                    reason="entry_plan_price_invalidated",
+                                )
+                            continue
+                        if plan.execution_mode == "RESTING_MAKER" and row["status"] == "waiting":
+                            from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+                            await asyncio.to_thread(
+                                execute_entry_plan,
+                                plan_id,
+                                bid=float(event.bid),
+                                ask=float(event.ask),
+                                observed_at=datetime.fromtimestamp(
+                                    event.received_timestamp_ms / 1000, tz=timezone.utc
+                                ).isoformat(),
+                            )
+                for plan_id, engine in tuple(plan_engines.items()):
+                    if engine.instrument != event.instrument:
+                        continue
+                    ready = engine.observe(event)
+                    if ready is not None:
+                        from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+                        await asyncio.to_thread(
+                            execute_entry_plan,
+                            plan_id,
+                            bid=ready.bid,
+                            ask=ready.ask,
+                            observed_at=ready.observed_at,
+                        )
                 for setup_id, engine in tuple(engines.items()):
                     if engine.instrument != event.instrument:
                         continue
@@ -327,9 +458,7 @@ async def _watch_loop(cfg) -> None:
                             state="pullback_seen",
                         )
                     if ready is not None:
-                        current_cfg = await asyncio.to_thread(
-                            load_config, persist_migrations=False
-                        )
+                        current_cfg = await asyncio.to_thread(load_config, persist_migrations=False)
                         result = await asyncio.to_thread(
                             materialize_trigger,
                             setup_id,

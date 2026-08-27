@@ -427,8 +427,7 @@ def insert_audit_event_once(event: AuditEvent) -> bool:
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
     cursor = execute_write(
-        f"INSERT INTO audit_events ({columns}) VALUES ({placeholders}) "
-        "ON CONFLICT(id) DO NOTHING",
+        f"INSERT INTO audit_events ({columns}) VALUES ({placeholders}) ON CONFLICT(id) DO NOTHING",
         tuple(data.values()),
     )
     return cursor.rowcount == 1
@@ -468,7 +467,9 @@ def _durable_agent_artifact_id(artifact_type: str, artifact_id: str) -> str:
     """Promote a late-written pending PI artifact to its one durable final row."""
     if artifact_type != "pi_decision":
         return artifact_id
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT final.id FROM pi_decisions pending "
         "JOIN pi_decisions final ON final.opportunity_id=pending.opportunity_id "
         " AND COALESCE(final.signal_source, 'market_observer')="
@@ -492,7 +493,9 @@ def _durable_agent_artifact_id(artifact_type: str, artifact_id: str) -> str:
         "          AND newer_pending.rowid<final.rowid))"
         ") ORDER BY julianday(final.created_at), final.rowid LIMIT 2",
         (artifact_id,),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return str(rows[0][0]) if len(rows) == 1 else artifact_id
 
 
@@ -575,19 +578,12 @@ def insert_opportunity_generation(
     from aletheia.trading.instruments import instrument_market_to_db_market
 
     identity = generation.instrument_identity
-    instrument = InstrumentId.from_parts(
-        identity.venue, identity.symbol, identity.market_type
-    )
+    instrument = InstrumentId.from_parts(identity.venue, identity.symbol, identity.market_type)
     stock_linked_perp = opportunity.asset_subclass == "stock_linked_perp"
-    if (
-        not opportunity.execution_eligible
-        or (opportunity.asset_class != "crypto" and not stock_linked_perp)
-    ):
+    if not opportunity.execution_eligible or (opportunity.asset_class != "crypto" and not stock_linked_perp):
         raise ValueError("Opportunity generation requires execution-eligible asset")
     expected_market = (
-        instrument.market_type
-        if stock_linked_perp
-        else instrument_market_to_db_market(instrument.market_type)
+        instrument.market_type if stock_linked_perp else instrument_market_to_db_market(instrument.market_type)
     )
     if (
         opportunity.symbol != instrument.symbol
@@ -624,9 +620,7 @@ def insert_opportunity_validity_assessment(
         evidence = json.loads(assessment.evidence_json)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("Opportunity validity evidence is invalid") from exc
-    canonical = json.dumps(
-        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
+    canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     if canonical != assessment.evidence_json or expected != assessment.evidence_hash:
         raise ValueError("Opportunity validity evidence hash mismatch")
@@ -634,8 +628,7 @@ def insert_opportunity_validity_assessment(
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
     cursor = execute_write(
-        f"INSERT OR IGNORE INTO opportunity_entry_validity_assessments "
-        f"({columns}) VALUES ({placeholders})",
+        f"INSERT OR IGNORE INTO opportunity_entry_validity_assessments ({columns}) VALUES ({placeholders})",
         tuple(data.values()),
     )
     return cursor.rowcount == 1
@@ -656,9 +649,7 @@ def list_opportunities(limit: int = 50) -> list[dict]:
 
 
 def get_opportunity_by_setup(setup_id: str) -> dict | None:
-    row = get_db().execute(
-        "SELECT * FROM opportunities WHERE setup_id=? LIMIT 1", (setup_id,)
-    ).fetchone()
+    row = get_db().execute("SELECT * FROM opportunities WHERE setup_id=? LIMIT 1", (setup_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -748,8 +739,14 @@ def transition_universe_setup(
     """Compare-and-swap one setup state without widening its authority."""
 
     allowed = {
-        "pending_authorization", "armed", "pullback_seen", "triggering",
-        "executed", "refused", "expired", "invalidated",
+        "pending_authorization",
+        "armed",
+        "pullback_seen",
+        "triggering",
+        "executed",
+        "refused",
+        "expired",
+        "invalidated",
     }
     expected = tuple(str(value) for value in expected_states)
     if not expected or state not in allowed or any(value not in allowed for value in expected):
@@ -774,10 +771,14 @@ def insert_conditional_entry_authorization(
 
 
 def get_conditional_entry_authorization(setup_id: str) -> dict | None:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT * FROM conditional_entry_authorizations WHERE setup_id=? LIMIT 1",
         (setup_id,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -786,15 +787,22 @@ def insert_fast_trigger_market_snapshot(snapshot: FastTriggerMarketSnapshot) -> 
 
 
 def get_fast_trigger_market_snapshot(setup_id: str) -> dict | None:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT * FROM fast_trigger_market_snapshots WHERE setup_id=? LIMIT 1",
         (setup_id,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
+
 
 def list_opportunity_instruments() -> list[dict]:
     """Return one latest-state summary for each exact Opportunity instrument."""
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         """
         WITH ranked AS (
             SELECT
@@ -824,7 +832,9 @@ def list_opportunity_instruments() -> list[dict]:
         WHERE latest_rank = 1
         ORDER BY (open_count > 0) DESC, datetime(latest_created_at) DESC
         """
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -1225,8 +1235,7 @@ def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     db = get_db()
     row = db.execute(
-        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ?"
-        " ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
         (symbol, cutoff),
     ).fetchone()
     return dict(row) if row else None
@@ -1282,10 +1291,7 @@ def find_final_pi_decision_for_opportunity(
             action,
         )
     else:
-        action_clause = (
-            "AND final.action NOT IN ("
-            "'signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
-        )
+        action_clause = "AND final.action NOT IN ('signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
         generation_clause = (
             "AND NOT EXISTS ("
             " SELECT 1 FROM pi_decisions pending "
@@ -1334,10 +1340,7 @@ def classify_final_pi_decision_for_opportunity(
         generation_clause = ""
         params = (opportunity_id, signal_source or "market_observer", action)
     else:
-        action_clause = (
-            "AND final.action NOT IN ("
-            "'signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
-        )
+        action_clause = "AND final.action NOT IN ('signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
         generation_clause = (
             "AND NOT EXISTS ("
             " SELECT 1 FROM pi_decisions pending "
@@ -1581,7 +1584,6 @@ def transition_queued_opportunity_to_open(oid: str) -> bool:
     return cur.rowcount == 1
 
 
-
 class ReplacementResult:
     """Outcome of one atomic priority-replacement attempt.
 
@@ -1667,6 +1669,7 @@ def atomic_replace_queued_carrier(
 class _AtomicReplacementAbort(Exception):
     """Internal signal to abort an atomic replacement attempt cleanly."""
 
+
 def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     """opportunity_id set whose most recent Operator observation is an active defer.
 
@@ -1680,14 +1683,18 @@ def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     """
     if now_iso is None:
         now_iso = datetime.now(timezone.utc).isoformat()
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT json_extract(queue_snapshot_json,'$.opportunity_id') AS opportunity_id "
         "FROM operator_evaluation_events "
         "WHERE event_kind LIKE 'operator_decision_deferred_%' "
         "AND json_extract(queue_snapshot_json,'$.defer_until') > ? "
         "GROUP BY json_extract(queue_snapshot_json,'$.opportunity_id')",
         (now_iso,),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return {str(row["opportunity_id"]) for row in rows if row["opportunity_id"]}
 
 
@@ -1701,7 +1708,9 @@ def next_pending_signal_defer_deadline(now_iso: str | None = None) -> str | None
     """
     if now_iso is None:
         now_iso = datetime.now(timezone.utc).isoformat()
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "WITH ranked_operator_events AS ("
         " SELECT rowid AS event_rowid,event_kind,queue_snapshot_json,created_at,"
         "  json_extract(queue_snapshot_json,'$.opportunity_id') AS opportunity_id,"
@@ -1743,7 +1752,9 @@ def next_pending_signal_defer_deadline(now_iso: str | None = None) -> str | None
         ") "
         "ORDER BY datetime(deadline) ASC, defer.event_rowid ASC LIMIT 1",
         (now_iso,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return str(row["deadline"]) if row is not None and row["deadline"] else None
 
 
@@ -1767,10 +1778,10 @@ def latest_direct_skip_defer_for_setup(
     The caller compares fingerprints — this only bounds the lookback by time so a
     stale skip cannot suppress a setup forever.
     """
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))
-    ).isoformat()
-    row = get_db().execute(
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))).isoformat()
+    row = (
+        get_db()
+        .execute(
         "SELECT queue_snapshot_json FROM operator_evaluation_events "
         "WHERE event_kind LIKE 'operator_decision_deferred_%' "
         "AND json_extract(queue_snapshot_json,'$.defer_reason') LIKE 'direct_skip_not_confirmed%' "
@@ -1786,7 +1797,9 @@ def latest_direct_skip_defer_for_setup(
         ") "
         "ORDER BY created_at DESC LIMIT 1",
         (symbol, direction, market_type, cutoff),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     if row is None:
         return None
     try:
@@ -1811,10 +1824,10 @@ def latest_skip_validation_for_setup(
     skip at an unchanged material fingerprint, this lets the caller reuse the prior
     counterfactual confirmation instead of a second LLM call.
     """
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))
-    ).isoformat()
-    row = get_db().execute(
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))).isoformat()
+    row = (
+        get_db()
+        .execute(
         "SELECT queue_snapshot_json FROM operator_evaluation_events "
         "WHERE event_kind = 'operator_skip_validated' "
         "AND json_extract(queue_snapshot_json,'$.symbol') = ? "
@@ -1823,7 +1836,9 @@ def latest_skip_validation_for_setup(
         "AND created_at >= ? "
         "ORDER BY created_at DESC LIMIT 1",
         (symbol, direction, market_type, cutoff),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     if row is None:
         return None
     try:
@@ -2052,7 +2067,9 @@ def list_capital_events(limit: int = 200) -> list[dict]:
 
 def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
     """Return aggregate external cash flows inside one equity-snapshot window."""
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         """
         SELECT *
         FROM capital_events
@@ -2060,14 +2077,12 @@ def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
           AND datetime(detected_at) <= datetime(?)
         """,
         (start_at, end_at),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     start = _normalized_utc_datetime(start_at)
     end = _normalized_utc_datetime(end_at)
-    events = [
-        dict(row)
-        for row in rows
-        if start < _normalized_utc_datetime(row["detected_at"]) <= end
-    ]
+    events = [dict(row) for row in rows if start < _normalized_utc_datetime(row["detected_at"]) <= end]
     return sorted(
         events,
         key=lambda row: (_normalized_utc_datetime(row["detected_at"]), row["id"]),
@@ -2116,7 +2131,9 @@ def list_paper_account_events(limit: int = 50) -> list[dict]:
 
 def list_paper_cash_events_between(start_at: str, end_at: str) -> list[dict]:
     """Return administrative local-paper cash changes inside a snapshot window."""
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         """
         SELECT *
         FROM paper_account_events
@@ -2129,14 +2146,12 @@ def list_paper_cash_events_between(start_at: str, end_at: str) -> list[dict]:
           AND datetime(created_at) <= datetime(?)
         """,
         (start_at, end_at),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     start = _normalized_utc_datetime(start_at)
     end = _normalized_utc_datetime(end_at)
-    events = [
-        dict(row)
-        for row in rows
-        if start < _normalized_utc_datetime(row["created_at"]) <= end
-    ]
+    events = [dict(row) for row in rows if start < _normalized_utc_datetime(row["created_at"]) <= end]
     return sorted(
         events,
         key=lambda row: (_normalized_utc_datetime(row["created_at"]), row["id"]),
@@ -2391,11 +2406,7 @@ def validate_trade_proposal_commit_hash(
 ) -> str:
     """Return the stored Proposal hash only if immutable content still matches it."""
     try:
-        stored = (
-            proposal
-            if isinstance(proposal, TradeProposal)
-            else TradeProposal.model_validate(proposal)
-        )
+        stored = proposal if isinstance(proposal, TradeProposal) else TradeProposal.model_validate(proposal)
     except ValidationError as exc:
         raise ValueError("stored proposal content cannot be validated") from exc
     if stored.commit_hash is None:
@@ -2487,6 +2498,18 @@ def list_trade_proposals(limit: int = 50, status: str | None = None) -> list[dic
 
 def get_trade_proposal(pid: str) -> dict | None:
     return _select_one("trade_proposals", pid)
+
+
+def get_trade_proposal_by_entry_plan(entry_plan_id: str) -> dict | None:
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM trade_proposals WHERE entry_plan_id=? LIMIT 1",
+            (entry_plan_id,),
+        )
+        .fetchone()
+    )
+    return dict(row) if row else None
 
 
 def get_proposal_execution_claim(proposal_id: str) -> dict | None:
@@ -2921,9 +2944,7 @@ def validate_native_order_authority(order: Order | Mapping[str, object]) -> None
         if position.get("status") != "open":
             raise ValueError("native close Order requires an open Position")
         if data.get("risk_decision_id") is not None:
-            raise ValueError(
-                "native close Order consumes Position authority, not a RiskDecision"
-            )
+            raise ValueError("native close Order consumes Position authority, not a RiskDecision")
         for field in ("proposal_id", "symbol", "market_type", "direction", "execution_mode"):
             if data.get(field) != position.get(field):
                 raise ValueError(f"native close Order {field} does not match Position")
@@ -2958,6 +2979,30 @@ def insert_order(o: Order) -> None:
 
 def update_order(oid: str, **kwargs) -> None:
     _update("orders", oid, kwargs)
+    lifecycle_status = {
+        "partially_filled": "partially_filled",
+        "partial": "partially_filled",
+        "filled": "filled",
+        "cancelled": "cancelled",
+        "error": "failed",
+    }.get(kwargs.get("status"))
+    if lifecycle_status is None:
+        return
+    order = get_order(oid)
+    plan_id = order.get("entry_plan_id") if order else None
+    if not plan_id:
+        return
+    plan = get_entry_plan(plan_id)
+    from aletheia.trading.entry_plan import entry_plan_transition_allowed
+
+    if plan and entry_plan_transition_allowed(plan["status"], lifecycle_status):
+        transition_entry_plan(
+            plan_id,
+            expected_status=plan["status"],
+            status=lifecycle_status,
+            order_id=oid,
+            reason=kwargs.get("error_reason"),
+        )
 
 
 def finalize_exchange_acknowledgement(
@@ -2976,11 +3021,7 @@ def finalize_exchange_acknowledgement(
         if order is None:
             raise ValueError(f"order not found: {order_id}")
         current_exchange_id = str(order.get("exchange_order_id") or "").strip() or None
-        if (
-            current_exchange_id
-            and incoming_exchange_id
-            and current_exchange_id != incoming_exchange_id
-        ):
+        if current_exchange_id and incoming_exchange_id and current_exchange_id != incoming_exchange_id:
             raise ValueError("exchange acknowledgement identity conflicts with durable Order")
 
         position = get_position(close_position_id) if close_position_id else None
@@ -3023,11 +3064,12 @@ def finalize_exchange_acknowledgement(
         position = get_position(position_id) if position_id else None
         fills = [
             dict(row)
-            for row in get_db().execute(
-                "SELECT id, fill_price, fill_quantity FROM fills "
-                "WHERE order_id=? ORDER BY filled_at, rowid LIMIT 2",
+            for row in get_db()
+            .execute(
+                "SELECT id, fill_price, fill_quantity FROM fills WHERE order_id=? ORDER BY filled_at, rowid LIMIT 2",
                 (order_id,),
-            ).fetchall()
+            )
+            .fetchall()
         ]
         fill = fills[0] if len(fills) == 1 else None
 
@@ -3317,11 +3359,15 @@ def _first_full_position_path_bucket_open_ms(opened_at: object) -> int | None:
 def get_position_path_observer_cursor() -> dict | None:
     """Return the durable bucket-enrollment cursor, if initialized."""
 
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT stream_id,last_enqueued_bucket_open_ms,updated_at "
         "FROM position_path_observer_cursor "
         "WHERE stream_id='position_path_observer'"
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row is not None else None
 
 
@@ -3358,12 +3404,8 @@ def enqueue_position_path_observation_buckets_through(
 
         inserted_position_buckets = 0
         for bucket_open_ms in buckets:
-            bucket_open = datetime.fromtimestamp(
-                bucket_open_ms / 1000, tz=timezone.utc
-            ).isoformat()
-            bucket_end = datetime.fromtimestamp(
-                (bucket_open_ms + 300_000) / 1000, tz=timezone.utc
-            ).isoformat()
+            bucket_open = datetime.fromtimestamp(bucket_open_ms / 1000, tz=timezone.utc).isoformat()
+            bucket_end = datetime.fromtimestamp((bucket_open_ms + 300_000) / 1000, tz=timezone.utc).isoformat()
             positions = db.execute(
                 "SELECT id,opened_at,status,closed_at FROM positions "
                 "WHERE aletheia_instant_us(opened_at) <= ? "
@@ -3373,9 +3415,7 @@ def enqueue_position_path_observation_buckets_through(
                 (iso_instant_us(bucket_open), iso_instant_us(bucket_end)),
             ).fetchall()
             for position in positions:
-                first_bucket_open_ms = _first_full_position_path_bucket_open_ms(
-                    position["opened_at"]
-                )
+                first_bucket_open_ms = _first_full_position_path_bucket_open_ms(position["opened_at"])
                 if first_bucket_open_ms is None or bucket_open_ms < first_bucket_open_ms:
                     continue
                 inserted = execute_write(
@@ -3426,9 +3466,7 @@ def enqueue_position_path_observation_buckets_through(
         }
 
 
-def list_positions_for_path_observation_bucket(
-    *, bucket_open: str, bucket_end: str
-) -> list[dict]:
+def list_positions_for_path_observation_bucket(*, bucket_open: str, bucket_end: str) -> list[dict]:
     """Return open Positions plus Positions closed after the target bucket."""
 
     db = get_db()
@@ -3447,26 +3485,26 @@ def list_positions_for_path_observation_bucket(
 def list_positions_for_path_observation_recovery() -> list[dict]:
     """Return every open/closed Position whose expected path may need recovery."""
 
-    rows = get_db().execute(
-        "SELECT * FROM positions WHERE status IN ('open','closed') ORDER BY rowid DESC"
-    ).fetchall()
+    rows = get_db().execute("SELECT * FROM positions WHERE status IN ('open','closed') ORDER BY rowid DESC").fetchall()
     return [dict(row) for row in rows]
 
 
-def get_observed_position_ids_for_bucket(
-    position_ids: Sequence[str], *, bucket_open_ms: int
-) -> set[str]:
+def get_observed_position_ids_for_bucket(position_ids: Sequence[str], *, bucket_open_ms: int) -> set[str]:
     """Return candidate Position IDs already observed for one bucket."""
 
     observed: set[str] = set()
     for offset in range(0, len(position_ids), 400):
         chunk = position_ids[offset : offset + 400]
         placeholders = ",".join("?" for _ in chunk)
-        rows = get_db().execute(
+        rows = (
+            get_db()
+            .execute(
             "SELECT position_id FROM position_path_observations "
             f"WHERE bucket_open_ms=? AND position_id IN ({placeholders})",
             (bucket_open_ms, *chunk),
-        ).fetchall()
+            )
+            .fetchall()
+        )
         observed.update(str(row["position_id"]) for row in rows)
     return observed
 
@@ -3476,10 +3514,7 @@ def get_position_path_bucket_state(
 ) -> dict[str, dict[str, set[int]]]:
     """Return materialized and deferred bucket identities for each Position."""
 
-    state = {
-        str(position_id): {"observed": set(), "deferred": set()}
-        for position_id in position_ids
-    }
+    state = {str(position_id): {"observed": set(), "deferred": set()} for position_id in position_ids}
     for offset in range(0, len(position_ids), 400):
         chunk = position_ids[offset : offset + 400]
         if not chunk:
@@ -3489,16 +3524,20 @@ def get_position_path_bucket_state(
             ("position_path_observations", "observed"),
             ("position_path_observation_deferred_buckets", "deferred"),
         ):
-            rows = get_db().execute(
-                f"SELECT position_id,bucket_open_ms FROM {table} "
-                f"WHERE position_id IN ({placeholders})",
+            rows = (
+                get_db()
+                .execute(
+                    f"SELECT position_id,bucket_open_ms FROM {table} WHERE position_id IN ({placeholders})",
                 chunk,
-            ).fetchall()
+                )
+                .fetchall()
+            )
             for row in rows:
                 position_state = state.get(str(row["position_id"]))
                 if position_state is not None:
                     position_state[key].add(int(row["bucket_open_ms"]))
     return state
+
 
 def defer_position_path_observation_bucket(
     position_id: str,
@@ -3530,8 +3569,7 @@ def defer_position_path_observation_bucket(
         ),
     )
     row = db.execute(
-        "SELECT attempt_count FROM position_path_observation_deferred_buckets "
-        "WHERE position_id=? AND bucket_open_ms=?",
+        "SELECT attempt_count FROM position_path_observation_deferred_buckets WHERE position_id=? AND bucket_open_ms=?",
         (position_id, bucket_open_ms),
     ).fetchone()
     if not was_in_tx:
@@ -3543,12 +3581,16 @@ def list_exhausted_deferred_position_path_buckets(*, limit: int = 2_000) -> list
     """Return retry rows that must be materialized as terminal unavailable facts."""
 
     bounded_limit = max(1, min(int(limit), 2_000))
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT * FROM position_path_observation_deferred_buckets "
         "WHERE attempt_count >= ? "
         "ORDER BY bucket_open_ms, position_id LIMIT ?",
         (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -3573,7 +3615,9 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
         "AND earlier.bucket_open_ms < d.bucket_open_ms"
         ")"
     )
-    live_rows = get_db().execute(
+    live_rows = (
+        get_db()
+        .execute(
         f"WITH due AS ({due_sql}) "
         "SELECT due.* FROM due "
         "INNER JOIN positions p ON p.id=due.position_id "
@@ -3585,37 +3629,43 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
         ") "
         "ORDER BY due.position_id LIMIT ?",
         (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     if live_rows:
         return [dict(row) for row in live_rows]
-    rows = get_db().execute(
-        f"WITH due AS ({due_sql}) "
-        "SELECT * FROM due "
-        "ORDER BY bucket_open_ms, position_id LIMIT ?",
+    rows = (
+        get_db()
+        .execute(
+            f"WITH due AS ({due_sql}) SELECT * FROM due ORDER BY bucket_open_ms, position_id LIMIT ?",
         (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
 def count_deferred_position_path_observation_buckets() -> int:
     """Return the durable Position/bucket retry queue size."""
 
-    row = get_db().execute(
-        "SELECT COUNT(*) AS count FROM position_path_observation_deferred_buckets"
-    ).fetchone()
+    row = get_db().execute("SELECT COUNT(*) AS count FROM position_path_observation_deferred_buckets").fetchone()
     return int(row["count"]) if row else 0
 
 
 def count_position_path_observations_since(since_bucket_open_ms: int) -> dict[str, int]:
     """Count immutable facts whose bucket starts in the trailing window."""
 
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT evidence_status, COUNT(*) AS count "
         "FROM position_path_observations "
         "WHERE bucket_open_ms >= ? "
         "GROUP BY evidence_status",
         (int(since_bucket_open_ms),),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     counts = {"available": 0, "unavailable": 0}
     for row in rows:
         status = str(row["evidence_status"])
@@ -3624,16 +3674,13 @@ def count_position_path_observations_since(since_bucket_open_ms: int) -> dict[st
     return counts
 
 
-def resolve_deferred_position_path_observation(
-    position_id: str, *, bucket_open_ms: int
-) -> None:
+def resolve_deferred_position_path_observation(position_id: str, *, bucket_open_ms: int) -> None:
     """Remove one retry only after it became an immutable fact or ineligible."""
 
     db = get_db()
     was_in_tx = db.in_transaction
     execute_write(
-        "DELETE FROM position_path_observation_deferred_buckets "
-        "WHERE position_id=? AND bucket_open_ms=?",
+        "DELETE FROM position_path_observation_deferred_buckets WHERE position_id=? AND bucket_open_ms=?",
         (position_id, bucket_open_ms),
     )
     if not was_in_tx:
@@ -3676,9 +3723,7 @@ def insert_position_path_observation(observation: Mapping[str, object]) -> bool:
     )
     missing = [column for column in columns if column not in data]
     if missing:
-        raise ValueError(
-            "position path observation is missing columns: " + ", ".join(missing)
-        )
+        raise ValueError("position path observation is missing columns: " + ", ".join(missing))
     db = get_db()
     was_in_tx = db.in_transaction
     cursor = execute_write(
@@ -3700,11 +3745,14 @@ def list_position_path_observations(
     """Return one Position's immutable observations oldest-first."""
 
     bounded_limit = max(1, min(int(limit), 10_000))
-    rows = get_db().execute(
-        "SELECT * FROM position_path_observations WHERE position_id=? "
-        "ORDER BY bucket_open_ms ASC LIMIT ?",
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM position_path_observations WHERE position_id=? ORDER BY bucket_open_ms ASC LIMIT ?",
         (position_id, bounded_limit),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -4035,10 +4083,7 @@ def persist_position_trailing_recovery_observation(
         if not identity_matches:
             raise PositionProtectionConflict("recovery observation identity is invalid")
         if state.get("recovery_observation_json") is not None:
-            if (
-                state["recovery_observation_json"] == canonical
-                and state["recovery_observation_hash"] == digest
-            ):
+            if state["recovery_observation_json"] == canonical and state["recovery_observation_hash"] == digest:
                 return False
             raise PositionProtectionConflict("recovery observation already differs")
         cursor = execute_write(
@@ -4070,7 +4115,9 @@ def get_position_protection_trigger(position_id: str) -> dict | None:
 def list_position_protection_work(limit: int = 200) -> list[dict]:
     """Return bounded active/triggered local-paper protection work."""
 
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT state.* FROM position_protection_state AS state "
         "JOIN positions AS position ON position.id=state.position_id "
         "WHERE position.execution_mode='paper_internal' "
@@ -4078,14 +4125,18 @@ def list_position_protection_work(limit: int = 200) -> list[dict]:
         "ORDER BY CASE state.status WHEN 'triggered' THEN 0 ELSE 1 END, "
         "state.next_bar_open_ms, state.position_id LIMIT ?",
         (max(1, min(int(limit), 1000)),),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
 def get_exact_position_protection_bar(state: dict) -> dict | None:
     """Read exactly the frozen 1m instrument/cursor; never select a fallback."""
 
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT ts,open,high,low,close,volume,provider,exchange,market_type "
         "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? "
         "AND timeframe='1m' AND ts=?",
@@ -4095,7 +4146,9 @@ def get_exact_position_protection_bar(state: dict) -> dict | None:
             state["market_type"],
             int(state["next_bar_open_ms"]),
         ),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row is not None else None
 
 
@@ -4125,8 +4178,7 @@ def get_position_exit_plan_for_bar(
     ).fetchone()
     bisected = bool(
         successor is not None
-        and _utc_timestamp_ms(successor["effective_at"], "next ExitPlan effective_at")
-        < bar_close_ms
+        and _utc_timestamp_ms(successor["effective_at"], "next ExitPlan effective_at") < bar_close_ms
     )
     return plan, bisected
 
@@ -4295,21 +4347,13 @@ def supersede_position_protection_after_close(position_id: str) -> bool:
         if state["status"] == "superseded":
             return False
         if state["trigger_id"] is not None or state["status"] not in {"active", "gap"}:
-            raise PositionProtectionConflict(
-                "only untriggered active protection can be superseded"
-            )
+            raise PositionProtectionConflict("only untriggered active protection can be superseded")
         position_row = db.execute(
             "SELECT status, closed_at FROM positions WHERE id=?",
             (position_id,),
         ).fetchone()
-        if (
-            position_row is None
-            or position_row["status"] != "closed"
-            or not position_row["closed_at"]
-        ):
-            raise PositionProtectionConflict(
-                "protection supersession requires a durably closed Position"
-            )
+        if position_row is None or position_row["status"] != "closed" or not position_row["closed_at"]:
+            raise PositionProtectionConflict("protection supersession requires a durably closed Position")
         _utc_timestamp_ms(position_row["closed_at"], "Position closed_at")
         cursor = execute_write(
             "UPDATE position_protection_state SET status='superseded', updated_at=? "
@@ -4318,9 +4362,7 @@ def supersede_position_protection_after_close(position_id: str) -> bool:
             (position_row["closed_at"], position_id),
         )
         if cursor.rowcount != 1:
-            raise PositionProtectionConflict(
-                "protection supersession compare-and-set failed"
-            )
+            raise PositionProtectionConflict("protection supersession compare-and-set failed")
     return True
 
 
@@ -4452,21 +4494,21 @@ def record_position_protection_trigger(trigger: PositionProtectionTrigger) -> bo
             raise PositionProtectionConflict("no ExitPlan is effective at trigger bar open")
         plan = dict(plan_row)
         if plan["version"] != trigger.plan_version:
-            raise PositionProtectionConflict(
-                "trigger ExitPlan is not authoritative at bar open"
-            )
+            raise PositionProtectionConflict("trigger ExitPlan is not authoritative at bar open")
         next_plan = db.execute(
             "SELECT effective_at FROM position_exit_plan_versions "
             "WHERE position_id=? AND version>? ORDER BY version ASC LIMIT 1",
             (trigger.position_id, trigger.plan_version),
         ).fetchone()
-        if next_plan is not None and _utc_timestamp_ms(
+        if (
+            next_plan is not None
+            and _utc_timestamp_ms(
             next_plan["effective_at"],
             "next ExitPlan effective_at",
-        ) < trigger.bar_close_ms:
-            raise PositionProtectionConflict(
-                "trigger bar crosses an ExitPlan effective boundary"
             )
+            < trigger.bar_close_ms
+        ):
+            raise PositionProtectionConflict("trigger bar crosses an ExitPlan effective boundary")
         _validate_trigger_evidence(
             trigger,
             state=state,
@@ -4723,24 +4765,25 @@ def insert_exit_breakeven_shadow_assignment(
         if existing is not None:
             if all(dict(existing).get(field) == value for field, value in data.items()):
                 return False
-            raise ExitBreakevenShadowConflict(
-                "exit breakeven shadow assignment already exists with different content"
-            )
+            raise ExitBreakevenShadowConflict("exit breakeven shadow assignment already exists with different content")
         columns = ", ".join(data)
         placeholders = ", ".join("?" for _ in data)
         execute_write(
-            f"INSERT INTO exit_breakeven_shadow_assignments ({columns}) "
-            f"VALUES ({placeholders})",
+            f"INSERT INTO exit_breakeven_shadow_assignments ({columns}) VALUES ({placeholders})",
             tuple(data.values()),
         )
     return True
 
 
 def get_exit_breakeven_shadow_assignment(position_id: str) -> dict | None:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT * FROM exit_breakeven_shadow_assignments WHERE position_id=?",
         (position_id,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row is not None else None
 
 
@@ -4750,9 +4793,7 @@ def insert_exit_breakeven_shadow_outcome(
     """Append one paired result; retained outcomes can never be revised."""
 
     data = outcome.model_dump()
-    expected_evidence_hash = hashlib.sha256(
-        outcome.evidence_json.encode("utf-8")
-    ).hexdigest()
+    expected_evidence_hash = hashlib.sha256(outcome.evidence_json.encode("utf-8")).hexdigest()
     if outcome.evidence_hash != expected_evidence_hash:
         raise ExitBreakevenShadowConflict("exit breakeven shadow evidence_hash mismatch")
     db = get_db()
@@ -4764,31 +4805,34 @@ def insert_exit_breakeven_shadow_outcome(
         if existing is not None:
             if all(dict(existing).get(field) == value for field, value in data.items()):
                 return False
-            raise ExitBreakevenShadowConflict(
-                "exit breakeven shadow outcome already exists with different content"
-            )
+            raise ExitBreakevenShadowConflict("exit breakeven shadow outcome already exists with different content")
         columns = ", ".join(data)
         placeholders = ", ".join("?" for _ in data)
         execute_write(
-            f"INSERT INTO exit_breakeven_shadow_outcomes ({columns}) "
-            f"VALUES ({placeholders})",
+            f"INSERT INTO exit_breakeven_shadow_outcomes ({columns}) VALUES ({placeholders})",
             tuple(data.values()),
         )
     return True
 
 
 def get_exit_breakeven_shadow_outcome(position_id: str) -> dict | None:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT * FROM exit_breakeven_shadow_outcomes WHERE position_id=?",
         (position_id,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row is not None else None
 
 
 def list_exit_breakeven_shadow_outcomes(limit: int = 1000) -> list[dict]:
     if limit < 1 or limit > 10000:
         raise ValueError("limit must be between 1 and 10000")
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT outcome.*, assignment.direction, assignment.market_type, "
         "assignment.treatment_id, assignment.code_commit, position.close_reason "
         "FROM exit_breakeven_shadow_outcomes AS outcome "
@@ -4797,7 +4841,9 @@ def list_exit_breakeven_shadow_outcomes(limit: int = 1000) -> list[dict]:
         "LEFT JOIN positions AS position ON position.id=outcome.position_id "
         "ORDER BY outcome.settled_at DESC LIMIT ?",
         (limit,),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -4807,13 +4853,11 @@ def list_exit_breakeven_shadow_report_rows(
 ) -> list[dict]:
     """Return every eligible closed assignment, including unsettled outcomes."""
 
-    cutoff_clause = (
-        "AND julianday(position.closed_at) >= julianday(?) "
-        if closed_after is not None
-        else ""
-    )
+    cutoff_clause = "AND julianday(position.closed_at) >= julianday(?) " if closed_after is not None else ""
     params = (closed_after,) if closed_after is not None else ()
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT assignment.position_id, outcome.status, outcome.treatment_changed, "
         "outcome.actual_closed_at, outcome.incremental_net_pnl, "
         "position.closed_at AS assigned_closed_at, position.close_reason "
@@ -4825,7 +4869,9 @@ def list_exit_breakeven_shadow_report_rows(
         + cutoff_clause
         + "ORDER BY position.closed_at DESC",
         params,
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -5099,9 +5145,7 @@ def insert_knowledge_item_if_absent(
     content_hash = str(k.content_hash or "").strip()
     with transaction(immediate=True):
         if title_window_hours is not None:
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(hours=title_window_hours)
-            ).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=title_window_hours)).isoformat()
             existing = db.execute(
                 """
                 SELECT id FROM knowledge_items
@@ -5159,7 +5203,9 @@ def list_knowledge_items(
 
 
 def list_pending_trade_case_studies(
-    limit: int = 10, *, after_cursor: str | None = None,
+    limit: int = 10,
+    *,
+    after_cursor: str | None = None,
     before_cursor: str | None = None,
 ) -> list[dict]:
     """Return oldest active trade cases without active lesson evidence."""
@@ -5200,7 +5246,9 @@ def list_pending_trade_case_studies(
                 )
             """
             params.extend((created_at, created_at, case_id))
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         f"""
         SELECT ki.*
         FROM knowledge_items AS ki
@@ -5209,14 +5257,18 @@ def list_pending_trade_case_studies(
         LIMIT ?
         """,
         (*params, bounded_limit),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
 def pending_trade_case_studies_summary() -> tuple[int, str | None]:
     """Return pending case count and oldest creation time for job health."""
 
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         """
         SELECT COUNT(*) AS pending_count, MIN(ki.created_at) AS oldest_created_at
         FROM knowledge_items AS ki
@@ -5233,7 +5285,9 @@ def pending_trade_case_studies_summary() -> tuple[int, str | None]:
                 )
           )
         """
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return int(row["pending_count"] or 0), row["oldest_created_at"]
 
 
@@ -5802,12 +5856,16 @@ def insert_serenity_research_run(r) -> None:
 
 
 def get_serenity_research_retry(parent_run_id: str, retry_count: int) -> dict | None:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT * FROM serenity_research_runs "
         "WHERE parent_run_id = ? AND retry_count = ? "
         "ORDER BY created_at, id LIMIT 1",
         (parent_run_id, retry_count),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -5815,11 +5873,7 @@ def insert_serenity_research_retry(r) -> tuple[dict, bool]:
     """Insert one durable retry identity, returning the winner on a race."""
 
     retry_key = getattr(r, "idempotency_key", None)
-    if (
-        not r.parent_run_id
-        or not isinstance(retry_key, str)
-        or not retry_key.startswith("serenity-retry:")
-    ):
+    if not r.parent_run_id or not isinstance(retry_key, str) or not retry_key.startswith("serenity-retry:"):
         raise ValueError("Serenity retry identity is required")
     try:
         insert_serenity_research_run(r)
@@ -5925,8 +5979,14 @@ def finish_serenity_research_run(run_id: str, status: str, **kwargs) -> bool:
     if status not in {"completed", "completed_empty", "failed", "rate_limited"}:
         raise ValueError(f"invalid Serenity terminal status: {status}")
     allowed = {
-        "stage", "finished_at", "updated_at", "artifact_counts", "error_type",
-        "error_message", "error_stage", "next_retry_at",
+        "stage",
+        "finished_at",
+        "updated_at",
+        "artifact_counts",
+        "error_type",
+        "error_message",
+        "error_stage",
+        "next_retry_at",
     }
     unknown = set(kwargs) - allowed
     if unknown:
@@ -5945,8 +6005,14 @@ def finish_serenity_research_run_with_event(run_id: str, status: str, event, **k
     if status not in {"completed", "completed_empty", "failed", "rate_limited"}:
         raise ValueError(f"invalid Serenity terminal status: {status}")
     allowed = {
-        "stage", "finished_at", "updated_at", "artifact_counts", "error_type",
-        "error_message", "error_stage", "next_retry_at",
+        "stage",
+        "finished_at",
+        "updated_at",
+        "artifact_counts",
+        "error_type",
+        "error_message",
+        "error_stage",
+        "next_retry_at",
     }
     unknown = set(kwargs) - allowed
     if unknown:
@@ -6679,7 +6745,8 @@ def _filter_outcome_loss_event(
         event_type="filter_outcome_evidence_dropped_unmeasured",
         entity_type="filter_candidate_outcomes",
         entity_id=f"{cutoff}:{digest[:16]}",
-        after_state=json.dumps({
+        after_state=json.dumps(
+            {
             "batch_digest": digest,
             "dropped_unmeasured": dropped,
             "by_horizon": by_horizon,
@@ -6687,7 +6754,9 @@ def _filter_outcome_loss_event(
             "retention_days": retention_days,
             "outcome_ids": outcome_ids,
             "outcome_candidate_keys": outcome_keys,
-        }, sort_keys=True),
+            },
+            sort_keys=True,
+        ),
         message=(
             f"{dropped} filter-outcome rows were deleted at the {cutoff} "
             f"retention cutoff while still 'pending'. Their counterfactual "
@@ -6729,9 +6798,7 @@ def _prune_filter_candidate_outcomes_batches(
                 )
                 pending_by_horizon = json.loads(event.after_state or "{}").get("by_horizon", {})
                 if not insert_audit_event_once(event):
-                    raise RuntimeError(
-                        "filter_candidate_outcomes prune batch audit already exists while rows remain"
-                    )
+                    raise RuntimeError("filter_candidate_outcomes prune batch audit already exists while rows remain")
             rowids = [int(row[0]) for row in rows]
             placeholders = ",".join("?" for _ in rowids)
             cur = execute_write(
@@ -6741,8 +6808,7 @@ def _prune_filter_candidate_outcomes_batches(
             deleted = max(0, cur.rowcount or 0)
             if deleted != len(rowids):
                 raise RuntimeError(
-                    "filter_candidate_outcomes prune deleted "
-                    f"{deleted} rows after selecting {len(rowids)}"
+                    f"filter_candidate_outcomes prune deleted {deleted} rows after selecting {len(rowids)}"
                 )
         duration_ms = (time.monotonic() - started) * 1000
         _record_retention_batch("filter_candidate_outcomes", deleted, duration_ms)
@@ -6890,6 +6956,7 @@ def prune_filter_decision_batches(days: int = 30) -> int:
 
 class ExperimentStateReadError(Exception):
     """Raised when experiment state cannot be reliably read from storage."""
+
     pass
 
 
@@ -7396,9 +7463,7 @@ def get_ohlcv_candles(
     params: tuple = (scoped_exchange, symbol, scoped_market_type, timeframe)
     if before_ts is not None:
         params = (*params, int(before_ts))
-    columns = {
-        str(row[1]) for row in db.execute("PRAGMA table_info(market_ohlcv)").fetchall()
-    }
+    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(market_ohlcv)").fetchall()}
     provenance_sql = ""
     if include_provenance:
         first_seen_sql = "first_persisted_at" if "first_persisted_at" in columns else "NULL"
@@ -7442,9 +7507,7 @@ def plan_market_ohlcv_tiering(
         "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? ORDER BY ts",
         (exchange.lower(), symbol, market_type, timeframe),
     ).fetchall()
-    manager = OHLCVTierManager(
-        OHLCVTieringPolicy(hot_bars=hot_bars, cold_chunk_bars=cold_chunk_bars)
-    )
+    manager = OHLCVTierManager(OHLCVTieringPolicy(hot_bars=hot_bars, cold_chunk_bars=cold_chunk_bars))
     return manager.plan(
         OHLCVSeriesIdentity(exchange.lower(), symbol, market_type, timeframe),
         rows,
@@ -7454,6 +7517,8 @@ def plan_market_ohlcv_tiering(
 # --- Universe Generator ---
 
 from aletheia.storage.models import (
+    CandidatePlanningGeneration,
+    EntryPlanRecord,
     UniverseAsset,
     UniverseFeatureSnapshot,
     UniverseMember,
@@ -7649,10 +7714,11 @@ def universe_twin_shadow_capture_due(
 ) -> bool:
     """Return whether a compact diagnostic sample may be captured now."""
 
-    row = get_db().execute(
-        "SELECT captured_at FROM universe_twin_shadow_batches "
-        "ORDER BY captured_at DESC LIMIT 1"
-    ).fetchone()
+    row = (
+        get_db()
+        .execute("SELECT captured_at FROM universe_twin_shadow_batches ORDER BY captured_at DESC LIMIT 1")
+        .fetchone()
+    )
     latest = str(row["captured_at"]) if row else None
     return _universe_twin_shadow_capture_due_from_latest(
         captured_at,
@@ -7666,10 +7732,11 @@ def relative_rank_shadow_capture_due(
     *,
     min_interval_sec: int = 55 * 60,
 ) -> bool:
-    row = get_db().execute(
-        "SELECT captured_at FROM universe_relative_rank_shadow_batches "
-        "ORDER BY captured_at DESC LIMIT 1"
-    ).fetchone()
+    row = (
+        get_db()
+        .execute("SELECT captured_at FROM universe_relative_rank_shadow_batches ORDER BY captured_at DESC LIMIT 1")
+        .fetchone()
+    )
     return _universe_twin_shadow_capture_due_from_latest(
         captured_at,
         str(row["captured_at"]) if row else None,
@@ -7698,9 +7765,7 @@ def _validate_universe_twin_prospective_bundle(
         "primary_horizon",
         "outcome_contract_version",
     )
-    prospective = bool(outcome_rows) or any(
-        getattr(batch, field) is not None for field in prospective_markers
-    )
+    prospective = bool(outcome_rows) or any(getattr(batch, field) is not None for field in prospective_markers)
     if not prospective:
         return
     required_batch_fields = (
@@ -7724,10 +7789,7 @@ def _validate_universe_twin_prospective_bundle(
         raise ValueError("universe_twin_shadow_assignment_unit_mismatch")
     if batch.assignment_arm not in {"treatment", "control"}:
         raise ValueError("universe_twin_shadow_assignment_arm_invalid")
-    if (
-        batch.assignment_propensity is None
-        or not 0 < batch.assignment_propensity <= 1
-    ):
+    if batch.assignment_propensity is None or not 0 < batch.assignment_propensity <= 1:
         raise ValueError("universe_twin_shadow_assignment_propensity_invalid")
     expected_coefficient = 1.0 if batch.assignment_arm == "treatment" else 0.0
     if batch.treatment_coefficient != expected_coefficient:
@@ -7754,10 +7816,7 @@ def _validate_universe_twin_prospective_bundle(
         "metric_version",
     )
     for item in evidence:
-        if any(
-            getattr(item, field) != getattr(batch, field)
-            for field in record_identity_fields
-        ):
+        if any(getattr(item, field) != getattr(batch, field) for field in record_identity_fields):
             raise ValueError("universe_twin_shadow_record_experiment_identity_mismatch")
         if item.shadow_authority_applied:
             raise ValueError("universe_twin_shadow_authority_not_allowed")
@@ -7793,9 +7852,7 @@ def insert_universe_twin_shadow_bundle(
         raise ValueError("universe_twin_shadow_capture_time_mismatch")
     _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
     if batch.experiment_id is not None:
-        outcome_by_key = {
-            str(row["outcome_candidate_key"]): row for row in outcome_rows
-        }
+        outcome_by_key = {str(row["outcome_candidate_key"]): row for row in outcome_rows}
         if len(outcome_by_key) != len(outcome_rows):
             raise ValueError("universe_twin_shadow_duplicate_outcome_identity")
         for item in evidence:
@@ -7824,9 +7881,7 @@ def insert_universe_twin_shadow_bundle(
                 assigned_direction = str(contract["assigned_policy_direction"])
                 assigned_family = contract["assigned_policy_family"]
             except (KeyError, TypeError, ValueError):
-                raise ValueError(
-                    "universe_twin_shadow_assigned_direction_missing"
-                ) from None
+                raise ValueError("universe_twin_shadow_assigned_direction_missing") from None
             if row.get("direction") != assigned_direction:
                 raise ValueError("universe_twin_shadow_outcome_direction_mismatch")
             if row.get("scanner_family") != assigned_family:
@@ -7844,8 +7899,7 @@ def insert_universe_twin_shadow_bundle(
             return 0
 
         latest = db.execute(
-            "SELECT captured_at FROM universe_twin_shadow_batches "
-            "ORDER BY captured_at DESC LIMIT 1"
+            "SELECT captured_at FROM universe_twin_shadow_batches ORDER BY captured_at DESC LIMIT 1"
         ).fetchone()
         if not _universe_twin_shadow_capture_due_from_latest(
             batch.captured_at,
@@ -7933,19 +7987,26 @@ def _assert_twin_outcomes_match(
 
 
 def get_universe_twin_shadow_batch(scanner_run_id: str) -> dict | None:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT * FROM universe_twin_shadow_batches WHERE scanner_run_id=?",
         (scanner_run_id,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
 def list_universe_twin_shadow_records(scanner_run_id: str) -> list[dict]:
-    rows = get_db().execute(
-        "SELECT * FROM universe_twin_shadow_records WHERE scanner_run_id=? "
-        "ORDER BY candidate_index",
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM universe_twin_shadow_records WHERE scanner_run_id=? ORDER BY candidate_index",
         (scanner_run_id,),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -7970,22 +8031,17 @@ def insert_relative_rank_shadow_bundle(
     if batch.promotion_eligible:
         raise ValueError("relative_rank_shadow_promotion_not_allowed")
     selected_keys = {
-        str(record.get("outcome_candidate_key"))
-        for record in records
-        if record.get("assigned_policy_selected")
+        str(record.get("outcome_candidate_key")) for record in records if record.get("assigned_policy_selected")
     }
     if "None" in selected_keys or len(selected_keys) != len(outcome_rows):
         raise ValueError("relative_rank_shadow_outcome_count_mismatch")
-    if selected_keys != {
-        str(row.get("outcome_candidate_key")) for row in outcome_rows
-    }:
+    if selected_keys != {str(row.get("outcome_candidate_key")) for row in outcome_rows}:
         raise ValueError("relative_rank_shadow_outcome_identity_mismatch")
 
     db = get_db()
     with transaction(immediate=True):
         stored = db.execute(
-            "SELECT batch_hash FROM universe_relative_rank_shadow_batches "
-            "WHERE scanner_run_id=?",
+            "SELECT batch_hash FROM universe_relative_rank_shadow_batches WHERE scanner_run_id=?",
             (batch.scanner_run_id,),
         ).fetchone()
         if stored is not None:
@@ -7994,8 +8050,7 @@ def insert_relative_rank_shadow_bundle(
             _assert_twin_outcomes_match(outcome_rows)
             return 0
         latest = db.execute(
-            "SELECT captured_at FROM universe_relative_rank_shadow_batches "
-            "ORDER BY captured_at DESC LIMIT 1"
+            "SELECT captured_at FROM universe_relative_rank_shadow_batches ORDER BY captured_at DESC LIMIT 1"
         ).fetchone()
         if not _universe_twin_shadow_capture_due_from_latest(
             batch.captured_at,
@@ -8017,11 +8072,14 @@ def insert_relative_rank_shadow_bundle(
 
 
 def list_relative_rank_shadow_batches(policy_epoch_id: str) -> list[dict]:
-    rows = get_db().execute(
-        "SELECT * FROM universe_relative_rank_shadow_batches "
-        "WHERE policy_epoch_id=? ORDER BY captured_at",
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM universe_relative_rank_shadow_batches WHERE policy_epoch_id=? ORDER BY captured_at",
         (policy_epoch_id,),
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -8241,6 +8299,346 @@ def get_universe_member(member_id: str) -> dict | None:
 get_candidate = get_universe_member
 
 
+def ensure_candidate_planning_generation(
+    candidate_id: str,
+    *,
+    manual_replan: bool = False,
+    now: datetime | None = None,
+) -> tuple[dict, bool]:
+    """Own one thesis-level planning generation without snapshot/rank churn."""
+
+    from aletheia.trading.entry_plan import candidate_planning_identity
+
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current_time.isoformat()
+    with transaction(immediate=True):
+        candidate = get_candidate(candidate_id)
+        if candidate is None:
+            raise ValueError("candidate_not_found")
+        planning_key, planning_identity = candidate_planning_identity(candidate)
+        existing_row = (
+            get_db()
+            .execute(
+                "SELECT * FROM candidate_planning_generations WHERE planning_key=? AND is_current=1 LIMIT 1",
+                (planning_key,),
+            )
+            .fetchone()
+        )
+        existing = dict(existing_row) if existing_row else None
+        if existing is not None and not manual_replan and existing["planning_identity"] == planning_identity:
+            execute_write(
+                "UPDATE candidate_planning_generations SET last_candidate_id=?, updated_at=? WHERE id=?",
+                (candidate_id, timestamp, existing["id"]),
+            )
+            existing.update(last_candidate_id=candidate_id, updated_at=timestamp)
+            return existing, False
+
+        reason = "manual_replan" if manual_replan else "incompatible_planning_generation"
+        if existing is not None:
+            execute_write(
+                "UPDATE candidate_planning_generations SET is_current=0, "
+                "status='superseded', updated_at=? WHERE id=? AND is_current=1",
+                (timestamp, existing["id"]),
+            )
+            execute_write(
+                "UPDATE entry_plans SET status='invalidated', terminal_at=?, "
+                "terminal_reason=?, updated_at=? WHERE planning_generation_id=? "
+                "AND status IN ('waiting','risk_reserved','triggered')",
+                (timestamp, reason, timestamp, existing["id"]),
+            )
+
+        generation = CandidatePlanningGeneration(
+            planning_key=planning_key,
+            planning_identity=planning_identity,
+            candidate_id=candidate_id,
+            last_candidate_id=candidate_id,
+            venue=str(candidate["venue"]),
+            symbol=str(candidate["symbol"]),
+            market_type=str(candidate["market_type"]),
+            candidate_family=str(candidate["scanner_family"]),
+            direction=str(candidate["scanner_direction"]),
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        data = _stamp_provenance(generation.model_dump())
+        _insert("candidate_planning_generations", data)
+        return data, True
+
+
+def claim_next_candidate_planning(
+    owner_token: str,
+    *,
+    lease_seconds: int = 300,
+    max_attempts: int = 3,
+    now: datetime | None = None,
+) -> dict | None:
+    """CAS one current generation; duplicate wakes return no second owner."""
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    lease_until = (current + timedelta(seconds=lease_seconds)).isoformat()
+    with transaction(immediate=True):
+        row = (
+            get_db()
+            .execute(
+                "SELECT * FROM candidate_planning_generations WHERE is_current=1 "
+                "AND attempt_count<? AND (status='pending' "
+                "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
+                "OR (status='planning' AND claim_expires_at<=?)) "
+                "ORDER BY created_at ASC LIMIT 1",
+                (max_attempts, timestamp, timestamp),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        generation_id = row["id"]
+        claimed = execute_write(
+            "UPDATE candidate_planning_generations SET status='planning', "
+            "owner_token=?, claim_expires_at=?, retry_not_before=NULL, "
+            "attempt_count=attempt_count+1, updated_at=? WHERE id=? AND is_current=1 "
+            "AND attempt_count<? AND (status='pending' "
+            "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
+            "OR (status='planning' AND claim_expires_at<=?))",
+            (
+                owner_token,
+                lease_until,
+                timestamp,
+                generation_id,
+                max_attempts,
+                timestamp,
+                timestamp,
+            ),
+        )
+        if claimed.rowcount != 1:
+            return None
+        result = (
+            get_db()
+            .execute(
+                "SELECT * FROM candidate_planning_generations WHERE id=?",
+                (generation_id,),
+            )
+            .fetchone()
+        )
+        return dict(result) if result else None
+
+
+def count_pending_candidate_planning(max_attempts: int = 3) -> int:
+    row = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) FROM candidate_planning_generations WHERE is_current=1 "
+            "AND attempt_count<? AND status IN ('pending','planning','unavailable')",
+            (max_attempts,),
+        )
+        .fetchone()
+    )
+    return int(row[0] or 0) if row else 0
+
+
+def complete_candidate_planning_no_plan(
+    generation_id: str,
+    owner_token: str,
+    result: dict,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Persist a durable no-plan result; heartbeat cannot reopen it."""
+
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    payload = json.dumps(result, sort_keys=True, separators=(",", ":"))
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET status='no_plan', "
+        "result_kind='no_plan', result_json=?, owner_token=NULL, claim_expires_at=NULL, "
+        "completed_at=?, updated_at=? WHERE id=? AND is_current=1 "
+        "AND status='planning' AND owner_token=?",
+        (payload, timestamp, timestamp, generation_id, owner_token),
+    )
+    return updated.rowcount == 1
+
+
+def defer_candidate_planning(
+    generation_id: str,
+    owner_token: str,
+    reason: str,
+    *,
+    retry_seconds: int = 60,
+    max_attempts: int = 3,
+    now: datetime | None = None,
+) -> bool:
+    """Bound provider unavailability; never heartbeat-loop beyond max attempts."""
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    row = (
+        get_db()
+        .execute(
+            "SELECT attempt_count FROM candidate_planning_generations WHERE id=?",
+            (generation_id,),
+        )
+        .fetchone()
+    )
+    terminal = row is not None and int(row["attempt_count"] or 0) >= max_attempts
+    retry_at = None if terminal else (current + timedelta(seconds=retry_seconds)).isoformat()
+    payload = json.dumps({"reason": str(reason)[:160]}, sort_keys=True)
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET status='unavailable', "
+        "result_kind='unavailable', result_json=?, retry_not_before=?, "
+        "owner_token=NULL, claim_expires_at=NULL, completed_at=?, updated_at=? "
+        "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
+        (
+            payload,
+            retry_at,
+            timestamp if terminal else None,
+            timestamp,
+            generation_id,
+            owner_token,
+        ),
+    )
+    return updated.rowcount == 1
+
+
+def complete_candidate_planning_with_plan(
+    generation_id: str,
+    owner_token: str,
+    plan,
+    *,
+    now: datetime | None = None,
+) -> tuple[str, dict | None]:
+    """Activate only a still-current claimed generation; retain stale result audit."""
+
+    from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
+
+    plan = EntryPlan.model_validate(plan)
+    if plan.planning_generation_id != generation_id:
+        raise ValueError("entry_plan_generation_mismatch")
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    payload, digest = entry_plan_payload(plan)
+    with transaction(immediate=True):
+        row = (
+            get_db()
+            .execute(
+                "SELECT * FROM candidate_planning_generations WHERE id=?",
+                (generation_id,),
+            )
+            .fetchone()
+        )
+        if row is None or row["owner_token"] != owner_token:
+            return "claim_lost", None
+        if not bool(row["is_current"]):
+            execute_write(
+                "UPDATE candidate_planning_generations SET result_kind='stale_result', "
+                "result_json=?, owner_token=NULL, claim_expires_at=NULL, "
+                "completed_at=?, updated_at=? WHERE id=?",
+                (payload, timestamp, timestamp, generation_id),
+            )
+            return "stale", None
+        if row["status"] != "planning":
+            return "claim_lost", None
+        if (
+            plan.candidate_id != row["last_candidate_id"]
+            or plan.venue != row["venue"]
+            or plan.symbol != row["symbol"]
+            or plan.market_type != row["market_type"]
+            or plan.direction != row["direction"]
+            or plan.candidate_family != row["candidate_family"]
+        ):
+            raise ValueError("entry_plan_candidate_identity_mismatch")
+        record = EntryPlanRecord(
+            id=plan.plan_id,
+            planning_generation_id=generation_id,
+            candidate_id=plan.candidate_id,
+            planning_key=row["planning_key"],
+            venue=plan.venue,
+            symbol=plan.symbol,
+            market_type=plan.market_type,
+            direction=plan.direction,
+            execution_mode=plan.execution_mode,
+            plan_json=payload,
+            plan_hash=digest,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        record_data = _stamp_provenance(record.model_dump())
+        _insert("entry_plans", record_data)
+        execute_write(
+            "UPDATE candidate_planning_generations SET status='planned', "
+            "result_kind='entry_plan', result_json=?, entry_plan_id=?, "
+            "owner_token=NULL, claim_expires_at=NULL, completed_at=?, updated_at=? "
+            "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
+            (
+                payload,
+                plan.plan_id,
+                timestamp,
+                timestamp,
+                generation_id,
+                owner_token,
+            ),
+        )
+        return "planned", record_data
+
+
+def get_entry_plan(plan_id: str) -> dict | None:
+    return _select_one("entry_plans", plan_id)
+
+
+def list_watchable_entry_plans(limit: int = 100) -> list[dict]:
+    return _select_all(
+        "entry_plans",
+        where="status IN ('waiting','ordered','partially_filled')",
+        order="created_at ASC",
+        limit=limit,
+    )
+
+
+def has_current_entry_plan_for_instrument(venue: str, symbol: str, market_type: str, direction: str) -> bool:
+    row = (
+        get_db()
+        .execute(
+            "SELECT 1 FROM entry_plans ep "
+            "JOIN candidate_planning_generations pg ON pg.id=ep.planning_generation_id "
+            "WHERE pg.is_current=1 AND ep.venue=? AND ep.symbol=? "
+            "AND ep.market_type=? AND ep.direction=? LIMIT 1",
+            (venue, symbol, market_type, direction),
+        )
+        .fetchone()
+    )
+    return row is not None
+
+
+def transition_entry_plan(
+    plan_id: str,
+    *,
+    expected_status: str,
+    status: str,
+    order_id: str | None = None,
+    reason: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Monotonic lifecycle CAS; terminal plans cannot revive."""
+
+    from aletheia.trading.entry_plan import entry_plan_transition_allowed
+
+    if not entry_plan_transition_allowed(expected_status, status):
+        raise ValueError("invalid_entry_plan_transition")
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    terminal = status in {"filled", "invalidated", "expired", "cancelled", "failed"}
+    updated = execute_write(
+        "UPDATE entry_plans SET status=?, order_id=COALESCE(?, order_id), updated_at=?, "
+        "terminal_at=?, terminal_reason=? WHERE id=? AND status=?",
+        (
+            status,
+            order_id,
+            timestamp,
+            timestamp if terminal else None,
+            reason if terminal else None,
+            plan_id,
+            expected_status,
+        ),
+    )
+    return updated.rowcount == 1
+
+
 def get_active_universe_members(limit: int = 20) -> list[dict]:
     """Return top-ranked members from the currently active universe snapshot."""
     snap = get_active_universe_snapshot()
@@ -8261,11 +8659,7 @@ def get_latest_feature_snapshot(asset_id: str) -> dict | None:
 def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
     return _select_all(
         "opportunities",
-        where=(
-            "universe_member_id = ? "
-            "AND setup_id IS NOT NULL "
-            "AND generation_version='opportunity-generation/v2'"
-        ),
+        where=("universe_member_id = ? AND setup_id IS NOT NULL AND generation_version='opportunity-generation/v2'"),
         params=(member_id,),
         order="created_at DESC",
         limit=limit,
@@ -8458,7 +8852,9 @@ def get_decision_grade_shadow_outcome(
         if normalized_horizon == "24h"
         else _shadow_candidate_identity_sql("shadow_trades", "canonical_outcome")
     )
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT canonical_outcome.*, shadow_trades.id AS shadow_id, "
         "shadow_trades.batch_id AS shadow_batch_id, "
         "shadow_trades.opportunity_id AS shadow_opportunity_id, "
@@ -8473,7 +8869,9 @@ def get_decision_grade_shadow_outcome(
         f"AND {authority_sql} "
         "LIMIT 1",
         (normalized_horizon, shadow_id),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -8538,9 +8936,7 @@ def _settle_outcome_with_exact_venue(
                 or "settlement_lag_sec" not in updates
                 or not valid_settlement_price_provenance(candidate)
             ):
-                raise ValueError(
-                    f"{kind} outcome requires decision-grade price provenance"
-                )
+                raise ValueError(f"{kind} outcome requires decision-grade price provenance")
         if table == "filter_candidate_outcomes":
             try:
                 from aletheia.agent_runtime.runtime_session import current_provenance
@@ -8768,13 +9164,17 @@ def list_pending_filter_candidate_outcomes(
 
 
 def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int:
-    row = get_db().execute(
+    row = (
+        get_db()
+        .execute(
         "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
         "WHERE status = 'pending' AND due_at <= ? AND ("
         "typeof(venue) <> 'text' "
         f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
         (before_ts,),
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return int(row["n"] or 0)
 
 
@@ -8792,15 +9192,11 @@ def list_open_learning_outcome_candidate_keys(
     if not path_ids:
         return set()
     placeholders = ", ".join("?" for _ in path_ids)
-    behavior_clause = (
-        " AND le.behavior_contract_hash=?" if behavior_contract_hash else ""
-    )
-    parameters: tuple[object, ...] = (
-        (*path_ids, behavior_contract_hash)
-        if behavior_contract_hash
-        else path_ids
-    )
-    rows = get_db().execute(
+    behavior_clause = " AND le.behavior_contract_hash=?" if behavior_contract_hash else ""
+    parameters: tuple[object, ...] = (*path_ids, behavior_contract_hash) if behavior_contract_hash else path_ids
+    rows = (
+        get_db()
+        .execute(
         "SELECT DISTINCT le.outcome_candidate_key "
         "FROM learning_exposures le "
         "JOIN learning_experiments e "
@@ -8813,12 +9209,10 @@ def list_open_learning_outcome_candidate_keys(
         "AND le.outcome_candidate_key IS NOT NULL"
         f"{behavior_clause}",
         parameters,
-    ).fetchall()
-    return {
-        str(row["outcome_candidate_key"])
-        for row in rows
-        if row["outcome_candidate_key"]
-    }
+        )
+        .fetchall()
+    )
+    return {str(row["outcome_candidate_key"]) for row in rows if row["outcome_candidate_key"]}
 
 
 def list_open_learning_target_horizons(path_ids: tuple[str, ...]) -> set[tuple[str, str]]:
@@ -8826,7 +9220,9 @@ def list_open_learning_target_horizons(path_ids: tuple[str, ...]) -> set[tuple[s
     if not path_ids:
         return set()
     placeholders = ", ".join("?" for _ in path_ids)
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT DISTINCT h.path_id, h.target_horizon "
         "FROM learning_exposures le "
         "JOIN learning_experiments e "
@@ -8839,11 +9235,11 @@ def list_open_learning_target_horizons(path_ids: tuple[str, ...]) -> set[tuple[s
         "AND le.outcome_candidate_key IS NOT NULL "
         "AND TRIM(h.target_horizon) <> ''",
         path_ids,
-    ).fetchall()
+        )
+        .fetchall()
+    )
     return {
-        (str(row["path_id"]), str(row["target_horizon"]))
-        for row in rows
-        if row["path_id"] and row["target_horizon"]
+        (str(row["path_id"]), str(row["target_horizon"])) for row in rows if row["path_id"] and row["target_horizon"]
     }
 
 
@@ -8856,7 +9252,9 @@ def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
     backlog, so pending outcome state—not open-epoch state—is authoritative.
     """
 
-    rows = get_db().execute(
+    rows = (
+        get_db()
+        .execute(
         "SELECT DISTINCT r.outcome_candidate_key, r.primary_horizon "
         "FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b "
@@ -8869,11 +9267,10 @@ def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
         "AND o.status='pending' "
         "AND r.outcome_candidate_key IS NOT NULL "
         "AND r.primary_horizon IS NOT NULL"
-    ).fetchall()
-    return {
-        f"{row['outcome_candidate_key']}:{row['primary_horizon']}"
-        for row in rows
-    }
+        )
+        .fetchall()
+    )
+    return {f"{row['outcome_candidate_key']}:{row['primary_horizon']}" for row in rows}
 
 
 _PRIORITY_SCAN_BATCH_ROWS = 2000
@@ -9035,11 +9432,13 @@ def fail_filter_candidate_outcome(
         provenance = current_provenance()
     except Exception:
         provenance = {}
-    updates.update({
+    updates.update(
+        {
         "settlement_runtime_session_id": provenance.get("runtime_session_id"),
         "settlement_producer_commit": provenance.get("producer_commit"),
         "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
-    })
+        }
+    )
     with transaction(immediate=True):
         return _update_pending("filter_candidate_outcomes", outcome_id, updates)
 
@@ -9050,9 +9449,7 @@ def settle_linked_shadow_outcomes(
     """Project the unique decision-grade canonical 24h row onto linked shadows."""
     db = get_db()
     was_in_tx = db.in_transaction
-    identity_sql = _shadow_candidate_identity_sql(
-        "shadow_trades", "canonical_outcome"
-    )
+    identity_sql = _shadow_candidate_identity_sql("shadow_trades", "canonical_outcome")
     canonical_where = (
         "canonical_outcome.outcome_candidate_key="
         "shadow_trades.outcome_candidate_key "
@@ -9233,13 +9630,13 @@ def calibration_stats(*, cost_model_version: str) -> list[dict]:
     for raw in rows:
         row = dict(raw)
         key = (
-            row.get("scanner_family"), row.get("direction"),
-            row.get("market_type"), row.get("horizon"),
+            row.get("scanner_family"),
+            row.get("direction"),
+            row.get("market_type"),
+            row.get("horizon"),
         )
         source = lineage.get(key)
-        row["source_outcome_fingerprint"] = (
-            source["fingerprint"] if source else None
-        )
+        row["source_outcome_fingerprint"] = source["fingerprint"] if source else None
         row["source_window_start"] = cutoff
         row["independent_n"] = source["independent_n"] if source else 0
         row["distinct_symbols"] = source["distinct_symbols"] if source else 0
@@ -9283,9 +9680,7 @@ def _horizon_separated_counts(
 
     for symbol, venue, entry_ts_str in sorted_rows:
         try:
-            ts = datetime.fromisoformat(
-                entry_ts_str.replace("Z", "+00:00")
-            ).timestamp()
+            ts = datetime.fromisoformat(entry_ts_str.replace("Z", "+00:00")).timestamp()
         except (ValueError, TypeError):
             continue
         sv = (symbol, venue)
@@ -9300,7 +9695,9 @@ def _horizon_separated_counts(
 
 
 def _calibration_source_lineage(
-    db, cutoff: str, cost_model_version: str,
+    db,
+    cutoff: str,
+    cost_model_version: str,
 ) -> dict[tuple, dict]:
     """Hash every exact row consumed by ``calibration_stats`` without retaining it."""
     cursor = db.execute(
@@ -9323,8 +9720,10 @@ def _calibration_source_lineage(
     for raw in cursor:
         row = dict(raw)
         key = (
-            row.pop("scanner_family"), row.pop("direction"),
-            row.pop("market_type"), row.pop("horizon"),
+            row.pop("scanner_family"),
+            row.pop("direction"),
+            row.pop("market_type"),
+            row.pop("horizon"),
         )
         symbol = row.pop("symbol", None) or ""
         venue = row.pop("venue", None) or ""
@@ -9339,9 +9738,7 @@ def _calibration_source_lineage(
     result = {}
     for key, hasher in hashers.items():
         horizon = key[3]
-        ind_n, dist_sym, dist_days = _horizon_separated_counts(
-            group_rows.get(key, []), horizon
-        )
+        ind_n, dist_sym, dist_days = _horizon_separated_counts(group_rows.get(key, []), horizon)
         result[key] = {
             "fingerprint": hasher.hexdigest(),
             "count": counts[key],
@@ -10551,16 +10948,12 @@ def scan_orphan_session_ids() -> dict:
     ]
     try:
         db = get_db()
-        known = {
-            r[0] for r in db.execute("SELECT session_id FROM runtime_sessions").fetchall()
-        }
+        known = {r[0] for r in db.execute("SELECT session_id FROM runtime_sessions").fetchall()}
         total = 0
         by_table: dict[str, dict] = {}
         orphan_ids: set[str] = set()
         for table, col in _ENTITY_TABLES_COLS:
-            rows = db.execute(
-                f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL"
-            ).fetchall()
+            rows = db.execute(f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL").fetchall()
             orphans = [r[0] for r in rows if r[0] not in known]
             if orphans:
                 by_table.setdefault(table, {})[col] = len(orphans)
@@ -10773,18 +11166,27 @@ def prune_universe_twin_shadow_evidence(
         run_ids = [str(row[0]) for row in run_rows]
         if run_ids:
             placeholders = ", ".join("?" for _ in run_ids)
-            deleted += execute_write(
+            deleted += (
+                execute_write(
                 f"DELETE FROM universe_twin_shadow_records WHERE scanner_run_id IN ({placeholders})",
                 run_ids,
-            ).rowcount or 0
-            deleted += execute_write(
+                ).rowcount
+                or 0
+            )
+            deleted += (
+                execute_write(
                 f"DELETE FROM universe_twin_shadow_batches WHERE scanner_run_id IN ({placeholders})",
                 run_ids,
-            ).rowcount or 0
-        deleted += execute_write(
+                ).rowcount
+                or 0
+            )
+        deleted += (
+            execute_write(
             "DELETE FROM universe_relative_rank_shadow_batches WHERE captured_at < ?",
             (cutoff,),
-        ).rowcount or 0
+            ).rowcount
+            or 0
+        )
     return deleted
 
 
@@ -10965,8 +11367,7 @@ def expire_stale_serenity_themes() -> int:
         for theme_id in theme_ids:
             update_serenity_theme(theme_id, status="expired", updated_at=now_iso)
             execute_write(
-                "UPDATE serenity_opportunities SET status='expired', updated_at=? "
-                "WHERE theme_id=? AND status='active'",
+                "UPDATE serenity_opportunities SET status='expired', updated_at=? WHERE theme_id=? AND status='active'",
                 (now_iso, theme_id),
             )
         return len(theme_ids)
@@ -11025,9 +11426,8 @@ def insert_shadow_trade(shadow) -> None:
         "btc_return_pct",
         "resolved_at",
     )
-    if (
-        str(data.get("outcome_candidate_key") or "").strip()
-        and any(data.get(field) is not None for field in keyed_result_fields)
+    if str(data.get("outcome_candidate_key") or "").strip() and any(
+        data.get(field) is not None for field in keyed_result_fields
     ):
         raise ValueError("keyed shadow results require canonical projection")
     _insert("shadow_trades", data)
