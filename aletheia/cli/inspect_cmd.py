@@ -1526,31 +1526,46 @@ def agent_runs(
 def equity(
     days: int = typer.Option(7, "--days", "-d", help="Lookback window in days"),
     limit: int = typer.Option(50, "--limit", "-n"),
+    execution_mode: Optional[str] = typer.Option(None, "--execution-mode", help="Account series: paper_internal | exchange_account"),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show portfolio equity time series (from portfolio_snapshots)."""
-    from aletheia.storage.repositories import list_portfolio_snapshots
-    rows = list_portfolio_snapshots(days=days, limit=limit)
+    """Show one explicit account-equity time series."""
+    from aletheia.config.loader import load_config
+    from aletheia.storage.repositories import list_account_equity_snapshots
+
+    if execution_mode is None:
+        cfg = load_config()
+        execution_mode = (
+            "paper_internal"
+            if cfg.exchange.paper_execution_mode == "paper_internal"
+            else "exchange_account"
+        )
+    rows = list_account_equity_snapshots(execution_mode=execution_mode, days=days, limit=limit)
     display = [{
         "snapshot_at": r.get("snapshot_at"),
-        "equity_usdt": r.get("equity_usdt"),
-        "available_usdt": r.get("available_usdt"),
+        "execution_mode": r.get("execution_mode"),
+        "account_equity_usdt": r.get("account_equity_usdt"),
         "unrealized_pnl": r.get("unrealized_pnl"),
-        "realized_pnl_today": r.get("realized_pnl_today"),
-        "open_positions": r.get("open_positions"),
+        "realized_pnl": r.get("realized_pnl"),
+        "positions_count": r.get("positions_count"),
     } for r in rows]
     if json_output:
         _output(display, True)
         return
     if not display:
-        typer.echo("(no portfolio snapshots)")
+        typer.echo(f"(no account-equity snapshots for execution_mode={execution_mode})")
         return
     typer.echo(f"=== Equity Curve ({days}d, {len(display)} snapshots) ===")
     for d in display[:30]:
-        eq = d.get("equity_usdt") or 0
+        eq = d.get("account_equity_usdt")
         upnl = d.get("unrealized_pnl") or 0
-        pos = d.get("open_positions") or 0
-        typer.echo(f"  {d['snapshot_at']}  eq=${eq:.0f}  uPnL={upnl:+.2f}  pos={pos}")
+        pos = d.get("positions_count")
+        eq_text = "not available" if eq is None else f"${eq:.0f}"
+        pos_text = "not available" if pos is None else str(pos)
+        typer.echo(
+            f"  {d['snapshot_at']}  mode={d.get('execution_mode')}  "
+            f"eq={eq_text}  uPnL={upnl:+.2f}  pos={pos_text}"
+        )
 
 
 @inspect_app.command("reflection")
