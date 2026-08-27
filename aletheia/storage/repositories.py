@@ -5249,6 +5249,15 @@ def insert_serenity_theme(t: SerenityTheme) -> None:
     _insert("serenity_themes", t.model_dump())
 
 
+def insert_serenity_theme_with_claim_links(
+    theme: SerenityTheme,
+    links: list[tuple[str, str, float | None]],
+) -> None:
+    with transaction(savepoint=True):
+        insert_serenity_theme(theme)
+        insert_serenity_theme_claims_bulk(links)
+
+
 def get_serenity_theme(theme_id: str) -> dict | None:
     return _select_one("serenity_themes", theme_id)
 
@@ -5913,6 +5922,30 @@ def finish_serenity_research_run(run_id: str, status: str, **kwargs) -> bool:
     return cursor.rowcount == 1
 
 
+def finish_serenity_research_run_with_event(run_id: str, status: str, event, **kwargs) -> bool:
+    """Commit a terminal run transition and its terminal event atomically."""
+    if status not in {"completed", "completed_empty", "failed", "rate_limited"}:
+        raise ValueError(f"invalid Serenity terminal status: {status}")
+    allowed = {
+        "stage", "finished_at", "updated_at", "artifact_counts", "error_type",
+        "error_message", "error_stage", "next_retry_at",
+    }
+    unknown = set(kwargs) - allowed
+    if unknown:
+        raise ValueError(f"invalid Serenity terminal fields: {sorted(unknown)}")
+    values = {"status": status, **kwargs}
+    sets = ", ".join(f"{key} = ?" for key in values)
+    with transaction(savepoint=True):
+        cursor = execute_write(
+            f"UPDATE serenity_research_runs SET {sets} WHERE id = ? AND status = 'running'",
+            [*values.values(), run_id],
+        )
+        if cursor.rowcount != 1:
+            return False
+        insert_serenity_run_event(event)
+    return True
+
+
 def get_active_serenity_research_run() -> dict | None:
     rows = list_active_serenity_research_runs(limit=1)
     return rows[0] if rows else None
@@ -6019,7 +6052,6 @@ def get_serenity_claim(claim_id: str) -> dict | None:
 def insert_serenity_claims_bulk(claims: list) -> None:
     if not claims:
         return
-    db = get_db()
     with transaction():
         for c in claims:
             data = c.model_dump()
@@ -6046,26 +6078,20 @@ def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None 
 
 
 def insert_serenity_theme_claim(theme_id: str, claim_id: str, relevance_score: float | None = None) -> None:
-    db = get_db()
-    was_in_tx = db.in_transaction
-    execute_write(
-        "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
-        (theme_id, claim_id, relevance_score),
-    )
-    if not was_in_tx:
-        db.commit()
-
-
-def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]) -> None:
-    db = get_db()
-    was_in_tx = db.in_transaction
-    for theme_id, claim_id, relevance_score in links:
+    with transaction(savepoint=True):
         execute_write(
             "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
             (theme_id, claim_id, relevance_score),
         )
-    if not was_in_tx:
-        db.commit()
+
+
+def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]) -> None:
+    with transaction(savepoint=True):
+        for theme_id, claim_id, relevance_score in links:
+            execute_write(
+                "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
+                (theme_id, claim_id, relevance_score),
+            )
 
 
 def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict]:
