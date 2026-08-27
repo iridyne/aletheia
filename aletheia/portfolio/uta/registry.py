@@ -16,6 +16,7 @@ def register_broker(broker_id: str, adapter_class: type) -> None:
 
 
 def create_broker(broker_id: str) -> "IBroker | None":
+    _ensure_registered()
     cls = _BROKER_REGISTRY.get(broker_id)
     if cls is None:
         return None

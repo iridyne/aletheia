@@ -688,6 +688,7 @@ class ExchangeMarketsRequest(SettingsRequest):
     usdt_futures: bool
     paper_execution_mode: Optional[str] = None
     bitget_profile: Optional[str] = None
+    uta_read_boundary: Optional[Literal["legacy", "shadow_read", "uta_v1"]] = None
     confirm_exchange_divergence: bool = False
 
 
@@ -716,9 +717,26 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
     if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
         raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
+    if req.uta_read_boundary == "uta_v1":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "uta_profile_not_qualified",
+                "message": "UTA v1 activation requires persisted qualification evidence.",
+            },
+        )
     # Pre-validate outside the mutation lock to fail fast
     cfg_check = load_config()
     next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
+    if req.uta_read_boundary is not None and next_paper_mode not in {
+        "binance_testnet",
+        "okx_demo",
+        "bitget_demo",
+    }:
+        raise HTTPException(
+            400,
+            "uta_read_boundary is supported only for Binance testnet, OKX demo, and Bitget demo",
+        )
     _reject_live_identity_change(
         cfg_check,
         changed=(req.paper_execution_mode is not None and next_paper_mode != cfg_check.exchange.paper_execution_mode),
@@ -743,7 +761,15 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         if req.paper_execution_mode is not None:
             cfg.exchange.paper_execution_mode = req.paper_execution_mode
         if req.bitget_profile is not None:
+            if req.bitget_profile != cfg.exchange.bitget_profile:
+                generations = dict(cfg.exchange.uta_account_config_generations)
+                generations["bitget_demo"] = generations.get("bitget_demo", 0) + 1
+                cfg.exchange.uta_account_config_generations = generations
             cfg.exchange.bitget_profile = req.bitget_profile
+        if req.uta_read_boundary is not None:
+            boundaries = dict(cfg.exchange.uta_read_boundaries)
+            boundaries[next_paper_mode] = req.uta_read_boundary
+            cfg.exchange.uta_read_boundaries = boundaries
         changed = old != cfg.exchange.model_dump(mode="json")
         return True
 

@@ -2051,6 +2051,7 @@ export const api = {
 		spot: boolean;
 		usdt_futures: boolean;
 		paper_execution_mode?: string;
+		uta_read_boundary?: "legacy" | "shadow_read" | "uta_v1";
 		confirm_exchange_divergence?: boolean;
 	}) => post<Record<string, any>>("/settings/exchange-markets", body),
 	setPrimaryExchange: (exchange_id: string) =>

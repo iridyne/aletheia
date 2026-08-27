@@ -170,6 +170,25 @@ async def test_profiles_construct_on_active_loop_and_enable_demo_before_first_re
     assert session.closed is True
 
 
+@pytest.mark.asyncio
+async def test_concurrent_connect_builds_exactly_one_loop_owned_client(monkeypatch):
+    class SlowLoadExchange(FakeExchange):
+        async def load_markets(self):
+            await asyncio.sleep(0.01)
+            return await super().load_markets()
+
+    profile = _profile("binance")
+    exchange = SlowLoadExchange()
+    _session, calls = _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    await asyncio.gather(adapter.connect(), adapter.connect())
+
+    assert len(calls) == 1
+    assert [event[0] for event in exchange.events] == ["sandbox", "load_markets"]
+    await adapter.close()
+
+
 @pytest.mark.parametrize("kind", ACCOUNT_PARITY)
 @pytest.mark.asyncio
 async def test_account_profiles_preserve_decimal_equity_and_zero(

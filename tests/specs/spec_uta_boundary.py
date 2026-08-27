@@ -82,24 +82,29 @@ def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     SpecClaim(
         "UTA-S04",
         "uta_boundary",
-        "§4 Phase 1 shadow isolation",
+        "§4 Phase 2 account read cutover",
         "L2b",
-        "The CCXT shadow adapter uses the managed factory and has no production consumer or mutation cutover.",
+        "Account reads route through the canonical UTA manager while uta_v1 prevents legacy private reads and mutations remain disabled.",
     )
 )
-def test_phase_one_shadow_uses_managed_ccxt_without_consumer_cutover():
+def test_phase_two_reads_use_canonical_manager_without_mutation_cutover():
     adapter = (UTA_ROOT / "ccxt_adapter.py").read_text(encoding="utf-8")
+    manager = (UTA_ROOT / "manager.py").read_text(encoding="utf-8")
+    exchange_sync = (ROOT / "aletheia" / "portfolio" / "exchange_sync.py").read_text(
+        encoding="utf-8"
+    )
+    compatibility = (
+        ROOT / "aletheia" / "portfolio" / "uta" / "manager.py"
+    ).read_text(encoding="utf-8")
+
     assert "from aletheia.net import make_ccxt" in adapter
     assert "read_only_shadow_mutation_disabled" in adapter
-
-    consumers = []
-    for path in (ROOT / "aletheia").rglob("*.py"):
-        if path.is_relative_to(UTA_ROOT):
-            continue
-        text = path.read_text(encoding="utf-8")
-        if "CCXTUTAAdapter" in text:
-            consumers.append(str(path.relative_to(ROOT)))
-    assert consumers == []
+    assert "legacy_modes" in manager
+    assert 'if boundary in {"legacy", "shadow_read"}' in manager
+    assert "registry.create(identity.account_id)" in manager
+    assert "from aletheia.uta.manager import get_unified_state_sync" in exchange_sync
+    assert 'uta_read_boundary_for("bitget_demo") != "uta_v1"' in exchange_sync
+    assert "from aletheia.uta.manager import" in compatibility
 
 
 @spec_claim(

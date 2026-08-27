@@ -240,7 +240,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
   const uta = p?.uta_state as any
 
   // UTA unified equity takes priority when available and has multiple accounts
-  const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt > 0 ? uta.total_equity_usdt : null
+  const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt != null ? uta.total_equity_usdt : null
   const utaAccounts: UTAAccount[] = uta?.accounts ?? []
 
   const exchangeEquity = p?.exchange_equity_usdt

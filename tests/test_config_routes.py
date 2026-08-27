@@ -1441,6 +1441,62 @@ async def test_settings_update_controls_persist_new_config_fields(client):
 
 
 @pytest.mark.anyio
+async def test_uta_read_selector_defaults_legacy_and_profile_change_advances_generation(client):
+    from aletheia.config.loader import load_config
+
+    before = load_config().exchange
+    assert before.uta_read_boundary_for("bitget_demo") == "legacy"
+    assert before.uta_account_config_generation_for("bitget_demo") == 0
+
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={
+            "spot": True,
+            "usdt_futures": True,
+            "paper_execution_mode": "bitget_demo",
+            "bitget_profile": "uta_v3",
+            "uta_read_boundary": "shadow_read",
+            "confirm_exchange_divergence": True,
+        },
+    )
+
+    assert response.status_code == 200
+    current = load_config().exchange
+    assert current.uta_read_boundary_for("bitget_demo") == "shadow_read"
+    assert current.uta_account_config_generation_for("bitget_demo") == 1
+
+
+@pytest.mark.anyio
+async def test_uta_v1_selector_rejects_unqualified_activation(client):
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={
+            "spot": True,
+            "usdt_futures": True,
+            "uta_read_boundary": "uta_v1",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "uta_profile_not_qualified"
+
+
+@pytest.mark.anyio
+async def test_uta_selector_rejects_non_external_account_mode(client):
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={
+            "spot": True,
+            "usdt_futures": True,
+            "paper_execution_mode": "paper_internal",
+            "uta_read_boundary": "shadow_read",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio
 async def test_trading_mandate_settings_control_validates_and_redacts_nested_unknowns(client):
     mandate = {
         "enabled": True,

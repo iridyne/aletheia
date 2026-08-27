@@ -89,6 +89,13 @@ def test_account_snapshot_uses_unified_sync_status_not_presence():
     assert "p?.uta_state != null\n      ? 'unified · live'" not in src
 
 
+def test_pnl_zone_preserves_authoritative_zero_uta_equity():
+    src = _read("components/PnLZone.tsx")
+
+    assert "uta?.total_equity_usdt != null" in src
+    assert "uta?.total_equity_usdt > 0" not in src
+
+
 def test_shared_page_header_and_table_expose_accessible_semantics():
     header = _read("components/PageHeader.tsx")
     table = _read("components/DataTable.tsx")

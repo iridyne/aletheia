@@ -24,6 +24,8 @@ _WILDCARD_HOSTS = {"0.0.0.0", "::"}
 # remain finite because urllib rejects non-finite or non-positive deadlines.
 NotificationHour = Annotated[int, Field(ge=0, le=23)]
 WebhookTimeoutSeconds = Annotated[FiniteFloat, Field(ge=1.0, le=60.0)]
+UTAReadBoundary = Literal["legacy", "shadow_read", "uta_v1"]
+UTAGeneration = Annotated[int, Field(ge=0)]
 
 
 class AppConfig(BaseModel):
@@ -311,6 +313,12 @@ class ExchangeConfig(BaseModel):
     #   "uta_v3"     → /api/v3/ Unified Trading Account (category, qty, posSide, cursor).
     #                  Experimental: Demo qualification required before any live use.
     bitget_profile: str = "classic_v2"
+    # Per-execution-mode UTA read selector. Missing entries are deliberately
+    # legacy until that exact account/profile generation is qualified.
+    uta_read_boundaries: dict[str, UTAReadBoundary] = Field(default_factory=dict)
+    # Non-secret configuration component of the exact account generation.
+    # Credential mutations carry a separate durable counter in secrets.enc.
+    uta_account_config_generations: dict[str, UTAGeneration] = Field(default_factory=dict)
 
     @field_validator("bitget_profile")
     @classmethod
@@ -319,6 +327,19 @@ class ExchangeConfig(BaseModel):
         if v not in allowed:
             raise ValueError(f"bitget_profile must be one of {sorted(allowed)}, got {v!r}")
         return v
+
+    @field_validator("uta_read_boundaries", "uta_account_config_generations")
+    @classmethod
+    def _validate_uta_mode_keys(cls, value: dict) -> dict:
+        if any(not isinstance(key, str) or not key.strip() for key in value):
+            raise ValueError("UTA account generation and boundary keys must be non-empty")
+        return value
+
+    def uta_read_boundary_for(self, execution_mode: str) -> UTAReadBoundary:
+        return self.uta_read_boundaries.get(execution_mode, "legacy")
+
+    def uta_account_config_generation_for(self, execution_mode: str) -> int:
+        return self.uta_account_config_generations.get(execution_mode, 0)
     # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
     futures_symbols: list[str] = Field(
         default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]

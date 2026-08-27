@@ -219,6 +219,51 @@ async def test_uta_state_uses_canonical_future_timestamp_status(monkeypatch):
     assert payload["sync_status"] == "stale"
 
 
+@pytest.mark.asyncio
+async def test_uta_state_offloads_credential_bound_cache_validation(monkeypatch):
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.server.routes import bitget
+
+    calls = []
+
+    async def run_in_thread(function, *args):
+        calls.append(function)
+        return function(*args)
+
+    monkeypatch.setattr(bitget.asyncio, "to_thread", run_in_thread)
+    monkeypatch.setattr(
+        es,
+        "get_unified_cached_state",
+        lambda: {
+            "total_equity_usdt": 0.0,
+            "age_seconds": 0.0,
+            "sync_status": "ok",
+        },
+    )
+
+    payload = await bitget.uta_state()
+
+    assert payload["total_equity_usdt"] == 0.0
+    assert calls == [es.get_unified_cached_state]
+
+
+@pytest.mark.asyncio
+async def test_uta_state_unconfigured_is_null_not_zero(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.server.routes import bitget
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    save_config(cfg)
+
+    payload = await bitget.uta_state()
+
+    assert payload["sync_status"] == "unconfigured"
+    assert payload["total_equity_usdt"] is None
+    assert payload["total_available_usdt"] is None
+
+
 # --- portfolio integration: new fields exposed ---
 
 def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
@@ -368,12 +413,15 @@ def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     from aletheia.portfolio import exchange_sync as es
-    import aletheia.portfolio.uta.manager as manager
+    import aletheia.uta.manager as manager
 
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "okx_demo"
     save_config(cfg)
     monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
+    monkeypatch.setattr(
+        es, "_unified_identity_is_current", lambda _state: (True, "current")
+    )
     monkeypatch.setattr(
         manager,
         "get_unified_state_sync",
@@ -403,6 +451,189 @@ def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
     assert out["uta_state"]["connected_brokers"] == ["okx_demo"]
     assert out["uta_state"]["sync_status"] == "ok"
     assert out["total_value_usdt"] == 123.45
+
+
+def test_unified_cache_generation_mismatch_revokes_authority(monkeypatch):
+    from aletheia.portfolio import exchange_sync as es
+
+    identity = {
+        "account_id": "okx_demo",
+        "execution_mode": "okx_demo",
+        "venue": "okx",
+        "environment": "demo",
+        "profile": "okx_demo",
+        "credential_generation": 1,
+        "sub_accounts": [],
+        "adapter_implementation": "CCXTUTAAdapter",
+        "adapter_version": "1",
+        "account_fingerprint": None,
+        "ccxt_version": "4.5.56",
+    }
+
+    class Registry:
+        def configured_identities(self):
+            from aletheia.uta.models import UTAAccountIdentity
+
+            return (UTAAccountIdentity.model_validate(identity),)
+
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
+    state = {
+        "accounts": [
+            {"broker_id": "okx_demo", "identity": {**identity, "credential_generation": 0}, "boundary": "legacy"}
+        ]
+    }
+
+    current, reason = es._unified_identity_is_current(state)
+
+    assert current is False
+    assert reason == "uta_account_generation_mismatch"
+
+
+def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.uta.models import UTAAccountIdentity
+
+    uta_identity = UTAAccountIdentity(
+        account_id="okx_demo",
+        execution_mode="okx_demo",
+        venue="okx",
+        environment="demo",
+        profile="okx_demo",
+        credential_generation=1,
+        adapter_implementation="CCXTUTAAdapter",
+        adapter_version="1",
+        ccxt_version="4.5.56",
+    )
+
+    class Registry:
+        def configured_identities(self):
+            return (uta_identity,)
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(es, "load_config", lambda: cfg)
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
+    state = {
+        "accounts": [
+            {
+                "broker_id": "okx_demo",
+                "boundary": "legacy",
+                "identity": uta_identity.model_copy(
+                    update={
+                        "adapter_implementation": "OkxDemoAdapter",
+                        "adapter_version": "legacy",
+                        "ccxt_version": None,
+                    }
+                ).model_dump(mode="json"),
+            }
+        ]
+    }
+
+    assert es._unified_identity_is_current(state) == (True, "current")
+
+
+def test_unified_cache_preserves_explicit_empty_connected_set(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import exchange_sync as es
+
+    monkeypatch.setattr(
+        es, "_unified_identity_is_current", lambda _state: (True, "current")
+    )
+    es._store_unified(
+        {
+            "accounts": [{"broker_id": "okx_demo"}],
+            "positions": [],
+            "errors": [],
+            "connected_brokers": [],
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+    cached = es.get_unified_cached_state()
+
+    assert cached["connected_brokers"] == []
+    assert cached["sync_status"] == "error"
+
+
+def test_uta_v1_default_cache_never_falls_back_to_legacy_bitget(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync as es
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.exchange.uta_read_boundaries = {"bitget_demo": "uta_v1"}
+    save_config(cfg)
+    es._store(
+        es.ExchangeAccountState(
+            mode="demo",
+            equity_usdt=999.0,
+            available_usdt=999.0,
+            frozen_usdt=0.0,
+            futures_unrealized_pnl=0.0,
+            open_positions_count=0,
+            open_orders_count=0,
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            asset_breakdown=[],
+            positions=[],
+        )
+    )
+
+    assert es.get_cached_state() is None
+
+
+def test_uta_v1_sync_skips_private_legacy_bitget_read(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync as es
+    import aletheia.uta.manager as manager
+
+    cfg = load_config()
+    cfg.exchange.uta_read_boundaries = {"bitget_demo": "uta_v1"}
+    save_config(cfg)
+    monkeypatch.setattr(
+        es,
+        "sync_exchange_account",
+        lambda: pytest.fail("legacy Bitget client must not be constructed"),
+    )
+    monkeypatch.setattr(
+        manager,
+        "get_unified_state_sync",
+        lambda: SimpleNamespace(
+            total_equity_usdt=0.0,
+            total_available_usdt=0.0,
+            total_unrealized_pnl=0.0,
+            accounts=[],
+            positions=[],
+            errors=[],
+            connected_brokers=[],
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+    assert es.sync_all_exchanges() is not None
+
+
+def test_active_broker_rejects_generation_mismatch(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync as es
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    monkeypatch.setattr(
+        es,
+        "get_unified_cached_state",
+        lambda: {
+            "age_seconds": 0,
+            "sync_status": "generation_mismatch",
+            "accounts": [{"broker_id": "okx_demo"}],
+        },
+    )
+
+    complete, reason = es.active_broker_view_complete(cfg)
+
+    assert complete is False
+    assert reason == "unified view generation_mismatch"
 
 
 def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):

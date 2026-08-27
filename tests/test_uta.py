@@ -113,6 +113,18 @@ def test_create_broker_unknown_returns_none():
     assert b is None
 
 
+def test_selective_create_initializes_legacy_registry(monkeypatch):
+    from aletheia.portfolio.uta import registry
+
+    monkeypatch.setattr(registry, "_registered", False)
+    monkeypatch.setattr(registry, "_BROKER_REGISTRY", {})
+
+    assert registry.create_broker("__nonexistent__") is None
+    assert {"bitget_demo", "binance_testnet", "okx_demo"} <= set(
+        registry._BROKER_REGISTRY
+    )
+
+
 def test_create_broker_failing_constructor_returns_none(monkeypatch):
     def _fail():
         raise RuntimeError("creds missing")
@@ -157,8 +169,9 @@ async def test_unified_state_one_broker_fails(monkeypatch):
 
     state: UnifiedState = await get_unified_state()
 
-    # Healthy broker still contributes
-    assert state.total_equity_usdt == 5000.0
+    # The healthy row remains visible, but an incomplete multi-account total is
+    # unavailable rather than a silently understated 5000.
+    assert state.total_equity_usdt is None
     assert len(state.accounts) == 1
     assert len(state.errors) == 1
     assert "binance_testnet" in state.errors[0]

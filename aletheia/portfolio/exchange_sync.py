@@ -160,10 +160,15 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
         mode = cfg.exchange.mode
         # Default path + active paper broker is non-Bitget → use unified cache,
         # which carries the true total equity across all brokers.
-        if not explicit_mode and not (cfg.exchange.paper_execution_mode or "").startswith("bitget"):
-            unified = get_unified_cached_state()
-            if unified is not None and account_equity_value(unified) is not None:
-                return unified
+        active_boundary = cfg.exchange.uta_read_boundary_for(
+            cfg.exchange.paper_execution_mode or ""
+        )
+        active_mode = cfg.exchange.paper_execution_mode or ""
+        if not explicit_mode and active_mode not in {"", "paper_internal"} and (
+            not (cfg.exchange.paper_execution_mode or "").startswith("bitget")
+            or active_boundary == "uta_v1"
+        ):
+            return get_unified_cached_state()
     raw = _read_raw(mode)
     if raw is None:
         return None
@@ -182,7 +187,7 @@ def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -
         return "stale"
     if not math.isfinite(age_value) or age_value < 0 or age_value > max_age_sec:
         return "stale"
-    if state.get("sync_status") in {"error", "unconfigured"}:
+    if state.get("sync_status") in {"error", "unconfigured", "generation_mismatch"}:
         return str(state["sync_status"])
     return "ok"
 
@@ -235,13 +240,51 @@ def get_unified_cached_state() -> Optional[dict]:
     if raw is None:
         return None
     raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
-    raw["connected_brokers"] = list(
-        raw.get("connected_brokers")
-        or [account.get("broker_id") for account in raw.get("accounts", []) if account.get("broker_id")]
-    )
+    if "connected_brokers" in raw:
+        raw["connected_brokers"] = list(raw.get("connected_brokers") or [])
+    else:
+        raw["connected_brokers"] = [
+            account.get("broker_id")
+            for account in raw.get("accounts", [])
+            if account.get("broker_id")
+        ]
+    identity_current, identity_reason = _unified_identity_is_current(raw)
+    raw["identity_current"] = identity_current
+    raw["identity_reason"] = identity_reason
     raw["sync_status"] = _unified_sync_status(raw)
     raw["sync_complete"] = raw["sync_status"] == "ok"
     return raw
+
+
+def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
+    """Generation/profile/boundary mismatch immediately revokes cache authority."""
+    try:
+        from aletheia.uta.manager import build_uta_registry, expected_cache_identity
+
+        cfg = load_config()
+        registry = build_uta_registry(cfg)
+        expected = {}
+        for identity in registry.configured_identities():
+            boundary = cfg.exchange.uta_read_boundary_for(identity.execution_mode)
+            expected[identity.execution_mode] = expected_cache_identity(
+                cfg, identity, boundary
+            ).model_dump(mode="json")
+    except Exception:
+        return False, "uta_registry_configuration_invalid"
+    observed = {
+        str(account.get("broker_id") or ""): account
+        for account in state.get("accounts", [])
+        if isinstance(account, dict) and account.get("broker_id")
+    }
+    if set(observed) != set(expected):
+        return False, "uta_account_set_mismatch"
+    for execution_mode, expected_identity in expected.items():
+        account = observed[execution_mode]
+        if account.get("identity") != expected_identity:
+            return False, "uta_account_generation_mismatch"
+        if account.get("boundary") != cfg.exchange.uta_read_boundary_for(execution_mode):
+            return False, "uta_boundary_mismatch"
+    return True, "current"
 
 
 def _unified_sync_status(state: dict, max_age_sec: int = 600) -> str:
@@ -250,7 +293,16 @@ def _unified_sync_status(state: dict, max_age_sec: int = 600) -> str:
         age = _age_seconds(state.get("fetched_at", ""))
     if age is None or age > max_age_sec:
         return "stale"
+    if state.get("identity_current") is False:
+        return "generation_mismatch"
     if state.get("errors"):
+        return "error"
+    accounts = {
+        account.get("broker_id")
+        for account in state.get("accounts", [])
+        if isinstance(account, dict) and account.get("broker_id")
+    }
+    if accounts != set(state.get("connected_brokers") or []):
         return "error"
     if not state.get("connected_brokers") and not state.get("accounts"):
         return "unconfigured"
@@ -286,6 +338,8 @@ def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
     unified = get_unified_cached_state()
     if unified is None:
         return False, "no unified view cached"
+    if status_for(unified) != "ok":
+        return False, f"unified view {unified.get('sync_status') or 'unusable'}"
     connected = {(a.get("broker_id") or "") for a in (unified.get("accounts") or [])}
     if active in connected:
         return True, f"{active} connected"
@@ -482,18 +536,22 @@ def sync_all_exchanges() -> Optional[dict]:
     stays warm for callers that haven't migrated to get_unified_cached_state() yet.
     Returns the serialised UnifiedState dict, or None on total failure.
     """
-    from aletheia.portfolio.uta.manager import get_unified_state_sync
+    from aletheia.uta.manager import get_unified_state_sync
 
-    try:
-        sync_exchange_account()
-    except Exception as e:
-        logger.debug("legacy bitget sync failed (non-fatal): %s", e)
+    cfg = load_config()
+    if cfg.exchange.uta_read_boundary_for("bitget_demo") != "uta_v1":
+        try:
+            sync_exchange_account()
+        except Exception as e:
+            logger.debug("legacy bitget sync failed (non-fatal): %s", e)
 
     try:
         unified = get_unified_state_sync()
-        connected_brokers = getattr(unified, "connected_brokers", None) or [
-            acct.get("broker_id") for acct in unified.accounts if acct.get("broker_id")
-        ]
+        connected_brokers = getattr(unified, "connected_brokers", None)
+        if connected_brokers is None:
+            connected_brokers = [
+                acct.get("broker_id") for acct in unified.accounts if acct.get("broker_id")
+            ]
         payload = {
             "total_equity_usdt": unified.total_equity_usdt,
             "total_available_usdt": unified.total_available_usdt,
@@ -501,6 +559,7 @@ def sync_all_exchanges() -> Optional[dict]:
             "accounts": unified.accounts,
             "positions": unified.positions,
             "errors": unified.errors,
+            "shadow_errors": getattr(unified, "shadow_errors", []),
             "connected_brokers": connected_brokers,
             "fetched_at": unified.fetched_at,
         }
@@ -515,9 +574,18 @@ def sync_all_exchanges() -> Optional[dict]:
             from aletheia.storage.repositories import has_capital_event_for_broker, insert_capital_event
             from aletheia.storage.models import CapitalEvent
             for acct in unified.accounts:
+                if (
+                    acct.get("account_completeness", "complete") != "complete"
+                    or acct.get("position_completeness", "complete") != "complete"
+                ):
+                    continue
                 broker_id = acct.get("broker_id", "")
                 available = acct.get("available_usdt", 0)
                 equity = acct.get("equity_usdt", 0)
+                if not isinstance(available, (int, float)) or not isinstance(
+                    equity, (int, float)
+                ):
+                    continue
                 deposit_amount = available if available > 0 else equity
                 if broker_id and deposit_amount > 0 and not has_capital_event_for_broker(broker_id):
                     insert_capital_event(CapitalEvent(

@@ -29,6 +29,22 @@ Allowed non-private exceptions remain `aletheia/data/**` public market data and
 `aletheia/net.py` CCXT construction/session ownership. Existing concrete clients
 and venue brokers are migration sources, not approved final-cutover exceptions.
 
+## Phase 2 account/position read cutover
+
+Fixing baseline: `master@abdfbecab65e3e93090ab85234ead8d53ae19be1`.
+
+| Boundary | Phase 2 state | Authority result |
+|---|---|---|
+| Registry/manager | `aletheia/uta/manager.py` owns loop-local UTA factories, selected reads, completeness projection and legacy/shadow rollback; the old manager is an import shim. | One selected account-read coordinator; no client singleton. |
+| Account cache | Unified rows persist exact account/profile/environment/generation, actual authoritative adapter implementation and boundary. Credential/profile changes invalidate the old generation immediately. | A mismatched cache remains diagnostic only and reports `generation_mismatch`. |
+| Portfolio/UI | Default external-account reads use the unified cache for non-Bitget accounts and any `uta_v1` account. Unknown totals are `null`; complete zero remains zero. | No legacy Bitget balance can substitute for an unavailable UTA read. |
+| Risk/Startup | Risk resolves exact named healthy rows; Startup uses `active_broker_view_complete`. Both reject stale, partial, missing and generation-mismatched views. | Sizing and startup fail closed without current account authority. |
+| Reconciliation | Existing compatibility positions now originate from the selected manager and retain broker/account/instrument identity. Reconciliation already requires an `ok` unified view. | An incomplete active account cannot silently become authoritative absence. |
+| Selector | Missing selector remains `legacy`; `shadow_read` compares without changing authority; production settings reject `uta_v1` until persisted qualification exists. | Rollback remains config-only and unqualified profiles cannot activate UTA reads. |
+
+Phase 2 intentionally does not implement order/fill/funding/verified-exit/Trust
+evidence or any mutation. Those remain Phase 3 and later gates.
+
 ## Adjacent execution findings
 
 | Issue | Exact-head evidence | Composition decision |

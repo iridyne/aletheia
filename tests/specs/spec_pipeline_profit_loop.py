@@ -102,6 +102,10 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
         mode = "demo"
         paper_execution_mode = "okx_demo"
 
+        @staticmethod
+        def uta_read_boundary_for(_execution_mode):
+            return "legacy"
+
     class _Cfg:
         exchange = _Exch()
 
@@ -147,6 +151,10 @@ def test_bitget_active_keeps_legacy_cache(tmp_path, monkeypatch):
     class _Exch:
         mode = "demo"
         paper_execution_mode = "bitget_demo"
+
+        @staticmethod
+        def uta_read_boundary_for(_execution_mode):
+            return "legacy"
 
     class _Cfg:
         exchange = _Exch()
