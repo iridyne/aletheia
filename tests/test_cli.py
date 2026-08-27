@@ -452,6 +452,67 @@ def test_strategy_parameters_write_path_requires_json_object(cli_db):
     assert exc.value.reason == "not_json_object"
 
 
+def test_inspect_equity_uses_current_account_equity_series(cli_db):
+    import json as json_mod
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO portfolio_snapshots
+        (id, total_value_usdt, account_equity_usdt, unrealized_pnl, realized_pnl,
+         positions_count, execution_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("legacy", 9999, None, 99, 0, 9, "paper_internal"),
+    )
+    db.execute(
+        """
+        INSERT INTO portfolio_snapshots
+        (id, total_value_usdt, account_equity_usdt, unrealized_pnl, realized_pnl,
+         positions_count, execution_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("paper", 1000, 1000, 12.5, 40, 2, "paper_internal"),
+    )
+    db.execute(
+        """
+        INSERT INTO portfolio_snapshots
+        (id, total_value_usdt, account_equity_usdt, unrealized_pnl, realized_pnl,
+         positions_count, execution_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("exchange", 2000, 2000, -5, 10, 1, "exchange_account"),
+    )
+    db.commit()
+
+    result = runner.invoke(app, ["inspect", "equity", "--json"])
+
+    assert result.exit_code == 0, result.output
+    rows = json_mod.loads(result.output)
+    assert len(rows) == 1
+    assert rows[0]["execution_mode"] == "paper_internal"
+    assert rows[0]["account_equity_usdt"] == 1000
+    assert rows[0]["positions_count"] == 2
+    assert "equity_usdt" not in rows[0]
+    assert "open_positions" not in rows[0]
+
+    exchange = runner.invoke(
+        app,
+        ["inspect", "equity", "--execution-mode", "exchange_account", "--json"],
+    )
+    assert exchange.exit_code == 0, exchange.output
+    assert json_mod.loads(exchange.output)[0]["account_equity_usdt"] == 2000
+
+    human = runner.invoke(app, ["inspect", "equity"])
+    assert human.exit_code == 0, human.output
+    assert "mode=paper_internal" in human.output
+    assert "eq=$1000" in human.output
+    assert "pos=2" in human.output
+    assert "9999" not in human.output
+
+
 def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
     import json as json_mod
 
