@@ -113,8 +113,9 @@ def _blocked_candidate_stats_by_guard(
     from aletheia.storage.sqlite import get_db
     from datetime import datetime, timezone, timedelta
 
+    as_of_at = datetime.now(timezone.utc)
     if evaluated_since is None:
-        evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        evaluated_since = (as_of_at - timedelta(days=90)).isoformat()
 
     guard_ids = {guard.guard_id for guard in guards}
     candidates: dict[str, set[str]] = defaultdict(set)
@@ -143,7 +144,7 @@ def _blocked_candidate_stats_by_guard(
         candidate_key = str(row.get("decision_outcome_candidate_key") or row.get("outcome_candidate_key") or "")
         if not candidate_key:
             continue
-        assessment = assess_candidate_outcome(row)
+        assessment = assess_candidate_outcome(row, as_of_at=as_of_at)
         for guard_id in matched_ids:
             candidates[guard_id].add(candidate_key)
             if assessment.eligible and assessment.net_return_pct is not None:

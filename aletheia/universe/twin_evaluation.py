@@ -299,6 +299,7 @@ def _evaluate_clusters(
     records_by_run: dict[str, list[dict[str, Any]]],
     outcomes: dict[str, dict[str, Any]],
     invalid: set[str],
+    as_of_at: datetime,
 ) -> _ClusterAudit:
     audit = _ClusterAudit()
     for batch in batches:
@@ -320,7 +321,7 @@ def _evaluate_clusters(
             if outcome is None or outcome.get("_duplicate"):
                 cluster_complete = False
                 continue
-            assessment = assess_candidate_outcome(outcome)
+            assessment = assess_candidate_outcome(outcome, as_of_at=as_of_at)
             fee = _finite(outcome.get("estimated_fee_pct"))
             spread = _finite(outcome.get("estimated_spread_slippage_pct"))
             funding = _finite(outcome.get("estimated_funding_pct"))
@@ -490,6 +491,7 @@ def _validate_epoch_contract(
 def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
     """Return an honest diagnostic report for one exact prospective epoch."""
 
+    as_of_at = datetime.now(timezone.utc)
     db = get_db()
     epoch = db.execute(
         "SELECT * FROM learning_policy_epochs WHERE epoch_id=?",
@@ -533,6 +535,7 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         "blocking_reasons": [],
         "invalid_reasons": [],
         "verdict": "insufficient_data",
+        "as_of_at": as_of_at.isoformat(),
     }
     if epoch is None:
         base_report["invalid_reasons"] = ["policy_epoch_not_available"]
@@ -589,7 +592,11 @@ def evaluate_twin_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         str(first.get("primary_horizon") or ""),
     )
     cluster_audit = _evaluate_clusters(
-        batches, record_audit.records_by_run, outcomes, invalid
+        batches,
+        record_audit.records_by_run,
+        outcomes,
+        invalid,
+        as_of_at,
     )
     treatment_utility_mean = (
         fmean(cluster_audit.treatment_cluster_utilities)
