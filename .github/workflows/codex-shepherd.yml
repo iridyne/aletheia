@@ -34,7 +34,7 @@ jobs:
       checks: read
       contents: read
       pull-requests: read
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
     timeout-minutes: 5
     # A successful metadata-gate completion is a unique recovery edge. Do not
     # let later review/comment activity cancel the sole retry callback.
@@ -141,7 +141,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
     timeout-minutes: 10
     # Review/state callbacks are reconstructible from current PR state and may
     # converge to the newest event without affecting metadata recovery above.
