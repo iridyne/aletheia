@@ -76,6 +76,7 @@ def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
             bid=99.9,
             ask=100,
             observed_at=datetime.now(timezone.utc).isoformat(),
+            source_observed_at=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -86,6 +87,7 @@ def test_urgent_entry_uses_exact_opposing_bbo_ioc():
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
     assert proposal.order_type == "limit"
     assert proposal.price == 100.05
@@ -101,6 +103,7 @@ def test_urgent_entry_never_chases_beyond_worst_price():
             bid=100,
             ask=100.05,
             observed_at=datetime.now(timezone.utc).isoformat(),
+            source_observed_at=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -111,6 +114,7 @@ def test_urgent_entry_cannot_escape_the_plan_zone():
             bid=101.09,
             ask=101.1,
             observed_at=datetime.now(timezone.utc).isoformat(),
+            source_observed_at=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -190,6 +194,7 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     ).model_copy(update={"quantity": 2.0})
     resolved = SimpleNamespace(
         policy=SimpleNamespace(policy_id="demo-v1", revision=1),
@@ -402,6 +407,7 @@ def test_canonical_risk_rejects_superseded_or_expired_entry_plan(monkeypatch):
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
     resolved = SimpleNamespace(
         policy=SimpleNamespace(policy_id="demo-v1", revision=1),
@@ -480,6 +486,24 @@ def test_stale_exact_state_cannot_advance_triggered_plan():
             bid=100,
             ask=100.05,
             observed_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
+            source_observed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+
+
+def test_stale_source_state_cannot_advance_triggered_plan():
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    plan = _persist_waiting_plan()
+    with pytest.raises(ValueError, match="entry_exact_state_stale"):
+        execute_entry_plan(
+            plan.plan_id,
+            bid=100,
+            ask=100.05,
+            observed_at=datetime.now(timezone.utc).isoformat(),
+            source_observed_at=(
+                datetime.now(timezone.utc) - timedelta(seconds=5)
+            ).isoformat(),
         )
     assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
 

@@ -519,7 +519,7 @@ async def _watch_loop(cfg) -> None:
                 if stream.health().subscriptions_confirmed:
                     for engine in (*engines.values(), *plan_engines.values()):
                         engine.confirm_subscription()
-                if event.event_type == "quote":
+                if event.event_type == "quote" and stream.health().subscriptions_confirmed:
                     for plan_id, plan in tuple(plans.items()):
                         instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
                         if instrument != event.instrument:
@@ -563,6 +563,9 @@ async def _watch_loop(cfg) -> None:
                                 observed_at=datetime.fromtimestamp(
                                     event.received_timestamp_ms / 1000, tz=timezone.utc
                                 ).isoformat(),
+                                source_observed_at=datetime.fromtimestamp(
+                                    event.exchange_timestamp_ms / 1000, tz=timezone.utc
+                                ).isoformat(),
                             )
                         elif row["status"] in {"triggered", "risk_reserved"}:
                             from aletheia.execution.entry_plan_execution import (
@@ -578,6 +581,10 @@ async def _watch_loop(cfg) -> None:
                                     event.received_timestamp_ms / 1000,
                                     tz=timezone.utc,
                                 ).isoformat(),
+                                source_observed_at=datetime.fromtimestamp(
+                                    event.exchange_timestamp_ms / 1000,
+                                    tz=timezone.utc,
+                                ).isoformat(),
                             )
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
@@ -591,7 +598,14 @@ async def _watch_loop(cfg) -> None:
                             plan_id,
                             bid=ready.bid,
                             ask=ready.ask,
-                            observed_at=ready.observed_at,
+                            observed_at=datetime.fromtimestamp(
+                                ready.quote_received_timestamp_ms / 1000,
+                                tz=timezone.utc,
+                            ).isoformat(),
+                            source_observed_at=datetime.fromtimestamp(
+                                ready.quote_exchange_timestamp_ms / 1000,
+                                tz=timezone.utc,
+                            ).isoformat(),
                         )
                 for setup_id, engine in tuple(engines.items()):
                     if engine.instrument != event.instrument:
