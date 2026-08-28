@@ -330,7 +330,7 @@ def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
     if isinstance(history, dict):
         status = str(history.get("orderStatus") or history.get("status") or "").lower()
         cancel_reason = str(history.get("cancelReason") or "")
-        if status == "filled":
+        if status not in {"canceled", "cancelled", "expired", "rejected"}:
             return None
         if cancel_reason == TRADE_RATE_LIMIT_CANCEL_REASON:
             return TRADE_RATE_LIMIT_CANCEL_REASON
