@@ -127,7 +127,7 @@ async def test_risk_status_warns_when_exchange_live_but_live_disabled(client):
 
 
 @pytest.mark.anyio
-async def test_risk_status_keeps_latest_rejected_decision_as_history(client):
+async def test_risk_status_keeps_latest_decision_as_history_not_current_health(client):
     proposal = TradeProposal(symbol="DOGEUSDT", market_type="spot", direction="long")
     repo.insert_trade_proposal(proposal)
     repo.insert_risk_decision(RiskDecision(
@@ -140,10 +140,11 @@ async def test_risk_status_keeps_latest_rejected_decision_as_history(client):
     resp = await client.get("/api/risk/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "healthy"
+    assert data["status"] == "not_evaluated"
     assert data["violations"] == []
     assert data["latest_risk_decision"]["id"]
     assert not data["latest_risk_decision"]["approved"]
+    assert data["latest_risk_decision"]["decision_role"] == "legacy"
 
 
 @pytest.mark.anyio
