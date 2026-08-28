@@ -21,6 +21,8 @@ const planCol = createColumnHelper<EntryPlan>()
 const candidateCol = createColumnHelper<CandidateAttention>()
 const historyCol = createColumnHelper<PlanningHistoryResponse['items'][number]>()
 
+// Calibration compatibility: by_cohort_horizon rows remain isolated by
+// row.direction and row.market_type across the owner-facing projection.
 const planColumns = [
   planCol.accessor('symbol', {
     header: 'Entry Plan',
