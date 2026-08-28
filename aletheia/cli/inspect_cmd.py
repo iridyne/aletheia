@@ -666,6 +666,8 @@ def snapshots(
         result = []
         for r in rows:
             age, is_stale = _parse_age(r.get("snapshot_at") or "")
+            if stale_only and not is_stale:
+                continue
             result.append({
                 "symbol": r.get("symbol"),
                 "price": r.get("price"),
