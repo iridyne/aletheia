@@ -1,6 +1,10 @@
 """Tests for the spot-sweep gamma flip estimation (issue #1161)."""
 
+import asyncio
+from contextlib import asynccontextmanager
 import math
+
+import pytest
 
 from aletheia.data.collectors.options_structure import _bsm_gamma, _gamma_flip_spot_sweep
 
@@ -61,3 +65,54 @@ def test_gamma_flip_returns_none_when_no_crossing():
     ]
     flip = _gamma_flip_spot_sweep(entries, spot)
     assert flip is None
+
+
+def test_bsm_gamma_rejects_non_finite_inputs():
+    assert _bsm_gamma(float("nan"), 50_000.0, 0.1, 0.6) is None
+    assert _bsm_gamma(50_000.0, float("inf"), 0.1, 0.6) is None
+
+
+def test_options_snapshot_rejects_non_finite_values():
+    from aletheia.data.models import OptionsMarketStructureSnapshot
+
+    with pytest.raises(ValueError):
+        OptionsMarketStructureSnapshot(
+            symbol="BTC",
+            underlying_price=float("nan"),
+            observed_at="2026-08-29T00:00:00+00:00",
+        )
+
+
+def test_options_collector_rejects_non_finite_source_values(monkeypatch):
+    import aletheia.data.collectors.options_structure as mod
+
+    payload = {
+        "result": [
+            {
+                "instrument_name": f"BTC-30DEC30-{50_000 + i * 1_000}-C",
+                "open_interest": "NaN" if i == 0 else "10",
+                "mid_iv": "60",
+                "underlying_price": "50000",
+            }
+            for i in range(5)
+        ]
+    }
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    class Client:
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    @asynccontextmanager
+    async def fake_httpx_client(**kwargs):
+        yield Client()
+
+    monkeypatch.setattr(mod, "httpx_client", fake_httpx_client)
+    with pytest.raises(ValueError, match="invalid_numeric_inputs"):
+        asyncio.run(mod._collect_currency("BTC"))
