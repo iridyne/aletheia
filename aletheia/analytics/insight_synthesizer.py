@@ -501,7 +501,7 @@ async def _llm_synthesize_insight(stats: dict, memo: TradingMemo) -> str | None:
         from aletheia.agents.helpers import llm_complete
 
         regime_info = stats.get("current_regime")
-        regime_str = regime_info.get("state", "unknown") if regime_info else "unknown"
+        regime_str = regime_info.get("state") or "unknown" if regime_info else "unknown"
 
         prompt = f"""Based on the following 30-day trading performance summary, write ONE concise paragraph (3-5 sentences) identifying the most actionable insight for the next trading session.
 
