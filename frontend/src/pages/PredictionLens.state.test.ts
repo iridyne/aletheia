@@ -35,4 +35,5 @@ describe('Prediction Lens status presentation', () => {
     expect(resolvePredictionDataState([], false, false)).toBe('empty')
     expect(resolvePredictionDataState([{ id: 'retained' }], false, true)).toBe('stale')
   })
+
 })
