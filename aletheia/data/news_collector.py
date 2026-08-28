@@ -72,9 +72,12 @@ def _extract_symbols(title: str, summary: str) -> list[str]:
 def _fetch_feed_sync(url: str) -> list[dict]:
     """Parse a single RSS feed (blocking I/O)."""
     feed = feedparser.parse(url)
+    status = getattr(feed, "status", None)
+    if isinstance(status, int) and status >= 400:
+        raise RuntimeError(f"feed_http_error:{status}")
     if feed.bozo and not feed.entries:
         logger.debug("feed parse error for %s: %s", url, feed.bozo_exception)
-        return []
+        raise RuntimeError("feed_parse_error")
     return feed.entries
 
 
@@ -94,15 +97,32 @@ async def fetch_news_feeds() -> dict:
     ensure_opportunity_information_policy_epoch()
     cfg = load_config()
     if not cfg.news.enabled:
-        return {"fetched": 0, "new": 0}
+        return {
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "fetched": 0,
+            "new": 0,
+            "errors": [],
+        }
 
     active_feeds = [f for f in cfg.news.feeds if f.enabled]
     if not active_feeds:
-        return {"fetched": 0, "new": 0}
+        return {
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "fetched": 0,
+            "new": 0,
+            "errors": [],
+        }
 
     loop = asyncio.get_event_loop()
+    total_succeeded = 0
+    total_failed = 0
     total_fetched = 0
     total_new = 0
+    errors: list[str] = []
 
     for feed_cfg in active_feeds:
         try:
@@ -112,11 +132,18 @@ async def fetch_news_feeds() -> dict:
             )
         except asyncio.TimeoutError:
             logger.warning("news fetch timed out for %s (20s)", feed_cfg.name)
+            total_failed += 1
+            if len(errors) < 8:
+                errors.append(f"{feed_cfg.name}:timeout")
             continue
         except Exception as e:
             logger.warning("news fetch failed for %s: %s", feed_cfg.name, e)
+            total_failed += 1
+            if len(errors) < 8:
+                errors.append(f"{feed_cfg.name}:{type(e).__name__}")
             continue
 
+        total_succeeded += 1
         total_fetched += len(entries)
 
         # Async scheduler jobs share a persistent event-loop thread. Another job
@@ -175,7 +202,14 @@ async def fetch_news_feeds() -> dict:
     else:
         logger.debug("news: fetched %d items from %d feeds, 0 new", total_fetched, len(active_feeds))
 
-    return {"fetched": total_fetched, "new": total_new}
+    return {
+        "attempted": len(active_feeds),
+        "succeeded": total_succeeded,
+        "failed": total_failed,
+        "fetched": total_fetched,
+        "new": total_new,
+        "errors": errors,
+    }
 
 
 def prune_old_news(retention_days: int = 7) -> int:

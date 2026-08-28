@@ -203,7 +203,7 @@ async def analyze_one_item(item_id: str) -> dict:
     }
 
 
-async def analyze_pending_news(batch_size: int = 3) -> int:
+async def analyze_pending_news(batch_size: int = 3) -> dict[str, int | list[str]]:
     """Analyze a fair mix of oldest new items and retries due after 30 minutes."""
     from aletheia.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
@@ -234,15 +234,44 @@ async def analyze_pending_news(batch_size: int = 3) -> int:
         (batch_size,),
     ).fetchall()
 
+    result: dict[str, int | list[str]] = {
+        "attempted": len(rows),
+        "analyzed": 0,
+        "retryable_failed": 0,
+        "terminal_failed": 0,
+        "unresolved_failed": 0,
+        "errors": [],
+    }
     if not rows:
-        return 0
+        return result
 
-    analyzed = 0
     for row in rows:
-        if await _analyze_single_row(dict(row), db):
-            analyzed += 1
+        row_dict = dict(row)
+        if await _analyze_single_row(row_dict, db):
+            result["analyzed"] = int(result["analyzed"]) + 1
+            continue
 
-    if analyzed:
-        logger.info("news: analyzed %d items", analyzed)
+        final = db.execute(
+            "SELECT status FROM news_items WHERE id = ?", (row_dict["id"],)
+        ).fetchone()
+        final_status = final["status"] if final else "unknown"
+        if final_status == "analysis_retry":
+            result["retryable_failed"] = int(result["retryable_failed"]) + 1
+            code = "analysis_retry"
+        elif final_status == "analysis_failed":
+            result["terminal_failed"] = int(result["terminal_failed"]) + 1
+            code = "analysis_failed"
+        elif final_status == "analyzed":
+            result["analyzed"] = int(result["analyzed"]) + 1
+            continue
+        else:
+            result["unresolved_failed"] = int(result["unresolved_failed"]) + 1
+            code = "analysis_state_unresolved"
+        errors = result["errors"]
+        if isinstance(errors, list) and code not in errors and len(errors) < 8:
+            errors.append(code)
 
-    return analyzed
+    if result["analyzed"]:
+        logger.info("news: analyzed %d items", result["analyzed"])
+
+    return result

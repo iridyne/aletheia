@@ -3677,7 +3677,14 @@ def _run_news_fetch():
     if not cfg.news.enabled:
         return
     try:
-        _run_async_with_timeout("news_fetch", _async_news_fetch())
+        result = _run_async_with_timeout("news_fetch", _async_news_fetch())
+        if isinstance(result, dict) and result.get("failed", 0):
+            status = (
+                "all_feeds_failed"
+                if result.get("succeeded", 0) == 0
+                else "partial_feed_failure"
+            )
+            _record_job_failure("news_fetch", status)
     except TimeoutError:
         logger.warning("news_fetch timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["news_fetch"])
         _record_job_failure("news_fetch", "timeout")
@@ -3688,7 +3695,7 @@ def _run_news_fetch():
 
 async def _async_news_fetch():
     from aletheia.data.news_collector import fetch_news_feeds
-    await fetch_news_feeds()
+    return await fetch_news_feeds()
 
 
 def _run_news_analyze():
@@ -3696,7 +3703,18 @@ def _run_news_analyze():
     if not cfg.news.enabled or cfg.runtime.paused:
         return
     try:
-        _run_async_with_timeout("news_analyze", _async_news_analyze())
+        result = _run_async_with_timeout("news_analyze", _async_news_analyze())
+        if isinstance(result, dict):
+            failures = int(result.get("retryable_failed", 0)) + int(
+                result.get("terminal_failed", 0)
+            ) + int(result.get("unresolved_failed", 0))
+            if result.get("attempted", 0) and failures:
+                status = (
+                    "all_items_failed"
+                    if result.get("analyzed", 0) == 0
+                    else "partial_item_failure"
+                )
+                _record_job_failure("news_analyze", status)
     except TimeoutError:
         logger.warning(
             "news_analyze timed out after %.0fs",
@@ -3711,7 +3729,7 @@ def _run_news_analyze():
 async def _async_news_analyze():
     from aletheia.data.news_analyzer import analyze_pending_news
 
-    await analyze_pending_news(batch_size=3)
+    return await analyze_pending_news(batch_size=3)
 
 
 def _run_persona_rollout():
