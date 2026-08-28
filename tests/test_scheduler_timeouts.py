@@ -979,6 +979,29 @@ def _patch_scheduler_result(
         monkeypatch.setattr(
             position_manager, "evaluate_open_positions", lambda: result
         )
+    elif job_id in {"paper_funding_settler", "broker_funding_settler"}:
+        async def produce():
+            return result
+
+        if job_id == "paper_funding_settler":
+            from aletheia.portfolio import paper_account
+
+            monkeypatch.setattr(
+                paper_account, "settle_unsettled_paper_closes", produce
+            )
+        else:
+            from aletheia.portfolio import broker_funding_settlement
+
+            monkeypatch.setattr(
+                broker_funding_settlement,
+                "settle_unsettled_exchange_closes",
+                produce,
+            )
+        monkeypatch.setattr(
+            scheduler,
+            "_run_async_with_timeout",
+            lambda _job, awaitable: asyncio.run(awaitable),
+        )
     elif job_id == "tpsl_fill_check":
         from aletheia.storage import repositories
 
@@ -1014,6 +1037,12 @@ def _patch_scheduler_result(
          "position_manager_reported_errors"),
         ("position_reconcile", {"adopted": [], "closed_orphans": [], "errors": ["adopt failed"]},
          "position_reconcile_reported_errors"),
+        ("paper_funding_settler", {"settled": 1, "revived": 0, "still_pending": 1,
+                                    "errors": ["position-1: provider down"]},
+         "paper_funding_settler_reported_errors"),
+        ("broker_funding_settler", {"checked": 2, "settled": 1, "still_pending": 1,
+                                     "errors": ["position-2: TimeoutError"]},
+         "broker_funding_settler_reported_errors"),
     ],
 )
 def test_scheduler_result_failures_survive_outer_wrapper(
@@ -1057,6 +1086,10 @@ def test_scheduler_result_failures_survive_outer_wrapper(
         ("reconciliation", {"checked": 0, "errors": []}),
         ("position_manager", {"checked": 0, "closed": 0, "errors": []}),
         ("position_reconcile", {"adopted": [], "closed_orphans": [], "errors": []}),
+        ("paper_funding_settler", {"settled": 0, "revived": 0, "still_pending": 1,
+                                    "errors": []}),
+        ("broker_funding_settler", {"checked": 0, "settled": 0, "still_pending": 1,
+                                     "errors": []}),
     ],
 )
 def test_scheduler_clean_or_empty_result_resets_failure_health(
