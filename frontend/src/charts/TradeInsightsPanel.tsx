@@ -612,7 +612,7 @@ function ConvictionCalibrationChart({ executionMode }: { executionMode?: string 
     error: b.calibration_error,
   }))
 
-  const eceColor = !data.ece ? C.muted
+  const eceColor = data.ece == null ? C.muted
     : data.ece < 0.05 ? C.green
     : data.ece < 0.10 ? C.accent
     : data.ece < 0.20 ? C.yellow
