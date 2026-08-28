@@ -768,8 +768,12 @@ def get_db() -> sqlite3.Connection:
 
 
 def close_db() -> None:
+    global _injected_db_connection
+
     conn = getattr(_local, "conn", None)
     if conn:
+        if conn is _injected_db_connection:
+            _injected_db_connection = None
         conn.close()
         _local.conn = None
 
