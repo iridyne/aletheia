@@ -16,6 +16,8 @@ from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPP
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.combining import OrTrigger
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from aletheia.config.loader import load_config
@@ -70,6 +72,23 @@ _ESSENTIAL_JOBS: set[str] = {
 # can reference the same source of truth and stay in sync when the interval
 # changes here.
 MARKET_DATA_INTERVAL_MINUTES = 5
+
+_EQUITY_MARKET_TZ = "America/New_York"
+
+
+def _equity_observer_trigger() -> OrTrigger:
+    """Return only the valid half-hour fires in the Eastern session."""
+    return OrTrigger([
+        CronTrigger(
+            day_of_week="mon-fri", hour="9", minute="30", timezone=_EQUITY_MARKET_TZ
+        ),
+        CronTrigger(
+            day_of_week="mon-fri", hour="10-15", minute="0,30", timezone=_EQUITY_MARKET_TZ
+        ),
+        CronTrigger(
+            day_of_week="mon-fri", hour="16", minute="0", timezone=_EQUITY_MARKET_TZ
+        ),
+    ])
 
 # A persisted overdue Learning measurement should recover after the gateway is
 # ready, but before the legacy two-minute startup catch-up.  The latter remains
@@ -1449,14 +1468,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=120, executor="agents",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
-    # US equity observer — runs every 30 min Mon–Fri during US market hours
-    # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
-    # + Bitget xStocks real-time price cross-validation. Replaces stock_observer.
-    # hour="14-21" so the last fire at 21:00 covers the closing auction (highest volume).
+    # US equity observer — wakes only at valid Eastern half-hours in the
+    # 09:30–16:00 America/New_York session.  The trigger owns the boundary so a
+    # delayed 16:00 fire can still run inside misfire_grace_time after the
+    # single agents worker becomes available.
     _scheduler.add_job(
-        _guarded("equity_observer", _run_equity_observer), "cron",
-        day_of_week="mon-fri", hour="14-21", minute="*/30",
-        id="equity_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
+        _guarded("equity_observer", _run_equity_observer), _equity_observer_trigger(),
+        id="equity_observer", misfire_grace_time=300, executor="agents",
     )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
@@ -3003,7 +3021,7 @@ def _tpsl_fill_check_body():
 
 
 def _run_equity_observer():
-    """Run equity_observer during US market hours (scheduler cron already filters)."""
+    """Run equity_observer; the scheduler trigger owns the session boundary."""
     cfg = load_config()
     if cfg.runtime.paused:
         return
