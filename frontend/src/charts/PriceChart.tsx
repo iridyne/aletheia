@@ -103,6 +103,8 @@ export interface PriceChartProps {
   settings: ChartSettings
   onMarkerClick?: (events: ChartMarker[]) => void
   onMetaChange?: (meta: OhlcvResult['meta'] | null) => void
+  onPollError?: () => void
+  onPollRecovered?: () => void
 }
 
 interface IndicatorPaneProps {
@@ -285,7 +287,7 @@ function IndicatorPane({
 
 export default function PriceChart({
   symbol, timeframe = '1h', marketType = 'spot', exchange = '', markers = [], positionLevels = [],
-  settings, onMarkerClick, onMetaChange,
+  settings, onMarkerClick, onMetaChange, onPollError, onPollRecovered,
 }: PriceChartProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const priceContainerRef = useRef<HTMLDivElement>(null)
@@ -312,10 +314,14 @@ export default function PriceChart({
   const exchangeRef = useRef(exchange)
   const markerClickRef = useRef(onMarkerClick)
   const metaChangeRef = useRef(onMetaChange)
+  const pollErrorRef = useRef(onPollError)
+  const pollRecoveredRef = useRef(onPollRecovered)
   const paneChartsRef = useRef<Map<SubchartIndicatorId, IChartApi>>(new Map())
   exchangeRef.current = exchange
   markerClickRef.current = onMarkerClick
   metaChangeRef.current = onMetaChange
+  pollErrorRef.current = onPollError
+  pollRecoveredRef.current = onPollRecovered
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
   const [barRevision, setBarRevision] = useState(0)
 
@@ -465,7 +471,12 @@ export default function PriceChart({
       try {
         const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchangeRef.current)
         if (cancelled) return
+        if (!result.candles.length) {
+          pollErrorRef.current?.()
+          return
+        }
         metaChangeRef.current?.(result.meta)
+        pollRecoveredRef.current?.()
         for (const bar of result.candles.sort((a, b) => a.time - b.time)) {
           const last = barsRef.current[barsRef.current.length - 1]
           if (!last || bar.time < last.time) continue
@@ -475,6 +486,7 @@ export default function PriceChart({
         setAllData()
       } catch {
         // The next live tick retries without replacing visible data.
+        if (!cancelled) pollErrorRef.current?.()
       }
     }
     void (async () => {

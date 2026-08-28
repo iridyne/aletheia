@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Position, UniverseCurrentResponse } from '../types'
 import type * as PriceChartModel from '../charts/priceChartModel'
 import type { ChartSettings } from '../charts/priceChartModel'
+import type { OhlcvResult } from '../api/client'
 
 vi.mock('../charts/PriceChart', async () => {
   const model = await vi.importActual<typeof PriceChartModel>('../charts/priceChartModel')
@@ -16,7 +17,20 @@ vi.mock('../charts/PriceChart', async () => {
     MAIN_INDICATOR_IDS: model.MAIN_INDICATOR_IDS,
     SUBCHART_INDICATOR_IDS: model.SUBCHART_INDICATOR_IDS,
     MAX_INDICATORS_PER_ZONE: model.MAX_INDICATORS_PER_ZONE,
-    default: ({ symbol, marketType, settings, timeframe }: { symbol: string; marketType: string; timeframe?: string; settings: ChartSettings }) => (
+    marketDataMetaState: (meta: { ageMs: number | null; stale: boolean | null; receivedAt: number }, now: number) => {
+      if (meta.ageMs == null) return { ageMs: null, stale: meta.stale }
+      const ageMs = meta.ageMs + Math.max(0, now - meta.receivedAt)
+      return { ageMs, stale: meta.stale || ageMs > 15_000 }
+    },
+    default: ({ symbol, marketType, settings, timeframe, onMetaChange, onPollError, onPollRecovered }: {
+      symbol: string
+      marketType: string
+      timeframe?: string
+      settings: ChartSettings
+      onMetaChange?: (meta: OhlcvResult['meta']) => void
+      onPollError?: () => void
+      onPollRecovered?: () => void
+    }) => (
       <div
         data-testid="price-chart"
         data-symbol={symbol}
@@ -26,7 +40,15 @@ vi.mock('../charts/PriceChart', async () => {
         data-subchart-indicators={settings.indicators.subcharts.join(',')}
         data-scale-mode={settings.scale.mode}
         data-timezone={settings.view.timezone}
-      >Chart canvas</div>
+      >
+        Chart canvas
+        <button type="button" data-testid="meta-success" onClick={() => onMetaChange?.({
+          source: 'provider_fetch', instrument: 'binance:BTC/USDT:spot:1h', asOf: '2026-08-13T00:00:00Z',
+          receivedAt: Date.now(), ageMs: 2_000, stale: false,
+        })}>Meta success</button>
+        <button type="button" data-testid="poll-error" onClick={() => onPollError?.()}>Poll error</button>
+        <button type="button" data-testid="poll-recovered" onClick={() => onPollRecovered?.()}>Poll recovered</button>
+      </div>
     ),
   }
 })
@@ -140,6 +162,30 @@ describe('Markets workbench', () => {
     expect(text).toContain('Chart settings')
     expect(text).not.toMatch(/KLineChart|TradingView Lite/)
     expect(text).not.toMatch(/Hyperliquid liquidation wall|Position X|\bBuy\b|\bSell\b/)
+  })
+
+  it('advances candle age after failed refreshes and separates transport degradation', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    try {
+      const node = renderCharts()
+      const chart = node.querySelector('[data-testid="price-chart"]')!
+      const provenance = () => node.querySelector('.market-context-provenance')?.textContent || ''
+
+      click(chart.querySelector('[data-testid="meta-success"]') as HTMLButtonElement)
+      expect(provenance()).toContain('Market data as of 2s ago · fetched 0s ago')
+      expect(provenance()).not.toContain('Data refreshed 2s ago')
+
+      act(() => vi.advanceTimersByTime(20_000))
+      expect(provenance()).toContain('Market data as of 22s ago · fetched 20s ago · stale')
+
+      click(chart.querySelector('[data-testid="poll-error"]') as HTMLButtonElement)
+      expect(provenance()).toContain('live refresh unavailable')
+      click(chart.querySelector('[data-testid="poll-recovered"]') as HTMLButtonElement)
+      expect(provenance()).not.toContain('live refresh unavailable')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('opens chart settings as a centered modal covering View, Price scale, Overlays, Main chart indicators, and Subcharts', () => {

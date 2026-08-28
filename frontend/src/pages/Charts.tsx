@@ -6,7 +6,8 @@ import {
 } from '../api/client'
 import PriceChart, {
   DEFAULT_CHART_SETTINGS, MAIN_INDICATOR_IDS, MAX_INDICATORS_PER_ZONE, SUBCHART_INDICATOR_IDS,
-  type ChartMarker, type ChartSettings, type MainIndicatorId, type PositionLevel, type SubchartIndicatorId,
+  marketDataMetaState, type ChartMarker, type ChartSettings, type MainIndicatorId, type PositionLevel,
+  type SubchartIndicatorId,
 } from '../charts/PriceChart'
 import MacroBar from '../components/MacroBar'
 import PageHeader from '../components/PageHeader'
@@ -521,6 +522,8 @@ export default function Charts() {
   const [chartSettings, setChartSettings] = useState<ChartSettings>(hydrateChartSettings)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dataMeta, setDataMeta] = useState<OhlcvResult['meta'] | null>(null)
+  const [metaNow, setMetaNow] = useState(() => Date.now())
+  const [pollUnavailable, setPollUnavailable] = useState(false)
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false)
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<ReadonlySet<string>>(() => new Set<string>())
   const toggleGroupCollapse = useCallback((id: string) => {
@@ -661,7 +664,14 @@ export default function Charts() {
     document.getElementById('market-chart-toolbar')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [selectInstrument])
   const signalCount = opportunities.filter(opportunity => opportunity.status === 'open').length
-  const metaAge = dataMeta?.ageMs == null ? 'age not available' : dataMeta.ageMs < 60_000 ? `${Math.floor(dataMeta.ageMs / 1000)}s ago` : `${Math.floor(dataMeta.ageMs / 60_000)}m ago`
+  useEffect(() => {
+    const clock = window.setInterval(() => setMetaNow(Date.now()), 10_000)
+    return () => window.clearInterval(clock)
+  }, [])
+  const metaState = dataMeta ? marketDataMetaState(dataMeta, metaNow) : null
+  const formatAge = (ageMs: number | null) => ageMs == null ? 'age not available' : ageMs < 60_000 ? `${Math.floor(ageMs / 1000)}s ago` : `${Math.floor(ageMs / 60_000)}m ago`
+  const dataAge = formatAge(metaState?.ageMs ?? null)
+  const fetchAge = formatAge(dataMeta ? Math.max(0, metaNow - dataMeta.receivedAt) : null)
   const navigator = <InstrumentNavigator
     groups={groups}
     active={active}
@@ -711,7 +721,11 @@ export default function Charts() {
       <strong className="market-context-price mono">{currentSnapshot?.price == null ? 'Price not available' : fmtNum(currentSnapshot.price)}</strong>
       {currentSnapshot?.change_pct_24h != null && <span className={currentSnapshot.change_pct_24h > 0 ? 'pnl-positive' : currentSnapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}>{fmtDelta(currentSnapshot.change_pct_24h)}%</span>}
       <span>{active.exchange || 'default exchange'} · {active.marketType}</span>
-      <span className="market-context-provenance">{dataMeta ? `Data refreshed ${metaAge}` : 'Data source not available'}</span>
+      <span className="market-context-provenance">
+        {dataMeta
+          ? `Market data as of ${dataAge} · fetched ${fetchAge}${metaState?.stale ? ' · stale' : ''}${pollUnavailable ? ' · live refresh unavailable' : ''}`
+          : 'Data source not available'}
+      </span>
     </div>
     {entryPlanId && <Card className="entry-workbench-notice">
       {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}
@@ -744,7 +758,9 @@ export default function Charts() {
           positionLevels={positionLevels}
           settings={chartSettings}
           onMarkerClick={setSelectedEvents}
-          onMetaChange={setDataMeta}
+          onMetaChange={meta => { setDataMeta(meta); setMetaNow(Date.now()); setPollUnavailable(false) }}
+          onPollError={() => setPollUnavailable(true)}
+          onPollRecovered={() => setPollUnavailable(false)}
         />
       </Card>
     </div>

@@ -128,6 +128,7 @@ describe('OHLCV response metadata', () => {
       source: 'database_fallback',
       instrument: 'bybit:BTC/USDT:spot:5m',
       asOf: '1970-01-01T00:30:00.000Z',
+      receivedAt: 2_500_000,
       ageMs: 700_000,
       stale: true,
     })

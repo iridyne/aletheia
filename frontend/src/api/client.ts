@@ -474,6 +474,7 @@ export interface OhlcvResult {
 		source: string;
 		instrument: string | null;
 		asOf: string | null;
+		receivedAt: number;
 		ageMs: number | null;
 		stale: boolean | null;
 	};
@@ -548,6 +549,7 @@ export function decodeOhlcvResponse(
 			source: headers.get("X-Aletheia-Data-Source") || "unknown",
 			instrument: headers.get("X-Aletheia-Data-Instrument"),
 			asOf: lastTime === undefined ? null : new Date(lastTime * 1000).toISOString(),
+			receivedAt: nowMs,
 			ageMs,
 			stale: ageMs === null || intervalMs === null ? null : ageMs > intervalMs * 2,
 		},
