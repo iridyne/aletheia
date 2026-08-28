@@ -6291,9 +6291,10 @@ def insert_market_snapshot_batch(snaps) -> int:
 
 def list_market_snapshots(
     symbol: str | None = None,
-    limit: int = 100,
+    limit: int | None = 100,
     exchange: str = "",
     market_type: str | None = None,
+    latest_per_symbol: bool = False,
 ) -> list[dict]:
     """Return market snapshots, optionally filtered by symbol, exchange, and/or market_type.
 
@@ -6314,6 +6315,29 @@ def list_market_snapshots(
         conditions.append("market_type = ?")
         params.append(market_type)
     where = " AND ".join(conditions) if conditions else None
+    if latest_per_symbol:
+        where_sql = f"WHERE {where}" if where else ""
+        sql = f"""
+            WITH ranked AS (
+                SELECT rowid AS snapshot_rowid,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY symbol
+                           ORDER BY COALESCE(snapshot_at, '') DESC, rowid DESC
+                       ) AS snapshot_rank
+                FROM market_snapshots
+                {where_sql}
+            )
+            SELECT snapshots.*
+            FROM market_snapshots AS snapshots
+            JOIN ranked
+              ON ranked.snapshot_rowid = snapshots.rowid
+             AND ranked.snapshot_rank = 1
+            ORDER BY COALESCE(snapshots.snapshot_at, '') DESC, snapshots.rowid DESC
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(1, limit))
+        return [dict(row) for row in get_db().execute(sql, tuple(params)).fetchall()]
     return _select_all(
         "market_snapshots",
         where=where,

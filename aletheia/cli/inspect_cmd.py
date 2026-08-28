@@ -684,7 +684,7 @@ def snapshots(
         return
 
     # Coverage mode: latest snapshot per symbol
-    rows = list_market_snapshots(limit=500)
+    rows = list_market_snapshots(limit=None, latest_per_symbol=True)
     latest: dict = {}
     for r in rows:
         sym = r.get("symbol") or ""
