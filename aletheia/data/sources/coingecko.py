@@ -99,6 +99,8 @@ class CoinGeckoProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult:
         raise NotImplementedError(
             "CoinGecko public OHLC has range-dependent intervals and no volume; "

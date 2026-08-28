@@ -136,6 +136,8 @@ class FallbackChainProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult:
         last_err: Exception | None = None
         attempts: list[OHLCVAttempt] = []
@@ -143,9 +145,10 @@ class FallbackChainProvider:
             declared_name = getattr(type(provider), "venue_name", None)
             provider_name = declared_name if isinstance(declared_name, str) else type(provider).__name__
             try:
-                candles = await provider.get_ohlcv(
-                    symbol, timeframe=timeframe, limit=limit, since=since
-                )
+                fetch_kwargs = {"timeframe": timeframe, "limit": limit, "since": since}
+                if not use_cache:
+                    fetch_kwargs["use_cache"] = False
+                candles = await provider.get_ohlcv(symbol, **fetch_kwargs)
                 if isinstance(candles, OHLCVResult):
                     if candles.attempts:
                         attempts.extend(candles.attempts)
@@ -169,6 +172,7 @@ class FallbackChainProvider:
                     requested=limit,
                     rejected=sum(attempt.rejected for attempt in attempts),
                     attempts=attempts,
+                    source=getattr(candles, "source", None) or "provider_fetch",
                 )
             except NotImplementedError:
                 attempts.append(OHLCVAttempt(provider=provider_name, outcome="unsupported"))
@@ -191,7 +195,11 @@ class FallbackChainProvider:
             last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
             raise last_err
         if any(attempt.outcome == "empty" for attempt in attempts):
-            return OHLCVResult(requested=limit, attempts=attempts)
+            return OHLCVResult(
+                requested=limit,
+                attempts=attempts,
+                source="provider_fetch",
+            )
         raise RuntimeError(f"no provider supports {timeframe} candles for {symbol}")
 
     async def close(self) -> None:

@@ -93,6 +93,18 @@ def _resolve_ccxt_symbol(symbol: InstrumentId | str) -> tuple[str, str, str]:
     return canon, canon, "spot"
 
 
+def _cached_ohlcv_result(cached: object, requested: int) -> OHLCVResult:
+    if isinstance(cached, OHLCVResult):
+        return OHLCVResult(
+            cached,
+            requested=cached.requested,
+            rejected=cached.rejected,
+            attempts=cached.attempts,
+            source="memory_cache",
+        )
+    return OHLCVResult(cached, requested=requested, source="memory_cache")
+
+
 def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
     """Drop malformed CCXT market rows before `set_markets()` sorts by id.
 
@@ -216,6 +228,7 @@ class CCXTProvider:
         limit: int = 100,
         since: int | None = None,
         *,
+        use_cache: bool = True,
         _record_venue_health: bool = True,
         _persist_result: bool = True,
     ) -> OHLCVResult:
@@ -223,15 +236,13 @@ class CCXTProvider:
 
         from aletheia.data.cache import get_cache
         cache = get_cache()
-        if since is None:
+        if use_cache and since is None:
             cached = cache.get(
                 canon, timeframe, limit,
                 market_type=mkt, exchange=self._primary_name,
             )
             if cached is not None:
-                return cached if isinstance(cached, OHLCVResult) else OHLCVResult(
-                    cached, requested=limit,
-                )
+                return _cached_ohlcv_result(cached, limit)
 
         last_err: Exception | None = None
         attempts: list[OHLCVAttempt] = []
@@ -239,15 +250,13 @@ class CCXTProvider:
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
         ):
-            if since is None and name != self._primary_name:
+            if use_cache and since is None and name != self._primary_name:
                 cached = cache.get(
                     canon, timeframe, limit,
                     market_type=mkt, exchange=name,
                 )
                 if cached is not None:
-                    return cached if isinstance(cached, OHLCVResult) else OHLCVResult(
-                        cached, requested=limit,
-                    )
+                    return _cached_ohlcv_result(cached, limit)
             if not is_venue_available(name):
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
@@ -308,8 +317,9 @@ class CCXTProvider:
                     requested=limit,
                     rejected=sum(attempt.rejected for attempt in attempts),
                     attempts=attempts,
+                    source="provider_fetch",
                 )
-                if since is None:
+                if use_cache and since is None:
                     cache.set(
                         canon, timeframe, limit, result,
                         market_type=mkt, exchange=name,
@@ -330,6 +340,7 @@ class CCXTProvider:
                 requested=limit,
                 rejected=sum(attempt.rejected for attempt in attempts),
                 attempts=attempts,
+                source="provider_fetch",
             )
         if last_err:
             last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
