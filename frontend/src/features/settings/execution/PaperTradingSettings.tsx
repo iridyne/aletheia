@@ -14,6 +14,12 @@ import type { SettingsDirtyProps } from '../types'
 
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 type PaperCashAction = 'credit' | 'debit' | 'set'
+type CapitalEventPage = {
+  events: any[]
+  total: number
+  has_more: boolean
+  next_cursor: { detected_at: string; id: string } | null
+}
 
 export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQueryClient>; onDirty?: (id: string, isDirty: boolean) => void }) {
   const confirm = useConfirm()
@@ -146,7 +152,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
       before_id: eventCursor.id,
     } }),
   })
-  const eventPage = Array.isArray(eventPageResponse)
+  const eventPage: CapitalEventPage = Array.isArray(eventPageResponse)
     ? { events: eventPageResponse, total: eventPageResponse.length, has_more: false, next_cursor: null }
     : eventPageResponse ?? { events: [], total: 0, has_more: false, next_cursor: null }
   const events = eventPage.events
