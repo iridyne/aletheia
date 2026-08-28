@@ -71,6 +71,14 @@ class MockAdapter:
         self.closed = True
 
 
+def _legacy_map(brokers, modes=None):
+    return {
+        broker.broker_id: broker
+        for broker in brokers
+        if modes is None or broker.broker_id in modes
+    }
+
+
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
@@ -143,8 +151,8 @@ async def test_unified_state_sums_two_brokers(monkeypatch):
         MockAdapter("binance_testnet", "Binance Testnet", equity=3000, available=2500, upnl=50),
     ]
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: brokers,
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map(brokers, modes),
     )
 
     state: UnifiedState = await get_unified_state()
@@ -163,8 +171,8 @@ async def test_unified_state_one_broker_fails(monkeypatch):
         MockAdapter("binance_testnet", "Binance Testnet", fail=True),
     ]
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: brokers,
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map(brokers, modes),
     )
 
     state: UnifiedState = await get_unified_state()
@@ -180,8 +188,8 @@ async def test_unified_state_one_broker_fails(monkeypatch):
 @pytest.mark.asyncio
 async def test_unified_state_no_brokers(monkeypatch):
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: {},
     )
     state: UnifiedState = await get_unified_state()
     assert state.total_equity_usdt == 0.0
@@ -191,10 +199,10 @@ async def test_unified_state_no_brokers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_broker_close_called_after_query(monkeypatch):
-    adapter = MockAdapter("test", "Test", equity=1000)
+    adapter = MockAdapter("bitget_demo", "Test", equity=1000)
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [adapter],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map([adapter], modes),
     )
     await get_unified_state()
     assert adapter.closed is True
@@ -209,8 +217,8 @@ async def test_positions_merged_across_brokers(monkeypatch):
         MockAdapter("binance_testnet", "Binance", equity=3000, positions=[pos_b]),
     ]
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: brokers,
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map(brokers, modes),
     )
     state = await get_unified_state()
     assert len(state.positions) == 2
@@ -227,8 +235,8 @@ async def test_unified_state_preserves_broker_open_time(monkeypatch):
                                    opened_at_ms=opened_at_ms)],
     )
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [adapter],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map([adapter], modes),
     )
 
     state = await get_unified_state()
@@ -255,8 +263,8 @@ async def test_unified_state_preserves_market_and_leverage_provenance(monkeypatc
         )],
     )
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [adapter],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map([adapter], modes),
     )
 
     state = await get_unified_state()
@@ -365,10 +373,10 @@ async def test_all_uta_adapters_preserve_valid_exchange_leverage():
 # ---------------------------------------------------------------------------
 
 def test_get_unified_state_sync(monkeypatch):
-    adapter = MockAdapter("test_sync", "Test Sync", equity=999)
+    adapter = MockAdapter("bitget_demo", "Test Sync", equity=999)
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [adapter],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map([adapter], modes),
     )
     from aletheia.portfolio.uta.manager import get_unified_state_sync
     state = get_unified_state_sync()
@@ -398,8 +406,8 @@ async def test_positions_query_failure_removes_broker_from_connected(monkeypatch
         positions=[BrokerPosition("ETH/USDT", "long", 1.0, 3000, 0)],
     )
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [partial, healthy],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map([partial, healthy], modes),
     )
 
     state = await get_unified_state()
@@ -417,8 +425,8 @@ async def test_successful_empty_positions_remains_complete_view(monkeypatch):
     """A broker returning an empty positions list (no open positions) is still connected."""
     adapter = MockAdapter("bitget_demo", "Bitget Demo", equity=5000, positions=[])
     monkeypatch.setattr(
-        "aletheia.portfolio.uta.registry.create_all_configured",
-        lambda: [adapter],
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: _legacy_map([adapter], modes),
     )
 
     state = await get_unified_state()

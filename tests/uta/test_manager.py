@@ -21,13 +21,14 @@ from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 NOW = datetime(2026, 8, 27, tzinfo=timezone.utc)
 
 
-def _identity(generation=7):
+def _identity(generation=7, execution_mode="okx_demo"):
+    live = execution_mode.endswith("_live_limited")
     return UTAAccountIdentity(
-        account_id="okx_demo",
-        execution_mode="okx_demo",
+        account_id=execution_mode,
+        execution_mode=execution_mode,
         venue="okx",
-        environment="demo",
-        profile="okx_demo",
+        environment="live" if live else "demo",
+        profile="okx_live" if live else "okx_demo",
         credential_generation=generation,
         adapter_implementation="CCXTUTAAdapter",
         adapter_version="1",
@@ -36,8 +37,15 @@ def _identity(generation=7):
 
 
 class FakeUTAAdapter:
-    def __init__(self, identity, *, position_completeness=ReadCompleteness.COMPLETE):
+    def __init__(
+        self,
+        identity,
+        *,
+        equity="0",
+        position_completeness=ReadCompleteness.COMPLETE,
+    ):
         self.identity = identity
+        self.equity = equity
         self.position_completeness = position_completeness
         self.connected = False
         self.closed = False
@@ -56,8 +64,8 @@ class FakeUTAAdapter:
             received_at=NOW,
             profile_version="1",
             settlement_currency="USDT",
-            equity="0",
-            available="0",
+            equity=self.equity,
+            available=self.equity,
             frozen="0",
         )
 
@@ -181,10 +189,108 @@ async def test_multi_account_reads_start_concurrently(monkeypatch):
     monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
     monkeypatch.setattr("aletheia.uta.manager._legacy_brokers", lambda modes=None: {})
 
-    state = await get_unified_state(cfg)
+    state = await get_unified_state(
+        cfg, execution_modes=("okx_demo", "binance_testnet")
+    )
 
     assert started == 2
     assert state.connected_brokers == ["okx_demo", "binance_testnet"]
+
+
+@pytest.mark.asyncio
+async def test_default_unified_scope_excludes_configured_live_account(monkeypatch):
+    demo = FakeUTAAdapter(_identity(), equity="10")
+    live = FakeUTAAdapter(_identity(execution_mode="okx_live_limited"), equity="100")
+    registry = UTARegistry()
+    for adapter in (demo, live):
+        registry.register(
+            UTAAdapterConfig(identity=adapter.identity, boundary="uta_v1"),
+            lambda _config, adapter=adapter: adapter,
+        )
+    cfg = type(
+        "Config",
+        (),
+        {
+            "exchange": ExchangeConfig(
+                uta_read_boundaries={
+                    "okx_demo": "uta_v1",
+                    "okx_live_limited": "uta_v1",
+                }
+            )
+        },
+    )()
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
+    monkeypatch.setattr("aletheia.uta.manager._legacy_brokers", lambda modes=None: {})
+
+    paper = await get_unified_state(cfg)
+    targeted_live = await get_unified_state(
+        cfg, execution_modes=("okx_live_limited",)
+    )
+
+    assert paper.total_equity_usdt == 10.0
+    assert paper.connected_brokers == ["okx_demo"]
+    assert [row["identity"]["execution_mode"] for row in paper.accounts] == [
+        "okx_demo"
+    ]
+    assert targeted_live.total_equity_usdt == 100.0
+    assert targeted_live.connected_brokers == ["okx_live_limited"]
+
+
+@pytest.mark.asyncio
+async def test_default_unified_scope_ignores_live_legacy_boundary(monkeypatch):
+    demo = FakeUTAAdapter(_identity(), equity="10")
+    live = FakeUTAAdapter(_identity(execution_mode="okx_live_limited"), equity="100")
+    registry = UTARegistry()
+    registry.register(
+        UTAAdapterConfig(identity=demo.identity, boundary="uta_v1"),
+        lambda _config: demo,
+    )
+    registry.register(
+        UTAAdapterConfig(identity=live.identity, boundary="legacy"),
+        lambda _config: live,
+    )
+    cfg = type(
+        "Config",
+        (),
+        {
+            "exchange": ExchangeConfig(
+                uta_read_boundaries={
+                    "okx_demo": "uta_v1",
+                    "okx_live_limited": "legacy",
+                }
+            )
+        },
+    )()
+    calls = []
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
+    monkeypatch.setattr(
+        "aletheia.uta.manager._legacy_brokers",
+        lambda modes=None: calls.append(modes) or {},
+    )
+
+    state = await get_unified_state(cfg)
+
+    assert state.total_equity_usdt == 10.0
+    assert state.errors == []
+    assert state.connected_brokers == ["okx_demo"]
+    assert calls == [()]
+    assert live.connected is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_missing_unified_account_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry", lambda _cfg: UTARegistry()
+    )
+    monkeypatch.setattr("aletheia.uta.manager._legacy_brokers", lambda modes=None: {})
+
+    state = await get_unified_state(
+        _cfg("legacy"), execution_modes=("okx_live_limited",)
+    )
+
+    assert state.total_equity_usdt is None
+    assert state.connected_brokers == []
+    assert state.errors == ["okx_live_limited:account_not_configured"]
 
 
 class FakeLegacyBroker:
