@@ -809,7 +809,11 @@ class CCXTUTAAdapter:
             failed_calls = 0
             history_bound_reached = False
             page_limit = query.scope.limit or 1000
-            for params in self._profile.ledger_requests:
+            ledger_requests = self._profile.funding_ledger_requests(
+                start_at=query.scope.start_at,
+                received_at=received_at,
+            )
+            for params in ledger_requests:
                 try:
                     page = await self._request(
                         exchange.fetch_ledger(
@@ -825,7 +829,7 @@ class CCXTUTAAdapter:
                     rows.extend(item for item in page if isinstance(item, dict))
                 except (Exception, TimeoutError):
                     failed_calls += 1
-            if failed_calls == len(self._profile.ledger_requests):
+            if failed_calls == len(ledger_requests):
                 raise RuntimeError("private funding ledger unavailable")
             events = self._profile.funding_events(rows)
             entries = []

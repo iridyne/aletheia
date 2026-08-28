@@ -67,6 +67,7 @@ class FakeExchange:
         self.exact_order = None
         self.trades = []
         self.ledger = []
+        self.ledger_responses = []
         self.balance_params = []
         self.position_calls = []
         self.order_params = []
@@ -141,6 +142,11 @@ class FakeExchange:
 
     async def fetch_ledger(self, code=None, since=None, limit=None, params=None):
         self.events.append(("fetch_ledger", dict(params or {})))
+        if self.ledger_responses:
+            response = self.ledger_responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
         return list(self.ledger)
 
     async def set_leverage(self, leverage, symbol):
@@ -648,6 +654,103 @@ async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
         if event[0] in {"fetch_my_trades", "fetch_ledger"}
     )
     await adapter.close()
+
+
+def _okx_funding_row(event_id: str, amount: str, timestamp: int) -> dict:
+    return {"info": {
+        "billId": event_id,
+        "instId": "BTC-USDT-SWAP",
+        "type": "8",
+        "subType": "173",
+        "pnl": amount,
+        "ccy": "USDT",
+        "ts": str(timestamp),
+    }}
+
+
+def _funding_scope(now: datetime, *, age_days: int) -> QueryScope:
+    return QueryScope(
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        start_at=now - timedelta(days=age_days),
+        end_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_okx_recent_funding_window_uses_only_recent_surface(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    exchange.ledger = [_okx_funding_row(
+        "recent", "0.02", int((now - timedelta(days=1)).timestamp() * 1000)
+    )]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_funding_ledger(FundingLedgerQuery(
+        scope=_funding_scope(now, age_days=2)
+    ))
+
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert [event[1].get("method") for event in exchange.events
+            if event[0] == "fetch_ledger"] == [None]
+
+
+@pytest.mark.asyncio
+async def test_okx_older_funding_window_merges_archive_without_duplicates(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    recent = _okx_funding_row(
+        "recent", "0.02", int((now - timedelta(days=1)).timestamp() * 1000)
+    )
+    older = _okx_funding_row(
+        "older", "-0.05", int((now - timedelta(days=12)).timestamp() * 1000)
+    )
+    exchange.ledger_responses = [[recent], [recent, older]]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_funding_ledger(FundingLedgerQuery(
+        scope=_funding_scope(now, age_days=20)
+    ))
+
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert [(entry.venue_ledger_id, entry.amount) for entry in report.entries] == [
+        ("older", Decimal("-0.05")),
+        ("recent", Decimal("0.02")),
+    ]
+    assert [event[1].get("method") for event in exchange.events
+            if event[0] == "fetch_ledger"] == [
+        None, "privateGetAccountBillsArchive"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_okx_archive_failure_keeps_recent_evidence_partial(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    exchange.ledger_responses = [[_okx_funding_row(
+        "recent", "0.02", int((now - timedelta(days=1)).timestamp() * 1000)
+    )], TimeoutError()]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_funding_ledger(FundingLedgerQuery(
+        scope=_funding_scope(now, age_days=20)
+    ))
+
+    assert report.completeness is ReadCompleteness.PARTIAL
+    assert report.reason_code == "funding_ledger_partial"
+    assert [entry.venue_ledger_id for entry in report.entries] == ["recent"]
 
 
 @pytest.mark.asyncio
