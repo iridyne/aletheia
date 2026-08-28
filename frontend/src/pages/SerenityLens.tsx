@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -13,6 +13,10 @@ import ThesisText from '../components/ThesisText'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
 const SERENITY_TABS: Tab[] = ['overview', 'runs', 'themes', 'evidence', 'profile']
+
+type SerenityProfilePreview = { sourceBrief: string; result: any }
+type SerenityProfileDraft = { brief: string; preview: SerenityProfilePreview | null }
+const EMPTY_SERENITY_PROFILE_DRAFT: SerenityProfileDraft = { brief: '', preview: null }
 
 // U1: verdict recommendation tone mapping (AI Berkshire forced-verdict)
 const VERDICT_TONE: Record<string, StatusTone> = {
@@ -932,40 +936,55 @@ function EvidenceTab() {
 }
 
 // --- Profile Tab ---
-function ProfileTab() {
+function ProfileTab({ draft, setDraft }: {
+  draft: SerenityProfileDraft
+  setDraft: Dispatch<SetStateAction<SerenityProfileDraft>>
+}) {
   const qc = useQueryClient()
   const { data } = useQuery({
     queryKey: ['serenity-profile'],
     queryFn: api.getSerenityProfile,
   })
 
-  const [editBrief, setEditBrief] = useState('')
-  const [parseResult, setParseResult] = useState<any>(null)
   const [parseError, setParseError] = useState('')
   const [saveError, setSaveError] = useState('')
 
   const parseMut = useMutation({
-    mutationFn: () => api.parseSerenityBrief(editBrief),
-    onMutate: () => {
+    mutationFn: (brief: string) => api.parseSerenityBrief(brief),
+    onMutate: (brief: string) => {
       setParseError('')
-      setParseResult(null)
+      setDraft(current => current.brief === brief ? { ...current, preview: null } : current)
     },
-    onSuccess: (d) => setParseResult(d),
+    onSuccess: (result, brief: string) => {
+      setDraft(current => current.brief === brief
+        ? { ...current, preview: { sourceBrief: brief, result } }
+        : current)
+    },
     onError: (error: unknown) => setParseError(`Preview failed: ${safeErrorText(error)}`),
   })
 
   const saveMut = useMutation({
-    mutationFn: (body: any) => api.updateSerenityProfile(body),
+    mutationFn: ({ body }: { body: any; preview: SerenityProfilePreview }) => api.updateSerenityProfile(body),
     onMutate: () => setSaveError(''),
-    onSuccess: () => {
+    onSuccess: (_result, variables: { body: any; preview: SerenityProfilePreview }) => {
       qc.invalidateQueries({ queryKey: ['serenity-profile'] })
-      setParseResult(null)
-      setEditBrief('')
+      setDraft(current => current.preview === variables.preview
+        ? EMPTY_SERENITY_PROFILE_DRAFT
+        : current)
     },
     onError: (error: unknown) => setSaveError(`Save failed: ${safeErrorText(error)}`),
   })
 
   const profile = data?.profile
+  const parseResult = draft.preview?.result
+  const canSave = Boolean(draft.preview && draft.preview.sourceBrief === draft.brief)
+  const discardDraft = () => {
+    if (window.confirm('Discard this unsaved profile draft?')) {
+      setDraft(EMPTY_SERENITY_PROFILE_DRAFT)
+      setParseError('')
+      setSaveError('')
+    }
+  }
 
   return (
     <div>
@@ -996,24 +1015,35 @@ function ProfileTab() {
         <div className="lens-brief-input">
           <textarea
             placeholder="Describe your research focus in natural language (e.g. '关注 AI 半导体供应链\navoid meme coins')…"
-            value={editBrief}
-            onChange={e => setEditBrief(e.target.value)}
+            value={draft.brief}
+            onChange={e => {
+              const brief = e.target.value
+              setDraft(current => current.brief === brief
+                ? current
+                : { brief, preview: null })
+            }}
             rows={3}
             maxLength={2000}
           />
           <div className="lens-brief-actions">
-            <Button variant="secondary" onClick={() => parseMut.mutate()} disabled={!editBrief || parseMut.isPending}>
+            <Button variant="secondary" onClick={() => parseMut.mutate(draft.brief)} disabled={!draft.brief || parseMut.isPending}>
               {parseMut.isPending ? 'Parsing…' : 'Preview'}
             </Button>
-            {parseResult && (
+            {canSave && (
               <Button onClick={() => saveMut.mutate({
-                includeTopics: parseResult.parsed?.includeTopics,
-                excludeTopics: parseResult.parsed?.excludeTopics,
-                timeHorizon: parseResult.parsed?.timeHorizon,
-                rawBrief: editBrief,
+                preview: draft.preview!,
+                body: {
+                  includeTopics: parseResult.parsed?.includeTopics,
+                  excludeTopics: parseResult.parsed?.excludeTopics,
+                  timeHorizon: parseResult.parsed?.timeHorizon,
+                  rawBrief: draft.preview!.sourceBrief,
+                },
               })} disabled={saveMut.isPending}>
                 {saveMut.isPending ? 'Saving…' : 'Save to Profile'}
               </Button>
+            )}
+            {(draft.brief || draft.preview) && (
+              <Button variant="secondary" onClick={discardDraft}>Discard draft</Button>
             )}
           </div>
         </div>
@@ -1042,6 +1072,7 @@ function ProfileTab() {
 // --- Main Page ---
 export default function SerenityLens() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const [profileDraft, setProfileDraft] = useState<SerenityProfileDraft>(EMPTY_SERENITY_PROFILE_DRAFT)
   const requestedTab = searchParams.get('tab') as Tab | null
   const activeTab = requestedTab && SERENITY_TABS.includes(requestedTab) ? requestedTab : 'overview'
   const setActiveTab = (tab: Tab) => {
@@ -1068,7 +1099,7 @@ export default function SerenityLens() {
           { id: 'runs',     label: 'Runs',     render: () => <RunsTab /> },
           { id: 'themes',   label: 'Themes',   render: () => <ThemesTab /> },
           { id: 'evidence', label: 'Evidence', render: () => <EvidenceTab /> },
-          { id: 'profile',  label: 'Profile',  render: () => <ProfileTab /> },
+          { id: 'profile',  label: 'Profile',  render: () => <ProfileTab draft={profileDraft} setDraft={setProfileDraft} /> },
         ]) as TabDef[]}
       />
     </div>
