@@ -123,10 +123,11 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
                 "conclusion": "failure",
                 "started_at": "2026-08-24T00:00:02Z",
                 "completed_at": "2026-08-24T00:00:20Z",
-                "steps": [{
-                    "name": "Verify Change Contract before deep CI",
-                    "conclusion": "failure",
-                }],
+            "steps": [{
+                "name": "Verify Change Contract before deep CI",
+                "conclusion": "failure",
+            }],
+                "labels": ["self-hosted", "pr-ephemeral"],
             }]}
         if path == "actions/runs/10/attempts/2/jobs?per_page=100":
             return {"jobs": [{
@@ -135,7 +136,8 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
                 "conclusion": "success",
                 "started_at": "2026-08-24T00:01:00Z",
                 "completed_at": "2026-08-24T00:01:10Z",
-                "steps": [],
+            "steps": [],
+                "labels": ["self-hosted", "pr-ephemeral"],
             }]}
         if path.startswith("actions/runs/20/"):
             return {"jobs": []}
@@ -158,6 +160,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
     assert collected["lanes"][0]["independent_defect"] == "no"
     assert collected["lanes"][0]["eligible_at_estimate"] == "2026-08-24T00:00:02Z"
     assert collected["lanes"][0]["runner_queue_wait_seconds_estimate"] == 0
+    assert collected["lanes"][0]["runner_class"] == "pr-ephemeral"
 
 
 def test_limit_50_pages_numbers_before_bounded_pr_details(monkeypatch) -> None:
@@ -202,6 +205,54 @@ def test_listing_failure_is_structured_unavailable(monkeypatch) -> None:
     assert report["pull_requests"] == []
 
 
+def test_detail_failure_is_partial_and_does_not_abort_selection(monkeypatch) -> None:
+    calls = []
+
+    def fake_gh(args):
+        calls.append(args)
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return [[
+                {"number": 1, "merged_at": "2026-08-24T00:00:00Z"},
+                {"number": 2, "merged_at": "2026-08-24T00:00:00Z"},
+            ]]
+        if args[0:2] == ["pr", "view"] and args[2] == "1":
+            raise RuntimeError("transient detail failure")
+        pr = _pr()
+        pr["number"] = int(args[2])
+        return pr
+
+    monkeypatch.setattr(ci_yield, "_gh_json", fake_gh)
+    monkeypatch.setattr(
+        ci_yield,
+        "_collect_pr",
+        lambda _repo, pr: {
+            "pr": {"pr_number": pr["number"], "ci_attempts_before_merge": 0, "failed_ci_attempts": 0},
+            "attempts": [],
+            "lanes": [],
+        },
+    )
+
+    report = ci_yield.collect("iridyne/aletheia", 1, workers=1)
+
+    assert report["data_quality"]["status"] == "partial"
+    assert report["data_quality"]["complete_prs"] == 1
+    assert report["data_quality"]["collection_errors"] == [
+        {"pr_number": 1, "error": "transient detail failure"},
+    ]
+    assert report["pull_requests"][0]["pr_number"] == 2
+
+
+def test_missing_slo_evidence_is_unknown() -> None:
+    summary = ci_yield._summary([], [], [])
+
+    assert summary["slo"] == {
+        "full_ci_p50_le_420": None,
+        "full_ci_p95_le_600": None,
+        "runner_wait_p50_le_15_estimate": None,
+        "runner_wait_p95_le_120_estimate": None,
+    }
+
+
 def test_markdown_keeps_unknown_yield_visible() -> None:
     report = {
         "summary": {
@@ -227,3 +278,12 @@ def test_markdown_keeps_unknown_yield_visible() -> None:
     markdown = ci_yield.markdown_report(report)
     assert "Independent-defect ambiguity remains `unknown`" in markdown
     assert "| Python integration | 1 | 1 | 2.0 | 0 | 1 | None |" in markdown
+
+
+def test_markdown_reports_unavailable_without_summary_shape() -> None:
+    markdown = ci_yield.markdown_report({
+        "data_quality": {"status": "unavailable", "reason": "node limit"},
+        "summary": {},
+    })
+
+    assert "Data unavailable: `node limit`" in markdown

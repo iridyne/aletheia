@@ -342,7 +342,10 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                     "runner_group_name": job.get("runner_group_name"),
                     "runner_class": (
                         "pr-ephemeral"
-                        if "pr-" in str(job.get("runner_name") or "")
+                        if "pr-ephemeral" in {
+                            str(label).strip().lower()
+                            for label in job.get("labels") or []
+                        }
                         else job.get("runner_group_name") or "unknown"
                     ),
                     "runner_registration_id": None,
@@ -521,10 +524,10 @@ def _summary(prs: list[dict[str, Any]], attempts: list[dict[str, Any]], lanes: l
             "source": "eligible_at_estimate_from_direct_needs_completion",
         },
         "slo": {
-            "full_ci_p50_le_420": full_p50 is not None and full_p50 <= 420,
-            "full_ci_p95_le_600": full_p95 is not None and full_p95 <= 600,
-            "runner_wait_p50_le_15_estimate": queue_p50 is not None and queue_p50 <= 15,
-            "runner_wait_p95_le_120_estimate": queue_p95 is not None and queue_p95 <= 120,
+            "full_ci_p50_le_420": None if full_p50 is None else full_p50 <= 420,
+            "full_ci_p95_le_600": None if full_p95 is None else full_p95 <= 600,
+            "runner_wait_p50_le_15_estimate": None if queue_p50 is None else queue_p50 <= 15,
+            "runner_wait_p95_le_120_estimate": None if queue_p95 is None else queue_p95 <= 120,
         },
         "lane_orchestration_and_queue_wait_seconds": {
             "p50": _percentile(lane_wait_seconds, 0.50),
@@ -582,13 +585,17 @@ def collect(repo: str, limit: int, workers: int = 4) -> dict[str, Any]:
             "summary": {}, "pull_requests": [], "attempts": [], "lanes": [],
         }
     selected = []
+    errors: list[dict[str, Any]] = []
     for number in numbers:
-        pr = _gh_json(["pr", "view", str(number), "--repo", repo, "--json", PR_FIELDS])
+        try:
+            pr = _gh_json(["pr", "view", str(number), "--repo", repo, "--json", PR_FIELDS])
+        except RuntimeError as exc:
+            errors.append({"pr_number": number, "error": str(exc)[:500]})
+            continue
         if _is_ordinary_code_pr(pr):
             selected.append(pr)
         if len(selected) == limit:
             break
-    errors: list[dict[str, Any]] = []
     collected: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [(pr, pool.submit(_collect_pr, repo, pr)) for pr in selected]
@@ -621,7 +628,14 @@ def collect(repo: str, limit: int, workers: int = 4) -> dict[str, Any]:
 
 
 def markdown_report(report: dict[str, Any]) -> str:
-    summary = report["summary"]
+    summary = report.get("summary") or {}
+    if "full_required_ci_execution_seconds" not in summary:
+        quality = report.get("data_quality") or {}
+        reason = quality.get("reason") or quality.get("status") or "unavailable"
+        return (
+            "# CI Yield baseline\n\n"
+            f"Data unavailable: `{reason}`. No SLO judgment is emitted.\n"
+        )
     full = summary["full_required_ci_execution_seconds"]
     queue = summary["workflow_queue_seconds"]
     lines = [

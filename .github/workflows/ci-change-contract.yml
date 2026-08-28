@@ -1,7 +1,7 @@
 # RUNNER SECURITY CONTRACT (#1356)
-# This metadata gate pins label `casi` so it does not contend with Fedora deep
-# pytest slots. #1356 ephemeral isolation remains a known gap: CASI workers are
-# still persistent self-hosted hosts, not a disposable trusted substrate.
+# Every metadata job runs on the dedicated one-job disposable `pr-ephemeral`
+# runner class. Privileged release handoff stays in the default-branch
+# workflow_run controller on the separate CASI class.
 #
 # PHASE 1 SAME-HEAD METADATA RECOVERY CONTRACT (#2167, addendum A)
 # ci.yml deliberately does NOT listen to pull_request `edited`, so a PR-body-only

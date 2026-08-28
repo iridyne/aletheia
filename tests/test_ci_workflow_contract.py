@@ -980,6 +980,7 @@ def test_pr_runner_isolation_contract() -> None:
         "cancel-in-progress": "false",
     }
     job = handoff["jobs"]["handoff"]
+    assert "startsWith(github.event.workflow_run.head_branch" in job["if"]
     assert job["runs-on"] == SELF_HOSTED_CASI
     assert not any("checkout" in str(step.get("uses", "")) for step in job["steps"])
     script = job["steps"][0]["with"]["script"]
