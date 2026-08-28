@@ -683,6 +683,11 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "review-native",
     ]
     assert unit_job["name"] == "Python unit"
+    assert any(
+        step.get("uses") == SETUP_NODE_ACTION
+        and step.get("with", {}).get("node-version") == "22"
+        for step in unit_job["steps"]
+    )
 
     # Stage 2 has exactly two deterministic lane heads.
     assert runtime_job["needs"] == ["review", "unit"]
