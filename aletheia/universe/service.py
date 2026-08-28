@@ -84,6 +84,13 @@ def _notify_operator_feature_refresh(source: str) -> bool:
         return False
 
 
+def _execution_eligible(member: object) -> bool:
+    """Only execution-eligible Candidates may enter the planning queue."""
+    if isinstance(member, dict):
+        return bool(member.get("execution_eligible", True))
+    return bool(getattr(member, "execution_eligible", True))
+
+
 async def _compute_twin_shadow_nonfatal(
     builder,
     inputs: tuple,
@@ -904,6 +911,7 @@ class UniverseService:
                     ),
                 )
                 for item in unique_scored
+                if _execution_eligible(item)
             }
 
             now = datetime.now(timezone.utc)
@@ -1002,6 +1010,8 @@ class UniverseService:
                 new_generation_ids: set[str] = set()
                 with _atomic_universe_publication():
                     for member in repo.list_universe_members(prev_snapshot_id, limit=500):
+                        if not _execution_eligible(member):
+                            continue
                         try:
                             generation, created = repo.ensure_candidate_planning_generation(
                                 member["id"],
@@ -1131,6 +1141,8 @@ class UniverseService:
                 selected_generation_ids: set[str] = set()
                 new_generation_ids: set[str] = set()
                 for member in member_models:
+                    if not _execution_eligible(member):
+                        continue
                     try:
                         generation, created = repo.ensure_candidate_planning_generation(
                             member.id,
