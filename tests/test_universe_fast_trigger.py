@@ -944,16 +944,19 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
     cfg.exchange.paper_execution_mode = "bitget_demo"
     first = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
     second = InstrumentId.from_parts("bitget", "ETH/USDT", "perp")
+    observed = []
 
     class Engine:
-        def __init__(self, instrument):
+        def __init__(self, instrument, generation):
             self.instrument = instrument
+            self.generation = generation
             self.state = "armed"
 
         def confirm_subscription(self):
             pass
 
-        def observe(self, _event):
+        def observe(self, event):
+            observed.append((self.generation, event.sequence))
             return None
 
     class BusyStream:
@@ -998,9 +1001,9 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
     async def load_watchers(_cfg, existing=None):
         nonlocal load_count
         load_count += 1
-        engines = {"first": existing.get("first", Engine(first)) if existing else Engine(first)}
+        engines = {"first": Engine(first, load_count)}
         if load_count > 1:
-            engines["second"] = existing.get("second", Engine(second)) if existing else Engine(second)
+            engines["second"] = Engine(second, load_count)
         return {key: object() for key in engines}, engines
 
     monkeypatch.setattr(watch, "_WATCHER_RELOAD_INTERVAL_SEC", 0.01)
@@ -1019,6 +1022,7 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
 
     assert frozenset({first, second}) in stream.subscriptions
     assert load_count >= 2
+    assert all(generation == 1 for generation, _sequence in observed)
 
 
 def test_authorization_refuses_non_2r_target_and_cross_venue(tmp_path, monkeypatch):
