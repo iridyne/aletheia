@@ -69,6 +69,16 @@ _VERIFICATION_FIELDS = (
 )
 
 
+class ProviderNotConfigured(ValueError):
+    """A selected provider lacks the owner-supplied config required to run."""
+
+    reason_code = "not_configured"
+
+    def __init__(self, name: str):
+        self.provider_name = name
+        super().__init__(f"Model provider is not_configured: {name}")
+
+
 def clear_provider_verification(pcfg) -> None:
     """Remove durable verification evidence from one provider config."""
 
@@ -98,6 +108,11 @@ def provider_is_configured(name: str, pcfg) -> bool:
     # CLI integrations own their credentials outside Aletheia.  An entry in
     # ModelsConfig is the explicit integration configuration boundary.
     return True
+
+
+def _require_provider_configured(name: str, pcfg) -> None:
+    if not provider_is_configured(name, pcfg):
+        raise ProviderNotConfigured(name)
 
 
 def provider_configuration_identity(
@@ -432,6 +447,7 @@ def get_provider(name: str | None = None) -> ModelProvider:
         raise ValueError(f"Unknown provider: {name}")
     if not pcfg.enabled:
         raise ValueError(f"Model provider is disabled: {name}")
+    _require_provider_configured(name, pcfg)
 
     if name in _cache:
         return _cache[name]
@@ -516,6 +532,7 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
         raise ValueError(f"Unknown provider: {name}")
     if not pcfg.enabled:
         raise ValueError(f"Model provider is disabled: {name}")
+    _require_provider_configured(name, pcfg)
 
     # For a cached OAuth-native provider, verify the token is still current.
     # The sync get_provider path cannot refresh inside a running event loop, so this

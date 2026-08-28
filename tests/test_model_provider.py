@@ -19,7 +19,9 @@ from aletheia.model_provider.router import (
     invalidate_health_cache,
     invalidate_model_directory,
     get_provider,
+    get_provider_async,
     list_models_cached,
+    ProviderNotConfigured,
 )
 
 
@@ -87,12 +89,84 @@ def test_router_returns_anthropic(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     clear_cache()
     cfg = load_config()
-    cfg.models.providers["anthropic_compatible"] = ProviderConfig(type="anthropic_compatible", enabled=True)
+    cfg.models.providers["anthropic_compatible"] = ProviderConfig(
+        type="anthropic_compatible",
+        base_url="http://localhost:8001",
+        enabled=True,
+    )
     save_config(cfg)
     clear_cache()
     provider = get_provider("anthropic_compatible")
     assert isinstance(provider, AnthropicCompatibleProvider)
     assert provider.protocol == "anthropic_messages"
+    clear_cache()
+
+
+def test_router_rejects_enabled_provider_without_endpoint(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["missing-endpoint"] = ProviderConfig(
+        type="openai_compatible",
+        enabled=True,
+    )
+    save_config(cfg)
+
+    with pytest.raises(ProviderNotConfigured, match="not_configured"):
+        get_provider("missing-endpoint")
+    clear_cache()
+
+
+@pytest.mark.anyio
+async def test_async_router_rejects_native_provider_without_credential(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret", lambda _ref: None)
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["missing-credential"] = ProviderConfig(
+        type="openai_native",
+        api_key_secret_ref="model.missing.api_key",
+        enabled=True,
+    )
+    save_config(cfg)
+
+    with pytest.raises(ProviderNotConfigured, match="not_configured"):
+        await get_provider_async("missing-credential")
+    clear_cache()
+
+
+def test_cached_provider_is_revalidated_when_config_becomes_unconfigured(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["mutable-provider"] = ProviderConfig(
+        type="openai_compatible",
+        base_url="http://localhost:8000/v1",
+        enabled=True,
+    )
+    save_config(cfg)
+    assert get_provider("mutable-provider") is not None
+
+    cfg = load_config()
+    cfg.models.providers["mutable-provider"].base_url = ""
+    save_config(cfg)
+    with pytest.raises(ProviderNotConfigured, match="not_configured"):
+        get_provider("mutable-provider")
     clear_cache()
 
 
