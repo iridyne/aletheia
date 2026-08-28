@@ -607,6 +607,7 @@ def materialize_position_economics(
                 source=source,
                 position_id=position_id,
                 note="Local paper position realized PnL after funding finalization",
+                allow_negative_balance=True,
             )
         else:
             compensation = round(realized - cash_total, 8)

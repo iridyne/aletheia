@@ -1601,6 +1601,49 @@ def test_delayed_funding_materialization_converges_every_projection_once(
     assert len(repairs) == 1
 
 
+def test_delayed_loss_materialization_allows_negative_paper_cash(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import (
+        get_paper_account,
+        materialize_position_economics,
+        set_cash_balance,
+    )
+    from aletheia.storage import repositories as repo
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "delayed-funding-loss"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    set_cash_balance(0.0, note="simulate an insolvent paper account")
+
+    result = materialize_position_economics(
+        position_id,
+        realized_pnl=-0.24,
+        funding_cost=0.0,
+        funding_evidence=_complete_recovered_funding(position_id),
+        outcome_eligible=False,
+        outcome_exclusion_reason="missing_attribution_identity",
+    )
+
+    assert result["status"] == "settled"
+    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(-0.24)
+    event = repo.get_db().execute(
+        "SELECT amount_usdt FROM paper_account_events "
+        "WHERE position_id=? AND action='position_closed'",
+        (position_id,),
+    ).fetchone()
+    assert event["amount_usdt"] == pytest.approx(-0.24)
+
+
 def test_invalidated_position_cannot_be_rematerialized(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
