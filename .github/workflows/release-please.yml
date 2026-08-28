@@ -42,7 +42,7 @@ jobs:
         github.event_name == 'workflow_dispatch' &&
         inputs.operational_need == true
       )
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
     timeout-minutes: 10
     permissions:
       actions: write
