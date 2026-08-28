@@ -102,23 +102,36 @@ def test_nonfinite_durable_private_fill_is_rejected_on_replay(field, value):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# #1752 — BGB/BNB fee does not block materialization
+# #2041 — BGB/BNB quote conversion remains unavailable
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_fee_in_quote_bgb_returns_zero():
-    """BGB fee (not base/quote) returns 0.0, not exception."""
+def test_fee_in_quote_bgb_is_unavailable():
+    """BGB fee (not base/quote) cannot become a fabricated quote zero."""
     result = _fee_in_quote(
         fee=0.5, fee_currency="BGB", fill_price=2000.0, symbol="ETH/USDT"
     )
-    assert result == 0.0
+    assert result is None
 
 
-def test_fee_in_quote_bnb_returns_zero():
-    """BNB fee on BTC/USDT returns 0.0."""
+def test_fee_in_quote_bnb_is_unavailable():
+    """BNB fee on BTC/USDT cannot become a fabricated quote zero."""
     result = _fee_in_quote(
         fee=0.001, fee_currency="BNB", fill_price=50000.0, symbol="BTC/USDT"
     )
-    assert result == 0.0
+    assert result is None
+
+
+def test_third_currency_fee_keeps_aggregate_quote_cost_unavailable():
+    """Raw fee evidence may exist while quote-currency economics remain NULL."""
+    assert _fill_totals(
+        [{
+            "fill_price": 2000.0,
+            "fill_quantity": 0.5,
+            "fee": 0.5,
+            "fee_currency": "BGB",
+        }],
+        symbol="ETH/USDT",
+    ) == (0.5, 1000.0, None)
 
 
 def test_fee_in_quote_usdt_passes_through():

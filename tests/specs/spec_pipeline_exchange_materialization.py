@@ -318,6 +318,49 @@ def test_base_asset_fee_is_converted_before_position_cost(
     assert position["entry_fee"] == pytest.approx(0.1)
 
 
+def test_third_currency_entry_keeps_fill_but_withholds_quote_entry_cost(
+    tmp_path, monkeypatch
+):
+    """#2041: an entry Position can exist without claiming an unknown fee value."""
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.reconciliation import reconcile
+    from aletheia.storage import repositories as repo
+
+    fill_rows = [
+        _private_fill(
+            "EX-XM-THIRD-ENTRY-FEE",
+            "BG-XM-THIRD-ENTRY-FEE-1",
+            price=101.0,
+            quantity=0.75,
+            fee=0.001,
+            fee_currency="BGB",
+            filled_at_ms=1_784_080_000_000,
+        )
+    ]
+    _patch_bitget_history(monkeypatch, fill_rows)
+    _, proposal, _, order = _seed_native_chain(
+        exchange_order_id="EX-XM-THIRD-ENTRY-FEE"
+    )
+
+    result = reconcile()
+    stored_order = repo.get_order(order.id)
+    stored_position = dict(
+        db.execute("SELECT * FROM positions WHERE order_id=?", (order.id,)).fetchone()
+    )
+    stored_fill = dict(
+        db.execute("SELECT * FROM fills WHERE order_id=?", (order.id,)).fetchone()
+    )
+
+    assert result["filled"] == 1
+    assert stored_order["status"] == "filled"
+    assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
+    assert stored_fill["fee"] == pytest.approx(0.001)
+    assert stored_fill["fee_currency"] == "BGB"
+    assert stored_position["entry_price"] == pytest.approx(101.0)
+    assert stored_position["entry_fee"] is None
+    assert stored_position["entry_fill_verified"] == 1
+
+
 @spec_claim(
     SpecClaim(
         "PL-XM-01",
@@ -1009,6 +1052,58 @@ def _seed_pending_close(
         pending_close_requested_at="2026-07-13T00:00:00+00:00",
     )
     return proposal, entry_order, position, close_order
+
+
+def test_third_currency_close_keeps_lifecycle_but_withholds_quote_economics(
+    tmp_path, monkeypatch
+):
+    """#2041: raw BNB fee is durable, but quote PnL stays explicitly unavailable."""
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.reconciliation import reconcile
+
+    fill_rows = [
+        _private_fill(
+            "EX-XM-THIRD-FEE",
+            "BG-XM-THIRD-FEE-1",
+            price=110.0,
+            quantity=1.0,
+            fee=0.001,
+            fee_currency="BNB",
+            filled_at_ms=1_784_400_000_000,
+        )
+    ]
+    _patch_bitget_history(monkeypatch, fill_rows)
+    _, _, position, close_order = _seed_pending_close(
+        exchange_order_id="EX-XM-THIRD-FEE"
+    )
+
+    result = reconcile()
+    stored_position = dict(
+        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
+    )
+    stored_fill = dict(
+        db.execute("SELECT * FROM fills WHERE order_id=?", (close_order.id,)).fetchone()
+    )
+    close_event = dict(
+        db.execute(
+            "SELECT * FROM position_close_events WHERE position_id=?",
+            (position.id,),
+        ).fetchone()
+    )
+    evidence = json.loads(stored_position["reconciliation_evidence"])
+
+    assert result["filled"] == 1
+    assert stored_fill["fee"] == pytest.approx(0.001)
+    assert stored_fill["fee_currency"] == "BNB"
+    assert stored_position["status"] == "closed"
+    assert stored_position["exit_fee"] is None
+    assert stored_position["realized_pnl"] is None
+    assert stored_position["outcome_eligible"] == 0
+    assert stored_position["outcome_exclusion_reason"] == "incomplete_realized_economics"
+    assert evidence["fee_status"] == "unavailable"
+    assert evidence["fee_in_quote"] is None
+    assert close_event["exit_fee"] is None
+    assert close_event["realized_pnl"] is None
 
 
 @pytest.mark.parametrize("lifecycle", ["entry", "close", "futures_close"])

@@ -420,12 +420,13 @@ def _fee_in_quote(
     fee_currency: str,
     fill_price: float,
     symbol: str,
-) -> float:
+) -> float | None:
     """Convert a directly usable private fee into the instrument quote asset.
 
     When the fee is denominated in a third currency (e.g. BGB, BNB), the exact
-    conversion is not available from local fill evidence.  Return 0.0 so
-    materialization proceeds conservatively rather than blocking.  (#1752)
+    conversion is not available from local fill evidence.  Preserve the raw
+    Fill but leave quote-currency economics unavailable.  A numeric zero would
+    fabricate a verified cost.  (#2041)
     """
     if not math.isfinite(fee) or not math.isfinite(fill_price):
         raise MaterializationIntegrityError("private fill quote economics must be finite")
@@ -440,23 +441,25 @@ def _fee_in_quote(
         return fee
     if currency == base.upper():
         return fee * fill_price
-    # Third-currency fee (e.g. BGB, BNB): treat as zero — conservative and
-    # avoids blocking a legitimate fill when the exchange charges in a deduction asset.
+    # Third-currency fee (e.g. BGB, BNB): the raw fee remains auditable, but its
+    # quote-currency conversion is unavailable without attributable market data.
     import logging as _log
 
     _log.getLogger(__name__).warning(
-        "private fill fee in unknown currency %r for %s — treating as 0.0",
+        "private fill fee in unknown currency %r for %s — quote economics unavailable",
         fee_currency,
         symbol,
     )
-    return 0.0
+    return None
 
 
-def _private_fill_totals(evidence: Iterable[PrivateFill], *, symbol: str) -> tuple[float, float, float]:
+def _private_fill_totals(
+    evidence: Iterable[PrivateFill], *, symbol: str
+) -> tuple[float, float, float | None]:
     """Reject finite inputs whose derived Order economics are not finite."""
     quantity = 0.0
     notional = 0.0
-    fee = 0.0
+    fee: float | None = 0.0
     for item in evidence:
         item_notional = item.quantity * item.price
         item_fee = _fee_in_quote(
@@ -467,18 +470,26 @@ def _private_fill_totals(evidence: Iterable[PrivateFill], *, symbol: str) -> tup
         )
         quantity += item.quantity
         notional += item_notional
-        fee += item_fee
-        if item_notional <= 0 or not all(
-            math.isfinite(value) for value in (item_notional, item_fee, quantity, notional, fee)
-        ):
+        if fee is not None and item_fee is not None:
+            fee += item_fee
+        else:
+            fee = None
+        finite_values = (item_notional, quantity, notional)
+        if item_fee is not None:
+            finite_values += (item_fee,)
+        if fee is not None:
+            finite_values += (fee,)
+        if item_notional <= 0 or not all(math.isfinite(value) for value in finite_values):
             raise PrivateFillEvidenceInvalid("private fill derived economics must be finite")
     return quantity, notional, fee
 
 
-def _fill_totals(rows: Iterable[dict], *, symbol: str) -> tuple[float, float, float]:
+def _fill_totals(
+    rows: Iterable[dict], *, symbol: str
+) -> tuple[float, float, float | None]:
     quantity = 0.0
     notional = 0.0
-    fee = 0.0
+    fee: float | None = 0.0
     for row in rows:
         try:
             row_quantity = float(row["fill_quantity"])
@@ -504,12 +515,23 @@ def _fill_totals(rows: Iterable[dict], *, symbol: str) -> tuple[float, float, fl
             fill_price=row_price,
             symbol=symbol,
         )
-        if row_notional <= 0 or not all(math.isfinite(value) for value in (row_notional, row_quote_fee)):
+        if row_quote_fee is not None and fee is not None:
+            fee += row_quote_fee
+        else:
+            fee = None
+        finite_values = (row_notional, quantity, notional)
+        if row_quote_fee is not None:
+            finite_values += (row_quote_fee,)
+        if fee is not None:
+            finite_values += (fee,)
+        if row_notional <= 0 or not all(math.isfinite(value) for value in finite_values):
             raise MaterializationIntegrityError("durable private Fill derived economics must be finite")
         quantity += row_quantity
         notional += row_notional
-        fee += row_quote_fee
-    if not all(math.isfinite(value) for value in (quantity, notional, fee)):
+    finite_totals = (quantity, notional)
+    if fee is not None:
+        finite_totals += (fee,)
+    if not all(math.isfinite(value) for value in finite_totals):
         raise MaterializationIntegrityError("durable private Fill totals must be finite")
     return quantity, notional, fee
 
@@ -758,14 +780,25 @@ def materialize_bitget_entry(
             if delta_quantity > 0:
                 old_quantity = float(position["quantity"])
                 old_entry = float(position["entry_price"])
-                old_entry_fee = float(position.get("entry_fee") or 0.0)
+                old_entry_fee = position.get("entry_fee")
+                if old_entry_fee is not None:
+                    old_entry_fee = float(old_entry_fee)
                 old_slippage = float(position.get("slippage_cost") or 0.0)
                 new_quantity = old_quantity + delta_quantity
                 current_price = delta_notional / delta_quantity
                 new_entry = (old_quantity * old_entry + delta_notional) / new_quantity
-                new_entry_fee = old_entry_fee + delta_fee
+                new_entry_fee = (
+                    old_entry_fee + delta_fee
+                    if old_entry_fee is not None and delta_fee is not None
+                    else None
+                )
                 new_slippage = (
                     old_slippage + abs(current_price - float(order.get("price") or current_price)) * delta_quantity
+                )
+                finite_fee_values = (
+                    (old_entry_fee, new_entry_fee)
+                    if old_entry_fee is not None and new_entry_fee is not None
+                    else ()
                 )
                 if (
                     new_quantity <= 0
@@ -776,15 +809,14 @@ def materialize_bitget_entry(
                         for value in (
                             old_quantity,
                             old_entry,
-                            old_entry_fee,
                             old_slippage,
                             new_quantity,
                             new_entry,
                             current_price,
-                            new_entry_fee,
                             new_slippage,
                         )
                     )
+                    or any(not math.isfinite(value) for value in finite_fee_values)
                 ):
                     raise MaterializationIntegrityError("averaged entry economics must be finite")
                 update_fields = {
@@ -1179,6 +1211,10 @@ def _materialize_complete_private_close(
             "durable_fill_ids": [durable_private_fill_id(execution_mode, item.fill_id) for item in evidence],
             "fill_quantity": exchange_quantity,
             "fee_in_quote": total_fee,
+            "fee_status": "complete" if total_fee is not None else "unavailable",
+            "fee_unavailable_reason": (
+                None if total_fee is not None else "third_currency_conversion_unavailable"
+            ),
             "fills": [
                 {
                     "fill_id": item.fill_id,
