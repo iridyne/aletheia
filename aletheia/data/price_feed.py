@@ -463,8 +463,27 @@ async def refresh_watched_prices() -> dict:
                                     instrument.market_type,
                                 )
                                 prev_entry = _instrument_price_cache.get(instrument_key, {})
-                                prev_price = prev_entry.get("price")
-                                volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
+                                try:
+                                    previous_age_sec = (
+                                        observed_at - prev_entry["ts"]
+                                    ).total_seconds()
+                                except (KeyError, TypeError, ValueError):
+                                    previous_age_sec = None
+                                previous_comparable = (
+                                    previous_age_sec is not None
+                                    and 0 <= previous_age_sec <= _STALE_THRESHOLD_SEC
+                                )
+                                prev_price = (
+                                    prev_entry.get("price")
+                                    if previous_comparable
+                                    else None
+                                )
+                                prev_volume_24h = (
+                                    prev_entry.get("volume_24h")
+                                    if previous_comparable
+                                    else None
+                                )
+                                volume_24h = getattr(ticker, "volume_24h", None) or prev_volume_24h
                                 entry = {
                                     "price": ticker.last_price,
                                     "ts": observed_at,
@@ -480,7 +499,7 @@ async def refresh_watched_prices() -> dict:
 
                             if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
                                 pct = (ticker.last_price - prev_price) / prev_price * 100
-                                _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
+                                _check_event_triggers(sym, pct, volume_24h, prev_volume_24h, cfg)
 
                             refreshed.append(sym)
                             refreshed_instruments.append(instrument)

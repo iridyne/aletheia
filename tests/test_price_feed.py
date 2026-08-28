@@ -441,6 +441,48 @@ class TestRefreshWatchedPrices:
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",
+        return_value=[InstrumentId.from_parts("binance", "BTC/USDT", "spot")],
+    )
+    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.config.loader.load_config")
+    def test_stale_instrument_cache_starts_a_new_event_continuity_segment(
+        self, mock_cfg, mock_provider_fn, mock_symbols
+    ):
+        from aletheia.data import price_feed
+
+        cfg = MagicMock()
+        cfg.event_triggers.enabled = True
+        cfg.event_triggers.price_move_pct_threshold = 5.0
+        cfg.event_triggers.volume_surge_multiplier = 2.0
+        mock_cfg.return_value = cfg
+
+        stale_ts = datetime.now(timezone.utc) - timedelta(
+            seconds=_STALE_THRESHOLD_SEC + 1
+        )
+        with _cache_lock:
+            price_feed._instrument_price_cache[("binance", "BTC/USDT", "spot")] = {
+                "price": 100.0,
+                "ts": stale_ts,
+                "volume_24h": 100.0,
+            }
+
+        provider = AsyncMock()
+        provider.get_ticker = AsyncMock(
+            return_value=MagicMock(last_price=110.0, volume_24h=300.0, provider="binance")
+        )
+        provider.close = AsyncMock()
+        mock_provider_fn.return_value = provider
+
+        with patch("aletheia.data.price_feed._check_event_triggers") as mock_events:
+            asyncio.run(refresh_watched_prices())
+
+        mock_events.assert_not_called()
+        assert price_feed._instrument_price_cache[("binance", "BTC/USDT", "spot")][
+            "prev_price"
+        ] is None
+
+    @patch(
+        "aletheia.data.price_feed.get_watched_instruments",
         return_value=[
             InstrumentId.from_parts("binance", "BTC/USDT", "spot"),
             InstrumentId.from_parts("binance", "ETH/USDT", "spot"),
