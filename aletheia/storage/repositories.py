@@ -8555,12 +8555,16 @@ def claim_next_candidate_planning(
         row = (
             get_db()
             .execute(
-                "SELECT * FROM candidate_planning_generations WHERE is_current=1 "
-                "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
-                "AND attempt_count<? AND (status='pending' "
-                "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
-                "OR (status='planning' AND claim_expires_at<=?)) "
-                "ORDER BY created_at ASC LIMIT 1",
+                "SELECT pg.* FROM candidate_planning_generations pg "
+                "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+                "WHERE pg.is_current=1 AND pg.attention_status='active' "
+                "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
+                "AND pg.attempt_count<? AND (pg.status='pending' "
+                "OR (pg.status='unavailable' "
+                "AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
+                "OR (pg.status='planning' AND pg.claim_expires_at<=?)) "
+                "ORDER BY CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC, "
+                "pg.created_at ASC, pg.id ASC LIMIT 1",
                 (timestamp, timestamp, max_attempts, timestamp, timestamp),
             )
             .fetchone()
