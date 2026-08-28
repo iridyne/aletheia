@@ -459,6 +459,16 @@ async def _watch_loop(cfg) -> None:
                         if plan.execution_mode == "RESTING_MAKER"
                     )
                     if fresh_instruments != subscribed:
+                        if event_task is not None:
+                            if event_task.done():
+                                try:
+                                    event_task.result()
+                                except StopAsyncIteration:
+                                    pass
+                            else:
+                                event_task.cancel()
+                                await asyncio.gather(event_task, return_exceptions=True)
+                            event_task = None
                         await stream.set_instruments(fresh_instruments)
                         subscribed = fresh_instruments
                         # A subscription generation change invalidates every
