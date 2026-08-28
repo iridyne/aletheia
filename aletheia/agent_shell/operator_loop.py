@@ -209,8 +209,10 @@ def _last_action_time_persistent(event_type: str, param: str | None = None) -> d
         if param:
             where += " AND entity_id = ?"
             params_tup = (event_type, param)
-        rows = repo._select_all("audit_events", where=where, params=params_tup,
-                                order="timestamp DESC", limit=1)
+        rows = repo._select_all(
+            "audit_events", where=where, params=params_tup,
+            order="timestamp DESC", limit=100,
+        )
         for row in rows:
             timestamp = _parse_audit_timestamp(row.get("timestamp"))
             if timestamp is not None and timestamp <= now:

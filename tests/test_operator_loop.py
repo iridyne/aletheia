@@ -800,7 +800,13 @@ class TestPersistentActionLog:
             {"timestamp": recent},
             {"timestamp": "not-a-timestamp"},
         ]
-        monkeypatch.setattr(operator_loop.repo, "_select_all", lambda *args, **kwargs: rows)
+        calls = {}
+
+        def select_all(*args, **kwargs):
+            calls.update(kwargs)
+            return rows
+
+        monkeypatch.setattr(operator_loop.repo, "_select_all", select_all)
         operator_loop._action_log.clear()
 
         last = operator_loop._last_action_time_persistent("config_patch", "test_param")
@@ -808,6 +814,7 @@ class TestPersistentActionLog:
         assert last <= now
         assert (now - last).total_seconds() < 2 * 3600
         assert operator_loop._count_actions_today_persistent("config_patch", "test_param") == 1
+        assert calls["limit"] == 100
 
 
 class TestLoosenHandlers:
