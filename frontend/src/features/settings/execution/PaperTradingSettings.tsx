@@ -138,7 +138,18 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
 
 export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty: boolean) => void }) {
   const qc = useQueryClient()
-  const { data: events, isLoading: eventsLoading, isError: eventsError, refetch: refetchEvents } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
+  const [eventCursor, setEventCursor] = useState<{ detected_at: string; id: string } | null>(null)
+  const { data: eventPageResponse, isLoading: eventsLoading, isError: eventsError, refetch: refetchEvents } = useQuery({
+    queryKey: ['capital-events', eventCursor],
+    queryFn: () => api.getCapitalEvents({ limit: 20, ...eventCursor && {
+      before_detected_at: eventCursor.detected_at,
+      before_id: eventCursor.id,
+    } }),
+  })
+  const eventPage = Array.isArray(eventPageResponse)
+    ? { events: eventPageResponse, total: eventPageResponse.length, has_more: false, next_cursor: null }
+    : eventPageResponse ?? { events: [], total: 0, has_more: false, next_cursor: null }
+  const events = eventPage.events
   const { data: netData, isLoading: netLoading, isError: netError, refetch: refetchNet } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
   const [brokerId, setBrokerId] = useState('')
   const [eventType, setEventType] = useState<'deposit' | 'withdraw'>('deposit')
@@ -155,6 +166,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['capital-events'] })
+      setEventCursor(null)
       qc.invalidateQueries({ queryKey: ['capital-net-deposits'] })
       qc.invalidateQueries({ queryKey: ['account-equity-history'] })
       setAmount('')
@@ -206,20 +218,29 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
         </p>
       )}
       {!eventsLoading && !eventsError && (events as any[]).length > 0 && (
-        <table className="mini-table mt-2">
-          <thead><tr><th>Date</th><th>Type</th><th>Broker</th><th>Amount</th><th>Note</th></tr></thead>
-          <tbody>
-            {(events as any[]).slice(0, 20).map((e: any) => (
-              <tr key={e.id}>
-                <td>{(e.detected_at || '').slice(0, 10)}</td>
-                <td>{e.event_type}</td>
-                <td>{e.broker_id}</td>
-                <td>{Number(e.amount_usdt).toFixed(2)}</td>
-                <td>{e.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <p className="hint mt-2">Showing {events.length} of {eventPage.total} retained events.</p>
+          <table className="mini-table mt-2">
+            <thead><tr><th>Date</th><th>Type</th><th>Broker</th><th>Amount</th><th>Note</th></tr></thead>
+            <tbody>
+              {events.map((e: any) => (
+                <tr key={e.id}>
+                  <td>{(e.detected_at || '').slice(0, 10)}</td>
+                  <td>{e.event_type}</td>
+                  <td>{e.broker_id}</td>
+                  <td>{Number(e.amount_usdt).toFixed(2)}</td>
+                  <td>{e.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {eventPage.has_more && eventPage.next_cursor && (
+            <button
+              className="btn btn-secondary mt-2"
+              onClick={() => setEventCursor(eventPage.next_cursor)}
+            >Load older</button>
+          )}
+        </>
       )}
     </div>
   )
