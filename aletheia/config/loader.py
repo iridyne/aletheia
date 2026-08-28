@@ -5,6 +5,8 @@ import os
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 import yaml
@@ -63,6 +65,20 @@ DATA_DIR = preview_data_dir() if is_preview_mode() else runtime_data_dir()
 CONFIG_PATH = DATA_DIR / "config.yaml"
 
 _DOTENV_LOADED = False
+
+_READ_ONLY_CONFIG: ContextVar[bool] = ContextVar(
+    "aletheia_read_only_config", default=False
+)
+
+
+@contextmanager
+def read_only_config():
+    """Prevent implicit config migrations from persisting in a read path."""
+    token = _READ_ONLY_CONFIG.set(True)
+    try:
+        yield
+    finally:
+        _READ_ONLY_CONFIG.reset(token)
 
 
 def _load_dotenv() -> None:
@@ -375,6 +391,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
     the source of truth on disk.
     """
     global _config_cache
+    persist_migrations = persist_migrations and not _READ_ONLY_CONFIG.get()
     if not is_preview_mode():
         from aletheia.runtime_home_migration import assert_runtime_home_ready
 

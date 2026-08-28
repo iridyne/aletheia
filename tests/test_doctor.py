@@ -949,6 +949,39 @@ def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch
     assert "[REDACTED]" in text
 
 
+def test_doctor_read_paths_do_not_persist_config_or_create_missing_db(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite_store
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    loader._invalidate_config_cache()
+    sqlite_store.reset_db()
+    sqlite_store._db_conn = None
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
+    before = config_path.read_bytes()
+    observed = []
+
+    def probe(_report):
+        loader.load_config()
+        try:
+            sqlite_store.get_db()
+        except FileNotFoundError:
+            observed.append("missing")
+
+    monkeypatch.setattr(dx, "_CONTENT_PROBES", (probe,))
+    dx.build_content_report()
+
+    assert observed == ["missing"]
+    assert config_path.read_bytes() == before
+    assert not (tmp_path / "app.db").exists()
+    assert not (tmp_path / "app.db-wal").exists()
+    assert not (tmp_path / "app.db-shm").exists()
+
+
 # --- end-to-end: probes must never raise, even on a fresh/empty environment ---
 
 def test_build_report_runs_and_covers_all_dimensions():
