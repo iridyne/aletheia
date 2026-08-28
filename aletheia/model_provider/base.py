@@ -186,6 +186,38 @@ class ModelHealth:
     routing_roles: list[str] = field(default_factory=list)
 
 
+def health_from_model_catalogue(
+    provider: str,
+    model: str,
+    models: list[dict],
+    *,
+    allow_default: bool = False,
+) -> ModelHealth:
+    """Build honest health from a non-empty provider model catalogue."""
+    slugs = [
+        str(item["slug"])
+        for item in models
+        if isinstance(item, dict) and item.get("slug")
+    ]
+    if model not in slugs and not (allow_default and model == "default"):
+        return ModelHealth(
+            provider=provider,
+            available=False,
+            model=model,
+            models=slugs,
+            model_metadata=models,
+            error="configured model not found in current catalogue",
+            reason_code="provider_rejection",
+        )
+    return ModelHealth(
+        provider=provider,
+        available=True,
+        model=model,
+        models=slugs,
+        model_metadata=models,
+    )
+
+
 class ModelProvider:
     """Base provider with transparent append-only physical-call measurement."""
 

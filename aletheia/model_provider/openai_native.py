@@ -12,12 +12,13 @@ from aletheia.model_provider.base import (
     ModelResponse,
     ModelHealth,
     StreamChunk,
+    health_from_model_catalogue,
     model_json_schema_payload,
 )
 
 BASE_URL = "https://api.openai.com/v1"
 
-_CHAT_MODEL_PREFIXES = ("gpt-4", "gpt-3.5", "o1", "o3", "o4", "chatgpt-4o")
+_CHAT_MODEL_PREFIXES = ("gpt-5", "gpt-4", "gpt-3.5", "o1", "o3", "o4", "chatgpt-4o")
 
 _TIER_RULES = [
     (("gpt-4o-mini", "gpt-4-turbo"), "standard"),
@@ -191,14 +192,7 @@ class OpenAINativeProvider(ModelProvider):
         try:
             models = await self.list_models()
             if models:
-                slugs = [m["slug"] for m in models]
-                return ModelHealth(
-                    provider=self.name,
-                    available=True,
-                    model=self.model,
-                    models=slugs,
-                    model_metadata=models,
-                )
+                return health_from_model_catalogue(self.name, self.model, models)
             return ModelHealth(
                 provider=self.name,
                 available=False,
