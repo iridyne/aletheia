@@ -139,6 +139,49 @@ describe('PaperTradingSettings', () => {
     expect(html).toContain('Market-Aware Position Review')
   })
 
+  it('appends older capital-event pages without losing newer rows', async () => {
+    const firstPage = {
+      events: [{ id: 'newer', detected_at: '2026-08-22T00:00:00Z', event_type: 'deposit', broker_id: 'manual', amount_usdt: 2, note: '' }],
+      total: 2,
+      has_more: true,
+      next_cursor: { detected_at: '2026-08-22T00:00:00Z', id: 'newer' },
+    }
+    const secondPage = {
+      events: [{ id: 'older', detected_at: '2026-08-21T00:00:00Z', event_type: 'withdraw', broker_id: 'manual', amount_usdt: 1, note: '' }],
+      total: 2,
+      has_more: false,
+      next_cursor: null,
+    }
+    vi.spyOn(api, 'getCapitalEvents').mockImplementation(async params => (
+      params?.before_id ? secondPage : firstPage
+    ))
+    vi.spyOn(api, 'getNetDeposits').mockResolvedValue({ net_deposits_usdt: 1, first_event_at: null })
+
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <CapitalEventsCard />
+        </QueryClientProvider>,
+      )
+    })
+    await vi.waitFor(() => {
+      expect(container.querySelectorAll('tbody tr')).toHaveLength(1)
+      expect(container.textContent).toContain('2026-08-22')
+    })
+
+    await act(async () => { button('Load older').click() })
+    await vi.waitFor(() => {
+      expect(container.querySelectorAll('tbody tr')).toHaveLength(2)
+      expect(container.textContent).toContain('2026-08-22')
+      expect(container.textContent).toContain('2026-08-21')
+    })
+    expect(container.textContent).not.toContain('Load older')
+  })
+
   it('serializes local paper account actions behind one pending gate', async () => {
     const setPending = deferred<{ ok: boolean }>()
     const closePending = deferred<{ closed_position_ids: string[] }>()

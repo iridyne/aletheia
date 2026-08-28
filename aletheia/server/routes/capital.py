@@ -1,6 +1,6 @@
 """Capital events API: audited deposit/withdraw tracking and net-flow reporting."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.storage import repositories as repo
@@ -24,8 +24,21 @@ def get_net_deposits():
 
 
 @router.get("/events")
-def list_events():
-    return repo.list_capital_events()
+def list_events(
+    limit: int = Query(20, ge=1, le=100),
+    before_detected_at: str | None = Query(None),
+    before_id: str | None = Query(None),
+):
+    if (before_detected_at is None) != (before_id is None):
+        raise HTTPException(
+            status_code=422,
+            detail="before_detected_at and before_id must be provided together",
+        )
+    return repo.list_capital_events_page(
+        limit=limit,
+        before_detected_at=before_detected_at,
+        before_id=before_id,
+    )
 
 
 @router.post("/events")

@@ -2063,7 +2063,45 @@ def insert_capital_event(event) -> None:
 
 
 def list_capital_events(limit: int = 200) -> list[dict]:
-    return _select_all("capital_events", order="detected_at DESC", limit=limit)
+    return _select_all("capital_events", order="detected_at DESC, id DESC", limit=limit)
+
+
+def list_capital_events_page(
+    *,
+    limit: int = 20,
+    before_detected_at: str | None = None,
+    before_id: str | None = None,
+) -> dict:
+    """Return one stable, keyset-paginated page of the retained cash-flow ledger."""
+    if (before_detected_at is None) != (before_id is None):
+        raise ValueError("before_detected_at and before_id must be provided together")
+    page_limit = min(max(int(limit), 1), 100)
+    where = ""
+    params: tuple[object, ...] = ()
+    if before_detected_at is not None and before_id is not None:
+        where = " WHERE detected_at < ? OR (detected_at = ? AND id < ?)"
+        params = (before_detected_at, before_detected_at, before_id)
+    total_row = get_db().execute("SELECT COUNT(*) FROM capital_events").fetchone()
+    total = int(total_row[0]) if total_row is not None else 0
+    rows = get_db().execute(
+        "SELECT page.* "
+        f"FROM capital_events AS page{where} "
+        "ORDER BY detected_at DESC, id DESC LIMIT ?",
+        (*params, page_limit + 1),
+    ).fetchall()
+    has_more = len(rows) > page_limit
+    events = [dict(row) for row in rows[:page_limit]]
+    last = events[-1] if has_more and events else None
+    return {
+        "events": events,
+        "total": total,
+        "has_more": has_more,
+        "next_cursor": (
+            {"detected_at": last["detected_at"], "id": last["id"]}
+            if last is not None
+            else None
+        ),
+    }
 
 
 def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
