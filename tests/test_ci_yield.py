@@ -156,6 +156,50 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
     assert primary[1]["next_event"] == "merge"
     assert collected["pr"]["ci_attempts_before_merge"] == 2
     assert collected["lanes"][0]["independent_defect"] == "no"
+    assert collected["lanes"][0]["eligible_at_estimate"] == "2026-08-24T00:00:02Z"
+    assert collected["lanes"][0]["runner_queue_wait_seconds_estimate"] == 0
+
+
+def test_limit_50_pages_numbers_before_bounded_pr_details(monkeypatch) -> None:
+    calls = []
+
+    def fake_gh(args):
+        calls.append(args)
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return [[{"number": number, "merged_at": "2026-08-24T00:00:00Z"} for number in range(1, 51)]]
+        pr = _pr()
+        pr["number"] = int(args[2])
+        return pr
+
+    monkeypatch.setattr(ci_yield, "_gh_json", fake_gh)
+    def fake_collect(_repo, pr):
+        shape = ci_yield._pr_shape(pr)
+        shape.update(ci_attempts_before_merge=0, failed_ci_attempts=0)
+        return {"pr": shape, "attempts": [], "lanes": []}
+
+    monkeypatch.setattr(ci_yield, "_collect_pr", fake_collect)
+
+    report = ci_yield.collect("iridyne/aletheia", 50, workers=1)
+
+    assert report["schema_version"] == "ci_yield.v2"
+    assert report["data_quality"]["status"] == "complete"
+    assert len(report["pull_requests"]) == 50
+    assert calls[0][:3] == ["api", "--paginate", "--slurp"]
+
+
+def test_listing_failure_is_structured_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ci_yield, "_gh_json", lambda _args: (_ for _ in ()).throw(RuntimeError("node limit")),
+    )
+
+    report = ci_yield.collect("iridyne/aletheia", 50)
+
+    assert report["schema_version"] == "ci_yield.v2"
+    assert report["data_quality"] == {
+        "status": "unavailable",
+        "reason": "node limit",
+    }
+    assert report["pull_requests"] == []
 
 
 def test_markdown_keeps_unknown_yield_visible() -> None:

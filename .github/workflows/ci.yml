@@ -1,14 +1,7 @@
 # RUNNER SECURITY CONTRACT (#1356)
-# Control-plane / metadata jobs pin label `casi`; deep PR test jobs pin `fedora`.
-# #1356 ephemeral isolation is still a known gap: both classes remain persistent
-# self-hosted workers. This split only stops control-plane jobs from queueing
-# behind Unit / Stage 2 pytest on the Fedora pair.
-# Required: PR-controlled jobs (review-*, unit, integration, etc.) MUST run on a
-# dedicated one-job ephemeral/JIT runner group that is destroyed after each job,
-# has no access to runtime credentials/secrets/keyring, and is isolated from the
-# privileged release-handoff job. See Issue #1356 for resolution path.
-# Until the ephemeral runner group is provisioned, treat CI evidence as potentially
-# contaminated by prior PR runs on the same host.
+# Every job in this PR/merge validation workflow executes on the dedicated
+# one-job disposable runner class. Privileged release handoff is intentionally
+# absent: the default-branch workflow_run controller revalidates this run.
 
 name: Aletheia CI
 
@@ -42,7 +35,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Check out source
@@ -87,7 +80,7 @@ jobs:
     name: Review core
     needs: [change-contract-preflight]
     if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 10
     outputs:
       base: ${{ steps.changes.outputs.base }}
@@ -292,7 +285,7 @@ jobs:
     name: Review trust-boundary coverage
     needs: review-core
     if: ${{ needs.review-core.outputs.coverage == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -341,7 +334,7 @@ jobs:
     name: Review Node surfaces
     needs: review-core
     if: ${{ needs.review-core.outputs.frontend == 'true' || needs.review-core.outputs.operator == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -391,7 +384,7 @@ jobs:
     name: Review native host
     needs: review-core
     if: ${{ needs.review-core.outputs.native == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -431,7 +424,7 @@ jobs:
     name: Review checks
     needs: [review-core, review-coverage, review-node, review-native]
     if: ${{ always() }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Aggregate review results
@@ -466,7 +459,7 @@ jobs:
     name: Python unit
     needs: [change-contract-preflight]
     if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -506,7 +499,7 @@ jobs:
     name: Python runtime state
     needs: [review, unit]
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 15
     steps:
       - name: Check out source
@@ -562,7 +555,7 @@ jobs:
     name: Python integration
     needs: [review, unit]
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -597,7 +590,7 @@ jobs:
     # The lane predecessor is ordering only. A Runtime failure is itself useful
     # evidence and must not hide the independent Specifications regression.
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -631,7 +624,7 @@ jobs:
     needs: [review, unit, integration]
     # Integration orders this lane but does not suppress E2E failure evidence.
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    runs-on: [self-hosted, pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -659,53 +652,3 @@ jobs:
           --dist loadfile
           -q --tb=short
           --timeout=120
-
-  release-candidate:
-    name: Hand off verified release candidate
-    needs: [review, unit, runtime-state-tests, specifications, integration, end-to-end]
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      startsWith(github.ref_name, 'release-please--branches--master')
-    permissions:
-      contents: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
-    steps:
-      - name: Dispatch verified candidate
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
-        with:
-          retries: 3
-          script: |
-            await github.rest.repos.createDispatchEvent({
-              ...context.repo,
-              event_type: 'release_candidate_verified',
-              client_payload: {
-                head_branch: context.ref.replace('refs/heads/', ''),
-                head_sha: context.sha,
-              },
-            });
-
-  release-pr-ci:
-    name: Hand off verified release pull request
-    needs: [review, unit, runtime-state-tests, specifications, integration, end-to-end]
-    if: >-
-      github.event_name == 'pull_request' &&
-      startsWith(github.head_ref, 'release-please--branches--master')
-    permissions:
-      contents: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
-    steps:
-      - name: Dispatch verified release pull request
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
-        with:
-          retries: 3
-          script: |
-            await github.rest.repos.createDispatchEvent({
-              ...context.repo,
-              event_type: 'auto_merge_update',
-              client_payload: {
-                operation: 'enable',
-                pull_request_number: context.payload.pull_request.number,
-                expected_head_sha: context.payload.pull_request.head.sha,
-                release_after_merge: true,
-              },
-            });
