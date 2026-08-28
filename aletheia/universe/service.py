@@ -515,54 +515,43 @@ def _register_experiment_candidate_outcomes(
         key = item.get("learning_candidate_key")
         if not key:
             continue
-        try:
-            direction = item.get("scanner_direction") or item.get("direction")
-            venue = item.get("venue")
-            entry_price = item.get("last_price")
-            target_horizon = item.get("learning_target_horizon")
-            if (
-                direction not in {"long", "short"}
-                or not isinstance(venue, str)
-                or not venue.strip()
-                or not item.get("symbol")
-            ):
-                continue
-            if float(entry_price or 0) <= 0 or not target_horizon:
-                continue
-            outcomes.extend(
-                build_candidate_outcomes(
-                    outcome_candidate_key=key,
-                    venue=venue.strip(),
-                    symbol=item.get("symbol"),
-                    market_type=item.get("market_type", "spot"),
-                    direction=direction,
-                    scanner_family=item.get("scanner_family"),
-                    regime_tag=None,
-                    entry_price_usd=float(entry_price),
-                    entry_spread_bps=item.get("spread_bps"),
-                    funding_rate_at_entry=item.get("funding_rate"),
-                    entry_ts=entry_ts,
-                    allocation_selected=str(key) in selected_keys,
-                    horizons=(str(target_horizon),),
-                    rsi_1h_at_entry=item.get("rsi_14"),
-                    rsi_15m_at_entry=item.get("rsi_15m"),
-                    return_24h_at_entry=item.get("return_24h"),
-                    direction_exhaustion_signal=item.get("direction_exhaustion_signal"),
-                )
+        direction = item.get("scanner_direction") or item.get("direction")
+        venue = item.get("venue")
+        entry_price = item.get("last_price")
+        target_horizon = item.get("learning_target_horizon")
+        if (
+            direction not in {"long", "short"}
+            or not isinstance(venue, str)
+            or not venue.strip()
+            or not item.get("symbol")
+        ):
+            continue
+        if float(entry_price or 0) <= 0 or not target_horizon:
+            continue
+        outcomes.extend(
+            build_candidate_outcomes(
+                outcome_candidate_key=key,
+                venue=venue.strip(),
+                symbol=item.get("symbol"),
+                market_type=item.get("market_type", "spot"),
+                direction=direction,
+                scanner_family=item.get("scanner_family"),
+                regime_tag=None,
+                entry_price_usd=float(entry_price),
+                entry_spread_bps=item.get("spread_bps"),
+                funding_rate_at_entry=item.get("funding_rate"),
+                entry_ts=entry_ts,
+                allocation_selected=str(key) in selected_keys,
+                horizons=(str(target_horizon),),
+                rsi_1h_at_entry=item.get("rsi_14"),
+                rsi_15m_at_entry=item.get("rsi_15m"),
+                return_24h_at_entry=item.get("return_24h"),
+                direction_exhaustion_signal=item.get("direction_exhaustion_signal"),
             )
-        except Exception:
-            logger.debug(
-                "experiment candidate outcome registration skipped for %s",
-                item.get("symbol"),
-                exc_info=True,
-            )
+        )
     if not outcomes:
         return 0
-    try:
-        return repo.insert_filter_candidate_outcomes_batch(outcomes)
-    except Exception:
-        logger.debug("experiment candidate outcome persistence skipped", exc_info=True)
-        return 0
+    return repo.insert_filter_candidate_outcomes_batch(outcomes)
 
 
 def _active_paper_learning_identity(path_id: str) -> tuple[bool, dict | None]:
@@ -761,6 +750,7 @@ class UniverseService:
         run = UniverseScannerRun()
         repo.insert_universe_scanner_run(run)
         attempted_snapshot_id: str | None = None
+        attempt_transaction = None
 
         try:
             await sync_registry(cfg)
@@ -852,6 +842,14 @@ class UniverseService:
             except Exception as _e:
                 logger.debug("filter_advisor tolerance fetch failed (non-fatal): %s", _e)
                 family_tolerances = {}
+
+            # Keep scoring, exposure writes, allocation, publication, and the
+            # canonical full-arm outcomes in one scanner-attempt transaction.
+            # Feature collection stays outside the writer lock because it is
+            # asynchronous and may perform provider I/O.
+            tx = repo.transaction(immediate=True, savepoint=True)
+            tx.__enter__()
+            attempt_transaction = tx
 
             # Scan all coarsely-filtered candidates to get family + direction assignments.
             pre_scored = []
@@ -1034,6 +1032,9 @@ class UniverseService:
                         completed_at=datetime.now(timezone.utc).isoformat(),
                         snapshot_id=prev_snapshot_id,
                     )
+                tx, attempt_transaction = attempt_transaction, None
+                if tx is not None:
+                    tx.__exit__(None, None, None)
                 logger.info(
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
                     prev_snapshot_id,
@@ -1209,6 +1210,10 @@ class UniverseService:
                     inserted_experiment_outcomes,
                 )
 
+            tx, attempt_transaction = attempt_transaction, None
+            if tx is not None:
+                tx.__exit__(None, None, None)
+
             # Alpha-control observations are analytics telemetry, not part of
             # snapshot/Opportunity authority. Persist them after the atomic
             # publication so their JSON/control construction cannot extend the
@@ -1239,6 +1244,9 @@ class UniverseService:
             return snap.id
 
         except Exception as e:
+            if attempt_transaction is not None:
+                tx, attempt_transaction = attempt_transaction, None
+                tx.__exit__(type(e), e, e.__traceback__)
             logger.error("Universe refresh failed: %s", e, exc_info=True)
             repo.update_universe_scanner_run(
                 run.id,

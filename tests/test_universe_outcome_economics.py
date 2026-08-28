@@ -339,6 +339,31 @@ def test_experiment_outcomes_do_not_infer_missing_venue(monkeypatch):
     assert {row.venue for row in captured} == {"okx"}
 
 
+def test_experiment_outcome_batch_failure_propagates(monkeypatch):
+    from aletheia.universe import service
+
+    monkeypatch.setattr(
+        service.repo,
+        "insert_filter_candidate_outcomes_batch",
+        lambda _rows: (_ for _ in ()).throw(RuntimeError("full-arm write failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="full-arm write failed"):
+        service._register_experiment_candidate_outcomes(
+            [{
+                "learning_candidate_key": "candidate",
+                "symbol": "BTC/USDT",
+                "venue": "okx",
+                "market_type": "perp",
+                "scanner_family": "momentum",
+                "scanner_direction": "long",
+                "learning_target_horizon": "4h",
+                "last_price": 100.0,
+            }],
+            entry_ts="2026-07-10T00:00:00+00:00",
+        )
+
+
 def test_pending_forward_outcome_writer_rejects_missing_venue_atomically():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseForwardOutcome
