@@ -172,7 +172,8 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
         return None
     if report.fills:
         return False
-    return not any(item.state.value in {"accepted", "open", "partially_filled", "filled"} for item in report.orders)
+    # An exact returned order proves presence even when its lifecycle is unknown.
+    return not report.orders
 
 
 def _decide(order: dict) -> tuple[str, str] | None:

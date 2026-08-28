@@ -9,10 +9,12 @@ never touching an Order that carries real economics.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from aletheia.execution import stale_order_cleanup as soc
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Fill, Order, Position
+from aletheia.uta.models import ReadCompleteness
 
 
 def _iso(hours_ago: float) -> str:
@@ -162,6 +164,25 @@ def test_exchange_still_open_is_never_cancelled(monkeypatch):
     summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 0
     assert _status("still-open") == "submitted"
+
+
+def test_exact_unknown_order_is_not_treated_as_absent(monkeypatch):
+    order = _order(
+        oid="unknown-state", hours_ago=300, execution_mode="binance_testnet",
+    ).model_dump()
+    report = SimpleNamespace(
+        completeness=ReadCompleteness.COMPLETE,
+        fills=(),
+        orders=(SimpleNamespace(state=SimpleNamespace(value="unknown")),),
+    )
+
+    def fake_run(coro):
+        coro.close()
+        return report
+
+    monkeypatch.setattr(soc, "_run_coro", fake_run)
+
+    assert soc._exchange_order_absent_unfilled(order) is False
 
 
 def test_exchange_confirms_absent_cancels_before_hard_window(monkeypatch):
