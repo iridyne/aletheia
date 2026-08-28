@@ -222,7 +222,8 @@ def settle_position_closed(position_id: str, realized_pnl: float) -> None:
         if not repo.has_paper_account_position_event("position_closed", position_id):
             _write_event(action="position_closed", amount_usdt=realized_pnl, actor="system",
                          source="portfolio_pnl", position_id=position_id,
-                         note="Local paper position realized PnL")
+                         note="Local paper position realized PnL",
+                         allow_negative_balance=True)
 
 
 def invalidate_paper_position_economics(

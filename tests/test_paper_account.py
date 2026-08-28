@@ -142,6 +142,36 @@ def test_local_close_settles_realized_pnl_once(tmp_path, monkeypatch):
     assert get_paper_account()["cash_balance_usdt"] == pytest.approx(settled["cash_balance_usdt"])
 
 
+def test_valid_loss_closes_zero_cash_position_and_keeps_new_entries_unfunded(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.paper_account import get_paper_account, set_cash_balance
+    from aletheia.portfolio.pnl import close_position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, current_price=100.0,
+        execution_mode="paper_internal", entry_fee=0.0,
+    )
+    repo.insert_position(position)
+    set_cash_balance(0.0, note="simulate an insolvent paper account")
+
+    result = close_position(position.id, exit_price=90.0, reason="protective")
+
+    account = get_paper_account()
+    assert result["realized_pnl"] < 0
+    assert account["cash_balance_usdt"] == pytest.approx(result["realized_pnl"])
+    assert account["equity_usdt"] == pytest.approx(result["realized_pnl"])
+    assert account["available_balance_usdt"] == pytest.approx(0.0)
+    event = repo.get_db().execute(
+        "SELECT action, amount_usdt FROM paper_account_events "
+        "WHERE position_id=? AND action='position_closed'",
+        (position.id,),
+    ).fetchone()
+    assert event["amount_usdt"] == pytest.approx(result["realized_pnl"])
+
+
 def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.paper_account import (
