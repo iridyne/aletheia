@@ -47,8 +47,9 @@ for (const path of staticFiles) {
   if (!existsSync(`${path}.br`) || !existsSync(`${path}.gz`)) failures.push(`missing compression sidecar for ${path}`)
 }
 const size = (files, codec) => files.reduce((total, file) => {
-  const path = join(output, file) + (codec === 'raw' ? '' : codec === 'gzip' ? '.gz' : '.br')
-  return total + (existsSync(path) ? statSync(path).size : 0)
+  const raw = join(output, file)
+  const path = raw + (codec === 'raw' ? '' : codec === 'gzip' ? '.gz' : '.br')
+  return total + statSync(existsSync(path) ? path : raw).size
 }, 0)
 const metric = {
   schema_version: 'frontend-performance-v1',

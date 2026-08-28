@@ -150,6 +150,7 @@ _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
 _DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / "dashboard_static"
 _STAGED_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-next"
 _PREVIOUS_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-previous"
+_DASHBOARD_FRONTEND_TREE = ".aletheia-frontend-tree"
 
 
 def _frontend_deps_changed(changed_files: list[str]) -> bool:
@@ -159,8 +160,19 @@ def _frontend_deps_changed(changed_files: list[str]) -> bool:
     )
 
 
-def _dashboard_build_required(changed_files: list[str]) -> bool:
-    if any(path.startswith("frontend/") for path in changed_files):
+def _dashboard_build_required(frontend_tree: str) -> bool:
+    marker = _DASHBOARD_STATIC / _DASHBOARD_FRONTEND_TREE
+    try:
+        if not frontend_tree or marker.read_text().strip() != frontend_tree:
+            return True
+    except OSError:
+        return True
+    if not (
+        (_DASHBOARD_STATIC / ".vite" / "manifest.json").is_file()
+        and (_DASHBOARD_STATIC / "performance.json").is_file()
+        and (_DASHBOARD_STATIC / "assets").is_dir()
+        and any((_DASHBOARD_STATIC / "assets").iterdir())
+    ):
         return True
     from aletheia.gateway.preflight import dashboard_artifact_errors
 
@@ -194,7 +206,7 @@ def _install_frontend_deps() -> dict:
     }
 
 
-def _build_frontend() -> dict:
+def _build_frontend(frontend_tree: str) -> dict:
     """Build staging output, then validate it with target-loaded Python code."""
     shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
     env = _safe_env()
@@ -224,6 +236,17 @@ def _build_frontend() -> dict:
             "ok": False,
             "reason": "frontend_artifact_validation_failed",
             "detail": validated.get("detail") or validated.get("reason"),
+        }
+    try:
+        (_STAGED_DASHBOARD_STATIC / _DASHBOARD_FRONTEND_TREE).write_text(
+            frontend_tree + "\n"
+        )
+    except OSError as exc:
+        shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+        return {
+            "ok": False,
+            "reason": "frontend_artifact_fingerprint_failed",
+            "detail": str(exc),
         }
     return {"ok": True}
 
@@ -489,11 +512,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=False,
                 restart=restart, failure_reason=install["reason"],
             )
-    dashboard_build_required = restart and _dashboard_build_required(changed_files)
+    frontend_tree = git_ops.tree_hash(new, "frontend") if restart else ""
+    dashboard_build_required = restart and _dashboard_build_required(frontend_tree)
     if dashboard_build_required:
         if progress:
             progress("Building dashboard")
-        build = _build_frontend()
+        build = _build_frontend(frontend_tree)
         if not build.get("ok"):
             return _rollback_update(
                 old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=frontend_deps_changed,

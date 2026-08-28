@@ -35,3 +35,11 @@ def test_performance_gate_uses_generated_sidecars_and_rejects_missing(tmp_path):
     missing = subprocess.run(command, cwd="frontend", env=env, capture_output=True, text=True)
     assert missing.returncode == 1
     assert "missing compression sidecar" in missing.stderr
+
+    script.write_text("tiny")
+    Path(f"{script}.gz").unlink()
+    tiny = subprocess.run(command, cwd="frontend", env=env, capture_output=True, text=True)
+    assert tiny.returncode == 0, tiny.stderr
+    performance = json.loads((tmp_path / "performance.json").read_text())
+    assert performance["critical_js"]["gzip"] == 4
+    assert performance["critical_js"]["br"] == 4
