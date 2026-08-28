@@ -208,7 +208,19 @@ export default function RiskControls() {
 
   const fnl = funnel?.risk_decisions
   const topRejection = fnl?.top_rejection_reasons?.[0]
-  type LatestDecision = { created_at?: string; approved?: boolean; risk_score?: number | null } | null
+  type LatestDecision = {
+    created_at?: string
+    approved?: boolean
+    risk_score?: number | null
+    proposal_id?: string | null
+    decision_role?: string | null
+    proposal_execution_mode?: string | null
+    allowed_execution_mode?: string | null
+    risk_mode?: string | null
+    policy_id?: string | null
+    policy_revision?: number | null
+    proposal_commit_hash?: string | null
+  } | null
   const latest: LatestDecision = riskStatusError ? null : ((riskStatus as Record<string, unknown> | undefined)?.latest_risk_decision as LatestDecision ?? null)
 
   return (
@@ -402,7 +414,15 @@ export default function RiskControls() {
               <div className="latest-check">
                 <span className="latest-check-time mono">{fmtRelative(latest.created_at)}</span>
                 <StatusText tone={latest.approved ? 'green' : 'red'}>{latest.approved ? 'Approved' : 'Rejected'}</StatusText>
+                <span className="latest-check-meta">
+                  {latest.decision_role === 'authoritative' ? 'Authoritative' : `${latest.decision_role || 'legacy'} history`}
+                </span>
                 {latest.risk_score != null && <span className="latest-check-meta">risk score {latest.risk_score}</span>}
+                {(latest.risk_mode || latest.proposal_execution_mode || latest.allowed_execution_mode || latest.policy_id) && (
+                  <span className="latest-check-meta">
+                    {[latest.risk_mode && `mode ${latest.risk_mode}`, latest.proposal_execution_mode && `requested ${latest.proposal_execution_mode}`, latest.allowed_execution_mode && `allowed ${latest.allowed_execution_mode}`, latest.policy_id && `policy ${latest.policy_id}${latest.policy_revision != null ? `@${latest.policy_revision}` : ''}`].filter(Boolean).join(' · ')}
+                  </span>
+                )}
               </div>
             </div>
           )}

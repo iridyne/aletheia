@@ -29,6 +29,13 @@ describe('RiskControls trust-path mutations', () => {
     expect(SRC).toContain('riskState, healthState, paused')
   })
 
+  it('keeps historical risk decisions visibly separate from current health', () => {
+    expect(SRC).toContain("const riskState = riskStatusError ? 'unavailable' : String(riskStatus?.status || 'unknown')")
+    expect(SRC).toContain("latest.decision_role === 'authoritative' ? 'Authoritative' : `${latest.decision_role || 'legacy'} history`")
+    expect(SRC).toContain('latest.proposal_execution_mode')
+    expect(SRC).toContain('latest.policy_id')
+  })
+
   it('derives live exposure market labels from open positions only', () => {
     const spotOpenPerpClosed = [
       { symbol: 'BTC/USDT', market_type: 'spot', status: 'open' },

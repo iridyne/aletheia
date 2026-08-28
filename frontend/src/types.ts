@@ -26,6 +26,14 @@ export interface RiskDecision {
   risk_score: number | null
   violations: string | null
   allowed_execution_mode: string | null
+  proposal_execution_mode?: string | null
+  decision_role?: string | null
+  evaluated_quantity?: number | null
+  proposal_commit_hash?: string | null
+  risk_mode?: string | null
+  policy_id?: string | null
+  policy_revision?: number | null
+  policy_hash?: string | null
   message: string | null
   created_at: string
 }
