@@ -240,6 +240,9 @@ uv run aletheia update check
 uv run aletheia update --no-restart
 ```
 
+`update check` exits non-zero when the configured update source is disabled,
+unavailable, or cannot be fetched; a printed reason is not a successful check.
+
 `--no-restart` is an emergency source-checkout control: it does not build or
 activate dashboard artifacts. Do not use it while adopting a change that removes
 tracked dashboard build output. Use the default update path instead. If the
@@ -278,6 +281,8 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
   or `--deep` (redacted log tails + recent failures + next-log pointers),
   `aletheia doctor --bundle ~/.aletheia/diagnostics/doctor.json` (redacted JSON bundle for AI/support),
   `aletheia gateway status`, `aletheia gateway logs` (multi-log redacted tails). (`aletheia risk status` still works but the Risk panel is primary.)
+- `aletheia doctor --fetch` performs an explicit origin refresh; a failed
+  refresh exits non-zero, and `--json` includes its bounded `fetch` outcome.
 - **Files** under the effective Runtime root (`~/.aletheia/` unless an absolute
   `ALETHEIA_DATA_DIR` is configured):
   - `logs/audit.jsonl` — every state transition (rotates at `retention.jsonl_max_mb`, default 50 MB, numeric generations)

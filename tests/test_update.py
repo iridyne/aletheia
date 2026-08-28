@@ -496,6 +496,23 @@ def test_cli_update_check_smoke(tmp_path, monkeypatch):
     assert "[deprecated]" not in result.stderr
 
 
+def test_cli_update_check_unavailable_exits_nonzero(monkeypatch):
+    from aletheia.update import applier
+    from typer.testing import CliRunner
+    from aletheia.cli.update_cmd import update_app
+
+    monkeypatch.setattr(
+        applier,
+        "check_for_update",
+        lambda: {"ok": False, "reason": "fetch_failed"},
+    )
+
+    result = CliRunner().invoke(update_app, ["check"])
+
+    assert result.exit_code == 1
+    assert "fetch_failed" in result.output
+
+
 async def test_api_update_status_is_local_until_explicit_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier

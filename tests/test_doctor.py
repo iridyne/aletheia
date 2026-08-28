@@ -949,6 +949,42 @@ def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch
     assert "[REDACTED]" in text
 
 
+def test_doctor_fetch_failure_is_machine_visible_and_nonzero(monkeypatch):
+    import json
+
+    from aletheia.main import app
+    from aletheia.update import git_ops
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(git_ops, "is_repo", lambda: True)
+    monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
+    monkeypatch.setattr(
+        git_ops,
+        "fetch",
+        lambda _branch: {
+            "ok": False,
+            "reason": "fetch failed / auth?",
+            "stderr": "secret-token",
+        },
+    )
+    monkeypatch.setattr(dx, "build_report", lambda **_kwargs: dx.Report(generated_at="t"))
+
+    json_result = CliRunner().invoke(app, ["doctor", "--json", "--fetch"])
+    text_result = CliRunner().invoke(app, ["doctor", "--fetch"])
+
+    assert json_result.exit_code == 1
+    payload = json.loads(json_result.stdout)
+    assert payload["fetch"] == {
+        "requested": True,
+        "attempted": True,
+        "ok": False,
+        "reason": "fetch_failed___auth_",
+    }
+    assert "secret-token" not in json_result.stdout
+    assert text_result.exit_code == 1
+    assert "fetch skipped: fetch failed / auth?" in text_result.stdout
+
+
 def test_apply_fixes_suppresses_lifecycle_stdout_and_structures_typer_exit(monkeypatch, capsys):
     import typer
 
