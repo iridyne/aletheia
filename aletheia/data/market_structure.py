@@ -642,11 +642,17 @@ class MarketStructureProvider:
                 provider_outcome=provider_outcome,
             )
 
-        closed = tuple(candle for candle in source_rows if candle.is_closed)
         if as_of_ms is None:
+            closed = tuple(
+                candle
+                for candle in source_rows
+                if candle.is_closed
+                and candle.timestamp + tf_ms <= computed_at_ms
+            )
             error = _series_error(closed, tf_ms)
             admitted = closed[-WINDOW_BARS:]
         else:
+            closed = tuple(candle for candle in source_rows if candle.is_closed)
             admitted = tuple(
                 candle
                 for candle in closed

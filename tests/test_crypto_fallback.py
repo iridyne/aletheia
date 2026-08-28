@@ -163,8 +163,28 @@ class TestBinancePublicProvider:
         # Returned ticker is tagged canonical, not the exchange name.
         assert ticker.symbol == "AAVE/USDT"
 
+    @pytest.mark.parametrize("market_type", ["perp", "futures"])
+    @pytest.mark.anyio
+    async def test_non_spot_ticker_is_unsupported_without_network_io(
+        self, market_type
+    ):
+        from aletheia.data.symbols import InstrumentId
+
+        instrument = InstrumentId.from_parts(
+            "binance", "BTC/USDT", market_type
+        )
+        with patch(
+            "aletheia.net.httpx_client",
+            side_effect=AssertionError("unexpected network I/O"),
+        ) as httpx_client:
+            with pytest.raises(NotImplementedError, match="spot"):
+                await BinancePublicProvider().get_ticker(instrument)
+        httpx_client.assert_not_called()
+
     @pytest.mark.anyio
     async def test_get_ohlcv(self):
+        from aletheia.data.symbols import InstrumentId
+
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = [
@@ -181,7 +201,11 @@ class TestBinancePublicProvider:
 
         with patch("aletheia.net.httpx_client", return_value=mock_client):
             provider = BinancePublicProvider()
-            candles = await provider.get_ohlcv("BTC/USDT", timeframe="1h", limit=10)
+            candles = await provider.get_ohlcv(
+                InstrumentId.from_parts("binance", "BTC/USDT", "spot"),
+                timeframe="1h",
+                limit=10,
+            )
 
         assert len(candles) == 2
         assert candles[0].timestamp == 1700000000000
@@ -190,6 +214,33 @@ class TestBinancePublicProvider:
         assert candles[1].close == 67600.0
         assert {candle.provider for candle in candles} == {"binance_public"}
         assert {candle.exchange for candle in candles} == {"binance"}
+        assert all(candle.is_closed for candle in candles)
+
+    @pytest.mark.anyio
+    async def test_get_ohlcv_marks_future_close_as_forming(self):
+        base_ms = 1_700_000_000_000
+        now_ms = base_ms + 2 * 3_600_000 - 1
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = [
+            [base_ms, "100", "105", "95", "101", "10"],
+            [base_ms + 3_600_000, "101", "106", "96", "102", "11"],
+        ]
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("time.time_ns", return_value=now_ms * 1_000_000),
+            patch("aletheia.net.httpx_client", return_value=mock_client),
+        ):
+            candles = await BinancePublicProvider().get_ohlcv(
+                "BTC/USDT", timeframe="1h", limit=2
+            )
+
+        assert candles[0].is_closed is True
+        assert candles[1].is_closed is False
 
     @pytest.mark.anyio
     async def test_unknown_timeframe_is_unsupported_without_network_io(self):
@@ -197,6 +248,26 @@ class TestBinancePublicProvider:
         with patch("aletheia.net.httpx_client") as httpx_client:
             with pytest.raises(NotImplementedError, match="2h"):
                 await provider.get_ohlcv("BTC/USDT", timeframe="2h")
+        httpx_client.assert_not_called()
+
+    @pytest.mark.parametrize("market_type", ["perp", "futures"])
+    @pytest.mark.anyio
+    async def test_non_spot_ohlcv_is_unsupported_without_network_io(
+        self, market_type
+    ):
+        from aletheia.data.symbols import InstrumentId
+
+        instrument = InstrumentId.from_parts(
+            "binance", "BTC/USDT", market_type
+        )
+        with patch(
+            "aletheia.net.httpx_client",
+            side_effect=AssertionError("unexpected network I/O"),
+        ) as httpx_client:
+            with pytest.raises(NotImplementedError, match="spot"):
+                await BinancePublicProvider().get_ohlcv(
+                    instrument, timeframe="1h"
+                )
         httpx_client.assert_not_called()
 
     @pytest.mark.anyio
@@ -292,6 +363,38 @@ class TestFallbackChainProvider:
         assert result[0].close == 1.5
         assert result[0].provider == "exact_fake"
         assert result[0].exchange == "fake_venue"
+
+    @pytest.mark.anyio
+    async def test_derivative_request_never_reaches_spot_fallback(self):
+        from aletheia.data.providers import OHLCVResult
+        from aletheia.data.symbols import InstrumentId
+
+        instrument = InstrumentId.from_parts(
+            "binance", "BTC/USDT", "perp"
+        )
+        primary = AsyncMock()
+        primary.get_ohlcv = AsyncMock(return_value=OHLCVResult([
+            Candle(
+                timestamp=1,
+                open=1,
+                high=2,
+                low=0.5,
+                close=1.5,
+                volume=100,
+                provider="ccxt",
+                exchange="binance",
+            )
+        ], requested=1))
+        spot_fallback = AsyncMock()
+        chain = FallbackChainProvider([primary, spot_fallback])
+
+        result = await chain.get_ohlcv(instrument, timeframe="1m", limit=1)
+
+        assert len(result) == 1
+        primary.get_ohlcv.assert_awaited_once_with(
+            instrument, timeframe="1m", limit=1, since=None
+        )
+        spot_fallback.get_ohlcv.assert_not_called()
 
     @pytest.mark.anyio
     async def test_close_calls_all(self):

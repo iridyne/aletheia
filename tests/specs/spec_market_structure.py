@@ -133,6 +133,31 @@ def test_market_structure_provider_historical_cutoff_is_replay_stable():
 
 
 @spec_claim(SpecClaim(
+    "MS-C03",
+    "market_structure_contract",
+    "§ Invariants and trust boundaries",
+    "L2b",
+    "Latest reads independently require provider-closed and elapsed-close-time "
+    "evidence, while Binance Public rejects exact non-spot instruments",
+))
+def test_latest_close_time_and_spot_only_provider_guards_are_structural():
+    from aletheia.data import market_structure
+    from aletheia.data.sources import binance_public
+
+    snapshot_source = inspect.getsource(market_structure.MarketStructureProvider)
+    spot_guard_source = inspect.getsource(binance_public._spot_canonical)
+    ticker_source = inspect.getsource(binance_public.BinancePublicProvider.get_ticker)
+    ohlcv_source = inspect.getsource(binance_public.BinancePublicProvider.get_ohlcv)
+
+    assert "candle.is_closed" in snapshot_source
+    assert "candle.timestamp + tf_ms <= computed_at_ms" in snapshot_source
+    assert "symbol.market_type != MARKET_SPOT" in spot_guard_source
+    assert "raise NotImplementedError" in spot_guard_source
+    assert "_spot_canonical(symbol)" in ticker_source
+    assert "_spot_canonical(symbol)" in ohlcv_source
+
+
+@spec_claim(SpecClaim(
     "MS-A01",
     "market_structure_contract",
     "§ Durable state and consumers",

@@ -50,6 +50,10 @@ proof of network receipt or freshness.
 
 - No fact is observable before its canonical `known_at_ms`; `computed_at_ms`
   is provenance only and never enters fact identity.
+- Latest reads independently require both `Candle.is_closed=true` and
+  `Candle.timestamp + timeframe_ms(timeframe) <= computed_at_ms`; a provider
+  flag cannot make a future-close row causal evidence. Historical reads retain
+  the stricter close-time cutoff against their requested `as_of_ms`.
 - Closed bars are strictly increasing, unique, finite, economically valid, and
   exactly continuous at the canonical `timeframe_ms()` duration. The component
   never interpolates, reorders, deduplicates, or substitutes another venue.
@@ -84,8 +88,8 @@ bounded to 120 bars, this is not a durable historical event ledger.
 ## Executable evidence
 
 - `tests/test_market_structure.py` proves causal Swing/event/FVG time,
-  state-machine behavior, exact provider reads, replay stability, fingerprints,
-  identities, failure semantics, and provider ownership.
+  state-machine behavior, exact provider reads, replay stability, future-close
+  exclusion, fingerprints, identities, failure semantics, and provider ownership.
 - `tests/test_universe_fast_trigger.py` proves the v2 compatibility projection,
   no repeated final-bar event, empty hard allowlist, and Shadow-only
   non-authority.
