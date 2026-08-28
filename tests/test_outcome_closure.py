@@ -898,6 +898,51 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     ]) == 1
 
 
+def test_verified_external_close_converges_with_unknown_entry_fee():
+    """Verified disappearance closes lifecycle while withholding net economics."""
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
+
+    position = _position(execution_mode="bitget_demo")
+    position.entry_fee = None
+    repo.insert_position(position)
+    evidence = _verified_result(position)
+
+    result = close_position_from_verified_exit(position.id, evidence)
+
+    assert result["closed"] is True
+    assert result["realized_pnl"] is None
+    assert result["outcome_eligible"] is False
+    assert result["outcome_exclusion_reason"] == "incomplete_realized_economics"
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "closed"
+    assert stored["entry_fee"] is None
+    assert stored["exit_fee"] == pytest.approx(0.2)
+    assert stored["realized_pnl"] is None
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "incomplete_realized_economics"
+
+    db = repo.get_db()
+    close_order = db.execute(
+        "SELECT * FROM orders WHERE position_id=? AND close_reason=?",
+        (position.id, "verified_external"),
+    ).fetchone()
+    assert close_order is not None
+    assert close_order["source"] == "adopted"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
+    ).fetchone()[0] == 2
+
+    repeated = close_position_from_verified_exit(position.id, evidence)
+    assert repeated["already_closed"] is True
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason=?",
+        (position.id, "verified_external"),
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
+    ).fetchone()[0] == 2
+
+
 def test_exit_result_router_never_closes_inconclusive_and_routes_absent_to_admin():
     from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
 

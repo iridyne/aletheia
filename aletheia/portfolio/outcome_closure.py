@@ -340,8 +340,6 @@ def close_position_verified(
             float(fill.fee) for fill in evidence.fills if fill.fee is not None
         )
         entry_fee = current.get("entry_fee")
-        if entry_fee is None:
-            raise ValueError("verified closure requires known entry fee")
         gross = _realized_pnl(
             str(current["direction"]),
             float(current["entry_price"]),
@@ -365,7 +363,7 @@ def close_position_verified(
         # futures funding still makes net realized economics unavailable.  Do
         # not convert that missing ledger fact into a zero-cost assumption.
         realized: float | None = None
-        if funding_cost is not None:
+        if funding_cost is not None and entry_fee is not None:
             realized = gross - float(entry_fee) - exit_fee - funding_cost
         closed_at = datetime.fromtimestamp(
             max(fill.filled_at_ms for fill in evidence.fills) / 1000,
@@ -397,7 +395,7 @@ def close_position_verified(
             "pending_close_order_id": None,
             "pending_close_status": None,
             "pending_close_requested_at": None,
-            "entry_fee": float(entry_fee),
+            "entry_fee": float(entry_fee) if entry_fee is not None else None,
             "exit_fee": exit_fee,
             "funding_cost": funding_cost,
             "funding_source": funding_source,
@@ -429,7 +427,10 @@ def close_position_verified(
                 },
             )),
         }
-        if strategy_outcome and funding_cost is None:
+        if entry_fee is None or exit_fee is None:
+            outcome_eligible = False
+            outcome_reason = "incomplete_realized_economics"
+        elif strategy_outcome and funding_cost is None:
             outcome_eligible = False
             outcome_reason = "incomplete_funding_economics"
         elif strategy_outcome:
