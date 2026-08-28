@@ -7,22 +7,30 @@ always an ISO-8601 UTC string.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OrderbookSnapshot(BaseModel):
     symbol: str
     exchange: str
     market_type: str
-    bid_price: float
-    ask_price: float
-    spread_bps: float
-    bid_depth_10bps_usd: float
-    ask_depth_10bps_usd: float
-    total_depth_10bps_usd: float
-    imbalance_ratio: float | None = None
+    bid_price: float = Field(gt=0, allow_inf_nan=False)
+    ask_price: float = Field(gt=0, allow_inf_nan=False)
+    spread_bps: float = Field(ge=0, allow_inf_nan=False)
+    bid_depth_10bps_usd: float = Field(ge=0, allow_inf_nan=False)
+    ask_depth_10bps_usd: float = Field(ge=0, allow_inf_nan=False)
+    total_depth_10bps_usd: float = Field(ge=0, allow_inf_nan=False)
+    imbalance_ratio: float | None = Field(
+        default=None, ge=-1, le=1, allow_inf_nan=False
+    )
     observed_at: str
-    fetch_latency_ms: int | None = None
+    fetch_latency_ms: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_book_geometry(self):
+        if self.ask_price < self.bid_price:
+            raise ValueError("crossed orderbook")
+        return self
 
 
 class TradabilityScore(BaseModel):
