@@ -205,8 +205,19 @@ def _render_human(rep: dict) -> str:
         o = rep["order_stats"]
         out.append("")
         out.append("[订单 order_stats]")
-        out.append("  成交率: %s%% (filled=%s, errors=%s)" % (
-            o.get("fill_rate_pct"), o.get("filled"), o.get("errors")))
+        out.append(
+            "  已解析成交率: %s%% (%s/%s; observed=%s; "
+            "in_flight=%s; unresolved_or_integrity=%s; delivery_status=%s)"
+            % (
+                o.get("resolved_fill_rate_pct", o.get("fill_rate_pct")),
+                o.get("resolved_fill_numerator", o.get("filled")),
+                o.get("resolved_fill_denominator"),
+                o.get("observed_order_count", o.get("total")),
+                o.get("in_flight_count"),
+                o.get("unresolved_or_integrity_count"),
+                o.get("delivery_status", "unknown"),
+            )
+        )
 
     if "risk_adjusted" in rep:
         ra = rep["risk_adjusted"]

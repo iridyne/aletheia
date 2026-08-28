@@ -514,7 +514,18 @@ def orders(
             typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
             return
         typer.echo(f"=== {days}-Day Order Stats ({mode}) ===")
-        typer.echo(f"  total: {result['total']}  filled: {result['filled']}  errors: {result['errors']}  fill_rate: {result['fill_rate_pct']}%")
+        typer.echo(
+            f"  observed: {result['observed_order_count']}  "
+            f"filled: {result['filled']}  errors: {result['errors']}  "
+            f"cancelled: {result['cancelled']}  "
+            f"resolved_fill_rate: {result['resolved_fill_rate_pct']}% "
+            f"({result['resolved_fill_numerator']}/{result['resolved_fill_denominator']})  "
+            f"delivery_status: {result['delivery_status']}"
+        )
+        typer.echo(
+            f"  in_flight: {result['in_flight_count']}  "
+            f"unresolved_or_integrity: {result['unresolved_or_integrity_count']}"
+        )
         if result["error_breakdown"]:
             typer.echo("")
             typer.echo("=== Error Breakdown ===")
@@ -1091,7 +1102,18 @@ def status(
 
     typer.echo("")
     typer.echo(f"=== Orders ({days}d) ===")
-    typer.echo(f"  filled: {order_section['filled']}  errors: {order_section['errors']}  fill_rate: {order_section['fill_rate_pct']}%")
+    typer.echo(
+        f"  observed: {order_section['observed_order_count']}  "
+        f"filled: {order_section['filled']}  errors: {order_section['errors']}  "
+        f"cancelled: {order_section['cancelled']}  "
+        f"resolved_fill_rate: {order_section['resolved_fill_rate_pct']}% "
+        f"({order_section['resolved_fill_numerator']}/{order_section['resolved_fill_denominator']})  "
+        f"delivery_status: {order_section['delivery_status']}"
+    )
+    typer.echo(
+        f"  in_flight: {order_section['in_flight_count']}  "
+        f"unresolved_or_integrity: {order_section['unresolved_or_integrity_count']}"
+    )
     for e in order_section["error_breakdown"][:3]:
         typer.echo(f"  {e['pattern']}: x{e['count']} ({', '.join(e['symbols'][:3])})")
 
