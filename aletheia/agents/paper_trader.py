@@ -286,8 +286,10 @@ def _operator_evaluated_opportunity_ids(
             (signal_source or "market_observer", cutoff),
         ).fetchall()
         return {str(row[0]) for row in rows if row[0]}
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(
+            "operator_evaluated_ownership_unavailable"
+        ) from e
 
 
 def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[dict]:

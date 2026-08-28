@@ -93,6 +93,24 @@ def _patch_deps(
     return MultiPatch()
 
 
+def test_operator_evaluated_ownership_read_fails_closed(monkeypatch):
+    from aletheia.agents.paper_trader import (
+        SignalQueueOwnershipUnavailable,
+        _operator_evaluated_opportunity_ids,
+    )
+
+    def fail_db():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", fail_db)
+
+    with pytest.raises(
+        SignalQueueOwnershipUnavailable,
+        match="operator_evaluated_ownership_unavailable",
+    ):
+        _operator_evaluated_opportunity_ids()
+
+
 # ---------------------------------------------------------------------------
 # Filter tests
 # ---------------------------------------------------------------------------
