@@ -176,9 +176,18 @@ def load_published_regime() -> tuple[str | None, float | None]:
         from aletheia.regime import detector as regime_mod
         published = getattr(regime_mod, "_published_regime", None)
         if published is not None:
-            return getattr(published, "state", None), getattr(published, "confidence", None)
+            from aletheia.data.freshness import assess_freshness
+
+            verdict = assess_freshness(
+                {"detected_at": getattr(published, "detected_at", None)},
+                "regime",
+                timestamp_field="detected_at",
+            )
+            if verdict.usable:
+                return getattr(published, "state", None), getattr(published, "confidence", None)
         from aletheia.storage.repositories import get_latest_market_regime
-        if get_latest_market_regime() is None:
+        regime = get_latest_market_regime()
+        if not regime or not regime.get("state"):
             return None, None
         regime = regime_mod.get_current_regime()
         return getattr(regime, "state", None), getattr(regime, "confidence", None)
