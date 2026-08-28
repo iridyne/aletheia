@@ -581,7 +581,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             evaluate_trading_opportunity,
             review_portfolio_state,
         )
-        from aletheia.agent_shell.entry_planner import run_entry_planner_once
+        from aletheia.agent_shell.entry_planner import run_entry_planner_batch
         from aletheia.agent_runtime.scheduler import _record_job_success
 
         logger.info(
@@ -600,7 +600,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             if evaluation_params.get("wake_batches"):
                 result = await asyncio.wait_for(review_portfolio_state(evaluation_params), timeout=300.0)
             else:
-                result = await asyncio.wait_for(run_entry_planner_once(), timeout=300.0)
+                result = await asyncio.wait_for(run_entry_planner_batch(), timeout=300.0)
                 if result.get("status") == "idle":
                     result = await asyncio.wait_for(evaluate_trading_opportunity(evaluation_params), timeout=300.0)
         action = result.get("action") or result.get("status") or "unknown" if isinstance(result, dict) else "unknown"

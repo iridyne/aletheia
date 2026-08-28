@@ -74,14 +74,24 @@ def test_entry_plan_execution_reuses_canonical_gateway():
         "§4 DL-INV-37 Candidate planning priority",
         "L2b",
         "Entry Planner claims the current exact Candidate rank first and falls back "
-        "deterministically without changing planning identity.",
+        "deterministically, then plans a bounded 3-15 generation batch concurrently "
+        "without changing planning identity or single-owner CAS.",
         status="implemented",
     )
 )
 def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback():
+    from aletheia.agent_shell.entry_planner import (
+        ENTRY_PLANNER_MAX_CONCURRENCY,
+        ENTRY_PLANNER_MIN_CONCURRENCY,
+        run_entry_planner_batch,
+    )
     from aletheia.storage.repositories import claim_next_candidate_planning
 
-    source = inspect.getsource(claim_next_candidate_planning)
-    assert "um.id=pg.last_candidate_id" in source
-    assert "CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC" in source
-    assert "pg.created_at ASC, pg.id ASC" in source
+    claim_source = inspect.getsource(claim_next_candidate_planning)
+    batch_source = inspect.getsource(run_entry_planner_batch)
+    assert "um.id=pg.last_candidate_id" in claim_source
+    assert "CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC" in claim_source
+    assert "pg.created_at ASC, pg.id ASC" in claim_source
+    assert ENTRY_PLANNER_MIN_CONCURRENCY == 3
+    assert ENTRY_PLANNER_MAX_CONCURRENCY == 15
+    assert "asyncio.gather" in batch_source

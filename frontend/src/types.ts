@@ -887,7 +887,7 @@ export interface EntryWorkbenchResponse {
   availability: Record<string, { available: boolean; stale: boolean; reason?: string }>
   universe: {
     enabled: boolean | null
-    status: 'active' | 'disabled' | 'no_active_snapshot' | 'read_unavailable'
+    status: 'active' | 'disabled' | 'stale_snapshot' | 'no_active_snapshot' | 'read_unavailable'
     snapshot: UniverseSnapshot | null
     fallback_instruments: string[]
   }

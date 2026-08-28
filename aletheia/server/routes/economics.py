@@ -157,7 +157,7 @@ def costs_by_tool(
 def viability(
     scope: str = Query("system", pattern="^(system|operator)$"),
     days: int = Query(7, ge=1, le=365),
-    execution_mode: str = "paper_internal",
+    execution_mode: Literal["paper_internal"] = "paper_internal",
     data_cost_usd: Optional[float] = Query(None, ge=0),
     infrastructure_cost_usd: Optional[float] = Query(None, ge=0),
     other_cost_usd: Optional[float] = Query(None, ge=0),

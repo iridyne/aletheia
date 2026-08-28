@@ -504,7 +504,7 @@ def test_daemon_evaluation_failures_count_and_real_success_recovers(monkeypatch)
         return {"status": "idle"}
 
     monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.run_entry_planner_once",
+        "aletheia.agent_shell.entry_planner.run_entry_planner_batch",
         idle_planner,
     )
 

@@ -1,6 +1,7 @@
 """Secrets handling: OS keyring first, encrypted file fallback. Never logs secrets."""
 
 import os
+import stat as _stat
 import threading
 import time
 from pathlib import Path
@@ -137,6 +138,7 @@ def get_credential_generation(scope: str) -> int:
     if is_preview_mode():
         return 0
     path = _fallback_path()
+    _ensure_private_file(path)
     if not path.exists():
         return 0
     try:
@@ -169,6 +171,51 @@ def _get_keyring():
 
 def _fallback_path() -> Path:
     return get_data_dir() / "secrets.enc"
+
+
+def _ensure_private_file(path: Path) -> None:
+    """Reject links/foreign owners and tighten POSIX secret-file permissions."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if _stat.S_ISLNK(info.st_mode):
+        raise RuntimeError(f"secret file must not be a symlink: {path.name}")
+    if not _stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"secret file must be regular: {path.name}")
+    getuid = getattr(os, "getuid", None)
+    if getuid is not None and info.st_uid != getuid():
+        raise RuntimeError(f"secret file has unexpected owner: {path.name}")
+    try:
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"cannot restrict secret file permissions: {path.name}") from exc
+    if os.name != "nt" and path.stat().st_mode & 0o077:
+        raise RuntimeError(f"secret file permissions are too broad: {path.name}")
+
+
+def _write_private_bytes(path: Path, data: bytes, *, exclusive: bool = False) -> None:
+    _ensure_private_file(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if exclusive:
+        flags |= os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o600)
+    try:
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+    except BaseException:
+        # fdopen owns the descriptor after entering the context; this close is
+        # only for errors raised before that handoff.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    _ensure_private_file(path)
 
 
 def set_secret(key: str, value: str) -> None:
@@ -236,14 +283,13 @@ def delete_secret(key: str) -> None:
 def _get_fernet():
     from cryptography.fernet import Fernet
     key_path = get_data_dir() / ".secret.key"
-    if not key_path.exists():
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            # Exclusive creation so only one concurrent first-start process wins.
-            with open(key_path, "xb") as f:
-                f.write(Fernet.generate_key())
-        except FileExistsError:
-            pass  # Another process created the key first; read it below.
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Exclusive creation so only one concurrent first-start process wins.
+        _write_private_bytes(key_path, Fernet.generate_key(), exclusive=True)
+    except FileExistsError:
+        pass  # Another process created the key first; read it below.
+    _ensure_private_file(key_path)
     return Fernet(key_path.read_bytes())
 
 
@@ -254,6 +300,7 @@ def _file_set(key: str, value: str) -> None:
         try:
             fernet = _get_fernet()
             path = _fallback_path()
+            _ensure_private_file(path)
             data: dict = {}
             if path.exists():
                 try:
@@ -264,8 +311,9 @@ def _file_set(key: str, value: str) -> None:
             _advance_credential_generation(data, key)
             tmp = path.with_name(path.name + ".tmp")
             try:
-                tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+                _write_private_bytes(tmp, fernet.encrypt(json.dumps(data).encode()))
                 tmp.replace(path)
+                _ensure_private_file(path)
             finally:
                 tmp.unlink(missing_ok=True)
         finally:
@@ -275,6 +323,7 @@ def _file_set(key: str, value: str) -> None:
 def _file_get(key: str) -> str | None:
     import json
     path = _fallback_path()
+    _ensure_private_file(path)
     if not path.exists():
         return None
     fernet = _get_fernet()
@@ -288,6 +337,7 @@ def _file_get(key: str) -> str | None:
 def _file_delete(key: str, *, force_generation: bool = False) -> None:
     import json
     path = _fallback_path()
+    _ensure_private_file(path)
     if not path.exists() and not force_generation:
         return
     with _write_lock:
@@ -307,8 +357,9 @@ def _file_delete(key: str, *, force_generation: bool = False) -> None:
             _advance_credential_generation(data, key)
             tmp = path.with_name(path.name + ".tmp")
             try:
-                tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+                _write_private_bytes(tmp, fernet.encrypt(json.dumps(data).encode()))
                 tmp.replace(path)
+                _ensure_private_file(path)
             finally:
                 tmp.unlink(missing_ok=True)
         finally:
