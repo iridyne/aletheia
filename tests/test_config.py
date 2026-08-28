@@ -1,11 +1,14 @@
 """Tests for config loading, schema defaults, and bootstrap."""
 
 import tempfile
+import os
+import stat
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
+import yaml
 
 from aletheia.config.schema import AletheiaConfig, GuardConfig, RiskConfig
 from aletheia.config.loader import load_config, save_config, bootstrap, ensure_data_dirs
@@ -60,6 +63,49 @@ def test_config_roundtrip(tmp_path):
         loaded = load_config()
         assert loaded.agent.permission_mode == "Paper"
         assert loaded.app.dashboard_port == 8787
+
+
+def test_config_save_fsyncs_temp_file_before_directory(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_file)
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "_dirs_ensured_for", None)
+    calls = []
+    real_fsync = os.fsync
+
+    def record_fsync(fd):
+        calls.append(stat.S_ISREG(os.fstat(fd).st_mode))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(loader.os, "fsync", record_fsync)
+
+    loader._save_config_locked(AletheiaConfig())
+
+    assert calls == [True, False]
+
+
+def test_config_save_replace_failure_leaves_complete_file_and_no_temp(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_file)
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "_dirs_ensured_for", None)
+    original_replace = loader.os.replace
+
+    def replace_then_crash(source, target):
+        original_replace(source, target)
+        raise RuntimeError("injected crash after replace")
+
+    monkeypatch.setattr(loader.os, "replace", replace_then_crash)
+
+    with pytest.raises(RuntimeError, match="injected crash"):
+        loader._save_config_locked(AletheiaConfig())
+
+    assert list(tmp_path.glob("*.tmp")) == []
+    AletheiaConfig.model_validate(yaml.safe_load(config_file.read_text(encoding="utf-8")))
 
 
 @pytest.mark.parametrize(
