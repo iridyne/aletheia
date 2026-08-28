@@ -101,4 +101,13 @@ describe('StatusCluster permission scope presentation', () => {
     expect(SRC).toContain('Worker / Trading permission mode:')
     expect(SRC).not.toContain('title={`Permission mode: ${permission} — click to cycle`}')
   })
+
+  it('passes the observed scheduler snapshot into the shared master state', () => {
+    expect(SRC).toContain('const schedulerEnabled = data?.scheduler?.enabled')
+    expect(SRC).toContain('const schedulerRunning = data?.scheduler?.running')
+    expect(SRC).toContain('schedulerEnabled,')
+    expect(SRC).toContain('schedulerRunning,')
+    expect(SRC).toContain('Scheduler: ${schedulerState}')
+    expect(SRC).not.toContain('!paused && !!data?.scheduler?.enabled')
+  })
 })

@@ -78,7 +78,9 @@ export function classifyRiskPolicyMode(exchangeMode: unknown, statusAvailable: b
 export default function RiskControls() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const { data: status, isLoading: statusLoading, isError: statusError } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
+  const { data: status, isLoading: statusLoading, isError: statusError } = useQuery({
+    queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 30_000,
+  })
   const { data: riskStatus, isPending: riskStatusPending, isError: riskStatusError } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: health, isError: healthError } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 15000 })
   const { data: boundaries, isPending: boundariesPending, isError: boundariesError } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
@@ -143,6 +145,9 @@ export default function RiskControls() {
   const killed = killSwitchAvailable && killSwitch?.active === true
   const paused = statusAvailable && !!s.paused
   const gatewayRunning = statusAvailable && !!s.gateway_running
+  const schedulerEnabled = typeof s.scheduler_enabled === 'boolean' ? s.scheduler_enabled : null
+  const schedulerRunning = typeof s.scheduler_running === 'boolean' ? s.scheduler_running : null
+  const schedulerAvailable = schedulerEnabled != null && schedulerRunning != null
   const schedulerPending = pauseMut.isPending || resumeMut.isPending
   const violations = riskStatusError ? [] : ((riskStatus?.violations as string[]) || [])
   const riskState = riskStatusError ? 'unavailable' : String(riskStatus?.status || 'unknown')
@@ -151,7 +156,7 @@ export default function RiskControls() {
 
   const master = !statusAvailable || !killSwitchAvailable
     ? { word: 'NOT AVAILABLE', tone: 'blue' as const, detail: 'Authoritative runtime safety state is unavailable.' }
-    : deriveMasterState({ gatewayRunning, killed, riskState, healthState, paused })
+    : deriveMasterState({ gatewayRunning, killed, riskState, healthState, paused, schedulerEnabled, schedulerRunning })
 
   // Exposure: largest magnitude first; bars scale to the biggest absolute exposure.
   const exposureRaw = (portfolio as Record<string, unknown> | undefined)?.exposure_by_symbol as Record<string, number> | undefined
@@ -293,8 +298,8 @@ export default function RiskControls() {
             <div className="risk-lever">
               <div className="risk-lever-head">
                 <span className="risk-lever-label">Scheduler</span>
-                <StatusText tone={!statusAvailable ? 'yellow' : paused ? 'yellow' : gatewayRunning ? 'green' : 'muted'}>
-                  {!statusAvailable ? 'NOT AVAILABLE' : paused ? 'PAUSED' : gatewayRunning ? 'ACTIVE' : 'OFFLINE'}
+                <StatusText tone={!statusAvailable || !schedulerAvailable ? 'yellow' : paused ? 'yellow' : schedulerEnabled === false ? 'muted' : schedulerRunning ? 'green' : 'red'}>
+                  {!statusAvailable || !schedulerAvailable ? 'NOT AVAILABLE' : paused ? 'PAUSED' : schedulerEnabled === false ? 'DISABLED' : schedulerRunning ? 'ACTIVE' : 'OFFLINE'}
                 </StatusText>
               </div>
               <div className="risk-lever-actions">
