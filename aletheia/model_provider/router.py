@@ -850,7 +850,11 @@ def _decorate_health(
             health.reason_code = "verified" if health.verified is True else "reachable"
             health.state = "verified" if health.verified is True else "reachable"
         else:
-            health.reason_code = _classify_health_error(health.error)
+            health.reason_code = (
+                health.reason_code
+                if health.reason_code != "no_observation"
+                else _classify_health_error(health.error)
+            )
             health.state = "unavailable"
     else:
         health.reachable = None

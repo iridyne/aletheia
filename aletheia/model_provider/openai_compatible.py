@@ -13,6 +13,7 @@ from aletheia.model_provider.base import (
     ModelResponse,
     ProviderResponseError,
     StructuredModelRequest,
+    health_from_model_catalogue,
     model_json_schema_payload,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
@@ -243,10 +244,8 @@ class OpenAICompatibleProvider(ModelProvider):
         try:
             models = await self.list_models()
             if models:
-                slugs = [m["slug"] for m in models]
-                return ModelHealth(
-                    provider=self.name, available=True, model=self.model,
-                    models=slugs, model_metadata=models,
+                return health_from_model_catalogue(
+                    self.name, self.model, models, allow_default=True
                 )
             return ModelHealth(
                 provider=self.name,
