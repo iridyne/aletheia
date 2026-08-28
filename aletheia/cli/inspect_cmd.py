@@ -1570,6 +1570,9 @@ def serenity(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show Serenity research data (themes, runs, or opportunities)."""
+    what = str(what).strip().lower()
+    if what not in {"themes", "runs", "opps"}:
+        raise typer.BadParameter("what must be one of: themes, runs, opps")
     from aletheia.storage import repositories as repo
     if what == "themes":
         rows = repo.list_serenity_themes(status=status_filter or "active", limit=limit)
@@ -2120,6 +2123,9 @@ def predictions(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show prediction market data (events or runs)."""
+    what = str(what).strip().lower()
+    if what not in {"events", "runs"}:
+        raise typer.BadParameter("what must be one of: events, runs")
     from aletheia.storage import repositories as repo
     if what == "runs":
         rows = repo.list_prediction_runs(limit=limit)
