@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 from aletheia.agent_shell.entry_planner import plan_next_candidate
@@ -7,19 +8,27 @@ from aletheia.storage.models import UniverseMember, UniverseSnapshot
 from aletheia.trading.entry_plan import EntryPlan
 
 
-def _candidate(*, regime: str = "trending", rank: int = 1, price: float = 100.0):
+def _candidate(
+    *,
+    regime: str = "trending",
+    rank: int = 1,
+    price: float = 100.0,
+    asset_id: str = "asset-btc",
+    symbol: str = "BTC/USDT",
+    direction: str = "long",
+):
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_snapshot(snapshot)
     candidate = UniverseMember(
         snapshot_id=snapshot.id,
-        asset_id="asset-btc",
+        asset_id=asset_id,
         venue="bitget",
-        symbol="BTC/USDT",
+        symbol=symbol,
         market_type="perp",
         rank=rank,
         total_score=90 - rank,
         scanner_family="momentum",
-        scanner_direction="long",
+        scanner_direction=direction,
         regime_tag=regime,
         entry_price_usd=price,
         expires_at="2099-01-01T00:00:00+00:00",
@@ -98,6 +107,173 @@ def test_unchanged_candidate_and_duplicate_wakes_create_one_durable_owner():
     assert repo.claim_next_candidate_planning("owner-two") is None
 
 
+def test_candidate_attention_requalification_preserves_hard_deadline():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, created = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    assert created is True
+    assert generation["attention_started_at"] == start.isoformat()
+    assert generation["last_requalified_at"] is None
+    assert generation["soft_expires_at"] == (start + timedelta(seconds=900)).isoformat()
+    assert generation["hard_expires_at"] == (start + timedelta(seconds=3600)).isoformat()
+
+    reselected = _candidate(rank=2, price=101)
+    same, created = repo.ensure_candidate_planning_generation(
+        reselected.id,
+        now=start + timedelta(seconds=600),
+    )
+    assert created is False
+    source = {"scanner_run_id": "run-complete", "snapshot_id": reselected.snapshot_id}
+    counts = repo.reconcile_candidate_attention(
+        {same["id"]},
+        eligible_identity_keys={("bitget", "BTC/USDT", "perp", "momentum", "long")},
+        refresh_source=source,
+        soft_lease_sec=900,
+        now=start + timedelta(seconds=600),
+    )
+
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert counts == {"requalified": 1, "quota_evicted": 0, "admission_lost": 0}
+    assert stored["last_requalified_at"] == (start + timedelta(seconds=600)).isoformat()
+    assert stored["soft_expires_at"] == (start + timedelta(seconds=1500)).isoformat()
+    assert stored["hard_expires_at"] == generation["hard_expires_at"]
+    assert repo.get_candidate_planning_for_candidate(candidate.id)["id"] == generation["id"]
+    assert repo.get_candidate_planning_for_candidate(reselected.id)["id"] == generation["id"]
+    persisted_source = json.loads(stored["requalification_source_json"])
+    assert persisted_source == {
+        **source,
+        "planning_generation_id": generation["id"],
+        "planning_identity": generation["planning_identity"],
+    }
+
+
+def test_timer_only_universe_ttl_slide_does_not_requalify_attention():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    before = repo.get_candidate_planning_generation(generation["id"])
+
+    repo.refresh_active_snapshot_ttls(candidate.snapshot_id, start + timedelta(seconds=300))
+
+    after = repo.get_candidate_planning_generation(generation["id"])
+    assert after["last_requalified_at"] is None
+    assert after["requalification_source_json"] is None
+    assert after["soft_expires_at"] == before["soft_expires_at"]
+    assert after["hard_expires_at"] == before["hard_expires_at"]
+
+
+def test_attention_expiry_does_not_resurrect_unchanged_identity():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+
+    assert repo.claim_next_candidate_planning("late", now=start + timedelta(seconds=901)) is None
+    expired = repo.get_candidate_planning_generation(generation["id"])
+    assert expired["attention_status"] == "terminal"
+    assert expired["attention_terminal_reason"] == "ttl_expired"
+    assert expired["is_current"] == 1
+
+    churn = _candidate(rank=3, price=102)
+    same, created = repo.ensure_candidate_planning_generation(churn.id, now=start + timedelta(seconds=902))
+    assert created is False
+    assert same["id"] == generation["id"]
+    assert repo.get_candidate_planning_generation(generation["id"])["attention_status"] == "terminal"
+
+
+def test_completed_reselection_after_soft_deadline_cannot_revive_attention():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    counts = repo.reconcile_candidate_attention(
+        {generation["id"]},
+        eligible_identity_keys={("bitget", "BTC/USDT", "perp", "momentum", "long")},
+        refresh_source={"scanner_run_id": "completed-too-late"},
+        soft_lease_sec=900,
+        now=start + timedelta(seconds=901),
+    )
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert counts["requalified"] == 0
+    assert stored["attention_status"] == "terminal"
+    assert stored["attention_terminal_reason"] == "ttl_expired"
+    assert stored["last_requalified_at"] is None
+
+
+def test_hard_attention_deadline_is_distinct_from_soft_expiry():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(
+        candidate.id,
+        soft_lease_sec=3600,
+        max_attention_age_sec=3600,
+        now=start,
+    )
+    repo.expire_candidate_attention(now=start + timedelta(seconds=3600))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored["attention_terminal_reason"] == "max_attention_age"
+
+
+def test_attention_expiry_rejects_late_plan_without_invalidating_existing_plan():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    assert repo.claim_next_candidate_planning("slow-owner", now=start)
+
+    plan = _plan(generation)
+    status, record = repo.complete_candidate_planning_with_plan(
+        generation["id"],
+        "slow-owner",
+        plan,
+        now=start + timedelta(seconds=901),
+    )
+    assert (status, record) == ("stale", None)
+    assert repo.get_entry_plan(plan.plan_id) is None
+
+
+def test_attention_is_rechecked_before_model_invocation(monkeypatch):
+    candidate = _candidate()
+    repo.ensure_candidate_planning_generation(candidate.id)
+    calls = 0
+
+    async def planner(_context):
+        nonlocal calls
+        calls += 1
+        return {"result": "NO_PLAN", "reasoning": "should not run"}
+
+    monkeypatch.setattr(repo, "candidate_attention_is_active", lambda _generation_id: False)
+    result = asyncio.run(plan_next_candidate(planner))
+    assert result["status"] == "stale"
+    assert result["model_invoked"] is False
+    assert calls == 0
+
+
+def test_completed_refresh_terminal_reasons_require_exact_eligibility_evidence():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    selected = _candidate()
+    selected_generation, _ = repo.ensure_candidate_planning_generation(selected.id, now=start)
+    evicted = _candidate(asset_id="asset-eth", symbol="ETH/USDT", direction="short")
+    evicted_generation, _ = repo.ensure_candidate_planning_generation(evicted.id, now=start)
+
+    assert repo.reconcile_candidate_attention(
+        {selected_generation["id"]},
+        eligible_identity_keys=set(),
+        refresh_source={"scanner_run_id": "failed"},
+        soft_lease_sec=900,
+        refresh_complete=False,
+        now=start + timedelta(seconds=10),
+    ) == {"requalified": 0, "quota_evicted": 0, "admission_lost": 0}
+    assert repo.get_candidate_planning_generation(evicted_generation["id"])["attention_status"] == "active"
+
+    counts = repo.reconcile_candidate_attention(
+        {selected_generation["id"]},
+        eligible_identity_keys={("bitget", "ETH/USDT", "perp", "momentum", "short")},
+        refresh_source={"scanner_run_id": "complete"},
+        soft_lease_sec=900,
+        now=start + timedelta(seconds=20),
+    )
+    assert counts["quota_evicted"] == 1
+    assert repo.get_candidate_planning_generation(evicted_generation["id"])["attention_terminal_reason"] == "quota_evicted"
+
+
 def test_no_plan_is_durable_until_new_generation():
     candidate = _candidate()
     repo.ensure_candidate_planning_generation(candidate.id)
@@ -155,6 +331,40 @@ def test_retry_backoff_is_not_reported_as_immediate_planning_work():
     assert repo.count_pending_candidate_planning(now=start + timedelta(seconds=61)) == 1
 
 
+def test_retry_exhaustion_terminals_attention_as_planning_unavailable():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    for attempt in range(3):
+        attempt_at = start + timedelta(seconds=attempt * 61)
+        assert repo.claim_next_candidate_planning(f"owner-{attempt}", now=attempt_at)
+        assert repo.defer_candidate_planning(
+            generation["id"],
+            f"owner-{attempt}",
+            "provider_unavailable",
+            retry_seconds=60,
+            now=attempt_at,
+        )
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored["status"] == "unavailable"
+    assert stored["attention_status"] == "terminal"
+    assert stored["attention_terminal_reason"] == "planning_unavailable"
+
+
+def test_no_plan_terminals_candidate_attention():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert repo.claim_next_candidate_planning("owner")
+    assert repo.complete_candidate_planning_no_plan(
+        generation["id"],
+        "owner",
+        {"result": "NO_PLAN", "reasoning": "insufficient geometry"},
+    )
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored["attention_status"] == "terminal"
+    assert stored["attention_terminal_reason"] == "no_plan"
+
+
 def test_rank_snapshot_churn_does_not_invalidate_active_plan():
     candidate = _candidate()
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
@@ -167,6 +377,9 @@ def test_rank_snapshot_churn_does_not_invalidate_active_plan():
     assert created is False
     assert same["id"] == generation["id"]
     assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+
+    active_plan_ids = {row["id"] for row in repo.list_active_entry_plans()}
+    assert plan.plan_id in active_plan_ids
 
     repo.get_db().execute("DELETE FROM universe_members WHERE id=?", (candidate.id,))
     repo.get_db().commit()
@@ -199,6 +412,45 @@ def test_incompatible_generation_explicitly_supersedes_active_plan():
     next_generation, created = repo.ensure_candidate_planning_generation(replacement.id)
     assert created is True
     assert next_generation["id"] != generation["id"]
+    prior_generation = repo.get_candidate_planning_generation(generation["id"])
+    assert prior_generation["attention_status"] == "terminal"
+    assert prior_generation["attention_terminal_reason"] == "planning_generation_superseded"
     stored = repo.get_entry_plan(plan.plan_id)
     assert stored["status"] == "invalidated"
     assert stored["terminal_reason"] == "incompatible_planning_generation"
+
+
+def test_terminal_entry_plan_detail_validates_by_exact_id():
+    from aletheia.server.routes.universe import get_entry_plan_detail
+
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.claim_next_candidate_planning("owner")
+    plan = _plan(generation)
+    assert repo.complete_candidate_planning_with_plan(generation["id"], "owner", plan)[0] == "planned"
+    assert repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="expired")
+
+    detail = get_entry_plan_detail(plan.plan_id)
+    assert detail["id"] == plan.plan_id
+    assert detail["status"] == "expired"
+    assert detail["contract_valid"] is True
+    assert detail["plan"]["thesis"] == plan.thesis
+
+
+def test_planning_history_uses_stable_bounded_cursor():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    generations = []
+    for index, symbol in enumerate(("BTC/USDT", "ETH/USDT", "SOL/USDT")):
+        candidate = _candidate(asset_id=f"asset-{index}", symbol=symbol)
+        generation, _ = repo.ensure_candidate_planning_generation(
+            candidate.id,
+            now=start + timedelta(seconds=index),
+        )
+        generations.append(generation)
+
+    first_page = repo.list_planning_history(limit=2)
+    cursor = (first_page[-1]["updated_at"], first_page[-1]["id"])
+    second_page = repo.list_planning_history(limit=2, before=cursor)
+    assert len(first_page) == 2
+    assert len(second_page) == 1
+    assert {row["id"] for row in first_page}.isdisjoint({row["id"] for row in second_page})

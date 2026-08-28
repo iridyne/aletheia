@@ -1124,9 +1124,9 @@ def reject_proposal(proposal_id: str, request: Request):
 
 
 @router.get("/trades")
-def get_trades():
+def get_trades(entry_plan_id: str | None = None):
     _ensure_db()
-    return repo.list_orders()
+    return repo.list_orders(entry_plan_id=entry_plan_id)
 
 
 @router.get("/trades/export")

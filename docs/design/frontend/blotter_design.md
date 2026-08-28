@@ -1,4 +1,11 @@
-# Blotter — Trade Decision Workstation Redesign Spec
+# Blotter — historical Trade Decision Workstation spec
+
+> Historical record only. Issue #2288 removed the standalone Decision Blotter
+> after a producer audit found no durable human-review-required authority.
+> `/blotter` and `/proposals` now redirect to the Entry Workbench at `/universe`.
+> All remaining Blotter, Candidate Ledger, and Awaiting Sign-off wording below
+> describes the retired 2026-07-18 design, not current product behavior. Current
+> authority: [entry_workbench_design.md](entry_workbench_design.md).
 
 > Status: V1 in progress (2026-07-18). Merges four Overview cards + the existing
 > `/proposals` Approval Desk into a single trade-blotter workstation at `/blotter`.

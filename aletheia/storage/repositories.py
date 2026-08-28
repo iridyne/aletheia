@@ -3087,7 +3087,18 @@ def finalize_exchange_acknowledgement(
     }
 
 
-def list_orders(limit: int = 100, status: str | None = None) -> list[dict]:
+def list_orders(
+    limit: int = 100,
+    status: str | None = None,
+    entry_plan_id: str | None = None,
+) -> list[dict]:
+    if entry_plan_id:
+        where = "entry_plan_id = ?"
+        params: tuple[object, ...] = (entry_plan_id,)
+        if status:
+            where += " AND status = ?"
+            params += (status,)
+        return _select_all("orders", where=where, params=params, limit=limit)
     if status:
         return _select_all("orders", where="status = ?", params=(status,), limit=limit)
     return _select_all("orders", limit=limit)
@@ -8304,10 +8315,159 @@ def get_candidate_planning_generation(generation_id: str) -> dict | None:
     return _select_one("candidate_planning_generations", generation_id)
 
 
+def get_candidate_planning_for_candidate(candidate_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM candidate_planning_generations "
+        "WHERE candidate_id=? "
+        "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
+        (candidate_id,),
+    ).fetchone()
+    if row is None:
+        row = get_db().execute(
+            "SELECT * FROM candidate_planning_generations WHERE last_candidate_id=? "
+            "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
+            (candidate_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _candidate_attention_valid(row: dict, timestamp: str) -> bool:
+    return (
+        row.get("attention_status") == "active"
+        and bool(row.get("soft_expires_at"))
+        and bool(row.get("hard_expires_at"))
+        and str(row["soft_expires_at"]) > timestamp
+        and str(row["hard_expires_at"]) > timestamp
+    )
+
+
+def expire_candidate_attention(*, now: datetime | None = None) -> dict[str, int]:
+    """Terminalize active Candidate attention by its frozen soft/hard clocks."""
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    counts = {"ttl_expired": 0, "max_attention_age": 0}
+    with transaction(immediate=True):
+        rows = get_db().execute(
+            "SELECT id, soft_expires_at, hard_expires_at "
+            "FROM candidate_planning_generations "
+            "WHERE is_current=1 AND attention_status='active' "
+            "AND (soft_expires_at<=? OR hard_expires_at<=?)",
+            (timestamp, timestamp),
+        ).fetchall()
+        for row in rows:
+            reason = "max_attention_age" if str(row["hard_expires_at"]) <= timestamp else "ttl_expired"
+            updated = execute_write(
+                "UPDATE candidate_planning_generations SET attention_status='terminal', "
+                "attention_terminal_at=?, attention_terminal_reason=?, updated_at=? "
+                "WHERE id=? AND attention_status='active'",
+                (timestamp, reason, timestamp, row["id"]),
+            )
+            counts[reason] += int(updated.rowcount or 0)
+    return counts
+
+
+def candidate_attention_is_active(
+    generation_id: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Re-read current attention at a planning side-effect boundary."""
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
+    row = get_db().execute(
+        "SELECT * FROM candidate_planning_generations WHERE id=? AND is_current=1",
+        (generation_id,),
+    ).fetchone()
+    return bool(row and _candidate_attention_valid(dict(row), timestamp))
+
+
+def reconcile_candidate_attention(
+    selected_generation_ids: set[str],
+    *,
+    eligible_identity_keys: set[tuple[str, str, str, str, str]],
+    refresh_source: dict,
+    soft_lease_sec: int,
+    new_generation_ids: set[str] | None = None,
+    refresh_complete: bool = True,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Apply one completed Universe allocation as attention evidence.
+
+    A failed/partial refresh calls this with ``refresh_complete=False`` and is a
+    strict no-op. New generations already own their initial lease; only a later
+    completed re-selection records ``last_requalified_at``.
+    """
+
+    if not refresh_complete:
+        return {"requalified": 0, "quota_evicted": 0, "admission_lost": 0}
+    if not 300 <= int(soft_lease_sec) <= 86_400:
+        raise ValueError("candidate_attention_soft_lease_out_of_bounds")
+    if len(json.dumps(refresh_source, sort_keys=True, separators=(",", ":"))) > 3_500:
+        raise ValueError("candidate_attention_source_too_large")
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    requested_soft = (current + timedelta(seconds=int(soft_lease_sec))).isoformat()
+    new_generation_ids = new_generation_ids or set()
+    counts = {"requalified": 0, "quota_evicted": 0, "admission_lost": 0}
+    expire_candidate_attention(now=current)
+    with transaction(immediate=True):
+        rows = [
+            dict(row)
+            for row in get_db().execute(
+                "SELECT * FROM candidate_planning_generations "
+                "WHERE is_current=1 AND attention_status='active'"
+            ).fetchall()
+        ]
+        for row in rows:
+            generation_id = str(row["id"])
+            if generation_id in selected_generation_ids:
+                if generation_id in new_generation_ids:
+                    continue
+                soft_expires_at = min(requested_soft, str(row["hard_expires_at"]))
+                source_json = json.dumps(
+                    {
+                        **refresh_source,
+                        "planning_generation_id": generation_id,
+                        "planning_identity": row["planning_identity"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                updated = execute_write(
+                    "UPDATE candidate_planning_generations SET last_requalified_at=?, "
+                    "requalification_source_json=?, soft_expires_at=?, updated_at=? "
+                    "WHERE id=? AND attention_status='active'",
+                    (timestamp, source_json, soft_expires_at, timestamp, generation_id),
+                )
+                counts["requalified"] += int(updated.rowcount or 0)
+                continue
+            identity_key = (
+                str(row["venue"]),
+                str(row["symbol"]),
+                str(row["market_type"]),
+                str(row["candidate_family"]),
+                str(row["direction"]),
+            )
+            reason = "quota_evicted" if identity_key in eligible_identity_keys else "admission_lost"
+            updated = execute_write(
+                "UPDATE candidate_planning_generations SET attention_status='terminal', "
+                "attention_terminal_at=?, attention_terminal_reason=?, updated_at=? "
+                "WHERE id=? AND attention_status='active'",
+                (timestamp, reason, timestamp, generation_id),
+            )
+            counts[reason] += int(updated.rowcount or 0)
+    return counts
+
+
 def ensure_candidate_planning_generation(
     candidate_id: str,
     *,
     manual_replan: bool = False,
+    soft_lease_sec: int = 900,
+    max_attention_age_sec: int = 3600,
     now: datetime | None = None,
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
@@ -8315,6 +8475,8 @@ def ensure_candidate_planning_generation(
     from aletheia.trading.entry_plan import candidate_planning_identity
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if not 300 <= int(soft_lease_sec) <= int(max_attention_age_sec) <= 86_400:
+        raise ValueError("candidate_attention_bounds_invalid")
     timestamp = current_time.isoformat()
     with transaction(immediate=True):
         candidate = get_candidate(candidate_id)
@@ -8342,8 +8504,10 @@ def ensure_candidate_planning_generation(
         if existing is not None:
             execute_write(
                 "UPDATE candidate_planning_generations SET is_current=0, "
-                "status='superseded', updated_at=? WHERE id=? AND is_current=1",
-                (timestamp, existing["id"]),
+                "status='superseded', attention_status='terminal', "
+                "attention_terminal_at=?, attention_terminal_reason='planning_generation_superseded', "
+                "updated_at=? WHERE id=? AND is_current=1",
+                (timestamp, timestamp, existing["id"]),
             )
             execute_write(
                 "UPDATE entry_plans SET status='invalidated', terminal_at=?, "
@@ -8364,6 +8528,10 @@ def ensure_candidate_planning_generation(
             direction=str(candidate["scanner_direction"]),
             created_at=timestamp,
             updated_at=timestamp,
+            attention_started_at=timestamp,
+            soft_expires_at=(current_time + timedelta(seconds=int(soft_lease_sec))).isoformat(),
+            hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
+            attention_max_age_sec=int(max_attention_age_sec),
         )
         data = _stamp_provenance(generation.model_dump())
         _insert("candidate_planning_generations", data)
@@ -8381,17 +8549,19 @@ def claim_next_candidate_planning(
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
     lease_until = (current + timedelta(seconds=lease_seconds)).isoformat()
     with transaction(immediate=True):
         row = (
             get_db()
             .execute(
                 "SELECT * FROM candidate_planning_generations WHERE is_current=1 "
+                "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
                 "AND attempt_count<? AND (status='pending' "
                 "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
                 "OR (status='planning' AND claim_expires_at<=?)) "
                 "ORDER BY created_at ASC LIMIT 1",
-                (max_attempts, timestamp, timestamp),
+                (timestamp, timestamp, max_attempts, timestamp, timestamp),
             )
             .fetchone()
         )
@@ -8402,6 +8572,7 @@ def claim_next_candidate_planning(
             "UPDATE candidate_planning_generations SET status='planning', "
             "owner_token=?, claim_expires_at=?, retry_not_before=NULL, "
             "attempt_count=attempt_count+1, updated_at=? WHERE id=? AND is_current=1 "
+            "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
             "AND attempt_count<? AND (status='pending' "
             "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
             "OR (status='planning' AND claim_expires_at<=?))",
@@ -8410,6 +8581,8 @@ def claim_next_candidate_planning(
                 lease_until,
                 timestamp,
                 generation_id,
+                timestamp,
+                timestamp,
                 max_attempts,
                 timestamp,
                 timestamp,
@@ -8433,15 +8606,18 @@ def count_pending_candidate_planning(
     *,
     now: datetime | None = None,
 ) -> int:
-    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
     row = (
         get_db()
         .execute(
             "SELECT COUNT(*) FROM candidate_planning_generations WHERE is_current=1 "
+            "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
             "AND attempt_count<? AND (status='pending' "
             "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
             "OR (status='planning' AND claim_expires_at<=?))",
-            (max_attempts, timestamp, timestamp),
+            (timestamp, timestamp, max_attempts, timestamp, timestamp),
         )
         .fetchone()
     )
@@ -8457,15 +8633,26 @@ def complete_candidate_planning_no_plan(
 ) -> bool:
     """Persist a durable no-plan result; heartbeat cannot reopen it."""
 
-    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
     payload = json.dumps(result, sort_keys=True, separators=(",", ":"))
     updated = execute_write(
         "UPDATE candidate_planning_generations SET status='no_plan', "
         "result_kind='no_plan', result_json=?, owner_token=NULL, claim_expires_at=NULL, "
-        "completed_at=?, updated_at=? WHERE id=? AND is_current=1 "
+        "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
+        "attention_terminal_reason='no_plan', updated_at=? WHERE id=? AND is_current=1 "
+        "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
         "AND status='planning' AND owner_token=?",
-        (payload, timestamp, timestamp, generation_id, owner_token),
+        (payload, timestamp, timestamp, timestamp, generation_id, timestamp, timestamp, owner_token),
     )
+    if updated.rowcount != 1:
+        execute_write(
+            "UPDATE candidate_planning_generations SET result_kind='stale_result', "
+            "result_json=?, owner_token=NULL, claim_expires_at=NULL, completed_at=?, updated_at=? "
+            "WHERE id=? AND status='planning' AND owner_token=?",
+            (payload, timestamp, timestamp, generation_id, owner_token),
+        )
     return updated.rowcount == 1
 
 
@@ -8482,26 +8669,37 @@ def defer_candidate_planning(
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
     row = (
         get_db()
         .execute(
-            "SELECT attempt_count FROM candidate_planning_generations WHERE id=?",
+            "SELECT attempt_count, attention_status FROM candidate_planning_generations WHERE id=?",
             (generation_id,),
         )
         .fetchone()
     )
-    terminal = row is not None and int(row["attempt_count"] or 0) >= max_attempts
+    if row is None or row["attention_status"] != "active":
+        return False
+    terminal = int(row["attempt_count"] or 0) >= max_attempts
     retry_at = None if terminal else (current + timedelta(seconds=retry_seconds)).isoformat()
     payload = json.dumps({"reason": str(reason)[:160]}, sort_keys=True)
     updated = execute_write(
         "UPDATE candidate_planning_generations SET status='unavailable', "
         "result_kind='unavailable', result_json=?, retry_not_before=?, "
-        "owner_token=NULL, claim_expires_at=NULL, completed_at=?, updated_at=? "
-        "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
+        "owner_token=NULL, claim_expires_at=NULL, completed_at=?, "
+        "attention_status=CASE WHEN ? THEN 'terminal' ELSE attention_status END, "
+        "attention_terminal_at=CASE WHEN ? THEN ? ELSE attention_terminal_at END, "
+        "attention_terminal_reason=CASE WHEN ? THEN 'planning_unavailable' ELSE attention_terminal_reason END, "
+        "updated_at=? WHERE id=? AND is_current=1 AND attention_status='active' "
+        "AND status='planning' AND owner_token=?",
         (
             payload,
             retry_at,
             timestamp if terminal else None,
+            terminal,
+            terminal,
+            timestamp,
+            terminal,
             timestamp,
             generation_id,
             owner_token,
@@ -8524,7 +8722,9 @@ def complete_candidate_planning_with_plan(
     plan = EntryPlan.model_validate(plan)
     if plan.planning_generation_id != generation_id:
         raise ValueError("entry_plan_generation_mismatch")
-    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    expire_candidate_attention(now=current)
     payload, digest = entry_plan_payload(plan)
     with transaction(immediate=True):
         row = (
@@ -8537,7 +8737,7 @@ def complete_candidate_planning_with_plan(
         )
         if row is None or row["owner_token"] != owner_token:
             return "claim_lost", None
-        if not bool(row["is_current"]):
+        if not bool(row["is_current"]) or not _candidate_attention_valid(dict(row), timestamp):
             execute_write(
                 "UPDATE candidate_planning_generations SET result_kind='stale_result', "
                 "result_json=?, owner_token=NULL, claim_expires_at=NULL, "
@@ -8573,25 +8773,129 @@ def complete_candidate_planning_with_plan(
         )
         record_data = _stamp_provenance(record.model_dump())
         _insert("entry_plans", record_data)
-        execute_write(
+        completed = execute_write(
             "UPDATE candidate_planning_generations SET status='planned', "
             "result_kind='entry_plan', result_json=?, entry_plan_id=?, "
-            "owner_token=NULL, claim_expires_at=NULL, completed_at=?, updated_at=? "
-            "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
+            "owner_token=NULL, claim_expires_at=NULL, completed_at=?, "
+            "attention_status='terminal', attention_terminal_at=?, "
+            "attention_terminal_reason='entry_plan_created', updated_at=? "
+            "WHERE id=? AND is_current=1 AND attention_status='active' "
+            "AND soft_expires_at>? AND hard_expires_at>? "
+            "AND status='planning' AND owner_token=?",
             (
                 payload,
                 plan.plan_id,
                 timestamp,
                 timestamp,
+                timestamp,
                 generation_id,
+                timestamp,
+                timestamp,
                 owner_token,
             ),
         )
+        if completed.rowcount != 1:
+            raise RuntimeError("candidate_attention_completion_cas_failed")
         return "planned", record_data
 
 
 def get_entry_plan(plan_id: str) -> dict | None:
     return _select_one("entry_plans", plan_id)
+
+
+_ACTIVE_ENTRY_PLAN_STATUSES = (
+    "waiting",
+    "risk_reserved",
+    "triggered",
+    "ordered",
+    "partially_filled",
+)
+
+
+def list_active_entry_plans(limit: int = 100) -> list[dict]:
+    placeholders = ",".join("?" for _ in _ACTIVE_ENTRY_PLAN_STATUSES)
+    return [
+        dict(row)
+        for row in get_db().execute(
+            f"SELECT * FROM entry_plans WHERE status IN ({placeholders}) "
+            "ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (*_ACTIVE_ENTRY_PLAN_STATUSES, max(1, min(int(limit), 200))),
+        ).fetchall()
+    ]
+
+
+def list_active_candidate_attention(limit: int = 100) -> list[dict]:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    return [
+        dict(row)
+        for row in get_db().execute(
+            "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
+            "um.expires_at AS candidate_expires_at FROM candidate_planning_generations pg "
+            "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "WHERE pg.is_current=1 AND pg.attention_status='active' "
+            "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
+            "ORDER BY MIN(pg.soft_expires_at, pg.hard_expires_at), pg.id LIMIT ?",
+            (timestamp, timestamp, max(1, min(int(limit), 200))),
+        ).fetchall()
+    ]
+
+
+def get_entry_workbench_summary(*, now: datetime | None = None) -> dict[str, int]:
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now_iso = timestamp.isoformat()
+    warning_iso = (timestamp + timedelta(seconds=300)).isoformat()
+    placeholders = ",".join("?" for _ in _ACTIVE_ENTRY_PLAN_STATUSES)
+    row = get_db().execute(
+        f"SELECT "
+        f"(SELECT COUNT(*) FROM entry_plans WHERE status IN ({placeholders})) AS active_entry_plans, "
+        "(SELECT COUNT(*) FROM candidate_planning_generations "
+        " WHERE is_current=1 AND attention_status='active' "
+        " AND soft_expires_at>? AND hard_expires_at>? AND attempt_count<3 "
+        " AND (status='pending' OR status='unavailable')) AS needs_planning, "
+        "(SELECT COUNT(*) FROM candidate_planning_generations "
+        " WHERE is_current=1 AND attention_status='active' "
+        " AND MIN(soft_expires_at, hard_expires_at)>? "
+        " AND MIN(soft_expires_at, hard_expires_at)<=?) + "
+        f"(SELECT COUNT(*) FROM entry_plans WHERE status IN ({placeholders}) "
+        " AND json_extract(plan_json, '$.expires_at')>? "
+        " AND json_extract(plan_json, '$.expires_at')<=?) AS expiring_soon",
+        (
+            *_ACTIVE_ENTRY_PLAN_STATUSES,
+            now_iso,
+            now_iso,
+            now_iso,
+            warning_iso,
+            *_ACTIVE_ENTRY_PLAN_STATUSES,
+            now_iso,
+            warning_iso,
+        ),
+    ).fetchone()
+    return {key: int(row[key] or 0) for key in row.keys()}
+
+
+def list_planning_history(
+    *,
+    limit: int = 50,
+    before: tuple[str, str] | None = None,
+) -> list[dict]:
+    where = ""
+    params: list[object] = []
+    if before is not None:
+        where = "WHERE (pg.updated_at < ? OR (pg.updated_at = ? AND pg.id < ?))"
+        params.extend((before[0], before[0], before[1]))
+    params.append(max(1, min(int(limit), 201)))
+    return [
+        dict(row)
+        for row in get_db().execute(
+            "SELECT pg.*, ep.status AS entry_plan_status, ep.execution_mode, "
+            "ep.order_id, ep.terminal_at AS entry_plan_terminal_at, "
+            "ep.terminal_reason AS entry_plan_terminal_reason "
+            "FROM candidate_planning_generations pg "
+            "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+            f"{where} ORDER BY pg.updated_at DESC, pg.id DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    ]
 
 
 def list_watchable_entry_plans(limit: int = 100) -> list[dict]:

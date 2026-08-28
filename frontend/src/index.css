@@ -1185,6 +1185,12 @@ button.news-card:active:not(:disabled) { transform: none; }
 
 /* ---------- Universe Board ---------- */
 .universe-board { display: flex; flex-direction: column; gap: var(--space-3); }
+.entry-workbench { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.entry-workbench-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
+.entry-workbench-notice { padding: var(--space-3); color: var(--muted); }
+.entry-workbench .tab-panel { min-width: 0; overflow-x: auto; }
+@media (max-width: 1023px) { .entry-workbench-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 639px) { .entry-workbench-summary { grid-template-columns: 1fr; } .entry-workbench .tab-bar { overflow-x: auto; } }
 .universe-disabled-card { border-color: var(--border-2); margin-bottom: 0; }
 .universe-disabled-card h3 { margin-bottom: var(--space-1); }
 .universe-disabled-card .hint { margin: 0; }

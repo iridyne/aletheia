@@ -72,7 +72,7 @@ export default function Overview() {
       <h2 className="page-title">Overview</h2>
       <SetupNotice required={overview.data?.setup_required} />
       <PnLZone bootstrap={overview.data} />
-      <BlotterSummaryStrip summary={overview.data?.summary} />
+      <EntrySummaryStrip summary={overview.data?.summary} />
       <div className="cockpit-main">
         <AgentFeed bootstrap={overview.data} />
         <div className="cockpit-rail">
@@ -289,14 +289,14 @@ function ModeDetail({ shell }: { shell?: ShellBootstrap }) {
   return <div className="chd-panel"><div className="chd-title">Mode &amp; permissions</div>{items.map(item => <div key={item.label} className="chd-domain"><div className="chd-domain-head"><span className={`status-light light-${item.light}`} /><span className="chd-domain-name">{item.label}</span><span className={`chd-status chd-status-${item.light}`}>{item.value}</span></div></div>)}</div>
 }
 
-function BlotterSummaryStrip({ summary }: { summary?: OverviewBootstrap['summary'] }) {
+function EntrySummaryStrip({ summary }: { summary?: OverviewBootstrap['summary'] }) {
   const navigate = useNavigate()
-  const staged = summary?.open_opportunities
-  const awaiting = summary?.pending_proposals
-  const runs = summary?.runs_24h
+  const active = summary?.active_entry_plans
+  const needsPlanning = summary?.needs_planning
+  const expiring = summary?.expiring_soon
   return (
-    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/blotter')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/blotter') } }} title="Open Blotter">
-      <span className="ov-blotter-label">Blotter</span><span className="ov-blotter-item">Staged <b className="mono">{staged ?? '—'}</b></span><span className="ov-blotter-item">Awaiting <b className={`mono ${awaiting ? 'ov-blotter-yellow' : ''}`}>{awaiting ?? '—'}</b></span><span className="ov-blotter-item">Runs 24h <b className="mono">{runs ?? '—'}</b></span><span className="ov-blotter-arrow">→</span>
+    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/universe')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/universe') } }} title="Open Entry Workbench">
+      <span className="ov-blotter-label">Entry Workbench</span><span className="ov-blotter-item">Active Plans <b className="mono">{active ?? '—'}</b></span><span className="ov-blotter-item">Needs Planning <b className={`mono ${needsPlanning ? 'ov-blotter-yellow' : ''}`}>{needsPlanning ?? '—'}</b></span><span className="ov-blotter-item">Expiring Soon <b className={`mono ${expiring ? 'ov-blotter-yellow' : ''}`}>{expiring ?? '—'}</b></span><span className="ov-blotter-arrow">→</span>
     </div>
   )
 }

@@ -195,8 +195,29 @@ async def plan_next_candidate(
     generation = repo.claim_next_candidate_planning(owner)
     if generation is None:
         return {"status": "idle", "model_invoked": False}
+    if not repo.candidate_attention_is_active(generation["id"]):
+        return {
+            "status": "stale",
+            "planning_generation_id": generation["id"],
+            "model_invoked": False,
+        }
     try:
-        raw = await planner(_candidate_context(generation))
+        context = _candidate_context(generation)
+    except Exception as exc:
+        repo.defer_candidate_planning(generation["id"], owner, type(exc).__name__)
+        return {
+            "status": "unavailable",
+            "planning_generation_id": generation["id"],
+            "model_invoked": False,
+        }
+    if not repo.candidate_attention_is_active(generation["id"]):
+        return {
+            "status": "stale",
+            "planning_generation_id": generation["id"],
+            "model_invoked": False,
+        }
+    try:
+        raw = await planner(context)
     except Exception as exc:
         repo.defer_candidate_planning(generation["id"], owner, type(exc).__name__)
         return {

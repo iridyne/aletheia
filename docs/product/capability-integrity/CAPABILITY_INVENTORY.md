@@ -45,7 +45,7 @@ Discovery surfaces:
 | MD-03 | Orderbook, funding, and open-interest collection | Collect microstructure facts used by opportunity analysis | Scheduler, Markets, CLI | `scheduler.py:data_collectors`, `aletheia/data/collectors.py` |
 | MD-04 | Liquidation, macro, and cross-venue context | Enrich analysis with bounded contextual market data | Scheduler, Markets | `scheduler.py:data_collector_context`, `aletheia/data/context_collectors.py` |
 | MD-05 | Historical OHLCV backfill | Maintain bounded historical bars for active-universe features and settlement | Scheduler, CLI | `ohlcv_active_backfill`, `ohlcv_nightly_backfill` |
-| MD-06 | Dynamic Universe generation | Discover, score, diversify, and persist tradable candidate instruments | Universe Board, Settings, scheduler | `aletheia/universe/`, `scheduler.py:universe_refresh` |
+| MD-06 | Dynamic Universe generation | Discover, score, diversify, and persist tradable candidate instruments | Entry Workbench, Settings, scheduler | `aletheia/universe/`, `scheduler.py:universe_refresh` |
 | MD-07 | Universe family calibration | Measure cost-adjusted treatment/control outcomes by scanner family | Learning UI, CLI, scheduler | `universe_forward_outcomes`, `learning_exposures`, calibration analytics |
 | MD-08 | Forward outcome settlement | Settle universe/filter/shadow outcomes at declared horizons | Scheduler, Learning, CLI | `scheduler.py:outcome_settler`, `aletheia/learning/outcomes.py` |
 | MD-09 | Market regime detection | Produce regime state and use it in analysis/sizing/risk context | Markets, Settings, CLI | `aletheia/regime/`, `aletheia/server/routes/data.py` |
@@ -59,12 +59,12 @@ Discovery surfaces:
 | ID | Capability | Product promise | Entry surfaces | Primary discovery evidence |
 |---|---|---|---|---|
 | DC-01 | Deterministic Universe opportunity generation | Admit attributable Universe opportunities deterministically; Observer may add advisory context only | Scheduler, Agent Activity | `aletheia/universe/signal_emitter.py`, `aletheia/agents/market_observer.py` |
-| DC-02 | Paper Ranker admission | Rank open opportunities, apply eligibility evidence, and queue bounded candidates | Scheduler, Blotter | `aletheia/agents/paper_trader_ranker.py`, `scheduler.py:paper_trader` |
-| DC-03 | System Operator trading decision | Make the sole terminal trade/skip/watch/flip/scale decision with durable reasoning | Blotter, Command Center, scheduler | `aletheia/agent_shell/trading_decision.py`, `pi_daemon.py` |
+| DC-02 | Candidate attention admission | Admit selected Universe identities into bounded, durable planning attention with soft and hard deadlines | Entry Workbench, scheduler | `candidate_planning_generations`, `aletheia/universe/service.py` |
+| DC-03 | Candidate planning | Claim valid Candidate attention and produce one immutable, identity-bound Entry Plan or an explicit terminal outcome | Entry Workbench, Agent Activity, scheduler | `aletheia/agent_shell/entry_planner.py`, `entry_plans` |
 | DC-04 | PI scheduled decision fallback | Run decision assessments even when no event wake is received | Scheduler, Agent Activity | `scheduler.py:pi_trading_decision` |
-| DC-05 | Proposal creation and causal identity | Convert an approved Operator decision into one attributable TradeProposal | Blotter, API, execution | `trading_decision.py`, `trade_proposals` |
-| DC-06 | Paper proposal approval and rejection | Let a human approve eligible paper proposals or reject them without identity rewriting | Blotter, API | `frontend/src/pages/Blotter.tsx`, `server/routes/data.py` |
-| DC-07 | Candidate ledger and decision trace | Show every terminal candidate outcome and its evidence chain | Blotter, CLI | `operator decisions` projection, `aletheia inspect decisions` |
+| DC-05 | Entry Plan creation and causal identity | Persist immutable plan geometry and exact Candidate/planning identity before Risk and execution | Entry Workbench, API, execution | `entry_plans`, `server/routes/universe.py` |
+| DC-06 | Legacy paper proposal mutation API | Preserve guarded approve/reject compatibility APIs; no current producer persists explicit human-review authority, so no owner-facing review queue is promised | API only | `server/routes/data.py` |
+| DC-07 | Planning ledger and causal detail | Show active and terminal Candidate/Entry Plan evidence without inferring unavailable stages | Entry Workbench, Charts, Trades | `server/routes/universe.py`, `frontend/src/pages/Universe.tsx` |
 | DC-08 | Agent run and opportunity observability | Show current/historical agent runs, outputs, failures, and opportunities | Agent Activity, API, CLI | `frontend/src/pages/AgentActivity.tsx` |
 | DC-09 | Manual agent triggering | Allow explicit bounded runs of supported agents | Command palette, API | `startAgentRun`, agent runtime routes |
 | DC-10 | Operator command workspace | Hold persistent command/diagnostic/review sessions with evidence-backed inspection | Command Center, API, CLI | `frontend/src/pages/CommandCenter.tsx`, `server/routes/operator.py` |
@@ -89,8 +89,8 @@ Discovery surfaces:
 
 | ID | Capability | Product promise | Entry surfaces | Primary discovery evidence |
 |---|---|---|---|---|
-| EX-01 | Automatic local paper trading | Carry eligible candidates through decision, risk, local fill, position, and outcome | Scheduler, Blotter, Positions | `paper_trader`, `execution/paper_broker.py` |
-| EX-02 | Exchange demo trading | Execute risk-approved demo orders through Bitget/OKX/Binance adapters | Settings, Blotter, exchange adapters | `execution/*_broker.py` |
+| EX-01 | Automatic local paper trading | Carry eligible candidates through decision, risk, local fill, position, and outcome | Scheduler, Entry Workbench, Positions | `paper_trader`, `execution/paper_broker.py` |
+| EX-02 | Exchange demo trading | Execute risk-approved demo orders through Bitget/OKX/Binance adapters | Settings, Entry Workbench, exchange adapters | `execution/*_broker.py` |
 | EX-03 | Live Unlock and relock | Human-unlock live-limited authority and return it to disabled state | Settings, API | `server/routes/live.py`, live contract |
 | EX-04 | New-proposal live execution mode | Route newly authorized proposals to the selected live-limited broker | Operator, Risk, Execution Gateway | `trading_decision.py`, `execution/gateway.py` |
 | EX-05 | Order constraint normalization | Normalize quantity/price/contract constraints without changing approved intent | Execution Gateway | `execution/order_constraints.py` |
@@ -117,7 +117,7 @@ Discovery surfaces:
 | PF-05 | Position and trade blotter | Display pending/open/closed orders, fills, costs, and close reasons | Trades & Positions, API, CLI | `frontend/src/pages/TradesPositions.tsx` |
 | PF-06 | Trade insights and performance analytics | Show outcome-cohort-aware PnL, drawdown, expectancy, regime, hold, and exit analytics | Overview, Charts, API, CLI | `analytics/trade_insights.py`, `performance_summary.py` |
 | PF-07 | Trade attribution and thesis lineage | Reconstruct opportunity→decision→proposal→risk→order→fill→position→outcome | Drawers, CLI, analytics | `analytics/trade_attribution.py`, `thesis_lineage.py` |
-| PF-08 | Opportunity flow and funnel attribution | Count every generation, candidate, decision, rejection, fill, and outcome without survivor bias | Overview, Blotter, CLI | `analytics/opportunity_flow.py`, `trade_funnel.py` |
+| PF-08 | Opportunity flow and funnel attribution | Count every generation, candidate, decision, rejection, fill, and outcome without survivor bias | Overview, Entry Workbench, CLI | `analytics/opportunity_flow.py`, `trade_funnel.py` |
 | PF-09 | Alpha/family/factor attribution | Attribute cost-adjusted outcomes to scanner family, factors, and treatment paths | CLI, Learning, Analytics | `analytics/alpha_attribution.py`, `factor_feedback.py` |
 
 ## Learning and policy evolution

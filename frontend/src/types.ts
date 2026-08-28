@@ -13,6 +13,7 @@ export interface TradeProposal {
   take_profit: number | null
   risk_reward: number | null
   execution_mode: string
+  entry_plan_id?: string | null
   agent_rationale: string | null
   status: string
   created_at: string
@@ -40,6 +41,7 @@ export interface Order {
   quantity: number
   price: number | null
   execution_mode: string
+  entry_plan_id?: string | null
   exchange_order_id: string | null
   status: string
   created_at: string
@@ -825,6 +827,86 @@ export interface Candidate {
 /** @deprecated Compatibility alias for the physical `universe_members` wire row. */
 export type UniverseMember = Candidate
 
+export interface EntryPlan {
+  id: string
+  planning_generation_id: string
+  candidate_id: string
+  planning_key: string
+  version: 'entry-plan/v1'
+  venue: string
+  symbol: string
+  market_type: 'spot' | 'perp'
+  direction: 'long' | 'short'
+  execution_mode: 'RESTING_MAKER' | 'TRIGGERED'
+  status: 'waiting' | 'risk_reserved' | 'triggered' | 'ordered' | 'partially_filled' | 'filled' | 'invalidated' | 'expired' | 'cancelled' | 'failed'
+  order_id: string | null
+  plan_hash: string
+  created_at: string
+  updated_at: string
+  terminal_at: string | null
+  terminal_reason: string | null
+  contract_valid: boolean
+  plan: {
+    thesis: string
+    scenario: string
+    entry_zone: [number, number]
+    invalidation_price: number
+    stop_price: number
+    target_price: number
+    expires_at: string
+    limit_price?: number | null
+    trigger_spec_id?: string | null
+    trigger_params?: Record<string, unknown>
+  } | null
+}
+
+export interface CandidateAttention {
+  id: string
+  last_candidate_id: string
+  venue: string
+  symbol: string
+  market_type: 'spot' | 'perp'
+  candidate_family: string
+  direction: 'long' | 'short'
+  status: string
+  attempt_count: number
+  attention_status: 'active' | 'terminal'
+  attention_started_at: string
+  last_requalified_at: string | null
+  soft_expires_at: string
+  hard_expires_at: string
+  attention_terminal_at: string | null
+  attention_terminal_reason: string | null
+  rank: number | null
+  total_score: number | null
+  entry_price_usd: number | null
+}
+
+export interface EntryWorkbenchResponse {
+  generated_at: string
+  availability: Record<string, { available: boolean; stale: boolean; reason?: string }>
+  universe: {
+    enabled: boolean | null
+    status: 'active' | 'disabled' | 'no_active_snapshot' | 'read_unavailable'
+    snapshot: UniverseSnapshot | null
+    fallback_instruments: string[]
+  }
+  summary: { active_entry_plans: number; needs_planning: number; expiring_soon: number } | null
+  entry_plans: EntryPlan[] | null
+  candidate_attention: CandidateAttention[] | null
+}
+
+export interface PlanningHistoryResponse {
+  items: Array<CandidateAttention & {
+    is_current: number
+    entry_plan_id: string | null
+    entry_plan_status: string | null
+    execution_mode: string | null
+    updated_at: string
+  }>
+  next_before: string | null
+}
+
 export interface UniverseSnapshot {
   id: string
   created_at: string
@@ -865,6 +947,7 @@ export interface UniverseFeatureSnapshot {
 
 export interface CandidateDetail {
   member: Candidate
+  attention: CandidateAttention | null
   features: UniverseFeatureSnapshot | null
   entry_plans: Array<{ id: string; status: string; execution_mode: string; created_at: string }>
   opportunities: Array<{ id: string; symbol: string; status: string; direction_bias: string | null; created_at: string }>

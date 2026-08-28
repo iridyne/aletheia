@@ -1540,6 +1540,9 @@ class UniverseConfig(BaseModel):
     # symbol on the watchlist". Scanner refreshes every 10 min, so 15 min covers
     # one missed refresh + ranker processing latency (measured p75=25 min).
     entry_ttl_sec: int = Field(default=900, ge=300, le=3600)
+    # Frozen hard ceiling for one continuously compatible Candidate attention
+    # identity. Completed re-selection may extend the soft lease, never this age.
+    candidate_max_continuous_age_sec: int = Field(default=3600, ge=300, le=86_400)
     # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
     emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
@@ -1569,6 +1572,14 @@ class UniverseConfig(BaseModel):
             else:
                 _check_quota(v)
         return v
+
+    @model_validator(mode="after")
+    def _validate_candidate_attention_bounds(self):
+        if self.candidate_max_continuous_age_sec < self.entry_ttl_sec:
+            raise ValueError(
+                "candidate_max_continuous_age_sec must be >= entry_ttl_sec"
+            )
+        return self
 
 
 class FastTriggerConfig(BaseModel):

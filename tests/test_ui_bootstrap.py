@@ -75,7 +75,17 @@ def test_count_summary_normalizes_iso_run_timestamps(monkeypatch):
         ],
     )
     monkeypatch.setattr(ui, "get_db", lambda: db)
-    assert ui._count_summary() == {"pending_proposals": 1, "open_opportunities": 1, "runs_24h": 1}
+    monkeypatch.setattr(
+        ui.repo,
+        "get_entry_workbench_summary",
+        lambda: {"active_entry_plans": 2, "needs_planning": 3, "expiring_soon": 1},
+    )
+    assert ui._count_summary() == {
+        "active_entry_plans": 2,
+        "needs_planning": 3,
+        "expiring_soon": 1,
+        "runs_24h": 1,
+    }
 
 
 def test_model_setup_uses_configured_credential_channels(monkeypatch):

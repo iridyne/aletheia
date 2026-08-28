@@ -579,12 +579,20 @@ async def test_universe_settings_are_visible_and_persisted(client):
 
     resp = await client.post(
         "/api/settings/universe",
-        json={"enabled": False, "max_candidates": 20, "explore_ratio": 0.15},
+        json={
+            "enabled": False,
+            "max_candidates": 20,
+            "explore_ratio": 0.15,
+            "entry_ttl_sec": 600,
+            "candidate_max_continuous_age_sec": 1800,
+        },
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["universe"]["enabled"] is False
     assert body["universe"]["max_candidates"] == 20
+    assert body["universe"]["entry_ttl_sec"] == 600
+    assert body["universe"]["candidate_max_continuous_age_sec"] == 1800
 
     resp = await client.get("/api/settings")
     assert resp.json()["universe"]["enabled"] is False
@@ -1546,6 +1554,13 @@ async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
 
     resp = await client.post("/api/settings/universe", json={"fallback_symbols": []})
     assert resp.status_code == 400
+
+    resp = await client.post(
+        "/api/settings/universe",
+        json={"entry_ttl_sec": 1200, "candidate_max_continuous_age_sec": 600},
+    )
+    assert resp.status_code == 400
+    assert "must be >= entry_ttl_sec" in resp.json()["detail"]
 
     resp = await client.post("/api/settings/market-data", json={"ccxt_exchange": "unknown"})
     assert resp.status_code == 400

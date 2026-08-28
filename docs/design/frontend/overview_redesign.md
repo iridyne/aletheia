@@ -1,5 +1,11 @@
 # Overview / Cockpit — Redesign Spec (IMPLEMENTED 2026-06-07)
 
+> Current amendment (issue #2288): historical Blotter/Proposal sections below
+> are superseded. Overview now reads Entry Plan and Candidate-attention summary
+> facts from the backend Entry Workbench projection, AgentFeed emits exact Entry
+> Plan identity, and AccountSnapshot shows Working Orders. See
+> [entry_workbench_design.md](entry_workbench_design.md).
+
 > Conversational redesign with the owner, 2026-06-07. Stack locked: React + hand-written
 > CSS (no Tailwind/shadcn). Design language: Bloomberg density + TradingView chart link +
 > OpenAlice agent-native + Linear polish. This doc captures agreed decisions as we go.
@@ -93,13 +99,9 @@ Reading order = money first (PnL) → what the AI is doing (feed, main width) �
 YOU (right rail: pending proposals = the one human-in-loop control point) + system health.
 Bloomberg dense zoning + OpenAlice agent-narrative-primary, control secondary.
 
-**2026-07-18 amendment**: the "Approval Desk (pending)" tile in the right-rail sketch,
-plus the `EntryStatusCard` / `OpportunityFunnelCard` / `DecisionHistoryCard` that had
-since accumulated on this page, all relocated to the new `/blotter` workstation
-(`pages/Blotter.tsx`). Overview keeps its right-rail Risk state + System panel + Go-Live
-Scorecard; the pending-proposals visibility is preserved as a single-row `.ov-blotter-strip`
-between PnL and the agent feed (Staged / Awaiting Sign-off / Filled today / Rejected 24h
-counts with a click-to-open link + `onMouseEnter` prefetch). See `blotter_design.md`.
+**2026-08-28 amendment**: the current compact Entry summary reads Active Entry
+Plans, Needs Planning, and Expiring Soon from the backend ledger projection and
+opens `/universe`. Pending Proposal counts are not account or review authority.
 
 ### Owner clarification — viewport-bounded activity (2026-07-12)
 

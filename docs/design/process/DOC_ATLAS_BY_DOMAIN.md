@@ -154,7 +154,7 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 - **L2 契约**：[`ui_design_system`](../frontend/ui_design_system.md) ✅(设计语言/密度) · [`api_reference`](../api/api_reference.md) ✅(REST 端点/trust 义务)
 - **历史设计证据**：旧 redesign/page-map/UX audit/本地 issue ledger 统一保存在 [`docs/archive/legacy/`](../../archive/legacy/)；不再作为当前 roadmap。
 - **当前问题跟踪**：UI honesty 与 Config↔Runtime 断链按单项进入 GitHub Issues（当前集中在 #393–#410），不维护第二套本地 backlog。
-- **当前状态**：Overview/Blotter 共用 current-entry read model；Learning Contribution 已有 bounded API、typed UI consumer 与 focused tests。共享 types、DataTable、DetailDrawer、状态人性化等基础设施已落地；具体页面能力仍以 Capability Ground Truth 与当前 Issue 为准。
+- **当前状态**：Overview/Entry Workbench 共用 Candidate/Entry Plan read model；Learning Contribution 已有 bounded API、typed UI consumer 与 focused tests。共享 types、DataTable、DetailDrawer、状态人性化等基础设施已落地；具体页面能力仍以 Capability Ground Truth 与当前 Issue 为准。
 
 ## D11 · 子系统观察者
 

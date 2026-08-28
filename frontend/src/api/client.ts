@@ -1576,7 +1576,7 @@ export const api = {
 			};
 			fills: number;
 		}>(`/analytics/pipeline-funnel?hours=${hours}`),
-	// Recent terminal operator decisions — Candidate Ledger projection.
+	// Recent terminal operator decisions — legacy compatibility projection.
 	// Non-terminal conviction deferrals remain in the opportunity trace.
 	//
 	// Optional `outcome` / `symbol` filters are applied server-side AFTER the
@@ -1668,7 +1668,7 @@ export const api = {
 
 	// Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
 	// the operator (e.g. confidence gate, TTL expiry) — counterpart to the
-	// Blotter (formerly Approval Desk). Full-window response; see the compact
+	// legacy Opportunity diagnostics. Full-window response; see the compact
 	// /current-snapshot sibling for a faster subset when only `current.*` is
 	// needed.
 	getOpportunityFunnel: (hours = 24) =>
@@ -1863,8 +1863,7 @@ export const api = {
 		}>(`/analytics/opportunity-funnel?hours=${hours}`),
 
 	// Fast subset of getOpportunityFunnel — returns just `current` + config +
-	// family_ttl_sec. Used by the Blotter's Candidates panel, status-token
-	// strip, and Overview's shortcut strip. See
+	// family_ttl_sec. Retained for legacy Opportunity diagnostics. See
 	// docs/design/frontend/blotter_design.md#performance-backlog for why this
 	// split exists.
 	getOpportunityFunnelCurrentSnapshot: (hours = 24) =>
@@ -2312,7 +2311,10 @@ export const api = {
 		}>(
 			`/orders/${id}/risk-decision`,
 		),
-	getTrades: () => fetchJson<MarketTrade[]>("/trades"),
+	getTrades: (entryPlanId?: unknown) =>
+		fetchJson<MarketTrade[]>(typeof entryPlanId === "string" && entryPlanId
+			? `/trades?entry_plan_id=${encodeURIComponent(entryPlanId)}`
+			: "/trades"),
 	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
 	getPositions: () => fetchJson<Position[]>("/positions"),
 	getPositionsReconciliation: () =>
@@ -2761,13 +2763,22 @@ export const api = {
 	// Universe Generator endpoints
 	getUniverseCurrent: () =>
 		fetchJson<import("../types").UniverseCurrentResponse>("/universe/current"),
+	getEntryWorkbench: () =>
+		fetchJson<import("../types").EntryWorkbenchResponse>("/universe/workbench"),
+	getEntryPlan: (id: string) =>
+		fetchJson<import("../types").EntryPlan>(`/universe/entry-plans/${encodeURIComponent(id)}`),
+	getPlanningHistory: (limit = 50, before?: string | null) => {
+		const qs = new URLSearchParams({ limit: String(limit) });
+		if (before) qs.set("before", before);
+		return fetchJson<import("../types").PlanningHistoryResponse>(`/universe/planning-history?${qs}`);
+	},
 	getUniverseSnapshots: () =>
 		fetchJson<import("../types").UniverseSnapshot[]>("/universe/snapshots"),
 	getUniverseSnapshot: (id: string) =>
 		fetchJson<any>(`/universe/snapshots/${id}`),
 	getCandidate: (id: string) =>
 		fetchJson<import("../types").CandidateDetail>(
-			`/universe/members/${id}`,
+			`/universe/candidates/${encodeURIComponent(id)}`,
 		),
 	refreshUniverse: () =>
 		post<{ snapshot_id: string; status: string }>("/universe/refresh"),
@@ -2790,6 +2801,8 @@ export const api = {
 			explore_ratio: number;
 			snapshot_ttl_enabled: boolean;
 			snapshot_ttl_hours: number;
+			entry_ttl_sec: number;
+			candidate_max_continuous_age_sec: number;
 			blacklist: string[];
 			fallback_symbols: string[];
 			market_type: string;

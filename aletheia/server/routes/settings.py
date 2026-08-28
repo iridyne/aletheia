@@ -2460,6 +2460,8 @@ class UniverseConfigUpdate(SettingsRequest):
     explore_ratio: Optional[float] = None
     snapshot_ttl_enabled: Optional[bool] = None
     snapshot_ttl_hours: Optional[float] = None
+    entry_ttl_sec: Optional[int] = None
+    candidate_max_continuous_age_sec: Optional[int] = None
     blacklist: Optional[list[str]] = None
     fallback_symbols: Optional[list[str]] = None
     market_type: Optional[str] = None
@@ -2476,6 +2478,8 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "min_depth_10bps_usd": (1_000, 10_000_000),
     "explore_ratio": (0.0, 0.5),
     "snapshot_ttl_hours": (1, 72),
+    "entry_ttl_sec": (300, 3600),
+    "candidate_max_continuous_age_sec": (300, 86_400),
 }
 
 
@@ -2485,6 +2489,18 @@ def update_universe_config(req: UniverseConfigUpdate):
     cfg = load_config()
     old = cfg.universe.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
+    next_soft = int(updates.get("entry_ttl_sec", old["entry_ttl_sec"]))
+    next_hard = int(
+        updates.get(
+            "candidate_max_continuous_age_sec",
+            old["candidate_max_continuous_age_sec"],
+        )
+    )
+    if next_hard < next_soft:
+        raise HTTPException(
+            400,
+            "candidate_max_continuous_age_sec must be >= entry_ttl_sec",
+        )
 
     _VALID_MARKET_TYPES = {"crypto", "stocks", "mixed"}
     for field, value in updates.items():

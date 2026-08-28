@@ -5,9 +5,7 @@ import { fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 
 /**
  * Right-slide drawer showing the full lifecycle trace of one opportunity.
- * Used both from the Blotter Order-History table (row click) and from the
- * legacy Overview `DecisionHistoryCard` — extracted so the two callers share
- * one implementation instead of duplicating the query + rendering.
+ * Retained for legacy Opportunity identities that do not have an Entry Plan.
  */
 export function DecisionTraceDrawer({ opportunityId, onClose }: {
   opportunityId: string | null

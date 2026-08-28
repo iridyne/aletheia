@@ -114,12 +114,11 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
     { id: 'nav-news', label: 'Go to News Intel', group: 'Navigation', action: () => navigate('/news') },
     { id: 'nav-serenity-lens', label: 'Go to Serenity Lens', group: 'Navigation', keywords: 'research lens chokepoint opportunities', action: () => navigate('/serenity-lens') },
     { id: 'nav-prediction', label: 'Go to Prediction Markets', group: 'Navigation', keywords: 'prediction polymarket probability events', action: () => navigate('/prediction-markets') },
-    { id: 'nav-blotter', label: 'Go to Blotter', group: 'Navigation', keywords: 'blotter proposals approve sign-off candidates history', action: () => navigate('/blotter') },
     { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
     // #125 fix: /universe was reachable via the NAV bar but missing from the
     // command palette — an operator using the keyboard shortcut couldn't
-    // navigate to the Universe Board.
-    { id: 'nav-universe', label: 'Go to Universe Board', group: 'Navigation', keywords: 'universe scanner instruments', action: () => navigate('/universe') },
+    // navigate to the Entry Workbench.
+    { id: 'nav-universe', label: 'Go to Entry Workbench', group: 'Navigation', keywords: 'entry plans candidates planning history universe', action: () => navigate('/universe') },
     { id: 'nav-trades', label: 'Go to Trades & Positions', group: 'Navigation', keywords: 'paper orders fills positions blotter', action: () => navigate('/trades') },
     { id: 'nav-learning', label: 'Go to Learning', group: 'Navigation', keywords: 'dreaming knowledge base reports memory consolidation', action: () => navigate('/learning') },
     { id: 'nav-risk', label: 'Go to Risk & Controls', group: 'Navigation', action: () => navigate('/risk') },

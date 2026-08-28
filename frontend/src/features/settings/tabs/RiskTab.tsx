@@ -26,9 +26,9 @@ import type { DeepPartial, SettingsRiskConfig, SettingsRiskPolicy } from '../../
 import type { SettingsDirtyProps, SettingsProps } from '../types'
 
 export const UNIVERSE_SECTION = {
-  id: 'universe', title: 'Universe Board', tab: 'risk',
-  description: 'Controls the dynamic candidate selector shown on Universe Board. When disabled, agents use the static fallback list instead.',
-  searchTerms: ['scanner', 'tradable universe'],
+  id: 'universe', title: 'Universe & Candidate Attention', tab: 'risk',
+  description: 'Controls Universe selection plus the separate soft and hard Candidate attention bounds.',
+  searchTerms: ['scanner', 'tradable universe', 'candidate attention', 'soft lease', 'hard age'],
 } satisfies SettingsFeatureDescriptor
 
 export const EVENT_TRIGGERS_SECTION = {
@@ -116,6 +116,8 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [exploreRatio, setExploreRatio] = useState('0.2')
   const [snapshotTtlEnabled, setSnapshotTtlEnabled] = useState(true)
   const [snapshotTtlHours, setSnapshotTtlHours] = useState('24')
+  const [candidateSoftLease, setCandidateSoftLease] = useState('900')
+  const [candidateMaxAge, setCandidateMaxAge] = useState('3600')
   const [blacklist, setBlacklist] = useState('')
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
   const [marketType, setMarketType] = useState('crypto')
@@ -141,6 +143,8 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setExploreRatio(String(universe.explore_ratio ?? 0.2))
       setSnapshotTtlEnabled(universe.snapshot_ttl_enabled ?? true)
       setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
+      setCandidateSoftLease(String(universe.entry_ttl_sec ?? 900))
+      setCandidateMaxAge(String(universe.candidate_max_continuous_age_sec ?? 3600))
       setBlacklist(listToCsv(universe.blacklist))
       setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
       setMarketType(universe.market_type || 'crypto')
@@ -179,6 +183,8 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         explore_ratio: parseFloat(exploreRatio),
         snapshot_ttl_enabled: snapshotTtlEnabled,
         snapshot_ttl_hours: parseFloat(snapshotTtlHours),
+        entry_ttl_sec: parseInt(candidateSoftLease),
+        candidate_max_continuous_age_sec: parseInt(candidateMaxAge),
         blacklist: parseCsvList(blacklist),
         fallback_symbols: parseCsvList(fallbackSymbols),
         market_type: marketType,
@@ -246,6 +252,18 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
             <span className="hint m-0">hrs{!snapshotTtlEnabled ? ' (disabled — toggle on to edit)' : ''}</span>
           </div>
         </div>
+        <label className="settings-field">
+          <span>Candidate soft lease (sec)</span>
+          <input type="number" min={300} max={3600} step={60} value={candidateSoftLease}
+            onChange={e => { setCandidateSoftLease(e.target.value); setChanged(true); setMsg(null) }} />
+          <span className="hint m-0">Extended only by a completed real re-selection.</span>
+        </label>
+        <label className="settings-field">
+          <span>Max continuous Candidate attention (sec)</span>
+          <input type="number" min={300} max={86400} step={60} value={candidateMaxAge}
+            onChange={e => { setCandidateMaxAge(e.target.value); setChanged(true); setMsg(null) }} />
+          <span className="hint m-0">Frozen on admission; must be at least the soft lease.</span>
+        </label>
       </div>
       <div className="form-grid mb-3">
         <label>

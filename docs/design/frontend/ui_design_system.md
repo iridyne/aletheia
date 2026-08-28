@@ -230,7 +230,7 @@ Overview 是全站"main + auxiliary column"布局的**规范样板**。新页面
 | Name | Value | 触发的布局变化 |
 |------|-------|----------------|
 | `sm` | 640px | 手机 vs 平板边界；PnL tiles 4 → 2；`.metric-context` 释放 nowrap 换两行 |
-| `md` | 768px | Blotter summary strip `flex-wrap: wrap`；PnL tiles 单行密度上限 |
+| `md` | 768px | 紧凑 summary strip `flex-wrap: wrap`；PnL tiles 单行密度上限 |
 | `lg` | 1024px | **`main + rail` 分栏的唯一门槛**；小于此值一律纵向堆叠 |
 | `xl` | 1280px | 舒适宽屏；rail 上限展开到 380px 的 `clamp()` 极值 |
 
@@ -401,7 +401,19 @@ Overview 当前没有此需求，但作为下一批 tile 组件的默认写法�
 
 `<ConnectionStatus label="..." state="green|red|yellow|muted" text="..." />` — 圆点 + 等宽状态文字。用于凭证/连接卡片顶部。
 
-### Blotter primitives (`.bl-*`) — 交易台账工作站专用
+### Entry Workbench primitives — current ownership
+
+Entry Workbench uses neutral shared `MetricTile`, `Tabs`, `DataTable`,
+`DetailDrawer`, `Card`, `Button`, and `Badge` primitives. It must not copy or
+extend the retired `.bl-*` family. Its summary uses `.entry-workbench-summary`
+with four/two/one columns across the canonical 1024/640 boundaries; tabular
+content preserves keyboard order and scrolls on narrow screens.
+
+### Blotter primitives (`.bl-*`) — legacy, no active page owner
+
+The standalone Decision Blotter was removed by issue #2288. The CSS family below
+is documented only to identify legacy cleanup debt and must not be used by new
+or current owner-facing surfaces.
 
 引入自 2026-07-18 Blotter 迁移（`pages/Blotter.tsx`；参考 Bloomberg EMSX + IBKR TWS）。这套 primitives 只在决策工作站上下文使用，不应扩散到其他页面。CSS 定义在 `frontend/src/index.css`（`bl-token-strip` 段起）。
 
@@ -578,8 +590,8 @@ API key 等凭证字段**禁止用 badge 标注"已配置"**（颜色 badge 像�
 | Confirm | `useConfirm()`（非原生 `window.confirm()`） |
 | Toast | `useToast()`（非 `console.error()`） |
 | Tab | `<Tabs>`（非手写 tab bar） |
-| Blotter 决策工作站 | `.bl-*` 类族（见 §4 Blotter primitives），不要重造 status token 条 / faceted filter chip / candidate 表 |
-| Blotter 行点击 → trace | `<DecisionTraceDrawer opportunityId=… />`（`components/DecisionTraceDrawer.tsx`，Overview + Blotter 共用） |
+| Entry Workbench | `<Tabs>` + `<DataTable>` + `<DetailDrawer>` + neutral summary tiles; do not reuse legacy `.bl-*` CSS |
+| Legacy Opportunity trace | `<DecisionTraceDrawer opportunityId=… />`（仅无 Entry Plan identity 的兼容路径） |
 
 不要用 `.toFixed(0)` / 裸 `e.symbol` / 裸 `e.source` / 手写 lens-tabs — 每一项都违反一条铁律。
 
