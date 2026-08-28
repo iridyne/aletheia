@@ -168,6 +168,56 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
     assert "entry_plan_max_risk_exceeded" in violations
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "violation"),
+    [
+        ("stop_price", 99, "entry_plan_stop_price_mismatch"),
+        ("take_profit", 106, "entry_plan_take_profit_mismatch"),
+        ("order_tactic", "POST_ONLY_LIMIT", "entry_plan_order_tactic_mismatch"),
+        ("time_in_force", "GTC", "entry_plan_time_in_force_mismatch"),
+        ("post_only", True, "entry_plan_post_only_mismatch"),
+        ("price", 102, "entry_plan_entry_envelope_exceeded"),
+    ],
+)
+def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(
+    monkeypatch, field, value, violation
+):
+    from types import SimpleNamespace
+
+    from aletheia.risk import engine
+
+    plan = _plan()
+    payload, digest = entry_plan_payload(plan)
+    monkeypatch.setattr(
+        engine,
+        "get_entry_plan",
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+    )
+    monkeypatch.setattr(
+        engine,
+        "get_candidate_planning_generation",
+        lambda _generation_id: {"is_current": 1},
+    )
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=100,
+        ask=100.05,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+    ).model_copy(update={field: value})
+    resolved = SimpleNamespace(
+        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
+        policy_hash="risk-hash",
+    )
+
+    violations = engine._entry_plan_authority_violations(
+        proposal,
+        capital_base=1_000,
+        resolved_policy=resolved,
+    )
+
+    assert violation in violations
+
+
 def test_canonical_risk_rejects_superseded_or_expired_entry_plan(monkeypatch):
     from types import SimpleNamespace
 
