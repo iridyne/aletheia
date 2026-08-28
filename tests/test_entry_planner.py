@@ -2,7 +2,12 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
-from aletheia.agent_shell.entry_planner import plan_next_candidate
+from aletheia.agent_shell.entry_planner import (
+    ENTRY_PLANNER_MAX_CONCURRENCY,
+    ENTRY_PLANNER_MIN_CONCURRENCY,
+    plan_next_candidate,
+    run_entry_planner_batch,
+)
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import UniverseMember, UniverseSnapshot
 from aletheia.trading.entry_plan import EntryPlan
@@ -341,6 +346,78 @@ def test_no_plan_is_durable_until_new_generation():
     assert next_generation["id"] != candidate.id
     assert asyncio.run(plan_next_candidate(planner))["status"] == "no_plan"
     assert calls == 2
+
+
+def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
+    active = 0
+    peak = 0
+    calls = 0
+
+    async def fake_run_once(cfg=None):
+        nonlocal active, peak, calls
+        calls += 1
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return {"status": "no_plan", "model_invoked": True}
+
+    pending = ENTRY_PLANNER_MAX_CONCURRENCY + 5
+    remaining = iter((pending, pending - ENTRY_PLANNER_MAX_CONCURRENCY))
+    monkeypatch.setattr(repo, "count_pending_candidate_planning", lambda: next(remaining))
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.run_entry_planner_once",
+        fake_run_once,
+    )
+
+    result = asyncio.run(run_entry_planner_batch())
+
+    assert ENTRY_PLANNER_MIN_CONCURRENCY == 3
+    assert calls == peak == ENTRY_PLANNER_MAX_CONCURRENCY == 15
+    assert result["planning_attempts"] == ENTRY_PLANNER_MAX_CONCURRENCY
+    assert result["pending_queue_remaining"] == 5
+
+
+def test_entry_planner_batch_claims_rank_order_before_parallel_planning(monkeypatch):
+    candidates = [
+        _candidate(
+            rank=rank,
+            asset_id=f"asset-{rank}",
+            symbol=f"RANK{rank}/USDT",
+        )
+        for rank in (4, 1, 3, 2)
+    ]
+    generations = {
+        candidate.rank: repo.ensure_candidate_planning_generation(candidate.id)[0]["id"]
+        for candidate in candidates
+    }
+    started: list[str] = []
+    active = 0
+    peak = 0
+    all_started = asyncio.Event()
+
+    async def planner(context):
+        nonlocal active, peak
+        started.append(context["planning_generation"]["id"])
+        active += 1
+        peak = max(peak, active)
+        if active == 4:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        active -= 1
+        return {"result": "NO_PLAN", "reasoning": "bounded parallel test"}
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.system_operator_entry_planner",
+        planner,
+    )
+
+    result = asyncio.run(run_entry_planner_batch())
+
+    assert started == [generations[rank] for rank in (1, 2, 3, 4)]
+    assert peak == 4
+    assert result["planning_attempts"] == 4
+    assert result["pending_queue_remaining"] == 0
 
 
 def test_stale_llm_result_cannot_activate_entry_plan():
