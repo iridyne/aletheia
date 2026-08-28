@@ -21,6 +21,9 @@ DOMAIN_MAX_AGE: dict[str, timedelta] = {
     "cross_venue_open_interest": timedelta(minutes=30),
     "perp_structure": timedelta(minutes=60),
     "options_structure": timedelta(minutes=30),
+    # Detector runs about every 10 minutes and writes an unchanged-state heartbeat
+    # at 60 minutes; allow one bounded retry window before regime authority expires.
+    "regime": timedelta(minutes=90),
 }
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 

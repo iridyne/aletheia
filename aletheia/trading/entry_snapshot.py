@@ -28,6 +28,8 @@ def _current_regime() -> str:
         regime = get_latest_market_regime()
         if regime and regime.get("state"):
             return str(regime["state"])
+        if regime is not None:
+            return "unknown"
     except Exception:
         pass
     try:

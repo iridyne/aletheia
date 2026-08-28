@@ -30,10 +30,13 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
+
+import typer
 
 Severity = Literal["ok", "info", "warn", "blocker"]
 
@@ -57,6 +60,16 @@ _LLM_DEGRADED_SUCCESS_RATE = 0.5
 # while that Gateway is healthy.  Keep the process/session join bounded: a wide
 # heuristic would turn a genuinely stale crash row into false current authority.
 _RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
+
+
+@contextmanager
+def _read_only_diagnostics():
+    """Fence every Doctor report against config and SQLite writes."""
+    from aletheia.config.loader import read_only_config
+    from aletheia.storage.sqlite import readonly_db
+
+    with read_only_config(), readonly_db(allow_missing=True):
+        yield
 
 
 @dataclass
@@ -103,6 +116,7 @@ class Report:
         }
 
 
+@_read_only_diagnostics()
 def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20) -> dict:
     """Build a read-only diagnostic bundle for `doctor --verbose/--deep`.
 
@@ -4231,6 +4245,7 @@ _CONTENT_PROBES = (
 )
 
 
+@_read_only_diagnostics()
 def build_content_report() -> Report:
     """Run ONLY the content-quality probes — the cheap subset of build_report() that
     asks "is the AI's output garbage", not "is the loop alive". Used by the PI
@@ -4245,6 +4260,7 @@ def build_content_report() -> Report:
     return report
 
 
+@_read_only_diagnostics()
 def build_report(*, probe_llm: bool = False) -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing.
 
@@ -4324,35 +4340,73 @@ def build_report(*, probe_llm: bool = False) -> Report:
 
 # --- conservative auto-repair (opt-in, --fix) ---
 
-def apply_fixes() -> list[str]:
+def _gateway_start_exit_reason(exit_code: int, lifecycle_output: str) -> str:
+    text = lifecycle_output.lower()
+    if exit_code == 0 and "already running" in text:
+        return "already_running"
+    if "preflight" in text:
+        return "preflight_failed"
+    if "foreign process" in text or "port" in text and "in use" in text:
+        return "foreign_port_holder"
+    if "readiness" in text or "did not come up" in text:
+        return "readiness_failed"
+    if "machine service failed" in text:
+        return "machine_service_start_failed"
+    if "service manager failed" in text:
+        return "service_manager_start_failed"
+    return "gateway_start_exited"
+
+
+def apply_fixes() -> list[dict[str, object]]:
     """Deterministic, reversible, non-trading repairs only.
 
     Per the project safety rules, this NEVER clears the kill switch and NEVER
     touches trading state — it only fixes infrastructure: clears orphan gateway
-    processes / stale pidfiles and starts the gateway if it is down. Returns a
-    list of human-readable actions taken.
+    processes / stale pidfiles and starts the gateway if it is down. Returns
+    structured, secret-safe actions for Doctor to render.
     """
-    actions: list[str] = []
+    actions: list[dict[str, object]] = []
     # Remove legacy implicit-restart hooks before the running-check early return.
     from aletheia.gateway.git_hooks import remove_managed_git_hooks
     from aletheia.gateway.lifecycle import do_start
     from aletheia.gateway.pidfile import is_running
-    actions.extend(remove_managed_git_hooks())
+    for action in remove_managed_git_hooks():
+        actions.append({"action": "remove_managed_git_hook", "status": "ok", "detail": action})
 
     if is_running():
-        actions.append("gateway already running — nothing to start")
+        actions.append({"action": "gateway_start", "status": "skipped", "reason": "already_running"})
         return actions
 
     # do_start already self-heals: it sweeps orphan/ghost-socket processes holding
     # the port before spawning, and refuses if a foreign process holds it. We reuse
     # that rather than duplicating the cleanup logic.
+    import contextlib
+    import io
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
     try:
-        do_start(no_browser=True, foreground=False)
-        actions.append("started gateway in background (with orphan/port cleanup)")
-    except SystemExit:
-        # do_start raises typer.Exit on port-still-held; surface it as a non-fix.
-        actions.append("could not start gateway — port still held by a foreign process "
-                       "(see `aletheia gateway start` output)")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            started = do_start(no_browser=True, foreground=False)
+        actions.append({
+            "action": "gateway_start",
+            "status": "ok" if started is not False else "pending",
+            "reason": "started" if started is not False else "start_requested_readiness_unconfirmed",
+        })
+    except typer.Exit as exc:
+        exit_code = int(getattr(exc, "exit_code", 1) or 0)
+        lifecycle_output = stdout.getvalue() + stderr.getvalue()
+        actions.append({
+            "action": "gateway_start",
+            "status": "skipped" if exit_code == 0 else "failed",
+            "reason": _gateway_start_exit_reason(exit_code, lifecycle_output),
+            "exit_code": exit_code,
+        })
     except Exception as e:
-        actions.append(f"gateway start failed: {e}")
+        actions.append({
+            "action": "gateway_start",
+            "status": "failed",
+            "reason": "unexpected_error",
+            "error_type": type(e).__name__,
+        })
     return actions

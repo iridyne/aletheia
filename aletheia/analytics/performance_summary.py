@@ -33,10 +33,11 @@ def equity_curve(pnls: Sequence[float]) -> list[float]:
 
 
 def max_drawdown(equity: Sequence[float]) -> float:
-    """Peak-to-trough decline of the equity curve (always >= 0)."""
+    """Peak-to-trough decline, including the zero starting equity (always >= 0)."""
     if not equity:
         return 0.0
-    peak = float(equity[0])
+    # ``equity_curve`` is cumulative PnL and omits its pre-trade zero point.
+    peak = max(0.0, float(equity[0]))
     mdd = 0.0
     for v in equity:
         v = float(v)

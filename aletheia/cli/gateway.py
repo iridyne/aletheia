@@ -323,5 +323,13 @@ def open_dashboard():
     """Open the dashboard in the default browser."""
     import webbrowser
     from aletheia.config.loader import load_config
+
     cfg = load_config()
-    webbrowser.open(f"http://127.0.0.1:{cfg.app.dashboard_port}")
+    url = f"http://127.0.0.1:{cfg.app.dashboard_port}"
+    if webbrowser.open(url):
+        return
+    typer.echo(
+        f"Could not open a browser; open {url} manually.",
+        err=True,
+    )
+    raise typer.Exit(1)

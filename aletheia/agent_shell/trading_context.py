@@ -1873,6 +1873,8 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "confidence": regime.get("confidence"),
                 "long_bias": regime.get("long_bias"),
                 "short_bias": regime.get("short_bias"),
+                "freshness": regime.get("freshness"),
+                "age_seconds": regime.get("age_seconds"),
             }
         else:
             layer["regime"] = None

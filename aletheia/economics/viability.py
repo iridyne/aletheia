@@ -21,6 +21,14 @@ from aletheia.economics.tracing import list_cost_summary
 METRIC_VERSION = "aletheia-viability-v1"
 _NEUTRAL_EPSILON_USD = 1e-9
 _OPERATOR_AGENT_NAMES = ("pi_trading_decision", "system_operator")
+SUPPORTED_EXECUTION_MODES = frozenset({"paper_internal"})
+
+
+def require_supported_execution_mode(execution_mode: str) -> None:
+    if execution_mode not in SUPPORTED_EXECUTION_MODES:
+        raise ValueError(
+            "Economic Viability V1 supports only execution_mode='paper_internal'"
+        )
 
 
 def _utcnow() -> datetime:
@@ -138,6 +146,7 @@ def build_system_viability(
     window_end: datetime | str | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
+    require_supported_execution_mode(execution_mode)
     if not audit_enabled():
         raise RuntimeError("viability audit is disabled by ALETHEIA_VIABILITY_AUDIT")
     if days <= 0:
@@ -449,6 +458,7 @@ def build_operator_viability(
     window_end: datetime | str | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
+    require_supported_execution_mode(execution_mode)
     if not audit_enabled():
         raise RuntimeError("viability audit is disabled by ALETHEIA_VIABILITY_AUDIT")
     if days <= 0:

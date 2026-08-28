@@ -281,11 +281,20 @@ def get_current_regime() -> MarketRegime:
     """Return the last published regime, recovering from DB if process restarted."""
     global _published_regime
     if _published_regime is not None:
-        return _published_regime
+        from aletheia.data.freshness import assess_freshness
+
+        verdict = assess_freshness(
+            {"detected_at": _published_regime.detected_at},
+            "regime",
+            timestamp_field="detected_at",
+        )
+        if verdict.usable:
+            return _published_regime
+        _published_regime = None
     try:
         from aletheia.storage.repositories import get_latest_market_regime
         row = get_latest_market_regime()
-        if row:
+        if row and row.get("state"):
             # A11 (LEARNING_LOOP_AUDIT): on restart-recovery also restore long/short
             # bias — the old code left them at the 0.50/0.50 default, so a recovered
             # bear/bull regime fed NEUTRAL bias to consumers (ranker / risk / PI) until
@@ -298,6 +307,7 @@ def get_current_regime() -> MarketRegime:
                 confidence=float(row.get("confidence", 0.5)),
                 long_bias=lb,
                 short_bias=sb,
+                detected_at=str(row.get("detected_at") or ""),
             )
             return _published_regime
     except Exception:
