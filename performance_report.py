@@ -17,6 +17,7 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -50,7 +51,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def _collect() -> dict:
+_DEFAULT_REPORT_DAYS = 7
+_MAX_REPORT_DAYS = 3650
+
+
+def _days_arg(value: str) -> int:
+    try:
+        days = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("days must be an integer") from exc
+    if not 1 <= days <= _MAX_REPORT_DAYS:
+        raise argparse.ArgumentTypeError(
+            f"days must be between 1 and {_MAX_REPORT_DAYS}"
+        )
+    return days
+
+
+def _collect(days: int | None = None, execution_mode: str | None = None) -> dict:
     """Pull each analytics section, isolating failures so one bad source does
     not sink the whole report.
 
@@ -64,9 +81,15 @@ def _collect() -> dict:
     )
 
     result: dict = {"sections": []}
-    days = int(os.environ.get("REPORT_DAYS", os.environ.get("SNAPSHOT_WINDOW_HOURS", "7")))
+    if days is None:
+        raw_days = os.environ.get("REPORT_DAYS", str(_DEFAULT_REPORT_DAYS))
+        try:
+            days = _days_arg(raw_days)
+        except argparse.ArgumentTypeError as exc:
+            raise ValueError(f"REPORT_DAYS: {exc}") from exc
+    result["window"] = {"days": days}
 
-    override = os.environ.get("REPORT_EXECUTION_MODE") or _cli_execution_mode()
+    override = execution_mode or os.environ.get("REPORT_EXECUTION_MODE") or _cli_execution_mode()
     execution_mode = override or resolve_selected_execution_mode()
     result["execution_mode"] = execution_mode
     result["execution_mode_status"] = (
@@ -174,6 +197,7 @@ def _render_human(rep: dict) -> str:
         rep.get("execution_mode") or "—",
         rep.get("execution_mode_status") or "unavailable",
     ))
+    out.append("window_days: %s" % ((rep.get("window") or {}).get("days")))
     if rep.get("execution_mode_status") == "unavailable":
         out.append(
             "[fail-closed] execution_mode 无法解析,"
@@ -309,10 +333,23 @@ def _cli_execution_mode() -> str | None:
     return None
 
 
-def main() -> int:
-    as_json = "--json" in sys.argv[1:]
-    rep = _collect()
-    if as_json:
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--days",
+        type=_days_arg,
+        default=None,
+        help=f"Rolling window in days (1-{_MAX_REPORT_DAYS}; default: {_DEFAULT_REPORT_DAYS}).",
+    )
+    parser.add_argument("--json", action="store_true", help="Output machine-readable JSON.")
+    parser.add_argument("--execution-mode", default=None, help=argparse.SUPPRESS)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    rep = _collect(days=args.days, execution_mode=args.execution_mode)
+    if args.json:
         # Profit factor may be inf; JSON cannot represent it -> stringify.
         def _clean(o):
             if isinstance(o, float) and (o == float("inf") or o == float("-inf") or o != o):
