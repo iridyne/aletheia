@@ -9,6 +9,7 @@ import {
   useConfirm,
 } from '../../../components/ui'
 import { humanize } from '../../../lib/format'
+import { safeErrorText } from '../../../lib/mutationErrors'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { CapitalEventsCard, PaperAccountCard, TradingParamsCard } from '../execution/PaperTradingSettings'
@@ -400,6 +401,13 @@ const EXCHANGE_CONFIG = [
 ] as const
 
 type ExchangeId = typeof EXCHANGE_CONFIG[number]['id']
+type CredentialSubmission = {
+  exchange: ExchangeId
+  profile: string
+  apiKey: string
+  apiSecret: string
+  passphrase: string
+}
 
 function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
   const [exchange, setExchange] = useState<ExchangeId>('bitget')
@@ -497,48 +505,55 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
 
   // Verify & Save
   const verifyAndSave = useMutation({
-    mutationFn: async () => {
-      setResult(null)
-      const hasAllRequired = exCfg.hasPassphrase
-        ? !!(apiKey && apiSecret && passphrase)
-        : !!(apiKey && apiSecret)
+    mutationFn: async ({ exchange: targetExchange, profile: targetProfile, apiKey: targetApiKey, apiSecret: targetApiSecret, passphrase: targetPassphrase }: CredentialSubmission) => {
+      const targetCfg = EXCHANGE_CONFIG.find(e => e.id === targetExchange)!
+      const hasAllRequired = targetCfg.hasPassphrase
+        ? !!(targetApiKey && targetApiSecret && targetPassphrase)
+        : !!(targetApiKey && targetApiSecret)
 
       if (hasAllRequired) {
         // Test candidate before saving
         let testResult: any
-        if (exchange === 'bitget') {
-          testResult = await api.testBitgetCandidate({ profile, api_key: apiKey, api_secret: apiSecret, passphrase })
-        } else if (exchange === 'binance') {
-          testResult = await api.testBinanceCandidate({ mode: profile, api_key: apiKey, api_secret: apiSecret })
+        if (targetExchange === 'bitget') {
+          testResult = await api.testBitgetCandidate({ profile: targetProfile, api_key: targetApiKey, api_secret: targetApiSecret, passphrase: targetPassphrase })
+        } else if (targetExchange === 'binance') {
+          testResult = await api.testBinanceCandidate({ mode: targetProfile, api_key: targetApiKey, api_secret: targetApiSecret })
         } else {
-          testResult = await api.testOkxCandidate({ mode: profile, api_key: apiKey, api_secret: apiSecret, passphrase })
+          testResult = await api.testOkxCandidate({ mode: targetProfile, api_key: targetApiKey, api_secret: targetApiSecret, passphrase: targetPassphrase })
         }
         if (!testResult.connected) throw new Error(testResult.error || 'connection failed')
       }
 
       // Save credentials
-      if (exchange === 'bitget') {
-        await api.setBitgetCredentials({ profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined })
-      } else if (exchange === 'binance') {
-        await api.setBinanceCredentials({ profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined })
+      if (targetExchange === 'bitget') {
+        await api.setBitgetCredentials({ profile: targetProfile, api_key: targetApiKey || undefined, api_secret: targetApiSecret || undefined, passphrase: targetPassphrase || undefined })
+      } else if (targetExchange === 'binance') {
+        await api.setBinanceCredentials({ profile: targetProfile, api_key: targetApiKey || undefined, api_secret: targetApiSecret || undefined })
       } else {
-        await api.setOkxCredentials({ profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined })
+        await api.setOkxCredentials({ profile: targetProfile, api_key: targetApiKey || undefined, api_secret: targetApiSecret || undefined, passphrase: targetPassphrase || undefined })
       }
 
       return hasAllRequired
     },
-    onSuccess: (tested) => {
-      setApiKey(''); setApiSecret(''); setPassphrase('')
-      setResult({ ok: true, msg: tested ? '✓ verified & saved' : '✓ saved (partial)' })
+    onSuccess: (tested, variables) => {
+      if (apiKey === variables.apiKey) setApiKey('')
+      if (apiSecret === variables.apiSecret) setApiSecret('')
+      if (passphrase === variables.passphrase) setPassphrase('')
+      setResult({ ok: true, msg: `${tested ? '✓ verified & saved' : '✓ saved (partial)'} — ${variables.exchange} ${variables.profile}` })
       qc.invalidateQueries({ queryKey: ['bitgetCreds'] })
       qc.invalidateQueries({ queryKey: ['binanceCreds'] })
       qc.invalidateQueries({ queryKey: ['okxCreds'] })
-      qc.invalidateQueries({ queryKey: ['exchange-test', exchange, profile] })
+      qc.invalidateQueries({ queryKey: ['exchange-test', variables.exchange, variables.profile] })
     },
-    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message} — not saved` }),
+    onError: (e: any, variables) => setResult({ ok: false, msg: `✗ ${safeErrorText(e?.message || e?.error, 'credential save failed')} — ${variables.exchange} ${variables.profile} not saved` }),
   })
 
   const dirty = exCfg.hasPassphrase ? !!(apiKey || apiSecret || passphrase) : !!(apiKey || apiSecret)
+  const submit = () => {
+    if (!dirty || verifyAndSave.isPending) return
+    setResult(null)
+    verifyAndSave.mutate({ exchange, profile, apiKey, apiSecret, passphrase })
+  }
   useSettingsDraftLifecycle({
     id: 'exchange-credentials',
     dirty,
@@ -551,7 +566,7 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
     <div className="card mb-0">
       {/* Exchange selector */}
       <div className="flex gap-2 mb-3">
-        <select value={exchange} onChange={e => setExchange(e.target.value as ExchangeId)} style={{ flex: 1 }}>
+        <select value={exchange} onChange={e => setExchange(e.target.value as ExchangeId)} disabled={verifyAndSave.isPending} style={{ flex: 1 }}>
           {EXCHANGE_CONFIG.map(ex => (
             <option key={ex.id} value={ex.id}>{ex.name}</option>
           ))}
@@ -561,7 +576,7 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
       {/* Profile tabs */}
       <div className="flex gap-2 mb-3">
         {exCfg.profiles.map(p => (
-          <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => setProfile(p)}>
+          <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => setProfile(p)} disabled={verifyAndSave.isPending}>
             {p === 'testnet' ? 'Testnet' : p === 'demo' ? 'Demo' : 'Live'}
           </button>
         ))}
@@ -579,23 +594,23 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
       <div className="form-grid">
         <label>
           <span>API Key{cur?.api_key?.configured ? ` (··${cur.api_key.last4})` : ''}</span>
-          <input type="password" value={apiKey} placeholder={cur?.api_key?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiKey(e.target.value)} />
+          <input type="password" value={apiKey} placeholder={cur?.api_key?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiKey(e.target.value)} disabled={verifyAndSave.isPending} />
         </label>
         <label>
           <span>API Secret{cur?.api_secret?.configured ? ' (set)' : ''}</span>
-          <input type="password" value={apiSecret} placeholder={cur?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} />
+          <input type="password" value={apiSecret} placeholder={cur?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} disabled={verifyAndSave.isPending} />
         </label>
         {exCfg.hasPassphrase && (
           <label>
             <span>Passphrase{cur?.passphrase?.configured ? ' (set)' : ''}</span>
-            <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
+            <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} disabled={verifyAndSave.isPending} />
           </label>
         )}
       </div>
 
       {/* Save button */}
       <div className="flex gap-2 mt-3">
-        <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending || !dirty}>
+        <button onClick={submit} disabled={verifyAndSave.isPending || !dirty}>
           {verifyAndSave.isPending ? 'Verifying…' : `Verify & Save`}
         </button>
       </div>

@@ -63,4 +63,12 @@ describe('ExecutionTab', () => {
     expect(SRC).toContain('uta_read_boundary: readBoundary')
     expect(SRC).toContain('<option value="uta_v1" disabled>')
   })
+
+  it('keeps credential saves bound to an immutable target while pending', () => {
+    expect(SRC).toContain('type CredentialSubmission = {')
+    expect(SRC).toContain('verifyAndSave.mutate({ exchange, profile, apiKey, apiSecret, passphrase })')
+    expect(SRC).toContain('disabled={verifyAndSave.isPending}')
+    expect(SRC).toContain('variables.exchange, variables.profile')
+    expect(SRC).toContain("if (apiKey === variables.apiKey) setApiKey('')")
+  })
 })
