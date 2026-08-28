@@ -234,6 +234,91 @@ async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypa
 
 
 @pytest.mark.anyio
+async def test_ohlcv_route_falls_back_on_typed_empty_provider_result(client, monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVAttempt, OHLCVResult
+
+    class _EmptyProvider:
+        async def get_ohlcv(self, *args, **kwargs):
+            return OHLCVResult(
+                requested=99,
+                attempts=(OHLCVAttempt(provider="binance", outcome="empty"),),
+            )
+
+        async def close(self):
+            pass
+
+    repo.upsert_ohlcv_candles(
+        symbol="BTC/USDT", timeframe="1h", exchange="binance", market_type="spot",
+        candles=[Candle(
+            timestamp=1700000000000, open=1, high=2, low=0.5, close=1.4, volume=10,
+        )],
+    )
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: _EmptyProvider())
+
+    resp = await client.get(
+        "/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=99&exchange=binance&market_type=spot",
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["x-aletheia-data-source"] == "database_fallback"
+    assert resp.json()[0]["close"] == 1.4
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_reports_typed_empty_without_database_history(client, monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import OHLCVAttempt, OHLCVResult
+
+    class _EmptyProvider:
+        async def get_ohlcv(self, *args, **kwargs):
+            return OHLCVResult(
+                requested=99,
+                attempts=(OHLCVAttempt(provider="binance", outcome="empty"),),
+            )
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: _EmptyProvider())
+
+    resp = await client.get(
+        "/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=99&exchange=binance&market_type=spot",
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["x-aletheia-data-source"] == "unavailable"
+    assert resp.json() == {"error": "market_data_unavailable", "candles": []}
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_preserves_typed_partial_provider_result(client, monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVAttempt, OHLCVResult
+
+    class _PartialProvider:
+        async def get_ohlcv(self, *args, **kwargs):
+            return OHLCVResult(
+                [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)],
+                requested=99,
+                attempts=(OHLCVAttempt(provider="binance", outcome="partial", accepted=1),),
+            )
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: _PartialProvider())
+
+    resp = await client.get(
+        "/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=99&exchange=binance&market_type=spot",
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["x-aletheia-data-source"] == "provider_fetch"
+    assert resp.json()[0]["close"] == 1.5
+
+
+@pytest.mark.anyio
 async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
     """`before` (unix seconds) must drop any candle at/after the cutoff so a
     scroll-back page never overlaps the chart's left-most bar."""

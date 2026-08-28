@@ -1539,6 +1539,7 @@ async def get_market_ohlcv(
     from aletheia.config.loader import load_config
     from aletheia.data.cache import get_cache
     from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.providers import OHLCVResult
     from aletheia.data.symbols import InstrumentId, to_canonical
 
     cfg = load_config()
@@ -1569,6 +1570,18 @@ async def get_market_ohlcv(
     cache_key = sym
     use_cache = since_ms is None and limit == 100
     data_source = "memory_cache"
+
+    async def _database_fallback() -> list[dict]:
+        return await asyncio.to_thread(
+            repo.get_ohlcv_candles,
+            sym,
+            timeframe,
+            limit=limit,
+            exchange=effective_exchange,
+            market_type=market_type,
+            before_ts=before * 1000 if before > 0 else None,
+        )
+
     try:
         candles = (
             cache.get(
@@ -1595,17 +1608,15 @@ async def get_market_ohlcv(
                 except Exception:
                     # The chart remains usable during a provider outage, but exact
                     # venue/market/time paging is preserved and provenance is explicit.
-                    db_rows = await asyncio.to_thread(
-                        repo.get_ohlcv_candles,
-                        sym,
-                        timeframe,
-                        limit=limit,
-                        exchange=effective_exchange,
-                        market_type=market_type,
-                        before_ts=before * 1000 if before > 0 else None,
-                    )
+                    db_rows = await _database_fallback()
                     if not db_rows:
                         raise
+                    candles = db_rows
+                    data_source = "database_fallback"
+                if isinstance(candles, OHLCVResult) and candles.outcome == "empty":
+                    db_rows = await _database_fallback()
+                    if not db_rows:
+                        raise RuntimeError("provider returned empty OHLCV and no exact database history")
                     candles = db_rows
                     data_source = "database_fallback"
             finally:
