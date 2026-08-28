@@ -1581,7 +1581,7 @@ def serenity(
             "created_at": r.get("created_at"),
         } for r in rows]
     elif what == "runs":
-        rows = repo.list_serenity_research_runs(limit=limit)
+        rows = repo.list_serenity_research_runs(status=status_filter, limit=limit)
         display = [{
             "id": r.get("id", "")[:8],
             "status": r.get("status"),
