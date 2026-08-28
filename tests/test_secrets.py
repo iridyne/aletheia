@@ -1,5 +1,7 @@
 """Tests for secrets handling and redaction."""
 
+import os
+import stat
 from unittest.mock import patch
 import pytest  # pyright: ignore[reportMissingImports]
 from aletheia.config.secrets import (
@@ -73,6 +75,79 @@ def test_file_fallback_roundtrip(tmp_path):
         val = get_secret("test.key")
         assert val == "super_secret_value"
         assert get_secret("nonexistent") is None
+
+
+def test_secret_files_are_owner_only(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        set_secret("test.key", "super_secret_value")
+
+    assert stat.S_IMODE((tmp_path / ".secret.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "secrets.enc").stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask semantics")
+def test_secret_files_ignore_permissive_umask(tmp_path):
+    previous_umask = os.umask(0o022)
+    try:
+        with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+             patch("aletheia.config.secrets._get_keyring", return_value=None):
+            set_secret("test.key", "super_secret_value")
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE((tmp_path / ".secret.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "secrets.enc").stat().st_mode) == 0o600
+
+
+def test_existing_secret_files_are_tightened_before_read(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        set_secret("test.key", "super_secret_value")
+        os.chmod(tmp_path / ".secret.key", 0o644)
+        os.chmod(tmp_path / "secrets.enc", 0o644)
+        assert get_secret("test.key") == "super_secret_value"
+
+    assert stat.S_IMODE((tmp_path / ".secret.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "secrets.enc").stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink ownership semantics")
+def test_secret_key_symlink_is_rejected(tmp_path):
+    target = tmp_path / "other.key"
+    target.write_bytes(b"not-a-secret-key")
+    (tmp_path / ".secret.key").symlink_to(target)
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path):
+        with pytest.raises(RuntimeError, match="must not be a symlink"):
+            import aletheia.config.secrets as secrets
+
+            secrets._get_fernet()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink ownership semantics")
+def test_secret_store_symlink_is_rejected(tmp_path):
+    target = tmp_path / "other.enc"
+    target.write_bytes(b"not-a-secret-store")
+    (tmp_path / "secrets.enc").symlink_to(target)
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path):
+        with pytest.raises(RuntimeError, match="must not be a symlink"):
+            get_secret("test.key")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership semantics")
+def test_foreign_owner_secret_file_is_rejected(tmp_path):
+    import aletheia.config.secrets as secrets
+
+    key_path = tmp_path / ".secret.key"
+    key_path.write_bytes(b"invalid")
+    with (
+        patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path),
+        patch.object(secrets.os, "getuid", return_value=os.getuid() + 1),
+    ):
+        with pytest.raises(RuntimeError, match="unexpected owner"):
+            secrets._get_fernet()
 
 
 def test_exchange_credential_mutations_advance_isolated_generation(tmp_path):
