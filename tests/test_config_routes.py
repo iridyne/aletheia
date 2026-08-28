@@ -1282,6 +1282,31 @@ async def test_get_settings_masks_inline_secret_fields(client):
     assert "127.0.0.1:7890" in data["network"]["proxy_url"]
 
 
+@pytest.mark.anyio
+async def test_webhook_secret_presence_and_explicit_clear_are_truthful(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.webhook.secret = "WEBHOOKSECRET123"
+    cfg.webhook.url = "https://example.test/hook"
+    save_config(cfg)
+
+    configured = await client.get("/api/settings")
+    assert configured.status_code == 200
+    assert configured.json()["webhook"]["secret_configured"] is True
+    assert "WEBHOOKSECRET123" not in configured.text
+
+    cleared = await client.post("/api/settings/webhook", json={"secret": ""})
+    assert cleared.status_code == 200
+    assert "WEBHOOKSECRET123" not in cleared.text
+    assert "secret" not in cleared.json()["updated"]
+    assert cleared.json()["updated"]["secret_configured"] is False
+    assert load_config().webhook.secret == ""
+
+    unconfigured = await client.get("/api/settings")
+    assert unconfigured.json()["webhook"]["secret_configured"] is False
+
+
 def test_settings_openapi_exposes_redacted_typed_response_contract():
     response_schema = app.openapi()["paths"]["/api/settings"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert response_schema == {"$ref": "#/components/schemas/SettingsResponse"}
@@ -1322,9 +1347,16 @@ async def test_get_settings_projects_sanitized_webhook_delivery(client, monkeypa
 @pytest.mark.anyio
 async def test_settings_post_does_not_echo_secrets(client):
     """Regression #2/#4: webhook/network POST responses must not echo the submitted secret/creds."""
-    r = await client.post("/api/settings/webhook", json={"secret": "WEBHOOKSECRET999"})
+    with patch("aletheia.files.jsonl.write_audit") as write_audit:
+        r = await client.post("/api/settings/webhook", json={"secret": "WEBHOOKSECRET999"})
     assert r.status_code == 200
     assert "WEBHOOKSECRET999" not in r.text
+    assert "secret" not in r.json()["updated"]
+    assert r.json()["updated"]["secret_configured"] is True
+    event = write_audit.call_args.args[0]
+    assert "secret" not in event["before"]
+    assert "secret" not in event["after"]
+    assert event["after"]["secret_configured"] is True
 
     r2 = await client.post("/api/settings/network", json={"proxy_url": "http://uu:ppw@10.0.0.9:1080"})
     assert r2.status_code == 200

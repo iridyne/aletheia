@@ -142,8 +142,8 @@ def _redacted_network(net: dict) -> dict:
 
 def _redacted_webhook(wh: dict) -> dict:
     wh = dict(wh)
-    if wh.get("secret"):
-        wh["secret"] = _mask_secret(wh["secret"])
+    secret = wh.pop("secret", None)
+    wh["secret_configured"] = bool(secret)
     return wh
 
 
@@ -226,6 +226,7 @@ class SettingsModelsResponse(BaseModel):
 class SettingsWebhookResponse(BaseModel):
     enabled: bool
     url: str
+    secret_configured: bool
     notify_trade_fills: bool
     notify_alerts: bool
     notify_daily_summary: bool
@@ -444,6 +445,7 @@ def get_settings() -> SettingsResponse:
         "webhook": {
             **{k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
             "last_delivery": webhook_delivery_status(),
+            "secret_configured": bool(cfg.webhook.secret),
         },
         "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
         "universe": cfg.universe.model_dump(mode="json"),
@@ -2035,7 +2037,9 @@ def update_webhook_config(req: WebhookConfigUpdate):
                  "entity_type": "webhook_config", "before": _redacted_webhook(old),
                  "after": _redacted_webhook(cfg.webhook.model_dump(mode="json")),
                  "message": f"Webhook config updated: {list(updates.keys())}"})
-    return {"updated": _redacted_webhook(updates)}
+    updated = {key: value for key, value in updates.items() if key != "secret"}
+    updated["secret_configured"] = bool(cfg.webhook.secret)
+    return {"updated": updated}
 
 
 # ---------------------------------------------------------------------------

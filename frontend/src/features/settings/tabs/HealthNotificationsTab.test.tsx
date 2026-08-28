@@ -41,7 +41,28 @@ describe("HealthNotificationsTab", () => {
 		expect(html).toContain("Webhook URL");
 		expect(html).toContain("HMAC secret (write-only)");
 		expect(html).toContain("X-Aletheia-Signature");
-		expect(html).toContain("Secret is write-only — leave blank to keep the current value.");
+		expect(html).toContain("Secret is write-only — leave blank to keep the current value, or choose Remove HMAC secret to clear it.");
+	});
+
+	it("uses the explicit configured facet for HMAC removal", () => {
+		const client = new QueryClient();
+		client.setQueryData(["telegram-health"], {
+			reachable: false,
+			error: "not_configured",
+		});
+		const html = renderToStaticMarkup(
+			<QueryClientProvider client={client}>
+				<HealthNotificationsTab
+					settings={{ health: {}, telegram: {}, webhook: {
+						secret_configured: true,
+					} }}
+					qc={client}
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(html).toContain("Remove HMAC secret");
+		expect(html).toContain("••••••• (unchanged)");
 	});
 
 	it("shows only the sanitized last Webhook delivery result", () => {
