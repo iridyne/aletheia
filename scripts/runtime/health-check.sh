@@ -43,11 +43,13 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
 deadline=$((SECONDS + timeout_seconds))
 last_error="gateway did not answer"
+invalid_payload_seen=0
+initializing_seen=0
 while (( SECONDS <= deadline )); do
   ready_file="$(mktemp)"
   health_file="$(mktemp)"
-  if curl --fail --silent --show-error --max-time 3 "$base_url/_infra/readyz" >"$ready_file" 2>/dev/null \
-    && curl --fail --silent --show-error --max-time 5 "$base_url/api/health" >"$health_file" 2>/dev/null; then
+  if curl --silent --show-error --max-time 3 "$base_url/_infra/readyz" >"$ready_file" 2>/dev/null \
+    && curl --silent --show-error --max-time 5 "$base_url/api/health" >"$health_file" 2>/dev/null; then
     validation_output=""
     set +e
     validation_output="$(python3 - "$base_url" "$ready_file" "$health_file" <<'PY'
@@ -74,6 +76,10 @@ def unhealthy(reason: str, ready: dict, health: dict) -> None:
     raise SystemExit(1)
 
 
+def retry_initializing() -> None:
+    raise SystemExit(3)
+
+
 try:
     ready = json.loads(pathlib.Path(ready_path).read_text(encoding="utf-8"))
     health = json.loads(pathlib.Path(health_path).read_text(encoding="utf-8"))
@@ -84,6 +90,8 @@ if not isinstance(ready, dict) or not isinstance(health, dict):
     invalid("readiness and health payloads must be JSON objects")
 if ready.get("ok") is not True:
     unhealthy("readiness_not_ready", ready, health)
+if health.get("status") == "initializing":
+    retry_initializing()
 if health.get("status") != "healthy" or health.get("issues") != []:
     unhealthy("health_not_healthy", ready, health)
 
@@ -97,10 +105,20 @@ PY
       printf '%s\n' "$validation_output"
       exit "$validation_rc"
     fi
-    last_error="readiness or health payload invalid"
+    if (( validation_rc == 2 )); then
+      invalid_payload_seen=1
+    elif (( validation_rc == 3 )); then
+      initializing_seen=1
+    fi
   fi
   rm -f "$ready_file" "$health_file"
-  last_error="readiness or health endpoint unavailable"
+  if (( invalid_payload_seen )); then
+    last_error="readiness or health payload invalid"
+  elif (( initializing_seen )); then
+    last_error="health still initializing"
+  else
+    last_error="readiness or health endpoint unavailable"
+  fi
   sleep 0.5
 done
 
