@@ -303,6 +303,41 @@ async def test_stream_holds_broker_concurrency_until_iteration_finishes():
 
 
 @pytest.mark.anyio
+async def test_stream_backpressure_bounds_chunks_and_cancels_provider(monkeypatch):
+    import aletheia.model_provider.broker as broker_module
+
+    monkeypatch.setattr(broker_module, "_STREAM_QUEUE_MAXSIZE", 1)
+    broker = InferenceBroker(policy_loader=lambda _name: _policy(max_concurrency=1))
+    produced: list[int] = []
+    cancelled = threading.Event()
+
+    class Provider:
+        async def stream(self, _request):
+            try:
+                for index in range(100):
+                    produced.append(index)
+                    yield StreamChunk(content=str(index))
+            finally:
+                cancelled.set()
+
+    stream = brokered_stream(
+        "provider-a",
+        Provider(),
+        ModelRequest(messages=[{"role": "user", "content": "x"}]),
+        broker=broker,
+    )
+    iterator = stream.__aiter__()
+    try:
+        assert (await iterator.__anext__()).content == "0"
+        await asyncio.sleep(0.05)
+        assert len(produced) <= 3
+    finally:
+        await iterator.aclose()
+        assert await asyncio.to_thread(cancelled.wait, 1)
+        await broker.aclose()
+
+
+@pytest.mark.anyio
 async def test_broker_can_restart_after_orderly_close():
     broker = InferenceBroker(policy_loader=lambda _name: _policy())
 
