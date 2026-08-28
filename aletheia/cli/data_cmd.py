@@ -82,6 +82,8 @@ def database_capacity(
         payload["history"] = trend_history[-history:]
     if json_output:
         typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        if not snapshot.get("available"):
+            raise typer.Exit(1)
         return
     if not snapshot.get("available"):
         typer.echo(f"Database not available: {snapshot.get('path')}")
