@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
 import time
-from pathlib import Path
 import urllib.request
+from pathlib import Path
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.network import backend_bind_host
@@ -105,8 +106,28 @@ def wait_http_ready(base_url: str, *, timeout_sec: float = 10.0) -> bool:
                 if response.status != 200:
                     time.sleep(0.25)
                     continue
+                try:
+                    ready = json.loads(response.read())
+                except (TypeError, ValueError):
+                    time.sleep(0.25)
+                    continue
+                if not isinstance(ready, dict) or ready.get("ok") is not True:
+                    time.sleep(0.25)
+                    continue
             with opener.open(smoke_url, timeout=0.75) as response:
-                if 200 <= response.status < 500:
+                if response.status != 200:
+                    time.sleep(0.25)
+                    continue
+                try:
+                    health = json.loads(response.read())
+                except (TypeError, ValueError):
+                    time.sleep(0.25)
+                    continue
+                if (
+                    isinstance(health, dict)
+                    and health.get("status") == "healthy"
+                    and health.get("issues") == []
+                ):
                     return True
         except Exception:
             time.sleep(0.25)

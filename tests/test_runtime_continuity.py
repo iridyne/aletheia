@@ -1,9 +1,95 @@
-import sqlite3
 import inspect
+import json
+import sqlite3
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from typer.testing import CliRunner
+
+
+class _ReadyProbeResponse:
+    def __init__(self, status: int, payload: object):
+        self.status = status
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return self._body
+
+
+class _ReadyProbeOpener:
+    def __init__(
+        self,
+        *,
+        ready_status: int = 200,
+        health_status: int = 200,
+        ready_payload: object | None = None,
+        health_payload: object | None = None,
+    ):
+        self.ready_status = ready_status
+        self.health_status = health_status
+        self.ready_payload = ready_payload if ready_payload is not None else {"ok": True}
+        self.health_payload = health_payload if health_payload is not None else {
+            "status": "healthy",
+            "issues": [],
+        }
+
+    def open(self, url: str, timeout: float):
+        del timeout
+        if url.endswith("/_infra/readyz"):
+            return _ReadyProbeResponse(self.ready_status, self.ready_payload)
+        return _ReadyProbeResponse(self.health_status, self.health_payload)
+
+
+def _patch_ready_probe_clock(monkeypatch, processes):
+    clock = iter((0.0, 0.1, 2.0))
+    monkeypatch.setattr(processes.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(processes.time, "sleep", lambda _seconds: None)
+
+
+def test_wait_http_ready_accepts_only_healthy_json_contract(monkeypatch):
+    from aletheia.runtime_continuity import processes
+
+    _patch_ready_probe_clock(monkeypatch, processes)
+    monkeypatch.setattr(
+        processes.urllib.request,
+        "build_opener",
+        lambda *_args, **_kwargs: _ReadyProbeOpener(),
+    )
+
+    assert processes.wait_http_ready("http://gateway", timeout_sec=1) is True
+
+
+def test_wait_http_ready_rejects_false_readiness_payload(monkeypatch):
+    from aletheia.runtime_continuity import processes
+
+    _patch_ready_probe_clock(monkeypatch, processes)
+    monkeypatch.setattr(
+        processes.urllib.request,
+        "build_opener",
+        lambda *_args, **_kwargs: _ReadyProbeOpener(ready_payload={"ok": False}),
+    )
+
+    assert processes.wait_http_ready("http://gateway", timeout_sec=1) is False
+
+
+@pytest.mark.parametrize("status", [404, 401, 422])
+def test_wait_http_ready_rejects_non_200_health_responses(monkeypatch, status):
+    from aletheia.runtime_continuity import processes
+
+    _patch_ready_probe_clock(monkeypatch, processes)
+    monkeypatch.setattr(
+        processes.urllib.request,
+        "build_opener",
+        lambda *_args, **_kwargs: _ReadyProbeOpener(health_status=status),
+    )
+
+    assert processes.wait_http_ready("http://gateway", timeout_sec=1) is False
 
 
 def test_runtime_sync_io_handlers_are_threadpool_eligible():
