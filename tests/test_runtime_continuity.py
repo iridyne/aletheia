@@ -30,6 +30,7 @@ class _ReadyProbeOpener:
         health_status: int = 200,
         ready_payload: object | None = None,
         health_payload: object | None = None,
+        health_payloads: list[object] | None = None,
     ):
         self.ready_status = ready_status
         self.health_status = health_status
@@ -38,18 +39,34 @@ class _ReadyProbeOpener:
             "status": "healthy",
             "issues": [],
         }
+        self.health_payloads = health_payloads or [self.health_payload]
+        self.health_calls = 0
+        self.requests = []
 
     def open(self, url: str, timeout: float):
         del timeout
-        if url.endswith("/_infra/readyz"):
+        self.requests.append(url)
+        request_url = url.full_url if hasattr(url, "full_url") else url
+        if request_url.endswith("/_infra/readyz"):
             return _ReadyProbeResponse(self.ready_status, self.ready_payload)
-        return _ReadyProbeResponse(self.health_status, self.health_payload)
+        payload = self.health_payloads[min(self.health_calls, len(self.health_payloads) - 1)]
+        self.health_calls += 1
+        return _ReadyProbeResponse(self.health_status, payload)
 
 
 def _patch_ready_probe_clock(monkeypatch, processes):
-    clock = iter((0.0, 0.1, 2.0))
+    from types import SimpleNamespace
+
+    clock = iter((0.0, 0.1, 0.2, 2.0))
     monkeypatch.setattr(processes.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(processes.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda **_kwargs: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=False),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
 
 
 def test_wait_http_ready_accepts_only_healthy_json_contract(monkeypatch):
@@ -90,6 +107,44 @@ def test_wait_http_ready_rejects_non_200_health_responses(monkeypatch, status):
     )
 
     assert processes.wait_http_ready("http://gateway", timeout_sec=1) is False
+
+
+def test_wait_http_ready_retries_initializing_and_accepts_nonfatal_degraded(monkeypatch):
+    from aletheia.runtime_continuity import processes
+
+    _patch_ready_probe_clock(monkeypatch, processes)
+    opener = _ReadyProbeOpener(
+        health_payloads=[
+            {"status": "initializing", "issues": ["market_data_initializing"]},
+            {"status": "degraded", "issues": ["trading_paused"]},
+        ]
+    )
+    monkeypatch.setattr(processes.urllib.request, "build_opener", lambda *_args, **_kwargs: opener)
+
+    assert processes.wait_http_ready("http://gateway", timeout_sec=1) is True
+    assert opener.health_calls == 2
+
+
+def test_wait_http_ready_authenticates_protected_health_probe(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.runtime_continuity import processes
+
+    _patch_ready_probe_clock(monkeypatch, processes)
+    opener = _ReadyProbeOpener()
+    monkeypatch.setattr(processes.urllib.request, "build_opener", lambda *_args, **_kwargs: opener)
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda **_kwargs: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=True),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _name: "probe-token")
+
+    assert processes.wait_http_ready("http://gateway", timeout_sec=1) is True
+    request = next(item for item in opener.requests if hasattr(item, "full_url"))
+    assert request.get_header("X-aletheia-token") == "probe-token"
 
 
 def test_runtime_sync_io_handlers_are_threadpool_eligible():
