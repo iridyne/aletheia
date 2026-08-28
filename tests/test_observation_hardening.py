@@ -91,20 +91,22 @@ def _init_git_repo(root: Path) -> None:
 
 
 def test_drift_reports_no_behind_when_master_ref_absent(cli, tmp_path, monkeypatch):
-    """No local ``origin/master`` ref → behind/ahead are 0 by construction.
-    The command still succeeds and emits the current HEAD for audit."""
+    """An unreadable ``origin/master`` ref is unavailable, never clean drift."""
     from aletheia.cli.observe_cmd import observe_app
 
     _init_git_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
 
     result = cli.invoke(observe_app, ["drift", "--json"])
-    assert result.exit_code == 0, result.stdout + (result.stderr or "")
+    assert result.exit_code == 1, result.stdout + (result.stderr or "")
     import json
     payload = json.loads(result.stdout)
-    assert payload["behind"] == 0
-    assert payload["ahead"] == 0
-    assert payload["drifted"] is False
+    assert payload["available"] is False
+    assert payload["origin_master"] is None
+    assert payload["behind"] is None
+    assert payload["ahead"] is None
+    assert payload["drifted"] is None
+    assert payload["unavailable_reason"] == "git_command_failed"
     assert len(payload["worker_head"]) == 40
 
 
