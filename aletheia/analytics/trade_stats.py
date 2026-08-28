@@ -77,11 +77,14 @@ def compute_rolling_trade_stats(
 def compute_order_stats(
     days: int = 7, *, execution_mode: str | None = None,
 ) -> dict:
-    """Compute order fill rate and error breakdown for the last N days.
+    """Compute lifecycle-conserving order stats for the last N days.
 
-    Returns: {total, filled, errors, fill_rate_pct, error_breakdown: [{pattern, count, symbols}]}
+    ``resolved_fill_rate_pct`` uses only orders with a definitive outcome as
+    its denominator.  Orders still in flight or with an integrity gap remain
+    visible in ``status_counts`` and make ``delivery_status`` indeterminate.
     Scoped to a single ``execution_mode`` when provided (#2181).
     """
+    from collections import Counter
     from aletheia.storage.sqlite import get_db
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -97,9 +100,56 @@ def compute_order_stats(
         tuple(params),
     ).fetchall()
 
-    filled = sum(1 for r in rows if r["status"] == "filled")
-    errored = [r for r in rows if r["status"] == "error"]
-    total = filled + len(errored)  # fill rate = filled / (filled + errors)
+    def normalize_status(value: object) -> str:
+        status = str(value or "").strip().lower()
+        return status or "unknown"
+
+    status_counts = Counter(normalize_status(r["status"]) for r in rows)
+    completed_fill_statuses = {"filled", "executed"}
+    definitive_failure_statuses = {"error", "failed", "rejected"}
+    cancellation_statuses = {"cancelled", "canceled", "expired"}
+    in_flight_statuses = {"pending", "submitted", "open", "ordered", "new", "accepted"}
+    integrity_gap_statuses = {
+        "submission_unknown", "materialization_missing", "partially_filled", "overfilled",
+    }
+
+    filled = sum(status_counts.get(status, 0) for status in completed_fill_statuses)
+    errored = [r for r in rows if normalize_status(r["status"]) == "error"]
+    definitive_failures = sum(
+        status_counts.get(status, 0) for status in definitive_failure_statuses
+    )
+    cancellations = sum(status_counts.get(status, 0) for status in cancellation_statuses)
+    in_flight = sum(status_counts.get(status, 0) for status in in_flight_statuses)
+    integrity_gaps = sum(
+        status_counts.get(status, 0) for status in integrity_gap_statuses
+    )
+    unclassified = sum(
+        count
+        for status, count in status_counts.items()
+        if status not in (
+            completed_fill_statuses
+            | definitive_failure_statuses
+            | cancellation_statuses
+            | in_flight_statuses
+            | integrity_gap_statuses
+        )
+    )
+    unresolved_or_integrity = integrity_gaps + unclassified
+    unresolved = in_flight + unresolved_or_integrity
+    observed = len(rows)
+    resolved_denominator = filled + definitive_failures + cancellations
+    resolved_rate = (
+        round(filled / resolved_denominator * 100, 1)
+        if resolved_denominator
+        else None
+    )
+    status_buckets = {
+        "completed_fills": filled,
+        "definitive_failures": definitive_failures,
+        "cancellations": cancellations,
+        "in_flight": in_flight,
+        "unresolved_or_integrity": unresolved_or_integrity,
+    }
 
     # Group errors by pattern — count occurrences + track affected symbols
     import re
@@ -122,10 +172,31 @@ def compute_order_stats(
 
     return {
         "days": days,
-        "total": total,
+        # ``total`` remains for callers that already consume it, but now
+        # correctly means every observed Order rather than a lossy subset.
+        "total": observed,
+        "observed_order_count": observed,
+        "status_counts": dict(sorted(status_counts.items())),
+        "status_buckets": status_buckets,
         "filled": filled,
         "errors": len(errored),
-        "fill_rate_pct": round(filled / total * 100, 1) if total else 0.0,
+        "cancelled": cancellations,
+        "definitive_failure_count": definitive_failures,
+        "in_flight_count": in_flight,
+        "integrity_gap_count": integrity_gaps,
+        "unresolved_or_integrity_count": unresolved_or_integrity,
+        "unresolved_count": unresolved,
+        "resolved_order_count": resolved_denominator,
+        "resolved_fill_numerator": filled,
+        "resolved_fill_denominator": resolved_denominator,
+        "resolved_fill_rate_pct": resolved_rate,
+        # Backward-compatible alias; consumers should use the explicit field.
+        "fill_rate_pct": resolved_rate,
+        "delivery_status": (
+            "empty" if observed == 0
+            else "resolved" if unresolved == 0
+            else "indeterminate"
+        ),
         "error_breakdown": breakdown[:5],
         **execution_mode_identity(execution_mode),
     }
