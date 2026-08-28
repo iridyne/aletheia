@@ -443,6 +443,9 @@ def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
     assert payload is not None
     assert cached is not None
     assert cached["connected_brokers"] == ["okx_demo"]
+    assert cached["execution_modes"] == [
+        "binance_testnet", "okx_demo", "bitget_demo",
+    ]
     assert cached["sync_status"] == "ok"
     assert cached["sync_complete"] is True
 
@@ -478,6 +481,7 @@ def test_unified_cache_generation_mismatch_revokes_authority(monkeypatch):
 
     monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
     state = {
+        "execution_modes": ["okx_demo"],
         "accounts": [
             {"broker_id": "okx_demo", "identity": {**identity, "credential_generation": 0}, "boundary": "legacy"}
         ]
@@ -514,6 +518,7 @@ def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
     monkeypatch.setattr(es, "load_config", lambda: cfg)
     monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
     state = {
+        "execution_modes": ["okx_demo"],
         "accounts": [
             {
                 "broker_id": "okx_demo",
@@ -530,6 +535,78 @@ def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
     }
 
     assert es._unified_identity_is_current(state) == (True, "current")
+
+
+def test_unified_cache_validates_only_persisted_account_scope(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.uta.models import UTAAccountIdentity
+
+    demo = UTAAccountIdentity(
+        account_id="okx_demo",
+        execution_mode="okx_demo",
+        venue="okx",
+        environment="demo",
+        profile="okx_demo",
+        credential_generation=1,
+        adapter_implementation="CCXTUTAAdapter",
+        adapter_version="1",
+        ccxt_version="4.5.56",
+    )
+    live = demo.model_copy(
+        update={
+            "account_id": "okx_live_limited",
+            "execution_mode": "okx_live_limited",
+            "environment": "live",
+            "profile": "okx_live",
+            "credential_generation": 9,
+        }
+    )
+
+    class Registry:
+        def configured_identities(self):
+            return (demo, live)
+
+    cfg = AletheiaConfig()
+    cfg.exchange.uta_read_boundaries = {
+        "okx_demo": "uta_v1",
+        "okx_live_limited": "uta_v1",
+    }
+    monkeypatch.setattr(es, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry()
+    )
+
+    paper_state = {
+        "execution_modes": ["okx_demo"],
+        "accounts": [{
+            "broker_id": "okx_demo",
+            "boundary": "uta_v1",
+            "identity": demo.model_dump(mode="json"),
+        }],
+    }
+    live_state = {
+        "execution_modes": ["okx_live_limited"],
+        "accounts": [{
+            "broker_id": "okx_live_limited",
+            "boundary": "uta_v1",
+            "identity": live.model_dump(mode="json"),
+        }],
+    }
+
+    assert es._unified_identity_is_current(paper_state) == (True, "current")
+    assert es._unified_identity_is_current(live_state) == (True, "current")
+    assert es._unified_identity_is_current({"accounts": []}) == (
+        False, "uta_scope_missing"
+    )
+
+
+def test_periodic_unified_sync_cannot_target_live_scope():
+    import inspect
+
+    from aletheia.portfolio import exchange_sync as es
+
+    assert "execution_modes" not in inspect.signature(es.sync_all_exchanges).parameters
 
 
 def test_unified_cache_preserves_explicit_empty_connected_set(tmp_path, monkeypatch):

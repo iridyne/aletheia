@@ -7,7 +7,11 @@ import pytest
 
 from aletheia.config.schema import ExchangeConfig
 from aletheia.portfolio.uta.broker_protocol import AccountInfo
-from aletheia.uta.manager import _shadow_differences, get_unified_state
+from aletheia.uta.manager import (
+    DEFAULT_UNIFIED_EXECUTION_MODES,
+    _shadow_differences,
+    get_unified_state,
+)
 from aletheia.uta.models import (
     AccountSnapshot,
     PositionListReport,
@@ -232,8 +236,10 @@ async def test_default_unified_scope_excludes_configured_live_account(monkeypatc
     assert [row["identity"]["execution_mode"] for row in paper.accounts] == [
         "okx_demo"
     ]
+    assert paper.execution_modes == DEFAULT_UNIFIED_EXECUTION_MODES
     assert targeted_live.total_equity_usdt == 100.0
     assert targeted_live.connected_brokers == ["okx_live_limited"]
+    assert targeted_live.execution_modes == ("okx_live_limited",)
 
 
 @pytest.mark.asyncio
