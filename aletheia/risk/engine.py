@@ -132,6 +132,61 @@ def _entry_plan_authority_violations(
         or plan.execution_account_mode != proposal.execution_mode
     ):
         violations.append("entry_plan_order_identity_mismatch")
+    # An Entry Plan is the immutable execution authority.  Identity and risk
+    # ceilings alone are insufficient: a forged Proposal could otherwise keep
+    # the same symbol/size while changing the stop, target, liquidity tactic,
+    # or price envelope that Risk approved.
+    if proposal.order_type != "limit":
+        violations.append("entry_plan_order_type_mismatch")
+    for field, expected in (
+        ("stop_price", plan.stop_price),
+        ("take_profit", plan.target_price),
+        ("expected_horizon_hours", plan.expected_horizon_hours),
+    ):
+        actual = getattr(proposal, field)
+        try:
+            matches = actual is not None and math.isclose(float(actual), float(expected), rel_tol=1e-9, abs_tol=1e-9)
+        except (TypeError, ValueError):
+            matches = False
+        if not matches:
+            violations.append(f"entry_plan_{field}_mismatch")
+    if proposal.order_tactic != plan.order_tactic:
+        violations.append("entry_plan_order_tactic_mismatch")
+    if str(proposal.time_in_force or "").upper() != plan.time_in_force:
+        violations.append("entry_plan_time_in_force_mismatch")
+    if proposal.post_only is not bool(plan.maker_required):
+        violations.append("entry_plan_post_only_mismatch")
+    if proposal.bbo_reference != plan.bbo_reference:
+        violations.append("entry_plan_bbo_reference_mismatch")
+    for field in ("max_slippage_bps", "worst_price"):
+        expected = getattr(plan, field)
+        actual = getattr(proposal, field)
+        if expected is None or actual is None:
+            matches = expected is None and actual is None
+        else:
+            try:
+                matches = math.isclose(float(actual), float(expected), rel_tol=1e-9, abs_tol=1e-9)
+            except (TypeError, ValueError):
+                matches = False
+        if not matches:
+            violations.append(f"entry_plan_{field}_mismatch")
+    try:
+        proposal_price = float(proposal.price)
+        in_entry_envelope = math.isfinite(proposal_price) and plan.entry_zone[0] <= proposal_price <= plan.entry_zone[1]
+    except (TypeError, ValueError):
+        proposal_price = None
+        in_entry_envelope = False
+    if not in_entry_envelope:
+        violations.append("entry_plan_entry_envelope_exceeded")
+    elif plan.order_tactic == "POST_ONLY_LIMIT":
+        try:
+            exact_limit = plan.limit_price is not None and math.isclose(
+                proposal_price, float(plan.limit_price), rel_tol=1e-9, abs_tol=1e-9
+            )
+        except (TypeError, ValueError):
+            exact_limit = False
+        if not exact_limit:
+            violations.append("entry_plan_limit_price_mismatch")
     policy = resolved_policy.policy
     if (
         plan.risk_policy_id != policy.policy_id
