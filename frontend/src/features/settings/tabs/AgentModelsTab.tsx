@@ -9,6 +9,7 @@ import {
   Switch as Toggle,
   useConfirm,
 } from '../../../components/ui'
+import { DataStateMessage } from '../../../components/DataState'
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
@@ -659,15 +660,21 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
 // the semantic decoupling shows up in the operator's UI, not just the code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
-  const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: broker } = useQuery({
+export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
+  const { data, isPending: modelPending, isError: modelError } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
+  const {
+    data: broker,
+    isPending: brokerPending,
+    isError: brokerError,
+  } = useQuery({
     queryKey: ['model-broker'],
     queryFn: api.getInferenceBroker,
     refetchInterval: 10_000,
   })
 
-  if (!data) return <p className="hint">Loading provider list…</p>
+  if (modelPending && !data) return <DataStateMessage state="loading" message="Loading provider list…" />
+  if (modelError && !data) return <DataStateMessage state="unavailable" message="Provider list unavailable. The read failed; retry when the backend is reachable." />
+  if (!data) return <DataStateMessage state="unavailable" message="Provider list unavailable." />
 
   const providers = Object.entries((data as any).providers ?? {}) as Array<[string, any]>
   const enabled = providers.filter(([, cfg]) => cfg?.enabled === true)
@@ -681,13 +688,18 @@ function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc']; onDi
     )
   }
 
-  const running = broker?.running ?? false
+  const running = broker?.running === true
+  const brokerState = broker
+    ? running ? 'running' : 'not yet started'
+    : brokerPending ? 'checking…' : 'unavailable'
 
   return (
     <div className="flex flex-col gap-3">
       <div className="hint mono" style={{ fontSize: '0.72rem' }}>
-        Broker: {running ? 'running' : 'not yet started'}
+        Broker: {brokerState}
         {broker && ` · ${Object.keys(broker.providers ?? {}).length} lane(s) tracked`}
+        {brokerError && broker && ' · status stale'}
+        {brokerError && !broker && ' · status unavailable'}
         · 0 RPM / 0 TPM means unlimited
       </div>
       {enabled.map(([name, cfg]) => {
