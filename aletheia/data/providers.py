@@ -57,6 +57,8 @@ def _ticker_number(
     positive: bool = False,
     non_negative: bool = False,
 ) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"ticker {field} must be numeric")
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
@@ -68,6 +70,14 @@ def _ticker_number(
     if non_negative and number < 0:
         raise ValueError(f"ticker {field} must be non-negative")
     return number
+
+
+def _required_ticker_field(payload: dict, *names: str, field: str) -> object:
+    """Return the first present ticker fact without coercing falsey values."""
+    for name in names:
+        if name in payload and payload[name] is not None:
+            return payload[name]
+    raise ValueError(f"ticker {field} is missing")
 
 
 @dataclass

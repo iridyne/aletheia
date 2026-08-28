@@ -62,7 +62,21 @@ def test_quote_volume_rejects_nonfinite_derived_total():
     exchange = _Exchange({"BTC/USDT": {"spot": True}})
     ticker = {"quoteVolume": None, "baseVolume": 1e308, "last": 1e308}
 
-    assert _quote_volume_24h(exchange, "BTC/USDT", ticker) == 0.0
+    assert _quote_volume_24h(exchange, "BTC/USDT", ticker) is None
+
+
+@pytest.mark.parametrize("invalid_volume", [float("nan"), float("inf"), -1.0, "", True])
+def test_quote_volume_rejects_explicit_invalid_direct_volume(invalid_volume):
+    from aletheia.universe.features import _quote_volume_24h
+
+    exchange = _Exchange({"BTC/USDT": {"spot": True}})
+    ticker = {
+        "quoteVolume": invalid_volume,
+        "baseVolume": 100.0,
+        "last": 100.0,
+    }
+
+    assert _quote_volume_24h(exchange, "BTC/USDT", ticker) is None
 
 
 @pytest.mark.parametrize(
@@ -71,7 +85,9 @@ def test_quote_volume_rejects_nonfinite_derived_total():
         {"price": float("nan")},
         {"price": float("inf")},
         {"price": 0.0},
+        {"price": True},
         {"volume_24h": float("nan")},
+        {"volume_24h": False},
         {"high_24h": 90.0, "low_24h": 100.0},
     ],
 )

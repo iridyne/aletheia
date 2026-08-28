@@ -119,13 +119,16 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
             "GOOD/USDT": {"spot": True},
             "BADPRICE/USDT": {"spot": True},
             "BADCHANGE/USDT": {"spot": True},
+            "BADVOLUME/USDT": {"spot": True},
         }
 
         async def load_markets(self):
             return self.markets
 
         async def fetch_tickers(self, symbols):
-            assert set(symbols) == {"GOOD/USDT", "BADPRICE/USDT", "BADCHANGE/USDT"}
+            assert set(symbols) == {
+                "GOOD/USDT", "BADPRICE/USDT", "BADCHANGE/USDT", "BADVOLUME/USDT",
+            }
             return {
                 "GOOD/USDT": {
                     "quoteVolume": 1000.0,
@@ -141,6 +144,12 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
                     "quoteVolume": 1000.0,
                     "last": 10.0,
                     "percentage": float("nan"),
+                },
+                "BADVOLUME/USDT": {
+                    "quoteVolume": float("nan"),
+                    "baseVolume": 1000.0,
+                    "last": 10.0,
+                    "percentage": 0.0,
                 },
             }
 
@@ -162,10 +171,11 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
         InstrumentId.from_parts("okx", "GOOD/USDT", "spot"),
         InstrumentId.from_parts("okx", "BADPRICE/USDT", "spot"),
         InstrumentId.from_parts("okx", "BADCHANGE/USDT", "spot"),
+        InstrumentId.from_parts("okx", "BADVOLUME/USDT", "spot"),
     ]))
 
     assert [row["symbol"] for row in result["top_symbols"]] == ["GOOD/USDT"]
-    assert sum("invalid_ticker_numeric" in error for error in result["errors"]) == 2
+    assert sum("invalid_ticker_numeric" in error for error in result["errors"]) == 3
 
 
 def test_volume_scanner_keeps_observation_only_equity_out_of_crypto_ranking(monkeypatch):

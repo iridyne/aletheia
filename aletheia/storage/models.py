@@ -986,6 +986,16 @@ class MarketSnapshot(BaseModel):
     provider: str | None = None
     snapshot_at: str = Field(default_factory=_utcnow)
 
+    @field_validator(
+        "price", "volume_24h", "change_pct_24h", "high_24h", "low_24h",
+        mode="before",
+    )
+    @classmethod
+    def _reject_boolean_numeric_facts(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("market snapshot numeric facts must not be boolean")
+        return value
+
     @model_validator(mode="after")
     def _high_low_are_ordered(self):
         if (

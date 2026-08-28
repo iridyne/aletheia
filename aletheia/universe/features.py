@@ -264,11 +264,23 @@ def _is_valid_symbol(symbol: str) -> bool:
 
 
 def _positive_float(value) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         parsed = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
     return parsed if math.isfinite(parsed) and parsed > 0 else None
+
+
+def _nonnegative_float(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
 
 
 def _load_fresh_enrichment_rows(
@@ -306,7 +318,9 @@ def _load_fresh_enrichment_rows(
     return ob_row, fr_row, oi_row
 
 
-def _quote_volume_24h(exchange, ccxt_symbol: str, ticker: dict) -> float:
+def _quote_volume_24h(
+    exchange, ccxt_symbol: str, ticker: dict,
+) -> float | None:
     """Return 24h quote-currency volume for spot or contract tickers.
 
     OKX swap tickers leave ``quoteVolume`` empty and expose ``baseVolume`` as
@@ -314,25 +328,40 @@ def _quote_volume_24h(exchange, ccxt_symbol: str, ticker: dict) -> float:
     multiplying by the last price. Keeping this conversion in one helper ensures
     the volume pre-filter and persisted feature use identical economics.
     """
-    direct = _positive_float(ticker.get("quoteVolume"))
-    if direct is not None:
-        return direct
+    quote_raw = ticker.get("quoteVolume")
+    if quote_raw is not None:
+        return _nonnegative_float(quote_raw)
 
-    base_volume = _positive_float(ticker.get("baseVolume"))
-    last = _positive_float(ticker.get("last") or ticker.get("close"))
-    if base_volume is None or last is None:
+    base_raw = ticker.get("baseVolume")
+    if base_raw is None:
         return 0.0
+    base_volume = _nonnegative_float(base_raw)
+    if base_volume is None:
+        return None
+
+    last_raw = (
+        ticker.get("last") if ticker.get("last") is not None
+        else ticker.get("close")
+    )
+    if last_raw is None:
+        return 0.0
+    last = _positive_float(last_raw)
+    if last is None:
+        return None
 
     markets = getattr(exchange, "markets", {}) or {}
     market = markets.get(ccxt_symbol) or {}
     if market.get("contract"):
-        contract_size = _positive_float(market.get("contractSize"))
-        if contract_size is None:
+        contract_size_raw = market.get("contractSize")
+        if contract_size_raw is None:
             return 0.0
+        contract_size = _positive_float(contract_size_raw)
+        if contract_size is None:
+            return None
         base_volume *= contract_size
 
     result = base_volume * last
-    return result if math.isfinite(result) else 0.0
+    return result if math.isfinite(result) else None
 
 
 def _ticker_candidate_fact(
@@ -414,6 +443,14 @@ def _evaluate_ticker_prefilters(
             inputs={"ticker_symbol": ccxt_symbol},
         ))
         volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
+        if volume is None:
+            volume_facts.append(_ticker_candidate_fact(
+                asset,
+                decision="rejected",
+                reason_code="ticker_numeric_invalid",
+                inputs={"ticker_symbol": ccxt_symbol},
+            ))
+            continue
         if volume < min_volume and asset_id not in priority_asset_ids:
             volume_facts.append(_ticker_candidate_fact(
                 asset,

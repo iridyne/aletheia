@@ -43,6 +43,7 @@ from aletheia.data.providers import (
     OHLCVAttempt,
     OHLCVResult,
     Ticker,
+    _required_ticker_field,
     classify_ohlcv_outcome,
     parse_ohlcv_candle,
 )
@@ -206,11 +207,17 @@ class CCXTProvider:
                             exchange.options["defaultType"] = _prev_type
                 ticker = Ticker(
                     symbol=canon,
-                    last_price=float(raw.get("last") or raw.get("close") or 0.0),
-                    volume_24h=float(raw.get("quoteVolume") or raw.get("baseVolume") or 0.0),
-                    change_pct_24h=float(raw.get("percentage") or 0.0),
-                    high_24h=_opt_float(raw.get("high")),
-                    low_24h=_opt_float(raw.get("low")),
+                    last_price=_required_ticker_field(
+                        raw, "last", "close", field="last_price",
+                    ),
+                    volume_24h=_required_ticker_field(
+                        raw, "quoteVolume", "baseVolume", field="volume_24h",
+                    ),
+                    change_pct_24h=_required_ticker_field(
+                        raw, "percentage", field="change_pct_24h",
+                    ),
+                    high_24h=raw.get("high"),
+                    low_24h=raw.get("low"),
                     provider=name,
                 )
                 record_venue_success(name)

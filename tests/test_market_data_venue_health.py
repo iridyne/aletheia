@@ -72,7 +72,7 @@ async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
     class HealthyExchange:
         async def fetch_ticker(self, _symbol):
             calls["bybit"] += 1
-            return {"last": 1}
+            return {"last": 1, "quoteVolume": 0.0, "percentage": 0.0}
 
     provider = CCXTProvider("binance", "bybit")
     monkeypatch.setattr(provider, "_ensure_primary", lambda: BannedExchange())

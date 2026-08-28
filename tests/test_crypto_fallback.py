@@ -477,6 +477,9 @@ class TestFallbackChainProvider:
         (float("nan"), 1.0, 0.0),
         (1.0, -1.0, 0.0),
         (1.0, 1.0, float("inf")),
+        (True, 1.0, 0.0),
+        (1.0, False, 0.0),
+        (1.0, 1.0, True),
     ],
 )
 def test_ticker_rejects_invalid_numeric_facts(

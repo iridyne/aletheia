@@ -70,10 +70,21 @@ class VolumeScannerCollector:
                     if instrument is None:
                         continue
                     volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
+                    if volume is None:
+                        errors.append(f"{instrument}: invalid_ticker_numeric")
+                        continue
                     if volume <= 0:
                         continue
-                    last_price = _finite_float(ticker.get("last") or ticker.get("close"))
-                    change_pct = _finite_float(ticker.get("percentage") or 0)
+                    last_raw = (
+                        ticker.get("last") if ticker.get("last") is not None
+                        else ticker.get("close")
+                    )
+                    last_price = _finite_float(last_raw)
+                    change_pct = (
+                        _finite_float(ticker.get("percentage"))
+                        if ticker.get("percentage") is not None
+                        else None
+                    )
                     if last_price is None or last_price <= 0 or change_pct is None:
                         errors.append(f"{instrument}: invalid_ticker_numeric")
                         continue
@@ -103,6 +114,8 @@ class VolumeScannerCollector:
 
 
 def _finite_float(value) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
