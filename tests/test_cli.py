@@ -33,6 +33,38 @@ def test_gateway_status(tmp_path, monkeypatch):
     assert "stopped" in result.output
 
 
+def test_gateway_open_dashboard_reports_browser_launch_failure(tmp_path, monkeypatch):
+    import webbrowser
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    launched = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: launched.append(url) or False)
+
+    result = runner.invoke(app, ["gateway", "open-dashboard"])
+
+    assert result.exit_code == 1
+    assert launched == ["http://127.0.0.1:8787"]
+    assert "Could not open a browser" in result.output
+    assert "http://127.0.0.1:8787" in result.output
+
+
+def test_gateway_open_dashboard_succeeds_when_browser_launches(tmp_path, monkeypatch):
+    import webbrowser
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    launched = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: launched.append(url) or True)
+
+    result = runner.invoke(app, ["gateway", "open-dashboard"])
+
+    assert result.exit_code == 0
+    assert launched == ["http://127.0.0.1:8787"]
+
+
 def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
 
