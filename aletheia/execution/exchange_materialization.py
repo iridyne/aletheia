@@ -331,9 +331,10 @@ def _attribution_fields(proposal: dict) -> dict:
         )
     except Exception:
         sizing_manifest = None
+    regime_value = snapshot.get("regime_tag", "unknown")
     return {
         "btc_entry_price": snapshot.get("btc_entry_price"),
-        "regime_tag": str(snapshot.get("regime_tag") or "unknown"),
+        "regime_tag": None if regime_value is None else str(regime_value),
         "entry_market_summary": (
             json.dumps(market_context, sort_keys=True) if isinstance(market_context, dict) else None
         ),

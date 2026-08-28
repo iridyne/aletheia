@@ -132,6 +132,23 @@ def _btc_price_at_close() -> float | None:
         return None
 
 
+def _btc_benchmark_applicable(row: dict) -> bool:
+    """Keep BTC exit evidence unavailable for explicitly non-crypto entries."""
+    raw_summary = row.get("entry_market_summary")
+    if not raw_summary:
+        return True  # legacy Position rows have no frozen applicability context
+    try:
+        summary = json.loads(raw_summary) if isinstance(raw_summary, str) else raw_summary
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return True
+    if not isinstance(summary, dict):
+        return True
+    context = summary.get("analysis_context")
+    if not isinstance(context, dict):
+        return True
+    return context.get("kind") == "crypto"
+
+
 def _close_provenance() -> dict:
     """Return only available producer identity for the close event."""
     try:
@@ -736,8 +753,9 @@ def close_position(
     if funding_cost is not None:
         realized = gross_pnl - entry_fee - exit_fee - funding_cost
 
-    # BTC benchmark at exit for alpha/beta separation
-    btc_exit = _btc_price_at_close()
+    # BTC benchmark at exit for alpha/beta separation. Explicitly non-crypto
+    # entries carry no applicable benchmark pair.
+    btc_exit = _btc_price_at_close() if _btc_benchmark_applicable(row) else None
 
     execution_mode = str(row.get("execution_mode") or "")
     local_paper_fill = execution_mode == "paper_internal"

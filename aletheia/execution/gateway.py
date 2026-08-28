@@ -207,7 +207,11 @@ def submit_proposal(
     # Capture the read-only decision-time attribution for every execution mode
     # so that delayed exchange reconciliation does not invent later context or
     # silently lose the same metadata already preserved for local paper.
-    attribution_snapshot = _capture_attribution_snapshot_json(symbol)
+    attribution_snapshot = _capture_attribution_snapshot_json(
+        symbol,
+        market_type=market_type,
+        opportunity_id=opportunity_id,
+    )
 
     # EX-04 (#1004): a direct-entry live Proposal must also carry the opaque
     # authorization ref so the execution-time revalidation has something to
@@ -1817,9 +1821,18 @@ def _ensure_paper_attribution_snapshot(proposal: TradeProposal) -> dict | None:
     return _loads_attribution_snapshot(proposal.attribution_snapshot)
 
 
-def _capture_attribution_snapshot_json(symbol: str) -> str | None:
+def _capture_attribution_snapshot_json(
+    symbol: str,
+    *,
+    market_type: str = "",
+    opportunity_id: str | None = None,
+) -> str | None:
     try:
-        snapshot = capture_paper_attribution_snapshot(symbol)
+        snapshot = capture_paper_attribution_snapshot(
+            symbol,
+            market_type=market_type,
+            opportunity_id=opportunity_id,
+        )
         return json.dumps(snapshot, default=str)
     except Exception:
         return None

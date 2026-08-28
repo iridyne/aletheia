@@ -1200,7 +1200,7 @@ def test_ai_proposal_preflight_defers_unusable_exact_tradability(
     )
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
-        lambda symbol, *, exchange, market_type: {
+        lambda symbol, *, exchange, market_type, opportunity_id=None: {
             "btc_entry_price": 90_000.0,
             "regime_tag": "neutral",
             "market_context": {
@@ -1293,7 +1293,7 @@ def test_ai_proposal_persists_tradable_exact_instrument_attribution(
     }
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
-        lambda symbol, *, exchange, market_type: {
+        lambda symbol, *, exchange, market_type, opportunity_id=None: {
             "btc_entry_price": 90_000.0,
             "regime_tag": "neutral",
             "market_context": {

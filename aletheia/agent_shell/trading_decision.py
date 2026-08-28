@@ -1575,6 +1575,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         decision.symbol,
         exchange=str((snap or {}).get("exchange") or ""),
         market_type=market_type,
+        opportunity_id=decision.opportunity_id,
     )
     if decision.parameter_rationale_required:
         market_context = attribution_snapshot.get("market_context")

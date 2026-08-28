@@ -50,7 +50,7 @@ def _patch_enrichment_lookups(monkeypatch, *, btc=60000.0, regime="risk_on"):
     monkeypatch.setattr(
         gateway,
         "capture_paper_attribution_snapshot",
-        lambda symbol: {
+        lambda symbol, **_kwargs: {
             "btc_entry_price": btc,
             "regime_tag": regime,
             "market_context": {"symbol": symbol},

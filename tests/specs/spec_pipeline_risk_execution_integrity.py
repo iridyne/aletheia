@@ -585,7 +585,11 @@ def test_invalid_native_proposal_fails_closed(
 
     from aletheia.execution import gateway
 
-    monkeypatch.setattr(gateway, "_capture_attribution_snapshot_json", lambda _symbol: None)
+    monkeypatch.setattr(
+        gateway,
+        "_capture_attribution_snapshot_json",
+        lambda _symbol, **_kwargs: None,
+    )
     payload = {
         "symbol": "BTC/USDT",
         "market_type": "spot",
@@ -1207,7 +1211,7 @@ def test_execution_does_not_backfill_hash_covered_attribution_snapshot(
     monkeypatch.setattr(
         gateway,
         "_capture_attribution_snapshot_json",
-        lambda _symbol: json.dumps({"regime_tag": "late-context"}),
+        lambda _symbol, **_kwargs: json.dumps({"regime_tag": "late-context"}),
     )
     monkeypatch.setattr(
         gateway,
