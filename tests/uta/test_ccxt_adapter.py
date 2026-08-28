@@ -780,6 +780,66 @@ async def test_verified_exit_requires_compatible_fill_leg_or_one_way_evidence(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "direction", "fill_side", "trade_side", "position_mode",
+        "expected_state", "expected_leg",
+    ),
+    (
+        ("long", "buy", "close", "hedge_mode", VerifiedExitState.VERIFIED_FILL_EXIT, "long"),
+        ("short", "sell", "close", "hedge_mode", VerifiedExitState.VERIFIED_FILL_EXIT, "short"),
+        ("long", "buy", "open", "hedge_mode", VerifiedExitState.INCONCLUSIVE, None),
+        ("long", "buy", "close", None, VerifiedExitState.INCONCLUSIVE, None),
+        ("long", "sell", "close", "hedge_mode", VerifiedExitState.INCONCLUSIVE, None),
+    ),
+)
+async def test_bitget_hedge_close_normalizes_same_side_leg(
+    monkeypatch, direction, fill_side, trade_side, position_mode,
+    expected_state, expected_leg,
+):
+    profile = _profile("classic_v2")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    info = {"tradeSide": trade_side}
+    if position_mode is not None:
+        info["posMode"] = position_mode
+    exchange.trades = [{
+        "id": "bitget-hedge-fill",
+        "order": "bitget-hedge-order",
+        "symbol": "BTC/USDT:USDT",
+        "side": fill_side,
+        "amount": "1",
+        "price": "60000",
+        "timestamp": int((now - timedelta(seconds=1)).timestamp() * 1000),
+        "info": info,
+    }]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity,
+        local_position_id="position-1",
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        direction=direction,
+        expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1),
+        history_end_at=now,
+    ))
+
+    assert report.state is expected_state
+    if expected_leg:
+        assert report.exit_fills[0].position_side == expected_leg
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_private_history_bound_is_partial(monkeypatch):
     profile = _profile("binance")
     exchange = FakeExchange()

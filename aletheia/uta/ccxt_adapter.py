@@ -946,8 +946,6 @@ class CCXTUTAAdapter:
         close_side = "sell" if direction == "long" else "buy"
 
         def compatible_close(fill: FillReport) -> bool:
-            if fill.side.lower() != close_side:
-                return False
             position_side = (fill.position_side or "").lower()
             trade_intent = (fill.trade_intent or "").lower()
             if trade_intent in {"open", "entry", "increase"}:
@@ -957,7 +955,11 @@ class CCXTUTAAdapter:
             }:
                 return False
             if position_side in {"long", "short"}:
-                return position_side == direction
+                return position_side == direction and (
+                    bool(trade_intent) or fill.side.lower() == close_side
+                )
+            if fill.side.lower() != close_side:
+                return False
             return position_side in {"both", "net", "one_way", "oneway"}
 
         close_fills = tuple(fill for fill in non_entry_fills if compatible_close(fill))
