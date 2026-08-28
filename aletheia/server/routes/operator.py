@@ -95,18 +95,26 @@ def _operator_status_defaults() -> dict[str, Any]:
 def _trading_daemon_status() -> dict[str, Any]:
     """Report trading-decision liveness separately from Operator shell liveness."""
     from aletheia.agent_runtime.pi_daemon import daemon_status
-    from aletheia.agent_runtime.scheduler import status_snapshot
+    from aletheia.agent_runtime.scheduler import scheduled_job_status
 
     cfg = load_config()
     daemon = daemon_status()
-    scheduler = status_snapshot()
+    fallback = scheduled_job_status("pi_trading_decision")
     configured = bool(cfg.pi_daemon.enabled)
     running = bool(daemon.get("running"))
-    fallback_available = bool(scheduler.get("running"))
+    fallback_blocker = fallback.get("blocker")
+    if fallback_blocker is None:
+        if cfg.runtime.paused:
+            fallback_blocker = "runtime_paused"
+        elif cfg.agent.permission_mode not in ("Paper", "Full"):
+            fallback_blocker = "permission_mode"
+    fallback_available = fallback_blocker is None
     if running:
         state = "event_driven"
     elif fallback_available:
         state = "scheduled_fallback"
+    elif fallback_blocker in {"job_paused", "runtime_paused"}:
+        state = "paused"
     elif configured:
         state = "unavailable"
     else:
@@ -118,6 +126,7 @@ def _trading_daemon_status() -> dict[str, Any]:
         "wake_pending": bool(daemon.get("event_set")),
         "last_error_summary": daemon.get("last_error_summary"),
         "fallback_available": fallback_available,
+        "fallback_blocker": fallback_blocker,
         "state": state,
     }
 

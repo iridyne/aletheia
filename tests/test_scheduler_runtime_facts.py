@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from aletheia.agent_runtime import scheduler
@@ -22,3 +23,45 @@ def test_scheduler_snapshot_distinguishes_config_from_runtime_and_tracks_tick(mo
 
     scheduler._record_scheduler_tick(None)
     assert scheduler.status_snapshot()["last_tick"] is not None
+
+
+class _Job:
+    def __init__(self, next_run_time):
+        self.next_run_time = next_run_time
+
+
+class _Scheduler:
+    def __init__(self, *, state, job=None):
+        self.state = state
+        self.job = job
+
+    def get_job(self, job_id):
+        return self.job
+
+
+def test_scheduled_job_status_requires_registered_future_unpaused_job(monkeypatch) -> None:
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
+
+    monkeypatch.setattr(
+        scheduler,
+        "_scheduler",
+        _Scheduler(
+            state=STATE_RUNNING,
+            job=_Job(datetime.now(timezone.utc) + timedelta(minutes=1)),
+        ),
+    )
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", set())
+    assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] is None
+
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", {"pi_trading_decision"})
+    assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] == "job_paused"
+
+    monkeypatch.setattr(
+        scheduler,
+        "_scheduler",
+        _Scheduler(state=STATE_RUNNING, job=None),
+    )
+    assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] == "job_missing"
+
+    monkeypatch.setattr(scheduler, "_scheduler", _Scheduler(state=STATE_PAUSED))
+    assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] == "scheduler_stopped"

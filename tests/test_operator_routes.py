@@ -49,8 +49,8 @@ async def test_operator_status_defaults_when_no_heartbeat(client):
         "aletheia.agent_runtime.pi_daemon.daemon_status",
         return_value={"running": True, "event_set": False, "lock_held": False},
     ), patch(
-        "aletheia.agent_runtime.scheduler.status_snapshot",
-        return_value={"running": True, "state": "running", "job_count": 41},
+        "aletheia.agent_runtime.scheduler.scheduled_job_status",
+        return_value={"blocker": None},
     ):
         resp = await client.get("/api/operator/status")
 
@@ -73,6 +73,7 @@ async def test_operator_status_defaults_when_no_heartbeat(client):
         "wake_pending": False,
         "last_error_summary": None,
         "fallback_available": True,
+        "fallback_blocker": None,
         "state": "event_driven",
     }
 
@@ -140,8 +141,8 @@ async def test_operator_internal_heartbeat_roundtrip(client):
         "aletheia.agent_runtime.pi_daemon.daemon_status",
         return_value={"running": False, "event_set": False, "lock_held": False},
     ), patch(
-        "aletheia.agent_runtime.scheduler.status_snapshot",
-        return_value={"running": True, "state": "running", "job_count": 41},
+        "aletheia.agent_runtime.scheduler.scheduled_job_status",
+        return_value={"blocker": None},
     ):
         status = await client.get("/api/operator/status")
     data = status.json()
@@ -153,6 +154,67 @@ async def test_operator_internal_heartbeat_roundtrip(client):
     assert data["active_branch_title"] == "Momentum A Review"
     assert data["trading_daemon"]["state"] == "scheduled_fallback"
     assert data["trading_daemon"]["running"] is False
+
+
+@pytest.mark.parametrize(
+    ("blocker", "expected_state"),
+    [
+        ("scheduler_stopped", "unavailable"),
+        ("job_missing", "unavailable"),
+        ("job_paused", "paused"),
+    ],
+)
+def test_pi_fallback_status_reports_exact_blocker(blocker, expected_state, monkeypatch):
+    from aletheia.server.routes import operator as operator_routes
+
+    cfg = operator_routes.load_config()
+    cfg.pi_daemon.enabled = True
+    cfg.runtime.paused = False
+    cfg.agent.permission_mode = "Paper"
+    monkeypatch.setattr(operator_routes, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.daemon_status",
+        lambda: {"running": False, "event_set": False, "lock_held": False},
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.scheduled_job_status",
+        lambda _job_id: {"blocker": blocker},
+    )
+
+    status = operator_routes._trading_daemon_status()
+
+    assert status["fallback_available"] is False
+    assert status["fallback_blocker"] == blocker
+    assert status["state"] == expected_state
+
+
+def test_pi_fallback_status_applies_runtime_and_permission_guards(monkeypatch):
+    from aletheia.server.routes import operator as operator_routes
+
+    cfg = operator_routes.load_config()
+    cfg.pi_daemon.enabled = True
+    monkeypatch.setattr(operator_routes, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.daemon_status",
+        lambda: {"running": False, "event_set": False, "lock_held": False},
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.scheduled_job_status",
+        lambda _job_id: {"blocker": None},
+    )
+
+    cfg.runtime.paused = True
+    paused = operator_routes._trading_daemon_status()
+    assert paused["fallback_available"] is False
+    assert paused["fallback_blocker"] == "runtime_paused"
+    assert paused["state"] == "paused"
+
+    cfg.runtime.paused = False
+    cfg.agent.permission_mode = "Observe"
+    restricted = operator_routes._trading_daemon_status()
+    assert restricted["fallback_available"] is False
+    assert restricted["fallback_blocker"] == "permission_mode"
+    assert restricted["state"] == "unavailable"
 
 
 @pytest.mark.anyio

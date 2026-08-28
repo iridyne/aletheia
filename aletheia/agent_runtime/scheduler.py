@@ -2194,6 +2194,69 @@ def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
 
 
+def scheduled_job_status(job_id: str) -> dict[str, object]:
+    """Return the effective, read-only state of one scheduled job."""
+    with _SCHEDULER_JOB_LOCK:
+        if _scheduler is None:
+            return {
+                "scheduler_state": "stopped",
+                "registered": False,
+                "paused": False,
+                "next_run_time": None,
+                "blocker": "scheduler_stopped",
+            }
+
+        state = getattr(_scheduler, "state", STATE_STOPPED)
+        state_label = {
+            STATE_RUNNING: "running",
+            STATE_PAUSED: "paused",
+            STATE_STOPPED: "stopped",
+        }.get(state, f"unknown:{state}")
+        if state != STATE_RUNNING:
+            return {
+                "scheduler_state": state_label,
+                "registered": False,
+                "paused": state == STATE_PAUSED,
+                "next_run_time": None,
+                "blocker": "scheduler_stopped",
+            }
+
+        try:
+            job = _scheduler.get_job(job_id)
+        except Exception:  # noqa: BLE001 - status must fail closed
+            job = None
+        if job is None:
+            return {
+                "scheduler_state": state_label,
+                "registered": False,
+                "paused": False,
+                "next_run_time": None,
+                "blocker": "job_missing",
+            }
+
+        next_run_time = getattr(job, "next_run_time", None)
+        paused = job_id in _selectively_paused_jobs or next_run_time is None
+        if not paused:
+            if not isinstance(next_run_time, datetime):
+                paused = True
+            else:
+                next_run_time = (
+                    next_run_time.replace(tzinfo=timezone.utc)
+                    if next_run_time.tzinfo is None
+                    else next_run_time
+                )
+                paused = next_run_time <= datetime.now(timezone.utc)
+        return {
+            "scheduler_state": state_label,
+            "registered": True,
+            "paused": paused,
+            "next_run_time": (
+                next_run_time.isoformat() if isinstance(next_run_time, datetime) else None
+            ),
+            "blocker": "job_paused" if paused else None,
+        }
+
+
 def _record_scheduler_tick(_event) -> None:
     global _scheduler_last_tick
     _scheduler_last_tick = datetime.now(timezone.utc).isoformat()
