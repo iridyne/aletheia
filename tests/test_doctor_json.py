@@ -41,6 +41,40 @@ def test_report_to_dict_healthy_when_only_ok_info():
     assert d["summary"]["blockers"] == [] and d["summary"]["warns"] == []
 
 
+def test_doctor_json_warning_exits_nonzero(monkeypatch):
+    from typer.testing import CliRunner
+
+    from aletheia.main import app
+
+    report = dx.Report(generated_at="t")
+    report.add("runtime.health", "warn", "degraded")
+    monkeypatch.setattr(dx, "build_report", lambda **_kwargs: report)
+
+    result = CliRunner().invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["healthy"] is False
+
+
+def test_doctor_human_warning_exits_nonzero_but_info_stays_zero(monkeypatch):
+    from typer.testing import CliRunner
+
+    from aletheia.main import app
+
+    warning = dx.Report(generated_at="t")
+    warning.add("runtime.health", "warn", "degraded")
+    monkeypatch.setattr(dx, "build_report", lambda **_kwargs: warning)
+    result = CliRunner().invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "WARNINGS (1)" in result.stdout
+
+    healthy = dx.Report(generated_at="t")
+    healthy.add("runtime.health", "info", "not configured")
+    monkeypatch.setattr(dx, "build_report", lambda **_kwargs: healthy)
+    result = CliRunner().invoke(app, ["doctor"])
+    assert result.exit_code == 0
+
+
 def test_build_report_to_dict_is_json_serializable():
     # build_report() runs the real probes; its dict form must always serialize.
     d = dx.build_report().to_dict()

@@ -198,6 +198,11 @@ def _fix_actions_failed(fix_actions) -> bool:
     )
 
 
+def _doctor_exit_code(report, fix_actions=None) -> int:
+    """Return non-zero for any unhealthy report or failed repair action."""
+    return 1 if report.blockers or report.warns or _fix_actions_failed(fix_actions) else 0
+
+
 @doctor_app.callback(invoke_without_command=True)
 def doctor(
     fix: bool = typer.Option(False, "--fix", help="Apply conservative infra repairs (start gateway, clear orphans). Never clears kill switch."),
@@ -252,7 +257,7 @@ def doctor(
         if fix_actions is not None:
             out["fix_actions"] = fix_actions
         typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
-        raise typer.Exit(1 if report.blockers or _fix_actions_failed(fix_actions) else 0)
+        raise typer.Exit(_doctor_exit_code(report, fix_actions))
 
     _print_report(report)
     diagnostics = None
@@ -278,4 +283,4 @@ def doctor(
         written = _write_bundle(bundle, report, diagnostics, fix_actions=fix_actions)
         typer.echo(f"\nDiagnostic bundle written: {written}")
 
-    raise typer.Exit(1 if report.blockers or _fix_actions_failed(fix_actions) else 0)
+    raise typer.Exit(_doctor_exit_code(report, fix_actions))
