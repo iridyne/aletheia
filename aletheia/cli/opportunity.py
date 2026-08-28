@@ -29,6 +29,7 @@ _DEFAULT_OPTIONS = {"hours": 24, "limit": 200, "stage": None, "verdict": None, "
 
 @opportunity_app.command("audit")
 def audit(
+    ctx: typer.Context,
     hours: int = typer.Option(24, "--hours", help="Lookback window in hours."),
     limit: int = typer.Option(200, "--limit", help="Maximum opportunities to reconstruct."),
     stage: str | None = typer.Option(None, "--stage", help="Only show opportunities whose timeline includes this stage."),
@@ -44,6 +45,11 @@ def audit(
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """Analyze the full lifecycle of opportunities and their evidence."""
+    provided_options = {
+        name
+        for name in ("hours", "limit", "stage", "verdict", "symbol")
+        if ctx.get_parameter_source(name).name == "COMMANDLINE"
+    }
     _echo_audit(
         hours=hours,
         limit=limit,
@@ -52,6 +58,7 @@ def audit(
         symbol=symbol,
         view=view,
         json_output=json_output,
+        provided_options=provided_options,
     )
 
 
@@ -74,6 +81,7 @@ def _echo_audit(
     view: str = "overview",
     json_output: bool = False,
     deprecated_from: str | None = None,
+    provided_options: set[str] | None = None,
 ) -> None:
     report, rendered = _build_audit_view(
         hours=hours,
@@ -82,6 +90,7 @@ def _echo_audit(
         verdict=verdict,
         symbol=symbol,
         view=view,
+        provided_options=provided_options,
     )
     if json_output:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
@@ -116,6 +125,7 @@ def _build_audit_view(
     verdict: str | None,
     symbol: str | None,
     view: str,
+    provided_options: set[str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     clean_view = str(view or "overview").strip().lower()
     if clean_view not in _VIEWS:
@@ -127,11 +137,16 @@ def _build_audit_view(
         "verdict": verdict,
         "symbol": symbol,
     }
+    supplied = (
+        provided_options
+        if provided_options is not None
+        else {name for name, value in options.items() if value != _DEFAULT_OPTIONS[name]}
+    )
     unsupported = [
         f"--{name}"
-        for name, value in options.items()
+        for name in options
         if name not in _SUPPORTED_OPTIONS[clean_view]
-        and value != _DEFAULT_OPTIONS[name]
+        and name in supplied
     ]
     if unsupported:
         raise typer.BadParameter(

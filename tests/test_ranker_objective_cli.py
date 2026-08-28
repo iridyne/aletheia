@@ -4,6 +4,7 @@ import json
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 
 def test_build_audit_view_dispatches_ranker_objective(monkeypatch):
@@ -43,6 +44,25 @@ def test_ranker_objective_rejects_incompatible_shared_filters():
     ):
         with pytest.raises(typer.BadParameter, match="not supported"):
             _build_audit_view(hours=24, limit=10, view="ranker-objective", **filters)
+
+
+def test_cli_rejects_explicit_default_unsupported_option(monkeypatch):
+    import aletheia.analytics.trade_funnel as funnel
+    from aletheia.cli.opportunity import opportunity_app
+
+    monkeypatch.setattr(
+        funnel,
+        "build_trade_funnel_audit",
+        lambda **_: pytest.fail("unsupported option reached the report builder"),
+    )
+
+    result = CliRunner().invoke(
+        opportunity_app,
+        ["audit", "--view", "funnel", "--limit", "200"],
+    )
+
+    assert result.exit_code == 2
+    assert "--limit not supported with --view funnel" in result.output
 
 
 @pytest.mark.parametrize(
