@@ -29,6 +29,7 @@ def build_entry_plan_order_intent(
     bid: float,
     ask: float,
     observed_at: str,
+    source_observed_at: str,
     now: datetime | None = None,
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
@@ -37,9 +38,10 @@ def build_entry_plan_order_intent(
     if _instant(plan.expires_at) <= current:
         raise ValueError("entry_plan_expired")
     freshness_ms = plan.trigger_freshness_ms or 2_000
-    age_ms = (current - _instant(observed_at)).total_seconds() * 1_000
-    if age_ms < 0 or age_ms > freshness_ms:
-        raise ValueError("entry_exact_state_stale")
+    for timestamp in (observed_at, source_observed_at):
+        age_ms = (current - _instant(timestamp)).total_seconds() * 1_000
+        if age_ms < 0 or age_ms > freshness_ms:
+            raise ValueError("entry_exact_state_stale")
     bid, ask = float(bid), float(ask)
     if bid <= 0 or ask < bid:
         raise ValueError("entry_exact_bbo_invalid")
@@ -105,6 +107,7 @@ def execute_entry_plan(
     bid: float,
     ask: float,
     observed_at: str,
+    source_observed_at: str,
     now: datetime | None = None,
 ) -> dict:
     """Idempotently submit one approved plan through the existing Gateway."""
@@ -126,7 +129,12 @@ def execute_entry_plan(
         return execute_existing_proposal(existing["id"], existing["execution_mode"])
 
     proposal = build_entry_plan_order_intent(
-        plan, bid=bid, ask=ask, observed_at=observed_at, now=now
+        plan,
+        bid=bid,
+        ask=ask,
+        observed_at=observed_at,
+        source_observed_at=source_observed_at,
+        now=now,
     )
     if plan.execution_mode == "TRIGGERED" and row["status"] == "waiting":
         if not repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered", now=now):
