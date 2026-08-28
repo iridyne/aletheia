@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
@@ -643,7 +644,10 @@ def _market_data_age_seconds(symbol: str, market_type: str | None = None) -> flo
         dt = datetime.fromisoformat(ts)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt).total_seconds()
+        age = (datetime.now(timezone.utc) - dt).total_seconds()
+        if age < -MAX_FUTURE_SKEW.total_seconds():
+            return None
+        return age
     except ValueError:
         return None
 

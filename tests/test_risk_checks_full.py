@@ -260,6 +260,18 @@ def test_fresh_market_data_passes_freshness(tmp_path, monkeypatch):
     assert not any("stale_market_data" in v for v in result.violations)
 
 
+def test_future_market_data_fails_closed(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
+    snap.snapshot_at = future
+    repo.insert_market_snapshot(snap)
+
+    from aletheia.risk.engine import _market_data_age_seconds
+
+    assert _market_data_age_seconds("BTC/USDT") is None
+
+
 # --- max_total_live_exposure (live) ---
 
 def test_live_exposure_cap_blocks_new_order(tmp_path, monkeypatch):
