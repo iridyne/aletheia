@@ -32,17 +32,23 @@ const SENTIMENT_TONE: Record<string, 'green' | 'red' | 'blue' | 'yellow'> = {
 export default function NewsIntel() {
   const qc = useQueryClient()
   const { data: news, isPending: newsPending, isError: newsError } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
-  const [selected, setSelected] = useState<NewsItem | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
   const restoreNewsId = useRef<string | null>(null)
   const newsFilterFallback = useRef<HTMLButtonElement>(null)
+  const newsArray = (news ?? []) as NewsItem[]
+  const selected = selectedId ? newsArray.find(item => item.id === selectedId) ?? null : null
 
   useEffect(() => {
-    if (selected) {
-      restoreNewsId.current = selected.id
+    if (selectedId && !newsPending && !newsError && !selected) setSelectedId(null)
+  }, [newsError, newsPending, selected, selectedId])
+
+  useEffect(() => {
+    if (selectedId) {
+      restoreNewsId.current = selectedId
       return
     }
     const id = restoreNewsId.current
@@ -51,7 +57,7 @@ export default function NewsIntel() {
       .find(node => node.dataset.newsId === id)
     ;(opener || newsFilterFallback.current)?.focus()
     restoreNewsId.current = null
-  }, [selected])
+  }, [selectedId])
 
   const { toast } = useToast()
   const analyzeMut = useMutation({
@@ -89,7 +95,6 @@ export default function NewsIntel() {
       sentiment: addForm.sentiment,
     })
   }
-  const newsArray = (news ?? []) as NewsItem[]
   const newsState = newsPending && newsArray.length === 0
     ? 'loading'
     : newsError && newsArray.length === 0
@@ -173,7 +178,7 @@ export default function NewsIntel() {
               className="news-card clickable"
               data-news-id={item.id}
               aria-label={`Open news detail: ${item.title}`}
-              onClick={() => { setSelected(item); setAnalysis(null) }}
+              onClick={() => { setSelectedId(item.id); setAnalysis(null) }}
             >
               <div className="flex justify-between items-center gap-2">
                 <div className="news-card-main">
@@ -203,7 +208,7 @@ export default function NewsIntel() {
         </div>
       )}
 
-      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="News Detail">
+      <DetailDrawer open={!!selected} onClose={() => setSelectedId(null)} title="News Detail">
         {selected && (
           <>
             <DrawerSection label="Summary">
