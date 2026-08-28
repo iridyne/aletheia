@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import { positionKeys } from '../../../lib/queryKeys'
 import {
@@ -14,11 +14,18 @@ import type { SettingsDirtyProps } from '../types'
 
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 type PaperCashAction = 'credit' | 'debit' | 'set'
+type CapitalEventCursor = { detected_at: string; id: string }
 type CapitalEventPage = {
   events: any[]
   total: number
   has_more: boolean
-  next_cursor: { detected_at: string; id: string } | null
+  next_cursor: CapitalEventCursor | null
+}
+
+function normalizeCapitalEventPage(response: CapitalEventPage | any[]): CapitalEventPage {
+  return Array.isArray(response)
+    ? { events: response, total: response.length, has_more: false, next_cursor: null }
+    : response
 }
 
 export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQueryClient>; onDirty?: (id: string, isDirty: boolean) => void }) {
@@ -144,17 +151,37 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
 
 export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty: boolean) => void }) {
   const qc = useQueryClient()
-  const [eventCursor, setEventCursor] = useState<{ detected_at: string; id: string } | null>(null)
-  const { data: eventPageResponse, isLoading: eventsLoading, isError: eventsError, refetch: refetchEvents } = useQuery({
-    queryKey: ['capital-events', eventCursor],
-    queryFn: () => api.getCapitalEvents({ limit: 20, ...eventCursor && {
-      before_detected_at: eventCursor.detected_at,
-      before_id: eventCursor.id,
-    } }),
+  const {
+    data: eventPagesData,
+    isLoading: eventsLoading,
+    isError: eventsError,
+    refetch: refetchEvents,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['capital-events', 'paged'],
+    initialPageParam: null as CapitalEventCursor | null,
+    queryFn: ({ pageParam }) => api.getCapitalEvents({
+      limit: 20,
+      ...(pageParam ? {
+        before_detected_at: pageParam.detected_at,
+        before_id: pageParam.id,
+      } : {}),
+    }),
+    getNextPageParam: response => {
+      const page = normalizeCapitalEventPage(response)
+      return page.has_more ? page.next_cursor ?? undefined : undefined
+    },
   })
-  const eventPage: CapitalEventPage = Array.isArray(eventPageResponse)
-    ? { events: eventPageResponse, total: eventPageResponse.length, has_more: false, next_cursor: null }
-    : eventPageResponse ?? { events: [], total: 0, has_more: false, next_cursor: null }
+  const eventPages = (eventPagesData?.pages ?? []).map(normalizeCapitalEventPage)
+  const lastEventPage = eventPages[eventPages.length - 1]
+  const eventPage: CapitalEventPage = {
+    events: eventPages.flatMap(page => page.events),
+    total: eventPages[0]?.total ?? 0,
+    has_more: lastEventPage?.has_more ?? false,
+    next_cursor: lastEventPage?.next_cursor ?? null,
+  }
   const events = eventPage.events
   const { data: netData, isLoading: netLoading, isError: netError, refetch: refetchNet } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
   const [brokerId, setBrokerId] = useState('')
@@ -171,8 +198,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
       note: note || undefined,
     }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['capital-events'] })
-      setEventCursor(null)
+      qc.resetQueries({ queryKey: ['capital-events'] })
       qc.invalidateQueries({ queryKey: ['capital-net-deposits'] })
       qc.invalidateQueries({ queryKey: ['account-equity-history'] })
       setAmount('')
@@ -240,11 +266,12 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
               ))}
             </tbody>
           </table>
-          {eventPage.has_more && eventPage.next_cursor && (
+          {hasNextPage && eventPage.has_more && eventPage.next_cursor && (
             <button
               className="btn btn-secondary mt-2"
-              onClick={() => setEventCursor(eventPage.next_cursor)}
-            >Load older</button>
+              disabled={isFetchingNextPage}
+              onClick={() => fetchNextPage()}
+            >{isFetchingNextPage ? 'Loading…' : 'Load older'}</button>
           )}
         </>
       )}

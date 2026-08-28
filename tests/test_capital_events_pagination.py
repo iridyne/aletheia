@@ -43,3 +43,24 @@ def test_capital_events_page_rejects_partial_cursor():
         assert "provided together" in str(exc)
     else:
         raise AssertionError("partial keyset cursor must fail closed")
+
+
+def test_capital_events_empty_page_keeps_retained_total():
+    repo.insert_capital_event(CapitalEvent(
+        id="capital-oldest",
+        broker_id="paper_internal",
+        event_type="deposit",
+        amount_usdt=1.0,
+        detected_at="2026-08-21T00:00:00+00:00",
+    ))
+
+    page = repo.list_capital_events_page(
+        limit=2,
+        before_detected_at="2026-08-20T00:00:00+00:00",
+        before_id="capital-cursor",
+    )
+
+    assert page["events"] == []
+    assert page["total"] == 1
+    assert page["has_more"] is False
+    assert page["next_cursor"] is None

@@ -2081,17 +2081,16 @@ def list_capital_events_page(
     if before_detected_at is not None and before_id is not None:
         where = " WHERE detected_at < ? OR (detected_at = ? AND id < ?)"
         params = (before_detected_at, before_detected_at, before_id)
+    total_row = get_db().execute("SELECT COUNT(*) FROM capital_events").fetchone()
+    total = int(total_row[0]) if total_row is not None else 0
     rows = get_db().execute(
-        "SELECT page.*, (SELECT COUNT(*) FROM capital_events) AS _total_count "
+        "SELECT page.* "
         f"FROM capital_events AS page{where} "
         "ORDER BY detected_at DESC, id DESC LIMIT ?",
         (*params, page_limit + 1),
     ).fetchall()
-    total = int(rows[0]["_total_count"]) if rows else 0
     has_more = len(rows) > page_limit
     events = [dict(row) for row in rows[:page_limit]]
-    for event in events:
-        event.pop("_total_count", None)
     last = events[-1] if has_more and events else None
     return {
         "events": events,
