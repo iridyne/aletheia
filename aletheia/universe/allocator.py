@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import random
+from datetime import datetime, timezone
 
 from aletheia.config.schema import UniverseConfig
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
@@ -384,7 +385,28 @@ def compute_total_score(
                 if scoring_cohort_key else None
             )
             from aletheia.learning.experiments import apply_numeric_treatment
+            from aletheia.analytics.filter_evidence import build_candidate_outcomes
 
+            outcome_entry_ts = datetime.now(timezone.utc).isoformat()
+            outcome_seeds = build_candidate_outcomes(
+                outcome_candidate_key=str(candidate_key),
+                venue=str(feat.get("venue") or ""),
+                symbol=str(feat.get("symbol") or ""),
+                market_type=str(market_type),
+                direction=str(direction),
+                scanner_family=family,
+                regime_tag=None,
+                entry_price_usd=float(feat.get("last_price") or 0),
+                entry_spread_bps=feat.get("spread_bps"),
+                funding_rate_at_entry=feat.get("funding_rate"),
+                entry_ts=outcome_entry_ts,
+                allocation_selected=None,
+                horizons=(horizon,),
+                rsi_1h_at_entry=feat.get("rsi_14"),
+                rsi_15m_at_entry=feat.get("rsi_15m"),
+                return_24h_at_entry=feat.get("return_24h"),
+                direction_exhaustion_signal=feat.get("direction_exhaustion_signal"),
+            ) if candidate_key else []
             influence = apply_numeric_treatment(
                 path_id="universe_family_calibration",
                 scope=scope,
@@ -417,6 +439,9 @@ def compute_total_score(
                     if restrict_calibration_learning_scope else None
                 ),
                 suppress_shadow_if_paper_active=True,
+                exposed_at=outcome_entry_ts,
+                outcome_seeds=outcome_seeds,
+                require_outcome_seed=bool(candidate_key),
             )
             opportunity = influence.value
             calibration_effective_multiplier = (
@@ -431,6 +456,7 @@ def compute_total_score(
                 feat["learning_candidate_key"] = candidate_key
                 feat["learning_exposure_id"] = influence.exposure_id
                 feat["learning_target_horizon"] = horizon
+                feat["learning_outcome_entry_ts"] = outcome_entry_ts
     # Operator-adjustable per-family weight. The System Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty

@@ -523,12 +523,12 @@ def _should_sample_alpha_control(now: datetime) -> bool:
     return (now - parsed).total_seconds() >= _ALPHA_CONTROL_SAMPLE_SEC
 
 
-def _register_experiment_candidate_outcomes(
+def _build_experiment_candidate_outcomes(
     scored: list[dict],
     *,
     entry_ts: str,
     allocated: list[dict] | None = None,
-) -> int:
+) -> list:
     """P0-3: settle the FULL experiment arms, not just the survivors.
 
     A Universe Learning exposure is created for every calibrated candidate during
@@ -561,22 +561,20 @@ def _register_experiment_candidate_outcomes(
         key = item.get("learning_candidate_key")
         if not key:
             continue
-        try:
-            direction = item.get("scanner_direction") or item.get("direction")
-            venue = item.get("venue")
-            entry_price = item.get("last_price")
-            target_horizon = item.get("learning_target_horizon")
-            if (
-                direction not in {"long", "short"}
-                or not isinstance(venue, str)
-                or not venue.strip()
-                or not item.get("symbol")
-            ):
-                continue
-            if float(entry_price or 0) <= 0 or not target_horizon:
-                continue
-            outcomes.extend(
-                build_candidate_outcomes(
+        direction = item.get("scanner_direction") or item.get("direction")
+        venue = item.get("venue")
+        entry_price = item.get("last_price")
+        target_horizon = item.get("learning_target_horizon")
+        if (
+            direction not in {"long", "short"}
+            or not isinstance(venue, str)
+            or not venue.strip()
+            or not item.get("symbol")
+            or float(entry_price or 0) <= 0
+            or not target_horizon
+        ):
+            raise RuntimeError("universe_learning_outcome_identity_incomplete")
+        built = build_candidate_outcomes(
                     outcome_candidate_key=key,
                     venue=venue.strip(),
                     symbol=item.get("symbol"),
@@ -587,7 +585,7 @@ def _register_experiment_candidate_outcomes(
                     entry_price_usd=float(entry_price),
                     entry_spread_bps=item.get("spread_bps"),
                     funding_rate_at_entry=item.get("funding_rate"),
-                    entry_ts=entry_ts,
+                    entry_ts=str(item.get("learning_outcome_entry_ts") or entry_ts),
                     allocation_selected=str(key) in selected_keys,
                     horizons=(str(target_horizon),),
                     rsi_1h_at_entry=item.get("rsi_14"),
@@ -595,20 +593,10 @@ def _register_experiment_candidate_outcomes(
                     return_24h_at_entry=item.get("return_24h"),
                     direction_exhaustion_signal=item.get("direction_exhaustion_signal"),
                 )
-            )
-        except Exception:
-            logger.debug(
-                "experiment candidate outcome registration skipped for %s",
-                item.get("symbol"),
-                exc_info=True,
-            )
-    if not outcomes:
-        return 0
-    try:
-        return repo.insert_filter_candidate_outcomes_batch(outcomes)
-    except Exception:
-        logger.debug("experiment candidate outcome persistence skipped", exc_info=True)
-        return 0
+        if len(built) != 1:
+            raise RuntimeError("universe_learning_outcome_build_incomplete")
+        outcomes.extend(built)
+    return outcomes
 
 
 def _capture_universe_discovery_nonfatal(
@@ -1090,16 +1078,11 @@ class UniverseService:
                         "Universe refresh (suppressed): cascade expiry failed (non-fatal): %s",
                         _e,
                     )
-                inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
+                experiment_outcomes = _build_experiment_candidate_outcomes(
                     pre_scored,
                     entry_ts=entry_ts,
                     allocated=allocated,
                 )
-                if inserted_experiment_outcomes:
-                    logger.info(
-                        "Registered %d experiment candidate outcome row(s) across full arms",
-                        inserted_experiment_outcomes,
-                    )
                 with _atomic_universe_publication():
                     selected_generation_ids, new_generation_ids, planning_generations_created = (
                         _ensure_planning_generations(
@@ -1122,11 +1105,17 @@ class UniverseService:
                         new_generation_ids=new_generation_ids,
                         now=now,
                     )
+                    repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
                     repo.update_universe_scanner_run(
                         run.id,
                         status="completed",
                         completed_at=datetime.now(timezone.utc).isoformat(),
                         snapshot_id=prev_snapshot_id,
+                    )
+                if experiment_outcomes:
+                    logger.info(
+                        "Registered %d experiment candidate outcome row(s) across full arms",
+                        len(experiment_outcomes),
                     )
                 _capture_universe_discovery_nonfatal(
                     scanner_run_id=run.id,
@@ -1221,6 +1210,11 @@ class UniverseService:
                     }
                 )
             pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
+            experiment_outcomes = _build_experiment_candidate_outcomes(
+                pre_scored,
+                entry_ts=entry_ts,
+                allocated=allocated,
+            )
             sample_alpha_control = _should_sample_alpha_control(now)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
@@ -1253,10 +1247,8 @@ class UniverseService:
                 )
 
                 # Register forward outcome tracking for all members with valid prices
-                try:
-                    repo.insert_forward_outcomes_batch(pending_outcomes)
-                except Exception as e:
-                    logger.warning("Forward outcome registration failed (non-fatal): %s", e)
+                repo.insert_forward_outcomes_batch(pending_outcomes)
+                repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
@@ -1292,17 +1284,10 @@ class UniverseService:
                 cfg=cfg,
             )
 
-            # Selection is evidence only after the snapshot and Candidate/Setup handoff
-            # commit. A failed publication must not look like an applied paper arm.
-            inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
-                pre_scored,
-                entry_ts=entry_ts,
-                allocated=allocated,
-            )
-            if inserted_experiment_outcomes:
+            if experiment_outcomes:
                 logger.info(
                     "Registered %d experiment candidate outcome row(s) across full arms",
-                    inserted_experiment_outcomes,
+                    len(experiment_outcomes),
                 )
 
             # Alpha-control observations are analytics telemetry, not part of

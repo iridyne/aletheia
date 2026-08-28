@@ -17,6 +17,8 @@ import inspect
 import json
 import textwrap
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -30,7 +32,7 @@ def test_refresh_registers_full_scored_arm_with_selected_subset():
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "_register_experiment_candidate_outcomes"
+        and node.func.id == "_build_experiment_candidate_outcomes"
     ]
 
     assert len(calls) == 2
@@ -154,7 +156,13 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     async def settle_due():
         return 0
 
-    failure_code = f"candidate_planning_generation_{failure_kind}_failed"
+    failure_code = (
+        "forward_outcomes_registration_failed"
+        if failure_kind == "forward_outcomes"
+        else "canonical_outcomes_registration_failed"
+        if failure_kind == "canonical_outcomes"
+        else f"candidate_planning_generation_{failure_kind}_failed"
+    )
 
     def planning_generation_failure(*_args, **_kwargs):
         raise RuntimeError(failure_code)
@@ -205,8 +213,11 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     experiment_outcome_registrations = []
     monkeypatch.setattr(
         service,
-        "_register_experiment_candidate_outcomes",
-        lambda *_args, **_kwargs: experiment_outcome_registrations.append(True),
+        "_build_experiment_candidate_outcomes",
+        lambda *_args, **_kwargs: (
+            experiment_outcome_registrations.append(True),
+            [object()] if failure_kind == "canonical_outcomes" else [],
+        )[1],
     )
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
@@ -223,6 +234,24 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             service.repo,
             "update_universe_scanner_run",
             fail_scanner_completion,
+        )
+    elif failure_kind == "forward_outcomes":
+        insert_forward_outcomes_batch = service.repo.insert_forward_outcomes_batch
+
+        def fail_forward_outcomes(*_args, **_kwargs):
+            insert_forward_outcomes_batch(*_args, **_kwargs)
+            raise RuntimeError(failure_code)
+
+        monkeypatch.setattr(
+            service.repo,
+            "insert_forward_outcomes_batch",
+            fail_forward_outcomes,
+        )
+    elif failure_kind == "canonical_outcomes":
+        monkeypatch.setattr(
+            service.repo,
+            "insert_filter_candidate_outcomes_batch",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(failure_code)),
         )
     else:
         monkeypatch.setattr(
@@ -269,9 +298,7 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         assert failed_run["snapshot_id"] != previous.id
     assert failure_code in failed_run["errors"]
     assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
-    assert experiment_outcome_registrations == (
-        [True] if reuse_previous_snapshot else []
-    )
+    assert experiment_outcome_registrations == [True]
     if requalification_generation_id:
         requalification_after = repo.get_candidate_planning_generation(
             requalification_generation_id
@@ -349,6 +376,26 @@ def test_planning_generation_failure_rolls_back_inside_existing_transaction(
         monkeypatch,
         "evidence",
         caller_owns_transaction=True,
+    )
+
+
+def test_forward_outcome_failure_rolls_back_universe_publication(
+    tmp_path, monkeypatch
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path, monkeypatch, "forward_outcomes"
+    )
+
+
+@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
+def test_canonical_outcome_failure_cannot_complete_universe_decision(
+    tmp_path, monkeypatch, reuse_previous_snapshot
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path,
+        monkeypatch,
+        "canonical_outcomes",
+        reuse_previous_snapshot=reuse_previous_snapshot,
     )
 
 

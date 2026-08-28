@@ -350,6 +350,28 @@ def test_first_exposure_activates_registered_experiment_at_earliest_exposure():
     assert final_state["started_at"] == earlier.exposed_at
 
 
+def test_exposure_and_required_outcome_seed_roll_back_together(monkeypatch):
+    from aletheia.learning import ledger
+
+    hypothesis, experiment = _registered_experiment("outcome-seed-atomic")
+    exposure = _exposure(
+        hypothesis,
+        experiment,
+        token="outcome-seed-atomic",
+        exposed_at="2026-07-18T12:00:00+00:00",
+    )
+
+    def fail_seed(_outcomes):
+        raise RuntimeError("outcome_seed_failed")
+
+    monkeypatch.setattr(ledger, "insert_filter_candidate_outcomes_batch", fail_seed)
+    with pytest.raises(RuntimeError, match="outcome_seed_failed"):
+        ledger.insert_exposure(exposure, outcome_seeds=[object()])
+
+    assert ledger.get_record("learning_exposures", exposure.exposure_id) is None
+    assert ledger.get_record("learning_experiments", experiment.experiment_id)["status"] == "registered"
+
+
 def test_exposure_retry_repairs_partially_registered_experiment():
     from aletheia.learning.ledger import get_record, insert_exposure, insert_record
 

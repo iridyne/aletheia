@@ -371,6 +371,8 @@ def apply_numeric_treatment(
     expected_experiment_id: str | None = None,
     suppress_shadow_if_paper_active: bool = False,
     exposed_at: str | None = None,
+    outcome_seeds: list | None = None,
+    require_outcome_seed: bool = False,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
     baseline_value = float(baseline)
@@ -466,6 +468,8 @@ def apply_numeric_treatment(
             baseline_value, False, "unassigned", f"hypothesis_{hypothesis.status}",
             hypothesis_id=hypothesis.hypothesis_id,
         )
+    if require_outcome_seed and len(outcome_seeds or []) != 1:
+        raise RuntimeError("learning_outcome_seed_unavailable")
     assignment = stable_assignment(experiment, assignment_key or candidate_key)
     assignment_unit_key = assignment_key or candidate_key
     policy_epoch = _policy_epoch(path_id)
@@ -555,6 +559,7 @@ def apply_numeric_treatment(
         exposure,
         require_open_experiment_id=experiment.experiment_id,
         require_open_experiment_stage=experiment.stage,
+        outcome_seeds=outcome_seeds,
     )
     if inserted is None:
         return InfluenceDecision(
