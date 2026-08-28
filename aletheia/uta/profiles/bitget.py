@@ -1,8 +1,11 @@
 """Independent Bitget Classic-v2 and UTA-v3 profiles."""
 
+from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from aletheia.uta.profiles.base import CCXTProfile, decimal_value
+from aletheia.uta.models import FillReport, UTAAccountIdentity
 
 
 class _BitgetDemoProfile(CCXTProfile):
@@ -20,6 +23,35 @@ class _BitgetDemoProfile(CCXTProfile):
             password=passphrase,
             options={"defaultType": "swap", "uta": uta},
         )
+
+    def fill(
+        self,
+        raw: dict[str, object],
+        markets: dict[str, Any],
+        identity: UTAAccountIdentity,
+        received_at: datetime,
+    ) -> FillReport:
+        report = super().fill(raw, markets, identity, received_at)
+        info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+        position_mode = str(
+            raw.get("posMode") or info.get("posMode") or ""
+        ).strip().lower()
+        trade_intent = (report.trade_intent or "").strip().lower()
+        if (
+            report.position_side is None
+            and position_mode in {"hedge_mode", "hedge", "two_way", "two-way"}
+            and trade_intent in {"close", "exit", "reduce", "decrease"}
+            and report.side.lower() in {"buy", "sell"}
+        ):
+            # Bitget Classic hedge fills keep the opening side on a close.  The
+            # explicit close intent plus hedge mode makes this a canonical leg,
+            # without weakening ambiguous or opening activity.
+            return report.model_copy(update={
+                "position_side": (
+                    "long" if report.side.lower() == "buy" else "short"
+                ),
+            })
+        return report
 
 
 class BitgetClassicV2Profile(_BitgetDemoProfile):
