@@ -377,6 +377,8 @@ class FillReport(UTAModel):
     venue_order_id: str | None = None
     venue_fill_id: str = Field(min_length=1)
     side: str
+    position_side: str | None = None
+    trade_intent: str | None = None
     quantity: DecimalValue
     price: DecimalValue
     fee: DecimalValue | None = None

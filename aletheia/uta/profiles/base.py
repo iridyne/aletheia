@@ -355,6 +355,24 @@ class CCXTProfile:
         fill_id = raw.get("id") or info.get("tradeId") or info.get("fillId")
         if not fill_id:
             raise ValueError("fill identity missing")
+        position_side = (
+            raw.get("positionSide")
+            or raw.get("posSide")
+            or raw.get("holdSide")
+            or info.get("positionSide")
+            or info.get("posSide")
+            or info.get("holdSide")
+        )
+        trade_intent = (
+            raw.get("tradeSide")
+            or raw.get("trade_side")
+            or info.get("tradeSide")
+            or info.get("trade_side")
+        )
+        if trade_intent is None and (
+            raw.get("reduceOnly") is True or info.get("reduceOnly") is True
+        ):
+            trade_intent = "close"
         return FillReport(
             identity=identity,
             instrument=instrument,
@@ -364,6 +382,8 @@ class CCXTProfile:
             venue_order_id=str(raw.get("order")) if raw.get("order") else None,
             venue_fill_id=str(fill_id),
             side=str(raw.get("side") or "unknown"),
+            position_side=str(position_side) if position_side else None,
+            trade_intent=str(trade_intent) if trade_intent else None,
             quantity=quantity,
             price=price,
             fee=decimal_value(fee.get("cost")),
