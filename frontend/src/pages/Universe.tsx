@@ -118,6 +118,8 @@ export default function Universe() {
     ? 'Active'
     : universeStatus === 'disabled'
       ? 'Universe disabled'
+      : universeStatus === 'stale_snapshot'
+        ? 'Stale snapshot'
       : universeStatus === 'no_active_snapshot'
         ? 'No active snapshot'
         : 'Not available'

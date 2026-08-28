@@ -476,7 +476,7 @@ be interpreted as zeroing spendable balance or equity. See also
 | GET | `/universe/current` | Current universe composition |
 | GET | `/universe/snapshots` | Universe snapshot history |
 | GET | `/universe/snapshots/{id}` | Snapshot detail with members |
-| GET | `/universe/workbench` | Bounded active Entry Plans and Candidate attention, exact summary counts, Universe/fallback state, and per-section availability |
+| GET | `/universe/workbench` | Bounded active Entry Plans and Candidate attention, exact summary counts, and truthful config-first `disabled` / `stale_snapshot` / `active` Universe state; fallback instruments never imply Candidate attention |
 | GET | `/universe/entry-plans/{plan_id}` | Exact active or terminal Entry Plan; validates its stored V1 contract and content hash before returning it |
 | GET | `/universe/candidates/{candidate_id}` | Exact Candidate attention and planning evidence by identity; elapsed soft/hard attention deadlines are projected immediately as `ttl_expired` / `max_attention_age` without mutating Entry Plans or Orders |
 | GET | `/universe/planning-history` | Stable `(updated_at,id)` cursor pagination across Candidate planning generations and Entry Plans (`limit`, optional `before`), using the same effective attention-expiry projection as Candidate detail |
