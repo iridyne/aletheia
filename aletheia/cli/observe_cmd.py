@@ -247,35 +247,71 @@ def observation_drift(
         )
         raise typer.Exit(code=1)
 
-    def _git(*args: str) -> str:
+    def _git(*args: str, timeout: int = 15) -> tuple[str | None, str | None]:
         try:
             result = subprocess.run(
-                ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=15,
+                ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            raise typer.Exit(code=1) from exc
-        return (result.stdout or "").strip()
+        except subprocess.TimeoutExpired:
+            return None, "git_timeout"
+        except FileNotFoundError:
+            return None, "git_unavailable"
+        if result.returncode != 0:
+            return None, "git_command_failed"
+        return (result.stdout or "").strip(), None
+
+    fetched = False
+
+    def _unavailable(reason: str, *, head_sha: str | None = None, master_sha: str | None = None) -> None:
+        payload = {
+            "available": False,
+            "worker_head": head_sha,
+            "origin_master": master_sha,
+            "fetched": fetched,
+            "behind": None,
+            "ahead": None,
+            "warn_after": warn_after,
+            "drifted": None,
+            "unavailable_reason": reason,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            typer.echo(f"✗ unavailable={reason}")
+            typer.echo(f"  worker_head={(head_sha or 'unknown')[:12]}… origin/master={(master_sha or 'unknown')[:12]}…")
+        raise typer.Exit(code=1)
 
     if fetch:
-        subprocess.run(
-            ["git", "fetch", "origin", "master", "--quiet"],
-            cwd=cwd, check=False, timeout=60,
+        _fetch_output, fetch_error = _git(
+            "fetch", "origin", "master", "--quiet", timeout=60,
         )
+        if fetch_error:
+            _unavailable("git_fetch_failed" if fetch_error == "git_command_failed" else fetch_error)
+        fetched = True
 
-    head_sha = _git("rev-parse", "HEAD")
-    master_sha = _git("rev-parse", "origin/master") or None
-    if master_sha:
-        behind_raw = _git("rev-list", "--count", "HEAD..origin/master")
-        ahead_raw = _git("rev-list", "--count", "origin/master..HEAD")
-    else:
-        behind_raw = ahead_raw = "0"
-    behind = int(behind_raw or 0)
-    ahead = int(ahead_raw or 0)
+    head_sha, head_error = _git("rev-parse", "HEAD")
+    if head_error or not head_sha:
+        _unavailable(head_error or "git_head_unavailable")
+    master_sha, master_error = _git("rev-parse", "origin/master")
+    if master_error or not master_sha:
+        _unavailable(master_error or "git_origin_master_unavailable", head_sha=head_sha)
+    behind_raw, behind_error = _git("rev-list", "--count", "HEAD..origin/master")
+    if behind_error or not behind_raw:
+        _unavailable(behind_error or "git_behind_count_unavailable", head_sha=head_sha, master_sha=master_sha)
+    ahead_raw, ahead_error = _git("rev-list", "--count", "origin/master..HEAD")
+    if ahead_error or not ahead_raw:
+        _unavailable(ahead_error or "git_ahead_count_unavailable", head_sha=head_sha, master_sha=master_sha)
+    try:
+        behind = int(behind_raw)
+        ahead = int(ahead_raw)
+    except (TypeError, ValueError):
+        _unavailable("git_count_invalid", head_sha=head_sha, master_sha=master_sha)
 
     payload = {
+        "available": True,
         "worker_head": head_sha,
         "origin_master": master_sha,
-        "fetched": fetch,
+        "fetched": fetched,
         "behind": behind,
         "ahead": ahead,
         "warn_after": warn_after,
