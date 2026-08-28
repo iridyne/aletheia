@@ -492,16 +492,49 @@ def _save_config_locked(
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(CONFIG_PATH.parent), suffix=".tmp")
     try:
-        os.write(tmp_fd, content.encode("utf-8"))
+        payload = content.encode("utf-8")
+        offset = 0
+        while offset < len(payload):
+            written = os.write(tmp_fd, payload[offset:])
+            if written <= 0:
+                raise OSError("config write made no progress")
+            offset += written
+        os.fsync(tmp_fd)
         os.close(tmp_fd)
+        tmp_fd = None
         os.replace(tmp_path, str(CONFIG_PATH))
+        _sync_config_directory()
     except BaseException:
-        os.close(tmp_fd) if not os.get_inheritable(tmp_fd) else None
+        if tmp_fd is not None:
+            try:
+                os.close(tmp_fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
         raise
+
+
+def _sync_config_directory() -> None:
+    """Sync the replacement directory on POSIX; Windows lacks directory fsync."""
+    try:
+        directory_fd = os.open(str(CONFIG_PATH.parent), os.O_RDONLY)
+    except OSError:
+        # File fsync above remains the portable Windows fallback. On POSIX a
+        # directory-sync failure is surfaced instead of claiming durability.
+        if os.name == "nt":
+            return
+        raise
+    try:
+        try:
+            os.fsync(directory_fd)
+        except OSError:
+            if os.name != "nt":
+                raise
+    finally:
+        os.close(directory_fd)
 
 
 def save_config(
