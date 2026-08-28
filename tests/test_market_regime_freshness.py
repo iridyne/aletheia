@@ -18,14 +18,19 @@ def _insert_regime(detected_at: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("detected_at", "state"),
+    ("offset", "state"),
     [
-        ((datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(), "stale"),
-        ((datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(), "future"),
-        ("not-a-timestamp", "invalid"),
+        (-timedelta(hours=2), "stale"),
+        (timedelta(minutes=10), "future"),
+        (None, "invalid"),
     ],
 )
-def test_latest_market_regime_keeps_unavailable_provenance(detected_at, state):
+def test_latest_market_regime_keeps_unavailable_provenance(offset, state):
+    detected_at = (
+        (datetime.now(timezone.utc) + offset).isoformat()
+        if offset is not None
+        else "not-a-timestamp"
+    )
     _insert_regime(detected_at)
 
     row = repo.get_latest_market_regime()
