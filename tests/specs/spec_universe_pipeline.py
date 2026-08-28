@@ -14,6 +14,7 @@ import asyncio
 import ast
 from contextlib import nullcontext
 import inspect
+import json
 import textwrap
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -44,7 +45,12 @@ def test_refresh_registers_full_scored_arm_with_selected_subset():
 
 
 def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-    tmp_path, monkeypatch, failure_kind, *, caller_owns_transaction=False
+    tmp_path,
+    monkeypatch,
+    failure_kind,
+    *,
+    caller_owns_transaction=False,
+    reuse_previous_snapshot=False,
 ):
     from tests.test_entry_logic import setup_env
 
@@ -93,6 +99,16 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         market_type="crypto",
         status="active",
         expires_at="2099-01-01T00:00:00+00:00",
+        summary=(
+            json.dumps(
+                {
+                    "information_policy_epoch": service.POLICY_EPOCH_LABEL,
+                    "member_fingerprint": service._member_fingerprint(allocated, None),
+                }
+            )
+            if reuse_previous_snapshot
+            else "{}"
+        ),
     )
     repo.insert_universe_snapshot(previous)
     repo.insert_universe_member(UniverseMember(
@@ -107,6 +123,26 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         scanner_direction="long",
         expires_at="2099-01-01T00:00:00+00:00",
     ))
+    requalification_generation_id = None
+    requalification_before = None
+    if failure_kind == "scanner_completion":
+        existing_candidate = UniverseMember(
+            id="existing-requalification-candidate",
+            snapshot_id=previous.id,
+            asset_id=feature["asset_id"],
+            venue="bitget",
+            symbol="BTC/USDT",
+            market_type="spot",
+            rank=2,
+            total_score=70.0,
+            scanner_family="momentum",
+            scanner_direction="long",
+            expires_at="2099-01-01T00:00:00+00:00",
+        )
+        repo.insert_universe_member(existing_candidate)
+        generation, _ = repo.ensure_candidate_planning_generation(existing_candidate.id)
+        requalification_generation_id = generation["id"]
+        requalification_before = repo.get_candidate_planning_generation(generation["id"])
 
     async def sync_registry(_cfg):
         return 1
@@ -175,11 +211,25 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
     )
-    monkeypatch.setattr(
-        service.repo,
-        "ensure_candidate_planning_generation",
-        planning_generation_failure,
-    )
+    if failure_kind == "scanner_completion":
+        update_scanner_run = service.repo.update_universe_scanner_run
+
+        def fail_scanner_completion(run_id, **kwargs):
+            if kwargs.get("status") == "completed":
+                raise RuntimeError(failure_code)
+            return update_scanner_run(run_id, **kwargs)
+
+        monkeypatch.setattr(
+            service.repo,
+            "update_universe_scanner_run",
+            fail_scanner_completion,
+        )
+    else:
+        monkeypatch.setattr(
+            service.repo,
+            "ensure_candidate_planning_generation",
+            planning_generation_failure,
+        )
 
     caller_transaction = repo.transaction() if caller_owns_transaction else nullcontext()
     with caller_transaction:
@@ -197,20 +247,40 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     members = db.execute(
         "SELECT id,snapshot_id FROM universe_members ORDER BY rowid"
     ).fetchall()
-    assert [dict(row) for row in members] == [{
+    expected_members = [{
         "id": "previous-healthy-member",
         "snapshot_id": previous.id,
     }]
+    if failure_kind == "scanner_completion":
+        expected_members.append({
+            "id": "existing-requalification-candidate",
+            "snapshot_id": previous.id,
+        })
+    assert [dict(row) for row in members] == expected_members
     failed_run = db.execute(
         "SELECT status,snapshot_id,errors FROM universe_scanner_runs "
         "ORDER BY rowid DESC LIMIT 1"
     ).fetchone()
     assert failed_run["status"] == "failed"
-    assert failed_run["snapshot_id"]
-    assert failed_run["snapshot_id"] != previous.id
+    if reuse_previous_snapshot:
+        assert failed_run["snapshot_id"] is None
+    else:
+        assert failed_run["snapshot_id"]
+        assert failed_run["snapshot_id"] != previous.id
     assert failure_code in failed_run["errors"]
     assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
-    assert experiment_outcome_registrations == []
+    assert experiment_outcome_registrations == (
+        [True] if reuse_previous_snapshot else []
+    )
+    if requalification_generation_id:
+        requalification_after = repo.get_candidate_planning_generation(
+            requalification_generation_id
+        )
+        assert requalification_after["last_requalified_at"] is None
+        assert (
+            requalification_after["soft_expires_at"]
+            == requalification_before["soft_expires_at"]
+        )
 
 
 @spec_claim(
@@ -238,6 +308,36 @@ def test_unhandled_planning_generation_failure_cannot_publish_partial_universe_r
 ):
     _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path, monkeypatch, "runtime"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-29",
+        "universe_pipeline",
+        "§3 completed-scan Candidate attention authority",
+        "L2b",
+        "Candidate attention reconciliation and scanner-run completion commit atomically; "
+        "a completion write failure preserves the previous lease and records a failed run.",
+        status="implemented",
+    ),
+)
+def test_scanner_completion_failure_rolls_back_candidate_requalification(
+    tmp_path, monkeypatch
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path, monkeypatch, "scanner_completion"
+    )
+
+
+def test_change_suppressed_completion_failure_rolls_back_candidate_requalification(
+    tmp_path, monkeypatch
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path,
+        monkeypatch,
+        "scanner_completion",
+        reuse_previous_snapshot=True,
     )
 
 
