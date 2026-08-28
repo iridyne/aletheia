@@ -593,6 +593,7 @@ async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
         "amount": "1",
         "price": "60000.25",
         "timestamp": timestamp,
+        "info": {"positionSide": "BOTH"},
         "fee": {"cost": "0.1", "currency": "USDT"},
     }]
     exchange.ledger = [{"info": {
@@ -646,6 +647,135 @@ async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
         for event in exchange.events
         if event[0] in {"fetch_my_trades", "fetch_ledger"}
     )
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_verified_exit_matches_the_queried_position_leg(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.positions = [{
+        "symbol": "BTC/USDT:USDT",
+        "side": "short",
+        "contracts": "1",
+        "entryPrice": "60000",
+    }]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    now = datetime.now(timezone.utc)
+
+    report = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity,
+        local_position_id="long-position",
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        direction="long",
+        expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1),
+        history_end_at=now,
+    ))
+
+    assert report.state is VerifiedExitState.CONFIRMED_ABSENT_WITHOUT_FILL
+    assert report.current_position is None
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_verified_exit_keeps_unrecognized_position_leg_inconclusive(monkeypatch):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.positions = [{
+        "symbol": "BTC/USDT:USDT",
+        "side": "unknown",
+        "contracts": "1",
+        "entryPrice": "60000",
+    }]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    now = datetime.now(timezone.utc)
+
+    report = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity,
+        local_position_id="long-position",
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        direction="long",
+        expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1),
+        history_end_at=now,
+    ))
+
+    assert report.state is VerifiedExitState.INCONCLUSIVE
+    assert report.reason_code == "position_leg_unresolved"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "fill_side", "position_side", "trade_side", "expected"),
+    (
+        ("long", "sell", "SHORT", "open", VerifiedExitState.INCONCLUSIVE),
+        ("long", "sell", "LONG", "close", VerifiedExitState.VERIFIED_FILL_EXIT),
+        ("long", "sell", None, None, VerifiedExitState.INCONCLUSIVE),
+        ("long", "sell", "BOTH", None, VerifiedExitState.VERIFIED_FILL_EXIT),
+        ("short", "buy", "LONG", "open", VerifiedExitState.INCONCLUSIVE),
+        ("short", "buy", "SHORT", "close", VerifiedExitState.VERIFIED_FILL_EXIT),
+    ),
+)
+async def test_verified_exit_requires_compatible_fill_leg_or_one_way_evidence(
+    monkeypatch, direction, fill_side, position_side, trade_side, expected,
+):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    info = {}
+    if position_side is not None:
+        info["positionSide"] = position_side
+    if trade_side is not None:
+        info["tradeSide"] = trade_side
+    exchange.trades = [{
+        "id": "fill-hedge",
+        "order": "venue-close",
+        "symbol": "BTC/USDT:USDT",
+        "side": fill_side,
+        "amount": "1",
+        "price": "60000",
+        "timestamp": int((now - timedelta(seconds=1)).timestamp() * 1000),
+        "info": info,
+    }]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity,
+        local_position_id="long-position",
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        direction=direction,
+        expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1),
+        history_end_at=now,
+    ))
+
+    assert report.state is expected
     await adapter.close()
 
 

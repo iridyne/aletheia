@@ -896,7 +896,23 @@ class CCXTUTAAdapter:
             self.get_positions(PositionQuery(scope=scope)),
             self.get_fills(FillQuery(scope=scope)),
         )
-        if positions.completeness is ReadCompleteness.COMPLETE and positions.positions:
+        direction = (
+            "long" if query.direction.lower() in {"long", "buy"} else "short"
+        )
+        current_position = next(
+            (
+                position
+                for position in positions.positions
+                if position.side.lower() in (
+                    {"long", "buy"} if direction == "long" else {"short", "sell"}
+                )
+            ),
+            None,
+        )
+        if (
+            positions.completeness is ReadCompleteness.COMPLETE
+            and current_position is not None
+        ):
             return VerifiedExitReport(
                 identity=self.identity,
                 completeness=ReadCompleteness.COMPLETE,
@@ -905,7 +921,21 @@ class CCXTUTAAdapter:
                 profile_version=self._profile_version,
                 state=VerifiedExitState.POSITION_PRESENT,
                 local_position_id=query.local_position_id,
-                current_position=positions.positions[0],
+                current_position=current_position,
+            )
+        if positions.completeness is ReadCompleteness.COMPLETE and any(
+            position.side.lower() not in {"long", "buy", "short", "sell"}
+            for position in positions.positions
+        ):
+            return VerifiedExitReport(
+                identity=self.identity,
+                completeness=ReadCompleteness.COMPLETE,
+                scope=scope,
+                received_at=self._now(),
+                reason_code="position_leg_unresolved",
+                profile_version=self._profile_version,
+                state=VerifiedExitState.INCONCLUSIVE,
+                local_position_id=query.local_position_id,
             )
         non_entry_fills = tuple(
             fill
@@ -913,9 +943,25 @@ class CCXTUTAAdapter:
             if fill.client_order_id not in query.local_order_ids
             and fill.venue_order_id not in query.local_order_ids
         )
-        close_side = "sell" if query.direction.lower() in {"long", "buy"} else "buy"
-        close_fills = tuple(fill for fill in non_entry_fills if fill.side.lower() == close_side)
-        ambiguous = any(fill.side.lower() != close_side for fill in non_entry_fills)
+        close_side = "sell" if direction == "long" else "buy"
+
+        def compatible_close(fill: FillReport) -> bool:
+            if fill.side.lower() != close_side:
+                return False
+            position_side = (fill.position_side or "").lower()
+            trade_intent = (fill.trade_intent or "").lower()
+            if trade_intent in {"open", "entry", "increase"}:
+                return False
+            if trade_intent and trade_intent not in {
+                "close", "exit", "reduce", "decrease",
+            }:
+                return False
+            if position_side in {"long", "short"}:
+                return position_side == direction
+            return position_side in {"both", "net", "one_way", "oneway"}
+
+        close_fills = tuple(fill for fill in non_entry_fills if compatible_close(fill))
+        ambiguous = any(not compatible_close(fill) for fill in non_entry_fills)
         if (
             positions.completeness is ReadCompleteness.COMPLETE
             and fills.completeness is ReadCompleteness.COMPLETE
