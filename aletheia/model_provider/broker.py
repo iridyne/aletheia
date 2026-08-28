@@ -31,6 +31,9 @@ from aletheia.model_provider.base import ModelRequest, ModelResponse, StreamChun
 
 logger = logging.getLogger("aletheia.model_provider.broker")
 _DEFAULT_EXECUTOR_SHUTDOWN_TIMEOUT_SEC = 4.0
+_STREAM_QUEUE_MAXSIZE = 32
+# ponytail: one fixed bridge bound keeps slow consumers safe; make it policy
+# driven only if real workloads show materially different stream sizes.
 
 T = TypeVar("T")
 
@@ -754,23 +757,39 @@ async def brokered_stream(
 
     target = broker or inference_broker
     caller_loop = asyncio.get_running_loop()
-    chunks: asyncio.Queue[StreamChunk | object] = asyncio.Queue()
+    chunks: asyncio.Queue[StreamChunk | object] = asyncio.Queue(maxsize=_STREAM_QUEUE_MAXSIZE)
     sentinel = object()
+
+    async def _enqueue(chunk: StreamChunk | object) -> None:
+        # The provider runs on the broker loop; await the caller-loop put so a
+        # full queue applies backpressure instead of retaining unbounded chunks.
+        pending = asyncio.run_coroutine_threadsafe(chunks.put(chunk), caller_loop)
+        try:
+            await asyncio.wrap_future(pending)
+        except asyncio.CancelledError:
+            pending.cancel()
+            raise
 
     async def _consume() -> None:
         async for chunk in provider.stream(request):
-            caller_loop.call_soon_threadsafe(chunks.put_nowait, chunk)
+            await _enqueue(chunk)
 
-    task = asyncio.create_task(
-        target.submit(
-            provider_name,
-            _consume,
-            reserved_tokens=estimate_request_tokens(request),
-            priority=priority,
-            timeout_sec=timeout_sec,
-        )
-    )
-    task.add_done_callback(lambda _task: chunks.put_nowait(sentinel))
+    async def _run_stream() -> None:
+        try:
+            await target.submit(
+                provider_name,
+                _consume,
+                reserved_tokens=estimate_request_tokens(request),
+                priority=priority,
+                timeout_sec=timeout_sec,
+            )
+        finally:
+            current = asyncio.current_task()
+            if current is None or not current.cancelling():
+                with suppress(asyncio.CancelledError):
+                    await chunks.put(sentinel)
+
+    task = asyncio.create_task(_run_stream())
     try:
         while True:
             item = await chunks.get()
