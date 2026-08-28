@@ -30,6 +30,45 @@ class Ticker:
     high_24h: float | None = None
     low_24h: float | None = None
 
+    def __post_init__(self) -> None:
+        self.last_price = _ticker_number(
+            self.last_price, "last_price", positive=True,
+        )
+        self.volume_24h = _ticker_number(
+            self.volume_24h, "volume_24h", non_negative=True,
+        )
+        self.change_pct_24h = _ticker_number(self.change_pct_24h, "change_pct_24h")
+        if self.high_24h is not None:
+            self.high_24h = _ticker_number(self.high_24h, "high_24h", positive=True)
+        if self.low_24h is not None:
+            self.low_24h = _ticker_number(self.low_24h, "low_24h", positive=True)
+        if (
+            self.high_24h is not None
+            and self.low_24h is not None
+            and self.high_24h < self.low_24h
+        ):
+            raise ValueError("ticker high_24h must be >= low_24h")
+
+
+def _ticker_number(
+    value: object,
+    field: str,
+    *,
+    positive: bool = False,
+    non_negative: bool = False,
+) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"ticker {field} is not numeric") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"ticker {field} must be finite")
+    if positive and number <= 0:
+        raise ValueError(f"ticker {field} must be positive")
+    if non_negative and number < 0:
+        raise ValueError(f"ticker {field} must be non-negative")
+    return number
+
 
 @dataclass
 class Candle:

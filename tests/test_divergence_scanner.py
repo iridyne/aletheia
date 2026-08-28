@@ -3,6 +3,7 @@
 import json
 import pytest
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from aletheia.storage.sqlite import reset_db
@@ -373,7 +374,7 @@ async def test_nonfinite_ticker_evidence_fails_closed(tmp_path, monkeypatch):
         "updated_at": now,
     })
     mock_provider = AsyncMock()
-    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+    mock_provider.get_ticker = AsyncMock(return_value=SimpleNamespace(
         symbol="BTC/USDT",
         last_price=float("nan"),
         volume_24h=5_000_000_000.0,

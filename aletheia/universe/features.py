@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 
@@ -265,9 +266,9 @@ def _is_valid_symbol(symbol: str) -> bool:
 def _positive_float(value) -> float | None:
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return parsed if parsed > 0 else None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
 
 
 def _load_fresh_enrichment_rows(
@@ -330,7 +331,8 @@ def _quote_volume_24h(exchange, ccxt_symbol: str, ticker: dict) -> float:
             return 0.0
         base_volume *= contract_size
 
-    return base_volume * last
+    result = base_volume * last
+    return result if math.isfinite(result) else 0.0
 
 
 def _ticker_candidate_fact(

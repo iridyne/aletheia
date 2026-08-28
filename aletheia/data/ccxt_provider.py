@@ -204,8 +204,7 @@ class CCXTProvider:
                             exchange.options.pop("defaultType", None)
                         else:
                             exchange.options["defaultType"] = _prev_type
-                record_venue_success(name)
-                return Ticker(
+                ticker = Ticker(
                     symbol=canon,
                     last_price=float(raw.get("last") or raw.get("close") or 0.0),
                     volume_24h=float(raw.get("quoteVolume") or raw.get("baseVolume") or 0.0),
@@ -214,6 +213,8 @@ class CCXTProvider:
                     low_24h=_opt_float(raw.get("low")),
                     provider=name,
                 )
+                record_venue_success(name)
+                return ticker
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e
                 if is_venue_refusal(e):
@@ -421,12 +422,14 @@ def _opt_float(value) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("ticker optional numeric field is invalid") from exc
 
 
 def require_exact_ticker_venue(ticker: Ticker, venue: str) -> Ticker:
     """Reject a ticker whose physical provider differs from the requested venue."""
+    if not isinstance(ticker, Ticker):
+        raise ValueError("ticker payload is not canonical")
     expected = str(venue or "").strip().lower()
     actual = str(ticker.provider or "").strip().lower()
     if not expected or actual != expected:

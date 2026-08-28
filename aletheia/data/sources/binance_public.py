@@ -71,19 +71,23 @@ class BinancePublicProvider:
             if is_venue_refusal(exc):
                 record_venue_failure(self.venue_name, exc)
             raise
-        from aletheia.data.venue_health import record_venue_success
-
-        record_venue_success(self.venue_name)
-
-        return Ticker(
+        ticker = Ticker(
             symbol=canon,
             last_price=float(raw.get("lastPrice") or 0.0),
             volume_24h=float(raw.get("quoteVolume") or 0.0),
             change_pct_24h=float(raw.get("priceChangePercent") or 0.0),
-            high_24h=float(raw.get("highPrice") or 0.0) or None,
-            low_24h=float(raw.get("lowPrice") or 0.0) or None,
+            high_24h=(
+                None if raw.get("highPrice") is None else float(raw["highPrice"])
+            ),
+            low_24h=(
+                None if raw.get("lowPrice") is None else float(raw["lowPrice"])
+            ),
             provider="binance_public",
         )
+        from aletheia.data.venue_health import record_venue_success
+
+        record_venue_success(self.venue_name)
+        return ticker
 
     async def get_ohlcv(
         self,
