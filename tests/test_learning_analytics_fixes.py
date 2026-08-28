@@ -165,6 +165,7 @@ class TestMemoEffectivenessTradeFiltering:
 
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item") as mock_update, \
+             patch("aletheia.analytics.memo_effectiveness.is_current_outcome_artifact", return_value=True), \
              patch("aletheia.analytics.memo_effectiveness.eligible_strategy_outcomes") as mock_outcomes:
             mock_list.return_value = [{
                 "id": "memo_time_123",
