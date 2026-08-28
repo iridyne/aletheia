@@ -11940,7 +11940,7 @@ def insert_market_regime(record) -> None:
     _insert("market_regimes", data)
 
 
-def get_latest_market_regime() -> dict | None:
+def get_latest_market_regime(*, now: datetime | None = None) -> dict | None:
     rows = _select_all("market_regimes", order="detected_at DESC", limit=1)
     if not rows:
         return None
@@ -11950,6 +11950,23 @@ def get_latest_market_regime() -> dict | None:
             row["signals"] = json.loads(row["signals"])
         except (json.JSONDecodeError, TypeError):
             pass
+    from aletheia.data.freshness import assess_freshness
+
+    verdict = assess_freshness(
+        row,
+        "regime",
+        now=now,
+        timestamp_field="detected_at",
+    )
+    row["freshness"] = verdict.state
+    row["age_seconds"] = verdict.age_seconds
+    if not verdict.usable:
+        # Retain only provenance for diagnostics; stale regime values must not
+        # remain usable by ranking, sizing, attribution, or Operator context.
+        row["state"] = None
+        row["confidence"] = None
+        row["long_bias"] = None
+        row["short_bias"] = None
     return row
 
 

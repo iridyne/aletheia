@@ -695,6 +695,14 @@ async def test_viability_rejects_invalid_scope(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.anyio
+async def test_viability_rejects_unsupported_execution_mode(client):
+    resp = await client.get(
+        "/api/economics/viability?scope=system&days=1&execution_mode=okx_demo"
+    )
+    assert resp.status_code == 422
+
+
 # ── /api/economics/viability/reports ─────────────────────────────────────────
 
 

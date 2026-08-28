@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,6 +58,16 @@ _LLM_DEGRADED_SUCCESS_RATE = 0.5
 # while that Gateway is healthy.  Keep the process/session join bounded: a wide
 # heuristic would turn a genuinely stale crash row into false current authority.
 _RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
+
+
+@contextmanager
+def _read_only_diagnostics():
+    """Fence every Doctor report against config and SQLite writes."""
+    from aletheia.config.loader import read_only_config
+    from aletheia.storage.sqlite import readonly_db
+
+    with read_only_config(), readonly_db(allow_missing=True):
+        yield
 
 
 @dataclass
@@ -103,6 +114,7 @@ class Report:
         }
 
 
+@_read_only_diagnostics()
 def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20) -> dict:
     """Build a read-only diagnostic bundle for `doctor --verbose/--deep`.
 
@@ -4231,6 +4243,7 @@ _CONTENT_PROBES = (
 )
 
 
+@_read_only_diagnostics()
 def build_content_report() -> Report:
     """Run ONLY the content-quality probes — the cheap subset of build_report() that
     asks "is the AI's output garbage", not "is the loop alive". Used by the PI
@@ -4245,6 +4258,7 @@ def build_content_report() -> Report:
     return report
 
 
+@_read_only_diagnostics()
 def build_report(*, probe_llm: bool = False) -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing.
 

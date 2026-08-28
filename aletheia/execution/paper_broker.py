@@ -667,6 +667,8 @@ def _current_regime() -> str:
         mr = get_latest_market_regime()
         if mr and mr.get("state"):
             return mr["state"]
+        if mr is not None:
+            return "unknown"
     except Exception:
         pass
     try:
