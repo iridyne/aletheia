@@ -2235,20 +2235,15 @@ def scheduled_job_status(job_id: str) -> dict[str, object]:
             }
 
         next_run_time = getattr(job, "next_run_time", None)
+        if isinstance(next_run_time, datetime) and next_run_time.tzinfo is None:
+            next_run_time = next_run_time.replace(tzinfo=timezone.utc)
         paused = (
             state == STATE_PAUSED
             or job_id in _selectively_paused_jobs
             or next_run_time is None
         )
-        if not paused:
-            if not isinstance(next_run_time, datetime):
-                paused = True
-            else:
-                next_run_time = (
-                    next_run_time.replace(tzinfo=timezone.utc)
-                    if next_run_time.tzinfo is None
-                    else next_run_time
-                )
+        if not isinstance(next_run_time, datetime):
+            paused = True
         return {
             "scheduler_state": state_label,
             "registered": True,
