@@ -135,22 +135,23 @@ function ResearchStatusCard() {
 }
 
 // --- Overview Tab ---
-function OverviewTab() {
+export function OverviewTab() {
   const qc = useQueryClient()
   const [brief, setBrief] = useState('')
+  const briefVersion = useRef(0)
   const [saveToProfile, setSaveToProfile] = useState(false)
 
   const createRun = useMutation({
-    mutationFn: () => api.createSerenityRun({
+    mutationFn: (variables: { brief?: string; briefVersion: number; saveToProfile: boolean }) => api.createSerenityRun({
       mode: 'standard',
       triggerType: 'manual',
-      brief: brief || undefined,
-      saveToProfile,
+      brief: variables.brief,
+      saveToProfile: variables.saveToProfile,
     }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['serenity-status'] })
       qc.invalidateQueries({ queryKey: ['serenity-runs'] })
-      setBrief('')
+      if (briefVersion.current === variables.briefVersion) setBrief('')
     },
     meta: { errorSurface: 'inline' },
   })
@@ -171,7 +172,10 @@ function OverviewTab() {
           <textarea
             placeholder="Optional: describe what to focus on (e.g. 'AI semiconductor supply chain catalysts')…"
             value={brief}
-            onChange={e => setBrief(e.target.value)}
+            onChange={e => {
+              briefVersion.current += 1
+              setBrief(e.target.value)
+            }}
             rows={3}
             maxLength={2000}
           />
@@ -183,7 +187,7 @@ function OverviewTab() {
               label="Save preferences to profile"
             />
             <Button
-              onClick={() => createRun.mutate()}
+              onClick={() => createRun.mutate({ brief: brief || undefined, briefVersion: briefVersion.current, saveToProfile })}
               disabled={createRun.isPending || hasActive}
               title={hasActive ? 'A run is already active' : 'Start a new research run'}
             >
