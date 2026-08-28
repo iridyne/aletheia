@@ -43,6 +43,14 @@ export function preferPerpMarketType(types: Set<string>): string {
   return Array.from(types)[0] ?? ''
 }
 
+export function classifyRiskPolicyMode(exchangeMode: unknown, statusAvailable: boolean): 'demo' | 'live' | null {
+  if (!statusAvailable || typeof exchangeMode !== 'string') return null
+  const mode = exchangeMode.trim().toLowerCase()
+  if (mode === 'live') return 'live'
+  if (mode === 'demo' || mode === 'paper') return 'demo'
+  return null
+}
+
 /**
  * Risk & Controls — the brakes console (master-caution panel × Bloomberg risk monitor).
  *
@@ -169,10 +177,11 @@ export default function RiskControls() {
   // We surface 3 caps the operator cares about most: open-positions count,
   // largest single-position notional, today's loss vs daily-loss budget.
   // Caps come from `boundaries` (demo vs live picked by exchange_mode).
-  const exchangeMode = String(s.exchange_mode || 'demo').toLowerCase()
-  const isLive = exchangeMode === 'live' || exchangeMode === 'bitget_live_limited'
+  const policyMode = classifyRiskPolicyMode(s.exchange_mode, statusAvailable)
+  const exchangeMode = policyMode ?? ''
+  const isLive = policyMode === 'live'
   const b = (boundaries || {}) as Record<string, Record<string, unknown> | undefined>
-  const activePolicy = (isLive ? b.live : b.demo) ?? {}
+  const activePolicy = policyMode ? ((isLive ? b.live : b.demo) ?? {}) : {}
   const capPositions = (activePolicy.positions as Record<string, unknown> | undefined)
   const capCapital = (activePolicy.capital as Record<string, unknown> | undefined)
   const capLoss = (activePolicy.loss as Record<string, unknown> | undefined)
@@ -200,11 +209,11 @@ export default function RiskControls() {
     return Math.max(m, (qty * px) / lev)
   }, 0)
 
-  const headroomRows = [
+  const headroomRows = policyMode ? [
     posCap != null && { label: 'Open positions', used: positionsCount, cap: posCap, fmtUsed: (v: number) => String(Math.round(v)), fmtCap: (v: number) => String(Math.round(v)) },
     marginCap != null && { label: 'Position margin', used: largestMargin, cap: marginCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
     dailyLossCapUsdt != null && { label: 'Daily loss', used: todayLoss, cap: dailyLossCapUsdt, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
-  ].filter(Boolean) as { label: string; used: number | null; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[]
+  ].filter(Boolean) as { label: string; used: number | null; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[] : []
 
   const fnl = funnel?.risk_decisions
   const topRejection = fnl?.top_rejection_reasons?.[0]
@@ -385,7 +394,17 @@ export default function RiskControls() {
           ) : null}
 
           {/* HEADROOM — how close are we to each cap. */}
-          {headroomRows.length > 0 && (
+          {statusLoading ? (
+            <div className="risk-section">
+              <div className="risk-section-label">Headroom</div>
+              <DataStateMessage state="loading" message="Risk headroom loading…" />
+            </div>
+          ) : !policyMode ? (
+            <div className="risk-section">
+              <div className="risk-section-label">Headroom</div>
+              <DataStateMessage state="unavailable" message="Risk headroom unavailable. Current exchange mode is unavailable." />
+            </div>
+          ) : headroomRows.length > 0 && (
             <div className="risk-section">
               <div className="risk-section-label">Headroom · {humanize(exchangeMode)}</div>
               <div className="headroom-list">

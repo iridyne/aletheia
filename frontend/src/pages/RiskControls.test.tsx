@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import SRC from './RiskControls.tsx?raw'
 import { fmtSymbol } from '../lib/format'
-import { marketTypesFromOpenPositions, openPositionRows, preferPerpMarketType } from './RiskControls'
+import { classifyRiskPolicyMode, marketTypesFromOpenPositions, openPositionRows, preferPerpMarketType } from './RiskControls'
 
 describe('RiskControls trust-path mutations', () => {
   it('fails closed when authoritative reads are unavailable', () => {
@@ -34,6 +34,20 @@ describe('RiskControls trust-path mutations', () => {
     expect(SRC).toContain("latest.decision_role === 'authoritative' ? 'Authoritative' : `${latest.decision_role || 'legacy'} history`")
     expect(SRC).toContain('latest.proposal_execution_mode')
     expect(SRC).toContain('latest.policy_id')
+  })
+
+  it('never chooses a policy without a current, recognized exchange mode', () => {
+    expect(classifyRiskPolicyMode('live', true)).toBe('live')
+    expect(classifyRiskPolicyMode('demo', true)).toBe('demo')
+    expect(classifyRiskPolicyMode('paper', true)).toBe('demo')
+    expect(classifyRiskPolicyMode('LIVE', true)).toBe('live')
+    for (const mode of [null, undefined, '', 'bitget_live_limited', 'sandbox', 42]) {
+      expect(classifyRiskPolicyMode(mode, true)).toBeNull()
+    }
+    expect(classifyRiskPolicyMode('demo', false)).toBeNull()
+    expect(SRC).toContain('const policyMode = classifyRiskPolicyMode(s.exchange_mode, statusAvailable)')
+    expect(SRC).toContain('Risk headroom unavailable. Current exchange mode is unavailable.')
+    expect(SRC).not.toContain("String(s.exchange_mode || 'demo')")
   })
 
   it('derives live exposure market labels from open positions only', () => {
