@@ -1028,13 +1028,12 @@ class UniverseService:
                         new_generation_ids=new_generation_ids,
                         now=now,
                     )
-                # Publish completion only after Candidate attention reconciliation.
-                repo.update_universe_scanner_run(
-                    run.id,
-                    status="completed",
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    snapshot_id=prev_snapshot_id,
-                )
+                    repo.update_universe_scanner_run(
+                        run.id,
+                        status="completed",
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        snapshot_id=prev_snapshot_id,
+                    )
                 logger.info(
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
                     prev_snapshot_id,
@@ -1190,6 +1189,13 @@ class UniverseService:
                         cascaded,
                     )
 
+                repo.update_universe_scanner_run(
+                    run.id,
+                    status="completed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    snapshot_id=snap.id,
+                )
+
             # Selection is evidence only after the snapshot and Candidate/Setup handoff
             # commit. A failed publication must not look like an applied paper arm.
             inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
@@ -1222,12 +1228,6 @@ class UniverseService:
             else:
                 logger.debug("Universe causal control cohort sampling skipped (hourly cadence)")
 
-            repo.update_universe_scanner_run(
-                run.id,
-                status="completed",
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                snapshot_id=snap.id,
-            )
             _notify_operator_feature_refresh("universe_refresh_new_snapshot")
             logger.info(
                 "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",

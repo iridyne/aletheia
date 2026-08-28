@@ -117,6 +117,9 @@ Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assess
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
+Candidate attention 的 requalification/terminal reconciliation 与对应 scanner run 的 `completed`
+证据必须在同一个 Universe publication transaction 提交；任一写入失败时，两者全部回滚，失败或
+partial refresh 不得留下续租或 quota/admission 终态。
 所有 Universe family 共用 Candidate→Entry Plan→Execution 生命周期；Trigger 只属于 TRIGGERED plan。
 `setup_armed_entry_not_eligible` 与 `triggered_opportunity_created` 仅是历史 adapter 审计事件，不取得
 新开仓权限。V1 不引入新的 pullback、ATR、SMC/ICT
