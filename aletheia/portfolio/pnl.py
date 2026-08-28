@@ -693,6 +693,7 @@ def close_position(
         closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
+    private_exchange_fill = verified_exit_evidence is not None
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
     fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
     # Sprint B (QR-2026-07-01-02): entry_fee=0.0 is a legitimate stored value (zero-cost
@@ -700,10 +701,10 @@ def close_position(
     # genuinely missing (NULL from pre-Sprint-B positions). Truthiness "or 0" had been
     # recomputing fees on legible zeros and inflating realized PnL.
     entry_fee = row.get("entry_fee")
-    if entry_fee is None:
+    if entry_fee is None and not private_exchange_fill:
         entry_fee = row["entry_price"] * row["quantity"] * fee_rate
     if actual_exit_fee is None:
-        exit_fee = exit_price * row["quantity"] * fee_rate
+        exit_fee = None if private_exchange_fill else exit_price * row["quantity"] * fee_rate
     else:
         exit_fee = float(actual_exit_fee)
         if not math.isfinite(exit_fee) or exit_fee < 0:
@@ -750,7 +751,7 @@ def close_position(
     # publish a reassuring PnL number, and move local-paper cash by that invented
     # amount.  Keep the lifecycle closed while leaving the net result unavailable.
     realized: float | None = None
-    if funding_cost is not None:
+    if funding_cost is not None and entry_fee is not None and exit_fee is not None:
         realized = gross_pnl - entry_fee - exit_fee - funding_cost
 
     # BTC benchmark at exit for alpha/beta separation. Explicitly non-crypto
@@ -759,18 +760,21 @@ def close_position(
 
     execution_mode = str(row.get("execution_mode") or "")
     local_paper_fill = execution_mode == "paper_internal"
-    private_exchange_fill = verified_exit_evidence is not None
     if private_exchange_fill:
         if not isinstance(verified_exit_evidence, dict):
             raise ValueError("verified_exit_evidence must be a mapping")
         fill_ids = verified_exit_evidence.get("fill_ids")
+        fee_status = verified_exit_evidence.get("fee_status")
+        fee_in_quote = verified_exit_evidence.get("fee_in_quote")
+        fee_unavailable = fee_status == "unavailable" and fee_in_quote is None
         try:
             evidence_quantity = float(verified_exit_evidence.get("fill_quantity"))
         except (TypeError, ValueError):
             evidence_quantity = 0.0
         tolerance = max(1e-12, float(row["quantity"]) * 1e-9)
         if (
-            actual_exit_fee is None
+            (actual_exit_fee is None and not fee_unavailable)
+            or (actual_exit_fee is not None and fee_unavailable)
             or not supplied_closed_at
             or not isinstance(fill_ids, list)
             or not fill_ids
@@ -872,8 +876,8 @@ def close_position(
         "close_reason": reason,
         "closed_at": closed_at,
         "btc_exit_price": btc_exit,
-        "entry_fee": round(entry_fee, 8),
-        "exit_fee": round(exit_fee, 8),
+        "entry_fee": round(entry_fee, 8) if entry_fee is not None else None,
+        "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
         "funding_cost": funding_cost,
         "funding_source": funding_source,
         "slippage_cost": (row.get("slippage_cost") if local_paper_fill else None),
@@ -896,7 +900,10 @@ def close_position(
         ),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
-    if exit_fill_verified and funding_cost is None:
+    if exit_fill_verified and (entry_fee is None or exit_fee is None):
+        outcome_eligible = False
+        outcome_exclusion_reason = "incomplete_realized_economics"
+    elif exit_fill_verified and funding_cost is None:
         outcome_eligible = False
         outcome_exclusion_reason = "incomplete_funding_economics"
     else:
@@ -973,8 +980,8 @@ def close_position(
                 "exit_price": exit_price,
                 "closed_qty": row["quantity"],
                 "realized_pnl": realized,
-                "entry_fee": round(entry_fee, 8),
-                "exit_fee": round(exit_fee, 8),
+                "entry_fee": round(entry_fee, 8) if entry_fee is not None else None,
+                "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
                 "is_partial": 0,
                 "closed_at": closed_at,
             }
@@ -1020,7 +1027,7 @@ def close_position(
         pnl_emoji = "+" if realized is not None and realized > 0 else ""
         if realized is None:
             pnl_message = (
-                "Net PnL unavailable: funding economics are incomplete"
+                "Net PnL unavailable: close economics are incomplete"
                 "\nOutcome excluded from feedback: "
                 f"{outcome_exclusion_reason}"
             )
