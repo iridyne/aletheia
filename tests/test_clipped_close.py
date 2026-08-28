@@ -10,6 +10,7 @@ double-counting a replayed clip.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -476,3 +477,50 @@ def test_clipped_close_quantity_halves_per_venue_cancel(tmp_path, monkeypatch):
         "'stale_close_order_absent_unfilled','2026-08-22T15:40:00+00:00')"
     )
     assert _clipped_close_quantity("pos-clip", 424.0) == floor
+
+
+def test_clipped_close_materializes_realized_pnl_and_entry_fee(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip", quantity=424)
+    db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
+    db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
+
+    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+
+    assert result.state == "filled_clip_partial_position"
+    position = repo._select_one("positions", "pos-clip")
+    assert position["entry_fee"] == 2.12
+    event = db.execute(
+        "SELECT closed_qty, exit_price, realized_pnl, entry_fee, exit_fee "
+        "FROM position_close_events WHERE position_id='pos-clip'"
+    ).fetchone()
+    assert event["closed_qty"] == 212.0
+    assert event["exit_price"] == 1.48
+    assert event["entry_fee"] == 2.12
+    assert event["exit_fee"] == 0.2
+    assert event["realized_pnl"] == -105.776
+
+
+def test_partial_close_without_entry_fee_blocks_daily_loss_economics(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.portfolio.account_loss import _partial_close_realized_today
+    from aletheia.storage import repositories as repo
+
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_position_close_event({
+        "id": "partial-missing-economics",
+        "position_id": "position-missing-economics",
+        "symbol": "XRP/USDT",
+        "direction": "short",
+        "execution_mode": "bitget_demo",
+        "closed_qty": 1.0,
+        "realized_pnl": None,
+        "is_partial": 1,
+        "closed_at": now,
+    })
+
+    assert _partial_close_realized_today("bitget_demo", now[:10] + "T00:00:00+00:00") is None
