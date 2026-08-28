@@ -290,13 +290,15 @@ def _insert_many(table: str, rows: list[dict]) -> int:
 
 
 def _select_all(
-    table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100
+    table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int | None = 100
 ) -> list[dict]:
     db = get_db()
     sql = f"SELECT * FROM {table}"
     if where:
         sql += f" WHERE {where}"
-    sql += f" ORDER BY {order} LIMIT {max(1, limit)}"
+    sql += f" ORDER BY {order}"
+    if limit is not None:
+        sql += f" LIMIT {max(1, limit)}"
     rows = db.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
@@ -8229,7 +8231,7 @@ def insert_universe_members_batch(members: list[UniverseMember]) -> int:
     )
 
 
-def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
+def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict]:
     return _select_all(
         "universe_members",
         where="snapshot_id = ?",
@@ -8962,8 +8964,8 @@ def transition_entry_plan(
     return updated.rowcount == 1
 
 
-def get_active_universe_members(limit: int = 20) -> list[dict]:
-    """Return top-ranked members from the currently active universe snapshot."""
+def get_active_universe_members(limit: int | None = 20) -> list[dict]:
+    """Return members from the active universe snapshot, optionally bounded."""
     snap = get_active_universe_snapshot()
     if not snap:
         return []
