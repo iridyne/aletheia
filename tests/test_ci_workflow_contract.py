@@ -21,7 +21,7 @@ SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
 RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4"
 SELF_HOSTED_CASI = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "casi"]
 SELF_HOSTED_FEDORA = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "fedora"]
-SELF_HOSTED_PR = ["self-hosted", "pr-ephemeral"]
+SELF_HOSTED_PR = ["pr-ephemeral"]
 
 
 def _workflow() -> dict:

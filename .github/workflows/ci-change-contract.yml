@@ -44,7 +44,7 @@ concurrency:
 jobs:
   verify-change-contract:
     name: Verify Change Contract
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Check out source

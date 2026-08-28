@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Check out source
@@ -80,7 +80,7 @@ jobs:
     name: Review core
     needs: [change-contract-preflight]
     if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     outputs:
       base: ${{ steps.changes.outputs.base }}
@@ -285,7 +285,7 @@ jobs:
     name: Review trust-boundary coverage
     needs: review-core
     if: ${{ needs.review-core.outputs.coverage == 'true' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -334,7 +334,7 @@ jobs:
     name: Review Node surfaces
     needs: review-core
     if: ${{ needs.review-core.outputs.frontend == 'true' || needs.review-core.outputs.operator == 'true' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -384,7 +384,7 @@ jobs:
     name: Review native host
     needs: review-core
     if: ${{ needs.review-core.outputs.native == 'true' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -424,7 +424,7 @@ jobs:
     name: Review checks
     needs: [review-core, review-coverage, review-node, review-native]
     if: ${{ always() }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Aggregate review results
@@ -459,7 +459,7 @@ jobs:
     name: Python unit
     needs: [change-contract-preflight]
     if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -499,7 +499,7 @@ jobs:
     name: Python runtime state
     needs: [review, unit]
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 15
     steps:
       - name: Check out source
@@ -555,7 +555,7 @@ jobs:
     name: Python integration
     needs: [review, unit]
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -590,7 +590,7 @@ jobs:
     # The lane predecessor is ordering only. A Runtime failure is itself useful
     # evidence and must not hide the independent Specifications regression.
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -624,7 +624,7 @@ jobs:
     needs: [review, unit, integration]
     # Integration orders this lane but does not suppress E2E failure evidence.
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, pr-ephemeral]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
