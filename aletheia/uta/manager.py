@@ -26,6 +26,13 @@ from aletheia.uta.profiles import (
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 
 
+DEFAULT_UNIFIED_EXECUTION_MODES = (
+    "binance_testnet",
+    "okx_demo",
+    "bitget_demo",
+)
+
+
 @dataclass
 class UnifiedState:
     total_equity_usdt: float | None
@@ -509,9 +516,18 @@ async def _read_selected_account(cfg, registry, legacy, identity):
         )
 
 
-async def get_unified_state(cfg=None) -> UnifiedState:
+async def get_unified_state(
+    cfg=None,
+    *,
+    execution_modes: tuple[str, ...] | None = None,
+) -> UnifiedState:
     cfg = cfg or load_config()
     fetched_at = datetime.now(timezone.utc).isoformat()
+    requested_modes = tuple(dict.fromkeys(
+        DEFAULT_UNIFIED_EXECUTION_MODES
+        if execution_modes is None
+        else execution_modes
+    ))
     try:
         registry = build_uta_registry(cfg)
     except Exception:
@@ -522,28 +538,64 @@ async def get_unified_state(cfg=None) -> UnifiedState:
             errors=["uta_registry_configuration_invalid"],
             fetched_at=fetched_at,
         )
-    configured_identities = registry.configured_identities()
+    configured_identities = tuple(
+        identity
+        for identity in registry.configured_identities()
+        if identity.execution_mode in requested_modes
+    )
     identities_by_mode = {
         identity.execution_mode: identity for identity in configured_identities
     }
-    if configured_identities:
-        legacy_modes = tuple(
-            identity.execution_mode
-            for identity in configured_identities
-            if cfg.exchange.uta_read_boundary_for(identity.execution_mode)
-            in {"legacy", "shadow_read"}
+    legacy_modes = tuple(
+        execution_mode
+        for execution_mode in (
+            (identity.execution_mode for identity in configured_identities)
+            if configured_identities
+            else requested_modes
         )
-        legacy = _legacy_brokers(legacy_modes)
-    else:
-        legacy = _legacy_brokers()
+        if cfg.exchange.uta_read_boundary_for(execution_mode)
+        in {"legacy", "shadow_read"}
+    )
+    legacy = _legacy_brokers(legacy_modes)
     for execution_mode, broker in legacy.items():
         identities_by_mode[execution_mode] = _legacy_identity(cfg, execution_mode, broker)
-    identities = tuple(identities_by_mode.values())
+    identities = (
+        tuple(identities_by_mode.values())
+        if execution_modes is None
+        else tuple(
+            identities_by_mode[execution_mode]
+            for execution_mode in requested_modes
+            if execution_mode in identities_by_mode
+        )
+    )
+    missing_modes = (
+        tuple(
+            execution_mode
+            for execution_mode in requested_modes
+            if execution_mode not in identities_by_mode
+        )
+        if execution_modes is not None
+        else ()
+    )
     if not identities:
+        if missing_modes:
+            return UnifiedState(
+                None,
+                None,
+                None,
+                errors=[
+                    f"{execution_mode}:account_not_configured"
+                    for execution_mode in missing_modes
+                ],
+                fetched_at=fetched_at,
+            )
         return UnifiedState(0.0, 0.0, 0.0, fetched_at=fetched_at)
     accounts = []
     positions = []
-    errors = []
+    errors = [
+        f"{execution_mode}:account_not_configured"
+        for execution_mode in missing_modes
+    ]
     shadow_errors = []
     connected = []
     totals = [0.0, 0.0, 0.0]
@@ -594,12 +646,17 @@ async def get_unified_state(cfg=None) -> UnifiedState:
     )
 
 
-def get_unified_state_sync() -> UnifiedState:
+def get_unified_state_sync(
+    execution_modes: tuple[str, ...] | None = None,
+) -> UnifiedState:
     from concurrent.futures import ThreadPoolExecutor
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(get_unified_state())
+        return asyncio.run(get_unified_state(execution_modes=execution_modes))
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, get_unified_state()).result(timeout=30)
+        return pool.submit(
+            asyncio.run,
+            get_unified_state(execution_modes=execution_modes),
+        ).result(timeout=30)
