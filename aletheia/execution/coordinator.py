@@ -87,12 +87,14 @@ def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
     )
 
 
-def _status(report) -> tuple[str, str | None]:
+def _status(report, *, close_position_id: str | None = None) -> tuple[str, str | None]:
     if report.evidence is CommandEvidence.AMBIGUOUS:
         return "submission_unknown", "command_acknowledgement_unknown"
     if report.evidence is CommandEvidence.NOT_SENT:
         return "error", report.reason_code or "command_not_sent"
     if report.evidence is CommandEvidence.VENUE_REJECTED:
+        if close_position_id and not getattr(report, "venue_order_id", None):
+            return "error", report.reason_code or "venue_rejected_command"
         return "submission_rejected", report.reason_code or "venue_rejected_command"
     state = report.order.state if report.order is not None else OrderLifecycle.ACCEPTED
     if state is OrderLifecycle.FILLED:
@@ -107,7 +109,12 @@ def _status(report) -> tuple[str, str | None]:
 
 
 def _apply_report(order: Order, report, *, close_position_id: str | None = None) -> dict:
-    status, reason = _status(report)
+    status, reason = _status(report, close_position_id=close_position_id)
+    pending_close_status = (
+        "submission_rejected"
+        if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED
+        else status
+    )
     try:
         acknowledgement = finalize_exchange_acknowledgement(
             order.id,
@@ -115,7 +122,7 @@ def _apply_report(order: Order, report, *, close_position_id: str | None = None)
             status=status,
             error_reason=reason,
             close_position_id=close_position_id,
-            pending_close_status=status if close_position_id else None,
+            pending_close_status=pending_close_status if close_position_id else None,
         )
     except Exception as exc:
         raise PostSubmitDBError(
