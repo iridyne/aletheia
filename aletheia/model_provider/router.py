@@ -532,7 +532,7 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
         raise ValueError(f"Unknown provider: {name}")
     if not pcfg.enabled:
         raise ValueError(f"Model provider is disabled: {name}")
-    _require_provider_configured(name, pcfg)
+    await asyncio.to_thread(_require_provider_configured, name, pcfg)
 
     # For a cached OAuth-native provider, verify the token is still current.
     # The sync get_provider path cannot refresh inside a running event loop, so this

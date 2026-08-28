@@ -1,6 +1,7 @@
 """Tests for model provider layer."""
 
 import asyncio
+import threading
 import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
 import json
@@ -142,6 +143,38 @@ async def test_async_router_rejects_native_provider_without_credential(tmp_path,
 
     with pytest.raises(ProviderNotConfigured, match="not_configured"):
         await get_provider_async("missing-credential")
+    clear_cache()
+
+
+@pytest.mark.anyio
+async def test_async_provider_configuration_check_runs_off_event_loop(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret", lambda _ref: "secret")
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["async-provider"] = ProviderConfig(
+        type="openai_compatible",
+        base_url="http://localhost:8000/v1",
+        enabled=True,
+    )
+    save_config(cfg)
+    loop_thread = threading.get_ident()
+    check_thread = None
+
+    def record_check(_name, _pcfg):
+        nonlocal check_thread
+        check_thread = threading.get_ident()
+
+    monkeypatch.setattr("aletheia.model_provider.router._require_provider_configured", record_check)
+    await get_provider_async("async-provider")
+
+    assert check_thread is not None
+    assert check_thread != loop_thread
     clear_cache()
 
 
