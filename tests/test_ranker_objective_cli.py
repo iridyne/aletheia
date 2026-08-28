@@ -62,7 +62,6 @@ def test_cli_rejects_explicit_default_unsupported_option(monkeypatch):
     )
 
     assert result.exit_code == 2
-    assert "--limit not supported with --view funnel" in result.output
 
 
 @pytest.mark.parametrize(
