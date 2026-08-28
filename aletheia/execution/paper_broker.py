@@ -572,7 +572,8 @@ def _paper_position_attribution(
 ) -> dict[str, Any]:
     snapshot = _coerce_attribution_snapshot(attribution_snapshot)
     if snapshot:
-        regime_tag = str(snapshot.get("regime_tag") or "unknown")
+        regime_value = snapshot.get("regime_tag", "unknown")
+        regime_tag = None if regime_value is None else str(regime_value)
         return {
             "btc_entry_price": _float_or_none(snapshot.get("btc_entry_price")),
             "regime_tag": regime_tag,
@@ -604,7 +605,7 @@ def _coerce_attribution_snapshot(value: dict[str, Any] | str | None) -> dict[str
 def _entry_market_summary_from_snapshot(
     snapshot: dict[str, Any],
     fill_price: float,
-    regime_tag: str,
+    regime_tag: str | None,
 ) -> str | None:
     explicit = snapshot.get("entry_market_summary")
     if isinstance(explicit, str):
@@ -615,13 +616,18 @@ def _entry_market_summary_from_snapshot(
     context = snapshot.get("market_context")
     if not isinstance(context, dict):
         return None
-    return json.dumps({
-        "regime": regime_tag,
+    summary = {
         "price": fill_price,
         "data_completeness": context.get("data_completeness"),
         "tradability": context.get("tradability", {}),
         "leverage": context.get("leverage", {}),
-    }, default=str)[:2000]
+    }
+    if regime_tag is not None:
+        summary["regime"] = regime_tag
+    for key in ("analysis_context", "instrument_background"):
+        if key in context:
+            summary[key] = context[key]
+    return json.dumps(summary, default=str)[:2000]
 
 
 def _live_entry_market_summary(symbol: str, fill_price: float, regime_tag: str) -> str | None:
