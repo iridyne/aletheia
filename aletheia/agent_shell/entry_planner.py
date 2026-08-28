@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,9 @@ class EntryPlanDraft(BaseModel):
 
 
 PlannerFn = Callable[[dict], Awaitable[EntryPlanDraft | dict | None]]
+
+ENTRY_PLANNER_MIN_CONCURRENCY = 3
+ENTRY_PLANNER_MAX_CONCURRENCY = 15
 
 
 def _candidate_context(generation: dict) -> dict:
@@ -282,3 +286,24 @@ async def system_operator_entry_planner(context: dict) -> EntryPlanDraft | None:
 
 async def run_entry_planner_once(cfg=None) -> dict[str, Any]:
     return await plan_next_candidate(system_operator_entry_planner, cfg=cfg)
+
+
+async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
+    """Plan one rank-ordered durable batch with bounded model concurrency."""
+
+    pending = repo.count_pending_candidate_planning()
+    worker_count = min(
+        max(pending, ENTRY_PLANNER_MIN_CONCURRENCY),
+        ENTRY_PLANNER_MAX_CONCURRENCY,
+    )
+    results = await asyncio.gather(
+        *(run_entry_planner_once(cfg=cfg) for _ in range(worker_count))
+    )
+    claimed = [result for result in results if result.get("status") != "idle"]
+    return {
+        "status": "batch" if claimed else "idle",
+        "results": claimed,
+        "planning_attempts": len(claimed),
+        "model_invoked": any(result.get("model_invoked") for result in claimed),
+        "pending_queue_remaining": repo.count_pending_candidate_planning(),
+    }

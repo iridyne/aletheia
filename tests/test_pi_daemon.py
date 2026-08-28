@@ -141,7 +141,7 @@ async def test_daemon_drains_reported_pending_backlog():
         return {"status": "idle"}
 
     with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
-         patch("aletheia.agent_shell.entry_planner.run_entry_planner_once", new=idle_planner), \
+         patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=idle_planner), \
          patch("aletheia.config.loader.load_config") as mock_cfg:
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
@@ -187,7 +187,7 @@ async def test_no_model_defer_backlog_does_not_wait_for_llm_cooldown():
         "aletheia.agent_shell.commands.evaluate_trading_opportunity",
         new=fake_evaluate,
     ), patch(
-        "aletheia.agent_shell.entry_planner.run_entry_planner_once",
+        "aletheia.agent_shell.entry_planner.run_entry_planner_batch",
         new=idle_planner,
     ), patch("aletheia.config.loader.load_config") as mock_cfg, patch.object(
         pd, "_NO_MODEL_COOLDOWN_MAX_SEC", 0.01

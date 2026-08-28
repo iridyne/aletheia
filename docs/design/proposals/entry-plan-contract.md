@@ -25,9 +25,10 @@ now lives in `docs/design/contracts/decision_lifecycle_contract.md` and
   snapshot, rank, score, price and Candidate-row churn. Duplicate wakes coalesce;
   durable No-Plan does not reopen on heartbeat; only incompatible thesis facts or
   explicit manual replan create a new generation.
-- The on-demand Entry Planner reuses PI daemon scheduling. Its result is
-  compare-and-set against the current generation. Stale results remain audit
-  evidence and cannot activate a plan.
+- The on-demand Entry Planner reuses PI daemon scheduling. Each cycle uses 3 to
+  15 worker slots to claim a rank-ordered batch concurrently; actual model work
+  never exceeds eligible durable generations. Every result remains compare-and-set
+  against its claimed generation, so stale results cannot activate a plan.
 - `EntryPlan` is a generic immutable domain model. Momentum breakout, pullback
   and reclaim values live only in registered `TriggerSpec.params`.
 - `RESTING_MAKER` and Triggered Maker require venue Post-Only semantics.
