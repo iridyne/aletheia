@@ -65,3 +65,23 @@ def test_entry_plan_execution_reuses_canonical_gateway():
     assert "execute_existing_proposal" in source
     assert "evaluate_proposal" not in source
     assert "BitgetClient" not in source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S04",
+        "decision_lifecycle_contract",
+        "§4 DL-INV-37 Candidate planning priority",
+        "L2b",
+        "Entry Planner claims the current exact Candidate rank first and falls back "
+        "deterministically without changing planning identity.",
+        status="implemented",
+    )
+)
+def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback():
+    from aletheia.storage.repositories import claim_next_candidate_planning
+
+    source = inspect.getsource(claim_next_candidate_planning)
+    assert "um.id=pg.last_candidate_id" in source
+    assert "CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC" in source
+    assert "pg.created_at ASC, pg.id ASC" in source

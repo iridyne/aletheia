@@ -107,6 +107,53 @@ def test_unchanged_candidate_and_duplicate_wakes_create_one_durable_owner():
     assert repo.claim_next_candidate_planning("owner-two") is None
 
 
+def test_candidate_planning_claim_prefers_current_rank_over_fifo_age():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    rank_twenty = _candidate(
+        rank=20,
+        asset_id="asset-eth",
+        symbol="ETH/USDT",
+    )
+    older_generation, _ = repo.ensure_candidate_planning_generation(
+        rank_twenty.id,
+        now=start,
+    )
+    rank_one = _candidate(rank=1)
+    best_generation, _ = repo.ensure_candidate_planning_generation(
+        rank_one.id,
+        now=start + timedelta(seconds=1),
+    )
+
+    claimed = repo.claim_next_candidate_planning(
+        "priority-owner",
+        now=start + timedelta(seconds=2),
+    )
+
+    assert claimed["id"] == best_generation["id"]
+    assert claimed["id"] != older_generation["id"]
+
+
+def test_candidate_planning_claim_has_stable_fifo_fallback_without_rank():
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    older = _candidate(asset_id="asset-eth", symbol="ETH/USDT")
+    older_generation, _ = repo.ensure_candidate_planning_generation(older.id, now=start)
+    newer = _candidate()
+    repo.ensure_candidate_planning_generation(newer.id, now=start + timedelta(seconds=1))
+    db = repo.get_db()
+    db.execute(
+        "DELETE FROM universe_members WHERE id IN (?, ?)",
+        (older.id, newer.id),
+    )
+    db.commit()
+
+    claimed = repo.claim_next_candidate_planning(
+        "fallback-owner",
+        now=start + timedelta(seconds=2),
+    )
+
+    assert claimed["id"] == older_generation["id"]
+
+
 def test_candidate_attention_requalification_preserves_hard_deadline():
     start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
     candidate = _candidate()
