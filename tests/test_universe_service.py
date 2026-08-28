@@ -225,6 +225,17 @@ def test_filters_non_execution_eligible(svc, enabled_cfg):
     assert members[0]["symbol"] == "GOOD/USDT"
 
 
+def test_execution_ineligible_members_cannot_enter_planning_queue():
+    from types import SimpleNamespace
+
+    from aletheia.universe.service import _execution_eligible
+
+    assert _execution_eligible({"execution_eligible": True}) is True
+    assert _execution_eligible({"execution_eligible": False}) is False
+    assert _execution_eligible(SimpleNamespace(execution_eligible=False)) is False
+    assert _execution_eligible(SimpleNamespace()) is True
+
+
 def test_fallback_all_expired(svc, enabled_cfg):
     past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     mock_members = [
