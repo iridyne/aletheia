@@ -65,4 +65,12 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Fallback instruments available')
     expect(html).toContain('They are not durable Candidates')
   })
+
+  it('renders the backend stale snapshot state truthfully', () => {
+    const html = renderWorkbench({
+      ...workbench,
+      universe: { ...workbench.universe, status: 'stale_snapshot' },
+    })
+    expect(html).toContain('Stale snapshot')
+  })
 })
