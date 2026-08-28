@@ -437,12 +437,12 @@ def test_close_demo_position_places_real_close_and_realizes_pnl(tmp_path, monkey
     assert reconcile()["filled"] == 1
     closed = repo._select_one("positions", pos.id)
     assert closed["status"] == "closed"
-    # The private fill proves the close, but this fixture supplies no trusted
-    # funding ledger. Do not treat unknown futures funding as zero net PnL.
+    # The private fill proves the close, but this manually seeded position has
+    # neither a trusted entry fee nor funding. Do not fabricate net PnL.
     assert closed["realized_pnl"] is None
     assert closed["funding_source"] == "unavailable"
     assert closed["outcome_eligible"] == 0
-    assert closed["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert closed["outcome_exclusion_reason"] == "incomplete_realized_economics"
     assert result["exchange_order_id"] == "EX-DEMO-1"
 
 

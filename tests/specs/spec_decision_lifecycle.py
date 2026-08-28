@@ -28,7 +28,7 @@ def _bypass_candidate_technical_preflight(monkeypatch) -> None:
 
 def _stub_tradable_exact_instrument(monkeypatch) -> None:
     """Keep seam tests focused after the independent tradability preflight."""
-    def capture(symbol, *, exchange, market_type):
+    def capture(symbol, *, exchange, market_type, opportunity_id=None):
         physical_market = (
             "perp" if market_type in {"usdt_futures", "swap"} else market_type
         )
