@@ -10,6 +10,16 @@ _ACTIVE_STRUCTURED_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active
 _ACTIVE_STREAM_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active_stream_cost_request", default=None)
 
 
+async def _record_llm_attempt_async(**kwargs: Any) -> None:
+    """Keep synchronous best-effort cost persistence off the provider loop."""
+    try:
+        from aletheia.economics.tracing import record_llm_attempt
+
+        await asyncio.to_thread(record_llm_attempt, **kwargs)
+    except Exception:
+        pass
+
+
 def model_json_schema_payload(schema: Any) -> dict[str, Any]:
     """Return a JSON Schema payload from schema-like objects.
 
@@ -283,9 +293,7 @@ class ModelProvider:
                 except BaseException as exc:
                     finished_dt = datetime.now(timezone.utc)
                     try:
-                        from aletheia.economics.tracing import record_llm_attempt
-
-                        record_llm_attempt(
+                        await _record_llm_attempt_async(
                             call_id=call_id,
                             provider=provider_name,
                             model=model,
@@ -315,9 +323,7 @@ class ModelProvider:
                         if key in raw and key not in raw_usage:
                             raw_usage[key] = raw[key]
                 try:
-                    from aletheia.economics.tracing import record_llm_attempt
-
-                    record_llm_attempt(
+                    await _record_llm_attempt_async(
                         call_id=call_id,
                         provider=provider_name,
                         model=str(getattr(response, "model", None) or model),
@@ -373,9 +379,7 @@ class ModelProvider:
                             before_attempt + 1,
                         )
                         try:
-                            from aletheia.economics.tracing import record_llm_attempt
-
-                            record_llm_attempt(
+                            await _record_llm_attempt_async(
                                 call_id=call_id,
                                 provider=_configured_provider_name(self),
                                 model=str(getattr(self, "model", "") or "unknown"),
@@ -404,9 +408,7 @@ class ModelProvider:
                             before_attempt + 1,
                         )
                         try:
-                            from aletheia.economics.tracing import record_llm_attempt
-
-                            record_llm_attempt(
+                            await _record_llm_attempt_async(
                                 call_id=call_id,
                                 provider=_configured_provider_name(self),
                                 model=str(getattr(self, "model", "") or "unknown"),
@@ -463,9 +465,7 @@ class ModelProvider:
                 except BaseException as exc:
                     if int(getattr(request, "_aletheia_cost_attempt_index", 0)) == before_attempt:
                         try:
-                            from aletheia.economics.tracing import record_llm_attempt
-
-                            record_llm_attempt(
+                            await _record_llm_attempt_async(
                                 call_id=call_id,
                                 provider=_configured_provider_name(self),
                                 model=final_model,
@@ -489,9 +489,7 @@ class ModelProvider:
                 else:
                     if int(getattr(request, "_aletheia_cost_attempt_index", 0)) == before_attempt:
                         try:
-                            from aletheia.economics.tracing import record_llm_attempt
-
-                            record_llm_attempt(
+                            await _record_llm_attempt_async(
                                 call_id=call_id,
                                 provider=_configured_provider_name(self),
                                 model=final_model,
