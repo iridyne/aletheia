@@ -11,10 +11,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.execution import stale_order_cleanup as soc
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Fill, Order, Position
-from aletheia.uta.models import ReadCompleteness
+from aletheia.uta.models import OrderLifecycle, ReadCompleteness
 
 
 def _iso(hours_ago: float) -> str:
@@ -174,6 +176,75 @@ def test_exact_unknown_order_is_not_treated_as_absent(monkeypatch):
         completeness=ReadCompleteness.COMPLETE,
         fills=(),
         orders=(SimpleNamespace(state=SimpleNamespace(value="unknown")),),
+    )
+
+    def fake_run(coro):
+        coro.close()
+        return report
+
+    monkeypatch.setattr(soc, "_run_coro", fake_run)
+
+    assert soc._exchange_order_absent_unfilled(order) is False
+
+
+@pytest.mark.parametrize(
+    "state", [OrderLifecycle.CANCELED, OrderLifecycle.EXPIRED, OrderLifecycle.REJECTED]
+)
+def test_exact_terminal_order_is_treated_as_absent(monkeypatch, state):
+    order = _order(
+        oid=f"terminal-{state.value}", hours_ago=300, execution_mode="binance_testnet",
+    ).model_dump()
+    report = SimpleNamespace(
+        completeness=ReadCompleteness.COMPLETE,
+        fills=(),
+        orders=(SimpleNamespace(state=state),),
+    )
+
+    def fake_run(coro):
+        coro.close()
+        return report
+
+    monkeypatch.setattr(soc, "_run_coro", fake_run)
+
+    assert soc._exchange_order_absent_unfilled(order) is True
+
+
+@pytest.mark.parametrize(
+    "state", [
+        OrderLifecycle.ACCEPTED,
+        OrderLifecycle.OPEN,
+        OrderLifecycle.PARTIALLY_FILLED,
+        OrderLifecycle.FILLED,
+        OrderLifecycle.UNKNOWN,
+    ]
+)
+def test_exact_non_terminal_order_is_not_treated_as_absent(monkeypatch, state):
+    order = _order(
+        oid=f"active-{state.value}", hours_ago=300, execution_mode="binance_testnet",
+    ).model_dump()
+    report = SimpleNamespace(
+        completeness=ReadCompleteness.COMPLETE,
+        fills=(),
+        orders=(SimpleNamespace(state=state),),
+    )
+
+    def fake_run(coro):
+        coro.close()
+        return report
+
+    monkeypatch.setattr(soc, "_run_coro", fake_run)
+
+    assert soc._exchange_order_absent_unfilled(order) is False
+
+
+def test_exact_terminal_order_with_fill_is_not_treated_as_absent(monkeypatch):
+    order = _order(
+        oid="terminal-with-fill", hours_ago=300, execution_mode="binance_testnet",
+    ).model_dump()
+    report = SimpleNamespace(
+        completeness=ReadCompleteness.COMPLETE,
+        fills=(SimpleNamespace(venue_fill_id="fill-1"),),
+        orders=(SimpleNamespace(state=OrderLifecycle.CANCELED),),
     )
 
     def fake_run(coro):

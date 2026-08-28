@@ -145,7 +145,7 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
     try:
         from aletheia.uta.compat import scope_from_local
         from aletheia.uta.manager import query_uta
-        from aletheia.uta.models import ReadCompleteness, ReconciliationQuery
+        from aletheia.uta.models import OrderLifecycle, ReadCompleteness, ReconciliationQuery
 
         client_id = str(order.get("client_order_id") or "").strip()
         venue_id = str(order.get("exchange_order_id") or "").strip()
@@ -172,8 +172,23 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
         return None
     if report.fills:
         return False
-    # An exact returned order proves presence even when its lifecycle is unknown.
-    return not report.orders
+    if not report.orders:
+        return True
+    # Only explicit terminal states prove that the exact order is no longer live.
+    # Active, filled, and unknown states remain unresolved even in a complete read.
+    terminal_states = {
+        OrderLifecycle.CANCELED,
+        OrderLifecycle.EXPIRED,
+        OrderLifecycle.REJECTED,
+    }
+    for order in report.orders:
+        try:
+            state = OrderLifecycle(order.state)
+        except (TypeError, ValueError):
+            return False
+        if state not in terminal_states:
+            return False
+    return True
 
 
 def _decide(order: dict) -> tuple[str, str] | None:
