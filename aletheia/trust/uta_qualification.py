@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from aletheia.config.loader import get_data_dir, load_config
-from aletheia.update.git_ops import current_commit
+from aletheia.update.git_ops import current_commit, is_worktree_dirty
 from aletheia.uta.contract import UTA_CONTRACT_VERSION
 from aletheia.uta.manager import create_uta_adapter
 
@@ -29,6 +29,8 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
     code_sha = current_commit()
     if artifact.get("code_sha") != code_sha or not code_sha:
         return False, "qualification_code_mismatch"
+    if is_worktree_dirty():
+        return False, "qualification_worktree_dirty"
     if artifact.get("uta_contract_version") != UTA_CONTRACT_VERSION:
         return False, "qualification_contract_mismatch"
     try:

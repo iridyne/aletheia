@@ -17,7 +17,7 @@ from aletheia.execution.order_constraints import (
     get_order_constraints,
     normalize_quantity,
 )
-from aletheia.update.git_ops import current_commit
+from aletheia.update.git_ops import current_commit, is_worktree_dirty
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.contract import UTA_CONTRACT_VERSION
 from aletheia.uta.manager import (
@@ -120,6 +120,8 @@ async def _qualify(args) -> dict:
         raise ValueError("Phase 4 qualification supports binance_testnet only")
     if args.execution_probe and not args.confirm_testnet_order:
         raise ValueError("--execution-probe requires --confirm-testnet-order")
+    if is_worktree_dirty():
+        raise RuntimeError("qualification_worktree_dirty")
     cfg = load_config()
     adapter = create_uta_adapter(args.execution_mode, cfg)
     identity = adapter.identity
@@ -319,7 +321,11 @@ async def _qualify(args) -> dict:
             and exact.found is not None
             and verified.state is VerifiedExitState.VERIFIED_FILL_EXIT
         )
-        artifact["qualified"] = read_ok and execution_ok
+        if is_worktree_dirty():
+            artifact["unresolved_items"].append("qualification_worktree_dirty")
+        artifact["qualified"] = (
+            read_ok and execution_ok and not artifact["unresolved_items"]
+        )
         if not artifact["qualified"]:
             artifact["unresolved_items"].append("qualification_gate_failed")
         return artifact
