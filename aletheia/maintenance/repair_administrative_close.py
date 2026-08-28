@@ -32,24 +32,73 @@ logger = logging.getLogger(__name__)
 
 def _find_native_close_order(position_id: str) -> dict | None:
     """Return the most recent native close Order for this Position, or None."""
-    row = repo.get_db().execute(
-        "SELECT id, exchange_order_id, price, quantity, filled_at, close_reason "
-        "FROM orders "
-        "WHERE position_id = ? AND source = 'native' "
-        "AND close_reason IS NOT NULL AND close_reason <> '' "
-        "AND status = 'filled' "
-        "ORDER BY filled_at DESC, rowid DESC LIMIT 1",
-        (position_id,),
-    ).fetchone()
+    row = (
+        repo.get_db()
+        .execute(
+            "SELECT id, exchange_order_id, price, quantity, filled_at, close_reason "
+            "FROM orders "
+            "WHERE position_id = ? AND source = 'native' "
+            "AND close_reason IS NOT NULL AND close_reason <> '' "
+            "AND status = 'filled' "
+            "ORDER BY filled_at DESC, rowid DESC LIMIT 1",
+            (position_id,),
+        )
+        .fetchone()
+    )
     return dict(row) if row is not None else None
 
 
-def _query_exchange_fill(exchange_order_id: str, symbol: str) -> dict | None:
-    """Best-effort: fetch the exact private fill from the exchange.
+def _aggregate_exchange_fills(
+    rows: list[dict],
+    *,
+    exchange_order_id: str,
+    symbol: str,
+    execution_mode: str,
+) -> dict | None:
+    """Normalize and aggregate exact private fills through the shared contract."""
+    from aletheia.execution.exchange_materialization import (
+        _private_fill_totals,
+        durable_private_fill_id,
+        parse_bitget_private_fills,
+    )
 
-    Returns None if the exchange query is unavailable — the repair still
-    proceeds using the fee-rate estimate, just without exit_fill_verified=True.
-    """
+    evidence = parse_bitget_private_fills(rows)
+    if not evidence or any(item.exchange_order_id != exchange_order_id for item in evidence):
+        return None
+    quantity, notional, fee = _private_fill_totals(evidence, symbol=symbol)
+    if quantity <= 0 or notional <= 0:
+        return None
+    return {
+        "fill_ids": [item.fill_id for item in evidence],
+        "durable_fill_ids": [durable_private_fill_id(execution_mode, item.fill_id) for item in evidence],
+        "fill_quantity": quantity,
+        "price": notional / quantity,
+        "fee": fee,
+        "fee_status": "complete" if fee is not None else "unavailable",
+        "filled_at": max(item.filled_at for item in evidence),
+        "fills": [
+            {
+                "fill_id": item.fill_id,
+                "remote_fill_id": item.fill_id,
+                "durable_fill_id": durable_private_fill_id(execution_mode, item.fill_id),
+                "price": item.price,
+                "quantity": item.quantity,
+                "fee": item.fee,
+                "fee_currency": item.fee_currency,
+                "filled_at": item.filled_at,
+            }
+            for item in evidence
+        ],
+    }
+
+
+def _query_exchange_fill(
+    exchange_order_id: str,
+    symbol: str,
+    *,
+    execution_mode: str,
+) -> dict | None:
+    """Fetch complete private-fill evidence; unavailable evidence fails closed."""
     try:
         from aletheia.exchanges.bitget.client import BitgetClient
         from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
@@ -67,18 +116,12 @@ def _query_exchange_fill(exchange_order_id: str, symbol: str) -> dict | None:
                 ),
                 timeout=30,
             )
-            if not rows:
-                return None
-            # Use the first fill row; market closes are typically single-fill.
-            r = rows[0]
-            return {
-                "fill_id": str(r.get("tradeId") or r.get("id") or exchange_order_id),
-                "price": float(r.get("fillPrice") or r.get("price") or 0.0),
-                "quantity": float(r.get("fillQuantity") or r.get("size") or 0.0),
-                "fee": float(r.get("fee") or 0.0),
-                "fee_currency": str(r.get("feeCoin") or r.get("fee_currency") or "USDT"),
-                "filled_at_ms": int(r.get("cTime") or r.get("createdTime") or 0),
-            }
+            return _aggregate_exchange_fills(
+                rows,
+                exchange_order_id=str(exchange_order_id),
+                symbol=symbol,
+                execution_mode=execution_mode,
+            )
         finally:
             from aletheia.async_utils import run_coro_from_sync
 
@@ -87,7 +130,7 @@ def _query_exchange_fill(exchange_order_id: str, symbol: str) -> dict | None:
             except Exception:
                 pass
     except Exception as exc:
-        logger.warning("exchange fill query failed (%s); proceeding without exact fee", exc)
+        logger.warning("exchange fill query failed (%s); administrative repair remains unchanged", exc)
         return None
 
 
@@ -114,26 +157,26 @@ def _reopen_position(position_id: str, *, exit_price: float, evidence: dict) -> 
             exit_price_source="unavailable",
             exit_fill_verified=False,
             realized_pnl=None,
-            entry_price_source="unavailable",
-            funding_source="unavailable",
             outcome_exclusion_reason="unclassified",
             outcome_eligible=False,
             exit_fee=None,
             reconciliation_evidence=json.dumps(evidence, sort_keys=True, separators=(",", ":"), default=str),
         )
-        repo.insert_audit_event(AuditEvent(
-            actor="system",
-            source="repair_administrative_close",
-            event_type="position_reopened_for_close_replay",
-            entity_type="position",
-            entity_id=position_id,
-            before_state=json.dumps({"status": "closed", "close_category": "administrative", "realized_pnl": None}),
-            after_state=json.dumps({"status": "open", "intent": "replay normal close path"}),
-            message=(
-                f"Reopened Position {position_id} to replay the normal close path "
-                f"after an incorrect administrative close."
-            ),
-        ))
+        repo.insert_audit_event(
+            AuditEvent(
+                actor="system",
+                source="repair_administrative_close",
+                event_type="position_reopened_for_close_replay",
+                entity_type="position",
+                entity_id=position_id,
+                before_state=json.dumps({"status": "closed", "close_category": "administrative", "realized_pnl": None}),
+                after_state=json.dumps({"status": "open", "intent": "replay normal close path"}),
+                message=(
+                    f"Reopened Position {position_id} to replay the normal close path "
+                    f"after an incorrect administrative close."
+                ),
+            )
+        )
 
 
 def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
@@ -145,32 +188,56 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
         raise ValueError(f"position not found: {position_id}")
 
     # Idempotency: already correctly closed via the strategy path.
-    if pos.get("status") == "closed" and pos.get("close_category") == "strategy" and pos.get("realized_pnl") is not None:
+    if (
+        pos.get("status") == "closed"
+        and pos.get("close_category") == "strategy"
+        and pos.get("realized_pnl") is not None
+    ):
         return {"position_id": position_id, "status": "already_correct", "realized_pnl": pos["realized_pnl"]}
 
     if pos.get("status") != "closed":
         raise ValueError(
-            f"repair requires an administratively-closed Position; "
-            f"{position_id} is status={pos.get('status')!r}"
+            f"repair requires an administratively-closed Position; {position_id} is status={pos.get('status')!r}"
         )
     if pos.get("close_category") != "administrative":
         raise ValueError(
-            f"repair targets close_category=administrative; "
-            f"{position_id} is {pos.get('close_category')!r}"
+            f"repair targets close_category=administrative; {position_id} is {pos.get('close_category')!r}"
         )
 
     order = _find_native_close_order(position_id)
     if order is None:
         raise ValueError(
-            f"no filled native close Order found for {position_id}; "
-            f"cannot determine exit economics for replay"
+            f"no filled native close Order found for {position_id}; cannot determine exit economics for replay"
         )
 
-    exit_price = float(order["price"])
-    # Best-effort exchange fee lookup. Not required: close_position recomputes
-    # fees from the execution-mode fee rate when actual_exit_fee is None, which
-    # is the canonical fallback for broker-ledger modes.
-    fill = _query_exchange_fill(str(order["exchange_order_id"]), str(pos["symbol"]))
+    execution_mode = str(pos.get("execution_mode") or "")
+    fill = _query_exchange_fill(
+        str(order["exchange_order_id"]),
+        str(pos["symbol"]),
+        execution_mode=execution_mode,
+    )
+    if fill is None:
+        raise ValueError("complete private fill evidence is unavailable; administrative close preserved")
+    try:
+        expected_quantity = float(pos["quantity"])
+        observed_quantity = float(fill["fill_quantity"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("private fill quantity is invalid; administrative close preserved") from None
+    tolerance = max(1e-10, abs(expected_quantity) * 1e-8)
+    if abs(observed_quantity - expected_quantity) > tolerance:
+        raise ValueError("private fills do not cover the Position quantity; administrative close preserved")
+    if fill.get("fee_status") != "complete" or fill.get("fee") is None:
+        raise ValueError("private fill quote fee is unavailable; administrative close preserved")
+    exit_price = float(fill["price"])
+    verified_exit_evidence = {
+        "source": "bitget_private_close_fills",
+        "source_endpoint": "private_fills",
+        "broker_id": execution_mode,
+        "account_environment": "demo" if execution_mode.endswith("_demo") else "live",
+        "execution_mode": execution_mode,
+        "exchange_order_id": str(order["exchange_order_id"]),
+        **fill,
+    }
 
     if dry_run:
         return {
@@ -180,9 +247,9 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
             "exchange_order_id": order["exchange_order_id"],
             "exit_price": exit_price,
             "close_reason": order["close_reason"],
-            "filled_at": order["filled_at"],
-            "actual_exit_fee": fill["fee"] if fill else None,
-            "exchange_fill_queried": fill is not None,
+            "filled_at": fill["filled_at"],
+            "actual_exit_fee": fill["fee"],
+            "exchange_fill_queried": True,
         }
 
     # Step 1: re-open so close_position's status=open preflight passes.
@@ -191,24 +258,29 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
         "close_order_id": order["id"],
         "exchange_order_id": order["exchange_order_id"],
         "exit_price": exit_price,
+        "fill_ids": fill["fill_ids"],
+        "fill_quantity": fill["fill_quantity"],
     }
-    _reopen_position(position_id, exit_price=exit_price, evidence=reopen_evidence)
+    # Reopen and replay under one transaction. The intermediate open state must
+    # never commit if the canonical close path rejects the evidence or fails.
+    with repo.transaction(immediate=True):
+        _reopen_position(position_id, exit_price=exit_price, evidence=reopen_evidence)
 
-    # Step 2: replay the canonical close path.
-    closed_at = order["filled_at"]
-    result = close_position(
-        position_id,
-        exit_price=exit_price,
-        reason=order["close_reason"] or "verified_exit",
-        actual_exit_fee=(float(fill["fee"]) if fill else None),
-        closed_at=closed_at,
-        actor="repair_administrative_close",
-        source="repair_administrative_close",
-    )
+        # Step 2: replay the canonical close path.
+        result = close_position(
+            position_id,
+            exit_price=exit_price,
+            reason=order["close_reason"] or "verified_exit",
+            actual_exit_fee=float(fill["fee"]),
+            verified_exit_evidence=verified_exit_evidence,
+            closed_at=fill["filled_at"],
+            actor="repair_administrative_close",
+            source="repair_administrative_close",
+        )
 
     result["close_order_id"] = order["id"]
     result["exchange_order_id"] = order["exchange_order_id"]
-    result["exchange_fill_queried"] = fill is not None
+    result["exchange_fill_queried"] = True
     stored = repo._select_one("positions", position_id)
     result["final_realized_pnl"] = stored.get("realized_pnl") if stored else None
     return result
