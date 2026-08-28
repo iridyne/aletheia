@@ -97,3 +97,10 @@ def test_costs_command_renders_current_summary_field_names():
     assert "Events: 1" in result.output
     assert "Known subtotal: $0.25000000" in result.output
     assert "llm: events=1 known=$0.25000000 unknown=0" in result.output
+
+
+def test_viability_command_rejects_unsupported_execution_mode():
+    result = runner.invoke(app, ["audit", "viability", "--execution-mode", "okx_demo"])
+
+    assert result.exit_code != 0
+    assert "paper_internal" in result.output
