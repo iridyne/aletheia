@@ -891,6 +891,20 @@ class UniverseService:
                 cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
             )
+            eligible_attention_identities = {
+                (
+                    str(item.get("venue") or ""),
+                    str(item.get("symbol") or ""),
+                    str(item.get("market_type", "spot")),
+                    str(item.get("scanner_family") or ""),
+                    str(
+                        item.get("scanner_direction")
+                        or _infer_direction(item.get("scanner_family"), item)
+                        or ""
+                    ),
+                )
+                for item in unique_scored
+            }
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
@@ -983,10 +997,38 @@ class UniverseService:
                         "Registered %d experiment candidate outcome row(s) across full arms",
                         inserted_experiment_outcomes,
                     )
-                # Advance the scanner run pointer to the reused snapshot, then
-                # short-circuit the publication block: no new members to insert,
-                # no downstream cohort logging (freshness monitors read the
-                # existing active snapshot as before).
+                planning_generations_created = 0
+                selected_generation_ids: set[str] = set()
+                new_generation_ids: set[str] = set()
+                with _atomic_universe_publication():
+                    for member in repo.list_universe_members(prev_snapshot_id, limit=500):
+                        try:
+                            generation, created = repo.ensure_candidate_planning_generation(
+                                member["id"],
+                                soft_lease_sec=cfg.universe.entry_ttl_sec,
+                                max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
+                                now=now,
+                            )
+                        except ValueError:
+                            continue
+                        selected_generation_ids.add(str(generation["id"]))
+                        if created:
+                            new_generation_ids.add(str(generation["id"]))
+                        planning_generations_created += int(created)
+                    repo.reconcile_candidate_attention(
+                        selected_generation_ids,
+                        eligible_identity_keys=eligible_attention_identities,
+                        refresh_source={
+                            "scanner_run_id": run.id,
+                            "snapshot_id": prev_snapshot_id,
+                            "member_fingerprint": new_fp,
+                            "change_suppressed": True,
+                        },
+                        soft_lease_sec=cfg.universe.entry_ttl_sec,
+                        new_generation_ids=new_generation_ids,
+                        now=now,
+                    )
+                # Publish completion only after Candidate attention reconciliation.
                 repo.update_universe_scanner_run(
                     run.id,
                     status="completed",
@@ -997,13 +1039,6 @@ class UniverseService:
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
                     prev_snapshot_id,
                 )
-                planning_generations_created = 0
-                for member in repo.list_universe_members(prev_snapshot_id, limit=500):
-                    try:
-                        _, created = repo.ensure_candidate_planning_generation(member["id"])
-                    except ValueError:
-                        continue
-                    planning_generations_created += int(created)
                 if planning_generations_created:
                     _notify_operator_feature_refresh("candidate_planning_generation_created")
                 return prev_snapshot_id
@@ -1094,9 +1129,16 @@ class UniverseService:
                 repo.insert_universe_members_batch(member_models)
 
                 planning_generations_created = 0
+                selected_generation_ids: set[str] = set()
+                new_generation_ids: set[str] = set()
                 for member in member_models:
                     try:
-                        _, created = repo.ensure_candidate_planning_generation(member.id)
+                        generation, created = repo.ensure_candidate_planning_generation(
+                            member.id,
+                            soft_lease_sec=cfg.universe.entry_ttl_sec,
+                            max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
+                            now=now,
+                        )
                     except ValueError as exc:
                         logger.info(
                             "Candidate unavailable to Entry Planner: candidate=%s reason=%s",
@@ -1104,7 +1146,24 @@ class UniverseService:
                             exc,
                         )
                     else:
+                        selected_generation_ids.add(str(generation["id"]))
+                        if created:
+                            new_generation_ids.add(str(generation["id"]))
                         planning_generations_created += int(created)
+
+                repo.reconcile_candidate_attention(
+                    selected_generation_ids,
+                    eligible_identity_keys=eligible_attention_identities,
+                    refresh_source={
+                        "scanner_run_id": run.id,
+                        "snapshot_id": snap.id,
+                        "member_fingerprint": new_fp,
+                        "change_suppressed": False,
+                    },
+                    soft_lease_sec=cfg.universe.entry_ttl_sec,
+                    new_generation_ids=new_generation_ids,
+                    now=now,
+                )
 
                 # Register forward outcome tracking for all members with valid prices
                 try:

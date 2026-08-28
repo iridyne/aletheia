@@ -29,9 +29,7 @@ async function flushQueries() {
 
 function renderSnapshot(client: QueryClient) {
   client.setQueryData(positionKeys.all, [])
-  client.setQueryData(['proposals'], [])
   vi.spyOn(api, 'getPositions').mockResolvedValue([])
-  vi.spyOn(api, 'getProposals').mockResolvedValue([])
   const node = document.createElement('div')
   document.body.appendChild(node)
   root = createRoot(node)

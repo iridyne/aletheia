@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v48"
+SCHEMA_VERSION = "aletheia-sqlite-v49"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3837,6 +3837,34 @@ END;
 """
 _ENTRY_PLAN_V1_CHECKSUM = hashlib.sha256(
     (repr(_ENTRY_PLAN_V1_COLUMNS) + _ENTRY_PLAN_V1_SQL + "\ncandidate_planning_entry_plan_v1").encode("utf-8")
+).hexdigest()
+
+_CANDIDATE_ATTENTION_COLUMNS = (
+    ("attention_status", "candidate_planning_generations", "TEXT NOT NULL DEFAULT 'active' CHECK(attention_status IN ('active', 'terminal'))"),
+    ("attention_started_at", "candidate_planning_generations", "TEXT"),
+    ("last_requalified_at", "candidate_planning_generations", "TEXT"),
+    ("requalification_source_json", "candidate_planning_generations", "TEXT CHECK(requalification_source_json IS NULL OR json_valid(requalification_source_json))"),
+    ("soft_expires_at", "candidate_planning_generations", "TEXT"),
+    ("hard_expires_at", "candidate_planning_generations", "TEXT"),
+    ("attention_max_age_sec", "candidate_planning_generations", "INTEGER CHECK(attention_max_age_sec BETWEEN 300 AND 86400)"),
+    ("attention_policy_version", "candidate_planning_generations", "TEXT CHECK(attention_policy_version IS NULL OR attention_policy_version='candidate-attention/v1')"),
+    ("attention_terminal_at", "candidate_planning_generations", "TEXT"),
+    ("attention_terminal_reason", "candidate_planning_generations", "TEXT"),
+)
+_CANDIDATE_ATTENTION_SQL = """
+CREATE INDEX IF NOT EXISTS idx_candidate_attention_active_deadline
+ON candidate_planning_generations(
+    attention_status, is_current, soft_expires_at, hard_expires_at
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_planning_history
+ON candidate_planning_generations(updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_candidate_planning_candidate
+ON candidate_planning_generations(candidate_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_candidate_planning_last_candidate
+ON candidate_planning_generations(last_candidate_id, updated_at DESC);
+"""
+_CANDIDATE_ATTENTION_CHECKSUM = hashlib.sha256(
+    (repr(_CANDIDATE_ATTENTION_COLUMNS) + _CANDIDATE_ATTENTION_SQL + "\ncandidate_attention_v1").encode("utf-8")
 ).hexdigest()
 
 _LESSON_REVIEWER_ATTEMPTS_SQL = """
@@ -5620,6 +5648,39 @@ def _apply_entry_plan_v48(db: sqlite3.Connection) -> None:
     db.executescript(_ENTRY_PLAN_V1_SQL)
 
 
+def _apply_candidate_attention_v49(db: sqlite3.Connection) -> None:
+    """Add the bounded attention lease to the existing planning generation."""
+
+    existing = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(candidate_planning_generations)").fetchall()
+    }
+    for column, table, column_type in _CANDIDATE_ATTENTION_COLUMNS:
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute(
+        "UPDATE candidate_planning_generations SET "
+        "attention_started_at=COALESCE(attention_started_at, created_at), "
+        "soft_expires_at=COALESCE(soft_expires_at, strftime('%Y-%m-%dT%H:%M:%f+00:00', created_at, '+900 seconds')), "
+        "hard_expires_at=COALESCE(hard_expires_at, strftime('%Y-%m-%dT%H:%M:%f+00:00', created_at, '+3600 seconds')), "
+        "attention_max_age_sec=COALESCE(attention_max_age_sec, 3600), "
+        "attention_policy_version=COALESCE(attention_policy_version, 'candidate-attention/v1')"
+    )
+    db.execute(
+        "UPDATE candidate_planning_generations SET attention_status='terminal', "
+        "attention_terminal_at=COALESCE(attention_terminal_at, completed_at, updated_at), "
+        "attention_terminal_reason=COALESCE(attention_terminal_reason, CASE "
+        "WHEN status='planned' THEN 'entry_plan_created' "
+        "WHEN status='no_plan' THEN 'no_plan' "
+        "WHEN status='superseded' THEN 'planning_generation_superseded' "
+        "WHEN status='unavailable' AND attempt_count>=3 THEN 'planning_unavailable' END) "
+        "WHERE status IN ('planned','no_plan','superseded') "
+        "OR (status='unavailable' AND attempt_count>=3)"
+    )
+    db.executescript(_CANDIDATE_ATTENTION_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_controller_recommendation_cost_model_v45(db: sqlite3.Connection) -> None:
     """Persist the cost-model identity behind each controller evidence row."""
 
@@ -6391,6 +6452,12 @@ _MIGRATIONS = (
         checksum=_ENTRY_PLAN_V1_CHECKSUM,
         schema_version="aletheia-sqlite-v48",
         apply=_apply_entry_plan_v48,
+    ),
+    MigrationStep(
+        migration_id="20260828_0048_candidate_attention_v49",
+        checksum=_CANDIDATE_ATTENTION_CHECKSUM,
+        schema_version="aletheia-sqlite-v49",
+        apply=_apply_candidate_attention_v49,
     ),
 )
 

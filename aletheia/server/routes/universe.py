@@ -1,12 +1,124 @@
-"""Universe Generator API routes."""
+"""Universe Generator and owner-facing Entry Workbench API routes."""
 
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
 
 router = APIRouter(prefix="/api/universe", tags=["universe"])
+
+
+def _entry_plan_projection(row: dict) -> dict:
+    from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
+
+    item = dict(row)
+    try:
+        plan = EntryPlan.model_validate_json(item["plan_json"])
+        canonical_payload, digest = entry_plan_payload(plan)
+        valid = digest == item["plan_hash"] and canonical_payload == item["plan_json"]
+    except Exception:
+        plan = None
+        valid = False
+    item["plan"] = plan.model_dump(mode="json") if plan else None
+    item["contract_valid"] = valid
+    return item
+
+
+def _active_entry_plan_projections(limit: int) -> list[dict]:
+    items = [_entry_plan_projection(row) for row in repo.list_active_entry_plans(limit)]
+    if any(not item["contract_valid"] for item in items):
+        raise ValueError("entry_plan_contract_invalid")
+    return items
+
+
+@router.get("/workbench")
+def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
+    """Bounded direct-ledger projection; section failures remain explicit."""
+
+    response = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "availability": {},
+        "universe": None,
+        "summary": None,
+        "entry_plans": None,
+        "candidate_attention": None,
+    }
+    try:
+        cfg = load_config()
+        snap = repo.get_active_universe_snapshot()
+        response["universe"] = {
+            "enabled": cfg.universe.enabled,
+            "status": "active"
+            if snap
+            else ("disabled" if not cfg.universe.enabled else "no_active_snapshot"),
+            "snapshot": snap,
+            "fallback_instruments": list(cfg.universe.fallback_symbols) if snap is None else [],
+        }
+        response["availability"]["universe"] = {"available": True, "stale": False}
+    except Exception as exc:
+        response["universe"] = {
+            "enabled": None,
+            "status": "read_unavailable",
+            "snapshot": None,
+            "fallback_instruments": [],
+        }
+        response["availability"]["universe"] = {
+            "available": False,
+            "stale": False,
+            "reason": type(exc).__name__,
+        }
+    readers = {
+        "summary": lambda: repo.get_entry_workbench_summary(),
+        "entry_plans": lambda: _active_entry_plan_projections(limit),
+        "candidate_attention": lambda: repo.list_active_candidate_attention(limit),
+    }
+    for section, read in readers.items():
+        try:
+            response[section] = read()
+            response["availability"][section] = {"available": True, "stale": False}
+        except Exception as exc:
+            response["availability"][section] = {
+                "available": False,
+                "stale": False,
+                "reason": type(exc).__name__,
+            }
+    return response
+
+
+@router.get("/entry-plans/{plan_id}")
+def get_entry_plan_detail(plan_id: str):
+    row = repo.get_entry_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "Entry Plan not found")
+    projection = _entry_plan_projection(row)
+    if not projection["contract_valid"]:
+        raise HTTPException(409, "Entry Plan contract validation failed")
+    return projection
+
+
+@router.get("/planning-history")
+def get_planning_history(
+    limit: int = Query(default=50, ge=1, le=200),
+    before: str | None = None,
+):
+    cursor = None
+    if before:
+        try:
+            updated_at, generation_id = before.rsplit("|", 1)
+            datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            if not generation_id:
+                raise ValueError
+            cursor = (updated_at, generation_id)
+        except ValueError as exc:
+            raise HTTPException(422, "Invalid planning history cursor") from exc
+    rows = repo.list_planning_history(limit=limit + 1, before=cursor)
+    page = rows[:limit]
+    next_before = None
+    if len(rows) > limit and page:
+        next_before = f"{page[-1]['updated_at']}|{page[-1]['id']}"
+    return {"items": page, "next_before": next_before}
 
 
 def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
@@ -121,6 +233,15 @@ def get_member(member_id: str):
         "entry_plans": [entry_plan] if entry_plan else [],
         "opportunities": opportunities,  # Backward-compatible historical read model.
     }
+
+
+@router.get("/candidates/{candidate_id}")
+def get_candidate(candidate_id: str):
+    """Canonical Candidate detail alias; /members remains compatibility."""
+
+    detail = get_member(candidate_id)
+    detail["attention"] = repo.get_candidate_planning_for_candidate(candidate_id)
+    return detail
 
 
 @router.post("/refresh")

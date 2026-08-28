@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
-import type { Order, Position, TradeProposal } from '../types'
+import type { EntryPlan, Order, Position, TradeProposal } from '../types'
 import { fmtSymbol } from '../lib/format'
 import { parseDecisionRationale } from '../lib/decisionReasoning'
 import { orderIntent, orderIntentLabel } from '../lib/orderIntent'
@@ -10,8 +10,9 @@ import { orderIntent, orderIntentLabel } from '../lib/orderIntent'
 /**
  * Causal-chain inspector (WEBUI_PAGE_MAP.md — cross-cutting, lives in Trades & Positions).
  *
- * Renders the immutable trust §1.1 chain:
- *   opportunity → strategy → proposal → entry reasoning → risk_decision → order → fill → position → close reasoning
+ * Renders Candidate → Entry Plan → Risk → Order → Fill → Position for the
+ * current path, retaining the older Opportunity/Proposal chain only when no
+ * exact Entry Plan identity was persisted.
  *
  * HONESTY:
  *  - Entry reasoning is parsed only from the proposal's persisted immutable metadata.
@@ -173,6 +174,12 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
       ? (positions as Position[]).find(p => p.id === anchor.order.position_id) ?? null
       : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
   const exactOrder = anchor.kind === 'order' ? anchor.order : resolvedOrder
+  const entryPlanId = exactOrder?.entry_plan_id ?? proposal?.entry_plan_id ?? null
+  const { data: entryPlan, isError: entryPlanError } = useQuery<EntryPlan>({
+    queryKey: ['entry-plan', entryPlanId],
+    queryFn: () => api.getEntryPlan(entryPlanId as string),
+    enabled: Boolean(entryPlanId),
+  })
   const riskDecisionId = exactOrder?.risk_decision_id ?? null
   const useOrderRiskDecision = !!riskDecisionId && !!exactOrder && anchorOrderIntent !== 'close'
 
@@ -205,23 +212,25 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
 
   return (
     <div className="causal-chain">
-      {proposalId
-        ? proposal
-          ? <CausalNode stage="Opportunity" state={opportunityId ? 'present' : 'empty'} facts={<span className="mono">{opportunityId}</span>} onOpen={opportunityId ? () => navigate('/agent-activity') : undefined} />
-          : <CausalNode stage="Opportunity" state="missing" note="proposal not in recent list" />
-        : <CausalNode stage="Opportunity" state="empty" />}
-
-      <CausalNode stage="Strategy" state={strategyId ? 'present' : 'empty'} facts={<span className="mono">{strategyId}</span>} />
-
-      {proposalId
-        ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} onOpen={() => navigate('/blotter')} />
-        : <CausalNode stage="Proposal" state="empty" />}
-
-      {proposal
-        ? entryParameters
-          ? <CausalNode stage="Entry Reasoning" state="present" facts={<EntryReasoningFacts parameters={entryParameters} />} />
-          : <CausalNode stage="Entry Reasoning" state="missing" note="proposal predates parameter rationale" />
-        : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
+      {entryPlanId ? <>
+        <CausalNode stage="Candidate" state={entryPlan ? 'present' : entryPlanError ? 'missing' : 'empty'} facts={entryPlan ? <span className="mono">{entryPlan.candidate_id}</span> : undefined} note={entryPlanError ? 'exact Entry Plan detail unavailable' : undefined} onOpen={entryPlan ? () => navigate(`/universe?tab=candidates&candidate_id=${encodeURIComponent(entryPlan.candidate_id)}`) : undefined} />
+        <CausalNode stage="Entry Plan" state="present" facts={<span className="mono">{entryPlanId}</span>} onOpen={() => navigate(`/universe?tab=plans&plan_id=${encodeURIComponent(entryPlanId)}`)} />
+      </> : <>
+        {proposalId
+          ? proposal
+            ? <CausalNode stage="Opportunity" state={opportunityId ? 'present' : 'empty'} facts={<span className="mono">{opportunityId}</span>} onOpen={opportunityId ? () => navigate('/agent-activity') : undefined} />
+            : <CausalNode stage="Opportunity" state="missing" note="proposal not in recent list" />
+          : <CausalNode stage="Opportunity" state="empty" />}
+        <CausalNode stage="Strategy" state={strategyId ? 'present' : 'empty'} facts={<span className="mono">{strategyId}</span>} />
+        {proposalId
+          ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} />
+          : <CausalNode stage="Proposal" state="empty" />}
+        {proposal
+          ? entryParameters
+            ? <CausalNode stage="Entry Reasoning" state="present" facts={<EntryReasoningFacts parameters={entryParameters} />} />
+            : <CausalNode stage="Entry Reasoning" state="missing" note="proposal predates parameter rationale" />
+          : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
+      </>}
 
       {risk
         ? <CausalNode stage="Risk Decision" state="present" facts={<>{risk.id && <div className="mono cc-id">{risk.id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? (anchorOrderIntent === 'close' ? 'entry approval (not close authorization)' : 'approved') : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />

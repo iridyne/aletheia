@@ -234,9 +234,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 49)
+        f"aletheia-sqlite-v{version}" for version in range(2, 50)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v48"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v49"
     connection.close()
 
 
@@ -683,8 +683,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260827_0047_candidate_planning_entry_plan_v48",
-        "aletheia-sqlite-v48",
+        "20260828_0048_candidate_attention_v49",
+        "aletheia-sqlite-v49",
     )
     order_columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)")}
     assert "close_reasoning" in order_columns
@@ -696,6 +696,79 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"
     ).fetchone()
     assert tuple(legacy) == ("monitoring", 0)
+    connection.close()
+
+
+def test_candidate_attention_migration_backfills_only_legitimate_clock_evidence():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute(
+        "CREATE TABLE candidate_planning_generations ("
+        "id TEXT PRIMARY KEY, planning_identity TEXT NOT NULL, is_current INTEGER NOT NULL, "
+        "candidate_id TEXT NOT NULL, last_candidate_id TEXT NOT NULL, "
+        "status TEXT NOT NULL, attempt_count INTEGER NOT NULL, created_at TEXT NOT NULL, "
+        "updated_at TEXT NOT NULL, completed_at TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO candidate_planning_generations VALUES "
+        "('generation-1', ?, 1, 'candidate-1', 'candidate-1', 'pending', 0, ?, ?, NULL)",
+        (
+            "a" * 64,
+            "2026-08-28T00:00:00+00:00",
+            "2026-08-28T00:30:00+00:00",
+        ),
+    )
+
+    migrations._apply_candidate_attention_v49(connection)
+    row = connection.execute(
+        "SELECT * FROM candidate_planning_generations WHERE id='generation-1'"
+    ).fetchone()
+    assert row["attention_started_at"] == "2026-08-28T00:00:00+00:00"
+    assert row["last_requalified_at"] is None
+    assert row["hard_expires_at"] == "2026-08-28T01:00:00.000+00:00"
+    assert row["attention_max_age_sec"] == 3600
+    assert row["attention_policy_version"] == "candidate-attention/v1"
+    active_plan = " ".join(
+        item[3]
+        for item in connection.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM candidate_planning_generations "
+            "WHERE attention_status='active' AND is_current=1 "
+            "AND soft_expires_at>? AND hard_expires_at>? "
+            "ORDER BY soft_expires_at LIMIT 200",
+            ("2026-08-28T00:00:00+00:00", "2026-08-28T00:00:00+00:00"),
+        )
+    )
+    history_plan = " ".join(
+        item[3]
+        for item in connection.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM candidate_planning_generations "
+            "ORDER BY updated_at DESC, id DESC LIMIT 200"
+        )
+    )
+    original_candidate_plan = " ".join(
+        item[3]
+        for item in connection.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM candidate_planning_generations "
+            "WHERE candidate_id=? "
+            "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
+            ("candidate-1",),
+        )
+    )
+    latest_candidate_plan = " ".join(
+        item[3]
+        for item in connection.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM candidate_planning_generations "
+            "WHERE last_candidate_id=? "
+            "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
+            ("candidate-1",),
+        )
+    )
+    assert "idx_candidate_attention_active_deadline" in active_plan
+    assert "idx_candidate_planning_history" in history_plan
+    assert "idx_candidate_planning_candidate" in original_candidate_plan
+    assert "idx_candidate_planning_last_candidate" in latest_candidate_plan
     connection.close()
 
 

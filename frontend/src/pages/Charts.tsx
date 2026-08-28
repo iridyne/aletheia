@@ -15,8 +15,8 @@ import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDrawer'
 import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../components/ui'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
-import { fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp } from '../lib/format'
-import type { Candidate, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
+import { fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
+import type { Candidate, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
 
 const PINNED_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -507,6 +507,7 @@ function ChartSettings({ open, scope, settings, onChange, onReset, onClose }: {
 
 export default function Charts() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const entryPlanId = searchParams.get('entry_plan_id')
   const [active, setActive] = useState<MarketInstrument>({
     symbol: searchParams.get('symbol') || 'BTC/USDT',
     exchange: searchParams.get('exchange') || '',
@@ -539,13 +540,24 @@ export default function Charts() {
   })
   const defaultExchange = (defaultExchangeConfig?.exchange || 'bitget').toLowerCase()
   const dialogId = useId()
+  const { data: entryPlan, isError: entryPlanUnavailable } = useQuery<EntryPlan>({
+    queryKey: ['entry-plan', entryPlanId],
+    queryFn: () => api.getEntryPlan(entryPlanId!),
+    enabled: Boolean(entryPlanId),
+  })
+
+  useEffect(() => {
+    if (!entryPlan) return
+    setActive({ symbol: entryPlan.symbol, exchange: entryPlan.venue, marketType: entryPlan.market_type })
+  }, [entryPlan])
 
   useEffect(() => {
     const params: Record<string, string> = { symbol: active.symbol }
     if (active.exchange) params.exchange = active.exchange
     if (active.marketType !== 'spot') params.market_type = active.marketType
+    if (entryPlanId) params.entry_plan_id = entryPlanId
     setSearchParams(params, { replace: true })
-  }, [active, setSearchParams])
+  }, [active, entryPlanId, setSearchParams])
   const { data: universe } = useQuery({ queryKey: ['universe-current'], queryFn: api.getUniverseCurrent, refetchInterval: 120_000 })
   const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 500), refetchInterval: 30_000 })
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions, refetchInterval: 30_000 })
@@ -595,7 +607,18 @@ export default function Charts() {
 
   const matchingPositions = useMemo(() => positions.filter(position => position.status === 'open'
     && position.symbol === active.symbol && (position.market_type || 'spot') === active.marketType), [active, positions])
-  const positionLevels = useMemo<PositionLevel[]>(() => matchingPositions.flatMap(position => {
+  const positionLevels = useMemo<PositionLevel[]>(() => {
+    const planLevels: PositionLevel[] = entryPlan?.plan ? [
+      ...entryPlan.plan.entry_zone.map((price, index) => ({ id: `${entryPlan.id}-entry-${index}`, kind: 'entry' as const, price, title: `Entry Plan zone ${index + 1}` })),
+      { id: `${entryPlan.id}-invalidation`, kind: 'stop' as const, price: entryPlan.plan.invalidation_price, title: 'Entry Plan invalidation' },
+      { id: `${entryPlan.id}-stop`, kind: 'stop' as const, price: entryPlan.plan.stop_price, title: 'Entry Plan stop' },
+      { id: `${entryPlan.id}-target`, kind: 'take_profit' as const, price: entryPlan.plan.target_price, title: 'Entry Plan target' },
+      ...(entryPlan.plan.limit_price ? [{ id: `${entryPlan.id}-limit`, kind: 'entry' as const, price: entryPlan.plan.limit_price, title: 'Entry Plan resting limit' }] : []),
+      ...Object.entries(entryPlan.plan.trigger_params ?? {})
+        .filter(([key, value]) => (key.includes('level') || key.includes('price')) && typeof value === 'number')
+        .map(([key, price]) => ({ id: `${entryPlan.id}-trigger-${key}`, kind: 'entry' as const, price: Number(price), title: `Trigger ${key.replaceAll('_', ' ')}` })),
+    ] : []
+    const openPositionLevels = matchingPositions.flatMap(position => {
     const direction = position.direction || 'Position'
     return [
       { id: `${position.id}-entry`, kind: 'entry' as const, price: position.entry_price, title: `Position entry · ${direction}` },
@@ -603,7 +626,9 @@ export default function Charts() {
       { id: `${position.id}-tp`, kind: 'take_profit' as const, price: position.take_profit_price ?? 0, title: `Take profit · ${direction}` },
       { id: `${position.id}-liq`, kind: 'liquidation' as const, price: position.liquidation_price ?? 0, title: `Estimated liquidation · ${direction}` },
     ]
-  }).filter(level => Number.isFinite(level.price) && level.price > 0), [matchingPositions])
+    })
+    return [...planLevels, ...openPositionLevels].filter(level => Number.isFinite(level.price) && level.price > 0)
+  }, [entryPlan, matchingPositions])
 
   const markers = useMemo<ChartMarker[]>(() => {
     const tradeMarkers: ChartMarker[] = trades.flatMap(trade => {
@@ -688,6 +713,9 @@ export default function Charts() {
       <span>{active.exchange || 'default exchange'} · {active.marketType}</span>
       <span className="market-context-provenance">{dataMeta ? `Data refreshed ${metaAge}` : 'Data source not available'}</span>
     </div>
+    {entryPlanId && <Card className="entry-workbench-notice">
+      {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}
+    </Card>}
     <div ref={shellRef} className="market-workbench-shell">
       <aside className="market-instrument-rail">{navigator}</aside>
       <Card className="market-workbench-chart-card">

@@ -28,7 +28,7 @@ export interface OverviewBootstrap {
   availability?: BootstrapAvailability
   reason?: string
   account?: Record<string, unknown>
-  summary?: { pending_proposals?: number; open_opportunities?: number; runs_24h?: number }
+  summary?: { active_entry_plans?: number; needs_planning?: number; expiring_soon?: number; runs_24h?: number } | null
   activity?: Array<Record<string, unknown>>
   setup_required?: boolean
   coverage?: Record<string, unknown>

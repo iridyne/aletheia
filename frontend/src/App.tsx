@@ -23,7 +23,6 @@ import Overview from './pages/Overview'
 // Legacy route contract: const Overview = lazy(() => import('./pages/Overview'))
 const AgentActivity = lazy(() => import('./pages/AgentActivity'))
 const Learning = lazy(() => import('./pages/Learning'))
-const Blotter = lazy(() => import('./pages/Blotter'))
 const TradesPositions = lazy(() => import('./pages/TradesPositions'))
 const Charts = lazy(() => import('./pages/Charts'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -195,8 +194,8 @@ export default function App() {
                 <Route path="/dreaming" element={<LegacyRedirect to="/learning" tab="dreaming" />} />
                 <Route path="/knowledge" element={<LegacyRedirect to="/learning" tab="knowledge" />} />
                 <Route path="/reports" element={<LegacyRedirect to="/learning" tab="operations" />} />
-                <Route path="/blotter" element={<Blotter />} />
-                <Route path="/proposals" element={<Navigate to="/blotter" replace />} />
+                <Route path="/blotter" element={<LegacyRedirect to="/universe" tab="plans" />} />
+                <Route path="/proposals" element={<LegacyRedirect to="/universe" tab="plans" />} />
                 <Route path="/trades" element={<TradesPositions />} />
                 <Route path="/paper-trades" element={<LegacyRedirect to="/trades" tab="blotter" />} />
                 <Route path="/positions" element={<LegacyRedirect to="/trades" tab="blotter" />} />

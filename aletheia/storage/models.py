@@ -1615,6 +1615,16 @@ class CandidatePlanningGeneration(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
     completed_at: str | None = None
+    attention_status: Literal["active", "terminal"] = "active"
+    attention_started_at: str
+    last_requalified_at: str | None = None
+    requalification_source_json: str | None = None
+    soft_expires_at: str
+    hard_expires_at: str
+    attention_max_age_sec: int = Field(default=3600, ge=300, le=86_400)
+    attention_policy_version: Literal["candidate-attention/v1"] = "candidate-attention/v1"
+    attention_terminal_at: str | None = None
+    attention_terminal_reason: str | None = None
 
 
 class EntryPlanRecord(_Provenanced):

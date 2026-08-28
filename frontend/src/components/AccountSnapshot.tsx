@@ -13,14 +13,9 @@ export default function AccountSnapshot() {
     dataUpdatedAt: portfolioUpdatedAt,
   } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   const { data: positions, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
-  const { data: proposals, isError: proposalsError } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
 
   const positionsUnavailable = positionsError && positions == null
-  const proposalsUnavailable = proposalsError && proposals == null
   const openPositions = positions ? positions.filter(p => p.status === 'open') : []
-  const pendingProposals = proposals
-    ? (proposals as unknown[]).filter((p: unknown) => typeof p === 'object' && p != null && (p as Record<string, unknown>).status === 'pending')
-    : []
 
   const p = portfolio as any
   const portfolioAvailable = p != null
@@ -94,12 +89,6 @@ export default function AccountSnapshot() {
         value={positionsUnavailable ? 'not available' : openPositions.length}
         tone={openPositions.length > 0 ? 'neutral' : 'muted'}
         onClick={() => navigate('/trades')}
-      />
-      <MetricTile
-        label="Pending Proposals"
-        value={proposalsUnavailable ? 'not available' : pendingProposals.length}
-        tone={pendingProposals.length > 0 ? 'neutral' : 'muted'}
-        onClick={() => navigate('/blotter')}
       />
     </div>
   )

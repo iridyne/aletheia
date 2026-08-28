@@ -33,18 +33,17 @@ def read_settings_source_graph() -> str:
     return "\n".join(sources)
 
 
-def test_universe_board_has_direct_settings_link():
-    """Disabled Universe Board must point to the exact setting that enables it."""
+def test_entry_workbench_has_direct_settings_link():
     page = Path("frontend/src/pages/Universe.tsx").read_text(encoding="utf-8")
     assert "/settings?tab=risk&section=universe" in page
-    assert "Open Universe setting" in page
-    assert "Universe generator is disabled" in page
+    assert "Settings" in page
+    assert "Universe disabled" in page
 
 
 def test_settings_exposes_universe_control_in_symbols_tab():
     """Universe is a symbol-selection control, so it must be discoverable there.
 
-    Asserts the outcome the Universe Board link depends on -- that the
+    Asserts the outcome the Entry Workbench link depends on -- that the
     ``?tab=risk&section=universe`` deep link resolves to a section rendered on
     the Risk tab -- rather than the mechanism that produces the anchor id.
 
@@ -63,7 +62,7 @@ def test_settings_exposes_universe_control_in_symbols_tab():
     # Registry-to-render drift is covered by the frontend registry test.
     assert "title: UNIVERSE_SECTION.title" in settings
     assert "slug: UNIVERSE_SECTION.id" in settings
-    assert re.search(r"id:\s*'universe'.*title:\s*'Universe Board'", settings_graph)
+    assert re.search(r"id:\s*'universe'.*title:\s*'Universe & Candidate Attention'", settings_graph)
     assert "settings-section-${section}" in settings
     assert settings_graph.count("<UniverseConfigCard") == 1
     assert "descriptor={UNIVERSE_SECTION}" in settings_graph
@@ -162,7 +161,6 @@ def test_p3_pages_use_shared_primitives_instead_of_ad_hoc_capsules_and_buttons()
         "NewsIntel.tsx",
         "Overview.tsx",
         "PredictionLens.tsx",
-        "Blotter.tsx",
         "RiskControls.tsx",
         "SerenityLens.tsx",
         "TradesPositions.tsx",

@@ -2333,6 +2333,11 @@ export interface components {
             /** Blacklist */
             blacklist?: string[];
             /**
+             * Candidate Max Continuous Age Sec
+             * @default 3600
+             */
+            candidate_max_continuous_age_sec: number;
+            /**
              * Core Pool Size
              * @default 10
              */

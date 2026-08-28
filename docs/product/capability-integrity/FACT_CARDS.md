@@ -44,7 +44,7 @@ Notation:
 | MD-03 | collectors → venue APIs → orderbook/funding/OI tables → scanners/observer → microstructure evidence | Markets/diagnostics; per-source errors | E1+E2+E3, Supported | Natural collectors persisted orderbook, funding, and OI rows and the coverage API reported current source-specific state. |
 | MD-04 | context scheduler → optional sources → context snapshots → analysis bundle → bounded context | Markets; missing-provider degradation | E1+E2, Supported | Freshness, degradation and final data-utilization acceptance pass with mocked provider boundaries. |
 | MD-05 | catch-up/nightly jobs → OHLCV provider → bars/readiness state → features/settler → historical inputs | coverage/CLI; partial retry | E1+E2+E3, Supported | Natural active-universe backfill planned and completed three ready symbols with 4,219 fetched bars. |
-| MD-06 | refresh job/UI → scanners/allocator → universe assets/members → observer/ranker → candidates | Universe Board; expiry/refresh | E1+E2+E3, Supported | Natural refresh scanned 1,000 assets, selected 30, persisted a snapshot, and emitted nine attributable candidates. |
+| MD-06 | refresh job/UI → scanners/allocator → universe assets/members → Candidate attention | Entry Workbench; expiry/refresh | E1+E2+E3, Supported | Natural refresh scanned 1,000 assets, selected 30, persisted a snapshot, and emitted attributable candidates. |
 | MD-07 | outcome jobs → exposures/outcomes → family calibration stats → allocator multiplier → bounded scoring | Learning/CLI; neutral 1.0 fallback | E1+E2, Experimental | External Windows runtime observations are tracked separately from this local code review. |
 | MD-08 | scheduler → outcome settler → horizon outcomes → calibration/learning consumers → settled evidence | Learning/CLI; retry/incomplete | E1+E2, Supported | Tests assert cost-aware settlement through its consumers. |
 | MD-09 | regime job/API → regime detector → regime rows → observer/persona/risk context → regime-aware input | Markets/doctor; neutral fallback | E1+E2, Supported | Detector, Universe/ranker/position consumers and attribution checks pass. |
@@ -58,12 +58,12 @@ Notation:
 | ID | Runtime path and durable state → final consumer/result | Visible / recovery | Evidence and verdict | Review |
 |---|---|---|---|---|
 | DC-01 | Universe refresh → deterministic emitter pass + Opportunity → optional Observer enrichment → ranker/Operator | Agent Activity; durable failure | E1+E2, Supported | Emitter fact is execution admission; Observer is advisory. |
-| DC-02 | paper job → ranker → admission/evidence rows → Operator queue → bounded candidate | Blotter; terminal reject reasons | E1+E2, Supported | Ranker is admission, not strategy authority. |
-| DC-03 | wake/schedule → System Operator → decision row → proposal/terminal ledger → trade/skip | Blotter/Command Center; retryable pending | E1+E2, Supported | Sole-authority and dedup constraints asserted. |
+| DC-02 | completed Universe allocation → exact selected identities → planning generation attention → bounded Candidate | Entry Workbench; terminal reason/deadlines | E1+E2, Supported | Only completed allocation evidence can requalify attention; hard age never slides. |
+| DC-03 | valid Candidate claim → context recheck → planner → immutable Entry Plan or terminal no-plan | Entry Workbench/Agent Activity; retry/expiry | E1+E2, Supported | Claim, context, and completion all fail closed when attention is no longer valid. |
 | DC-04 | scheduler → PI daemon → pending scan/wake → Operator → decision even without event | Agent Activity; timeout/retry | E1+E2, Supported | Scheduled fallback has production trigger and tests. |
-| DC-05 | Operator trade decision → proposal builder → trade_proposals → Gateway → attributable order path | Blotter/drawer; identity rejection | E1+E2, Supported | Tests retain opportunity/decision identity. |
-| DC-06 | Blotter/API → approve/reject service → proposal state/audit → Gateway or terminal reject | Blotter; conflict/error | E1+E2, Supported | Human action reaches final proposal state. |
-| DC-07 | projections/CLI → causal joins → decision/ledger read model → owner → complete candidate trace | Blotter/CLI; missing-link markers | E1+E2, Supported | Does not infer absent stages as success. |
+| DC-05 | Candidate planning generation → immutable Entry Plan contract/hash → Risk/Gateway → attributable order path | Entry Workbench/detail; identity rejection | E1+E2, Supported | Plan payload/hash and Candidate identity are validated on exact reads. |
+| DC-06 | compatibility API → guarded legacy proposal approve/reject mutation | API only; conflict/error | E1+E2, Implemented | No current producer persists explicit human-review authority, so this is not presented as an owner review queue. |
+| DC-07 | Candidate/Entry Plan stores → workbench/history/detail projections → owner → exact causal trace | Entry Workbench/Charts/Trades; unavailable markers | E1+E2, Supported | Partial read failures remain unavailable and absent stages are not inferred as success. |
 | DC-08 | agent routes → run/opportunity stores → read models → Agent Activity → history/failure | page/API; explicit error | E1+E2, Supported | Durable failure lifecycle, read APIs and UI error rendering are covered. |
 | DC-09 | command/API → runtime trigger → agent run row → supported agent → output | command palette; rejection/timeout | E1+E2, Supported | Route returns job identity and bounded worker persists queued through final state. |
 | DC-10 | UI/API/CLI → operator shell → sessions/messages/tasks → tools/read models → command result | Command Center; supervision/recovery | E1+E2, Supported | Tests cover workspace persistence and supervision. |
@@ -75,7 +75,7 @@ Notation:
 
 | ID | Runtime path and durable state → final consumer/result | Visible / recovery | Evidence and verdict | Review |
 |---|---|---|---|---|
-| RK-01 | proposal → Execution Gateway → Risk Engine → risk_decisions → gateway → approve/reject | Risk/Blotter; fail closed | E1+E2, Supported | E2 proves Risk cannot be bypassed on active path. |
+| RK-01 | proposal/Entry Plan execution → Execution Gateway → Risk Engine → risk_decisions → gateway → approve/reject | Risk/Entry Workbench; fail closed | E1+E2, Supported | E2 proves Risk cannot be bypassed on active path. |
 | RK-02 | Settings/API → revision-checked policy service → config/history → Risk Engine → scoped policy | Risk UI; conflict/reset | E1+E2, Supported | Persistence is tied to the actual engine consumer. |
 | RK-03 | UI/CLI/API → kill switch → runtime/config state → Risk/Gateway → block | Risk/top bar; explicit release | E1+E2, Supported | Global and mode scopes reach enforcement. |
 | RK-04 | proposal/account state → risk checks → risk decision → Gateway → bounded leverage/loss/margin | Risk UI; violations | E1+E2, Supported | Limits are deterministic final rejects, not advisory. |
@@ -88,12 +88,12 @@ Notation:
 
 | ID | Runtime path and durable state → final consumer/result | Visible / recovery | Evidence and verdict | Review |
 |---|---|---|---|---|
-| EX-01 | scheduler candidate → Operator → proposal → Risk → paper broker → order/fill/position/outcome | Blotter/Positions/Analytics; fail closed | E1+E2, Supported | Real paper roundtrip crosses all necessary seams. |
-| EX-02 | approved demo proposal → Gateway → venue adapter → exchange order/fill → local position/reconcile | Blotter/Positions; adapter error | E1+E2, Experimental | Mocked adapters are not exchange-runtime proof; outside active scope. |
+| EX-01 | scheduler Candidate → Entry Plan → Risk → paper broker → order/fill/position/outcome | Entry Workbench/Positions/Analytics; fail closed | E1+E2, Supported | Real paper roundtrip crosses all necessary seams. |
+| EX-02 | approved demo intent → Gateway → venue adapter → exchange order/fill → local position/reconcile | Entry Workbench/Positions; adapter error | E1+E2, Experimental | Mocked adapters are not exchange-runtime proof; outside active scope. |
 | EX-03 | Settings/API → scorecard/confirm → live state+permission+audit → authority gates → unlocked/relocked state | Settings labels this an experimental prerequisite; lock symmetry | E1+E2, Experimental | Card is only the state transition; Live remains outside the supported surface and EX-04/#418 covers the broken proposal behavior. |
 | EX-04 | live state → **no consumer in new-proposal mode selection** → paper/demo proposal | UI now states the boundary; diagnostic remains warning; relock works | E1+E2, Broken, CI-02, `LU-C07` missing | Broker branches do not repair the missing upstream trigger. |
 | EX-05 | approved intent → constraint normalizer → normalized order fields → broker → venue-valid request | decision/order evidence; reject | E1+E2, Supported | Normalization cannot rewrite approved direction/notional intent. |
-| EX-06 | durable approved order → materializer → exchange ids/fills/positions → reconciler → one chain | Blotter/Positions; idempotent recovery | E1+E2, Implemented | Contract is executable, but no external execution mode is owner-declared as supported. |
+| EX-06 | durable approved order → materializer → exchange ids/fills/positions → reconciler → one chain | Entry Workbench/Positions; idempotent recovery | E1+E2, Implemented | Contract is executable, but no external execution mode is owner-declared as supported. |
 | EX-07 | proposal/stops → broker-specific bracket helpers → exchange order ids → reconcile → protection | Positions; unsupported/failure | E1+E2, Experimental | Private-fill paths are tested; real venue behavior remains outside the supported surface. |
 | EX-08 | price-feed tick → Position Manager → exit rule → close service → fill/position/outcome | Positions/alerts; exact-price fail closed | E1+E2, Supported | Local stop/target/max-hold chain reaches verified close. |
 | EX-09 | adverse signal → exit evaluator → coalesced position wake → existing Operator portfolio review → durable hold/adjust/close result → authorized adjustment/close path | Settings review result and durable PiDecision evidence; delivery/review failure remains visible | E1+E2, Supported, CI-03, `PL-PM-14` | Wake reviews use the complete open-position set and exact ids; the deterministic evaluator never mutates a Position. |
@@ -116,7 +116,7 @@ Notation:
 | PF-05 | orders/fills/positions → read routes → UI blotter → owner → lifecycle/cost view | Trades & Positions; errors | E1+E2, Supported | Final close/cost fields are represented explicitly. |
 | PF-06 | eligible outcomes → analytics builders → read models → Overview/CLI → PnL/drawdown/expectancy | charts; unavailable reasons | E1+E2, Supported | Administrative/incomplete records are excluded, not zero-filled. |
 | PF-07 | causal ids → attribution joins → lineage models → drawers/CLI → full ancestry | detail drawers; missing-link flags | E1+E2, Supported | Tests cross opportunity-to-outcome identity. |
-| PF-08 | all candidate stages → flow/funnel ledger → API/CLI/UI → owner → survivor-bias-aware counts | Overview/Blotter; exclusions | E1+E2, Supported | Terminal skips/rejects remain in denominator. |
+| PF-08 | all candidate stages → flow/funnel ledger → API/CLI/UI → owner → survivor-bias-aware counts | Overview/Entry Workbench; exclusions | E1+E2, Supported | Terminal skips/rejects remain in denominator. |
 | PF-09 | exposures/outcomes → attribution analyzers → reports → Learning/owner → factor/family net evidence | CLI/Learning; cohort warnings | E1+E2, Experimental | No qualified natural cohort verdict; measurement is not Alpha proof. |
 
 ## Learning and policy evolution

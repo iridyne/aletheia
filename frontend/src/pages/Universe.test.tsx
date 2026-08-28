@@ -2,46 +2,67 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
-import type { UniverseCurrentResponse } from '../types'
+import type { EntryWorkbenchResponse } from '../types'
 import Universe from './Universe'
 
-const current: UniverseCurrentResponse = {
-  enabled: true,
-  fallback: false,
-  stale: false,
-  stale_count: 0,
-  snapshot: {
-    id: 'snapshot-1234', created_at: '2026-08-13T00:00:00Z', market_type: 'spot', policy_id: null,
-    status: 'active', expires_at: '2026-08-13T01:00:00Z', summary: JSON.stringify({ scanned: 120, filtered: 96 }),
+const workbench: EntryWorkbenchResponse = {
+  generated_at: '2026-08-28T00:00:00Z',
+  availability: {
+    summary: { available: true, stale: false },
+    entry_plans: { available: true, stale: false },
+    candidate_attention: { available: true, stale: false },
   },
-  members: [{
-    id: 'member-1', snapshot_id: 'snapshot-1234', asset_id: 'avax', symbol: 'AVAX/USDT', rank: 1,
-    total_score: 71.2, opportunity_score: 61, tradability_score: 87, liquidity_score: 88,
-    estimated_cost: 2.1, crowding_risk: 11, late_entry_penalty: 3, scanner_family: 'momentum',
-    quote_volume_24h: 18_400_000, spread_bps: 4.2, ttl_sec: 3600, expires_at: '2026-08-13T01:00:00Z',
-    inclusion_reason: JSON.stringify(['RS24h leads BTC']), risk_flags: '[]', execution_eligible: 1,
-    entry_plan_id: null, entry_plan_status: null, entry_plan_execution_mode: null,
-    setup_state: null, triggered_opportunity_id: null,
+  universe: {
+    enabled: true,
+    status: 'active',
+    fallback_instruments: [],
+    snapshot: {
+      id: 'snapshot-1234', created_at: '2026-08-28T00:00:00Z', market_type: 'spot', policy_id: null,
+      status: 'active', expires_at: '2026-08-28T01:00:00Z', summary: '{}',
+    },
+  },
+  summary: { active_entry_plans: 1, needs_planning: 2, expiring_soon: 1 },
+  entry_plans: [{
+    id: 'plan-1', planning_generation_id: 'generation-1', candidate_id: 'candidate-1', planning_key: 'a'.repeat(64),
+    version: 'entry-plan/v1', venue: 'bitget', symbol: 'AVAX/USDT', market_type: 'perp', direction: 'long',
+    execution_mode: 'RESTING_MAKER', status: 'waiting', order_id: null, plan_hash: 'b'.repeat(64),
+    created_at: '2026-08-28T00:00:00Z', updated_at: '2026-08-28T00:00:00Z', terminal_at: null,
+    terminal_reason: null, contract_valid: true, plan: {
+      thesis: 'bounded continuation', scenario: 'retrace', entry_zone: [100, 101], invalidation_price: 98,
+      stop_price: 98, target_price: 105, expires_at: '2026-08-28T01:00:00Z',
+    },
   }],
+  candidate_attention: [],
 }
 
-
-function renderUniverse() {
+function renderWorkbench(data: EntryWorkbenchResponse = workbench) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
-  client.setQueryData(['universe-current'], current)
+  client.setQueryData(['entry-workbench'], data)
   return renderToStaticMarkup(<MemoryRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>)
 }
 
-describe('Universe Board', () => {
-  it('prioritizes pool health, allocation, and actionable candidate context', () => {
-    const html = renderUniverse()
-    expect(html).toContain('Candidate')
-    expect(html).toContain('Scanned')
-    expect(html).toContain('Allocation')
-    expect(html).toContain('Why in pool')
-    expect(html).toContain('RS24h leads BTC')
-    expect(html).toContain('Market quality')
-    expect(html).toContain('Candidate state')
-    expect(html).not.toContain('Net Scanner Calibration')
+describe('Entry Workbench', () => {
+  it('defaults to the direct Entry Plan ledger and one canonical summary row', () => {
+    const html = renderWorkbench()
+    expect(html).toContain('Entry Workbench')
+    expect(html).toContain('Active Entry Plans')
+    expect(html).toContain('Needs Planning')
+    expect(html).toContain('Expiring Soon')
+    expect(html).toContain('AVAXUSDT')
+    expect(html).toContain('Entry Plans')
+    expect(html).toContain('Candidates')
+    expect(html).toContain('Planning History')
+    expect(html).not.toContain('Manual Review')
+  })
+
+  it('distinguishes fallback instruments from Candidate attention', () => {
+    const html = renderWorkbench({
+      ...workbench,
+      universe: { enabled: false, status: 'disabled', snapshot: null, fallback_instruments: ['BTC/USDT', 'ETH/USDT'] },
+      summary: { active_entry_plans: 1, needs_planning: 0, expiring_soon: 0 },
+      candidate_attention: [],
+    })
+    expect(html).toContain('Fallback instruments available')
+    expect(html).toContain('They are not durable Candidates')
   })
 })

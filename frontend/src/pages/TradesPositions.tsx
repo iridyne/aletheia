@@ -360,6 +360,7 @@ export default function TradesPositions() {
 	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const requestedTab = searchParams.get("tab");
+	const entryPlanId = searchParams.get("entry_plan_id");
 	const activeTab = isTradesTab(requestedTab) ? requestedTab : "blotter";
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
@@ -367,8 +368,8 @@ export default function TradesPositions() {
 		...positionFreshness,
 	});
 	const { data: orders, isPending: ordersPending, isError: ordersError } = useQuery({
-		queryKey: ["trades"],
-		queryFn: api.getTrades,
+		queryKey: entryPlanId ? ["trades", entryPlanId] : ["trades"],
+		queryFn: () => api.getTrades(entryPlanId),
 	});
 	const { data: reconciliation, isPending: reconPending, isError: reconError } = useQuery({
 		queryKey: positionKeys.reconciliation,

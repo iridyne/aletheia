@@ -38,14 +38,10 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
     def _has_item(scope: str, to: str, label: str) -> bool:
         return bool(re.search(rf"\{{ to: '{re.escape(to)}', label: '{re.escape(label)}'[^}}]*\}}", scope))
 
-    assert _has_item(research.group(0), "/universe", "Universe Board")
     assert _has_item(research.group(0), "/serenity-lens", "Serenity Lens")
     assert _has_item(research.group(0), "/news", "News Intel")
-    # 2026-07-18 Blotter migration: the Decide row now points at /blotter.
-    # The old '/proposals → Approval Desk' entry has been retired and its
-    # route rewired to `<Navigate to="/blotter" replace />` for legacy
-    # bookmarks (verified by test_proposals_route_redirects_to_blotter below).
-    assert _has_item(decision.group(0), "/blotter", "Blotter")
+    assert _has_item(decision.group(0), "/universe", "Entry Workbench")
+    assert "Blotter" not in decision.group(0)
     assert "Approval Desk" not in decision.group(0)
     assert _has_item(portfolio.group(0), "/trades", "Trades & Positions")
     assert _has_item(portfolio.group(0), "/risk", "Risk & Controls")
@@ -55,21 +51,12 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
     assert "/strategies" not in nav_text
 
 
-def test_proposals_route_redirects_to_blotter():
-    """`/proposals` was retired 2026-07-18 in favour of /blotter. Any lingering
-    external bookmark or in-app navigate() call to /proposals must still
-    resolve; the route stays wired as a Navigate redirect."""
+def test_legacy_review_routes_redirect_to_entry_workbench():
     app = _read("App.tsx")
-    # Redirect is present.
-    assert re.search(
-        r"<Route\s+path=\"/proposals\"\s+element=\{<Navigate\s+to=\"/blotter\"\s+replace\s*/>\}",
-        app,
-    ), "Expected `<Route path=\"/proposals\" element={<Navigate to=\"/blotter\" replace />}` in App.tsx"
-    # `Proposals` component import must be gone (file deleted).
+    assert '<Route path="/blotter" element={<LegacyRedirect to="/universe" tab="plans" />} />' in app
+    assert '<Route path="/proposals" element={<LegacyRedirect to="/universe" tab="plans" />} />' in app
     assert "from './pages/Proposals'" not in app
-    # The Blotter route + lazy component import exist.
-    assert "const Blotter = lazy(() => import('./pages/Blotter'))" in app
-    assert "<Route path=\"/blotter\" element={<Blotter />}" in app
+    assert "from './pages/Blotter'" not in app
 
 
 def test_frontend_has_no_links_to_removed_strategy_lifecycle_or_old_serenity_path():

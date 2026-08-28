@@ -1,18 +1,19 @@
 from pathlib import Path
 
 
-def test_proposals_ui_only_offers_paper_approval_for_stored_paper_intent():
-    source = Path("frontend/src/pages/Blotter.tsx").read_text(encoding="utf-8")
+def test_dead_manual_review_ui_is_removed_without_fabricating_authority():
+    app = Path("frontend/src/App.tsx").read_text(encoding="utf-8")
+    workbench = Path("frontend/src/pages/Universe.tsx").read_text(encoding="utf-8")
+    model = Path("aletheia/storage/models.py").read_text(encoding="utf-8")
 
-    assert "function canApprovePaper" in source
-    assert "p?.execution_mode === 'paper_internal'" in source
-    assert "canApprovePaper(p)" in source
-    assert "Approve Local Paper" in source
+    assert not Path("frontend/src/pages/Blotter.tsx").exists()
+    assert "Manual Review" not in workbench
+    assert "requires_manual_review" not in model
+    assert '<Route path="/blotter" element={<LegacyRedirect to="/universe" tab="plans" />} />' in app
+    assert '<Route path="/proposals" element={<LegacyRedirect to="/universe" tab="plans" />} />' in app
 
 
-def test_proposals_ui_does_not_claim_the_backend_overrides_execution_mode():
-    source = Path("frontend/src/pages/Blotter.tsx").read_text(encoding="utf-8")
-
-    assert "ALWAYS overrides" not in source
-    assert "routes every approval through" not in source
-    assert "proposal was tagged" not in source
+def test_entry_plan_proposals_are_not_emitted_as_legacy_activity():
+    backend = Path("aletheia/server/routes/ui.py").read_text(encoding="utf-8")
+    assert "WHERE entry_plan_id IS NULL" in backend
+    assert '"kind": "entry_plan"' in backend
