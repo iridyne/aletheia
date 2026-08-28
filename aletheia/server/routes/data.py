@@ -1539,6 +1539,7 @@ async def get_market_ohlcv(
     from aletheia.config.loader import load_config
     from aletheia.data.cache import get_cache
     from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.providers import OHLCVResult
     from aletheia.data.symbols import InstrumentId, to_canonical
 
     cfg = load_config()
@@ -1586,12 +1587,16 @@ async def get_market_ohlcv(
             provider = get_market_data_provider(effective_exchange)
             try:
                 try:
-                    candles = await provider.get_ohlcv(
-                        instrument,
-                        timeframe=timeframe,
-                        limit=limit,
-                        since=since_ms,
-                    )
+                    fetch_kwargs = {
+                        "timeframe": timeframe,
+                        "limit": limit,
+                        "since": since_ms,
+                    }
+                    if not use_cache:
+                        fetch_kwargs["use_cache"] = False
+                    candles = await provider.get_ohlcv(instrument, **fetch_kwargs)
+                    if isinstance(candles, OHLCVResult):
+                        data_source = candles.source
                 except Exception:
                     # The chart remains usable during a provider outage, but exact
                     # venue/market/time paging is preserved and provenance is explicit.

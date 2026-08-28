@@ -91,6 +91,8 @@ class BinancePublicProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult:
         from aletheia.net import httpx_client
 
@@ -155,7 +157,11 @@ class BinancePublicProvider:
         if rejected:
             logger.warning("ohlcv quality rejected %d/%d Binance row(s)", rejected, len(parsed))
         return OHLCVResult(
-            candles, requested=limit, rejected=rejected, attempts=(attempt,),
+            candles,
+            requested=limit,
+            rejected=rejected,
+            attempts=(attempt,),
+            source="provider_fetch",
         )
 
     async def close(self) -> None:

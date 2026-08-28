@@ -81,12 +81,14 @@ class OHLCVResult(list[Candle]):
         requested: int,
         rejected: int = 0,
         attempts: Iterable[OHLCVAttempt] = (),
+        source: str = "provider_fetch",
     ) -> None:
         super().__init__(candles)
         self.requested = requested
         self.accepted = len(self)
         self.rejected = rejected
         self.attempts = tuple(attempts)
+        self.source = source
         self.outcome = classify_ohlcv_outcome(
             accepted=self.accepted,
             rejected=rejected,
@@ -154,6 +156,8 @@ class MarketDataProvider(Protocol):
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult: ...
 
     async def close(self) -> None: ...

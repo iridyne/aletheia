@@ -161,7 +161,7 @@ async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
 
     class _FakeCCXT:
         # signature mirrors the real CCXTProvider (since added for history paging)
-        async def get_ohlcv(self, symbol, timeframe, limit, since=None):
+        async def get_ohlcv(self, symbol, timeframe, limit, since=None, *, use_cache=True):
             return [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)]
         async def get_ticker(self, symbol):
             from aletheia.data.providers import Ticker
@@ -194,6 +194,42 @@ async def test_ohlcv_route_marks_memory_cache_source(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.headers["x-aletheia-data-source"] == "memory_cache"
     assert resp.json()[0]["close"] == 1.5
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_fresh_tail_bypasses_provider_cache(client, monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle
+
+    class _LiveProvider:
+        calls = 0
+
+        async def get_ohlcv(self, symbol, timeframe, limit, since=None, *, use_cache=True):
+            assert use_cache is False
+            self.calls += 1
+            return [Candle(
+                timestamp=1700000000000,
+                open=1,
+                high=2,
+                low=0.5,
+                close=1 + self.calls,
+                volume=10,
+            )]
+
+        async def close(self):
+            pass
+
+    provider = _LiveProvider()
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda _exchange: provider)
+
+    first = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=2")
+    second = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=2")
+
+    assert first.headers["x-aletheia-data-source"] == "provider_fetch"
+    assert second.headers["x-aletheia-data-source"] == "provider_fetch"
+    assert first.json()[0]["close"] == 2
+    assert second.json()[0]["close"] == 3
+    assert provider.calls == 2
 
 
 @pytest.mark.anyio
@@ -244,8 +280,9 @@ async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
     captured = {}
 
     class _FakeCCXT:
-        async def get_ohlcv(self, symbol, timeframe, limit, since=None):
+        async def get_ohlcv(self, symbol, timeframe, limit, since=None, *, use_cache=True):
             captured["since"] = since
+            captured["use_cache"] = use_cache
             return [
                 Candle(timestamp=(cutoff - 3600) * 1000, open=1, high=2, low=0.5, close=1.4, volume=10),  # older — kept
                 Candle(timestamp=cutoff * 1000, open=1, high=2, low=0.5, close=1.5, volume=10),            # == cutoff — dropped
@@ -263,6 +300,7 @@ async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
     assert [c["time"] for c in data] == [cutoff - 3600]
     # the route asks the exchange for a window ending at the cutoff
     assert captured["since"] == cutoff * 1000 - 300 * 3_600_000
+    assert captured["use_cache"] is False
 
 
 @pytest.mark.anyio
