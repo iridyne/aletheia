@@ -144,6 +144,60 @@ def test_inspect_pnl_json_uses_same_counts_and_handles_empty_metrics():
     assert payload["rolling"]["total_pnl"] == 5.0
 
 
+def test_cost_summary_preserves_unknown_fee_legs(monkeypatch):
+    from aletheia.analytics import outcome_integrity
+    from aletheia.server.routes.analytics import get_cost_summary
+
+    complete = {"entry_fee": 1.25, "exit_fee": 0.75, "slippage_cost": 0.1}
+    unknown_exit = {"entry_fee": 0.5, "exit_fee": None, "slippage_cost": 0.2}
+    monkeypatch.setattr(
+        outcome_integrity, "eligible_strategy_outcomes", lambda **_: [complete]
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "raw_account_events", lambda **_: [complete, unknown_exit]
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "build_outcome_cohort_summary", lambda **_: {}
+    )
+
+    costs = get_cost_summary(execution_mode="paper_internal")
+
+    assert costs["total_entry_fees"] == 1.25
+    assert costs["total_exit_fees"] == 0.75
+    assert costs["total_fees"] == 2.0
+    assert costs["total_slippage"] == 0.1
+    assert costs["total_costs"] == 2.1
+    assert costs["raw_recorded_costs"] == {
+        "total_entry_fees": 1.75,
+        "total_exit_fees": None,
+        "total_fees": None,
+        "total_slippage": 0.3,
+        "total_costs": None,
+    }
+
+
+def test_cost_summary_keeps_explicit_zero_fees_numeric(monkeypatch):
+    from aletheia.analytics import outcome_integrity
+    from aletheia.server.routes.analytics import get_cost_summary
+
+    zero = {"entry_fee": 0.0, "exit_fee": 0.0, "slippage_cost": 0.0}
+    monkeypatch.setattr(
+        outcome_integrity, "eligible_strategy_outcomes", lambda **_: [zero]
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "raw_account_events", lambda **_: [zero]
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "build_outcome_cohort_summary", lambda **_: {}
+    )
+
+    costs = get_cost_summary(execution_mode="paper_internal")
+
+    assert costs["total_fees"] == 0.0
+    assert costs["total_costs"] == 0.0
+    assert costs["raw_recorded_costs"]["total_fees"] == 0.0
+
+
 def test_frontend_keeps_dual_curve_and_cohort_labels_visible():
     root = Path(__file__).resolve().parents[1]
     analytics = (root / "frontend/src/charts/TradeAnalyticsPanel.tsx").read_text()
