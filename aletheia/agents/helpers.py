@@ -55,6 +55,19 @@ def _prefers_json_reliable_models(caller: str) -> bool:
     return any(name.startswith(prefix) for prefix in _TRADE_JSON_CALLER_PREFIXES)
 
 
+def _resolve_provider_name(provider: str | None) -> str | None:
+    """Capture the default role before resolving its provider object."""
+    if provider is not None:
+        return provider
+    try:
+        from aletheia.config.loader import load_config
+
+        name = load_config(persist_migrations=False).models.default_provider
+    except Exception:
+        return None
+    return name if isinstance(name, str) and name.strip() else None
+
+
 def _structured_response_model_ids(resp) -> tuple[str, ...]:
     ids: list[str] = []
     seen: set[str] = set()
@@ -292,7 +305,7 @@ async def llm_complete(
     # name, so a deep-tier failure would (a) never trip its own model's
     # cooldown, and (b) fall back through default_provider's candidate list —
     # not the tier's.
-    provider_name = provider
+    provider_name = _resolve_provider_name(provider)
     rendered_system, adapter_id, context_manifest = _prepare_context_adapter(
         system,
         include=include_harness_header,
@@ -651,7 +664,7 @@ async def llm_structured(
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
     # provider actually in use, not cfg.models.default_provider.
-    provider_name = provider
+    provider_name = _resolve_provider_name(provider)
     schema_dict: dict = {}
     inference_call: InferenceCall | None = None
     inference_finished = False
@@ -1029,7 +1042,7 @@ async def llm_stream(
     Callers should iterate with `async for chunk in llm_stream(...)`.
     provider: explicit provider name (or None → use default_provider).
     """
-    provider_name = provider
+    provider_name = _resolve_provider_name(provider)
     rendered_system, adapter_id, context_manifest = _prepare_context_adapter(
         system,
         include=include_harness_header,
@@ -1049,12 +1062,10 @@ async def llm_stream(
     _record_call_started(inference_call, None, None)
     try:
         provider_instance = await get_provider_async(provider_name)
-        from aletheia.config.loader import load_config
         from aletheia.model_provider.broker import brokered_stream
 
-        resolved_name = provider_name or load_config().models.default_provider
         async for chunk in brokered_stream(
-            resolved_name,
+            provider_name,
             provider_instance,
             ModelRequest(
                 messages=messages,
