@@ -24,6 +24,7 @@ venue that does answer must still be able to close a row out.
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,8 +120,8 @@ class _BannedProvider:
         pass
 
 
-class _EmptyAnsweringProvider:
-    """A venue that answers both probes intact and simply has no price."""
+class _InvalidAnsweringProvider:
+    """A venue that answers with an invalid empty ticker payload."""
 
     def __init__(self):
         self.ohlcv_calls = 0
@@ -131,11 +132,14 @@ class _EmptyAnsweringProvider:
         return []
 
     async def get_ticker(self, instrument):
-        from aletheia.data.providers import Ticker
-
         self.ticker_calls += 1
-        return Ticker(symbol="ADA/USDT", last_price=0.0, volume_24h=0.0,
-                      change_pct_24h=0.0, provider=instrument.exchange)
+        return SimpleNamespace(
+            symbol="ADA/USDT",
+            last_price=0.0,
+            volume_24h=0.0,
+            change_pct_24h=0.0,
+            provider=instrument.exchange,
+        )
 
     async def close(self):
         pass
@@ -176,14 +180,14 @@ def test_a_transport_error_is_reported_as_deferred_not_as_no_price(monkeypatch):
     assert observations["row-banned"]["exit_price"] is None
 
 
-def test_an_intact_empty_answer_is_reported_as_no_price(monkeypatch):
-    """The terminal path must survive: this is what `failed` is actually for."""
+def test_an_invalid_empty_answer_is_deferred(monkeypatch):
+    """Malformed venue data is unavailable, not a terminal no-price result."""
     from aletheia.universe.outcome_recorder import (
         _batch_fetch_market_observations,
         is_deferred,
     )
 
-    provider = _EmptyAnsweringProvider()
+    provider = _InvalidAnsweringProvider()
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
@@ -195,11 +199,8 @@ def test_an_intact_empty_answer_is_reported_as_no_price(monkeypatch):
     )
 
     assert provider.ohlcv_calls == 1 and provider.ticker_calls == 1
-    assert not is_deferred(observations.get("row-empty"))
-    assert "row-empty" not in observations, (
-        "an intact answer with no price stays absent from the map, so the caller's "
-        "terminal write still fires"
-    )
+    assert is_deferred(observations.get("row-empty"))
+    assert observations["row-empty"]["defer_reason"] == "ticker:ValueError"
 
 
 def test_an_unusable_instrument_stays_terminal(monkeypatch):

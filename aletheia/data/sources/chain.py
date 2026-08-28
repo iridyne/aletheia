@@ -95,6 +95,8 @@ class FallbackChainProvider:
         for idx, provider in enumerate(self._eligible_providers(symbol)):
             try:
                 result = await provider.get_ticker(symbol)
+                if not isinstance(result, Ticker):
+                    raise ValueError("provider returned a non-canonical ticker")
                 if idx > 0:
                     fallback_used = True
                 break

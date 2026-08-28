@@ -8,6 +8,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 
 from aletheia.data.symbols import InstrumentId
+from aletheia.data.providers import Ticker
 
 from aletheia.data.price_feed import (
     get_cached_price,
@@ -353,9 +354,11 @@ class TestRefreshWatchedPrices:
         cfg.market_data.ccxt_exchange = "binance"
         cfg.event_triggers.enabled = False
         monkeypatch.setattr(loader, "load_config", lambda: cfg)
-        ticker = MagicMock(
+        ticker = Ticker(
+            symbol="BTC/USDT",
             last_price=65_000.0,
             volume_24h=1_000_000.0,
+            change_pct_24h=0.0,
             provider="binance",
         )
         provider = MagicMock()
@@ -385,12 +388,14 @@ class TestRefreshWatchedPrices:
         cfg.market_data.ccxt_exchange = "binance"
         mock_cfg.return_value = cfg
 
-        mock_ticker_btc = MagicMock()
-        mock_ticker_btc.last_price = 65000.0
-        mock_ticker_btc.provider = "binance"
-        mock_ticker_eth = MagicMock()
-        mock_ticker_eth.last_price = 3500.0
-        mock_ticker_eth.provider = "binance"
+        mock_ticker_btc = Ticker(
+            symbol="BTC/USDT", last_price=65000.0, volume_24h=0.0,
+            change_pct_24h=0.0, provider="binance",
+        )
+        mock_ticker_eth = Ticker(
+            symbol="ETH/USDT", last_price=3500.0, volume_24h=0.0,
+            change_pct_24h=0.0, provider="binance",
+        )
 
         provider = AsyncMock()
         provider.get_ticker = AsyncMock(side_effect=[mock_ticker_btc, mock_ticker_eth])
@@ -426,8 +431,14 @@ class TestRefreshWatchedPrices:
         cfg.event_triggers.volume_surge_multiplier = 2.0
         mock_cfg.return_value = cfg
 
-        spot = MagicMock(last_price=100.0, volume_24h=100.0, provider="binance")
-        perp = MagicMock(last_price=120.0, volume_24h=300.0, provider="binance")
+        spot = Ticker(
+            symbol="BTC/USDT", last_price=100.0, volume_24h=100.0,
+            change_pct_24h=0.0, provider="binance",
+        )
+        perp = Ticker(
+            symbol="BTC/USDT", last_price=120.0, volume_24h=300.0,
+            change_pct_24h=0.0, provider="binance",
+        )
         provider = AsyncMock()
         provider.get_ticker = AsyncMock(side_effect=[spot, perp, spot, perp])
         provider.close = AsyncMock()
@@ -458,8 +469,14 @@ class TestRefreshWatchedPrices:
         provider = AsyncMock()
         provider.get_ticker = AsyncMock(
             side_effect=[
-                MagicMock(last_price=65000.0, provider="binance"),
-                MagicMock(last_price=3500.0, provider="binance"),
+                Ticker(
+                    symbol="BTC/USDT", last_price=65000.0, volume_24h=0.0,
+                    change_pct_24h=0.0, provider="binance",
+                ),
+                Ticker(
+                    symbol="ETH/USDT", last_price=3500.0, volume_24h=0.0,
+                    change_pct_24h=0.0, provider="binance",
+                ),
             ]
         )
         provider.close = AsyncMock()
@@ -489,9 +506,11 @@ class TestRefreshWatchedPrices:
         cfg.event_triggers.enabled = False
         mock_cfg.return_value = cfg
 
-        ticker = MagicMock(
+        ticker = Ticker(
+            symbol="ON/USDT",
             last_price=90.57,
             volume_24h=3_012_868.0,
+            change_pct_24h=0.0,
             provider="bybit",
         )
         provider = AsyncMock()

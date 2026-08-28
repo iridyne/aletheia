@@ -47,6 +47,14 @@ age; configured freshness limit; criticality; and one of `fresh`, `stale`,
   identified; attribution is presentation metadata.
 - Coverage is a retained-table census, not requested-scope completeness or a
   publication-generation guarantee.
+- A provider may report ticker success only with a canonical `Ticker` whose
+  required price/volume/change facts are finite and in-domain; optional 24h
+  extremes, when present, are finite positive values and ordered.
+- Batch volume ranking omits rows with non-finite or impossible ticker price,
+  change, or volume facts. It never turns those values into ranking evidence.
+- `MarketSnapshot` rejects non-finite or impossible price, volume, and 24h
+  extreme values before persistence; this is defense in depth, not a SQLite
+  migration or a replacement for provider validation.
 - Neither report changes `/_infra/livez`, `/_infra/readyz`, Risk, Execution
   Gateway, or Live permissions.
 
@@ -67,6 +75,9 @@ the response exposes scan timing through `Server-Timing`.
   attribution, and recovery presentation.
 - `tests/test_market_data_coverage.py` proves fresh, stale, empty, and idle
   coverage classification.
+- `tests/test_crypto_fallback.py`, `tests/test_market_data_venue_health.py`,
+  `tests/test_instrument_aware_collectors.py`, and
+  `tests/test_universe_features.py` prove ticker and batch-ranking integrity.
 - `tests/test_market_routes.py` proves the two reports remain separate API
   surfaces and that data coverage exposes its timing facts.
 

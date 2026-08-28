@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -69,15 +70,31 @@ class VolumeScannerCollector:
                     if instrument is None:
                         continue
                     volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
+                    if volume is None:
+                        errors.append(f"{instrument}: invalid_ticker_numeric")
+                        continue
                     if volume <= 0:
+                        continue
+                    last_raw = (
+                        ticker.get("last") if ticker.get("last") is not None
+                        else ticker.get("close")
+                    )
+                    last_price = _finite_float(last_raw)
+                    change_pct = (
+                        _finite_float(ticker.get("percentage"))
+                        if ticker.get("percentage") is not None
+                        else None
+                    )
+                    if last_price is None or last_price <= 0 or change_pct is None:
+                        errors.append(f"{instrument}: invalid_ticker_numeric")
                         continue
                     ranked.append({
                         "symbol": instrument.symbol,
                         "market_type": instrument.market_type,
                         "exchange": venue,
                         "volume_24h_usd": volume,
-                        "last_price": float(ticker.get("last") or 0),
-                        "change_pct_24h": float(ticker.get("percentage") or 0),
+                        "last_price": last_price,
+                        "change_pct_24h": change_pct,
                     })
             except Exception as exc:
                 errors.append(f"volume_scanner:{venue}: {exc}")
@@ -94,3 +111,13 @@ class VolumeScannerCollector:
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "errors": errors,
         }
+
+
+def _finite_float(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
