@@ -683,7 +683,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         assert "--ignore=tests/test_pause_ownership.py" in commands
         assert "--dist loadfile" in commands
     assert '-m "tier_unit"' in unit_commands
-    assert "-n 6" in unit_commands
+    assert "-n 4" in unit_commands
     assert '-m "tier_integration"' in integration_commands
     assert '-m "tier_spec"' in spec_commands
     assert '-m "tier_e2e"' in e2e_commands
