@@ -69,6 +69,34 @@ async def _run_failed_structured_fixture(content: str) -> tuple[str, dict]:
 
 
 @pytest.mark.asyncio
+async def test_terminal_reasoning_empty_records_provider_failure(monkeypatch):
+    from aletheia.agents import helpers
+
+    async def complete(*_args, **_kwargs):
+        return ModelResponse(
+            content="",
+            raw={"usage": {"completion_tokens": 20}},
+        )
+
+    failures: list[bool] = []
+    with (
+        patch.object(helpers, "complete_with_fallback", complete),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())),
+        patch.object(helpers, "_record_llm", failures.append),
+    ):
+        data, error = await helpers.llm_structured(
+            "synthetic system",
+            "synthetic user",
+            schema=_OperatorDecisionSchema,
+            caller="system_operator.assess_opportunity",
+        )
+
+    assert data is None
+    assert error == "structured_empty_content"
+    assert failures == [False]
+
+
+@pytest.mark.asyncio
 async def test_schema_failure_persists_only_bounded_content_free_diagnostics():
     secret_marker = "SYNTHETIC_VALUE_MUST_NOT_PERSIST"
     content = json.dumps(

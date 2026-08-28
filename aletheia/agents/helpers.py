@@ -881,6 +881,7 @@ async def llm_structured(
                         "reasoning model exhausted budget on reasoning phase",
                         output_tokens,
                     )
+                    _record_llm(False)
                     return _failure("structured_empty_content")
                 if attempt < max_attempts - 1:
                     logger.warning(
