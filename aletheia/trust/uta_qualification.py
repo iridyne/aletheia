@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import json
 
-from aletheia.config.loader import get_data_dir
+from aletheia.config.loader import get_data_dir, load_config
 from aletheia.update.git_ops import current_commit
 from aletheia.uta.contract import UTA_CONTRACT_VERSION
 from aletheia.uta.manager import create_uta_adapter
+
+
+class UTAQualificationError(RuntimeError):
+    def __init__(self, reason_code: str) -> None:
+        super().__init__("UTA mutation requires current qualification")
+        self.reason_code = reason_code
 
 
 def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
@@ -52,3 +58,12 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
     ):
         return False, "qualification_execution_evidence_incomplete"
     return True, "qualified"
+
+
+def require_uta_mutation_qualification(execution_mode: str, cfg=None) -> None:
+    cfg = cfg or load_config()
+    if cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
+        raise UTAQualificationError("uta_mutation_boundary_inactive")
+    qualified, reason = uta_profile_qualified(execution_mode, cfg)
+    if not qualified:
+        raise UTAQualificationError(reason)

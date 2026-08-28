@@ -23,6 +23,7 @@ from aletheia.storage.repositories import (
     update_position,
 )
 from aletheia.storage.sqlite import get_db
+from aletheia.trust.uta_qualification import require_uta_mutation_qualification
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.manager import create_uta_adapter
 from aletheia.uta.models import (
@@ -54,6 +55,7 @@ def _run(coro):
 
 
 async def _command(execution_mode: str, method: str, command):
+    require_uta_mutation_qualification(execution_mode)
     adapter = create_uta_adapter(execution_mode)
     try:
         return await getattr(adapter, method)(command)
@@ -162,6 +164,7 @@ def execute_order(
     _guard_unresolved_submission(proposal_id, execution_mode)
     if market_type != "spot" and leverage is None:
         raise ValueError("futures UTA order requires leverage")
+    require_uta_mutation_qualification(execution_mode)
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
@@ -283,6 +286,13 @@ def close_position(
 ) -> dict:
     from aletheia.storage import repositories as repo
 
+    current = repo.get_position(position_id)
+    if current is None:
+        raise ValueError(f"position not found: {position_id}")
+    if current.get("status") != "open":
+        raise ValueError(f"position {position_id} is not open")
+    if not has_unresolved_close_claim(current):
+        require_uta_mutation_qualification(current["execution_mode"])
     row, order = _claim_close(position_id, reason, close_reasoning)
     if order is None:
         existing = repo.get_order(row["pending_close_order_id"])

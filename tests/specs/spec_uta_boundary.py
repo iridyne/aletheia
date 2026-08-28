@@ -128,7 +128,7 @@ def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
         encoding="utf-8"
     )
 
-    assert 'uta_read_boundary_for(allowed_mode) == "uta_v1"' in gateway
+    assert gateway.count("_qualified_uta_mutation_selected(") >= 3
     assert "aletheia.execution.coordinator import execute_order" in gateway
     assert "aletheia.execution.gateway import close_exchange_position" in manager
     assert "finalize_exchange_acknowledgement" in coordinator
