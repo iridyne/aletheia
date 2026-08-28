@@ -48,15 +48,26 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
     try:
         cfg = load_config()
         snap = repo.get_active_universe_snapshot()
+        now = datetime.now(timezone.utc).isoformat()
+        stale = bool(snap and snap.get("expires_at") and str(snap["expires_at"]) <= now)
+        status = (
+            "disabled"
+            if not cfg.universe.enabled
+            else "no_active_snapshot"
+            if snap is None
+            else "stale_snapshot"
+            if stale
+            else "active"
+        )
         response["universe"] = {
             "enabled": cfg.universe.enabled,
-            "status": "active"
-            if snap
-            else ("disabled" if not cfg.universe.enabled else "no_active_snapshot"),
+            "status": status,
             "snapshot": snap,
-            "fallback_instruments": list(cfg.universe.fallback_symbols) if snap is None else [],
+            "fallback_instruments": (
+                list(cfg.universe.fallback_symbols) if status != "active" else []
+            ),
         }
-        response["availability"]["universe"] = {"available": True, "stale": False}
+        response["availability"]["universe"] = {"available": True, "stale": stale}
     except Exception as exc:
         response["universe"] = {
             "enabled": None,

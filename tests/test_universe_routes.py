@@ -155,6 +155,30 @@ def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabl
     assert body["candidate_attention"] == []
 
 
+def test_workbench_disabled_overrides_old_snapshot_without_fabricating_candidates(
+    client, disabled_cfg
+):
+    old_snapshot = {
+        "id": "old-snapshot",
+        "status": "active",
+        "expires_at": "2020-01-01T00:00:00+00:00",
+    }
+    plans = [{"id": "plan-1", "status": "waiting"}]
+    with patch("aletheia.server.routes.universe.load_config", return_value=disabled_cfg), \
+         patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=old_snapshot), \
+         patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
+         patch("aletheia.server.routes.universe._active_entry_plan_projections", return_value=plans), \
+         patch("aletheia.server.routes.universe.repo.list_active_candidate_attention", return_value=[]):
+        response = client.get("/api/universe/workbench")
+
+    body = response.json()
+    assert body["universe"]["status"] == "disabled"
+    assert body["availability"]["universe"]["stale"] is True
+    assert body["universe"]["fallback_instruments"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    assert body["candidate_attention"] == []
+    assert body["entry_plans"] == plans
+
+
 def test_candidate_alias_and_exact_trade_plan_filter(client, monkeypatch):
     monkeypatch.setattr(
         "aletheia.server.routes.universe.get_member",
