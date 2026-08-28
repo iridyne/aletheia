@@ -478,8 +478,8 @@ be interpreted as zeroing spendable balance or equity. See also
 | GET | `/universe/snapshots/{id}` | Snapshot detail with members |
 | GET | `/universe/workbench` | Bounded active Entry Plans and Candidate attention, exact summary counts, Universe/fallback state, and per-section availability |
 | GET | `/universe/entry-plans/{plan_id}` | Exact active or terminal Entry Plan; validates its stored V1 contract and content hash before returning it |
-| GET | `/universe/candidates/{candidate_id}` | Exact Candidate attention and planning evidence by identity |
-| GET | `/universe/planning-history` | Stable `(updated_at,id)` cursor pagination across Candidate planning generations and Entry Plans (`limit`, optional `before`) |
+| GET | `/universe/candidates/{candidate_id}` | Exact Candidate attention and planning evidence by identity; elapsed soft/hard attention deadlines are projected immediately as `ttl_expired` / `max_attention_age` without mutating Entry Plans or Orders |
+| GET | `/universe/planning-history` | Stable `(updated_at,id)` cursor pagination across Candidate planning generations and Entry Plans (`limit`, optional `before`), using the same effective attention-expiry projection as Candidate detail |
 | GET | `/universe/members/{id}` | Member detail (features, outcomes) |
 | GET | `/universe/members/{id}/outcomes` | Market-aware gross/net outcome history, including estimated costs and MFE/MAE |
 | POST | `/universe/refresh` | Trigger universe refresh |
