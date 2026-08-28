@@ -662,7 +662,9 @@ def snapshots(
     from aletheia.storage.repositories import list_market_snapshots
 
     if symbol:
-        rows = list_market_snapshots(symbol=symbol, limit=limit)
+        # Fetch the retained symbol history before filtering so fresh rows do
+        # not consume the requested stale-only limit.
+        rows = list_market_snapshots(symbol=symbol, limit=None if stale_only else limit)
         result = []
         for r in rows:
             age, is_stale = _parse_age(r.get("snapshot_at") or "")
@@ -678,7 +680,7 @@ def snapshots(
                 "age_seconds": round(age, 0),
                 "is_stale": is_stale,
             })
-        _output(result, json_output)
+        _output(result[:limit], json_output)
         return
 
     # Coverage mode: latest snapshot per symbol
