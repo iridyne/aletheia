@@ -77,6 +77,156 @@ async def test_llm_complete_forwards_none_when_caller_did_not_specify():
 
 
 @pytest.mark.asyncio
+async def test_default_provider_identity_is_captured_before_config_reload():
+    """A default-role switch cannot relabel an already-resolved provider object."""
+    from types import SimpleNamespace
+
+    from aletheia.model_provider.base import ModelResponse
+    from aletheia.agents import helpers
+
+    import aletheia.config.loader as loader
+
+    cfg_a = SimpleNamespace(models=SimpleNamespace(default_provider="provider_a"))
+    cfg_b = SimpleNamespace(models=SimpleNamespace(default_provider="provider_b"))
+    first_read = True
+    captured: dict = {}
+
+    def fake_load_config(*, persist_migrations=True):  # noqa: ARG001
+        nonlocal first_read
+        if first_read:
+            first_read = False
+            return cfg_a
+        return cfg_b
+
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+        captured["provider"] = provider
+        captured["provider_name"] = provider_name
+        assert loader.load_config().models.default_provider == "provider_b"
+        return ModelResponse(content="ok", raw={})
+
+    async def fake_get_provider(name):
+        captured["resolved_name"] = name
+        return "provider-object-a"
+
+    with (
+        patch.object(loader, "load_config", fake_load_config),
+        patch.object(helpers, "get_provider_async", fake_get_provider),
+        patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback),
+    ):
+        content, error = await helpers.llm_complete(
+            "sys", "user", include_harness_header=False
+        )
+
+    assert (content, error) == ("ok", None)
+    assert captured == {
+        "provider": "provider-object-a",
+        "provider_name": "provider_a",
+        "resolved_name": "provider_a",
+    }
+
+
+@pytest.mark.asyncio
+async def test_structured_default_provider_identity_is_captured_before_reload():
+    from types import SimpleNamespace
+
+    from aletheia.model_provider.base import ModelResponse
+    from aletheia.agents import helpers
+    import aletheia.config.loader as loader
+    from pydantic import BaseModel
+
+    class DummySchema(BaseModel):
+        value: int
+
+    cfg_a = SimpleNamespace(models=SimpleNamespace(default_provider="provider_a"))
+    cfg_b = SimpleNamespace(models=SimpleNamespace(default_provider="provider_b"))
+    first_read = True
+    captured: dict = {}
+
+    def fake_load_config(*, persist_migrations=True):  # noqa: ARG001
+        nonlocal first_read
+        if first_read:
+            first_read = False
+            return cfg_a
+        return cfg_b
+
+    async def fake_get_provider(name):
+        captured["resolved_name"] = name
+        return "provider-object-a"
+
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+        captured["provider"] = provider
+        captured["provider_name"] = provider_name
+        assert loader.load_config().models.default_provider == "provider_b"
+        return ModelResponse(content='{"value": 42}', raw={})
+
+    with (
+        patch.object(loader, "load_config", fake_load_config),
+        patch.object(helpers, "get_provider_async", fake_get_provider),
+        patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback),
+    ):
+        data, error = await helpers.llm_structured(
+            "sys", "user", schema=DummySchema, include_harness_header=False
+        )
+
+    assert (data, error) == ({"value": 42}, None)
+    assert captured == {
+        "provider": "provider-object-a",
+        "provider_name": "provider_a",
+        "resolved_name": "provider_a",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_default_provider_identity_is_captured_before_reload():
+    from types import SimpleNamespace
+
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import StreamChunk
+    import aletheia.config.loader as loader
+
+    cfg_a = SimpleNamespace(models=SimpleNamespace(default_provider="provider_a"))
+    cfg_b = SimpleNamespace(models=SimpleNamespace(default_provider="provider_b"))
+    first_read = True
+    captured: dict = {}
+
+    def fake_load_config(*, persist_migrations=True):  # noqa: ARG001
+        nonlocal first_read
+        if first_read:
+            first_read = False
+            return cfg_a
+        return cfg_b
+
+    async def fake_get_provider(name):
+        captured["resolved_name"] = name
+        return "provider-object-a"
+
+    async def fake_brokered_stream(provider_name, provider, _request):
+        captured["provider_name"] = provider_name
+        captured["provider"] = provider
+        assert loader.load_config().models.default_provider == "provider_b"
+        yield StreamChunk(content="ok", done=True)
+
+    with (
+        patch.object(loader, "load_config", fake_load_config),
+        patch.object(helpers, "get_provider_async", fake_get_provider),
+        patch("aletheia.model_provider.broker.brokered_stream", fake_brokered_stream),
+    ):
+        chunks = [
+            chunk
+            async for chunk in helpers.llm_stream(
+                "sys", "user", include_harness_header=False
+            )
+        ]
+
+    assert [(chunk.content, chunk.done) for chunk in chunks] == [("ok", True)]
+    assert captured == {
+        "provider": "provider-object-a",
+        "provider_name": "provider_a",
+        "resolved_name": "provider_a",
+    }
+
+
+@pytest.mark.asyncio
 async def test_llm_complete_preserves_empty_exception_type():
     """TimeoutError has an empty str(); diagnostics must still retain its type."""
     from aletheia.agents import helpers
