@@ -110,6 +110,7 @@ def _now_iso() -> str:
 def _batch_scanner_weights_quota_stats(
     *, evaluated_since: str | None = None,
     shrinkage_k: float = 20.0,
+    as_of_at: str | datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate scanner_weights_quota rows out of the compressed batch stream.
 
@@ -126,11 +127,13 @@ def _batch_scanner_weights_quota_stats(
             current_cost_model_sql,
             decode_filter_decision_batch,
         )
+        from aletheia.learning.outcomes import candidate_outcome_temporal_reason
         from aletheia.storage.sqlite import get_db
     except Exception:
         return []
     time_clause = " AND datetime(evaluated_at) >= datetime(?)" if evaluated_since else ""
     params: tuple[Any, ...] = (evaluated_since,) if evaluated_since else ()
+    observed_end = as_of_at or _now_iso()
     try:
         rows = get_db().execute(
             "SELECT id, filter_name, stage, filter_version, parameter_snapshot, "
@@ -199,7 +202,8 @@ def _batch_scanner_weights_quota_stats(
             chunk = outcome_keys[offset : offset + 500]
             placeholders = ",".join("?" for _ in chunk)
             cursor = db.execute(
-                "SELECT outcome_candidate_key, horizon, status, net_return_pct, "
+                "SELECT outcome_candidate_key, horizon, status, entry_ts, due_at, "
+                "settled_at, net_return_pct, "
                 "cost_model_version, "
                 f"CASE WHEN {current_cost_model_complete_outcome_sql()} "
                 "THEN 1 ELSE 0 END AS economics_complete "
@@ -228,6 +232,9 @@ def _batch_scanner_weights_quota_stats(
                 if (
                     outcome.get("status") == "settled"
                     and outcome.get("economics_complete") == 1
+                    and candidate_outcome_temporal_reason(
+                        outcome, as_of_at=observed_end
+                    ) is None
                 ):
                     net = float(outcome["net_return_pct"])
                     bucket["settled"].append(net)
@@ -256,7 +263,7 @@ def _batch_scanner_weights_quota_stats(
         n_total = len(bucket["candidates"])
         settled = bucket["settled"]
         n_net = len(settled)
-        avg_net = (sum(settled) / n_net) if n_net else 0.0
+        avg_net = (sum(settled) / n_net) if n_net else None
         row_key = (
             filter_name,
             stage,
@@ -268,7 +275,10 @@ def _batch_scanner_weights_quota_stats(
             horizon,
         )
         total, weighted = priors.get(row_key, (0, 0.0))
-        priors[row_key] = (total + n_net, weighted + n_net * avg_net)
+        priors[row_key] = (
+            total + n_net,
+            weighted + n_net * float(avg_net or 0.0),
+        )
         aggregated.append({
             "filter_name": filter_name,
             "stage": stage,
@@ -283,7 +293,7 @@ def _batch_scanner_weights_quota_stats(
             "n_total": n_total,
             "n_net": n_net,
             "n": n_net,
-            "avg_net": round(avg_net, 6),
+            "avg_net": round(avg_net, 6) if avg_net is not None else None,
             "gains": bucket["gains"],
             "losses": bucket["losses"],
         })
@@ -302,9 +312,13 @@ def _batch_scanner_weights_quota_stats(
         gains = row.pop("gains", 0.0)
         losses = row.pop("losses", 0.0)
         row["outcome_coverage"] = round(n / row["n_total"], 4) if row["n_total"] else 0.0
-        row["shrunk_avg_net"] = round(
-            (n * sample + float(shrinkage_k) * prior) / (n + float(shrinkage_k)),
-            6,
+        row["shrunk_avg_net"] = (
+            round(
+                (n * float(sample) + float(shrinkage_k) * prior)
+                / (n + float(shrinkage_k)),
+                6,
+            )
+            if n and sample is not None else None
         )
         row["profit_factor"] = round(gains / losses, 4) if losses > 0 else None
         row["assignment_policy"] = "first_exposure"
@@ -316,6 +330,7 @@ def compute_filter_feedback(
     min_samples: int = _DEFAULT_MIN_SAMPLES,
     *,
     evaluated_since: str | None = None,
+    as_of_at: str | datetime | None = None,
 ) -> list[FilterRecommendation]:
     """Compare exact pass/reject cohorts without mutating any filter parameter.
 
@@ -328,11 +343,14 @@ def compute_filter_feedback(
 
     if evaluated_since is None:
         evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    observed_end = as_of_at or _now_iso()
 
     try:
         from aletheia.analytics.filter_evidence import filter_feedback_stats
 
-        stats = filter_feedback_stats(evaluated_since=evaluated_since)
+        stats = filter_feedback_stats(
+            evaluated_since=evaluated_since, as_of_at=observed_end
+        )
     except Exception as exc:
         logger.warning("filter_controller: filter evidence unavailable: %s", exc)
         stats = []
@@ -342,7 +360,9 @@ def compute_filter_feedback(
     # observational signal. Legacy filter_decisions rows and new batch rows
     # co-exist during migration; both feed the same cohort grouping below.
     try:
-        stats = list(stats) + _batch_scanner_weights_quota_stats(evaluated_since=evaluated_since)
+        stats = list(stats) + _batch_scanner_weights_quota_stats(
+            evaluated_since=evaluated_since, as_of_at=observed_end
+        )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("filter_controller: batch dual-decode failed: %s", exc)
 
@@ -912,9 +932,11 @@ def build_filter_controller_report(
         if hours_i is not None
         else None
     )
+    observed_end = _now_iso()
     recs = compute_filter_feedback(
         min_samples=min_samples,
         evaluated_since=evaluated_since,
+        as_of_at=observed_end,
     )
     try:
         from aletheia.analytics.filter_evidence import (
@@ -927,7 +949,8 @@ def build_filter_controller_report(
             evaluated_since=evaluated_since
         )
         observer_diagnostics = observer_pre_filter_diagnostics(
-            evaluated_since=evaluated_since
+            evaluated_since=evaluated_since,
+            as_of_at=observed_end,
         )
         observer_version_status = filter_version_status("observer_pre_filter")
     except Exception as exc:
@@ -961,6 +984,7 @@ def build_filter_controller_report(
         bounded_replays = build_bounded_filter_replays(
             recs,
             evaluated_since=evaluated_since,
+            as_of_at=observed_end,
             min_samples=min_samples,
         )
     except Exception as exc:

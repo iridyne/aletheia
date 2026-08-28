@@ -255,6 +255,30 @@ def test_complete_but_unsettled_skip_cohort_awaits_outcomes(tmp_path, monkeypatc
     assert report.counts["unsettled_candidate_skips"] == 1
 
 
+def test_temporally_future_settlement_cannot_drive_skip_action(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    candidate_at = now - timedelta(hours=25)
+    _add_candidate(
+        key="pi_decision:future-settlement", action="rejected", net=1.0,
+        now=candidate_at,
+    )
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET settled_at=? "
+        "WHERE outcome_candidate_key=? AND horizon='24h'",
+        ((now + timedelta(minutes=1)).isoformat(), "pi_decision:future-settlement"),
+    )
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.finding == "awaiting_outcomes"
+    assert report.recommended_action == "await_fixed_horizon_settlement"
+    assert report.counts["unsettled_candidate_skips"] == 1
+
+
 def test_negative_complete_skip_cohort_is_protective_not_a_bypass(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt

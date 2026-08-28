@@ -68,8 +68,9 @@ def test_build_report_shape(monkeypatch):
 def test_build_report_applies_requested_evidence_window(monkeypatch):
     captured = {}
 
-    def fake_compute(min_samples=20, *, evaluated_since=None):
+    def fake_compute(min_samples=20, *, evaluated_since=None, as_of_at=None):
         captured["evaluated_since"] = evaluated_since
+        captured["as_of_at"] = as_of_at
         return []
 
     monkeypatch.setattr(fc, "compute_filter_feedback", fake_compute)
