@@ -948,6 +948,37 @@ async def test_binance_modify_and_cancel_return_normalized_evidence(monkeypatch)
     assert [event[0] for event in exchange.events].count("cancel_order") == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ("trigger_price", "time_in_force"))
+async def test_binance_modify_rejects_unsupported_fields_before_edit(monkeypatch, field):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.exact_order = {
+        "id": "venue-1", "clientOrderId": "client-1",
+        "symbol": "BTC/USDT:USDT", "side": "buy", "type": "limit",
+        "amount": "1", "filled": "0", "remaining": "1", "price": "100",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    value = "99" if field == "trigger_price" else "IOC"
+
+    report = await adapter.modify_order(ModifyOrderCommand(
+        command_id="modify-unsupported",
+        expected_account=identity,
+        instrument=_binance_command(identity).instrument,
+        purpose="entry",
+        target_venue_order_id="venue-1",
+        **{field: value},
+    ))
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
+    assert report.reason_code == "modify_field_unsupported"
+    assert not any(event[0] == "edit_order" for event in exchange.events)
+
+
 def test_profile_rejects_missing_credentials_without_exposing_values():
     with pytest.raises(ValueError, match="credentials are incomplete"):
         BinanceTestnetProfile(api_key="", secret="secret")

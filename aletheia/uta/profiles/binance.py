@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+from aletheia.uta.errors import UTAError, UTAErrorCode
+from aletheia.uta.models import CommandEvidence
 from aletheia.uta.profiles.base import CCXTProfile, decimal_value
 
 
@@ -93,6 +95,12 @@ class BinanceTestnetProfile(CCXTProfile):
         )
 
     def modify_request(self, command, current):
+        if command.trigger_price is not None or command.time_in_force is not None:
+            raise UTAError(
+                UTAErrorCode.NOT_SUPPORTED,
+                "modify_field_unsupported",
+                command_evidence=CommandEvidence.NOT_SENT,
+            )
         order_id = command.target_venue_order_id or command.target_client_order_id
         params = {}
         if not command.target_venue_order_id and command.target_client_order_id:

@@ -1266,7 +1266,17 @@ class CCXTUTAAdapter:
             )
         request_started = False
         try:
-            args = self._profile.modify_request(command, exact.found)
+            try:
+                args = self._profile.modify_request(command, exact.found)
+            except UTAError as exc:
+                if exc.command_evidence is CommandEvidence.NOT_SENT:
+                    return self._not_sent(
+                        command,
+                        CommandReport,
+                        reason=exc.reason,
+                        error_code=exc.code,
+                    )
+                raise
             request_started = True
             raw = await self._request(exchange.edit_order(*args))
             if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
