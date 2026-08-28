@@ -3909,6 +3909,7 @@ async def _async_paper_funding_settler():
         result["settled"], result.get("revived", 0),
         result["still_pending"], len(result["errors"]),
     )
+    return result
 
 
 def _run_paper_funding_settler():
@@ -3920,8 +3921,15 @@ def _run_paper_funding_settler():
     paper account health must not depend on the runtime being unpaused.
     """
     try:
-        _run_async_with_timeout("paper_funding_settler", _async_paper_funding_settler())
-        _record_job_success("paper_funding_settler")
+        result = _run_async_with_timeout(
+            "paper_funding_settler", _async_paper_funding_settler()
+        )
+        if result.get("errors"):
+            _record_job_failure(
+                "paper_funding_settler", "paper_funding_settler_reported_errors"
+            )
+        else:
+            _record_job_success("paper_funding_settler")
     except TimeoutError:
         logger.warning(
             "paper_funding_settler timed out after %.0fs",
@@ -3944,15 +3952,21 @@ async def _async_broker_funding_settler():
         result["checked"], result["settled"], result["still_pending"],
         len(result["errors"]),
     )
+    return result
 
 
 def _run_broker_funding_settler():
     """Retry private broker funding bills for exchange-backed futures closes."""
     try:
-        _run_async_with_timeout(
+        result = _run_async_with_timeout(
             "broker_funding_settler", _async_broker_funding_settler()
         )
-        _record_job_success("broker_funding_settler")
+        if result.get("errors"):
+            _record_job_failure(
+                "broker_funding_settler", "broker_funding_settler_reported_errors"
+            )
+        else:
+            _record_job_success("broker_funding_settler")
     except TimeoutError:
         logger.warning(
             "broker_funding_settler timed out after %.0fs",
