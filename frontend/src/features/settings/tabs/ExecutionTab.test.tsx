@@ -1,8 +1,33 @@
+// @vitest-environment happy-dom
+import { act } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import { ExecutionTab } from './ExecutionTab'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../../../api/client'
+import { ExchangeModeRow, ExecutionTab } from './ExecutionTab'
 import SRC from './ExecutionTab.tsx?raw'
+
+vi.mock('../../../api/client', () => ({
+  api: { setExchangeMode: vi.fn() },
+}))
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+let root: Root | null = null
+
+afterEach(() => {
+  act(() => root?.unmount())
+  root = null
+  document.body.innerHTML = ''
+  vi.clearAllMocks()
+})
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>(res => { resolve = res })
+  return { promise, resolve }
+}
 
 function renderExecutionTab(
   paperMode = 'paper_internal',
@@ -62,5 +87,49 @@ describe('ExecutionTab', () => {
     expect(html).toContain('UTA shadow read')
     expect(SRC).toContain('uta_read_boundary: readBoundary')
     expect(SRC).toContain('<option value="uta_v1" disabled>')
+  })
+
+  it('keeps exchange mode writes serialized through the authoritative status refetch', async () => {
+    const write = deferred()
+    const refetch = deferred()
+    vi.mocked(api.setExchangeMode).mockReturnValue(write.promise as any)
+    const qc = { refetchQueries: vi.fn(() => refetch.promise) }
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const renderRow = (exchangeMode: string) => root!.render(
+      <QueryClientProvider client={client}>
+        <ExchangeModeRow
+          status={{ exchange_mode: exchangeMode }}
+          settings={{ exchange: { paper_execution_mode: 'paper_internal' } }}
+          qc={qc as any}
+        />
+      </QueryClientProvider>,
+    )
+
+    await act(async () => renderRow('live'))
+    const select = host.querySelector('select') as HTMLSelectElement
+    select.value = 'demo'
+    await act(async () => select.dispatchEvent(new Event('change', { bubbles: true })))
+
+    expect(api.setExchangeMode).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(select.value).toBe('demo')
+      expect(select.disabled).toBe(true)
+    })
+
+    await act(async () => write.resolve())
+    expect(qc.refetchQueries).toHaveBeenCalledWith({ queryKey: ['status'] }, { throwOnError: true })
+    expect(select.disabled).toBe(true)
+
+    await act(async () => {
+      renderRow('demo')
+      refetch.resolve()
+      await refetch.promise
+    })
+    await vi.waitFor(() => expect(select.disabled).toBe(false))
+    expect(select.value).toBe('demo')
+    expect(api.setExchangeMode).toHaveBeenCalledTimes(1)
   })
 })
