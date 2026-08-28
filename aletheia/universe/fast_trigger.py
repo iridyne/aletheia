@@ -729,6 +729,8 @@ async def authorize_next_setup(cfg=None) -> dict:
 def validate_fast_trigger_stream(cfg) -> str | None:
     if cfg.fast_trigger.mode == "off":
         return "fast_trigger_disabled"
+    if cfg.agent.permission_mode not in {"Paper", "Full"}:
+        return "entry_plan_permission_revoked"
     mode = str(cfg.exchange.paper_execution_mode or "")
     if "live" in mode:
         return "fast_trigger_live_forbidden"

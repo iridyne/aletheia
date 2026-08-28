@@ -119,6 +119,7 @@ def _watch_config_identity(cfg) -> tuple[object, ...]:
         cfg.fast_trigger.max_setups,
         cfg.fast_trigger.authorization_ttl_minutes,
         cfg.fast_trigger.trigger_behavior_version,
+        cfg.agent.permission_mode,
         cfg.exchange.paper_execution_mode,
         cfg.runtime.paused,
         cfg.runtime.kill_switch_active,

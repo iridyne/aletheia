@@ -787,6 +787,22 @@ def test_default_local_paper_uses_bitget_public_fast_stream():
     assert validate_fast_trigger_execution(cfg) is None
 
 
+def test_fast_trigger_refuses_observe_permission():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.agent_runtime.fast_trigger_watch import _watch_config_identity
+    from aletheia.universe.fast_trigger import validate_fast_trigger_execution
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.agent.permission_mode = "Observe"
+
+    assert validate_fast_trigger_execution(cfg) == "entry_plan_permission_revoked"
+    observe_identity = _watch_config_identity(cfg)
+    cfg.agent.permission_mode = "Paper"
+    assert _watch_config_identity(cfg) != observe_identity
+
+
 def test_local_paper_selects_bitget_public_data_adapter():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_stream import (
