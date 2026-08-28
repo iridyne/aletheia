@@ -15,6 +15,36 @@ def _display_decimal(value: object, precision: int) -> str:
         return "unavailable"
 
 
+def _finish_context_pair_report(
+    report: dict,
+    *,
+    output_json: bool,
+    label: str,
+    modality: str | None = None,
+) -> None:
+    """Render one paired-context report and fail closed unless review is ready."""
+    if output_json:
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{label} status: {report.get('status')}")
+        if modality is not None:
+            typer.echo(f"Modality: {report.get('modality_id', modality)}")
+        if report.get("blocker"):
+            typer.echo(f"Blocker: {report['blocker']}")
+        if report.get("errors"):
+            typer.echo(f"Errors: {json.dumps(report['errors'], ensure_ascii=False, default=str)[:1000]}")
+        invalid_reasons = (report.get("metrics") or {}).get("invalid_reasons") or []
+        if invalid_reasons:
+            typer.echo(f"Invalid reasons: {', '.join(map(str, invalid_reasons[:20]))}")
+        if report.get("evaluation_pair_id"):
+            typer.echo(f"Pair: {report['evaluation_pair_id']}")
+        if report.get("review_packet"):
+            typer.echo(f"Blinded review packet: {report['review_packet']}")
+        typer.echo("Effectiveness conclusion: none")
+    if report.get("status") != "awaiting_owner_review":
+        raise typer.Exit(code=4)
+
+
 @audit_app.command("verify")
 def verify():
     """Verify the integrity of the audit.jsonl hash chain."""
@@ -504,17 +534,7 @@ def learning_context_b1(
             provider_name=provider,
         )
     )
-    if output_json:
-        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
-        return
-    typer.echo(f"Learning B status: {report['status']}")
-    if report.get("blocker"):
-        typer.echo(f"Blocker: {report['blocker']}")
-    if report.get("evaluation_pair_id"):
-        typer.echo(f"Pair: {report['evaluation_pair_id']}")
-    if report.get("review_packet"):
-        typer.echo(f"Blinded review packet: {report['review_packet']}")
-    typer.echo("Effectiveness conclusion: none")
+    _finish_context_pair_report(report, output_json=output_json, label="Learning B")
 
 
 @audit_app.command("technical-context-check")
@@ -553,17 +573,7 @@ def technical_context_check(
             provider_name=provider,
         )
     )
-    if output_json:
-        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
-        return
-    typer.echo(f"Technical context status: {report['status']}")
-    if report.get("blocker"):
-        typer.echo(f"Blocker: {report['blocker']}")
-    if report.get("evaluation_pair_id"):
-        typer.echo(f"Pair: {report['evaluation_pair_id']}")
-    if report.get("review_packet"):
-        typer.echo(f"Blinded review packet: {report['review_packet']}")
-    typer.echo("Effectiveness conclusion: none")
+    _finish_context_pair_report(report, output_json=output_json, label="Technical context")
 
 
 @audit_app.command("context-ablation")
@@ -596,18 +606,12 @@ def context_ablation(
             provider_name=provider,
         )
     )
-    if output_json:
-        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
-        return
-    typer.echo(f"Context ablation status: {report['status']}")
-    typer.echo(f"Modality: {report.get('modality_id', modality)}")
-    if report.get("blocker"):
-        typer.echo(f"Blocker: {report['blocker']}")
-    if report.get("evaluation_pair_id"):
-        typer.echo(f"Pair: {report['evaluation_pair_id']}")
-    if report.get("review_packet"):
-        typer.echo(f"Blinded review packet: {report['review_packet']}")
-    typer.echo("Effectiveness conclusion: none")
+    _finish_context_pair_report(
+        report,
+        output_json=output_json,
+        label="Context ablation",
+        modality=modality,
+    )
 
 
 @audit_app.command("learning-context-b1-score")
