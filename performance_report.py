@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -53,6 +54,7 @@ def _now() -> str:
 
 _DEFAULT_REPORT_DAYS = 7
 _MAX_REPORT_DAYS = 3650
+_MAX_REPORT_HOURS = _MAX_REPORT_DAYS * 24
 
 
 def _days_arg(value: str) -> int:
@@ -65,6 +67,18 @@ def _days_arg(value: str) -> int:
             f"days must be between 1 and {_MAX_REPORT_DAYS}"
         )
     return days
+
+
+def _legacy_hours_arg(value: str) -> tuple[int, int]:
+    try:
+        hours = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("hours must be an integer") from exc
+    if not 1 <= hours <= _MAX_REPORT_HOURS:
+        raise argparse.ArgumentTypeError(
+            f"hours must be between 1 and {_MAX_REPORT_HOURS}"
+        )
+    return max(1, math.ceil(hours / 24)), hours
 
 
 def _collect(days: int | None = None, execution_mode: str | None = None) -> dict:
@@ -81,14 +95,27 @@ def _collect(days: int | None = None, execution_mode: str | None = None) -> dict
     )
 
     result: dict = {"sections": []}
+    window = {"scope": "rolling_and_order_stats"}
     if days is None:
-        raw_days = os.environ.get("REPORT_DAYS", str(_DEFAULT_REPORT_DAYS))
-        try:
-            days = _days_arg(raw_days)
-        except argparse.ArgumentTypeError as exc:
-            raise ValueError(f"REPORT_DAYS: {exc}") from exc
-    result["window"] = {"days": days}
+        if "REPORT_DAYS" in os.environ:
+            try:
+                days = _days_arg(os.environ["REPORT_DAYS"])
+            except argparse.ArgumentTypeError as exc:
+                raise ValueError(f"REPORT_DAYS: {exc}") from exc
+        elif "SNAPSHOT_WINDOW_HOURS" in os.environ:
+            try:
+                days, legacy_hours = _legacy_hours_arg(
+                    os.environ["SNAPSHOT_WINDOW_HOURS"]
+                )
+            except argparse.ArgumentTypeError as exc:
+                raise ValueError(f"SNAPSHOT_WINDOW_HOURS: {exc}") from exc
+            window.update({"source": "legacy_hours", "legacy_hours": legacy_hours})
+        else:
+            days = _DEFAULT_REPORT_DAYS
+    window["days"] = days
+    result["window"] = window
 
+    execution_mode = execution_mode.strip() if execution_mode is not None else None
     override = execution_mode or os.environ.get("REPORT_EXECUTION_MODE") or _cli_execution_mode()
     execution_mode = override or resolve_selected_execution_mode()
     result["execution_mode"] = execution_mode
@@ -197,7 +224,11 @@ def _render_human(rep: dict) -> str:
         rep.get("execution_mode") or "—",
         rep.get("execution_mode_status") or "unavailable",
     ))
-    out.append("window_days: %s" % ((rep.get("window") or {}).get("days")))
+    window = rep.get("window") or {}
+    out.append(
+        "rolling_order_window_days: %s (scope=%s)"
+        % (window.get("days"), window.get("scope") or "unknown")
+    )
     if rep.get("execution_mode_status") == "unavailable":
         out.append(
             "[fail-closed] execution_mode 无法解析,"
