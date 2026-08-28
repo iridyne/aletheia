@@ -201,8 +201,16 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
         )
         proposal_notional = _notional(proposal.get("quantity"), proposal.get("price"))
         executed_notional = _executed_notional(db, proposal["id"], position)
-        risk = _risk_cap_hit(db, proposal["id"], proposal_notional, cfg)
         leverage = _first_number(position.get("leverage") if position else None, proposal.get("leverage"), 1)
+        risk = _risk_cap_hit(
+            db,
+            proposal["id"],
+            proposal_notional,
+            cfg,
+            execution_mode=proposal.get("execution_mode"),
+            market_type=proposal.get("market_type"),
+            leverage=leverage,
+        )
         reason, notes = _reason(
             cfg=cfg,
             conviction=conviction,
@@ -389,7 +397,16 @@ def _executed_notional(db, proposal_id: str, position: dict | None) -> float | N
     return None
 
 
-def _risk_cap_hit(db, proposal_id: str, proposal_notional: float | None, cfg) -> bool | None:
+def _risk_cap_hit(
+    db,
+    proposal_id: str,
+    proposal_notional: float | None,
+    cfg,
+    *,
+    execution_mode: str | None = None,
+    market_type: str | None = None,
+    leverage: float | None = None,
+) -> bool | None:
     rows = []
     if _table_exists(db, "risk_decisions"):
         rows = db.execute(
@@ -400,12 +417,45 @@ def _risk_cap_hit(db, proposal_id: str, proposal_notional: float | None, cfg) ->
         " ".join(str(x) for x in _json_list(row["violations"])) + " " + str(row["message"] or "")
         for row in rows
     ).lower()
-    if any(token in text for token in ("max_demo_position_notional", "max_live_position_notional", "max_demo_position_margin", "max_live_position_margin", "single_trade_risk", "max_leverage", "account_leverage")):
+    if any(
+        token in text
+        for token in (
+            "max_demo_position_notional",
+            "max_live_position_notional",
+            "max_demo_position_margin",
+            "max_live_position_margin",
+            "exceeds_demo_position_margin",
+            "exceeds_max_position_margin",
+            "single_trade_risk",
+            "max_leverage",
+            "account_leverage",
+        )
+    ):
         return True
-    cap = _float_or_none(getattr(cfg.risk, "max_demo_position_notional_usdt", None))
-    if cap is not None and proposal_notional is not None and proposal_notional >= cap:
-        return True
-    return False if rows or proposal_notional is not None else None
+    if proposal_notional is None or not execution_mode:
+        return None
+
+    # Keep diagnostics on the same mode resolver and margin arithmetic as the
+    # authoritative Risk Engine. This is a projection only; persisted decisions
+    # above remain stronger historical evidence.
+    try:
+        from aletheia.risk.engine import _position_margin_usage
+        from aletheia.risk.policy import resolve_risk_policy
+
+        policy = resolve_risk_policy(cfg, str(execution_mode).strip()).policy
+        cap = _float_or_none(policy.capital.max_position_margin_usdt)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if cap is None:
+        return None
+
+    normalized_market = str(market_type or "").strip().lower()
+    margin_leverage = (
+        1.0
+        if normalized_market in {"spot", "cash"}
+        else (_float_or_none(leverage) or 1.0)
+    )
+    return _position_margin_usage(proposal_notional, margin_leverage) > cap
 
 
 def _reason(
