@@ -413,7 +413,14 @@ def _check_calibration() -> dict:
             total = report.get("total_executed", 0)
             ece = report.get("ece")
             grade = report.get("ece_grade", "?")
-            detail = f"ECE={ece:.3f} ({grade}), {total} trades" if ece is not None else f"{total} trades"
-        return _criterion("calibration", "Conviction Calibration (ECE<0.10)", float(score or 0), 0.10, detail)
+            detail = (
+                f"ECE={ece:.3f} ({grade}), {total} trades"
+                if ece is not None and score is not None
+                else f"calibration unavailable ({total} trades)"
+            )
+        return _criterion(
+            "calibration", "Conviction Calibration (ECE<0.10)",
+            float(score) if score is not None else 0.0, 0.10, detail,
+        )
     except Exception:
         return _criterion("calibration", "Conviction Calibration (ECE<0.10)", 0, 0.10, "unavailable")

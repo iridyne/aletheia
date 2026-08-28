@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 import aletheia.analytics.execution_mode as _execution_mode
@@ -120,18 +121,20 @@ def build_calibration_report(
                 (b["sample_size"] / reliable_n) * b["calibration_error"]
                 for b in buckets if b["reliable"]
             )
+            ece = round(ece, 4)
+            if ece < 0.05:
+                ece_grade = "excellent"
+            elif ece < 0.10:
+                ece_grade = "good"
+            elif ece < 0.20:
+                ece_grade = "fair"
+            else:
+                ece_grade = "poor"
+            calibration_state = "available"
         else:
-            ece = 0.0
-        ece = round(ece, 4)
-
-        if ece < 0.05:
-            ece_grade = "excellent"
-        elif ece < 0.10:
-            ece_grade = "good"
-        elif ece < 0.20:
-            ece_grade = "fair"
-        else:
-            ece_grade = "poor"
+            ece = None
+            ece_grade = "insufficient_data"
+            calibration_state = "insufficient_data"
 
         overall_wins = sum(1 for t in trades if t["win"])
         overall_wr = round(overall_wins / total, 4)
@@ -152,6 +155,8 @@ def build_calibration_report(
             "generated_at": now,
             "window_days": window_days,
             "total_executed": total,
+            "reliable_sample_count": reliable_n,
+            "calibration_state": calibration_state,
             "buckets": buckets,
             "ece": ece,
             "ece_grade": ece_grade,
@@ -197,6 +202,14 @@ def get_latest_calibration_report(
             except (json.JSONDecodeError, TypeError):
                 continue
             if report.get("execution_mode") != execution_mode:
+                continue
+            # Reports written before the explicit state field cannot distinguish
+            # perfect ECE from the old no-reliable-bucket sentinel (ECE=0).
+            if (
+                report.get("ece") == 0
+                and "calibration_state" not in report
+                and "reliable_sample_count" not in report
+            ):
                 continue
             if is_current_outcome_artifact(
                 report, max_age=MAX_ACTIVE_REPORT_AGE,
@@ -245,7 +258,27 @@ def compute_calibration_score() -> float | None:
     total = report.get("total_executed", 0)
     if total < MIN_CALIBRATION_SAMPLE:
         return None
-    ece = report.get("ece", 1.0) or 1.0
+    state = report.get("calibration_state")
+    if state is not None and state != "available":
+        return None
+    reliable_n = report.get("reliable_sample_count")
+    if reliable_n is not None:
+        try:
+            if int(reliable_n) <= 0:
+                return None
+        except (TypeError, ValueError):
+            return None
+    ece = report.get("ece")
+    try:
+        ece = float(ece)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(ece):
+        return None
+    # A legacy zero without coverage metadata is ambiguous and must not grant
+    # readiness points; non-zero legacy reports remain backward-compatible.
+    if state is None and reliable_n is None and ece == 0.0:
+        return None
     # ECE=0 → 100pts, ECE=0.20 → 60pts, ECE=0.50 → 0pts
     score = max(0.0, 100.0 - ece * 200.0)
     return round(min(100.0, score), 1)

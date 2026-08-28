@@ -3319,6 +3319,8 @@ export interface CalibrationReport {
 	generated_at?: string;
 	window_days?: number;
 	total_executed?: number;
+	reliable_sample_count?: number;
+	calibration_state?: "available" | "insufficient_data" | string;
 	buckets: CalibrationBucket[];
 	ece: number | null;
 	ece_grade: string;
