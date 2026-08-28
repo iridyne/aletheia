@@ -532,6 +532,57 @@ def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
     assert es._unified_identity_is_current(state) == (True, "current")
 
 
+def test_unified_cache_scope_ignores_configured_live_identity(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.uta.models import UTAAccountIdentity
+
+    demo_identity = UTAAccountIdentity(
+        account_id="okx_demo",
+        execution_mode="okx_demo",
+        venue="okx",
+        environment="demo",
+        profile="okx_demo",
+        credential_generation=1,
+        adapter_implementation="CCXTUTAAdapter",
+        adapter_version="1",
+        ccxt_version="4.5.56",
+    )
+    live_identity = demo_identity.model_copy(
+        update={
+            "account_id": "okx_live_limited",
+            "execution_mode": "okx_live_limited",
+            "environment": "live",
+            "profile": "okx_live",
+        }
+    )
+
+    class Registry:
+        def configured_identities(self):
+            return (demo_identity, live_identity)
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(es, "load_config", lambda: cfg)
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
+    state = {
+        "accounts": [
+            {
+                "broker_id": "okx_demo",
+                "boundary": "legacy",
+                "identity": demo_identity.model_copy(
+                    update={
+                        "adapter_implementation": "OkxDemoAdapter",
+                        "adapter_version": "legacy",
+                        "ccxt_version": None,
+                    }
+                ).model_dump(mode="json"),
+            }
+        ]
+    }
+
+    assert es._unified_identity_is_current(state) == (True, "current")
+
+
 def test_unified_cache_preserves_explicit_empty_connected_set(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio import exchange_sync as es

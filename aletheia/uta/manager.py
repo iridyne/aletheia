@@ -26,6 +26,13 @@ from aletheia.uta.profiles import (
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 
 
+# Ordinary Portfolio/Risk/Startup aggregation is a paper/testnet view. Live
+# adapters remain available through explicit targeted UTA queries.
+UNIFIED_PAPER_ACCOUNT_MODES = frozenset(
+    {"binance_testnet", "okx_demo", "bitget_demo"}
+)
+
+
 @dataclass
 class UnifiedState:
     total_equity_usdt: float | None
@@ -233,6 +240,20 @@ def _legacy_identity(cfg, execution_mode: str, broker) -> UTAAccountIdentity:
         credential_generation=generation,
         adapter_implementation=type(broker).__name__,
         adapter_version="legacy",
+    )
+
+
+def _requested_account_modes(
+    execution_modes: tuple[str, ...] | None,
+) -> frozenset[str]:
+    if execution_modes is None:
+        return UNIFIED_PAPER_ACCOUNT_MODES
+    if isinstance(execution_modes, str):
+        execution_modes = (execution_modes,)
+    return frozenset(
+        str(mode).strip()
+        for mode in execution_modes
+        if str(mode).strip()
     )
 
 
@@ -509,8 +530,17 @@ async def _read_selected_account(cfg, registry, legacy, identity):
         )
 
 
-async def get_unified_state(cfg=None) -> UnifiedState:
+async def get_unified_state(
+    cfg=None, *, execution_modes: tuple[str, ...] | None = None,
+) -> UnifiedState:
+    """Read the selected account population without mixing live credentials.
+
+    The default scope is the ordinary paper/testnet population. A caller that
+    needs a live account must name that exact mode explicitly; live credentials
+    alone never make it a member of the default aggregate.
+    """
     cfg = cfg or load_config()
+    requested_modes = _requested_account_modes(execution_modes)
     fetched_at = datetime.now(timezone.utc).isoformat()
     try:
         registry = build_uta_registry(cfg)
@@ -522,11 +552,15 @@ async def get_unified_state(cfg=None) -> UnifiedState:
             errors=["uta_registry_configuration_invalid"],
             fetched_at=fetched_at,
         )
-    configured_identities = registry.configured_identities()
+    configured_identities = tuple(
+        identity
+        for identity in registry.configured_identities()
+        if identity.execution_mode in requested_modes
+    )
     identities_by_mode = {
         identity.execution_mode: identity for identity in configured_identities
     }
-    if configured_identities:
+    if configured_identities or execution_modes is not None:
         legacy_modes = tuple(
             identity.execution_mode
             for identity in configured_identities
@@ -535,6 +569,9 @@ async def get_unified_state(cfg=None) -> UnifiedState:
         )
         legacy = _legacy_brokers(legacy_modes)
     else:
+        # Preserve the legacy registry path for tests/older deployments that
+        # have no credential-backed UTA identities yet. That registry itself
+        # contains only the non-live demo/testnet adapters.
         legacy = _legacy_brokers()
     for execution_mode, broker in legacy.items():
         identities_by_mode[execution_mode] = _legacy_identity(cfg, execution_mode, broker)
@@ -594,12 +631,17 @@ async def get_unified_state(cfg=None) -> UnifiedState:
     )
 
 
-def get_unified_state_sync() -> UnifiedState:
+def get_unified_state_sync(
+    *, execution_modes: tuple[str, ...] | None = None,
+) -> UnifiedState:
     from concurrent.futures import ThreadPoolExecutor
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(get_unified_state())
+        return asyncio.run(get_unified_state(execution_modes=execution_modes))
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, get_unified_state()).result(timeout=30)
+        return pool.submit(
+            asyncio.run,
+            get_unified_state(execution_modes=execution_modes),
+        ).result(timeout=30)

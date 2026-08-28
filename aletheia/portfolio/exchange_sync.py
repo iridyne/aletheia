@@ -259,12 +259,18 @@ def get_unified_cached_state() -> Optional[dict]:
 def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
     """Generation/profile/boundary mismatch immediately revokes cache authority."""
     try:
-        from aletheia.uta.manager import build_uta_registry, expected_cache_identity
+        from aletheia.uta.manager import (
+            UNIFIED_PAPER_ACCOUNT_MODES,
+            build_uta_registry,
+            expected_cache_identity,
+        )
 
         cfg = load_config()
         registry = build_uta_registry(cfg)
         expected = {}
         for identity in registry.configured_identities():
+            if identity.execution_mode not in UNIFIED_PAPER_ACCOUNT_MODES:
+                continue
             boundary = cfg.exchange.uta_read_boundary_for(identity.execution_mode)
             expected[identity.execution_mode] = expected_cache_identity(
                 cfg, identity, boundary
