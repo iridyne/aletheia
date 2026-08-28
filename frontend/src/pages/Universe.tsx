@@ -84,6 +84,7 @@ export default function Universe() {
   })
 
   const data = workbench.data
+  const workbenchUnavailable = workbench.isError && !data
   const summary = data?.summary
   const plans = data?.entry_plans
   const candidates = data?.candidate_attention
@@ -129,7 +130,7 @@ export default function Universe() {
       id: 'plans',
       label: 'Entry Plans',
       badge: plans?.length,
-      render: () => <ReadSection available={data?.availability.entry_plans?.available} loading={workbench.isPending} label="Entry Plans">
+      render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.entry_plans?.available} loading={workbench.isPending} label="Entry Plans">
         <DataTable columns={planColumns} data={plans ?? []} onRowClick={openPlan} emptyMessage="No active Entry Plans." tableId="entry-workbench-plans" />
       </ReadSection>,
     },
@@ -137,7 +138,7 @@ export default function Universe() {
       id: 'candidates',
       label: 'Candidates',
       badge: candidates?.length,
-      render: () => <ReadSection available={data?.availability.candidate_attention?.available} loading={workbench.isPending} label="Candidate attention">
+      render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.candidate_attention?.available} loading={workbench.isPending} label="Candidate attention">
         <DataTable columns={candidateColumns} data={candidates ?? []} onRowClick={openCandidate} emptyMessage="No active Candidate attention." tableId="entry-workbench-candidates" />
       </ReadSection>,
     },
@@ -165,6 +166,8 @@ export default function Universe() {
       <MetricTile label="Expiring Soon" value={summary?.expiring_soon ?? '—'} context="within 5 minutes" tone={summary?.expiring_soon ? 'warning' : 'neutral'} />
       <MetricTile label="Universe Status" value={statusLabel} context={data?.universe.snapshot ? `snapshot ${data.universe.snapshot.id.slice(0, 8)}` : 'no Candidate facts fabricated'} />
     </section>
+
+    {workbenchUnavailable ? <Card role="alert">Entry Workbench is unavailable. Summary counts and rows are not inferred.</Card> : null}
 
     {data?.universe.fallback_instruments.length ? <Card className="entry-workbench-notice">
       <strong>{statusLabel}.</strong> Fallback instruments available: {data.universe.fallback_instruments.join(', ')}. They are not durable Candidates.
