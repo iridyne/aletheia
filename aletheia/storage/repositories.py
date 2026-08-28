@@ -8229,7 +8229,13 @@ def insert_universe_members_batch(members: list[UniverseMember]) -> int:
     )
 
 
-def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
+def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict]:
+    if limit is None:
+        rows = get_db().execute(
+            "SELECT * FROM universe_members WHERE snapshot_id = ? ORDER BY rank ASC",
+            (snapshot_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
     return _select_all(
         "universe_members",
         where="snapshot_id = ?",
@@ -8990,7 +8996,7 @@ def transition_entry_plan(
     return updated.rowcount == 1
 
 
-def get_active_universe_members(limit: int = 20) -> list[dict]:
+def get_active_universe_members(limit: int | None = 20) -> list[dict]:
     """Return top-ranked members from the currently active universe snapshot."""
     snap = get_active_universe_snapshot()
     if not snap:
