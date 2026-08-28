@@ -58,12 +58,33 @@ def test_uta_qualification_is_bound_to_exact_sha_and_identity(tmp_path, monkeypa
         "aletheia.trust.uta_qualification.current_commit", lambda: "head-1"
     )
     monkeypatch.setattr(
+        "aletheia.trust.uta_qualification.is_worktree_dirty", lambda: False
+    )
+    monkeypatch.setattr(
         "aletheia.trust.uta_qualification.create_uta_adapter",
         lambda _mode, _cfg: SimpleNamespace(identity=identity),
     )
     from aletheia.trust.uta_qualification import uta_profile_qualified
 
     assert uta_profile_qualified("binance_testnet", object()) == (True, "qualified")
+
+    monkeypatch.setattr(
+        "aletheia.trust.uta_qualification.is_worktree_dirty", lambda: True
+    )
+    assert uta_profile_qualified("binance_testnet", object()) == (
+        False,
+        "qualification_worktree_dirty",
+    )
+    path.write_text(
+        json.dumps(_artifact(identity, "head-0")), encoding="utf-8"
+    )
+    assert uta_profile_qualified("binance_testnet", object()) == (
+        False,
+        "qualification_code_mismatch",
+    )
+    monkeypatch.setattr(
+        "aletheia.trust.uta_qualification.is_worktree_dirty", lambda: False
+    )
 
     mismatches = (
         ({"code_sha": "head-0"}, "qualification_code_mismatch"),
@@ -110,3 +131,20 @@ def test_uta_mutation_qualification_fails_closed_with_bounded_reason(monkeypatch
 
     assert caught.value.reason_code == "qualification_code_mismatch"
     assert str(caught.value) == "UTA mutation requires current qualification"
+
+
+@pytest.mark.asyncio
+async def test_uta_qualification_refuses_dirty_source_before_connect(monkeypatch):
+    from scripts import qualify_uta
+
+    monkeypatch.setattr(qualify_uta, "is_worktree_dirty", lambda: True)
+    monkeypatch.setattr(
+        qualify_uta,
+        "load_config",
+        lambda: pytest.fail("dirty qualification loaded runtime configuration"),
+    )
+
+    with pytest.raises(RuntimeError, match="qualification_worktree_dirty"):
+        await qualify_uta._qualify(
+            SimpleNamespace(execution_mode="binance_testnet", execution_probe=False)
+        )
