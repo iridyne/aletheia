@@ -357,7 +357,7 @@ async def _load_entry_plan_watchers(
                 )
             continue
         if (
-            plan.execution_mode == "RESTING_MAKER"
+            plan.order_tactic == "POST_ONLY_LIMIT"
             and row["status"] in {"ordered", "partially_filled"}
             and plan.max_wait_sec > 0
             and row.get("order_id")

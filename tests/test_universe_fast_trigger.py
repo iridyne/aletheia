@@ -964,6 +964,66 @@ async def test_integrity_failure_preserves_order_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": "triggered-maker",
+        "status": "ordered",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+        "order_id": "order-1",
+    }
+    plan = SimpleNamespace(
+        plan_id="triggered-maker",
+        planning_generation_id="generation-1",
+        risk_policy_id="policy-1",
+        risk_policy_revision=1,
+        risk_policy_hash="policy-hash",
+        execution_account_mode="bitget_demo",
+        execution_mode="TRIGGERED",
+        order_tactic="POST_ONLY_LIMIT",
+        max_wait_sec=30,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+    )
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(
+        watch.repo,
+        "get_order",
+        lambda _id: {
+            "created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        },
+    )
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="policy-1", revision=1),
+            policy_hash="policy-hash",
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason))
+        or {"status": "cancelled"},
+    )
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+    )
+    plans, engines = await watch._load_entry_plan_watchers(cfg)
+
+    assert plans == {}
+    assert engines == {}
+    assert cancellations == [("triggered-maker", "entry_plan_maker_timeout")]
+
+
+@pytest.mark.asyncio
 async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypatch):
     from aletheia.agent_runtime import fast_trigger_watch as watch
 
