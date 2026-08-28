@@ -93,7 +93,7 @@ def _status(report) -> tuple[str, str | None]:
     if report.evidence is CommandEvidence.NOT_SENT:
         return "error", report.reason_code or "command_not_sent"
     if report.evidence is CommandEvidence.VENUE_REJECTED:
-        return "error", report.reason_code or "venue_rejected_command"
+        return "submission_rejected", report.reason_code or "venue_rejected_command"
     state = report.order.state if report.order is not None else OrderLifecycle.ACCEPTED
     if state is OrderLifecycle.FILLED:
         return "materialization_missing", "private_fill_evidence_pending"

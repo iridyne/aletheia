@@ -133,6 +133,29 @@ def _fill(exchange_order_id: str, client_id: str):
     }
 
 
+@pytest.mark.parametrize(
+    ("evidence", "reason_code", "expected"),
+    (
+        (CommandEvidence.NOT_SENT, "command_not_sent", "error"),
+        (CommandEvidence.VENUE_REJECTED, "venue_rejected", "submission_rejected"),
+        (CommandEvidence.AMBIGUOUS, None, "submission_unknown"),
+        (CommandEvidence.ACKNOWLEDGED, None, "submitted"),
+    ),
+)
+def test_command_evidence_keeps_distinct_business_state(
+    evidence, reason_code, expected
+):
+    from aletheia.execution.coordinator import _status
+
+    status, _reason = _status(SimpleNamespace(
+        evidence=evidence,
+        reason_code=reason_code,
+        order=None,
+    ))
+
+    assert status == expected
+
+
 def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     proposal_id, risk_id = "proposal-1", "risk-1"
@@ -283,6 +306,61 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
     assert stored_order["status"] == "filled"
     assert stored_position["status"] == "closed"
     assert result["closed"] is True
+
+
+def test_venue_rejected_close_stays_claimed_and_is_not_resubmitted(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import close_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.uta.errors import UTAErrorCode
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    repo.insert_position(position)
+
+    async def reject(command):
+        return SubmissionReport(
+            identity=command.expected_account,
+            command_id=command.command_id,
+            evidence=CommandEvidence.VENUE_REJECTED,
+            received_at=datetime.now(timezone.utc),
+            client_order_id=command.client_order_id,
+            venue_order_id="venue-rejected-1",
+            error_code=UTAErrorCode.VENUE_REJECTED.value,
+            reason_code="invalid_position_mode",
+            profile_version="1",
+        )
+
+    adapter = _Adapter(reject)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+    )
+
+    with pytest.raises(RuntimeError, match="invalid_position_mode"):
+        close_position(position.id, "stop_loss")
+
+    [stored_order] = repo.list_orders(limit=10)
+    stored_position = repo.get_position(position.id)
+    assert stored_order["status"] == "submission_rejected"
+    assert stored_order["error_reason"] == "invalid_position_mode"
+    assert stored_order["exchange_order_id"] == "venue-rejected-1"
+    assert stored_position["pending_close_status"] == "submission_rejected"
+
+    second = close_position(position.id, "stop_loss")
+
+    assert second["already_pending"] is True
+    assert second["status"] == "submission_rejected"
+    assert adapter.calls == 1
 
 
 def test_gateway_close_selector_requires_current_qualification(tmp_path, monkeypatch):
