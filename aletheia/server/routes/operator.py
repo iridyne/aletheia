@@ -113,8 +113,6 @@ def _trading_daemon_status() -> dict[str, Any]:
         state = "event_driven"
     elif fallback_available:
         state = "scheduled_fallback"
-    elif fallback_blocker in {"job_paused", "runtime_paused"}:
-        state = "paused"
     elif configured:
         state = "unavailable"
     else:

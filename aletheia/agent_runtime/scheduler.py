@@ -2212,11 +2212,11 @@ def scheduled_job_status(job_id: str) -> dict[str, object]:
             STATE_PAUSED: "paused",
             STATE_STOPPED: "stopped",
         }.get(state, f"unknown:{state}")
-        if state != STATE_RUNNING:
+        if state == STATE_STOPPED:
             return {
                 "scheduler_state": state_label,
                 "registered": False,
-                "paused": state == STATE_PAUSED,
+                "paused": False,
                 "next_run_time": None,
                 "blocker": "scheduler_stopped",
             }
@@ -2235,7 +2235,11 @@ def scheduled_job_status(job_id: str) -> dict[str, object]:
             }
 
         next_run_time = getattr(job, "next_run_time", None)
-        paused = job_id in _selectively_paused_jobs or next_run_time is None
+        paused = (
+            state == STATE_PAUSED
+            or job_id in _selectively_paused_jobs
+            or next_run_time is None
+        )
         if not paused:
             if not isinstance(next_run_time, datetime):
                 paused = True
@@ -2245,7 +2249,6 @@ def scheduled_job_status(job_id: str) -> dict[str, object]:
                     if next_run_time.tzinfo is None
                     else next_run_time
                 )
-                paused = next_run_time <= datetime.now(timezone.utc)
         return {
             "scheduler_state": state_label,
             "registered": True,
@@ -2253,7 +2256,13 @@ def scheduled_job_status(job_id: str) -> dict[str, object]:
             "next_run_time": (
                 next_run_time.isoformat() if isinstance(next_run_time, datetime) else None
             ),
-            "blocker": "job_paused" if paused else None,
+            "blocker": (
+                "scheduler_paused"
+                if state == STATE_PAUSED
+                else "job_paused"
+                if paused
+                else None
+            ),
         }
 
 

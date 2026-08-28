@@ -161,7 +161,8 @@ async def test_operator_internal_heartbeat_roundtrip(client):
     [
         ("scheduler_stopped", "unavailable"),
         ("job_missing", "unavailable"),
-        ("job_paused", "paused"),
+        ("job_paused", "unavailable"),
+        ("scheduler_paused", "unavailable"),
     ],
 )
 def test_pi_fallback_status_reports_exact_blocker(blocker, expected_state, monkeypatch):
@@ -207,7 +208,7 @@ def test_pi_fallback_status_applies_runtime_and_permission_guards(monkeypatch):
     paused = operator_routes._trading_daemon_status()
     assert paused["fallback_available"] is False
     assert paused["fallback_blocker"] == "runtime_paused"
-    assert paused["state"] == "paused"
+    assert paused["state"] == "unavailable"
 
     cfg.runtime.paused = False
     cfg.agent.permission_mode = "Observe"

@@ -39,7 +39,7 @@ class _Scheduler:
         return self.job
 
 
-def test_scheduled_job_status_requires_registered_future_unpaused_job(monkeypatch) -> None:
+def test_scheduled_job_status_reports_explicit_pause_blockers(monkeypatch) -> None:
     from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
     monkeypatch.setattr(
@@ -56,6 +56,17 @@ def test_scheduled_job_status_requires_registered_future_unpaused_job(monkeypatc
     monkeypatch.setattr(scheduler, "_selectively_paused_jobs", {"pi_trading_decision"})
     assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] == "job_paused"
 
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", set())
+    monkeypatch.setattr(
+        scheduler,
+        "_scheduler",
+        _Scheduler(
+            state=STATE_RUNNING,
+            job=_Job(datetime.now(timezone.utc) - timedelta(minutes=1)),
+        ),
+    )
+    assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] is None
+
     monkeypatch.setattr(
         scheduler,
         "_scheduler",
@@ -63,5 +74,15 @@ def test_scheduled_job_status_requires_registered_future_unpaused_job(monkeypatc
     )
     assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] == "job_missing"
 
-    monkeypatch.setattr(scheduler, "_scheduler", _Scheduler(state=STATE_PAUSED))
-    assert scheduler.scheduled_job_status("pi_trading_decision")["blocker"] == "scheduler_stopped"
+    monkeypatch.setattr(
+        scheduler,
+        "_scheduler",
+        _Scheduler(
+            state=STATE_PAUSED,
+            job=_Job(datetime.now(timezone.utc) + timedelta(minutes=1)),
+        ),
+    )
+    paused = scheduler.scheduled_job_status("pi_trading_decision")
+    assert paused["registered"] is True
+    assert paused["paused"] is True
+    assert paused["blocker"] == "scheduler_paused"
