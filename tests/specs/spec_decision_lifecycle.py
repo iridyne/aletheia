@@ -6073,7 +6073,7 @@ def test_trade_output_requires_authored_entry_plan_while_skip_does_not():
 
 @spec_claim(
     SpecClaim(
-        "DL-S68",
+        "DL-S75",
         "decision_lifecycle_contract",
         "§2.1a Candidate attention read projection",
         "L2b",
