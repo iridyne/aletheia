@@ -8315,7 +8315,34 @@ def get_candidate_planning_generation(generation_id: str) -> dict | None:
     return _select_one("candidate_planning_generations", generation_id)
 
 
-def get_candidate_planning_for_candidate(candidate_id: str) -> dict | None:
+def _effective_candidate_attention(row: dict | None, *, now: datetime | None = None) -> dict | None:
+    """Project expired active attention without mutating its durable lifecycle."""
+
+    if row is None or row.get("attention_status") != "active":
+        return row
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    hard_expires_at = row.get("hard_expires_at")
+    soft_expires_at = row.get("soft_expires_at")
+    if hard_expires_at and str(hard_expires_at) <= timestamp:
+        reason, terminal_at = "max_attention_age", hard_expires_at
+    elif soft_expires_at and str(soft_expires_at) <= timestamp:
+        reason, terminal_at = "ttl_expired", soft_expires_at
+    else:
+        return row
+    projected = dict(row)
+    projected.update(
+        attention_status="terminal",
+        attention_terminal_at=terminal_at,
+        attention_terminal_reason=reason,
+    )
+    return projected
+
+
+def get_candidate_planning_for_candidate(
+    candidate_id: str,
+    *,
+    now: datetime | None = None,
+) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM candidate_planning_generations "
         "WHERE candidate_id=? "
@@ -8328,7 +8355,7 @@ def get_candidate_planning_for_candidate(candidate_id: str) -> dict | None:
             "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
             (candidate_id,),
         ).fetchone()
-    return dict(row) if row else None
+    return _effective_candidate_attention(dict(row) if row else None, now=now)
 
 
 def _candidate_attention_valid(row: dict, timestamp: str) -> bool:
@@ -8881,6 +8908,7 @@ def list_planning_history(
     *,
     limit: int = 50,
     before: tuple[str, str] | None = None,
+    now: datetime | None = None,
 ) -> list[dict]:
     where = ""
     params: list[object] = []
@@ -8889,7 +8917,7 @@ def list_planning_history(
         params.extend((before[0], before[0], before[1]))
     params.append(max(1, min(int(limit), 201)))
     return [
-        dict(row)
+        _effective_candidate_attention(dict(row), now=now)
         for row in get_db().execute(
             "SELECT pg.*, ep.status AS entry_plan_status, ep.execution_mode, "
             "ep.order_id, ep.terminal_at AS entry_plan_terminal_at, "

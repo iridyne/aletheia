@@ -501,3 +501,23 @@ def test_planning_history_uses_stable_bounded_cursor():
     assert len(first_page) == 2
     assert len(second_page) == 1
     assert {row["id"] for row in first_page}.isdisjoint({row["id"] for row in second_page})
+
+
+def test_expired_attention_projects_consistently_without_sweep_or_mutation():
+    from aletheia.server.routes.universe import get_candidate
+
+    start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    after_hard_deadline = start + timedelta(hours=2)
+
+    assert repo.list_active_candidate_attention() == []
+    detail = get_candidate(candidate.id)["attention"]
+    [history] = repo.list_planning_history(now=after_hard_deadline)
+
+    assert detail["attention_status"] == history["attention_status"] == "terminal"
+    assert detail["attention_terminal_reason"] == "max_attention_age"
+    assert history["attention_terminal_reason"] == "max_attention_age"
+    persisted = repo.get_candidate_planning_generation(generation["id"])
+    assert persisted["attention_status"] == "active"
+    assert persisted["attention_terminal_reason"] is None

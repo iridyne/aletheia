@@ -100,6 +100,11 @@ execution mode、注册 TriggerSpec、entry/invalidation/stop/target/horizon、�
 maker/taker 权限、timeout/fallback、expiry 和 behavior identity；状态只可单调前进。Momentum 的
 breakout/pullback/reclaim 只在 versioned `TriggerSpec.params` 中，不能成为通用 Entry Plan 字段。
 
+Candidate 精确详情与 Planning History 必须按同一 soft/hard attention deadline 投影即时有效状态：
+hard deadline 已过时为 `max_attention_age`，否则 soft deadline 已过时为 `ttl_expired`。该读投影不得
+写 planning generation，也不得改变 Entry Plan、Order 或其有效性；耐久终态仍只由 canonical expiry
+reconciliation 写入。
+
 ### 2.2 Legacy/independent TradingDecision compatibility contract (`agent_shell/trading_decision.py:56`,dataclass)
 
 仅独立 producer 与历史恢复路径使用；Universe-linked 开仓由 Entry Planner 直接产生 Entry Plan。
