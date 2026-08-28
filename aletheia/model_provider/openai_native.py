@@ -18,7 +18,7 @@ from aletheia.model_provider.base import (
 
 BASE_URL = "https://api.openai.com/v1"
 
-_CHAT_MODEL_PREFIXES = ("gpt-4", "gpt-3.5", "o1", "o3", "o4", "chatgpt-4o")
+_CHAT_MODEL_PREFIXES = ("gpt-5", "gpt-4", "gpt-3.5", "o1", "o3", "o4", "chatgpt-4o")
 
 _TIER_RULES = [
     (("gpt-4o-mini", "gpt-4-turbo"), "standard"),

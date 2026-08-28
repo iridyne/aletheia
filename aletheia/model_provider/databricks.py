@@ -136,7 +136,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
                         models=slugs,
                         model_metadata=models,
                         error="configured serving endpoint not found",
-                        reason_code="configured_model_not_found",
+                        reason_code="provider_rejection",
                     )
                 if selected and selected.get("ready_state") not in (None, "READY"):
                     return ModelHealth(

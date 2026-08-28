@@ -207,7 +207,7 @@ def health_from_model_catalogue(
             models=slugs,
             model_metadata=models,
             error="configured model not found in current catalogue",
-            reason_code="configured_model_not_found",
+            reason_code="provider_rejection",
         )
     return ModelHealth(
         provider=provider,

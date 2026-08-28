@@ -1,5 +1,7 @@
 """Selected model health must reflect the current provider catalogue."""
 
+from unittest.mock import patch
+
 import pytest
 
 from aletheia.model_provider.base import ModelHealth
@@ -35,9 +37,39 @@ async def test_missing_selected_model_is_unavailable(provider, monkeypatch):
     health = await provider.healthcheck()
 
     assert health.available is False
-    assert health.reason_code == "configured_model_not_found"
+    assert health.reason_code == "provider_rejection"
     assert health.model == "removed-model"
     assert health.models == ["current-model"]
+
+
+@pytest.mark.anyio
+async def test_openai_native_healthcheck_keeps_current_gpt5_model():
+    provider = OpenAINativeProvider(model="gpt-5.1", api_key="sk-test")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"id": "gpt-5.1"}, {"id": "gpt-4o"}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResponse()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        health = await provider.healthcheck()
+
+    assert health.available is True
+    assert "gpt-5.1" in health.models
 
 
 @pytest.mark.anyio
@@ -83,7 +115,7 @@ def test_fresh_catalogue_mismatch_survives_historical_verification(monkeypatch):
             model="removed-model",
             models=["current-model"],
             error="configured model not found in current catalogue",
-            reason_code="configured_model_not_found",
+            reason_code="provider_rejection",
             observed_at="2026-08-28T00:00:00Z",
         ),
         cfg,
@@ -92,5 +124,5 @@ def test_fresh_catalogue_mismatch_survives_historical_verification(monkeypatch):
     )
 
     assert health.state == "unavailable"
-    assert health.reason_code == "configured_model_not_found"
+    assert health.reason_code == "provider_rejection"
     assert health.verified is True
