@@ -1405,7 +1405,7 @@ def liquidations(
     if symbol:
         rows = recent_liquidations(symbol, hours=hours)[:limit]
     else:
-        members = get_active_universe_members()
+        members = get_active_universe_members(limit=None)
         rows = []
         for m in members:
             sym = m.get("symbol", "")
