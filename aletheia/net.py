@@ -553,6 +553,33 @@ def make_ccxt(name: str, **options):
     return exchange, session
 
 
+async def close_ccxt(exchange, session) -> bool:
+    """Close an injected CCXT exchange and its separately owned session."""
+    import asyncio as _aio
+
+    closed = True
+    cancelled: _aio.CancelledError | None = None
+    if exchange is not None:
+        try:
+            await _aio.wait_for(exchange.close(), timeout=5.0)
+        except _aio.CancelledError as exc:
+            cancelled = exc
+            closed = False
+        except Exception:  # noqa: BLE001
+            closed = False
+    if session is not None:
+        try:
+            await _aio.wait_for(session.close(), timeout=5.0)
+        except _aio.CancelledError as exc:
+            cancelled = cancelled or exc
+            closed = False
+        except Exception:  # noqa: BLE001
+            closed = False
+    if cancelled is not None:
+        raise cancelled
+    return closed
+
+
 def build_urllib_opener():
     """Return a urllib opener routing external requests through the managed proxy.
 

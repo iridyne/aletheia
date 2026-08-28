@@ -466,11 +466,13 @@ class BinanceClient:
 
     async def close(self):
         """Close the underlying CCXT client and the injected proxy session."""
-        if self._exchange is not None:
-            await self._exchange.close()
-        # ccxt won't close the session we injected (own_session=False) — do it here.
-        if self._session is not None:
-            await self._session.close()
+        from aletheia.net import close_ccxt
+
+        exchange, session = self._exchange, self._session
+        if not await close_ccxt(exchange, session):
+            raise RuntimeError("ccxt_cleanup_failed")
+        self._exchange = None
+        self._session = None
 
     @staticmethod
     def _map_status(raw: str) -> str:
