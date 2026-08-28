@@ -1,9 +1,25 @@
+// @vitest-environment happy-dom
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../api/client'
 import type { EntryWorkbenchResponse } from '../types'
 import Universe from './Universe'
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+let root: Root | undefined
+
+afterEach(() => {
+  act(() => root?.unmount())
+  root = undefined
+  document.body.replaceChildren()
+  vi.restoreAllMocks()
+})
 
 const workbench: EntryWorkbenchResponse = {
   generated_at: '2026-08-28T00:00:00Z',
@@ -41,6 +57,20 @@ function renderWorkbench(data: EntryWorkbenchResponse = workbench) {
   return renderToStaticMarkup(<MemoryRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>)
 }
 
+async function renderWorkbenchError(cached?: EntryWorkbenchResponse) {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: cached ? 0 : Infinity, retry: false } } })
+  if (cached) client.setQueryData(['entry-workbench'], cached)
+  vi.spyOn(api, 'getEntryWorkbench').mockRejectedValue(new Error('workbench unavailable'))
+  const node = document.createElement('div')
+  document.body.appendChild(node)
+  root = createRoot(node)
+  act(() => root!.render(<MemoryRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>))
+  await act(async () => {
+    await vi.waitFor(() => expect(node.textContent).not.toContain('Loading Entry Plans'))
+  })
+  return node.textContent ?? ''
+}
+
 describe('Entry Workbench', () => {
   it('defaults to the direct Entry Plan ledger and one canonical summary row', () => {
     const html = renderWorkbench()
@@ -72,5 +102,18 @@ describe('Entry Workbench', () => {
       universe: { ...workbench.universe, status: 'stale_snapshot' },
     })
     expect(html).toContain('Stale snapshot')
+  })
+
+  it('renders an initial whole-workbench failure as unavailable, never empty', async () => {
+    const html = await renderWorkbenchError()
+    expect(html).toContain('Entry Workbench is unavailable')
+    expect(html).toContain('Entry Plans is unavailable')
+    expect(html).not.toContain('No active Entry Plans')
+  })
+
+  it('keeps cached facts visible after a refetch failure', async () => {
+    const html = await renderWorkbenchError(workbench)
+    expect(html).toContain('AVAXUSDT')
+    expect(html).not.toContain('Entry Workbench is unavailable')
   })
 })
