@@ -154,7 +154,11 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     async def settle_due():
         return 0
 
-    failure_code = f"candidate_planning_generation_{failure_kind}_failed"
+    failure_code = (
+        "forward_outcomes_registration_failed"
+        if failure_kind == "forward_outcomes"
+        else f"candidate_planning_generation_{failure_kind}_failed"
+    )
 
     def planning_generation_failure(*_args, **_kwargs):
         raise RuntimeError(failure_code)
@@ -223,6 +227,18 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             service.repo,
             "update_universe_scanner_run",
             fail_scanner_completion,
+        )
+    elif failure_kind == "forward_outcomes":
+        insert_forward_outcomes_batch = service.repo.insert_forward_outcomes_batch
+
+        def fail_forward_outcomes(*_args, **_kwargs):
+            insert_forward_outcomes_batch(*_args, **_kwargs)
+            raise RuntimeError(failure_code)
+
+        monkeypatch.setattr(
+            service.repo,
+            "insert_forward_outcomes_batch",
+            fail_forward_outcomes,
         )
     else:
         monkeypatch.setattr(
@@ -349,6 +365,14 @@ def test_planning_generation_failure_rolls_back_inside_existing_transaction(
         monkeypatch,
         "evidence",
         caller_owns_transaction=True,
+    )
+
+
+def test_forward_outcome_failure_rolls_back_universe_publication(
+    tmp_path, monkeypatch
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path, monkeypatch, "forward_outcomes"
     )
 
 

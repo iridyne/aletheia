@@ -1165,10 +1165,7 @@ class UniverseService:
                 )
 
                 # Register forward outcome tracking for all members with valid prices
-                try:
-                    repo.insert_forward_outcomes_batch(pending_outcomes)
-                except Exception as e:
-                    logger.warning("Forward outcome registration failed (non-fatal): %s", e)
+                repo.insert_forward_outcomes_batch(pending_outcomes)
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
