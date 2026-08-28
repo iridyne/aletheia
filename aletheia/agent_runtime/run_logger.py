@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone, timedelta
 import json
+import logging
 
 from aletheia.storage.models import AgentArtifactRef, AgentRun, AgentRunArtifact
 from aletheia.storage.repositories import (
@@ -12,6 +13,22 @@ from aletheia.storage.repositories import (
 )
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_agent_run_log, write_audit
+
+_logger = logging.getLogger("aletheia.agent_runtime.run_logger")
+
+
+def _write_agent_run_log_best_effort(record: dict) -> bool:
+    """Mirror lifecycle evidence without making the diagnostic sink authoritative."""
+    try:
+        write_agent_run_log(record)
+    except Exception as exc:  # noqa: BLE001 - a secondary sink must not control lifecycle
+        _logger.warning(
+            "agent_run_diagnostic_mirror_failed event=%s error_type=%s",
+            record.get("event", "unknown"),
+            type(exc).__name__,
+        )
+        return False
+    return True
 
 
 def _create_run(
@@ -31,7 +48,7 @@ def _create_run(
         status=status,
     )
     insert_agent_run(run)
-    write_agent_run_log({"event": event, **run.model_dump()})
+    _write_agent_run_log_best_effort({"event": event, **run.model_dump()})
     return run
 
 
@@ -78,7 +95,7 @@ def begin_queued_run(run: AgentRun, *, permission_mode: str, model_provider: str
         permission_mode=permission_mode,
         model_provider=model_provider,
     )
-    write_agent_run_log({"event": "run_started", **run.model_dump()})
+    _write_agent_run_log_best_effort({"event": "run_started", **run.model_dump()})
 
 
 def end_run(
@@ -119,7 +136,7 @@ def end_run(
             )
             for artifact in artifact_refs or []
         ])
-    write_agent_run_log({
+    _write_agent_run_log_best_effort({
         "event": "run_ended",
         "run_id": run.id,
         "status": status,
@@ -205,6 +222,7 @@ def mark_stale_running_runs(
     if not already_in_tx:
         db.execute("BEGIN")
     marked = 0
+    mirror_records: list[dict] = []
     stale_error = f"marked stale by {source}: {reason}"
     try:
         for row in rows:
@@ -228,7 +246,7 @@ def mark_stale_running_runs(
             )
             if cur.rowcount:
                 marked += 1
-                write_agent_run_log(
+                mirror_records.append(
                     {
                         "event": "run_marked_stale",
                         "run_id": row["id"],
@@ -243,6 +261,9 @@ def mark_stale_running_runs(
         if not already_in_tx:
             db.rollback()
         raise
+
+    for record in mirror_records:
+        _write_agent_run_log_best_effort(record)
 
     if marked:
         write_audit(

@@ -122,6 +122,29 @@ def test_mark_stale_running_runs_closes_running_and_queued_rows(tmp_path, monkey
     reset_db()
 
 
+def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+
+    import aletheia.agent_runtime.run_logger as run_logger
+    from aletheia.agent_runtime.run_logger import end_run, mark_stale_running_runs, queue_run
+
+    def fail_log(_record):
+        raise OSError("diagnostic sink unavailable")
+
+    monkeypatch.setattr(run_logger, "write_agent_run_log", fail_log)
+
+    queued = queue_run("research_agent", "manual", "Observe")
+    assert repo.get_agent_run(queued.id)["status"] == "queued"
+
+    end_run(queued, status="completed", outputs=["done"])
+    assert repo.get_agent_run(queued.id)["status"] == "completed"
+
+    stale = queue_run("market_observer", "scheduled", "Observe")
+    assert mark_stale_running_runs(source="test") == 1
+    assert repo.get_agent_run(stale.id)["status"] == "stale"
+    reset_db()
+
+
 # Agents now call the LLM; with no model server in tests they degrade gracefully.
 _OK = ("completed", "completed_with_errors")
 
