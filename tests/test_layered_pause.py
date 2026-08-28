@@ -45,6 +45,24 @@ def _reset_scheduler():
 
 
 class TestLayeredPause:
+    def test_pause_acknowledgement_discloses_layered_mode_and_essential_jobs(self, monkeypatch):
+        from aletheia.agent_runtime import pause_ownership, scheduler
+
+        state = {
+            "scheduler_active": True,
+            "mode": "layered_paused",
+            "paused_jobs": ["paper_trader"],
+            "running_jobs": ["position_manager", "outcome_settler"],
+        }
+        monkeypatch.setattr(scheduler, "get_pause_state", lambda: state)
+
+        result = pause_ownership.pause_acknowledgement()
+
+        assert result["mode"] == "layered_paused"
+        assert result["essential_job_count"] == 2
+        assert result["essential_jobs_running"] == ["position_manager", "outcome_settler"]
+        assert "new decision/trading jobs are paused" in result["message"].lower()
+
     def test_layered_pause_keeps_essential_jobs_running(self, monkeypatch):
         """Essential jobs should not be paused during layered pause."""
         from aletheia.agent_runtime import scheduler

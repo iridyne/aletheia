@@ -455,7 +455,7 @@ def status():
 
 @router.post("/gateway/pause")
 def pause():
-    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause, pause_acknowledgement
 
     acquire_pause(
         MANUAL_OWNER,
@@ -466,12 +466,13 @@ def pause():
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "gateway_paused",
                  "message": "Gateway paused"})
-    return {"paused": True}
+    return pause_acknowledgement()
 
 
 @router.post("/gateway/resume")
 async def resume():
     from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_runtime.pause_ownership import pause_acknowledgement
 
     result = await resume_gate.resume_if_llm_available(
         actor="human",
@@ -483,4 +484,4 @@ async def resume():
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "gateway_resumed",
                  "message": "Gateway resumed"})
-    return {"paused": False}
+    return pause_acknowledgement(paused=False)

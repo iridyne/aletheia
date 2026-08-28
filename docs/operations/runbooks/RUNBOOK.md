@@ -27,7 +27,9 @@ uv run aletheia gateway status   # Gateway: running (PID ...)
 ```
 
 Other lifecycle commands: `gateway stop | restart | pause | resume | logs | open-dashboard`.
-`pause` halts all autonomous jobs without stopping the dashboard (the operator brake).
+`pause` pauses new decision/trading work without stopping the dashboard; essential
+collection, protection, reconciliation, settlement, measurement, health, and
+maintenance jobs continue in the default layered mode.
 
 Persistent service commands are separate from runtime control:
 
@@ -196,8 +198,12 @@ as a human; the agent can propose changes in a report but cannot apply them.
 
 ## 7. The brakes
 
-- **Pause everything:** `aletheia gateway pause` (or dashboard) — stops all
-  autonomous jobs, dashboard stays up. `resume` to re-enable.
+- **Layered pause (default):** `aletheia gateway pause` (or dashboard) — pauses
+  new decisions/trading while essential protection and truth-maintenance jobs
+  continue. The acknowledgement reports `mode=layered_paused` and the running
+  essential-job count. `resume` to re-enable.
+- **Full quiescence:** `aletheia gateway stop` — stops the Gateway and its
+  scheduler; use this when no automated job should run.
 - **Kill switch (global trading brake):** rejects *every* proposal (paper and
   live) until released. Auto-trips if the daily-loss limit is breached.
   Primary: dashboard **Risk panel**. CLI (deprecated, still works):

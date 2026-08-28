@@ -42,6 +42,10 @@ class GatewayResumeApiError(RuntimeError):
         self.payload = payload or {}
 
 
+class GatewayPauseApiError(RuntimeError):
+    """Raised when an in-process gateway pause request cannot complete."""
+
+
 def _apply_gateway_migrations() -> bool:
     """Apply pending DB upgrades before any managed process/readiness clock starts."""
 
@@ -929,8 +933,17 @@ def _notify_gateway_problem(
 
 
 def do_pause() -> None:
-    """Pause autonomous jobs."""
-    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+    """Pause new decisions/trading while essential protection jobs continue."""
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause, pause_acknowledgement
+
+    try:
+        payload = pause_running_gateway_via_api_if_running()
+        if payload is not None:
+            _echo_stdout_safe(f"Gateway paused. {payload['message']}")
+            return
+    except GatewayPauseApiError as exc:
+        _echo_safe(str(exc))
+        raise typer.Exit(1)
 
     acquire_pause(
         MANUAL_OWNER,
@@ -938,7 +951,7 @@ def do_pause() -> None:
         actor="human",
         source="cli",
     )
-    _echo_stdout_safe("Gateway paused. Autonomous jobs suspended.")
+    _echo_stdout_safe(f"Gateway paused. {pause_acknowledgement()['message']}")
 
 
 def do_resume() -> None:
@@ -976,6 +989,52 @@ def resume_running_gateway_via_api_if_running() -> bool:
         return False
     _post_gateway_resume_api(cfg)
     return True
+
+
+def pause_running_gateway_via_api_if_running() -> dict | None:
+    """Pause through the live gateway so the acknowledgement is authoritative."""
+    cfg = load_config()
+    if not (is_running() and port_in_use(cfg.app.dashboard_port, local_frontdoor_host())):
+        return None
+    return _post_gateway_pause_api(cfg)
+
+
+def _post_gateway_pause_api(cfg) -> dict:
+    """Call the running gateway's pause endpoint and return its scheduler projection."""
+    import urllib.error
+    import urllib.request
+
+    url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/api/gateway/pause"
+    headers = {"Content-Type": "application/json"}
+    remote_control = getattr(cfg, "remote_control", None)
+    token_required = bool(
+        getattr(getattr(cfg, "tunnel", None), "enabled", False)
+        or (getattr(remote_control, "enabled", False) and getattr(remote_control, "require_token", False))
+    )
+    if token_required:
+        from aletheia.config.secrets import get_secret
+
+        token = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
+        if token:
+            headers["X-Aletheia-Token"] = token
+    req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+    try:
+        with _local_urlopen(req, timeout=30.0) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise GatewayPauseApiError(
+            f"Gateway pause API failed: HTTP {exc.code} {detail.strip()}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise GatewayPauseApiError(f"Gateway pause API unavailable: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise GatewayPauseApiError("Gateway pause API timed out") from exc
+
+    payload = _decode_resume_api_payload(body)
+    if payload.get("paused") is not True or not payload.get("mode") or not payload.get("message"):
+        raise GatewayPauseApiError(f"Gateway pause API did not confirm pause state: {payload}")
+    return payload
 
 
 def _post_gateway_resume_api(cfg) -> dict:

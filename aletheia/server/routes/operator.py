@@ -236,7 +236,9 @@ async def _set_paused(paused: bool, *, event_type: str, message: str) -> dict[st
             "message": message,
         }
     )
-    return {"paused": paused}
+    from aletheia.agent_runtime.pause_ownership import pause_acknowledgement
+
+    return pause_acknowledgement(paused=paused)
 
 
 class OperatorHeartbeatIn(BaseModel):

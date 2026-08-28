@@ -686,7 +686,7 @@ async def get_recommendations(params: dict) -> dict:
 
 
 async def pause_agents(params: dict) -> dict:
-    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+    from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause, pause_acknowledgement
 
     acquire_pause(
         MANUAL_OWNER,
@@ -697,11 +697,12 @@ async def pause_agents(params: dict) -> dict:
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "agent_shell", "source": "command_center",
                  "event_type": "gateway_paused", "message": "Agents paused via Agent Shell"})
-    return {"paused": True, "message": "All scheduled agents have been paused."}
+    return pause_acknowledgement()
 
 
 async def resume_agents(params: dict) -> dict:
     from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_runtime.pause_ownership import pause_acknowledgement
 
     gate = await resume_gate.resume_if_llm_available(
         actor="agent_shell",
@@ -716,7 +717,7 @@ async def resume_agents(params: dict) -> dict:
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "agent_shell", "source": "command_center",
                  "event_type": "gateway_resumed", "message": "Agents resumed via Agent Shell"})
-    return {"paused": False, "message": "Scheduled agents have been resumed."}
+    return pause_acknowledgement(paused=False)
 
 
 async def create_research_note(params: dict) -> dict:

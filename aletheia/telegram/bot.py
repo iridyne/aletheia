@@ -138,7 +138,11 @@ class TelegramBot:
         )
 
     def _cmd_pause(self) -> str:
-        from aletheia.agent_runtime.pause_ownership import MANUAL_OWNER, acquire_pause
+        from aletheia.agent_runtime.pause_ownership import (
+            MANUAL_OWNER,
+            acquire_pause,
+            pause_acknowledgement,
+        )
 
         acquire_pause(
             MANUAL_OWNER,
@@ -152,7 +156,7 @@ class TelegramBot:
             "event_type": "gateway_paused",
             "message": "Paused via Telegram",
         })
-        return "Gateway paused. All autonomous jobs suspended."
+        return f"Gateway paused. {pause_acknowledgement()['message']}"
 
     async def _cmd_resume(self) -> str:
         from aletheia.agent_runtime import resume_gate
@@ -260,7 +264,7 @@ class TelegramBot:
         return (
             "Aletheia Trading OS\n\n"
             "/status — System status\n"
-            "/pause — Pause all agents\n"
+            "/pause — Pause new decisions/trading\n"
             "/resume — Resume agents\n"
             "/latest — Recent agent runs\n"
             "/positions — Open positions\n"
