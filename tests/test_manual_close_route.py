@@ -234,6 +234,47 @@ async def test_manual_close_route_market_dispatches_human_close(tmp_path, monkey
 
 
 @pytest.mark.anyio
+async def test_manual_close_route_stale_uta_qualification_returns_409(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+
+    from aletheia.server.app import app
+    from aletheia.trust.uta_qualification import UTAQualificationError
+    import aletheia.portfolio.position_manager as pm
+    from aletheia.execution import gateway
+
+    pid = _insert_open(execution_mode="binance_testnet")
+    monkeypatch.setattr(pm, "_latest_price", lambda _symbol: 105.0)
+    monkeypatch.setattr(
+        gateway,
+        "_qualified_uta_mutation_selected",
+        lambda _cfg, _mode: (_ for _ in ()).throw(
+            UTAQualificationError("qualification_identity_mismatch")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.close_position",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("UTA backend must not be called")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.binance_broker.close_testnet_position",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy backend must not be called")
+        ),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/api/positions/{pid}/close", json={"order_type": "market"})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "uta_mutation_qualification_required"
+    assert resp.json()["detail"]["reason_code"] == "qualification_identity_mismatch"
+    assert repo.get_position(pid)["status"] == "open"
+    assert repo.list_orders(limit=10) == []
+
+
+@pytest.mark.anyio
 async def test_manual_close_route_live_returns_409(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
 

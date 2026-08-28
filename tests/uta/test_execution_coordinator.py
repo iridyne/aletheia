@@ -455,7 +455,16 @@ def test_gateway_stale_close_qualification_calls_no_backend(tmp_path, monkeypatc
         ),
     )
 
-    with pytest.raises(UTAQualificationError) as caught:
-        gateway.close_exchange_position(position.id, "operator_close")
+    result = gateway.close_exchange_position(position.id, "operator_close")
 
-    assert caught.value.reason_code == "qualification_identity_mismatch"
+    assert result == {
+        "error": "uta_mutation_qualification_required",
+        "code": "uta_mutation_qualification_required",
+        "reason_code": "qualification_identity_mismatch",
+        "message": (
+            "UTA mutation qualification is not current; requalification is "
+            "required before closing."
+        ),
+        "position_id": position.id,
+        "closed": False,
+    }

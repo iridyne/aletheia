@@ -546,19 +546,33 @@ def close_exchange_position(
 ) -> dict:
     """Gateway-owned close dispatch; rollout selection is configuration-only."""
     from aletheia.storage import repositories as repo
+    from aletheia.trust.uta_qualification import UTAQualificationError
 
     row = repo.get_position(position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
     mode = row.get("execution_mode")
-    if mode == "binance_testnet" and _qualified_uta_mutation_selected(
-        load_config(), mode
-    ):
-        from aletheia.execution.coordinator import close_position
+    try:
+        if mode == "binance_testnet" and _qualified_uta_mutation_selected(
+            load_config(), mode
+        ):
+            from aletheia.execution.coordinator import close_position
 
-        return close_position(
-            position_id, reason=reason, close_reasoning=close_reasoning
-        )
+            return close_position(
+                position_id, reason=reason, close_reasoning=close_reasoning
+            )
+    except UTAQualificationError as exc:
+        return {
+            "error": "uta_mutation_qualification_required",
+            "code": "uta_mutation_qualification_required",
+            "reason_code": exc.reason_code,
+            "message": (
+                "UTA mutation qualification is not current; requalification is "
+                "required before closing."
+            ),
+            "position_id": position_id,
+            "closed": False,
+        }
     if mode in {"binance_testnet", "binance_live_limited"}:
         from aletheia.execution.binance_broker import close_testnet_position
 
