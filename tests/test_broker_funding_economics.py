@@ -147,6 +147,7 @@ def _seed_pending_broker_funding_close(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
+        entry_fee=0.1,
         current_price=110.0,
         execution_mode=mode,
         opened_at="2026-07-14T00:00:00+00:00",
@@ -532,6 +533,7 @@ def test_delayed_funding_settlement_rejects_alternate_symbol_double_claim(
             direction=direction,
             quantity=1.0,
             entry_price=100.0,
+            entry_fee=0.1,
             execution_mode="bitget_demo",
             opened_at="2026-07-14T00:00:00+00:00",
         )
@@ -605,6 +607,7 @@ def test_delayed_funding_revalidates_candidates_inside_writer_transaction(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
+        entry_fee=0.1,
         execution_mode="bitget_demo",
         opened_at="2026-07-14T00:00:00+00:00",
     )
@@ -726,6 +729,7 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
         direction="long",
         quantity=0.001,
         entry_price=60000.0,
+        entry_fee=0.036,
         current_price=61000.0,
         execution_mode="bitget_demo",
         opened_at="2026-07-14T00:00:00+00:00",
@@ -857,7 +861,7 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
     assert stored["status"] == "closed"
     assert stored["funding_cost"] is None
     assert stored["realized_pnl"] is None
-    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert stored["outcome_exclusion_reason"] == "incomplete_realized_economics"
 
 
 @pytest.mark.asyncio
