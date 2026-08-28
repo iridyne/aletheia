@@ -9,6 +9,7 @@ import {
   useConfirm,
 } from '../../../components/ui'
 import { humanize } from '../../../lib/format'
+import { safeErrorText } from '../../../lib/mutationErrors'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { CapitalEventsCard, PaperAccountCard, TradingParamsCard } from '../execution/PaperTradingSettings'
@@ -153,13 +154,19 @@ function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
     okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
     binance_testnet: 'Binance Testnet', paper_internal: 'Paper (internal)',
   }
+  const [err, setErr] = useState<string | null>(null)
   const mut = useMutation({
     mutationFn: (mode: string) => api.setExchangeMode(mode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
+    onSuccess: async () => {
+      await qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true })
+      setErr(null)
+    },
+    onError: (e: any) => setErr(`Exchange mode: ${safeErrorText(e?.message || e?.error, 'save failed')}`),
   })
+  const selectedMode = mut.isPending && mut.variables ? mut.variables : String(status.exchange_mode)
   return (
     <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? paperMode}.`}>
-      <select value={String(status.exchange_mode)} onChange={async e => {
+      <select value={selectedMode} onChange={async e => {
         const next = e.target.value
         if (next === 'live' && !(await confirm({
           title: 'Select experimental live readiness?',
@@ -167,11 +174,13 @@ function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
           confirmLabel: 'Select live readiness',
           variant: 'warning',
         }))) return
+        setErr(null)
         mut.mutate(next)
-      }} className="w-auto">
+      }} disabled={mut.isPending} className="w-auto">
         <option value="demo">demo</option>
         <option value="live">live</option>
       </select>
+      {err && <div className="settings-save-msg err mt-2">{err}</div>}
     </Row>
   )
 }

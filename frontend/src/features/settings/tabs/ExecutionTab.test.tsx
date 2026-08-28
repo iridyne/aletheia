@@ -63,4 +63,11 @@ describe('ExecutionTab', () => {
     expect(SRC).toContain('uta_read_boundary: readBoundary')
     expect(SRC).toContain('<option value="uta_v1" disabled>')
   })
+
+  it('keeps exchange mode writes serialized through the authoritative status refetch', () => {
+    expect(SRC).toContain('const selectedMode = mut.isPending && mut.variables ? mut.variables : String(status.exchange_mode)')
+    expect(SRC).toContain("await qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true })")
+    expect(SRC).toContain('disabled={mut.isPending}')
+    expect(SRC).toContain('safeErrorText')
+  })
 })
