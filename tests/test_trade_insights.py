@@ -216,6 +216,116 @@ def test_cohort_metadata_keys_present():
     assert meta["unavailability_reasons"] == {}
 
 
+def test_temporal_trade_insight_buckets_normalize_offsets_to_utc():
+    from aletheia.analytics.trade_insights import (
+        _by_day_of_week,
+        _by_hour,
+        _equity_curve,
+        _hour_day_heatmap,
+        _trade_frequency,
+    )
+
+    rows = [
+        _make_row(
+            id="utc-crossing",
+            closed_at="2026-01-01T19:30:00-05:00",
+            opened_at="2026-01-02T08:30:00+08:00",
+        ),
+    ]
+
+    by_hour = {row["hour"]: row for row in _by_hour(rows)}
+    by_day = {row["day"]: row for row in _by_day_of_week(rows)}
+    heatmap = {
+        (row["day"], row["hour"]): row
+        for row in _hour_day_heatmap(rows)
+        if row["trade_count"]
+    }
+
+    assert by_hour[0]["trade_count"] == 1
+    assert by_hour[19]["trade_count"] == 0
+    assert by_day["Fri"]["trade_count"] == 1
+    assert by_day["Thu"]["trade_count"] == 0
+    assert heatmap == {(4, 0): {"day": 4, "hour": 0, "avg_pnl_pct": 1.0, "trade_count": 1}}
+    assert _trade_frequency(rows)[0]["date"] == "2026-01-02"
+    assert _equity_curve(rows)[0]["time"] == "01/02"
+
+
+def test_temporal_trade_insight_buckets_exclude_naive_and_malformed_times():
+    import aletheia.analytics.outcome_integrity as oi
+    from aletheia.analytics import trade_insights
+
+    rows = [
+        _make_row(id="aware", closed_at="2026-01-02T00:30:00Z", opened_at="2026-01-02T00:00:00Z"),
+        _make_row(id="naive", closed_at="2026-01-02T00:30:00", opened_at="2026-01-02T00:00:00"),
+        _make_row(id="bad", closed_at="not-a-date", opened_at="not-a-date"),
+    ]
+    fake_r_dist: dict = {
+        "bins": [],
+        "eligible_r_multiple_count": 0,
+        "unavailable_r_multiple_count": 0,
+        "unavailability_reasons": {},
+    }
+
+    with (
+        patch.object(oi, "eligible_strategy_outcomes", return_value=rows),
+        patch.object(oi, "raw_account_events", return_value=rows),
+        patch.object(oi, "build_outcome_cohort_summary", return_value={}),
+        patch(
+            "aletheia.analytics.trade_insights._r_multiple_distribution",
+            return_value=fake_r_dist,
+        ),
+    ):
+        result = trade_insights.build_trade_insights()
+
+    assert result["by_hour"][0]["trade_count"] == 1
+    assert result["by_day_of_week"][4]["trade_count"] == 1
+    assert result["trade_frequency"] == [{
+        "date": "2026-01-02",
+        "trades": [{"pnl_pct": 1.0, "direction": "long"}],
+    }]
+    assert result["temporal_unbucketed_count"] == 2
+    assert result["heatmap_unbucketed_count"] == 2
+
+
+def test_streaks_keep_break_even_outcomes_neutral():
+    from aletheia.analytics.trade_insights import _streaks
+
+    rows = [
+        _make_row(id="win", realized_pnl=1.0),
+        _make_row(id="flat-1", realized_pnl=0.0),
+        _make_row(id="flat-2", realized_pnl=0.0),
+    ]
+
+    assert _streaks(rows) == {
+        "max_consecutive_wins": 1,
+        "max_consecutive_losses": 0,
+        "current_streak": 2,
+        "current_streak_type": "flat",
+        "total_wins": 1,
+        "total_losses": 0,
+        "total_flats": 2,
+    }
+
+
+def test_streaks_flats_break_loss_runs():
+    from aletheia.analytics.trade_insights import _streaks
+
+    rows = [
+        _make_row(id="loss-1", realized_pnl=-1.0),
+        _make_row(id="flat", realized_pnl=0.0),
+        _make_row(id="loss-2", realized_pnl=-1.0),
+    ]
+
+    result = _streaks(rows)
+
+    assert result["max_consecutive_losses"] == 1
+    assert result["current_streak"] == 1
+    assert result["current_streak_type"] == "loss"
+    assert result["total_wins"] == 0
+    assert result["total_losses"] == 2
+    assert result["total_flats"] == 1
+
+
 # ---------------------------------------------------------------------------
 # #2061 — r_multiple_distribution wire-shape contract
 #
@@ -298,3 +408,39 @@ def test_r_multiple_distribution_meta_all_keys_present():
     }, f"meta keys changed: {set(meta.keys())}"
     assert meta["unavailable_r_multiple_count"] == 3
     assert meta["unavailability_reasons"]["position_not_found"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #1931 — Symbol-direction matrix keeps physical market identity
+# ---------------------------------------------------------------------------
+
+def test_symbol_direction_matrix_does_not_merge_spot_and_futures_singletons():
+    from aletheia.analytics.trade_insights import _symbol_direction_matrix
+
+    rows = [
+        _make_row(id="spot", symbol="BTCUSDT", market_type="spot", realized_pnl=1.0),
+        _make_row(id="fut", symbol="BTC/USDT", market_type="usdt_futures", realized_pnl=-1.0),
+    ]
+
+    assert _symbol_direction_matrix(rows) == []
+
+
+def test_symbol_direction_matrix_reports_market_type_per_cell():
+    from aletheia.analytics.trade_insights import _symbol_direction_matrix
+
+    rows = [
+        _make_row(id="spot-1", symbol="BTCUSDT", market_type="spot", realized_pnl=1.0),
+        _make_row(id="spot-2", symbol="BTC/USDT", market_type="spot", realized_pnl=2.0),
+        _make_row(id="fut-1", symbol="BTCUSDT", market_type="futures", realized_pnl=-1.0),
+        _make_row(id="fut-2", symbol="BTC/USDT", market_type="usdt_futures", realized_pnl=-2.0),
+    ]
+
+    by_market = {r["market_type"]: r for r in _symbol_direction_matrix(rows)}
+
+    assert set(by_market) == {"spot", "usdt_futures"}
+    assert by_market["spot"]["symbol"] == "BTC/USDT"
+    assert by_market["spot"]["trade_count"] == 2
+    assert by_market["spot"]["win_rate"] == 100.0
+    assert by_market["usdt_futures"]["symbol"] == "BTC/USDT"
+    assert by_market["usdt_futures"]["trade_count"] == 2
+    assert by_market["usdt_futures"]["win_rate"] == 0.0

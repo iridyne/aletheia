@@ -31,6 +31,8 @@ Market-data computation and storage lifecycle are owned by the
 [Technical Analysis and OHLCV Tiering Contract](technical_analysis_contract.md).
 Exact-timeframe and real-field provider results are owned by the
 [OHLCV Provider Result Contract](ohlcv_provider_result_contract.md).
+Neutral causal Swing/BOS/CHOCH facts and query-requested FVG are owned by the
+[Market Structure Derived Data Contract](market_structure_contract.md).
 Collector execution facts and persisted dataset freshness are kept separate by
 the [Market Data Coverage and Collector Health Contract](market_data_coverage_contract.md).
 

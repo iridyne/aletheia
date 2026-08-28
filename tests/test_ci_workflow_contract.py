@@ -18,7 +18,8 @@ PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4"
-SELF_HOSTED = ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+SELF_HOSTED_CASI = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "casi"]
+SELF_HOSTED_FEDORA = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "fedora"]
 
 
 def _workflow() -> dict:
@@ -128,7 +129,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert "event_name == 'workflow_dispatch'" in handoff["if"]
     assert "release-please--branches--master" in handoff["if"]
     assert handoff["permissions"] == {"contents": "write"}
-    assert handoff["runs-on"] == SELF_HOSTED
+    assert handoff["runs-on"] == SELF_HOSTED_CASI
     assert len(handoff["steps"]) == 1
     step = handoff["steps"][0]
     assert step["uses"] == GITHUB_SCRIPT_ACTION
@@ -182,9 +183,16 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
 
     assert workflow["permissions"] == {"contents": "read"}
 
-    # All CI tasks use the managed Fedora pool.
+    # Cheap control-plane jobs pin CASI; deep pytest pins Fedora.
     for job_name in (
         "change-contract-preflight",
+        "review",
+        "release-candidate",
+        "release-pr-ci",
+    ):
+        assert jobs[job_name]["runs-on"] == SELF_HOSTED_CASI
+
+    for job_name in (
         "review-core",
         "review-coverage",
         "review-node",
@@ -195,9 +203,7 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
         "specifications",
         "end-to-end",
     ):
-        assert jobs[job_name]["runs-on"] == SELF_HOSTED
-
-    assert jobs["review"]["runs-on"] == SELF_HOSTED
+        assert jobs[job_name]["runs-on"] == SELF_HOSTED_FEDORA
 
     for job_name in (
         "change-contract-preflight",
@@ -266,7 +272,8 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     """#2167 Phase 1/addendum A: metadata has its own same-head status boundary."""
     gate = _change_contract_workflow()
     triggers = gate["on"]
-    ci_triggers = _workflow()["on"]
+    workflow = _workflow()
+    ci_triggers = workflow["on"]
 
     assert triggers == {
         "pull_request": {
@@ -279,6 +286,13 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert ci_triggers["pull_request"] == {"branches": ["master"]}
 
     assert gate["permissions"] == {"contents": "read"}
+    assert gate["env"] == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.connectTimeout",
+        "GIT_CONFIG_VALUE_0": "30",
+        "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+        "GIT_HTTP_LOW_SPEED_TIME": "30",
+    }
     assert gate["concurrency"] == {
         "group": "change-contract-${{ github.event.pull_request.number }}",
         "cancel-in-progress": "true",
@@ -286,7 +300,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert set(gate["jobs"]) == {"verify-change-contract"}
     job = gate["jobs"]["verify-change-contract"]
     assert job["name"] == "Verify Change Contract"
-    assert job["runs-on"] == SELF_HOSTED
+    assert job["runs-on"] == SELF_HOSTED_CASI
     assert job["timeout-minutes"] == "5"
 
     checkout = job["steps"][0]
@@ -300,9 +314,16 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert "preflight_metadata" in commands
     assert "upload-artifact" not in CHANGE_CONTRACT_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    workflow_jobs = _workflow()["jobs"]
+    workflow_jobs = workflow["jobs"]
+    assert workflow["env"] == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.connectTimeout",
+        "GIT_CONFIG_VALUE_0": "30",
+        "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+        "GIT_HTTP_LOW_SPEED_TIME": "30",
+    }
     deep_preflight = workflow_jobs["change-contract-preflight"]
-    assert deep_preflight["runs-on"] == SELF_HOSTED
+    assert deep_preflight["runs-on"] == SELF_HOSTED_CASI
     assert deep_preflight["timeout-minutes"] == "5"
     preflight_commands = _run_commands(deep_preflight)
     assert "uv run --no-sync python scripts/check_change_contract.py" in preflight_commands
@@ -311,6 +332,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
         "contents": "read",
         "pull-requests": "read",
     }
+    assert deep_preflight["steps"][0]["with"] == {"fetch-depth": "2"}
     assert deep_preflight["steps"][2]["name"] == "Read current exact-head PR body"
     assert "github.rest.pulls.get" in deep_preflight["steps"][2]["with"]["script"]
     assert "pullRequest.head.sha !== context.payload.pull_request.head.sha" in (
@@ -328,6 +350,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
 
 def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata_repairs() -> None:
     shepherd = _shepherd_workflow()
+    assert "concurrency" not in shepherd
     assert shepherd["on"]["workflow_run"] == {
         "workflows": ["Aletheia CI", "Aletheia Change Contract gate"],
         "types": ["completed"],
@@ -356,6 +379,10 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "createComment" not in metadata_branch  # uses the existing postComment helper
 
     recovery = shepherd["jobs"]["metadata-ci-recovery"]
+    assert recovery["concurrency"] == {
+        "group": "codex-shepherd-metadata-recovery-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
+    }
     assert recovery["permissions"] == {
         "actions": "write",
         "checks": "read",
@@ -375,6 +402,16 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "createWorkflowDispatch" not in recovery_script
     assert "metadata recovery job owns any required same-head CI rerun" in metadata_branch
     assert script.count("failure.category === 'preflight_metadata'") == 2
+
+    reconciliation = shepherd["jobs"]["shepherd"]
+    assert reconciliation["concurrency"] == {
+        "group": (
+            "codex-shepherd-reconcile-${{ github.event.pull_request.number || "
+            "github.event.issue.number || github.event.workflow_run.pull_requests[0].number || "
+            "github.run_id }}"
+        ),
+        "cancel-in-progress": "true",
+    }
 
 
 def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:
@@ -436,7 +473,7 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "inputs.operational_need == true" in job["if"]
     assert "github.event_name == 'workflow_dispatch'" in job["if"]
     assert "github.actor == github.repository_owner" not in job["if"]
-    assert job["runs-on"] == SELF_HOSTED
+    assert job["runs-on"] == SELF_HOSTED_CASI
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
         "actions": "write",
@@ -537,7 +574,16 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     }
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["refresh"]
-    assert job["if"] == "github.event.workflow_run.conclusion == 'success'"
+    assert job["if"] == (
+        "github.event.workflow_run.conclusion == 'success' && "
+        "github.event.workflow_run.event == 'repository_dispatch'"
+    )
+    assert workflow["concurrency"] == {
+        "group": "refresh-release-candidate-${{ github.event.workflow_run.id || github.run_id }}",
+        "cancel-in-progress": "false",
+    }
+    assert job["timeout-minutes"] == "10"
+    assert job["runs-on"] == SELF_HOSTED_CASI
     assert job["permissions"] == {
         "actions": "read",
         "contents": "write",
@@ -567,7 +613,8 @@ def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
 
     assert "version=8.24.3" in commands
     assert "gitleaks_${version}_linux_x64.tar.gz" in commands
-    assert "--retry 3 --retry-delay 2" in commands
+    assert "--connect-timeout 15 --max-time 60" in commands
+    assert "--retry 3 --retry-delay 2 --retry-max-time 180" in commands
     assert "--retry-all-errors" not in commands
     assert "sha256sum --check" in commands
     assert "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c" in commands
@@ -643,6 +690,11 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "review-native",
     ]
     assert unit_job["name"] == "Python unit"
+    assert any(
+        step.get("uses") == SETUP_NODE_ACTION
+        and step.get("with", {}).get("node-version") == "22"
+        for step in unit_job["steps"]
+    )
 
     # Stage 2 has exactly two deterministic lane heads.
     assert runtime_job["needs"] == ["review", "unit"]
@@ -749,7 +801,10 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
-    assert schedule["runs-on"] == "ubuntu-24.04" or schedule["runs-on"] == SELF_HOSTED
+    assert schedule["runs-on"] == SELF_HOSTED_CASI
+    assert schedule["timeout-minutes"] == "5"
+    assert schedule["concurrency"]["cancel-in-progress"] == "true"
+    assert "auto-merge-schedule-" in schedule["concurrency"]["group"]
     schedule_guard = schedule["if"]
     assert "event_name == 'pull_request_target'" in schedule_guard
     assert "action != 'closed'" in schedule_guard
@@ -775,6 +830,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "[filename, previous_filename].includes('.github/workflows/auto-merge.yml')" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
+    assert release_candidate["timeout-minutes"] == "10"
     assert release_candidate["permissions"] == {
         "contents": "write",
         "issues": "write",
@@ -812,7 +868,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"
-    assert update["runs-on"] == "ubuntu-24.04" or update["runs-on"] == SELF_HOSTED
+    assert update["runs-on"] == SELF_HOSTED_CASI
     assert "event_name == 'repository_dispatch'" in update["if"]
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert "event.sender.login == 'github-actions[bot]'" in update["if"]
@@ -937,7 +993,7 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
 
     assert set(workflow["jobs"]) == {"delete"}
     job = workflow["jobs"]["delete"]
-    assert job["runs-on"] == "ubuntu-24.04" or job["runs-on"] == SELF_HOSTED
+    assert job["runs-on"] == SELF_HOSTED_CASI
 
     guard = job["if"]
     assert "merged == true" in guard
@@ -954,7 +1010,9 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
 def test_pr_runner_isolation_contract() -> None:
     """#1356: Pull-request jobs must not share a runner pool with privileged release jobs.
 
-    Current status: KNOWN GAP — all jobs share the same self-hosted label.
+    Current status: KNOWN GAP — CASI/Fedora labels split queue contention, but
+    both remain persistent self-hosted workers. Disposable/JIT isolation is still
+    required by #1356 and is not claimed by this topology change.
     This test documents the required security property so any attempt to close the
     gap (or inadvertently widen it) is immediately visible.
 
@@ -965,29 +1023,20 @@ def test_pr_runner_isolation_contract() -> None:
     workflow = _workflow()
     jobs = workflow["jobs"]
 
-    # Privileged release handoff job — must not be accessible to PR-controlled code.
-    handoff_job = jobs.get("release-handoff") or jobs.get("handoff")
-
-    # PR-executing jobs: these receive pull_request-controlled code.
-    pr_jobs = [
-        "change-contract-preflight", "review-core", "review-coverage", "review-node", "review-native",
+    handoff_job = jobs["release-candidate"]
+    deep_jobs = (
+        "review-core", "review-coverage", "review-node", "review-native",
         "unit", "runtime-state-tests", "integration", "specifications", "end-to-end",
-    ]
+    )
+    for job_name in deep_jobs:
+        assert jobs[job_name]["runs-on"] == SELF_HOSTED_FEDORA
+    assert handoff_job["runs-on"] == SELF_HOSTED_CASI
 
-    pr_labels = {str(jobs[j]["runs-on"]) for j in pr_jobs if j in jobs}
-
-    # Document the gap: currently all share the same pool.
-    # When the gap is closed, replace this assertion with:
-    #   assert all("pr-ephemeral" in str(lbl) for lbl in pr_labels)
-    #   if handoff_job:
-    #       assert "pr-ephemeral" not in str(handoff_job["runs-on"])
-    assert len(pr_labels) >= 1, "PR jobs must have a runner label"
-
-    # Record the current state as a known gap comment — this line documents
-    # that runner isolation is NOT yet enforced at the workflow level.
-    # Issue #1356 tracks the resolution.
+    # When the gap is closed, replace the known-gap marker with:
+    #   assert all("pr-ephemeral" in str(jobs[j]["runs-on"]) for j in deep_jobs)
+    #   assert "pr-ephemeral" not in str(handoff_job["runs-on"])
     _KNOWN_GAP_1356 = (
-        "PR jobs run on shared self-hosted pool without ephemeral isolation. "
+        "PR jobs run on persistent self-hosted workers without ephemeral isolation. "
         "Resolution: configure dedicated pr-ephemeral runner group."
     )
     assert _KNOWN_GAP_1356  # always true — presence is the documentation

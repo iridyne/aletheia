@@ -8,7 +8,7 @@ from aletheia.storage.repositories import (
     complete_outcome_economics_sql,
     transaction,
 )
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import get_db, register_instant_us
 
 _TABLE_ID = {
     "learning_hypotheses": "hypothesis_id",
@@ -298,9 +298,12 @@ def get_latest_measurement_verdict(
         if value is not None:
             clauses.append(f"{column}=?")
             params.append(value)
-    row = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    row = db.execute(
         "SELECT * FROM learning_contribution_verdicts WHERE " + " AND ".join(clauses) + " "
-        "ORDER BY datetime(created_at) DESC, datetime(window_end) DESC, verdict_id DESC LIMIT 1",
+        "ORDER BY aletheia_instant_us(created_at) DESC, "
+        "aletheia_instant_us(window_end) DESC, verdict_id DESC LIMIT 1",
         tuple(params),
     ).fetchone()
     return dict(row) if row else None

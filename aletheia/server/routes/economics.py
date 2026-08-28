@@ -9,6 +9,7 @@ public GitHub catalog and persists explicitly estimated snapshots.
 See `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
 §4 Phase 1 for the original read-side constraints.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from aletheia.economics.context_artifacts import (
     summarize_context_artifacts,
 )
 from aletheia.economics.pricing_sync import (
+    PricingRefreshStartError,
     pricing_refresh_status,
     start_pricing_refresh,
 )
@@ -51,7 +53,7 @@ router = APIRouter(prefix="/api/economics", tags=["economics"])
 @router.get("/usage-insights")
 def usage_insights(
     days: int = Query(1),
-    group: Literal["summary", "operations", "analysis"] | None = None,
+    group: Literal["summary", "operations"] = "summary",
 ) -> dict:
     """Exact aggregate-only usage projection; never reads prompts or responses."""
     if days not in {1, 7, 30, 90}:
@@ -155,7 +157,7 @@ def costs_by_tool(
 def viability(
     scope: str = Query("system", pattern="^(system|operator)$"),
     days: int = Query(7, ge=1, le=365),
-    execution_mode: str = "paper_internal",
+    execution_mode: Literal["paper_internal"] = "paper_internal",
     data_cost_usd: Optional[float] = Query(None, ge=0),
     infrastructure_cost_usd: Optional[float] = Query(None, ge=0),
     other_cost_usd: Optional[float] = Query(None, ge=0),
@@ -208,8 +210,7 @@ def viability_reports(
     rows = [
         dict(row)
         for row in db.execute(
-            f"SELECT * FROM viability_reports {where_sql} "
-            f"ORDER BY window_end DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM viability_reports {where_sql} ORDER BY window_end DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
     ]
@@ -276,8 +277,7 @@ def pricing() -> dict:
     models = [
         dict(row)
         for row in db.execute(
-            "SELECT * FROM pricing_snapshots "
-            "ORDER BY effective_from DESC, created_at DESC LIMIT 200"
+            "SELECT * FROM pricing_snapshots ORDER BY effective_from DESC, created_at DESC LIMIT 200"
         ).fetchall()
     ]
     # Compatibility key: provider-native tool rates are columns on each model
@@ -304,4 +304,14 @@ def pricing_refresh() -> dict:
             "message": "Operator requested a LiteLLM estimated-price refresh.",
         }
     )
-    return start_pricing_refresh(trigger="dashboard")
+    try:
+        return start_pricing_refresh(trigger="dashboard")
+    except PricingRefreshStartError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "pricing_refresh_worker_start_failed",
+                "message": "Pricing refresh worker could not be started.",
+                "retryable": True,
+            },
+        ) from exc

@@ -78,6 +78,24 @@ def _healthy_cfg(**overrides) -> AletheiaConfig:
     return cfg
 
 
+def _insert_core_entry_order(status: str, *, order_id: str = "core-order") -> None:
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        """
+        INSERT INTO orders (
+            id, symbol, market_type, direction, order_type, quantity,
+            execution_mode, exchange_order_id, client_order_id,
+            status, source, created_at
+        ) VALUES (?, 'BTC/USDT', 'spot', 'long', 'limit', 0.01,
+            'bitget_demo', 'venue-secret-ish', ?, ?, 'native',
+            '2026-08-23T00:00:00+00:00')
+        """,
+        (order_id, f"client-{order_id}", status),
+    )
+    get_db().commit()
+
+
 @pytest.fixture(autouse=True)
 def _mock_scheduler(monkeypatch):
     """Record pause/resume calls without a real APScheduler."""
@@ -241,6 +259,104 @@ def test_unresolved_order_intent_blocks(tmp_path, monkeypatch):
     verdict = gate.evaluate_startup_gate()
     assert verdict["passed"] is False
     assert "pending_orders" in verdict["blockers"]
+
+
+@pytest.mark.parametrize("status", ["submission_unknown", "materialization_missing"])
+def test_core_reconciliation_required_entry_order_blocks_startup_behavior(
+    tmp_path,
+    monkeypatch,
+    status,
+):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    _insert_core_entry_order(status)
+
+    verdict = gate.evaluate_startup_gate()
+    pending_orders = next(
+        check for check in verdict["checks"] if check["name"] == "pending_orders"
+    )
+
+    assert verdict["passed"] is False
+    assert "pending_orders" in verdict["blockers"]
+    assert pending_orders["ok"] is False
+    assert f"{status}=1" in pending_orders["detail"]
+    assert "venue-secret-ish" not in pending_orders["detail"]
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["pending", "submitted", "partial", "partially_filled", "executed"],
+)
+def test_core_entry_states_without_reconciliation_requirement_do_not_block(
+    tmp_path,
+    monkeypatch,
+    status,
+):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    _insert_core_entry_order(status)
+
+    verdict = gate.evaluate_startup_gate()
+    pending_orders = next(
+        check for check in verdict["checks"] if check["name"] == "pending_orders"
+    )
+
+    assert pending_orders["ok"] is True, verdict
+    assert verdict["passed"] is True
+
+
+def test_core_order_query_failure_blocks_pending_orders(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(
+        repo,
+        "list_unresolved_native_entry_orders_for_risk",
+        lambda: (_ for _ in ()).throw(RuntimeError("schema drift with path /tmp/raw")),
+    )
+
+    verdict = gate.evaluate_startup_gate()
+    pending_orders = next(
+        check for check in verdict["checks"] if check["name"] == "pending_orders"
+    )
+
+    assert verdict["passed"] is False
+    assert "pending_orders" in verdict["blockers"]
+    assert pending_orders["ok"] is False
+    assert "pending-order check failed" in pending_orders["detail"]
+
+
+def test_core_entry_order_recheck_resumes_after_reconciliation(
+    tmp_path,
+    monkeypatch,
+    _mock_scheduler,
+):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(gate, "_start_recheck_loop", lambda *a, **k: None)
+    _insert_core_entry_order("submission_unknown")
+    asyncio.run(gate.startup_behavior_gate())
+    assert load_config().runtime.paused is True
+    assert gate.read_gate_state() is not None
+
+    get_db().execute("UPDATE orders SET status='executed' WHERE id='core-order'")
+    get_db().commit()
+
+    resumed = asyncio.run(gate.recheck_once())
+
+    assert resumed is True
+    assert load_config().runtime.paused is False
+    assert gate.read_gate_state() is None
+    assert _mock_scheduler["resume"] == 1
 
 
 def test_unknown_status_position_blocks_as_pending_close(tmp_path, monkeypatch):

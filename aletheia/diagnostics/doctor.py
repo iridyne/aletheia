@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +60,16 @@ _LLM_DEGRADED_SUCCESS_RATE = 0.5
 # while that Gateway is healthy.  Keep the process/session join bounded: a wide
 # heuristic would turn a genuinely stale crash row into false current authority.
 _RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
+
+
+@contextmanager
+def _read_only_diagnostics():
+    """Fence every Doctor report against config and SQLite writes."""
+    from aletheia.config.loader import read_only_config
+    from aletheia.storage.sqlite import readonly_db
+
+    with read_only_config(), readonly_db(allow_missing=True):
+        yield
 
 
 @dataclass
@@ -105,6 +116,7 @@ class Report:
         }
 
 
+@_read_only_diagnostics()
 def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20) -> dict:
     """Build a read-only diagnostic bundle for `doctor --verbose/--deep`.
 
@@ -300,22 +312,37 @@ def _diagnostic_logs(*, tail_lines: int) -> dict:
 
 def _recent_failures(limit: int = 12) -> list[dict]:
     try:
-        from aletheia.agent_runtime.run_view import finished_at, summarize_run_errors
+        from aletheia.agent_runtime.run_view import (
+            FAILED_AGENT_RUN_STATUSES,
+            SUCCESS_AGENT_RUN_STATUSES,
+            finished_at,
+            is_failed_agent_run,
+            summarize_run_errors,
+        )
         from aletheia.storage.sqlite import get_db
         db = get_db()
+        failed_statuses = tuple(sorted(FAILED_AGENT_RUN_STATUSES))
+        success_statuses = tuple(sorted(SUCCESS_AGENT_RUN_STATUSES))
+        params = (*failed_statuses, *success_statuses, limit)
+        failed_marks = ",".join("?" for _ in failed_statuses)
+        success_marks = ",".join("?" for _ in success_statuses)
         rows = db.execute(
-            "SELECT id, agent_name, status, started_at, "
-            "ended_at AS finished_at, errors AS error "
-            "FROM agent_runs "
-            "WHERE status NOT IN ('completed', 'success') "
-            "OR COALESCE(NULLIF(errors, ''), '[]') <> '[]' "
-            "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
-            (limit,),
+            f"""SELECT id, agent_name, status, started_at,
+                       ended_at AS finished_at, errors AS error
+                FROM agent_runs
+                WHERE status IN ({failed_marks})
+                   OR (
+                       status IN ({success_marks})
+                       AND COALESCE(NULLIF(errors, ''), '[]') <> '[]'
+                   )
+                ORDER BY COALESCE(ended_at, started_at) DESC
+                LIMIT ?""",
+            params,
         ).fetchall()
         failures: list[dict] = []
         for row in rows:
             summary = summarize_run_errors(row["error"])
-            if row["status"] in ("completed", "success") and not summary:
+            if not is_failed_agent_run(row["status"], row["error"]):
                 continue
             failures.append(
                 {
@@ -3904,9 +3931,6 @@ def _probe_filter_evidence(report: Report) -> None:
         outcomes = db.execute(
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
-            "SUM(CASE WHEN status='settled' AND "
-            f"  {complete_outcome_economics_sql()} "
-            "  THEN 1 ELSE 0 END) AS net_complete, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
             "  THEN 1 ELSE 0 END) AS overdue, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
@@ -3914,10 +3938,23 @@ def _probe_filter_evidence(report: Report) -> None:
             "FROM filter_candidate_outcomes",
             (now_iso, stale_before),
         ).fetchone()
+        from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+
+        net_complete_rows = db.execute(
+            "SELECT * FROM filter_candidate_outcomes "
+            "WHERE status='settled' AND "
+            f"{complete_outcome_economics_sql()}",
+        ).fetchall()
+        net_complete = 0
+        temporal_invalid_settled = 0
+        for raw in net_complete_rows:
+            if candidate_outcome_temporal_reason(dict(raw), as_of_at=now_iso) is None:
+                net_complete += 1
+            else:
+                temporal_invalid_settled += 1
         outcome_candidates = int(decisions["outcome_candidates"] or 0)
         registered = int(outcomes["registered"] or 0) if outcomes else 0
         settled = int(outcomes["settled"] or 0) if outcomes else 0
-        net_complete = int(outcomes["net_complete"] or 0) if outcomes else 0
         overdue = int(outcomes["overdue"] or 0) if outcomes else 0
         stale_overdue = int(outcomes["stale_overdue"] or 0) if outcomes else 0
         awaiting_cadence = max(0, overdue - stale_overdue)
@@ -3938,7 +3975,8 @@ def _probe_filter_evidence(report: Report) -> None:
             f"batches={batch_total}, batch_candidates={batch_candidates}, "
             f"batch_filters={batch_filters}, malformed={malformed_batches}; "
             f"outcome_candidates={registered}/{outcome_candidates}; "
-            f"settled={settled}, net_complete={net_complete}, overdue={overdue}, "
+            f"settled={settled}, net_complete={net_complete}, "
+            f"temporal_invalid_settled={temporal_invalid_settled}, overdue={overdue}, "
             f"awaiting_cadence={awaiting_cadence}, stale_overdue={stale_overdue}, "
             f"unobserved_failed={unobserved_failed}"
         )
@@ -4207,6 +4245,7 @@ _CONTENT_PROBES = (
 )
 
 
+@_read_only_diagnostics()
 def build_content_report() -> Report:
     """Run ONLY the content-quality probes — the cheap subset of build_report() that
     asks "is the AI's output garbage", not "is the loop alive". Used by the PI
@@ -4221,6 +4260,7 @@ def build_content_report() -> Report:
     return report
 
 
+@_read_only_diagnostics()
 def build_report(*, probe_llm: bool = False) -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing.
 

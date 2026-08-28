@@ -417,6 +417,10 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   else if (data?.reason === 'update_check_required') badge = <span className="badge">not checked</span>
   else if (data?.ok && data.has_update) badge = <span className="badge badge-yellow">{data.behind_count} behind</span>
   else if (data?.ok && !data.has_update) badge = <span className="badge badge-green">up to date</span>
+  const updateMode = data?.mode
+  const applySupported = data?.ok && data.has_update && updateMode === 'packaged'
+  const applyRequiresCli = data?.ok && data.has_update && updateMode === 'development'
+  const applyUnavailable = data?.ok && data.has_update && !applySupported && !applyRequiresCli
 
   return (
     <div className="card mb-0">
@@ -429,13 +433,23 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           </span>
         )}
         <button className="secondary" onClick={() => check.mutate()} disabled={check.isPending}>Re-check</button>
-        {data?.ok && data.has_update && (
+        {applySupported && (
           <button
-            onClick={async () => { if (await confirm({ title: 'Pull latest code?', description: 'Restart the gateway afterward.', confirmLabel: 'Apply update', variant: 'warning' })) apply.mutate() }}
+            onClick={async () => { if (await confirm({ title: 'Apply packaged update?', description: 'The packaged runtime owns restart and verification.', confirmLabel: 'Apply update', variant: 'warning' })) apply.mutate() }}
             disabled={apply.isPending}
           >Apply update</button>
         )}
       </div>
+      {applyRequiresCli && (
+        <p className="hint mb-3">
+          Source checkout update available. Run <code>aletheia update</code> from the controlling terminal; the external CLI owns checkout mutation, restart, and continuity verification.
+        </p>
+      )}
+      {applyUnavailable && (
+        <p className="hint mb-3">
+          Update apply action unavailable because this runtime did not report a supported update mode.
+        </p>
+      )}
       {applyMsg && <p className="hint mb-3">{applyMsg}</p>}
 
       {/* Config */}

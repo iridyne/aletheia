@@ -14,6 +14,7 @@ import asyncio
 import ast
 from contextlib import nullcontext
 import inspect
+import json
 import textwrap
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -43,8 +44,13 @@ def test_refresh_registers_full_scored_arm_with_selected_subset():
         assert allocated.id == "allocated"
 
 
-def _assert_emission_failure_cannot_publish_partial_universe_refresh(
-    tmp_path, monkeypatch, failure_kind, *, caller_owns_transaction=False
+def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+    tmp_path,
+    monkeypatch,
+    failure_kind,
+    *,
+    caller_owns_transaction=False,
+    reuse_previous_snapshot=False,
 ):
     from tests.test_entry_logic import setup_env
 
@@ -54,7 +60,6 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
     from aletheia.storage.sqlite import get_db
     from aletheia.universe import service
-    from aletheia.universe.signal_emitter import EmissionEvidenceError
 
     cfg = load_config()
     cfg.universe.enabled = True
@@ -94,6 +99,16 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
         market_type="crypto",
         status="active",
         expires_at="2099-01-01T00:00:00+00:00",
+        summary=(
+            json.dumps(
+                {
+                    "information_policy_epoch": service.POLICY_EPOCH_LABEL,
+                    "member_fingerprint": service._member_fingerprint(allocated, None),
+                }
+            )
+            if reuse_previous_snapshot
+            else "{}"
+        ),
     )
     repo.insert_universe_snapshot(previous)
     repo.insert_universe_member(UniverseMember(
@@ -108,6 +123,26 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
         scanner_direction="long",
         expires_at="2099-01-01T00:00:00+00:00",
     ))
+    requalification_generation_id = None
+    requalification_before = None
+    if failure_kind == "scanner_completion":
+        existing_candidate = UniverseMember(
+            id="existing-requalification-candidate",
+            snapshot_id=previous.id,
+            asset_id=feature["asset_id"],
+            venue="bitget",
+            symbol="BTC/USDT",
+            market_type="spot",
+            rank=2,
+            total_score=70.0,
+            scanner_family="momentum",
+            scanner_direction="long",
+            expires_at="2099-01-01T00:00:00+00:00",
+        )
+        repo.insert_universe_member(existing_candidate)
+        generation, _ = repo.ensure_candidate_planning_generation(existing_candidate.id)
+        requalification_generation_id = generation["id"]
+        requalification_before = repo.get_candidate_planning_generation(generation["id"])
 
     async def sync_registry(_cfg):
         return 1
@@ -119,15 +154,10 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     async def settle_due():
         return 0
 
-    failure_code = (
-        "opportunity_emission_evidence_failed:snapshot:member"
-        if failure_kind == "evidence"
-        else "opportunity_emission_runtime_failed:snapshot"
-    )
+    failure_code = f"candidate_planning_generation_{failure_kind}_failed"
 
-    def emission_failure(*_args, **_kwargs):
-        error_type = EmissionEvidenceError if failure_kind == "evidence" else RuntimeError
-        raise error_type(failure_code)
+    def planning_generation_failure(*_args, **_kwargs):
+        raise RuntimeError(failure_code)
 
     monkeypatch.setattr(service, "load_config", lambda: cfg)
     monkeypatch.setattr(service.repo, "mark_outlier_outcomes_failed", lambda: 0)
@@ -181,10 +211,25 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
     )
-    monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.emit_deterministic_opportunities",
-        emission_failure,
-    )
+    if failure_kind == "scanner_completion":
+        update_scanner_run = service.repo.update_universe_scanner_run
+
+        def fail_scanner_completion(run_id, **kwargs):
+            if kwargs.get("status") == "completed":
+                raise RuntimeError(failure_code)
+            return update_scanner_run(run_id, **kwargs)
+
+        monkeypatch.setattr(
+            service.repo,
+            "update_universe_scanner_run",
+            fail_scanner_completion,
+        )
+    else:
+        monkeypatch.setattr(
+            service.repo,
+            "ensure_candidate_planning_generation",
+            planning_generation_failure,
+        )
 
     caller_transaction = repo.transaction() if caller_owns_transaction else nullcontext()
     with caller_transaction:
@@ -202,54 +247,104 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     members = db.execute(
         "SELECT id,snapshot_id FROM universe_members ORDER BY rowid"
     ).fetchall()
-    assert [dict(row) for row in members] == [{
+    expected_members = [{
         "id": "previous-healthy-member",
         "snapshot_id": previous.id,
     }]
+    if failure_kind == "scanner_completion":
+        expected_members.append({
+            "id": "existing-requalification-candidate",
+            "snapshot_id": previous.id,
+        })
+    assert [dict(row) for row in members] == expected_members
     failed_run = db.execute(
         "SELECT status,snapshot_id,errors FROM universe_scanner_runs "
         "ORDER BY rowid DESC LIMIT 1"
     ).fetchone()
     assert failed_run["status"] == "failed"
-    assert failed_run["snapshot_id"]
-    assert failed_run["snapshot_id"] != previous.id
+    if reuse_previous_snapshot:
+        assert failed_run["snapshot_id"] is None
+    else:
+        assert failed_run["snapshot_id"]
+        assert failed_run["snapshot_id"] != previous.id
     assert failure_code in failed_run["errors"]
     assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
-    assert experiment_outcome_registrations == []
+    assert experiment_outcome_registrations == (
+        [True] if reuse_previous_snapshot else []
+    )
+    if requalification_generation_id:
+        requalification_after = repo.get_candidate_planning_generation(
+            requalification_generation_id
+        )
+        assert requalification_after["last_requalified_at"] is None
+        assert (
+            requalification_after["soft_expires_at"]
+            == requalification_before["soft_expires_at"]
+        )
 
 
 @spec_claim(
     SpecClaim(
         "UP-25",
         "universe_pipeline",
-        "§3 retryable opportunity emission",
+        "§3 atomic Candidate planning publication",
         "L2b",
-        "When deterministic Opportunity emission escapes with any unhandled failure, "
+        "When durable Candidate Planning Generation creation escapes with an unhandled failure, "
         "UniverseService rolls back the attempted snapshot publication, keeps the previous "
         "healthy snapshot active, and records the failed run with the attempted snapshot id.",
         status="implemented",
     ),
 )
-def test_emission_evidence_failure_cannot_publish_partial_universe_refresh(
+def test_planning_generation_evidence_failure_cannot_publish_partial_universe_refresh(
     tmp_path, monkeypatch
 ):
-    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path, monkeypatch, "evidence"
     )
 
 
-def test_unhandled_emitter_runtime_failure_cannot_publish_partial_universe_refresh(
+def test_unhandled_planning_generation_failure_cannot_publish_partial_universe_refresh(
     tmp_path, monkeypatch
 ):
-    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path, monkeypatch, "runtime"
     )
 
 
-def test_emission_failure_rolls_back_inside_existing_transaction(
+@spec_claim(
+    SpecClaim(
+        "UP-29",
+        "universe_pipeline",
+        "§3 completed-scan Candidate attention authority",
+        "L2b",
+        "Candidate attention reconciliation and scanner-run completion commit atomically; "
+        "a completion write failure preserves the previous lease and records a failed run.",
+        status="implemented",
+    ),
+)
+def test_scanner_completion_failure_rolls_back_candidate_requalification(
     tmp_path, monkeypatch
 ):
-    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path, monkeypatch, "scanner_completion"
+    )
+
+
+def test_change_suppressed_completion_failure_rolls_back_candidate_requalification(
+    tmp_path, monkeypatch
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path,
+        monkeypatch,
+        "scanner_completion",
+        reuse_previous_snapshot=True,
+    )
+
+
+def test_planning_generation_failure_rolls_back_inside_existing_transaction(
+    tmp_path, monkeypatch
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path,
         monkeypatch,
         "evidence",
@@ -446,8 +541,8 @@ def test_short_disable_is_hard():
 @spec_claim(
     SpecClaim("UP-19", "universe_pipeline", "§market-type snapshot eligibility", "L2b",
               "a candidate is execution-eligible only when a fresh snapshot exists for "
-              "that exact spot/perp instrument; a same-symbol snapshot from the other "
-              "market type must not pass the pre-trade freshness gate"),
+              "that exact venue plus spot/perp instrument; a same-symbol snapshot from "
+              "another venue or market type must not pass the pre-trade freshness gate"),
 )
 def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
     from datetime import datetime, timezone
@@ -463,9 +558,116 @@ def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
         "aletheia.universe.snapshot_freshness.list_market_snapshots", snapshots,
     )
     assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="bitget", now=datetime.now(timezone.utc),
+    ) is False
+    assert calls == [
+        {"symbol": "BTC/USDT", "exchange": "bitget", "market_type": "perp", "limit": 1}
+    ]
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="", now=datetime.now(timezone.utc),
+    ) is False
+
+
+def test_snapshot_freshness_requires_exchange(monkeypatch):
+    from datetime import datetime, timezone
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    def snapshots(**_kwargs):
+        raise AssertionError("missing venue must not query venue-agnostic snapshots")
+
+    monkeypatch.setattr(
+        "aletheia.universe.snapshot_freshness.list_market_snapshots", snapshots,
+    )
+    assert has_fresh_market_snapshot(
         "BTC/USDT", "perp", now=datetime.now(timezone.utc),
     ) is False
-    assert calls == [{"symbol": "BTC/USDT", "market_type": "perp", "limit": 1}]
+
+
+def test_snapshot_freshness_is_exact_venue_scoped(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="stale-binance-btc-perp",
+        symbol="BTC/USDT",
+        exchange="binance",
+        market_type="perp",
+        price=60_000.0,
+        snapshot_at=(now - timedelta(hours=3)).isoformat(),
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="fresh-bitget-btc-perp",
+        symbol="BTC/USDT",
+        exchange="bitget",
+        market_type="perp",
+        price=60_100.0,
+        snapshot_at=(now - timedelta(minutes=5)).isoformat(),
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="fresh-binance-btc-spot",
+        symbol="BTC/USDT",
+        exchange="binance",
+        market_type="spot",
+        price=59_900.0,
+        snapshot_at=(now - timedelta(minutes=5)).isoformat(),
+    ))
+
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="binance", now=now,
+    ) is False
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="bitget", now=now,
+    ) is True
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "spot", exchange="binance", now=now,
+    ) is True
+
+
+def test_snapshot_freshness_is_exchange_scoped(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    now = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    fresh_bitget = {
+        "exchange": "bitget",
+        "symbol": "SOXL/USDT",
+        "market_type": "perp",
+        "snapshot_at": now.isoformat(),
+    }
+    stale_binance = {
+        "exchange": "binance",
+        "symbol": "SOXL/USDT",
+        "market_type": "perp",
+        "snapshot_at": (now - timedelta(hours=3)).isoformat(),
+    }
+
+    def snapshots(**kwargs):
+        assert kwargs["symbol"] == "SOXL/USDT"
+        assert kwargs["market_type"] == "perp"
+        if kwargs.get("exchange") == "binance":
+            return [stale_binance]
+        return [fresh_bitget]
+
+    monkeypatch.setattr(
+        "aletheia.universe.snapshot_freshness.list_market_snapshots", snapshots,
+    )
+
+    assert has_fresh_market_snapshot(
+        "SOXL/USDT", "perp", exchange="binance", now=now,
+    ) is False
+
+    stale_binance["snapshot_at"] = now.isoformat()
+    assert has_fresh_market_snapshot(
+        "SOXL/USDT", "perp", exchange="binance", now=now,
+    ) is True
 
 
 @spec_claim(

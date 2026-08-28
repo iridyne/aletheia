@@ -196,8 +196,7 @@ async def _compute_relative_rank_allocation_nonfatal(
         return annotator(replayed, authority_selected)
     except Exception as shadow_exc:
         logger.warning(
-            "Universe relative-rank Shadow replay unavailable without authority "
-            "impact: %s",
+            "Universe relative-rank Shadow replay unavailable without authority impact: %s",
             type(shadow_exc).__name__,
         )
         return None
@@ -222,9 +221,13 @@ async def _persist_twin_shadow_nonfatal(
 
     def build_and_persist() -> int:
         captured_at = str(kwargs.get("captured_at") or "")
-        if capture_due is not None and captured_at and not capture_due(
-            captured_at,
-            min_interval_sec=min_interval_sec,
+        if (
+            capture_due is not None
+            and captured_at
+            and not capture_due(
+                captured_at,
+                min_interval_sec=min_interval_sec,
+            )
         ):
             return 0
         policy = policy_factory(**policy_kwargs)
@@ -249,8 +252,7 @@ async def _persist_twin_shadow_nonfatal(
         )
     except Exception as shadow_exc:
         logger.warning(
-            "Universe twin Shadow persistence unavailable without authority impact: "
-            "%s: %s (scanner_run_id=%s)",
+            "Universe twin Shadow persistence unavailable without authority impact: %s: %s (scanner_run_id=%s)",
             type(shadow_exc).__name__,
             shadow_exc,
             kwargs.get("scanner_run_id", "not_available"),
@@ -379,33 +381,31 @@ def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
 
     material: list[tuple] = []
     for rank, item in enumerate(allocated, 1):
-        material.append((
-            str(item.get("symbol") or ""),
-            str(item.get("venue") or ""),
-            str(item.get("market_type") or "spot"),
-            int(rank),
-            str(item.get("scanner_family") or ""),
-            str(item.get("scanner_direction") or item.get("direction") or ""),
-            bool(item.get("execution_eligible", True)),
-            int(item.get("ttl_sec") or 0),
-            _risk_flags(item.get("risk_flags")),
-            _entry_price(item),
-            json.dumps(
-                item.get("instrument_background"),
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-            json.dumps(
-                item.get("analysis_context"),
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
+        material.append(
             (
-                regime_tag
-                if (item.get("analysis_context") or {}).get("kind") == "crypto"
-                else None
-            ),
-        ))
+                str(item.get("symbol") or ""),
+                str(item.get("venue") or ""),
+                str(item.get("market_type") or "spot"),
+                int(rank),
+                str(item.get("scanner_family") or ""),
+                str(item.get("scanner_direction") or item.get("direction") or ""),
+                bool(item.get("execution_eligible", True)),
+                int(item.get("ttl_sec") or 0),
+                _risk_flags(item.get("risk_flags")),
+                _entry_price(item),
+                json.dumps(
+                    item.get("instrument_background"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                json.dumps(
+                    item.get("analysis_context"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                (regime_tag if (item.get("analysis_context") or {}).get("kind") == "crypto" else None),
+            )
+        )
     payload = json.dumps(
         {
             "information_policy_epoch": POLICY_EPOCH_LABEL,
@@ -553,7 +553,8 @@ def _register_experiment_candidate_outcomes(
         except Exception:
             logger.debug(
                 "experiment candidate outcome registration skipped for %s",
-                item.get("symbol"), exc_info=True,
+                item.get("symbol"),
+                exc_info=True,
             )
     if not outcomes:
         return 0
@@ -574,8 +575,7 @@ def _active_paper_learning_identity(path_id: str) -> tuple[bool, dict | None]:
         paper = [
             row
             for row in list_open_experiments(path_id=path_id)
-            if str(row.get("stage") or "")
-            in {"paper_10", "paper_25", "paper_50", "paper_active"}
+            if str(row.get("stage") or "") in {"paper_10", "paper_25", "paper_50", "paper_active"}
         ]
         if not paper:
             return False, None
@@ -586,9 +586,7 @@ def _active_paper_learning_identity(path_id: str) -> tuple[bool, dict | None]:
                 path_id,
             )
             return True, None
-        hypothesis = get_record(
-            "learning_hypotheses", str(paper[0]["hypothesis_id"])
-        )
+        hypothesis = get_record("learning_hypotheses", str(paper[0]["hypothesis_id"]))
         if not hypothesis or hypothesis.get("path_id") != path_id:
             raise ValueError("active Paper hypothesis is missing or belongs to another path")
         scope = json.loads(str(hypothesis.get("scope_json") or "null"))
@@ -597,9 +595,7 @@ def _active_paper_learning_identity(path_id: str) -> tuple[bool, dict | None]:
             raise ValueError("active Paper scope/action is not an object")
         if (
             set(scope) != {"family", "direction", "market_type"}
-            or scope.get("family") not in {
-                "momentum", "mean_reversion", "volatility", "derivatives"
-            }
+            or scope.get("family") not in {"momentum", "mean_reversion", "volatility", "derivatives"}
             or scope.get("direction") not in {"long", "short"}
             or scope.get("market_type") not in {"spot", "perp"}
         ):
@@ -710,10 +706,7 @@ class UniverseService:
         from aletheia.universe.outcome_recorder import build_pending, settle_due
         from aletheia.universe.registry import sync_registry
         from aletheia.universe.scanners import run_all_scanners
-        from aletheia.universe.signal_emitter import (
-            _infer_direction,
-            emit_deterministic_opportunities,
-        )
+        from aletheia.universe.signal_emitter import _infer_direction
 
         cfg = load_config()
 
@@ -757,8 +750,10 @@ class UniverseService:
                     current_regime.short_bias = 0.0
                 logger.info(
                     "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
-                    current_regime.state, current_regime.confidence,
-                    current_regime.long_bias, current_regime.short_bias,
+                    current_regime.state,
+                    current_regime.confidence,
+                    current_regime.long_bias,
+                    current_regime.short_bias,
                 )
         except Exception as e:
             logger.warning("Regime detection failed (non-fatal): %s", e)
@@ -770,7 +765,8 @@ class UniverseService:
         try:
             await sync_registry(cfg)
             assets = repo.list_universe_assets(
-                venue=cfg.market_data.ccxt_exchange, limit=1000,
+                venue=cfg.market_data.ccxt_exchange,
+                limit=1000,
             )
             priority_asset_ids: set[str] = set()
             try:
@@ -779,60 +775,64 @@ class UniverseService:
                 priority_assets = pending_candidate_assets(
                     venue=cfg.market_data.ccxt_exchange,
                 )
-                priority_asset_ids = {
-                    str(asset["id"]) for asset in priority_assets if asset.get("id")
-                }
+                priority_asset_ids = {str(asset["id"]) for asset in priority_assets if asset.get("id")}
                 if priority_asset_ids:
                     assets = priority_assets + [
-                        asset for asset in assets
-                        if str(asset.get("id") or "") not in priority_asset_ids
+                        asset for asset in assets if str(asset.get("id") or "") not in priority_asset_ids
                     ]
             except Exception:
                 logger.warning(
-                    "Pending candidate feature expansion failed", exc_info=True,
+                    "Pending candidate feature expansion failed",
+                    exc_info=True,
                 )
             repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
             # Inject volume-ranking symbols as additional candidates
             try:
                 from aletheia.agent_runtime.scheduler import get_latest_volume_ranking
+
                 vol = get_latest_volume_ranking()
                 vol_symbols = vol.get("symbols") or [] if vol else []
                 ranked_instruments = _volume_ranked_instruments(
-                    vol_symbols[:20], cfg.market_data.ccxt_exchange,
+                    vol_symbols[:20],
+                    cfg.market_data.ccxt_exchange,
                 )
                 rank_index = {
                     (item.exchange, item.symbol, item.market_type): index
                     for index, item in enumerate(ranked_instruments)
                 }
                 if rank_index:
-                    assets.sort(key=lambda asset: (
-                        0 if str(asset.get("id") or "") in priority_asset_ids else 1,
-                        rank_index.get(
-                            (
-                                asset.get("venue"),
-                                asset.get("symbol"),
-                                asset.get("market_type"),
+                    assets.sort(
+                        key=lambda asset: (
+                            0 if str(asset.get("id") or "") in priority_asset_ids else 1,
+                            rank_index.get(
+                                (
+                                    asset.get("venue"),
+                                    asset.get("symbol"),
+                                    asset.get("market_type"),
+                                ),
+                                len(rank_index),
                             ),
-                            len(rank_index),
-                        ),
-                    ))
+                        )
+                    )
             except Exception as e:
                 logger.debug("volume_ranking injection skipped: %s", e)
 
-            feature_kwargs = (
-                {"priority_asset_ids": priority_asset_ids}
-                if priority_asset_ids else {}
-            )
+            feature_kwargs = {"priority_asset_ids": priority_asset_ids} if priority_asset_ids else {}
             features_list = await collect_features(
-                assets, cfg, scanner_run_id=run.id, **feature_kwargs,
+                assets,
+                cfg,
+                scanner_run_id=run.id,
+                **feature_kwargs,
             )
 
             # Pass 1: coarse filter (stablecoin/blacklist/freshness/volume + extreme spread ≥3×).
             # Borderline spread cases (2×–3× max_spread_bps) pass through for family-aware
             # fine filtering after scanner assigns families.
             coarse_filtered = apply_coarse_tradability_filters(
-                features_list, cfg.universe, scanner_run_id=run.id,
+                features_list,
+                cfg.universe,
+                scanner_run_id=run.id,
             )
 
             calibration_evidence: dict[str, dict] = {}
@@ -841,8 +841,8 @@ class UniverseService:
             )
             if calibration:
                 logger.info("Calibration multipliers: %s", calibration)
-            restrict_calibration_scope, calibration_learning_identity = (
-                _active_paper_learning_identity("universe_family_calibration")
+            restrict_calibration_scope, calibration_learning_identity = _active_paper_learning_identity(
+                "universe_family_calibration"
             )
 
             # Load per-family spread tolerances from filter_advisor (empty until data
@@ -859,7 +859,10 @@ class UniverseService:
                 scanner_result = run_all_scanners(feat)
                 authority_score_audit: dict[str, object] = {}
                 total = compute_total_score(
-                    feat, scanner_result, cfg.universe, calibration=calibration or None,
+                    feat,
+                    scanner_result,
+                    cfg.universe,
+                    calibration=calibration or None,
                     calibration_evidence=calibration_evidence or None,
                     scoring_cohort_key=run.id,
                     scoring_audit_out=authority_score_audit,
@@ -872,7 +875,8 @@ class UniverseService:
             # via record_filter_decision with scanner_family → filter_candidate_outcomes
             # rows get family populated, closing the calibration feedback loop.
             scored = apply_fine_tradability_filters(
-                pre_scored, cfg.universe,
+                pre_scored,
+                cfg.universe,
                 family_tolerances=family_tolerances or None,
                 scanner_run_id=run.id,
             )
@@ -883,10 +887,24 @@ class UniverseService:
             # not consume a family/explore slot that is never refilled.
             unique_scored = _dedupe_by_symbol_preferred_market(scored, cfg)
             allocated = allocate_universe(
-                unique_scored, cfg.universe,
+                unique_scored,
+                cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
             )
-
+            eligible_attention_identities = {
+                (
+                    str(item.get("venue") or ""),
+                    str(item.get("symbol") or ""),
+                    str(item.get("market_type", "spot")),
+                    str(item.get("scanner_family") or ""),
+                    str(
+                        item.get("scanner_direction")
+                        or _infer_direction(item.get("scanner_family"), item)
+                        or ""
+                    ),
+                )
+                for item in unique_scored
+            }
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
@@ -912,9 +930,9 @@ class UniverseService:
 
             if reuse_previous_snapshot:
                 logger.debug(
-                    "Universe refresh: suppressed snapshot write (fingerprint unchanged, "
-                    "prev_age=%.0fs, prev=%s)",
-                    prev_age_sec, prev_snapshot_id,
+                    "Universe refresh: suppressed snapshot write (fingerprint unchanged, prev_age=%.0fs, prev=%s)",
+                    prev_age_sec,
+                    prev_snapshot_id,
                 )
                 # Slide member plus linked open/queued opportunity expiries. A
                 # queued row is revalidated only because this exact source
@@ -926,19 +944,22 @@ class UniverseService:
                 refreshed_opps = 0
                 try:
                     refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
-                        prev_snapshot_id, now,
+                        prev_snapshot_id,
+                        now,
                     )
                     if refreshed_members or refreshed_opps:
                         logger.info(
-                            "Universe refresh (suppressed): TTL slid forward — "
-                            "members=%d opps=%d snapshot=%s",
-                            refreshed_members, refreshed_opps, prev_snapshot_id,
+                            "Universe refresh (suppressed): TTL slid forward — members=%d opps=%d snapshot=%s",
+                            refreshed_members,
+                            refreshed_opps,
+                            prev_snapshot_id,
                         )
                 except Exception as _e:
                     # Non-fatal: the worst case is the pre-fix behavior (some
                     # carriers hard-reject as ttl_expired next scan).
                     logger.warning(
-                        "Universe refresh: TTL slide failed (non-fatal): %s", _e,
+                        "Universe refresh: TTL slide failed (non-fatal): %s",
+                        _e,
                     )
                 # Nudge ranker only when the slide made previously-expired
                 # opportunities eligible again. Without this the operator has
@@ -946,6 +967,7 @@ class UniverseService:
                 if refreshed_opps:
                     try:
                         from aletheia.agent_runtime.scheduler import notify_paper_trader
+
                         notify_paper_trader(source="universe_refresh_ttl_slide")
                     except Exception as _e:
                         logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
@@ -962,7 +984,8 @@ class UniverseService:
                         )
                 except Exception as _e:
                     logger.warning(
-                        "Universe refresh (suppressed): cascade expiry failed (non-fatal): %s", _e,
+                        "Universe refresh (suppressed): cascade expiry failed (non-fatal): %s",
+                        _e,
                     )
                 inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
                     pre_scored,
@@ -974,35 +997,63 @@ class UniverseService:
                         "Registered %d experiment candidate outcome row(s) across full arms",
                         inserted_experiment_outcomes,
                     )
-                # Advance the scanner run pointer to the reused snapshot, then
-                # short-circuit the publication block: no new members to insert,
-                # no downstream cohort logging (freshness monitors read the
-                # existing active snapshot as before).
-                repo.update_universe_scanner_run(
-                    run.id,
-                    status="completed",
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    snapshot_id=prev_snapshot_id,
-                )
+                planning_generations_created = 0
+                selected_generation_ids: set[str] = set()
+                new_generation_ids: set[str] = set()
+                with _atomic_universe_publication():
+                    for member in repo.list_universe_members(prev_snapshot_id, limit=500):
+                        try:
+                            generation, created = repo.ensure_candidate_planning_generation(
+                                member["id"],
+                                soft_lease_sec=cfg.universe.entry_ttl_sec,
+                                max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
+                                now=now,
+                            )
+                        except ValueError:
+                            continue
+                        selected_generation_ids.add(str(generation["id"]))
+                        if created:
+                            new_generation_ids.add(str(generation["id"]))
+                        planning_generations_created += int(created)
+                    repo.reconcile_candidate_attention(
+                        selected_generation_ids,
+                        eligible_identity_keys=eligible_attention_identities,
+                        refresh_source={
+                            "scanner_run_id": run.id,
+                            "snapshot_id": prev_snapshot_id,
+                            "member_fingerprint": new_fp,
+                            "change_suppressed": True,
+                        },
+                        soft_lease_sec=cfg.universe.entry_ttl_sec,
+                        new_generation_ids=new_generation_ids,
+                        now=now,
+                    )
+                    repo.update_universe_scanner_run(
+                        run.id,
+                        status="completed",
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        snapshot_id=prev_snapshot_id,
+                    )
                 logger.info(
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
                     prev_snapshot_id,
                 )
-                _notify_operator_feature_refresh(
-                    "universe_feature_refresh_reused_snapshot"
-                )
+                if planning_generations_created:
+                    _notify_operator_feature_refresh("candidate_planning_generation_created")
                 return prev_snapshot_id
 
             snap = UniverseSnapshot(
                 market_type=market_type,
                 expires_at=expires_at,
-                summary=json.dumps({
-                    "scanned": len(assets),
-                    "filtered": len(scored),
-                    "selected": len(allocated),
-                    "member_fingerprint": new_fp,
-                    "information_policy_epoch": POLICY_EPOCH_LABEL,
-                }),
+                summary=json.dumps(
+                    {
+                        "scanned": len(assets),
+                        "filtered": len(scored),
+                        "selected": len(allocated),
+                        "member_fingerprint": new_fp,
+                        "information_policy_epoch": POLICY_EPOCH_LABEL,
+                    }
+                ),
             )
             attempted_snapshot_id = snap.id
             # Precompute every member object and JSON payload before acquiring
@@ -1012,21 +1063,15 @@ class UniverseService:
             member_models: list[UniverseMember] = []
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
-                regime_tag = (
-                    global_regime_tag
-                    if (item.get("analysis_context") or {}).get("kind") == "crypto"
-                    else None
-                )
+                regime_tag = global_regime_tag if (item.get("analysis_context") or {}).get("kind") == "crypto" else None
                 ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
-                scanner_direction = (
-                    item.get("scanner_direction")
-                    or _infer_direction(item.get("scanner_family"), item)
-                )
+                scanner_direction = item.get("scanner_direction") or _infer_direction(item.get("scanner_family"), item)
                 member = UniverseMember(
                     snapshot_id=snap.id,
                     asset_id=item["asset_id"],
+                    venue=item.get("venue"),
                     symbol=item["symbol"],
                     market_type=item.get("market_type", "spot"),
                     rank=rank,
@@ -1052,25 +1097,27 @@ class UniverseService:
                     learning_candidate_key=item.get("learning_candidate_key"),
                 )
                 member_models.append(member)
-                inserted_members.append({
-                    "id": member.id,
-                    "snapshot_id": snap.id,
-                    "symbol": item["symbol"],
-                    "venue": item.get("venue"),
-                    "market_type": item.get("market_type", "spot"),
-                    "scanner_family": item.get("scanner_family"),
-                    "regime_tag": regime_tag,
-                    "direction": scanner_direction,
-                    "entry_price_usd": entry_price,
-                    "spread_bps": item.get("spread_bps"),
-                    "funding_rate": item.get("funding_rate"),
-                    "total_score": item["total_score"],
-                    "learning_candidate_key": item.get("learning_candidate_key"),
-                    "learning_exposure_id": item.get("learning_exposure_id"),
-                    "instrument_background": item.get("instrument_background"),
-                    "analysis_context": item.get("analysis_context"),
-                    "expires_at": member_expires,
-                })
+                inserted_members.append(
+                    {
+                        "id": member.id,
+                        "snapshot_id": snap.id,
+                        "symbol": item["symbol"],
+                        "venue": item.get("venue"),
+                        "market_type": item.get("market_type", "spot"),
+                        "scanner_family": item.get("scanner_family"),
+                        "regime_tag": regime_tag,
+                        "direction": scanner_direction,
+                        "entry_price_usd": entry_price,
+                        "spread_bps": item.get("spread_bps"),
+                        "funding_rate": item.get("funding_rate"),
+                        "total_score": item["total_score"],
+                        "learning_candidate_key": item.get("learning_candidate_key"),
+                        "learning_exposure_id": item.get("learning_exposure_id"),
+                        "instrument_background": item.get("instrument_background"),
+                        "analysis_context": item.get("analysis_context"),
+                        "expires_at": member_expires,
+                    }
+                )
             pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
             sample_alpha_control = _should_sample_alpha_control(now)
             # Do not expose the new active snapshot before every selected member
@@ -1080,21 +1127,49 @@ class UniverseService:
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)
 
+                planning_generations_created = 0
+                selected_generation_ids: set[str] = set()
+                new_generation_ids: set[str] = set()
+                for member in member_models:
+                    try:
+                        generation, created = repo.ensure_candidate_planning_generation(
+                            member.id,
+                            soft_lease_sec=cfg.universe.entry_ttl_sec,
+                            max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
+                            now=now,
+                        )
+                    except ValueError as exc:
+                        logger.info(
+                            "Candidate unavailable to Entry Planner: candidate=%s reason=%s",
+                            member.id,
+                            exc,
+                        )
+                    else:
+                        selected_generation_ids.add(str(generation["id"]))
+                        if created:
+                            new_generation_ids.add(str(generation["id"]))
+                        planning_generations_created += int(created)
+
+                repo.reconcile_candidate_attention(
+                    selected_generation_ids,
+                    eligible_identity_keys=eligible_attention_identities,
+                    refresh_source={
+                        "scanner_run_id": run.id,
+                        "snapshot_id": snap.id,
+                        "member_fingerprint": new_fp,
+                        "change_suppressed": False,
+                    },
+                    soft_lease_sec=cfg.universe.entry_ttl_sec,
+                    new_generation_ids=new_generation_ids,
+                    now=now,
+                )
+
                 # Register forward outcome tracking for all members with valid prices
                 try:
                     repo.insert_forward_outcomes_batch(pending_outcomes)
                 except Exception as e:
                     logger.warning("Forward outcome registration failed (non-fatal): %s", e)
 
-                # The emitter already converts auditable per-member insert failures
-                # into terminal evidence. Any exception that escapes the function is
-                # therefore a publication failure and must roll back this snapshot.
-                emit_deterministic_opportunities(
-                    inserted_members, snap.id, scored_features=scored,
-                    regime=current_regime,
-                    short_enabled=cfg.regime.short_enabled,
-                    allow_open_replacement=True,
-                )
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
                 # parent snapshot just became superseded. Queued Operator carriers
@@ -1113,6 +1188,13 @@ class UniverseService:
                         "from superseded snapshots marked expired",
                         cascaded,
                     )
+
+                repo.update_universe_scanner_run(
+                    run.id,
+                    status="completed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    snapshot_id=snap.id,
+                )
 
             # Selection is evidence only after the snapshot and Candidate/Setup handoff
             # commit. A failed publication must not look like an applied paper arm.
@@ -1144,27 +1226,15 @@ class UniverseService:
                 except Exception as e:
                     logger.debug("Universe causal control cohort logging skipped: %s", e)
             else:
-                logger.debug(
-                    "Universe causal control cohort sampling skipped (hourly cadence)"
-                )
+                logger.debug("Universe causal control cohort sampling skipped (hourly cadence)")
 
-            repo.update_universe_scanner_run(
-                run.id,
-                status="completed",
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                snapshot_id=snap.id,
-            )
-            # Candidate refresh may arm Momentum setups; the ranker nudge is
-            # harmless for families that remain Candidate-only.
-            try:
-                from aletheia.agent_runtime.scheduler import notify_paper_trader
-                notify_paper_trader(source="universe_refresh_new_snapshot")
-            except Exception as _e:
-                logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
-            _notify_operator_feature_refresh("universe_feature_refresh_new_snapshot")
+            _notify_operator_feature_refresh("universe_refresh_new_snapshot")
             logger.info(
                 "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",
-                len(assets), len(scored), len(allocated), snap.id,
+                len(assets),
+                len(scored),
+                len(allocated),
+                snap.id,
             )
             return snap.id
 

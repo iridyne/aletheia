@@ -354,7 +354,9 @@ def run_worker_pass(
 
     try:
         from aletheia.agent_runtime.build_info import get_boot_commit
-        source_commit = get_boot_commit()
+        from aletheia.update.git_ops import current_commit
+
+        source_commit = get_boot_commit() or current_commit()
     except Exception:  # pragma: no cover - build info fallback
         source_commit = None
 

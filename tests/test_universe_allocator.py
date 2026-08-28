@@ -125,7 +125,7 @@ def test_explore_rechecks_family_capacity_after_each_random_pick(monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.universe.allocator.has_fresh_market_snapshot",
-        lambda *_args: True,
+        lambda *_args, **_kwargs: True,
     )
 
     result = allocate_universe(items, cfg, regime_state=None)
@@ -176,18 +176,18 @@ def test_entry_ttl_reads_config_override(cfg):
 
 
 def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatch):
-    item = _scored_item("BTC/USDT", "momentum", 80, market_type="perp")
-    seen: list[tuple[str, str]] = []
+    item = _scored_item("BTC/USDT", "momentum", 80, market_type="perp", venue="okx")
+    seen: list[tuple[str, str, str | None]] = []
 
-    def _fresh(symbol: str, market_type: str) -> bool:
-        seen.append((symbol, market_type))
+    def _fresh(symbol: str, market_type: str, *, exchange: str | None = None) -> bool:
+        seen.append((symbol, market_type, exchange))
         return False
 
     monkeypatch.setattr("aletheia.universe.allocator.has_fresh_market_snapshot", _fresh)
 
     result = allocate_universe([item], cfg)
 
-    assert seen == [("BTC/USDT", "perp")]
+    assert seen == [("BTC/USDT", "perp", "okx")]
     assert result[0]["execution_eligible"] is False
 
 

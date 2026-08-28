@@ -65,10 +65,21 @@ type CompactTradeProposal = {
   status: string | null
 }
 
+type CompactEntryPlan = {
+  id: string
+  candidate_id: string
+  symbol: string | null
+  market_type: string | null
+  direction: string | null
+  execution_mode: string | null
+  status: string | null
+  thesis: string | null
+}
+
 type FeedItem = {
   key: string
   ts: string
-  kind: 'run' | 'opportunity' | 'proposal'
+  kind: 'run' | 'opportunity' | 'proposal' | 'entry_plan'
   agent: string
   icon: string
   status?: string
@@ -79,6 +90,7 @@ type FeedItem = {
   run?: CompactAgentRun
   opportunity?: CompactOpportunity
   proposal?: CompactTradeProposal
+  entryPlan?: CompactEntryPlan
 }
 
 const AGENT_ICON: Record<string, string> = {
@@ -220,8 +232,30 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
     }
   }
 
-  // ----- narrative/both track: outputs (opportunities + proposals) -----
+  // ----- narrative/both track: outputs -----
   if (mode === 'narrative' || mode === 'both') {
+    for (const p of activity.filter(item => item.kind === 'entry_plan') as any[]) {
+      items.push({
+        key: `entry-plan-${p.plan_id}`,
+        ts: String(p.timestamp || ''),
+        kind: 'entry_plan',
+        agent: 'system_operator',
+        icon: '📐',
+        status: p.status,
+        headline: p.headline || `Entry Plan: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)}`,
+        detail: p.thesis || p.excerpt || undefined,
+        entryPlan: {
+          id: p.plan_id,
+          candidate_id: p.candidate_id,
+          symbol: p.symbol || null,
+          market_type: p.market_type || null,
+          direction: p.direction || null,
+          execution_mode: p.execution_mode || null,
+          status: p.status || null,
+          thesis: p.thesis || p.excerpt || null,
+        },
+      })
+    }
     for (const o of activity.filter(item => item.kind === 'opportunity') as any[]) {
       const score = o.confidence_score != null
         ? ` (${fmtOpportunityScore(o.agent, o.confidence_score, null)})`
@@ -389,8 +423,24 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
               : <p className="feed-thesis">No rationale recorded.</p>}
           </DrawerSection>
           <div className="flex gap-2 mt-3">
-            <button className="btn-control" onClick={() => { onClose(); navigate('/blotter') }}>Review in Blotter →</button>
+            <button className="btn-control" onClick={() => { onClose(); navigate('/trades?tab=blotter') }}>Open execution record →</button>
           </div>
+        </>
+      )}
+      {item?.kind === 'entry_plan' && item.entryPlan && (
+        <>
+          <DrawerSection label="Entry Plan">
+            <DrawerField label="Plan ID" value={item.entryPlan.id} mono />
+            <DrawerField label="Candidate ID" value={item.entryPlan.candidate_id} mono />
+            <DrawerField label="Symbol" value={fmtSymbol(item.entryPlan.symbol, item.entryPlan.market_type)} mono />
+            <DrawerField label="Direction" value={item.entryPlan.direction} />
+            <DrawerField label="Execution" value={item.entryPlan.execution_mode} />
+            <DrawerField label="Status" value={item.entryPlan.status} />
+          </DrawerSection>
+          <DrawerSection label="Thesis">
+            {item.entryPlan.thesis ? <ThesisText text={item.entryPlan.thesis} /> : <p className="feed-thesis">No thesis recorded.</p>}
+          </DrawerSection>
+          <button className="btn-control" onClick={() => { onClose(); navigate(`/universe?tab=plans&plan_id=${encodeURIComponent(item.entryPlan!.id)}`) }}>Open exact Entry Plan →</button>
         </>
       )}
     </DetailDrawer>

@@ -404,6 +404,7 @@ async def run_lesson_reviewer(
     if stuck_accepted:
         outputs.append(f"retrying_stuck_accepted:{len(stuck_accepted)}")
     all_to_apply = newly_accepted + stuck_accepted
+    skill_store = None
     if all_to_apply:
         try:
             started_at = time.monotonic()
@@ -435,37 +436,75 @@ async def run_lesson_reviewer(
             errors.append(f"policy_version_create_failed:{e}")
             pv = None
         if pv is not None:
-            skill_store = None
+            from aletheia.learning.skills import SkillStore
+
+            skill_store = SkillStore()
             for lid in all_to_apply:
+                lesson = store.get(lid)
+                if not lesson:
+                    errors.append(f"lesson_missing:{lid}")
+                    continue
+                try:
+                    started_at = time.monotonic()
+                    skill = skill_store.create_from_lesson(
+                        lesson,
+                        policy_version_id=pv.policy_version_id,
+                    )
+                    if not skill:
+                        errors.append(f"skill_create_failed:{lid}:missing_skill")
+                        continue
+                    outputs.append(f"draft_skill:{skill.skill_id}")
+                    artifact_refs.append({"artifact_type": "draft_skill", "artifact_id": skill.skill_id})
+                    log_tool(
+                        run_id,
+                        "create_draft_skill",
+                        "observe",
+                        True,
+                        output=skill.skill_id,
+                        duration_ms=elapsed_ms(started_at),
+                    )
+                except Exception as e:
+                    errors.append(f"skill_create_failed:{lid}:{e}")
+                    continue
                 try:
                     store.mark_applied(lid, pv.policy_version_id)
-                    try:
-                        from aletheia.learning.skills import SkillStore
-
-                        if skill_store is None:
-                            skill_store = SkillStore()
-                        lesson = store.get(lid)
-                        if lesson:
-                            started_at = time.monotonic()
-                            skill = skill_store.create_from_lesson(
-                                lesson,
-                                policy_version_id=pv.policy_version_id,
-                            )
-                            if skill:
-                                outputs.append(f"draft_skill:{skill.skill_id}")
-                                artifact_refs.append({"artifact_type": "draft_skill", "artifact_id": skill.skill_id})
-                                log_tool(
-                                    run_id,
-                                    "create_draft_skill",
-                                    "observe",
-                                    True,
-                                    output=skill.skill_id,
-                                    duration_ms=elapsed_ms(started_at),
-                                )
-                    except Exception as e:
-                        errors.append(f"skill_create_failed:{lid}:{e}")
                 except Exception as e:
                     errors.append(f"mark_applied_failed:{lid}:{e}")
+
+    from aletheia.learning.skills import SkillStore
+
+    if skill_store is None:
+        skill_store = SkillStore()
+    recovered = 0
+    for lesson in store.list_all(status="applied", limit=100):
+        if not lesson.applied_policy_version:
+            continue
+        if skill_store.get_by_source_lesson_id(lesson.lesson_id):
+            continue
+        try:
+            started_at = time.monotonic()
+            skill = skill_store.create_from_lesson(
+                lesson,
+                policy_version_id=lesson.applied_policy_version,
+            )
+            if not skill:
+                errors.append(f"skill_recovery_failed:{lesson.lesson_id}:missing_skill")
+                continue
+            recovered += 1
+            outputs.append(f"recovered_draft_skill:{skill.skill_id}")
+            artifact_refs.append({"artifact_type": "draft_skill", "artifact_id": skill.skill_id})
+            log_tool(
+                run_id,
+                "recover_missing_draft_skill",
+                "observe",
+                True,
+                output=skill.skill_id,
+                duration_ms=elapsed_ms(started_at),
+            )
+        except Exception as e:
+            errors.append(f"skill_recovery_failed:{lesson.lesson_id}:{e}")
+    if recovered:
+        outputs.append(f"recovered_missing_draft_skills:{recovered}")
 
     remaining = max(0, backlog - len(batch))
     logger.info(

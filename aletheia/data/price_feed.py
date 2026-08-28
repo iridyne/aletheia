@@ -457,7 +457,12 @@ async def refresh_watched_prices() -> dict:
                         if ticker and ticker.last_price and ticker.last_price > 0:
                             observed_at = datetime.now(timezone.utc)
                             with _cache_lock:
-                                prev_entry = _price_cache.get(sym, {})
+                                instrument_key = (
+                                    instrument.exchange,
+                                    sym,
+                                    instrument.market_type,
+                                )
+                                prev_entry = _instrument_price_cache.get(instrument_key, {})
                                 prev_price = prev_entry.get("price")
                                 volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
                                 entry = {
@@ -470,13 +475,7 @@ async def refresh_watched_prices() -> dict:
                                     "market_type": instrument.market_type,
                                     "exchange": instrument.exchange,
                                 }
-                                _instrument_price_cache[
-                                    (
-                                        instrument.exchange,
-                                        sym,
-                                        instrument.market_type,
-                                    )
-                                ] = dict(entry)
+                                _instrument_price_cache[instrument_key] = dict(entry)
                                 _price_cache[sym] = entry
 
                             if prev_price and prev_price > 0 and cfg.event_triggers.enabled:

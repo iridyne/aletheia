@@ -80,28 +80,45 @@ async def test_get_inference_broker_metrics_is_sanitized(client):
 
 
 @pytest.mark.anyio
-async def test_ping_model_accepts_reasoning_only_provider_completion(client, monkeypatch):
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "The probe asks for acknowledgement.",
+                        "thinking_blocks": [{"type": "thinking"}],
+                    },
+                    "finish_reason": "length",
+                }
+            ]
+        },
+        {
+            "id": "resp_123",
+            "status": "completed",
+            "output": [{"type": "reasoning", "summary": []}],
+        },
+        {
+            "id": "msg_123",
+            "content": [{"type": "thinking", "thinking": "acknowledged"}],
+            "stop_reason": "max_tokens",
+        },
+    ],
+)
+async def test_ping_model_accepts_reasoning_only_provider_completion(client, monkeypatch, raw):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from aletheia.model_provider.base import ModelResponse
+    finished = []
     brokered_complete = AsyncMock(
         return_value=ModelResponse(
             content="",
             model="qwen35-122b-a10b",
             usage={"completion_tokens": 10},
-            raw={
-                "choices": [
-                    {
-                        "message": {
-                            "content": "",
-                            "reasoning_content": "The probe asks for acknowledgement.",
-                            "thinking_blocks": [{"type": "thinking"}],
-                        },
-                        "finish_reason": "length",
-                    }
-                ]
-            },
+            raw=raw,
         )
     )
     monkeypatch.setattr(
@@ -123,7 +140,7 @@ async def test_ping_model_accepts_reasoning_only_provider_completion(client, mon
     )
     monkeypatch.setattr(
         "aletheia.economics.inference_calls.record_inference_finished",
-        lambda _call, **_kwargs: True,
+        lambda _call, **kwargs: finished.append(kwargs) or True,
     )
 
     response = await client.post("/api/model/ping")
@@ -137,6 +154,7 @@ async def test_ping_model_accepts_reasoning_only_provider_completion(client, mon
     request = brokered_complete.await_args.args[2]
     assert request.max_tokens == 10
     assert request.allow_model_fallback is False
+    assert finished[0]["status"] == "success"
 
 
 def test_ping_model_does_not_accept_empty_response_without_completion_evidence():
@@ -145,6 +163,51 @@ def test_ping_model_does_not_accept_empty_response_without_completion_evidence()
     assert not _has_provider_completion_evidence(None)
     assert not _has_provider_completion_evidence({})
     assert not _has_provider_completion_evidence({"choices": [{"message": {}}]})
+    assert not _has_provider_completion_evidence({"choices": [{"finish_reason": ""}]})
+    assert not _has_provider_completion_evidence({"status": "in_progress"})
+    assert not _has_provider_completion_evidence({"status": "failed"})
+    assert not _has_provider_completion_evidence({"stop_reason": "pause_turn"})
+    assert not _has_provider_completion_evidence({"stop_reason": "refusal"})
+
+
+@pytest.mark.anyio
+async def test_ping_model_records_error_when_empty_completion_has_no_evidence(client, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from aletheia.model_provider.base import ModelResponse
+    finished = []
+    monkeypatch.setattr(
+        "aletheia.model_provider.router.get_provider_async",
+        AsyncMock(return_value=object()),
+    )
+    monkeypatch.setattr(
+        "aletheia.model_provider.broker.brokered_complete",
+        AsyncMock(return_value=ModelResponse(content="", model="empty-model", raw={})),
+    )
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            models=SimpleNamespace(default_provider="openai_compatible"),
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.economics.inference_calls.record_inference_started",
+        lambda _call: True,
+    )
+    monkeypatch.setattr(
+        "aletheia.economics.inference_calls.record_inference_finished",
+        lambda _call, **kwargs: finished.append(kwargs) or True,
+    )
+
+    response = await client.post("/api/model/ping")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "empty response"
+    assert payload["verified"] is False
+    assert finished == [{"status": "error", "error_type": "EmptyModelResponse"}]
 
 
 @pytest.mark.anyio
@@ -516,12 +579,20 @@ async def test_universe_settings_are_visible_and_persisted(client):
 
     resp = await client.post(
         "/api/settings/universe",
-        json={"enabled": False, "max_candidates": 20, "explore_ratio": 0.15},
+        json={
+            "enabled": False,
+            "max_candidates": 20,
+            "explore_ratio": 0.15,
+            "entry_ttl_sec": 600,
+            "candidate_max_continuous_age_sec": 1800,
+        },
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["universe"]["enabled"] is False
     assert body["universe"]["max_candidates"] == 20
+    assert body["universe"]["entry_ttl_sec"] == 600
+    assert body["universe"]["candidate_max_continuous_age_sec"] == 1800
 
     resp = await client.get("/api/settings")
     assert resp.json()["universe"]["enabled"] is False
@@ -1378,6 +1449,62 @@ async def test_settings_update_controls_persist_new_config_fields(client):
 
 
 @pytest.mark.anyio
+async def test_uta_read_selector_defaults_legacy_and_profile_change_advances_generation(client):
+    from aletheia.config.loader import load_config
+
+    before = load_config().exchange
+    assert before.uta_read_boundary_for("bitget_demo") == "legacy"
+    assert before.uta_account_config_generation_for("bitget_demo") == 0
+
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={
+            "spot": True,
+            "usdt_futures": True,
+            "paper_execution_mode": "bitget_demo",
+            "bitget_profile": "uta_v3",
+            "uta_read_boundary": "shadow_read",
+            "confirm_exchange_divergence": True,
+        },
+    )
+
+    assert response.status_code == 200
+    current = load_config().exchange
+    assert current.uta_read_boundary_for("bitget_demo") == "shadow_read"
+    assert current.uta_account_config_generation_for("bitget_demo") == 1
+
+
+@pytest.mark.anyio
+async def test_uta_v1_selector_rejects_unqualified_activation(client):
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={
+            "spot": True,
+            "usdt_futures": True,
+            "uta_read_boundary": "uta_v1",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "uta_profile_not_qualified"
+
+
+@pytest.mark.anyio
+async def test_uta_selector_rejects_non_external_account_mode(client):
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={
+            "spot": True,
+            "usdt_futures": True,
+            "paper_execution_mode": "paper_internal",
+            "uta_read_boundary": "shadow_read",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.anyio
 async def test_trading_mandate_settings_control_validates_and_redacts_nested_unknowns(client):
     mandate = {
         "enabled": True,
@@ -1427,6 +1554,13 @@ async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
 
     resp = await client.post("/api/settings/universe", json={"fallback_symbols": []})
     assert resp.status_code == 400
+
+    resp = await client.post(
+        "/api/settings/universe",
+        json={"entry_ttl_sec": 1200, "candidate_max_continuous_age_sec": 600},
+    )
+    assert resp.status_code == 400
+    assert "must be >= entry_ttl_sec" in resp.json()["detail"]
 
     resp = await client.post("/api/settings/market-data", json={"ccxt_exchange": "unknown"})
     assert resp.status_code == 400

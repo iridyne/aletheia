@@ -32,6 +32,7 @@ from aletheia.trading.entry_plan import (
     entry_plan_risk_reward_is_plausible,
     stop_distance_below_min_floor,
 )
+from aletheia.storage.models import exit_intent_violations
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
 
@@ -1574,6 +1575,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         decision.symbol,
         exchange=str((snap or {}).get("exchange") or ""),
         market_type=market_type,
+        opportunity_id=decision.opportunity_id,
     )
     if decision.parameter_rationale_required:
         market_context = attribution_snapshot.get("market_context")
@@ -1836,24 +1838,9 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     if proposal is None:
         return prepared
 
-    from aletheia.execution.paper_tools import create_paper_proposal
+    from aletheia.execution.paper_tools import submit_prepared_paper_proposal
 
-    return create_paper_proposal(
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        leverage=proposal.leverage,
-        stop_price=proposal.stop_price,
-        take_profit=proposal.take_profit,
-        risk_reward=proposal.risk_reward,
-        execution_mode=proposal.execution_mode,
-        opportunity_id=proposal.opportunity_id,
-        agent_rationale=proposal.agent_rationale,
-        trade_school=proposal.trade_school,
-    )
+    return submit_prepared_paper_proposal(proposal)
 
 
 _ENTRY_PARAMETER_KEYS = (
@@ -3427,6 +3414,14 @@ def _parse_decision(raw: dict) -> TradingDecision:
         except (TypeError, ValueError):
             return None
 
+    def _expected_horizon(v):
+        if exit_intent_violations(expected_horizon_hours=v):
+            raise DecisionUnavailable(
+                "invalid_expected_horizon_hours",
+                stage="operator_output_validation",
+            )
+        return _num(v)
+
     def _conviction(v):
         # Invalid model output is evaluation unavailability. Normalizing it to
         # zero used to manufacture a terminal skip and consume a real candidate.
@@ -3511,7 +3506,11 @@ def _parse_decision(raw: dict) -> TradingDecision:
         leverage=leverage,
         stop_price=stop_price,
         take_profit=take_profit,
-        expected_horizon_hours=_num(raw.get("expected_horizon_hours")),
+        expected_horizon_hours=(
+            _expected_horizon(raw.get("expected_horizon_hours"))
+            if raw_action == "trade"
+            else None
+        ),
         order_type=raw.get("order_type"),
         limit_price=_num(raw.get("limit_price")),
         risk_factors=raw.get("risk_factors", []),

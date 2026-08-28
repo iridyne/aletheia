@@ -324,14 +324,15 @@ durably queued and independently retried by `outcome_hook_replay`.
 - **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes are observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. The read-only evaluator compares gross weighted/equal/individual/no-structure baselines and rejects retrospective imports, mixed epochs, or mixed feature contracts; cost-aware evidence remains unavailable. No automatic source or scheduler is claimed, `ready_for_research_review` grants no promotion, and the evidence never changes Agent, Risk, or Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 
-#### Momentum Fast Trigger Authorizer / Watcher
+#### Historical Momentum Setup adapter (superseded)
 
-- **Slow trigger**: `fast_trigger_authorizer` runs once per minute, reads at most the highest-ranked pending Momentum Setup, and makes one structured `arm/refuse` System Operator call without debate. Timeout/provider failure writes no authorization and leaves the Setup pending.
+- **Scope**: retained only to read/recover pre-#2288 Setup rows when no current Entry Plan owns the exact instrument and direction. It is not an active producer and cannot run beside a current plan.
+- **Historical slow trigger**: `fast_trigger_authorizer` read a pending Momentum Setup and made one structured `arm/refuse` call. New Candidate work is owned by the on-demand Entry Planner and durable Planning Generation claim.
 - **Output**: `arm` atomically writes `PiDecision(action='arm', setup_id)` plus one bounded `ConditionalEntryAuthorization`; it freezes TriggerSpec/direction/structure/entry zone and risk envelope, never future entry, quantity or TP.
 - **Hot path**: lifecycle-owned `fast_trigger_watch` consumes credential-free exact-venue public quote/trade/books5/candle1m data for at most ten armed setups. It performs no LLM/provider call and writes SQLite only on state/subscription generation/trigger transitions.
 - **Failure behavior**: missing ACK, stale/absent/sequence-anomalous data, TTL/fingerprint/authorization mismatch, runtime pause/kill switch, or unavailable venue adapter blocks materialization. Local `paper_internal` defaults to the Bitget public fast-data venue and still executes only through the local paper broker; exchange-backed execution uses `bitget_demo` only. OKX/Binance without an adapter return `fast_trigger_stream_unavailable:<venue>` and Live is forbidden.
 - **Default**: `fast_trigger.mode=shadow` observes and prewarms without Gateway order authority; `execute` remains an explicit opt-in and `off` explicitly disables the watcher.
-- **Side effects**: after deterministic pullback/reclaim, one short CAS transaction persists the T0 snapshot and single Opportunity/Proposal. `shadow` never calls Gateway; `execute` calls only `execute_existing_proposal`, so Risk and broker routing remain unchanged and uncertain submission is never retried.
+- **Historical side effects**: the adapter may recover its existing T0/Opportunity/Proposal chain only under the compatibility guard. New execution uses Entry Plan → internal Order Intent → canonical Risk/Gateway.
 
 #### position_path_observer
 

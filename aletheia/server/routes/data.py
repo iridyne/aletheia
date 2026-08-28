@@ -1124,9 +1124,9 @@ def reject_proposal(proposal_id: str, request: Request):
 
 
 @router.get("/trades")
-def get_trades():
+def get_trades(entry_plan_id: str | None = None):
     _ensure_db()
-    return repo.list_orders()
+    return repo.list_orders(entry_plan_id=entry_plan_id)
 
 
 @router.get("/trades/export")
@@ -2109,14 +2109,103 @@ def get_case_studies():
     return repo.list_knowledge_items(item_type="trade_case_study")
 
 
+def _proposal_commit_matches(decision: dict, proposal: dict | None) -> bool:
+    expected = decision.get("proposal_commit_hash")
+    if not expected:
+        return True
+    return proposal is not None and proposal.get("commit_hash") == expected
+
+
+def _risk_decision_integrity_gap(
+    *,
+    order: dict,
+    decision: dict | None,
+    proposal: dict | None,
+) -> str | None:
+    if decision is None:
+        return "risk_decision_not_found"
+    if decision.get("proposal_id") != order.get("proposal_id"):
+        return "risk_decision_proposal_mismatch"
+    if decision.get("decision_role") != "authoritative":
+        return "risk_decision_not_authoritative"
+    if not _proposal_commit_matches(decision, proposal):
+        return "proposal_commit_hash_mismatch"
+    return None
+
+
+@router.get("/orders/{order_id}/risk-decision")
+def get_order_risk_decision(order_id: str):
+    """Get the exact authoritative RiskDecision consumed by an Order."""
+    _ensure_db()
+    order = repo.get_order(order_id)
+    if order is None:
+        raise HTTPException(404, "order_not_found")
+    risk_decision_id = order.get("risk_decision_id")
+    if not risk_decision_id:
+        return {
+            "order_id": order_id,
+            "proposal_id": order.get("proposal_id"),
+            "risk_decision_id": None,
+            "status": "not_recorded",
+            "reason_code": "order_risk_decision_not_recorded",
+            "decision": None,
+        }
+    decision = repo._select_one("risk_decisions", risk_decision_id)
+    proposal = repo.get_trade_proposal(order["proposal_id"]) if order.get("proposal_id") else None
+    gap = _risk_decision_integrity_gap(
+        order=order,
+        decision=decision,
+        proposal=proposal,
+    )
+    if gap is not None:
+        return {
+            "order_id": order_id,
+            "proposal_id": order.get("proposal_id"),
+            "risk_decision_id": risk_decision_id,
+            "status": "integrity_unavailable",
+            "reason_code": gap,
+            "decision": None,
+        }
+    return {
+        "order_id": order_id,
+        "proposal_id": order.get("proposal_id"),
+        "risk_decision_id": risk_decision_id,
+        "status": "available",
+        "reason_code": None,
+        "decision": decision,
+    }
+
+
 @router.get("/proposals/{proposal_id}/risk-decision")
 def get_proposal_risk_decision(proposal_id: str):
-    """Get risk decision for a specific proposal."""
+    """Get authoritative risk authority for a proposal, not advisory preflight."""
     _ensure_db()
-    rows = repo._select_all("risk_decisions", where="proposal_id = ?", params=(proposal_id,), limit=1)
+    rows = repo._select_all(
+        "risk_decisions",
+        where="proposal_id = ? AND decision_role = 'authoritative'",
+        params=(proposal_id,),
+        limit=1,
+    )
     if not rows:
-        return {"proposal_id": proposal_id, "decision": None}
-    return {"proposal_id": proposal_id, "decision": rows[0]}
+        preflights = repo._select_all(
+            "risk_decisions",
+            where="proposal_id = ? AND decision_role = 'preflight'",
+            params=(proposal_id,),
+            limit=1,
+        )
+        return {
+            "proposal_id": proposal_id,
+            "status": "advisory_only" if preflights else "not_recorded",
+            "reason_code": "no_authoritative_risk_decision",
+            "decision": None,
+            "preflight_decision": preflights[0] if preflights else None,
+        }
+    return {
+        "proposal_id": proposal_id,
+        "status": "available",
+        "reason_code": None,
+        "decision": rows[0],
+    }
 
 
 @router.get("/dreaming/summary")

@@ -56,6 +56,12 @@ def _insert_known_llm_cost(
     )
 
 
+@pytest.mark.parametrize("builder", [build_system_viability, build_operator_viability])
+def test_viability_rejects_unsupported_execution_mode(builder):
+    with pytest.raises(ValueError, match="only execution_mode='paper_internal'"):
+        builder(execution_mode="okx_demo", persist=False)
+
+
 def test_system_viability_uses_already_net_genuine_outcome(monkeypatch):
     ensure_economics_schema()
     _insert_known_llm_cost(event_id="system-cost", cost=1.0)

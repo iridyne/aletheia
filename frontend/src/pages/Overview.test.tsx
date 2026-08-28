@@ -83,7 +83,7 @@ describe('Overview semantic honesty', () => {
     expect(SRC).toContain('data ? data.traffic_light')
   })
 
-  it('BlotterSummaryStrip shows em-dash instead of 0 when summary is not loaded', () => {
+  it('EntrySummaryStrip shows em-dash instead of 0 when summary is not loaded', () => {
     // Missing data is not zero. Counts must not coerce undefined to 0.
     expect(SRC).not.toContain('?? 0')
     expect(SRC).toContain("?? '—'")

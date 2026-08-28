@@ -265,7 +265,7 @@ def test_layer3_lessons_from_trade_case_study(tmp_path, monkeypatch):
             "take_profit after 4h hold. Pattern: confluence breakouts in a risk_on regime "
             "are worth repeating; avoid when funding is crowded."
         ),
-        metadata={"symbol": "BTC/USDT"},
+        metadata={"position_id": "layer3-case-1", "symbol": "BTC/USDT"},
     )
     from aletheia.agent_shell.trading_context import _build_layer3_wisdom
     layer3 = _build_layer3_wisdom()

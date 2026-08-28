@@ -27,6 +27,12 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Complete Unified Trading Account](unified_trading_account.md): one private
+  external-account read/write boundary beneath Gateway authority, with explicit
+  evidence, reconciliation and profile qualification semantics.
+- [Usage v2 production read model and workspace](usage_v2_workspace.md):
+  event-time fail-closed cost semantics and one typed, read-only Usage page for
+  overview, trend, attribution, reliability, and configured budgets.
 - [Position replay and profit-gradient evidence](position_replay_profit_gradient.md):
   exact candidate/Position facts, frozen hypotheses, prefix-only analysis, and
   seven-layer unique-winner gates without trading authority.
@@ -41,9 +47,6 @@ Proposal as stable decision history.
 - [Universe continuous scoring safety](universe_continuous_scoring_safety.md):
   bounded continuous curves plus raw-evidence, missingness, reversible-feedback,
   and pessimistic-promotion safeguards.
-- [Universe Fast Trigger Watch](universe_fast_trigger_watch.md): Momentum setups,
-  conditional System Operator authorization, and same-venue deterministic T0
-  materialization through the existing Risk and Gateway boundary.
 - [Tokenomics harness phase plan](tokenomics_harness_phase_plan_2026-07-30.md):
   controlled inference-harness rollout.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
@@ -55,7 +58,19 @@ Proposal as stable decision history.
 - [Serenity Research Attempt Truth](serenity_research_attempt_truth.md):
   cooperative cancellation acknowledgement, guarded terminal transitions,
   durable progress facts, and restart reconciliation for Serenity runs.
-
 - [Fedora immutable Runtime updates](fedora_immutable_runtime_updates.md):
   signed Linux releases, headless activation ownership, migration preflight,
   health-gated activation, and bounded recovery.
+
+## Implemented proposals
+
+- [Entry Plan Contract](entry-plan-contract.md): canonical durable Entry Plan,
+  on-demand planning ownership, RESTING_MAKER/TRIGGERED execution, Gateway-owned
+  cancel and canonical Risk. Normative behavior is in the decision-lifecycle and
+  execution contracts.
+
+## Superseded proposals
+
+- [Universe Fast Trigger Watch](universe_fast_trigger_watch.md): historical
+  Momentum Setup/authorization design, replaced by the generic Entry Plan
+  contract; retained only for compatibility and audit context.

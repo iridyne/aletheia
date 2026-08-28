@@ -10,6 +10,7 @@ Claim prefix: DL
 
 import dataclasses
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,7 @@ def _bypass_candidate_technical_preflight(monkeypatch) -> None:
 
 def _stub_tradable_exact_instrument(monkeypatch) -> None:
     """Keep seam tests focused after the independent tradability preflight."""
-    def capture(symbol, *, exchange, market_type):
+    def capture(symbol, *, exchange, market_type, opportunity_id=None):
         physical_market = (
             "perp" if market_type in {"usdt_futures", "swap"} else market_type
         )
@@ -1199,7 +1200,7 @@ def test_ai_proposal_preflight_defers_unusable_exact_tradability(
     )
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
-        lambda symbol, *, exchange, market_type: {
+        lambda symbol, *, exchange, market_type, opportunity_id=None: {
             "btc_entry_price": 90_000.0,
             "regime_tag": "neutral",
             "market_context": {
@@ -1292,7 +1293,7 @@ def test_ai_proposal_persists_tradable_exact_instrument_attribution(
     }
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
-        lambda symbol, *, exchange, market_type: {
+        lambda symbol, *, exchange, market_type, opportunity_id=None: {
             "btc_entry_price": 90_000.0,
             "regime_tag": "neutral",
             "market_context": {
@@ -6051,6 +6052,12 @@ def test_trade_output_requires_authored_entry_plan_while_skip_does_not():
         ):
             _parse_decision(invalid)
 
+    for horizon in (0.0, -1.0, math.nan, math.inf):
+        with pytest.raises(
+            DecisionUnavailable, match="invalid_expected_horizon_hours"
+        ):
+            _parse_decision({**trade, "expected_horizon_hours": horizon})
+
     skip = {
         "action": "skip",
         "conviction": 40,
@@ -6062,3 +6069,37 @@ def test_trade_output_requires_authored_entry_plan_while_skip_does_not():
 
     prompt = _build_assessment_prompt({"layer1": {}, "layer2": {}, "layer3": {}})
     assert "stop_price and take_profit are mandatory finite positive" in prompt
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S75",
+        "decision_lifecycle_contract",
+        "§2.1a Candidate attention read projection",
+        "L2b",
+        "Candidate detail and Planning History project elapsed soft/hard attention "
+        "deadlines as ttl_expired/max_attention_age without mutating durable state.",
+        status="implemented",
+    ),
+)
+def test_candidate_attention_read_projection_is_effective_and_non_mutating():
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.storage.repositories import _effective_candidate_attention
+
+    start = datetime(2026, 8, 28, tzinfo=timezone.utc)
+    row = {
+        "attention_status": "active",
+        "attention_terminal_at": None,
+        "attention_terminal_reason": None,
+        "soft_expires_at": (start + timedelta(minutes=15)).isoformat(),
+        "hard_expires_at": (start + timedelta(hours=1)).isoformat(),
+    }
+
+    soft = _effective_candidate_attention(row, now=start + timedelta(minutes=16))
+    hard = _effective_candidate_attention(row, now=start + timedelta(hours=2))
+
+    assert soft["attention_terminal_reason"] == "ttl_expired"
+    assert hard["attention_terminal_reason"] == "max_attention_age"
+    assert row["attention_status"] == "active"
+    assert row["attention_terminal_reason"] is None

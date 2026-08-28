@@ -111,23 +111,16 @@ def _count_opportunities(db, commit: str | None, since_iso: str) -> dict[str, in
 
 def _pending_stats(db, commit: str | None) -> dict[str, Any]:
     """Current signal_pending queue depth (unbounded by window — reflects live state)."""
-    from aletheia.storage.repositories import count_unresolved_signal_pending
-    # The canonical count joins opportunities and filters on valid_until + no final action
-    count = count_unresolved_signal_pending(max_age_minutes=30)
-    # Also read oldest creation timestamp for UI lag indication
-    if commit:
-        rows = db.execute(
-            "SELECT MIN(created_at) FROM pi_decisions "
-            "WHERE action='signal_pending' AND producer_commit = ?",
-            (commit,),
-        ).fetchone()
-    else:
-        rows = db.execute(
-            "SELECT MIN(created_at) FROM pi_decisions WHERE action='signal_pending'"
-        ).fetchone()
+    from aletheia.storage.repositories import list_pending_signal_queue
+
+    pending = list_pending_signal_queue(max_age_minutes=30)
+    oldest_created_at = min(
+        (row["created_at"] for row in pending if row.get("created_at")),
+        default=None,
+    )
     return {
-        "count": count,
-        "oldest_created_at": rows[0] if rows and rows[0] else None,
+        "count": len(pending),
+        "oldest_created_at": oldest_created_at,
     }
 
 

@@ -110,6 +110,79 @@ class TestMemoEffectivenessTradeFiltering:
             assert result["n_trades"] == 2, f"Expected 2 trades, got {result['n_trades']}"
             mock_outcomes.assert_called_once_with(execution_mode="paper_internal")
 
+    def test_memo_trade_window_uses_absolute_instants_not_iso_text(self):
+        """Offset-bearing opened_at values are compared as UTC instants."""
+        from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
+        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
+
+        memo = {
+            "id": "memo_time_123",
+            "generated_at": "2026-08-25T00:30:00+00:00",
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
+            "execution_mode": "paper_internal",
+            "execution_mode_status": "resolved",
+            "regime_playbook": [
+                {"regime": "bull", "direction": "long", "edge": "strong"}
+            ],
+        }
+        trades = [
+            {
+                # 2026-08-25T00:00:00Z, before the memo despite sorting later as text.
+                "opened_at": "2026-08-25T08:00:00+08:00",
+                "regime_tag": "bull",
+                "direction": "long",
+                "realized_pnl": -100,
+            },
+            {
+                # 2026-08-25T01:00:00Z, after the memo despite sorting earlier as text.
+                "opened_at": "2026-08-24T20:00:00-05:00",
+                "regime_tag": "bull",
+                "direction": "long",
+                "realized_pnl": 100,
+            },
+            {
+                # Same instant as the memo; boundary is inclusive.
+                "opened_at": "2026-08-25T08:30:00+08:00",
+                "regime_tag": "bull",
+                "direction": "long",
+                "realized_pnl": 100,
+            },
+            {
+                "opened_at": "2026-08-25T00:45:00+00:00",
+                "regime_tag": "bull",
+                "direction": "long",
+                "realized_pnl": 100,
+            },
+            {
+                "opened_at": "not-a-timestamp",
+                "regime_tag": "bull",
+                "direction": "long",
+                "realized_pnl": -100,
+            },
+        ]
+
+        with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
+             patch("aletheia.storage.repositories.update_knowledge_item") as mock_update, \
+             patch("aletheia.analytics.memo_effectiveness.is_current_outcome_artifact", return_value=True), \
+             patch("aletheia.analytics.memo_effectiveness.eligible_strategy_outcomes") as mock_outcomes:
+            mock_list.return_value = [{
+                "id": "memo_time_123",
+                "content": json.dumps(memo),
+                "tags": "{}",
+            }]
+            mock_outcomes.return_value = trades
+
+            result = evaluate_prior_memo()
+
+            assert result is not None
+            assert result["n_trades"] == 3
+            assert result["accuracy_score"] == 1.0
+            assert result["overturned_rules"] == []
+            tags = json.loads(mock_update.call_args.kwargs["tags"])
+            assert tags["eval_trades"] == 3
+
 
 class TestReasoningFeedbackRegimeTag:
     """#1981: Rejected proposals use wrong regime_tag."""

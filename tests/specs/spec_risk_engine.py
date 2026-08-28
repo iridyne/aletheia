@@ -976,7 +976,11 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     def cached_state(mode):
-        return {"available_usdt": 80.0 if mode == "demo" else 30.0}
+        return {
+            "age_seconds": 1.0,
+            "status": "healthy",
+            "available_usdt": 80.0 if mode == "demo" else 30.0,
+        }
 
     monkeypatch.setattr(sync, "get_cached_state", cached_state)
 

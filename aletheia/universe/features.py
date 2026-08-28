@@ -166,6 +166,25 @@ def _record_priority_failure(asset: dict, component: str, reason: str) -> None:
         logger.debug("Could not record pending candidate refresh failure", exc_info=True)
 
 
+def _funding_observed_at(data: dict, *, received_at: datetime) -> str:
+    raw_ts = data.get("timestamp")
+    if raw_ts is not None:
+        try:
+            return datetime.fromtimestamp(float(raw_ts) / 1000, timezone.utc).isoformat()
+        except (TypeError, ValueError, OSError):
+            pass
+    raw_datetime = data.get("datetime")
+    if raw_datetime:
+        try:
+            parsed = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).isoformat()
+        except ValueError:
+            pass
+    return received_at.astimezone(timezone.utc).isoformat()
+
+
 def _pct_return(closes: list[float], bars: int) -> float | None:
     """Percentage return over the last N bars."""
     if len(closes) < bars + 1:
@@ -684,6 +703,7 @@ async def _fetch_single_feature(
 
     depth_10bps = ob_row["total_depth_10bps_usd"] if ob_row else None
     funding_rate = fr_row["funding_rate"] if fr_row else None
+    funding_observed_at = fr_row.get("observed_at") if fr_row else None
     open_interest = oi_row["open_interest_usd"] if oi_row else None
     oi_delta_1h = oi_row["oi_change_1h_pct"] if oi_row else None
     long_short_ratio = oi_row["long_short_ratio"] if oi_row else None
@@ -706,6 +726,9 @@ async def _fetch_single_feature(
                 mark_price = fr_data.get("markPrice")
                 if fr_data.get("fundingRate") is not None:
                     funding_rate = float(fr_data["fundingRate"])
+                    funding_observed_at = _funding_observed_at(
+                        fr_data, received_at=now
+                    )
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
@@ -788,6 +811,7 @@ async def _fetch_single_feature(
         "return_4h": return_4h,
         "return_24h": return_24h,
         "funding_rate": funding_rate,
+        "funding_observed_at": funding_observed_at,
         "open_interest": open_interest,
         "oi_delta_1h": oi_delta_1h,
         "long_short_ratio": long_short_ratio,

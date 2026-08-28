@@ -11,6 +11,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from aletheia.data.market_structure import (
+    COMPAT_ALGORITHM_VERSION,
+    CORE_ALGORITHM_VERSION,
+)
 from aletheia.data.symbols import InstrumentId
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -127,6 +131,7 @@ def build_momentum_setup(
     candles: list[dict],
     motive_evidence: dict | None = None,
     funding_rate: float | None = None,
+    funding_observed_at: str | None = None,
     now: datetime | None = None,
     ttl_minutes: int = 60,
 ) -> UniverseSetup:
@@ -216,7 +221,7 @@ def build_momentum_setup(
             motive_evidence or {}, sort_keys=True, separators=(",", ":")
         ),
         funding_rate=funding_rate,
-        funding_observed_at=current.isoformat() if funding_rate is not None else None,
+        funding_observed_at=funding_observed_at if funding_rate is not None else None,
         regime_tag=regime_tag,
         breakout_level=level,
         atr=atr,
@@ -1166,7 +1171,8 @@ def materialize_trigger(
         },
     )
     structure = trigger.market_structure or {
-        "algorithm_version": "market-structure/v1",
+        "algorithm_version": COMPAT_ALGORITHM_VERSION,
+        "core_algorithm_version": CORE_ALGORITHM_VERSION,
         "verdict": "unavailable",
         "reason": "not_preloaded",
     }
@@ -1177,7 +1183,9 @@ def materialize_trigger(
         authority="shadow",
         verdict=structure.get("verdict", "unavailable"),
         observed_at=trigger.observed_at,
-        algorithm_version=str(structure.get("algorithm_version") or "market-structure/v1"),
+        algorithm_version=str(
+            structure.get("algorithm_version") or COMPAT_ALGORITHM_VERSION
+        ),
         evidence=structure,
     )
     with repo.transaction(immediate=True):

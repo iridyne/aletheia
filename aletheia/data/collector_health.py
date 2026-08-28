@@ -50,7 +50,7 @@ def classify_collector_result(result: Any) -> str:
     if errors == ["no_key"]:
         return "not_configured"
 
-    ignored = {"errors", "observed_at", "movers_summary"}
+    ignored = {"errors", "observed_at", "movers_summary", "metric_outcomes"}
     has_payload = any(
         bool(value) for key, value in result.items() if key not in ignored
     )

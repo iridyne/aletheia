@@ -33,6 +33,7 @@ aletheia-trading-os/
 │   ├── agents/             # 观察、候选整理、Operator 决策和复盘 worker
 │   ├── risk/               # ⚠️ 信任边界：风控引擎（勿随意改）
 │   ├── execution/          # ⚠️ 信任边界：执行网关（勿随意改）
+│   ├── uta/                # 私有外部账户 V1 合同；Phase 0 尚未切换生产 I/O
 │   ├── data/               # 数据提供者、symbol 转换、CCXT provider
 │   ├── config/             # 配置 schema（改此处必须同步前端 Settings 页）
 │   ├── storage/            # SQLite 连接池、repositories
@@ -79,6 +80,16 @@ Execution Gateway（⚠️ 信任边界）→ paper_internal order/fill/position
     ↓
 Position Manager（保护性止损/止盈/追踪与平仓）
 ```
+
+## Unified Trading Account migration
+
+[`unified_trading_account.md`](../proposals/unified_trading_account.md) 已接受
+完整 UTA 设计，取代“UTA 仅只读”这一旧决策。Phase 0～3 已提供冻结合同、factory registry、
+read parity、account projection，以及 recovery、reconciliation、funding、verified-exit 与 Live Trust
+的 UTA 私有读取。Binance testnet 的 `uta_v1` 选择器现可把 Gateway entry/full-close 送到通用
+Coordinator；Coordinator 执行 pending/claim、外部调用后的短 CAS 与审计，UTA 只做外部账户 I/O，
+Aletheia storage 写入本地事实。凭据 qualification 未通过前该 profile 仍保持 legacy 默认，其他
+profile mutation 仍为 `NOT_SENT`。
 
 ---
 

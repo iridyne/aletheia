@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     _RISK_DECISION_PREFIX,
     _RISK_PROPOSAL_PREFIX,
@@ -21,6 +21,8 @@ from aletheia.storage.repositories import (
     _validate_native_entry_order_snapshot,
     acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
+    get_candidate_planning_generation,
+    get_entry_plan,
     get_entry_risk_reservation,
     get_opportunity,
     get_serenity_opportunity,
@@ -33,10 +35,13 @@ from aletheia.storage.repositories import (
     list_unresolved_native_entry_orders_for_risk,
     transaction,
     update_trade_proposal,
+    validate_trade_proposal_commit_hash,
 )
 from aletheia.trading.entry_plan import (
+    EntryPlan,
     RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
+    entry_plan_payload,
     entry_plan_risk_reward_is_plausible,
     stop_distance_below_min_floor,
 )
@@ -85,6 +90,66 @@ def _physical_market_type(value: str | None) -> str | None:
     if raw == "futures":
         return "futures"
     return None
+
+
+def _entry_plan_authority_violations(
+    proposal: TradeProposal,
+    *,
+    capital_base: float,
+    resolved_policy,
+) -> list[str]:
+    """Revalidate one bounded Entry Plan envelope inside canonical Risk."""
+
+    if not proposal.entry_plan_id:
+        return []
+    row = get_entry_plan(proposal.entry_plan_id)
+    if row is None:
+        return ["entry_plan_not_found"]
+    try:
+        plan = EntryPlan.model_validate_json(str(row["plan_json"]))
+        _, digest = entry_plan_payload(plan)
+    except Exception:
+        return ["entry_plan_contract_invalid"]
+    violations = []
+    if digest != row.get("plan_hash") or plan.plan_id != proposal.entry_plan_id:
+        violations.append("entry_plan_integrity_failed")
+    generation = get_candidate_planning_generation(plan.planning_generation_id)
+    if generation is None or not bool(generation.get("is_current")):
+        violations.append("entry_plan_generation_superseded")
+    if row.get("status") not in {"waiting", "triggered", "risk_reserved"}:
+        violations.append("entry_plan_lifecycle_not_executable")
+    try:
+        expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
+        if expires_at <= datetime.now(timezone.utc):
+            violations.append("entry_plan_expired")
+    except (TypeError, ValueError):
+        violations.append("entry_plan_expiry_invalid")
+    if (
+        plan.symbol != proposal.symbol
+        or _physical_market_type(plan.market_type) != _physical_market_type(proposal.market_type)
+        or plan.direction != proposal.direction
+        or plan.execution_account_mode != proposal.execution_mode
+    ):
+        violations.append("entry_plan_order_identity_mismatch")
+    policy = resolved_policy.policy
+    if (
+        plan.risk_policy_id != policy.policy_id
+        or plan.risk_policy_revision != policy.revision
+        or plan.risk_policy_hash != resolved_policy.policy_hash
+    ):
+        violations.append("entry_plan_risk_authority_revoked")
+    quantity = float(proposal.quantity or 0.0)
+    price = float(proposal.price or 0.0)
+    if price * quantity > plan.max_notional + 1e-12:
+        violations.append("entry_plan_max_notional_exceeded")
+    if int(proposal.leverage or 1) > plan.max_leverage:
+        violations.append("entry_plan_max_leverage_exceeded")
+    if proposal.stop_price is not None and capital_base > 0:
+        risk_amount = abs(price - float(proposal.stop_price)) * quantity
+        plan_max_risk = capital_base * plan.max_risk_pct / 100.0
+        if risk_amount > plan_max_risk + 1e-12:
+            violations.append("entry_plan_max_risk_exceeded")
+    return violations
 
 
 def _paper_opportunity_identity_violations(proposal: TradeProposal) -> list[str]:
@@ -457,7 +522,7 @@ def _pre_order_entry_reservations(
     return reservations
 
 
-def _cached_available_balance_usdt(execution_mode: str) -> float | None:
+def _cached_available_balance_usdt(execution_mode: str, cfg=None) -> float | None:
     """Return the cached available USDT for the account used by an order.
 
     Risk evaluation must stay local and deterministic: it never calls an exchange
@@ -479,9 +544,9 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
             # authority itself.  Its absence cannot be replaced by config capital.
             return None
 
+    cfg = cfg or load_config()
     if _is_live(execution_mode):
         try:
-            cfg = load_config()
             from aletheia.config.exchanges import live_execution_mode_for_exchange
             from aletheia.trust.live_unlock import evidence_matches_config
 
@@ -497,15 +562,24 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
 
     try:
         from aletheia.portfolio.exchange_sync import (
+            account_available_value,
             get_cached_state,
             get_unified_cached_state,
         )
 
-        if execution_mode.startswith("bitget_"):
+        use_legacy_bitget = execution_mode.startswith("bitget_") and (
+            _is_live(execution_mode)
+            or cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        )
+        if use_legacy_bitget:
             state = get_cached_state("live" if _is_live(execution_mode) else "demo")
-            value = (state or {}).get("available_usdt")
+            if not _external_account_cache_is_healthy(state):
+                return None
+            value = account_available_value(state)
         else:
             unified = get_unified_cached_state() or {}
+            if not _external_account_cache_is_healthy(unified):
+                return None
             account = next(
                 (
                     item for item in (unified.get("accounts") or [])
@@ -513,7 +587,9 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
                 ),
                 None,
             )
-            value = (account or {}).get("available_usdt")
+            if not _external_account_row_is_healthy(account):
+                return None
+            value = account_available_value(account)
         available = float(value)
         return max(0.0, available)
     except (TypeError, ValueError, AttributeError):
@@ -1100,6 +1176,13 @@ def _evaluate_proposal_locked(
     if capital_base is None:
         violations.append(f"capital_base_unavailable:{capital_base_reason}")
         capital_base = 0.0
+    violations.extend(
+        _entry_plan_authority_violations(
+            proposal,
+            capital_base=capital_base,
+            resolved_policy=resolved_policy,
+        )
+    )
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
     account_loss = authoritative_account_realized_loss(proposal.execution_mode)
     realized = account_loss.realized_pnl_usdt
@@ -1399,6 +1482,12 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
             violations.append("invalid_leverage")
     if proposal.execution_mode not in _NATIVE_EXECUTION_MODES:
         violations.append("invalid_execution_mode")
+    violations.extend(
+        exit_intent_violations(
+            expected_horizon_hours=proposal.expected_horizon_hours,
+            stop_source=proposal.stop_source,
+        )
+    )
     return violations
 
 
@@ -1411,12 +1500,10 @@ def _verified_original_proposal_commit_hash(
     row = get_trade_proposal(proposal.id)
     if row is not None:
         stored = TradeProposal.model_validate(row)
-        if stored.commit_hash is None:
-            raise ProposalIntegrityError("stored proposal has no commit hash")
-        if _compute_proposal_hash(stored) != stored.commit_hash:
-            raise ProposalIntegrityError(
-                "stored proposal content does not match commit hash"
-            )
+        try:
+            validate_trade_proposal_commit_hash(stored)
+        except ValueError as exc:
+            raise ProposalIntegrityError(str(exc)) from exc
         if require_evaluated_snapshot_match:
             # Venue preparation may normalize quantity, but every other field
             # covered by the original Proposal hash must remain identical. Put
@@ -2201,8 +2288,10 @@ def _check_account_leverage_ratio(
             weighted_notional += abs(proposal.price * proposal.quantity)
 
         equity = _account_equity(proposal.execution_mode, cfg)
-        if not equity or equity <= 0:
+        if equity is None:
             return [f"account_equity_unavailable:{proposal.execution_mode}"]
+        if equity <= 0:
+            return [f"account_equity_non_positive:{proposal.execution_mode}"]
 
         ratio = weighted_notional / equity
         if ratio > max_ratio:
@@ -2325,6 +2414,7 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
 
     try:
         from aletheia.portfolio.exchange_sync import (
+            account_equity_value,
             get_cached_state,
             get_unified_cached_state,
         )
@@ -2345,26 +2435,26 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
                 if account is not None:
                     if not _external_account_row_is_healthy(account):
                         return None
-                    value = float(account.get("equity_usdt"))
-                    if math.isfinite(value) and value > 0:
+                    value = account_equity_value(account)
+                    if value is not None:
                         return value
             if execution_mode.startswith("bitget_"):
                 cached = get_cached_state("live") or {}
                 if not _external_account_cache_is_healthy(cached):
                     return None
-                value = cached.get("equity_usdt") or cached.get("total_equity_usdt")
-                equity = float(value)
-                if math.isfinite(equity) and equity > 0:
+                equity = account_equity_value(cached)
+                if equity is not None:
                     return equity
             return None
 
-        if execution_mode.startswith("bitget_"):
+        if execution_mode.startswith("bitget_") and (
+            cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        ):
             cached = get_cached_state("demo") or {}
             if not _external_account_cache_is_healthy(cached):
                 return None
-            value = cached.get("equity_usdt") or cached.get("total_equity_usdt")
-            equity = float(value)
-            if math.isfinite(equity) and equity > 0:
+            equity = account_equity_value(cached)
+            if equity is not None:
                 return equity
             return None
 
@@ -2381,8 +2471,8 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
         )
         if not _external_account_row_is_healthy(account):
             return None
-        equity = float((account or {}).get("equity_usdt"))
-        if math.isfinite(equity) and equity > 0:
+        equity = account_equity_value(account)
+        if equity is not None:
             return equity
     except Exception:
         pass
@@ -2413,8 +2503,7 @@ def account_available_for_execution(execution_mode: str, cfg=None) -> float | No
     fail closed on ``None``: configured capital is never a substitute for an
     unavailable account authority.
     """
-    del cfg  # accepted for signature symmetry; the resolver reads config itself
-    return _cached_available_balance_usdt(execution_mode)
+    return _cached_available_balance_usdt(execution_mode, cfg or load_config())
 
 
 def _derive_per_symbol_cap(
@@ -2484,6 +2573,8 @@ def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | Non
     equity = _account_equity(execution_mode, cfg)
     if equity is None:
         return None, f"account_equity_unavailable:{execution_mode}"
+    if equity <= 0:
+        return None, f"account_equity_non_positive:{execution_mode}"
     return equity, None
 
 
@@ -2685,9 +2776,14 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
     except Exception:
         equity_value = math.nan
     if not math.isfinite(equity_value) or equity_value <= 0:
+        reason = (
+            f"account_equity_non_positive:{active_mode}"
+            if math.isfinite(equity_value)
+            else f"account_equity_unavailable:{active_mode}"
+        )
         return _unavailable_account_leverage_result(
             cap=max_ratio,
-            reason=f"account_equity_unavailable:{active_mode}",
+            reason=reason,
             positions=positions_detail,
         )
     ratio = weighted_notional / equity_value

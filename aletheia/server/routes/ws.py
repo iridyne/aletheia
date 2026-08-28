@@ -107,6 +107,8 @@ _REGULAR_QUERIES: dict[str, str] = {
     "prediction_runs": "SELECT MAX(COALESCE(completed_at, started_at)) FROM prediction_observer_runs",
     # Universe
     "universe_snaps":  "SELECT MAX(created_at) FROM universe_snapshots",
+    "candidate_planning": "SELECT MAX(updated_at) FROM candidate_planning_generations",
+    "entry_plans": "SELECT MAX(updated_at) FROM entry_plans",
 }
 
 # ── Alert-tier DB queries (100 ms) ───────────────────────────────────────────

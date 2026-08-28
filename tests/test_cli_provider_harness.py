@@ -1,11 +1,15 @@
 """Shared CLI harness behavior across existing agent integrations."""
 
+import asyncio
 import json
+import sys
+import threading
 
 import pytest  # pyright: ignore[reportMissingImports]
 
 from aletheia.model_provider.base import ModelRequest, StructuredModelRequest
 from aletheia.model_provider.claude_cli import ClaudeCLIProvider
+from aletheia.model_provider import cli_harness
 
 
 class _FakeProc:
@@ -95,3 +99,108 @@ async def test_claude_structured_fallback_keeps_system_context_on_stdin(monkeypa
     assert result == {"answer": "ok"}
     assert proc.stdin_written and b"required system boundary" in proc.stdin_written
     assert b"user: question" in proc.stdin_written
+
+
+@pytest.mark.anyio
+async def test_run_cli_uses_sync_worker_on_windows(monkeypatch):
+    monkeypatch.setattr(cli_harness.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(cli_harness, "_no_window_kwargs", lambda: {})
+
+    async def _forbidden_async_subprocess(*_args, **_kwargs):
+        raise AssertionError("asyncio subprocess path must not run on Windows")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _forbidden_async_subprocess)
+    result = await cli_harness.run_cli(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().upper())",
+        ],
+        stdin=b"ok",
+        timeout=5,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b"OK"
+
+
+@pytest.mark.anyio
+async def test_windows_sync_worker_timeout_kills_process(monkeypatch):
+    monkeypatch.setattr(cli_harness.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(cli_harness, "_no_window_kwargs", lambda: {})
+    killed = []
+
+    class _TimeoutProc:
+        returncode = None
+
+        def communicate(self, _stdin=None, timeout=None):
+            if self.returncode is not None:
+                return b"", b""
+            raise cli_harness.subprocess.TimeoutExpired("fake-cli", timeout)
+
+        def kill(self):
+            killed.append(True)
+            self.returncode = -9
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(cli_harness.subprocess, "Popen", lambda *_args, **_kwargs: _TimeoutProc())
+
+    with pytest.raises(asyncio.TimeoutError):
+        await cli_harness.run_cli(["fake-cli"], timeout=0.01)
+
+    assert killed == [True]
+
+
+@pytest.mark.anyio
+async def test_windows_sync_worker_cancellation_kills_process(monkeypatch):
+    monkeypatch.setattr(cli_harness.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(cli_harness, "_no_window_kwargs", lambda: {})
+    killed = threading.Event()
+
+    class _BlockingProc:
+        returncode = None
+
+        def communicate(self, _stdin=None, timeout=None):
+            killed.wait(timeout=5)
+            return b"", b""
+
+        def kill(self):
+            self.returncode = -9
+            killed.set()
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(cli_harness.subprocess, "Popen", lambda *_args, **_kwargs: _BlockingProc())
+
+    task = asyncio.create_task(cli_harness.run_cli(["fake-cli"], timeout=30))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert killed.wait(timeout=1)
+
+
+@pytest.mark.anyio
+async def test_pi_health_uses_windows_sync_harness(monkeypatch):
+    from aletheia.model_provider.pi_cli import PiCLIProvider
+
+    monkeypatch.setattr(cli_harness.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(cli_harness, "_no_window_kwargs", lambda: {})
+
+    async def _forbidden_async_subprocess(*_args, **_kwargs):
+        raise AssertionError("asyncio subprocess path must not run on Windows")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _forbidden_async_subprocess)
+    monkeypatch.setattr(
+        "aletheia.model_provider.pi_cli.shutil.which",
+        lambda command: command,
+    )
+
+    health = await PiCLIProvider(command=sys.executable, enabled=True).healthcheck()
+
+    assert health.available is False
+    assert health.error == "no_configured_models"

@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../../governance/policies/trust_and_change_control.md)。
-> Last updated: 2026-08-26 · 维护者:Aletheia Dev
+> Last updated: 2026-08-27 · 维护者:Aletheia Dev
 
 ---
 
@@ -16,21 +16,21 @@
 
 **开仓因果链(不可断,[trust §1.1](../../governance/policies/trust_and_change_control.md)):**
 
-```
-trade_proposals.id
-  → risk_decisions.proposal_id
-  → orders.proposal_id + orders.risk_decision_id
-  → fills.order_id
-  → positions (从 orders/fills 投影;schema 现直接携带 `proposal_id` + `order_id` + `opportunity_id`,新 position 开仓即写,adopt 也走同一路径 — #30/#50)
+```mermaid
+flowchart LR
+    A[Order Intent<br/>physical TradeProposal] --> B[Authoritative RiskDecision]
+    B --> C[Order]
+    C --> D[Private Fill]
+    D --> E[Position]
 ```
 
 **平仓因果链**不伪造第二个 RiskDecision：
 
-```
-open positions.id
-  → orders.position_id + orders.close_reason（若有 Operator 原话，另存 orders.close_reasoning；risk_decision_id=NULL）
-  → fills.order_id
-  → 同一 positions.id 收敛为 closed
+```mermaid
+flowchart LR
+    A[Open Position authority] --> B[Close Order]
+    B --> C[Private Fill]
+    C --> D[Same Position closed]
 ```
 
 开仓 Order 消费 approved authoritative RiskDecision；平仓 Order 消费它所减少的
@@ -39,17 +39,10 @@ durable close client identity。入场 RiskDecision 不能被复制到平仓单�
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
 
-Momentum Fast Trigger 是 Proposal 的新增上游，不是执行旁路。它必须先持久化精确 Setup 授权、
-同 venue T0 快照、唯一 Opportunity 和 immutable Proposal，再在事务外调用
-`execute_existing_proposal()`；RiskDecision、broker dispatch、Order/Fill/Position 因果链及
-`submission_unknown` 禁止重发语义完全沿用本契约。默认 `shadow` 不调用 Gateway；`paper_internal`
-的 `execute` 只走本地 paper broker，exchange-backed `execute` 首版只允许 `bitget_demo`，任何
-Live mode 必须在 Gateway 之前拒绝。
-
-V2 Fast Trigger 在 Gateway 调用前必须再次读取内存中的最新 same-venue snapshot。entry zone
-越界或 structural invalidation 先到者写入 append-only hard assessment，并原子把 Setup/Opportunity
-终结为 `invalidated`、拒绝 pending Proposal；Risk 和 broker 调用数必须为零。T0 generation
-不可因这次状态变化而重价或改写。
+Entry Plan 是 Universe-linked Proposal 的唯一 active 上游，不是执行旁路。它以 plan id 绑定
+immutable Proposal、authoritative RiskDecision 和 stable client order identity；duplicate execute
+只能恢复同一链，`submission_unknown` 必须先对账且禁止重发。V1 exchange tactic 只允许
+`bitget_demo`，任何 Live 或未注册 venue capability 都在 Gateway fail closed。
 
 ---
 
@@ -57,7 +50,7 @@ V2 Fast Trigger 在 Gateway 调用前必须再次读取内存中的最新 same-v
 
 | 环 | 结构 | 状态流 | 位置 |
 |----|------|--------|------|
-| Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
+| Order Intent | Physical compatibility model: `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; this is an internal immutable Risk/Gateway carrier, never an owner-facing planning stage | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
 | Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, close_reasoning?, risk_decision_id=NULL, ...)`；`close_reasoning` 只承载 pending Operator rationale，不代表已关闭；新 Paper Order 另存 immutable `reference_price/source` 供只读成本配对 | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
@@ -87,7 +80,7 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 | `paper_internal` | 否(本地模拟) | paper_broker | `paper_broker.py:17` |
 | `bitget_demo` | 是(demo 账户) | bitget_broker | `bitget_broker.py:53` |
 | `okx_demo` | 是(demo) | okx_broker | `okx_broker.py:96` |
-| `binance_testnet` | 是(testnet) | binance_broker | `binance_broker.py:40` |
+| `binance_testnet` | 是(testnet) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise binance_broker | `gateway.py` / `execution/coordinator.py` |
 | `bitget/okx/binance_live_limited` | 是(**真实资金**) | 同上 broker 同函数 | — |
 
 `_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
@@ -107,6 +100,23 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 - 每个本地 Position 只属于一个 immutable Proposal。相同 symbol/direction/strategy 的另一 Proposal
   不得在 broker 内并入已有 Position；正常 Gateway/Risk 路径会先拒绝重复暴露，broker 的独立
   lineage 是最后一道防御，避免费用、保护价和归因跨 Proposal 混合。
+
+### 3.0a Entry Plan Order Policy
+
+- `RESTING_MAKER` 与 Triggered Maker 必须逐层传递 `post_only=true`、
+  `time_in_force=post_only` 和 exact limit price。venue/profile 无法表达时返回
+  capability unavailable；普通 GTC Limit 永远不是 Maker。
+- Urgent Taker 默认是 opposing-BBO IOC Limit：long 使用 latest exact ask，short 使用 latest
+  exact bid。`max_slippage_bps` 与 `worst_price` 任一越界都拒绝，不得 chase；Market order 不在
+  V1 authority 中。
+- Risk reservation 必须在 Order 持久化和 exchange submission 之前存在。Order 与 Entry Plan
+  `risk_reserved → ordered` 在同一 SQLite writer transaction 中前进。
+- Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，
+  随后持锁重读 private Fill/Order。full Fill 赢得竞态；partial Fill 保留真实 Position，并允许取消
+  remainder；request-side `requested_liquidity` 不能冒充 `realized_liquidity`。
+- `paper_internal` 可验证 plan、trigger、Risk 和 deterministic Order Intent，但其 immediate-fill
+  模型不能证明 Post-Only queue 或 maker fill。真实 tactic qualification 使用 deterministic fake
+  adapter tests 与 Bitget Demo private evidence。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 
@@ -238,9 +248,9 @@ route 也在读取/更新 Proposal 前返回 `403 preview_execution_blocked`。
 
 | 项 | 行为 | 位置 |
 |----|------|------|
-| 逻辑 | 读交易所 live open orders → 本地 `status=submitted` 但不在交易所 open 的 → 标 `filled` | `reconciliation.py:38-85` |
+| 逻辑 | 通过 UTA 读取 exact Order、Fill、Position/mass status；只有完整、身份匹配的私有 Fill 才进入既有原子 materializer | `execution/reconciliation.py`、`uta/ccxt_adapter.py` |
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../../governance/policies/trust_and_change_control.md)) | — |
-| 防伪 | 对账从不创建虚假 Fill,仅更新 `order.status` | `reconciliation.py:77` |
+| 防伪 | open-list 缺失、分页触顶、unsupported/unavailable/partial 均保持 unresolved；不得推断 filled/cancelled | `execution/reconciliation.py`、`execution/stale_order_cleanup.py` |
 
 **Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
 
@@ -390,7 +400,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   只返回原 claim，不得覆盖。Position 保持 open 且 `exit_reasoning` 为空，直到完整 private Fill
   在共享 materializer 中验证通过。非空 carrier 损坏或与 `close_reason` 不一致时必须
   `materialization_missing`，不得降级成 generic actor/source；历史 `NULL` carrier 保持兼容。
-- 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
+- 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→Gateway close route（qualified uta_v1 时 Coordinator → UTA，否则 legacy broker）` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
 - **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
@@ -518,7 +528,8 @@ alert-only/fail-closed，不借本合同扩大自动权限。Demo ready candidat
 
 ### 11.2 Broker-neutral verified exit
 
-状态：RG-T06 / OI-B02 的只读 protocol 与三家 adapter、以及 RG-T07 的调用编排均已实现。
+状态：RG-T06 / OI-B02 的语义由 UTA `VerifiedExitReport` 和 RG-T07 编排实现；consumer 不再
+构造三家 concrete private client。
 
 Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
 
@@ -541,7 +552,7 @@ Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 
 alert-only，active reconciliation incident 仍先阻断收口。
 
 RG-T07 编排层另有一道独立防线（2026-08-19 事故后加入）：`confirmed_absent_without_fill` 本身不是
-administrative close 的充分授权——settlement 必须先用当前 profile client 做一次新鲜的全量仓位直查，
+administrative close 的充分授权——settlement 必须先用同一 UTA identity 做一次新鲜的 exact 仓位直查，
 直查仍确认 absent 才可关闭，并把 candidate 的 `direct_query_state` 落为 `confirmed_absent` 作为持久
 证据；直查显示仓位仍在则保持 open（下一轮 classify 会把 candidate 结案为 `reappeared`），直查不可用
 则 fail-closed 推迟。`verified_fill` 路径不受此门约束（私有成交历史是更强的平仓证据）。
@@ -664,3 +675,21 @@ multi-entry、partial close 或 adopted Position；multi-entry 以
 `unsupported_execution_multi_entry` 明确排除，不伪装成数据链缺失。该测量不授权改变
 slippage、fee、broker、Risk 或 Live 配置；
 任一身份/经济字段缺失均为 `insufficient_data`。
+
+---
+
+## 12. Unified Trading Account V1 migration boundary
+
+Issue #2299 接受的 D2 设计取代 #2189 中“UTA remains read-only”这一句，但不改变 Gateway、
+Risk 或本地存储的既有权威。Phase 0～2 已实现冻结合同、Decimal-safe 模型、registry、shadow
+parity 和 account/position read projection；Phase 3 把 reconciliation、stale/pending recovery、
+verified exit、funding settlement 与 Live Trust 的私有读取切到 UTA 规范化报告。Phase 4 已实现
+Binance testnet 的配置门控 entry/full-close 垂直切片与 submit/modify/cancel command evidence；凭据
+qualification 未通过时选择器仍必须保持 legacy，其他 profile mutation 仍返回 `NOT_SENT`。
+
+后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
+UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction
+之外，返回后只用短 expected-state/CAS 应用证据。`partial`、`unsupported`、`unavailable`、
+timeout 或异常都不能变成空、零、取消、仓位消失或完整经济事实；可能已经发送的 mutation 必须是
+`ambiguous` 且禁止自动重试。完整目标、profile rollout 与 qualification 证据由已接受的
+[`unified_trading_account.md`](../proposals/unified_trading_account.md) 和 Issue #2299 管理。

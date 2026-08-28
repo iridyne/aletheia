@@ -102,6 +102,10 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
         mode = "demo"
         paper_execution_mode = "okx_demo"
 
+        @staticmethod
+        def uta_read_boundary_for(_execution_mode):
+            return "legacy"
+
     class _Cfg:
         exchange = _Exch()
 
@@ -110,7 +114,9 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
 
     # Default path (mode=None) — what trading_context.py:61 calls.
     state = exchange_sync.get_cached_state()
-    equity = state.get("equity_usdt") or state.get("total_equity_usdt")
+    from aletheia.portfolio.exchange_sync import account_equity_value
+
+    equity = account_equity_value(state)
     assert equity == pytest.approx(88687.0), (
         f"default get_cached_state() must return active-account equity, got {equity} "
         "(regression: System Operator would see phantom-bankrupt $167 and skip every signal)"
@@ -145,6 +151,10 @@ def test_bitget_active_keeps_legacy_cache(tmp_path, monkeypatch):
     class _Exch:
         mode = "demo"
         paper_execution_mode = "bitget_demo"
+
+        @staticmethod
+        def uta_read_boundary_for(_execution_mode):
+            return "legacy"
 
     class _Cfg:
         exchange = _Exch()

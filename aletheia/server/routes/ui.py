@@ -140,8 +140,18 @@ def _compact_activity() -> list[dict]:
         for row in rows
     )
     rows = db.execute(
+        "SELECT id, candidate_id, symbol, market_type, direction, execution_mode, "
+        "status, created_at, json_extract(plan_json, '$.thesis') AS thesis "
+        "FROM entry_plans ORDER BY updated_at DESC LIMIT 8"
+    ).fetchall()
+    items.extend(
+        {"id": row["id"], "plan_id": row["id"], "candidate_id": row["candidate_id"], "kind": "entry_plan", "symbol": row["symbol"], "market_type": row["market_type"], "direction": row["direction"], "execution_mode": row["execution_mode"], "status": row["status"], "timestamp": row["created_at"], "created_at": row["created_at"], "thesis": row["thesis"], "headline": f"Entry Plan · {row['direction']} {row['symbol']}", "excerpt": row["thesis"]}
+        for row in rows
+    )
+    rows = db.execute(
         "SELECT id, symbol, market_type, direction, execution_mode, status, created_at, agent_rationale, "
-        "substr(agent_rationale, 1, 180) AS excerpt FROM trade_proposals ORDER BY created_at DESC LIMIT 8"
+        "substr(agent_rationale, 1, 180) AS excerpt FROM trade_proposals "
+        "WHERE entry_plan_id IS NULL ORDER BY created_at DESC LIMIT 8"
     ).fetchall()
     items.extend(
         {"id": row["id"], "kind": "proposal", "symbol": row["symbol"], "market_type": row["market_type"], "direction": row["direction"], "execution_mode": row["execution_mode"], "status": row["status"], "timestamp": row["created_at"], "created_at": row["created_at"], "agent_rationale": row["agent_rationale"], "headline": f"{row['direction']} {row['symbol']}", "excerpt": row["excerpt"]}
@@ -152,9 +162,9 @@ def _compact_activity() -> list[dict]:
 
 def _count_summary() -> dict:
     db = get_db()
+    entry = repo.get_entry_workbench_summary()
     return {
-        "pending_proposals": int(db.execute("SELECT COUNT(*) FROM trade_proposals WHERE status = 'pending'").fetchone()[0]),
-        "open_opportunities": int(db.execute("SELECT COUNT(*) FROM opportunities WHERE status = 'open'").fetchone()[0]),
+        **entry,
         "runs_24h": int(db.execute("SELECT COUNT(*) FROM agent_runs WHERE replace(started_at, ' ', 'T') >= replace(datetime('now', '-1 day'), ' ', 'T')").fetchone()[0]),
     }
 
@@ -244,7 +254,7 @@ def overview_bootstrap(response: Response):
         response.headers["Server-Timing"] = f"local;dur={(time.perf_counter() - started) * 1000:.1f}"
         return payload
     portfolio = _safe("portfolio", lambda: __import__("aletheia.portfolio.pnl", fromlist=["compute_portfolio"]).compute_portfolio(execution_mode=_selected_mode), {})
-    summary = _safe("summary", _count_summary, {"pending_proposals": 0, "open_opportunities": 0, "runs_24h": 0})
+    summary = _safe("summary", _count_summary, None)
     activity = _safe("activity", _compact_activity, [])
     cfg = _safe("config", lambda: load_config(persist_migrations=False), None)
     setup = _safe("setup", lambda: _model_provider_usable(cfg["value"]) if cfg["value"] is not None else False, False)
@@ -254,7 +264,8 @@ def overview_bootstrap(response: Response):
         "total_value_usdt", "account_equity_usdt", "today_pnl", "today_realized_pnl",
         "today_realized_pnl_complete", "unrealized_pnl", "all_realized_pnl",
         "all_realized_pnl_complete", "all_realized_pnl_unavailable_count", "positions_count",
-        "exchange_mode", "exchange_sync_status",
+        "exchange_mode", "exchange_sync_status", "exchange_equity_usdt", "exchange_state_age_sec",
+        "uta_state",
     )}
     account["exposure_by_symbol"] = dict(list((p.get("exposure_by_symbol") or {}).items())[:8])
     account["exchange_asset_breakdown"] = list((p.get("exchange_asset_breakdown") or [])[:8])

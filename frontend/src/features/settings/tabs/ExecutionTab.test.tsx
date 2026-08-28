@@ -4,14 +4,21 @@ import { describe, expect, it } from 'vitest'
 import { ExecutionTab } from './ExecutionTab'
 import SRC from './ExecutionTab.tsx?raw'
 
-function renderExecutionTab() {
+function renderExecutionTab(
+  paperMode = 'paper_internal',
+  utaReadBoundaries: Record<string, 'legacy' | 'shadow_read' | 'uta_v1'> = {},
+) {
   const client = new QueryClient()
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ExecutionTab
         status={{ live_state: 'disabled' }}
         settings={{
-          exchange: { paper_execution_mode: 'paper_internal', enabled_markets: {} },
+          exchange: {
+            paper_execution_mode: paperMode,
+            enabled_markets: {},
+            uta_read_boundaries: utaReadBoundaries,
+          },
           market_data: {},
           trading: {},
         }}
@@ -45,5 +52,15 @@ describe('ExecutionTab', () => {
     expect(SRC).toContain('<TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(SRC).toContain('<CapitalEventsCard onDirty={onDirty} />')
     expect(SRC).toContain('<PaperAccountCard qc={qc} onDirty={onDirty} />')
+  })
+
+  it('exposes legacy rollback and shadow-read selection for external accounts', () => {
+    const html = renderExecutionTab('okx_demo', { okx_demo: 'shadow_read' })
+
+    expect(html).toContain('UTA read backend')
+    expect(html).toContain('Legacy (authoritative)')
+    expect(html).toContain('UTA shadow read')
+    expect(SRC).toContain('uta_read_boundary: readBoundary')
+    expect(SRC).toContain('<option value="uta_v1" disabled>')
   })
 })

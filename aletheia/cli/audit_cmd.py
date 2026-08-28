@@ -436,9 +436,14 @@ def viability(
         build_operator_viability,
         build_system_viability,
         render_viability,
+        require_supported_execution_mode,
     )
 
     normalized = scope.strip().lower()
+    try:
+        require_supported_execution_mode(execution_mode)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--execution-mode") from exc
     if normalized == "system":
         report = build_system_viability(
             days=days,

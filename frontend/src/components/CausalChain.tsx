@@ -2,15 +2,17 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
-import type { Order, Position, TradeProposal } from '../types'
+import type { EntryPlan, Order, Position, TradeProposal } from '../types'
 import { fmtSymbol } from '../lib/format'
 import { parseDecisionRationale } from '../lib/decisionReasoning'
+import { orderIntent, orderIntentLabel } from '../lib/orderIntent'
 
 /**
  * Causal-chain inspector (WEBUI_PAGE_MAP.md — cross-cutting, lives in Trades & Positions).
  *
- * Renders the immutable trust §1.1 chain:
- *   opportunity → strategy → proposal → entry reasoning → risk_decision → order → fill → position → close reasoning
+ * Renders Candidate → Entry Plan → Risk → Order → Fill → Position for the
+ * current path, retaining the older Opportunity/Proposal chain only when no
+ * exact Entry Plan identity was persisted.
  *
  * HONESTY:
  *  - Entry reasoning is parsed only from the proposal's persisted immutable metadata.
@@ -27,6 +29,15 @@ type Anchor =
 
 type NodeState = 'present' | 'empty' | 'missing'
 type JsonRecord = Record<string, unknown>
+type RiskDecisionData = {
+  order_id?: string
+  proposal_id: string | null
+  risk_decision_id?: string | null
+  status: string
+  reason_code: string | null
+  decision: any
+  preflight_decision?: any
+}
 
 const ENTRY_PARAMETER_LABELS: Array<[string, string]> = [
   ['entry_price', 'Entry price'],
@@ -153,19 +164,38 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   })
   const proposal = (proposalFromList ?? proposalById ?? null) as TradeProposal | null
 
-  const { data: riskData } = useQuery({
-    queryKey: ['risk-decision', proposalId],
-    queryFn: () => api.getProposalRiskDecision(proposalId as string),
-    enabled: !!proposalId,
-  })
-  const risk = riskData?.decision
-
+  const anchorOrderIntent = anchor.kind === 'order' ? orderIntent(anchor.order) : null
   const resolvedOrder: Order | null = anchor.kind === 'position' && anchor.position.order_id
     ? (orders as Order[]).find(o => o.id === anchor.position.order_id) ?? null
     : null
   const resolvedPosition: Position | null = anchor.kind === 'position'
     ? anchor.position
-    : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
+    : anchorOrderIntent === 'close' && anchor.order.position_id
+      ? (positions as Position[]).find(p => p.id === anchor.order.position_id) ?? null
+      : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
+  const exactOrder = anchor.kind === 'order' ? anchor.order : resolvedOrder
+  const entryPlanId = exactOrder?.entry_plan_id ?? proposal?.entry_plan_id ?? null
+  const { data: entryPlan, isError: entryPlanError } = useQuery<EntryPlan>({
+    queryKey: ['entry-plan', entryPlanId],
+    queryFn: () => api.getEntryPlan(entryPlanId as string),
+    enabled: Boolean(entryPlanId),
+  })
+  const riskDecisionId = exactOrder?.risk_decision_id ?? null
+  const useOrderRiskDecision = !!riskDecisionId && !!exactOrder && anchorOrderIntent !== 'close'
+
+  const { data: riskData } = useQuery<RiskDecisionData>({
+    queryKey: useOrderRiskDecision
+      ? ['order-risk-decision', exactOrder?.id, riskDecisionId]
+      : ['risk-decision', proposalId],
+    queryFn: async () => useOrderRiskDecision
+      ? api.getOrderRiskDecision(exactOrder.id)
+      : api.getProposalRiskDecision(proposalId as string),
+    enabled: !!(useOrderRiskDecision || proposalId),
+  })
+  const risk = riskData?.decision
+  const riskGap = riskData?.reason_code ?? (
+    riskData?.status === 'advisory_only' ? 'advisory preflight only' : undefined
+  )
 
   const strategyId = anchor.kind === 'order'
     ? proposal?.strategy_id ?? null
@@ -182,30 +212,32 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
 
   return (
     <div className="causal-chain">
-      {proposalId
-        ? proposal
-          ? <CausalNode stage="Opportunity" state={opportunityId ? 'present' : 'empty'} facts={<span className="mono">{opportunityId}</span>} onOpen={opportunityId ? () => navigate('/agent-activity') : undefined} />
-          : <CausalNode stage="Opportunity" state="missing" note="proposal not in recent list" />
-        : <CausalNode stage="Opportunity" state="empty" />}
-
-      <CausalNode stage="Strategy" state={strategyId ? 'present' : 'empty'} facts={<span className="mono">{strategyId}</span>} />
-
-      {proposalId
-        ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} onOpen={() => navigate('/blotter')} />
-        : <CausalNode stage="Proposal" state="empty" />}
-
-      {proposal
-        ? entryParameters
-          ? <CausalNode stage="Entry Reasoning" state="present" facts={<EntryReasoningFacts parameters={entryParameters} />} />
-          : <CausalNode stage="Entry Reasoning" state="missing" note="proposal predates parameter rationale" />
-        : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
+      {entryPlanId ? <>
+        <CausalNode stage="Candidate" state={entryPlan ? 'present' : entryPlanError ? 'missing' : 'empty'} facts={entryPlan ? <span className="mono">{entryPlan.candidate_id}</span> : undefined} note={entryPlanError ? 'exact Entry Plan detail unavailable' : undefined} onOpen={entryPlan ? () => navigate(`/universe?tab=candidates&candidate_id=${encodeURIComponent(entryPlan.candidate_id)}`) : undefined} />
+        <CausalNode stage="Entry Plan" state="present" facts={<span className="mono">{entryPlanId}</span>} onOpen={() => navigate(`/universe?tab=plans&plan_id=${encodeURIComponent(entryPlanId)}`)} />
+      </> : <>
+        {proposalId
+          ? proposal
+            ? <CausalNode stage="Opportunity" state={opportunityId ? 'present' : 'empty'} facts={<span className="mono">{opportunityId}</span>} onOpen={opportunityId ? () => navigate('/agent-activity') : undefined} />
+            : <CausalNode stage="Opportunity" state="missing" note="proposal not in recent list" />
+          : <CausalNode stage="Opportunity" state="empty" />}
+        <CausalNode stage="Strategy" state={strategyId ? 'present' : 'empty'} facts={<span className="mono">{strategyId}</span>} />
+        {proposalId
+          ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} />
+          : <CausalNode stage="Proposal" state="empty" />}
+        {proposal
+          ? entryParameters
+            ? <CausalNode stage="Entry Reasoning" state="present" facts={<EntryReasoningFacts parameters={entryParameters} />} />
+            : <CausalNode stage="Entry Reasoning" state="missing" note="proposal predates parameter rationale" />
+          : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
+      </>}
 
       {risk
-        ? <CausalNode stage="Risk Decision" state="present" facts={<>{anchor.kind === 'order' && anchor.order.risk_decision_id && <div className="mono cc-id">{anchor.order.risk_decision_id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? 'approved' : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
-        : <CausalNode stage="Risk Decision" state="empty" />}
+        ? <CausalNode stage="Risk Decision" state="present" facts={<>{risk.id && <div className="mono cc-id">{risk.id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? (anchorOrderIntent === 'close' ? 'entry approval (not close authorization)' : 'approved') : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
+        : <CausalNode stage="Risk Decision" state={riskData ? 'missing' : 'empty'} note={riskGap} />}
 
       {anchor.kind === 'order'
-        ? <CausalNode stage="Order" state="present" facts={<><div className="mono cc-id">{anchor.order.id}</div><div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div></>} />
+        ? <CausalNode stage="Order" state="present" facts={<><div className="mono cc-id">{anchor.order.id}</div><div>{orderIntentLabel(anchorOrderIntent ?? 'entry')} · {anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div></>} />
         : anchor.position.order_id
           ? <CausalNode stage="Order" state="present" facts={resolvedOrder ? <><div className="mono cc-id">{anchor.position.order_id}</div><div>{resolvedOrder.direction?.toUpperCase()} {resolvedOrder.quantity} {fmtSymbol(resolvedOrder.symbol, resolvedOrder.market_type)} @ {resolvedOrder.price ?? 'mkt'} · {resolvedOrder.status}</div></> : <><div className="mono cc-id">{anchor.position.order_id}</div><div className="text-muted text-sm">(order detail not in recent list)</div></>} />
           : <CausalNode stage="Order" state="empty" />}

@@ -1,11 +1,15 @@
 """Tests for secrets handling and redaction."""
 
+import os
+import stat
 from unittest.mock import patch
 import pytest  # pyright: ignore[reportMissingImports]
 from aletheia.config.secrets import (
     delete_secret,
+    get_credential_generation,
     get_secret,
     is_secret_key,
+    migrate_keyring_to_file,
     redact,
     set_secret,
 )
@@ -73,6 +77,103 @@ def test_file_fallback_roundtrip(tmp_path):
         assert get_secret("nonexistent") is None
 
 
+def test_secret_files_are_owner_only(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        set_secret("test.key", "super_secret_value")
+
+    assert stat.S_IMODE((tmp_path / ".secret.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "secrets.enc").stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask semantics")
+def test_secret_files_ignore_permissive_umask(tmp_path):
+    previous_umask = os.umask(0o022)
+    try:
+        with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+             patch("aletheia.config.secrets._get_keyring", return_value=None):
+            set_secret("test.key", "super_secret_value")
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE((tmp_path / ".secret.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "secrets.enc").stat().st_mode) == 0o600
+
+
+def test_existing_secret_files_are_tightened_before_read(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        set_secret("test.key", "super_secret_value")
+        os.chmod(tmp_path / ".secret.key", 0o644)
+        os.chmod(tmp_path / "secrets.enc", 0o644)
+        assert get_secret("test.key") == "super_secret_value"
+
+    assert stat.S_IMODE((tmp_path / ".secret.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "secrets.enc").stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink ownership semantics")
+def test_secret_key_symlink_is_rejected(tmp_path):
+    target = tmp_path / "other.key"
+    target.write_bytes(b"not-a-secret-key")
+    (tmp_path / ".secret.key").symlink_to(target)
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path):
+        with pytest.raises(RuntimeError, match="must not be a symlink"):
+            import aletheia.config.secrets as secrets
+
+            secrets._get_fernet()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink ownership semantics")
+def test_secret_store_symlink_is_rejected(tmp_path):
+    target = tmp_path / "other.enc"
+    target.write_bytes(b"not-a-secret-store")
+    (tmp_path / "secrets.enc").symlink_to(target)
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path):
+        with pytest.raises(RuntimeError, match="must not be a symlink"):
+            get_secret("test.key")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership semantics")
+def test_foreign_owner_secret_file_is_rejected(tmp_path):
+    import aletheia.config.secrets as secrets
+
+    key_path = tmp_path / ".secret.key"
+    key_path.write_bytes(b"invalid")
+    with (
+        patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path),
+        patch.object(secrets.os, "getuid", return_value=os.getuid() + 1),
+    ):
+        with pytest.raises(RuntimeError, match="unexpected owner"):
+            secrets._get_fernet()
+
+
+def test_exchange_credential_mutations_advance_isolated_generation(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        assert get_credential_generation("bitget.demo") == 0
+        set_secret("bitget.demo.api_key", "first")
+        assert get_credential_generation("bitget.demo") == 1
+        set_secret("bitget.demo.api_key", "second")
+        assert get_credential_generation("bitget.demo") == 2
+        set_secret("okx.demo.api_key", "other")
+        assert get_credential_generation("bitget.demo") == 2
+        assert get_credential_generation("okx.demo") == 1
+        delete_secret("bitget.demo.api_key")
+        assert get_credential_generation("bitget.demo") == 3
+
+
+def test_corrupt_credential_generation_fails_closed(tmp_path):
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=None):
+        set_secret("bitget.demo.api_key", "first")
+        (tmp_path / "secrets.enc").write_bytes(b"corrupt")
+        with pytest.raises(RuntimeError, match="credential generation"):
+            get_credential_generation("bitget.demo")
+
+
 def test_empty_keyring_falls_through_to_authoritative_file_copy(tmp_path):
     class EmptyKeyring:
         def get_password(self, _service, _key):
@@ -84,6 +185,24 @@ def test_empty_keyring_falls_through_to_authoritative_file_copy(tmp_path):
     with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
          patch("aletheia.config.secrets._get_keyring", return_value=EmptyKeyring()):
         assert get_secret("model.profile.alpha.api_key") == "file-only-secret"
+
+
+def test_stale_keyring_cannot_override_generation_bound_file_value(tmp_path):
+    class StaleKeyring:
+        def get_password(self, _service, key):
+            return "old-keyring-value" if key == "bitget.demo.api_key" else None
+
+        def set_password(self, _service, _key, _value):
+            raise RuntimeError("keyring write unavailable")
+
+    with patch("aletheia.config.secrets.get_data_dir", return_value=tmp_path), \
+         patch("aletheia.config.secrets._get_keyring", return_value=StaleKeyring()):
+        set_secret("bitget.demo.api_key", "new-file-value")
+
+        assert get_secret("bitget.demo.api_key") == "new-file-value"
+        assert get_credential_generation("bitget.demo") == 1
+        assert migrate_keyring_to_file() == 0
+        assert get_secret("bitget.demo.api_key") == "new-file-value"
 
 
 def test_preview_mode_never_reads_or_writes_secrets(monkeypatch):

@@ -91,10 +91,121 @@ def test_get_current_uses_service_snapshot_namespace_with_mixed_config(client):
     data = resp.json()
     assert data["snapshot"] == snap
     assert data["members"] == [
-        {**members[0], "setup_state": None, "triggered_opportunity_id": None}
+        {
+            **members[0],
+            "entry_plan_id": None,
+            "entry_plan_status": None,
+            "entry_plan_execution_mode": None,
+            "setup_state": None,
+            "triggered_opportunity_id": None,
+        }
     ]
     assert data["fallback"] is False
     get_snapshot.assert_called_once_with()
+
+
+def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
+    from aletheia.server.routes.universe import _attach_candidate_handoff_state
+
+    db = MagicMock()
+    plan_result = MagicMock()
+    plan_result.fetchall.return_value = [
+        {
+            "last_candidate_id": "candidate-1",
+            "id": "plan-1",
+            "status": "waiting",
+            "execution_mode": "RESTING_MAKER",
+            "created_at": "2026-08-27T00:00:00+00:00",
+            "updated_at": "2026-08-27T00:00:00+00:00",
+        }
+    ]
+    legacy_result = MagicMock()
+    legacy_result.fetchall.return_value = []
+    db.execute.side_effect = [plan_result, legacy_result]
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
+
+    [candidate] = _attach_candidate_handoff_state([{"id": "candidate-1"}])
+
+    assert candidate["entry_plan_id"] == "plan-1"
+    assert candidate["entry_plan_status"] == "waiting"
+    assert candidate["entry_plan_execution_mode"] == "RESTING_MAKER"
+    assert candidate["setup_state"] is None
+
+
+def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabled_cfg):
+    with patch("aletheia.server.routes.universe.load_config", return_value=enabled_cfg), \
+         patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=None), \
+         patch(
+             "aletheia.server.routes.universe.repo.get_entry_workbench_summary",
+             side_effect=RuntimeError("db unavailable"),
+         ), \
+         patch("aletheia.server.routes.universe.repo.list_active_entry_plans", return_value=[]), \
+         patch("aletheia.server.routes.universe.repo.list_active_candidate_attention", return_value=[]):
+        response = client.get("/api/universe/workbench")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] is None
+    assert body["availability"]["summary"] == {
+        "available": False,
+        "stale": False,
+        "reason": "RuntimeError",
+    }
+    assert body["universe"]["status"] == "no_active_snapshot"
+    assert body["candidate_attention"] == []
+
+
+def test_workbench_disabled_overrides_old_snapshot_without_fabricating_candidates(
+    client, disabled_cfg
+):
+    old_snapshot = {
+        "id": "old-snapshot",
+        "status": "active",
+        "expires_at": "2020-01-01T00:00:00+00:00",
+    }
+    plans = [{"id": "plan-1", "status": "waiting"}]
+    with patch("aletheia.server.routes.universe.load_config", return_value=disabled_cfg), \
+         patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=old_snapshot), \
+         patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
+         patch("aletheia.server.routes.universe._active_entry_plan_projections", return_value=plans), \
+         patch("aletheia.server.routes.universe.repo.list_active_candidate_attention", return_value=[]):
+        response = client.get("/api/universe/workbench")
+
+    body = response.json()
+    assert body["universe"]["status"] == "disabled"
+    assert body["availability"]["universe"]["stale"] is True
+    assert body["universe"]["fallback_instruments"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    assert body["candidate_attention"] == []
+    assert body["entry_plans"] == plans
+
+
+def test_candidate_alias_and_exact_trade_plan_filter(client, monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.server.routes.universe.get_member",
+        lambda candidate_id: {"member": {"id": candidate_id}},
+    )
+    attention = {
+        "id": "generation-1",
+        "attention_status": "terminal",
+        "attention_terminal_reason": "entry_plan_created",
+    }
+    monkeypatch.setattr(
+        "aletheia.server.routes.universe.repo.get_candidate_planning_for_candidate",
+        lambda candidate_id: attention if candidate_id == "candidate-1" else None,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "aletheia.server.routes.data.repo.list_orders",
+        lambda **kwargs: calls.append(kwargs) or [],
+    )
+
+    candidate = client.get("/api/universe/candidates/candidate-1")
+    trades = client.get("/api/trades?entry_plan_id=plan-1")
+
+    assert candidate.json()["member"]["id"] == "candidate-1"
+    assert candidate.json()["attention"] == attention
+    assert trades.status_code == 200
+    assert calls == [{"entry_plan_id": "plan-1"}]
 
 
 def test_refresh_when_disabled(client, disabled_cfg):
@@ -162,6 +273,7 @@ def test_get_member_found(client):
     assert body["member"]["symbol"] == "BTC/USDT"
     assert body["member"]["setup_state"] is None
     assert body["features"]["rsi_14"] == 55.0
+    assert body["entry_plans"] == []
     assert len(body["opportunities"]) == 1
 
 

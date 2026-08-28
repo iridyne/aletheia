@@ -14,6 +14,7 @@ def _record_ttl_decision(
 ) -> None:
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     ttl_sec = int((filter_version_params or {}).get("ttl_sec", 1800))
     expires_at = now - timedelta(seconds=lateness_sec)
@@ -43,9 +44,9 @@ def _record_ttl_decision(
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=?, min_tradable_edge_pct=0.05, "
         "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
-        "cost_model_version='test-v1' "
+        "cost_model_version=? "
         "WHERE outcome_candidate_key=? AND horizon='1h'",
-        (net_1h + 0.2, 100.0 + net_1h + 0.2, net_1h, key),
+        (net_1h + 0.2, 100.0 + net_1h + 0.2, net_1h, COST_MODEL_VERSION, key),
     )
 
 
@@ -54,6 +55,7 @@ def _record_confidence_decision(
 ) -> None:
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     record_filter_decision(
         candidate_key=key,
@@ -78,9 +80,9 @@ def _record_confidence_decision(
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=?, min_tradable_edge_pct=0.05, "
         "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
-        "cost_model_version='test-v1' "
+        "cost_model_version=? "
         "WHERE outcome_candidate_key=? AND horizon='4h'",
-        (net_4h + 0.2, 100.0 + net_4h + 0.2, net_4h, key),
+        (net_4h + 0.2, 100.0 + net_4h + 0.2, net_4h, COST_MODEL_VERSION, key),
     )
 
 

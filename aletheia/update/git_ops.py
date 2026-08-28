@@ -195,6 +195,11 @@ def changed_files(old: str, new: str) -> list[str]:
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
 
 
+def tree_hash(commit: str, path: str) -> str:
+    r = _git("rev-parse", f"{commit}:{path}")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 
 
 def pull(branch: str = "master") -> dict:

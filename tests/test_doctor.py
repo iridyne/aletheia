@@ -448,6 +448,46 @@ def test_doctor_reports_filter_evidence_registration(tmp_path, monkeypatch):
     assert "outcome_candidates=1/1" in check.detail
 
 
+def test_filter_evidence_net_complete_requires_temporal_validity(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    record_filter_decision(
+        candidate_key="opportunity:doctor-temporal",
+        candidate_kind="opportunity",
+        filter_name="family_ttl",
+        stage="paper_ranker",
+        decision="passed",
+        reason_code="universe_member_fresh",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="spot",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', entry_ts=?, due_at=?, "
+        "settled_at='2999-01-01T00:00:00+00:00', exit_price_usd=101.2, "
+        "directional_return_pct=1.2, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+        "net_return_pct=1.0, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='candidate-net-v1'",
+        (_iso_ago(120), _iso_ago(60)),
+    )
+    report = dx.Report(generated_at="t")
+
+    dx._probe_filter_evidence(report)
+
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+    assert "settled=4" in check.detail
+    assert "net_complete=0" in check.detail
+    assert "temporal_invalid_settled=4" in check.detail
+
+
 def test_recent_failures_reads_agent_runs_using_current_columns(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
@@ -511,6 +551,96 @@ def test_recent_failures_excludes_completed_runs_with_empty_error_lists(tmp_path
     assert failures[0]["agent_name"] == "market_observer"
     assert failures[0]["status"] == "stale"
     assert failures[0]["error"] == "startup reconciled incomplete run"
+
+
+def test_recent_failures_filters_active_rows_before_limit(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import AgentRun
+    from aletheia.storage.repositories import insert_agent_run
+
+    active_statuses = ["queued", "running", "waiting_retry", "cancel_requested"]
+    for index in range(20):
+        insert_agent_run(
+            AgentRun(
+                id=f"active-{index}",
+                agent_name=f"active_{index}",
+                trigger_type="manual",
+                permission_mode="Observe",
+                status=active_statuses[index % len(active_statuses)],
+                started_at=_iso_ago(index + 1),
+                errors="[]",
+            )
+        )
+    for index, status in enumerate(["failed", "error", "stale", "timed_out"]):
+        insert_agent_run(
+            AgentRun(
+                id=f"failure-{status}",
+                agent_name=f"failed_{status}",
+                trigger_type="scheduled",
+                permission_mode="Observe",
+                status=status,
+                started_at=_iso_ago(50 + index),
+                ended_at=_iso_ago(49 + index),
+                errors=f'["{status} detail"]',
+            )
+        )
+    insert_agent_run(
+        AgentRun(
+            id="completed-with-errors",
+            agent_name="completed_with_errors",
+            trigger_type="scheduled",
+            permission_mode="Observe",
+            status="completed",
+            started_at=_iso_ago(60),
+            ended_at=_iso_ago(59),
+            errors='["tool warning"]',
+        )
+    )
+
+    failures = dx._recent_failures(limit=5)
+
+    assert {row["id"] for row in failures} == {
+        "failure-failed",
+        "failure-error",
+        "failure-stale",
+        "failure-timed_out",
+        "completed-with-errors",
+    }
+    assert {row["status"] for row in failures}.isdisjoint(active_statuses)
+    assert {row["error"] for row in failures} == {
+        "failed detail",
+        "error detail",
+        "stale detail",
+        "timed_out detail",
+        "tool warning",
+    }
+
+
+def test_human_deep_diagnostics_prints_only_corrected_recent_failures(capsys):
+    from aletheia.cli.doctor_cmd import _print_deep_diagnostics
+
+    _print_deep_diagnostics(
+        {
+            "attention": [],
+            "logs": {},
+            "recent_failures": [
+                {
+                    "agent_name": "paper_trader",
+                    "status": "failed",
+                    "started_at": "2026-08-26T00:00:00+00:00",
+                    "finished_at": "2026-08-26T00:01:00+00:00",
+                    "error": "provider timeout",
+                }
+            ],
+            "trading": {},
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Recent failed agent runs:" in output
+    assert "paper_trader failed" in output
+    assert "queued" not in output
+    assert "running" not in output
 
 
 def _seed_pending_filter_outcomes(*, count: int, due_at: str) -> None:
@@ -895,6 +1025,39 @@ def test_doctor_json_fix_bundle_remains_machine_readable_after_start_exit(tmp_pa
     assert payload["fix_actions"] == bundle["fix_actions"]
     assert payload["fix_actions"][0]["status"] == "failed"
     assert payload["fix_actions"][0]["reason"] == "gateway_start_exited"
+
+
+def test_doctor_read_paths_do_not_persist_config_or_create_missing_db(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite_store
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    loader._invalidate_config_cache()
+    sqlite_store.reset_db()
+    sqlite_store._db_conn = None
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
+    before = config_path.read_bytes()
+    observed = []
+
+    def probe(_report):
+        loader.load_config()
+        try:
+            sqlite_store.get_db()
+        except FileNotFoundError:
+            observed.append("missing")
+
+    monkeypatch.setattr(dx, "_CONTENT_PROBES", (probe,))
+    dx.build_content_report()
+
+    assert observed == ["missing"]
+    assert config_path.read_bytes() == before
+    assert not (tmp_path / "app.db").exists()
+    assert not (tmp_path / "app.db-wal").exists()
+    assert not (tmp_path / "app.db-shm").exists()
 
 
 # --- end-to-end: probes must never raise, even on a fresh/empty environment ---

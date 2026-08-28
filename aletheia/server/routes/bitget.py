@@ -4,6 +4,8 @@ Credentials are write-only over the API: POST accepts api_key/secret,
 GET only reports configured + last-4. Raw secrets are never returned.
 """
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -404,32 +406,35 @@ async def uta_state():
     Never blocks on a network call.
     """
     from aletheia.config.loader import load_config
-    from aletheia.portfolio.exchange_sync import (
-        get_unified_cached_state, get_cached_state, status_for
-    )
+    from aletheia.portfolio.exchange_sync import get_unified_cached_state, get_cached_state, status_for
 
-    unified = get_unified_cached_state()
+    unified = await asyncio.to_thread(get_unified_cached_state)
     if unified is not None:
-        age = unified.get("age_seconds")
-        sync_status = "ok" if (age is not None and age <= 600) else "stale"
+        sync_status = status_for(unified)
         return {**unified, "sync_status": sync_status}
 
     # Fallback is valid only for the Bitget demo account that owns this legacy
     # cache.  Never present it as the selected OKX/Binance account.
-    if load_config().exchange.paper_execution_mode != "bitget_demo":
+    cfg = load_config()
+    if (
+        cfg.exchange.paper_execution_mode != "bitget_demo"
+        or cfg.exchange.uta_read_boundary_for("bitget_demo") == "uta_v1"
+    ):
         return {
-            "total_equity_usdt": 0,
-            "total_available_usdt": 0,
-            "total_unrealized_pnl": 0,
+            "total_equity_usdt": None,
+            "total_available_usdt": None,
+            "total_unrealized_pnl": None,
             "accounts": [],
             "positions": [],
             "errors": [],
+            "connected_brokers": [],
             "fetched_at": None,
             "sync_status": "unconfigured",
+            "sync_complete": False,
         }
 
     # Fallback: wrap the Bitget-only cache in the unified shape
-    bitget = get_cached_state()
+    bitget = await asyncio.to_thread(get_cached_state)
     if bitget is not None:
         sync_status = status_for(bitget)
         return {
@@ -438,7 +443,7 @@ async def uta_state():
             "total_unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
             "accounts": [{
                 "broker_id": "bitget_demo",
-                "bitget_profile": load_config().exchange.bitget_profile,
+                "bitget_profile": cfg.exchange.bitget_profile,
                 "display_name": "Bitget Demo",
                 "equity_usdt": bitget.get("equity_usdt", 0),
                 "available_usdt": bitget.get("available_usdt", 0),
@@ -448,17 +453,21 @@ async def uta_state():
             }],
             "positions": bitget.get("positions", []),
             "errors": [],
+            "connected_brokers": ["bitget_demo"] if sync_status == "ok" else [],
             "fetched_at": bitget.get("fetched_at", ""),
             "sync_status": sync_status,
+            "sync_complete": sync_status == "ok",
         }
 
     return {
-        "total_equity_usdt": 0,
-        "total_available_usdt": 0,
-        "total_unrealized_pnl": 0,
+        "total_equity_usdt": None,
+        "total_available_usdt": None,
+        "total_unrealized_pnl": None,
         "accounts": [],
         "positions": [],
         "errors": [],
+        "connected_brokers": [],
         "fetched_at": None,
         "sync_status": "unconfigured",
+        "sync_complete": False,
     }

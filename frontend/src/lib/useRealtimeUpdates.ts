@@ -40,8 +40,7 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   opportunities: [
     ['opportunities'],
     ['opportunity-funnel'],
-    // Blotter's Candidates panel + status token strip + Overview summary
-    // strip all read the fast /current-snapshot endpoint. Without this,
+    // Legacy Opportunity views read the fast /current-snapshot endpoint. Without this,
     // WS-pushed opportunity changes would only reach them via the 30 s
     // refetch poll (2026-07-18).
     ['opportunity-funnel-snapshot'],
@@ -106,7 +105,19 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   // ── Universe ──────────────────────────────────────────────────────────────
   universe_snaps: [
     ['universe-current'],
+    ['entry-workbench'],
     ['universe-calibration'],
+  ],
+  candidate_planning: [
+    ['entry-workbench'],
+    ['planning-history'],
+    ['ui-overview-bootstrap'],
+  ],
+  entry_plans: [
+    ['entry-workbench'],
+    ['entry-plan'],
+    ['planning-history'],
+    ['ui-overview-bootstrap'],
   ],
 }
 

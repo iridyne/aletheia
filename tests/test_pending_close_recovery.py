@@ -37,7 +37,7 @@ def _position(**kwargs) -> Position:
 
 @pytest.fixture(autouse=True)
 def _skip_uta_history(monkeypatch):
-    monkeypatch.setattr(pcr, "_uta_history_lookup", lambda order: pcr._HISTORY_SKIP)
+    monkeypatch.setattr(pcr, "_uta_history_lookup", lambda order: None)
 
 
 def test_xrp_stale_submitted_close_released_when_absent_on_exchange(monkeypatch):
@@ -194,6 +194,99 @@ def test_absent_unfilled_close_released_after_ack_lag(monkeypatch):
     stored_position = repo._select_one("positions", "pos-ack-lost")
     assert stored_position["pending_close_order_id"] is None
     assert stored_position["pending_close_status"] is None
+
+
+@pytest.mark.parametrize("history_status", ("accepted", "open", "partially_filled", "unknown"))
+def test_exact_nonterminal_close_state_keeps_claim(monkeypatch, history_status):
+    order_id = f"close-nonterminal-{history_status}"
+    position_id = f"pos-nonterminal-{history_status}"
+    _seed_order(
+        Order(
+            id=order_id,
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id=f"ex-{history_status}",
+            created_at=_iso(1),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id=position_id,
+            pending_close_order_id=order_id,
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(1),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr,
+        "_uta_history_lookup",
+        lambda order: {"orderStatus": history_status, "cancelReason": ""},
+    )
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert repo.get_order(order_id)["status"] == "submitted"
+    stored_position = repo.get_position(position_id)
+    assert stored_position["pending_close_order_id"] == order_id
+    assert stored_position["pending_close_status"] == "submitted"
+
+
+def test_exact_terminal_close_state_can_release(monkeypatch):
+    order_id = "close-terminal-canceled"
+    position_id = "pos-terminal-canceled"
+    _seed_order(
+        Order(
+            id=order_id,
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id="ex-terminal-canceled",
+            created_at=_iso(1),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id=position_id,
+            pending_close_order_id=order_id,
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(1),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    monkeypatch.setattr(
+        pcr,
+        "_uta_history_lookup",
+        lambda order: {"orderStatus": "canceled", "cancelReason": ""},
+    )
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 1
+    assert repo.get_order(order_id)["status"] == "cancelled"
+    assert repo.get_position(position_id)["pending_close_order_id"] is None
 
 
 def test_absent_recovery_collects_exchange_evidence_outside_writer_lock(monkeypatch):

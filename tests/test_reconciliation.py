@@ -30,16 +30,26 @@ def setup_env(tmp_path, monkeypatch):
 
 
 def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
-    from aletheia.exchanges.bitget import client as bg
+    from aletheia.execution import reconciliation as recon
 
     async def fake_open_orders(self, market_type="spot"):
         return [{"orderId": oid} for oid in open_ids]
 
-    async def fake_fills(self, symbol=None, market_type="spot"):
+    async def fake_fills(self, symbol=None, market_type="spot", start_at=None):
         return list(fill_rows)
 
-    monkeypatch.setattr(bg.BitgetClient, "get_open_orders", fake_open_orders)
-    monkeypatch.setattr(bg.BitgetClient, "get_fills", fake_fills)
+    async def fake_order_fills(self, **_kwargs):
+        return list(fill_rows)
+
+    monkeypatch.setattr(
+        recon._UTAReconciliationProjection, "get_open_orders", fake_open_orders
+    )
+    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_fills", fake_fills)
+    monkeypatch.setattr(
+        recon._UTAReconciliationProjection,
+        "get_order_fills",
+        fake_order_fills,
+    )
 
 
 def test_submitted_order_no_longer_open_marked_filled(tmp_path, monkeypatch):

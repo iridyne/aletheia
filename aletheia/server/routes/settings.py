@@ -688,6 +688,7 @@ class ExchangeMarketsRequest(SettingsRequest):
     usdt_futures: bool
     paper_execution_mode: Optional[str] = None
     bitget_profile: Optional[str] = None
+    uta_read_boundary: Optional[Literal["legacy", "shadow_read", "uta_v1"]] = None
     confirm_exchange_divergence: bool = False
 
 
@@ -719,6 +720,30 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
     # Pre-validate outside the mutation lock to fail fast
     cfg_check = load_config()
     next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
+    if req.uta_read_boundary == "uta_v1":
+        from aletheia.trust.uta_qualification import uta_profile_qualified
+
+        qualified, qualification_reason = uta_profile_qualified(
+            next_paper_mode, cfg_check
+        )
+        if not qualified:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "uta_profile_not_qualified",
+                    "message": "UTA v1 activation requires persisted qualification evidence.",
+                    "reason": qualification_reason,
+                },
+            )
+    if req.uta_read_boundary is not None and next_paper_mode not in {
+        "binance_testnet",
+        "okx_demo",
+        "bitget_demo",
+    }:
+        raise HTTPException(
+            400,
+            "uta_read_boundary is supported only for Binance testnet, OKX demo, and Bitget demo",
+        )
     _reject_live_identity_change(
         cfg_check,
         changed=(req.paper_execution_mode is not None and next_paper_mode != cfg_check.exchange.paper_execution_mode),
@@ -743,7 +768,15 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         if req.paper_execution_mode is not None:
             cfg.exchange.paper_execution_mode = req.paper_execution_mode
         if req.bitget_profile is not None:
+            if req.bitget_profile != cfg.exchange.bitget_profile:
+                generations = dict(cfg.exchange.uta_account_config_generations)
+                generations["bitget_demo"] = generations.get("bitget_demo", 0) + 1
+                cfg.exchange.uta_account_config_generations = generations
             cfg.exchange.bitget_profile = req.bitget_profile
+        if req.uta_read_boundary is not None:
+            boundaries = dict(cfg.exchange.uta_read_boundaries)
+            boundaries[next_paper_mode] = req.uta_read_boundary
+            cfg.exchange.uta_read_boundaries = boundaries
         changed = old != cfg.exchange.model_dump(mode="json")
         return True
 
@@ -2427,6 +2460,8 @@ class UniverseConfigUpdate(SettingsRequest):
     explore_ratio: Optional[float] = None
     snapshot_ttl_enabled: Optional[bool] = None
     snapshot_ttl_hours: Optional[float] = None
+    entry_ttl_sec: Optional[int] = None
+    candidate_max_continuous_age_sec: Optional[int] = None
     blacklist: Optional[list[str]] = None
     fallback_symbols: Optional[list[str]] = None
     market_type: Optional[str] = None
@@ -2443,6 +2478,8 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "min_depth_10bps_usd": (1_000, 10_000_000),
     "explore_ratio": (0.0, 0.5),
     "snapshot_ttl_hours": (1, 72),
+    "entry_ttl_sec": (300, 3600),
+    "candidate_max_continuous_age_sec": (300, 86_400),
 }
 
 
@@ -2452,6 +2489,18 @@ def update_universe_config(req: UniverseConfigUpdate):
     cfg = load_config()
     old = cfg.universe.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
+    next_soft = int(updates.get("entry_ttl_sec", old["entry_ttl_sec"]))
+    next_hard = int(
+        updates.get(
+            "candidate_max_continuous_age_sec",
+            old["candidate_max_continuous_age_sec"],
+        )
+    )
+    if next_hard < next_soft:
+        raise HTTPException(
+            400,
+            "candidate_max_continuous_age_sec must be >= entry_ttl_sec",
+        )
 
     _VALID_MARKET_TYPES = {"crypto", "stocks", "mixed"}
     for field, value in updates.items():

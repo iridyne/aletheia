@@ -286,6 +286,14 @@ export interface components {
             preferred_market_type: string;
             /** Symbol List */
             symbol_list?: string[];
+            /** Uta Account Config Generations */
+            uta_account_config_generations?: {
+                [key: string]: number;
+            };
+            /** Uta Read Boundaries */
+            uta_read_boundaries?: {
+                [key: string]: "legacy" | "shadow_read" | "uta_v1";
+            };
         };
         /**
          * FastTriggerConfig
@@ -2324,6 +2332,11 @@ export interface components {
         UniverseConfig: {
             /** Blacklist */
             blacklist?: string[];
+            /**
+             * Candidate Max Continuous Age Sec
+             * @default 3600
+             */
+            candidate_max_continuous_age_sec: number;
             /**
              * Core Pool Size
              * @default 10

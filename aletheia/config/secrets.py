@@ -1,6 +1,7 @@
 """Secrets handling: OS keyring first, encrypted file fallback. Never logs secrets."""
 
 import os
+import stat as _stat
 import threading
 import time
 from pathlib import Path
@@ -73,6 +74,8 @@ def _release_file_lock(fd: "int | None") -> None:
         os.close(fd)
 
 _SERVICE_NAME = "aletheia-trading-os"
+_CREDENTIAL_GENERATIONS_KEY = "__aletheia_exchange_credential_generations__"
+_EXCHANGE_CREDENTIAL_FIELDS = {"api_key", "api_secret", "passphrase"}
 
 # These fragments are matched after key names are case/separator-normalized,
 # so ``api_key``, ``ApiKey``, and ``api-key`` share one trust-boundary rule.
@@ -102,6 +105,57 @@ def is_secret_key(key: object) -> bool:
     return any(fragment in normalized for fragment in SECRET_KEY_FRAGMENTS)
 
 
+def _exchange_credential_scope(key: str) -> str | None:
+    parts = key.split(".")
+    if (
+        len(parts) == 3
+        and parts[0] in {"binance", "okx", "bitget"}
+        and parts[1] in {"demo", "testnet", "live"}
+        and parts[2] in _EXCHANGE_CREDENTIAL_FIELDS
+    ):
+        return ".".join(parts[:2])
+    return None
+
+
+def _advance_credential_generation(data: dict, key: str) -> None:
+    scope = _exchange_credential_scope(key)
+    if scope is None:
+        return
+    generations = data.get(_CREDENTIAL_GENERATIONS_KEY)
+    if generations is None:
+        generations = {}
+    if not isinstance(generations, dict):
+        raise RuntimeError("invalid exchange credential generation metadata")
+    previous = generations.get(scope, 0)
+    if isinstance(previous, bool) or not isinstance(previous, int) or previous < 0:
+        raise RuntimeError("invalid exchange credential generation metadata")
+    generations[scope] = previous + 1
+    data[_CREDENTIAL_GENERATIONS_KEY] = generations
+
+
+def get_credential_generation(scope: str) -> int:
+    """Return the durable non-secret generation for one venue environment."""
+    if is_preview_mode():
+        return 0
+    path = _fallback_path()
+    _ensure_private_file(path)
+    if not path.exists():
+        return 0
+    try:
+        import json
+
+        data = json.loads(_get_fernet().decrypt(path.read_bytes()).decode())
+    except Exception as exc:
+        raise RuntimeError("failed to read exchange credential generation") from exc
+    generations = data.get(_CREDENTIAL_GENERATIONS_KEY, {})
+    if not isinstance(generations, dict):
+        raise RuntimeError("invalid exchange credential generation metadata")
+    value = generations.get(scope, 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RuntimeError("invalid exchange credential generation metadata")
+    return value
+
+
 class PreviewSecretAccessError(RuntimeError):
     """Raised when an isolated preview tries to persist a credential."""
 
@@ -117,6 +171,51 @@ def _get_keyring():
 
 def _fallback_path() -> Path:
     return get_data_dir() / "secrets.enc"
+
+
+def _ensure_private_file(path: Path) -> None:
+    """Reject links/foreign owners and tighten POSIX secret-file permissions."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if _stat.S_ISLNK(info.st_mode):
+        raise RuntimeError(f"secret file must not be a symlink: {path.name}")
+    if not _stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"secret file must be regular: {path.name}")
+    getuid = getattr(os, "getuid", None)
+    if getuid is not None and info.st_uid != getuid():
+        raise RuntimeError(f"secret file has unexpected owner: {path.name}")
+    try:
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"cannot restrict secret file permissions: {path.name}") from exc
+    if os.name != "nt" and path.stat().st_mode & 0o077:
+        raise RuntimeError(f"secret file permissions are too broad: {path.name}")
+
+
+def _write_private_bytes(path: Path, data: bytes, *, exclusive: bool = False) -> None:
+    _ensure_private_file(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if exclusive:
+        flags |= os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o600)
+    try:
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+    except BaseException:
+        # fdopen owns the descriptor after entering the context; this close is
+        # only for errors raised before that handoff.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    _ensure_private_file(path)
 
 
 def set_secret(key: str, value: str) -> None:
@@ -142,6 +241,9 @@ def get_secret(key: str) -> str | None:
     """Retrieve a secret. Returns None if not found."""
     if is_preview_mode():
         return None
+    value = _file_get(key)
+    if value is not None:
+        return value
     kr = _get_keyring()
     if kr:
         try:
@@ -150,7 +252,7 @@ def get_secret(key: str) -> str | None:
                 return value
         except Exception:
             pass
-    return _file_get(key)
+    return None
 
 
 def delete_secret(key: str) -> None:
@@ -170,7 +272,7 @@ def delete_secret(key: str) -> None:
             existing = kr.get_password(_SERVICE_NAME, key)
         except Exception as exc:
             raise RuntimeError("failed to inspect secret in OS keyring") from exc
-    _file_delete(key)
+    _file_delete(key, force_generation=existing is not None)
     if kr and existing is not None:
         try:
             kr.delete_password(_SERVICE_NAME, key)
@@ -181,14 +283,13 @@ def delete_secret(key: str) -> None:
 def _get_fernet():
     from cryptography.fernet import Fernet
     key_path = get_data_dir() / ".secret.key"
-    if not key_path.exists():
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            # Exclusive creation so only one concurrent first-start process wins.
-            with open(key_path, "xb") as f:
-                f.write(Fernet.generate_key())
-        except FileExistsError:
-            pass  # Another process created the key first; read it below.
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Exclusive creation so only one concurrent first-start process wins.
+        _write_private_bytes(key_path, Fernet.generate_key(), exclusive=True)
+    except FileExistsError:
+        pass  # Another process created the key first; read it below.
+    _ensure_private_file(key_path)
     return Fernet(key_path.read_bytes())
 
 
@@ -199,6 +300,7 @@ def _file_set(key: str, value: str) -> None:
         try:
             fernet = _get_fernet()
             path = _fallback_path()
+            _ensure_private_file(path)
             data: dict = {}
             if path.exists():
                 try:
@@ -206,10 +308,12 @@ def _file_set(key: str, value: str) -> None:
                 except Exception as exc:
                     raise RuntimeError("failed to read encrypted secret store") from exc
             data[key] = value
+            _advance_credential_generation(data, key)
             tmp = path.with_name(path.name + ".tmp")
             try:
-                tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+                _write_private_bytes(tmp, fernet.encrypt(json.dumps(data).encode()))
                 tmp.replace(path)
+                _ensure_private_file(path)
             finally:
                 tmp.unlink(missing_ok=True)
         finally:
@@ -219,6 +323,7 @@ def _file_set(key: str, value: str) -> None:
 def _file_get(key: str) -> str | None:
     import json
     path = _fallback_path()
+    _ensure_private_file(path)
     if not path.exists():
         return None
     fernet = _get_fernet()
@@ -229,28 +334,32 @@ def _file_get(key: str) -> str | None:
         return None
 
 
-def _file_delete(key: str) -> None:
+def _file_delete(key: str, *, force_generation: bool = False) -> None:
     import json
     path = _fallback_path()
-    if not path.exists():
+    _ensure_private_file(path)
+    if not path.exists() and not force_generation:
         return
     with _write_lock:
         fd = _acquire_file_lock()
         try:
             fernet = _get_fernet()
-            if not path.exists():
-                return  # re-check under lock
-            try:
-                data = json.loads(fernet.decrypt(path.read_bytes()).decode())
-            except Exception as exc:
-                raise RuntimeError("failed to read encrypted secret store") from exc
-            if key not in data:
+            data = {}
+            if path.exists():
+                try:
+                    data = json.loads(fernet.decrypt(path.read_bytes()).decode())
+                except Exception as exc:
+                    raise RuntimeError("failed to read encrypted secret store") from exc
+            existed = key in data
+            if not existed and not force_generation:
                 return
-            del data[key]
+            data.pop(key, None)
+            _advance_credential_generation(data, key)
             tmp = path.with_name(path.name + ".tmp")
             try:
-                tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+                _write_private_bytes(tmp, fernet.encrypt(json.dumps(data).encode()))
                 tmp.replace(path)
+                _ensure_private_file(path)
             finally:
                 tmp.unlink(missing_ok=True)
         finally:
@@ -314,8 +423,9 @@ def migrate_keyring_to_file() -> int:
     for key, value in pairs:
         if not value:
             continue
-        # Only write if the file store doesn't already have this value.
-        if _file_get(key) != value:
+        # The encrypted file is the read authority. Migration only fills a
+        # missing value; a stale keyring copy must never overwrite it.
+        if _file_get(key) is None:
             _file_set(key, value)
             migrated += 1
     return migrated

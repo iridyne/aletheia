@@ -47,6 +47,24 @@ _ROUTES = _ROOT / "aletheia" / "server" / "routes"
 _APP_PY = _ROOT / "aletheia" / "server" / "app.py"
 
 
+@spec_claim(
+    SpecClaim(
+        "API-S12",
+        "api_reference",
+        "§Universe Pipeline truthful state",
+        "L2a",
+        "Workbench Universe status is config-first, exposes stale snapshots, and only "
+        "uses fallback instruments outside active current state.",
+        status="implemented",
+    ),
+)
+def test_workbench_universe_state_is_config_first_and_stale_aware():
+    source = (_ROUTES / "universe.py").read_text(encoding="utf-8")
+    assert '"disabled"\n            if not cfg.universe.enabled' in source
+    assert 'else "stale_snapshot"' in source
+    assert 'if status != "active" else []' in source
+
+
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
 # ---------------------------------------------------------------------------

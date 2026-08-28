@@ -173,6 +173,7 @@ class LearningJobHealth(BaseModel):
     next_due_at: str | None = None
     input_watermark: str | None = None
     input_cursor: str | None = None
+    failed_input_watermark: str | None = None
     backlog_count: int = 0
     oldest_backlog_at: str | None = None
     consecutive_failures: int = 0

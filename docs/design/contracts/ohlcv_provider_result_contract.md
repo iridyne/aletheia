@@ -75,9 +75,10 @@ result contract.
 
 ## Executable evidence
 
-- `tests/test_crypto_fallback.py` proves CoinGecko OHLCV and unknown Binance
-  timeframes fail before network I/O, while supported Binance OHLCV and generic
-  unsupported-provider fallback remain functional.
+- `tests/test_crypto_fallback.py` proves CoinGecko OHLCV, unknown Binance
+  timeframes, and Binance Public non-spot instruments fail before network I/O;
+  it also proves the trailing future-close Binance kline remains forming while
+  supported spot OHLCV and generic unsupported-provider fallback remain functional.
 - `tests/test_ohlcv_provider_boundary.py` proves empty fallback and attempt facts.
 - `tests/test_ccxt_provider_async_persistence.py` proves exact observed-venue
   cache identity and confirmed-bar persistence.

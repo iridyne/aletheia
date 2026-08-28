@@ -179,9 +179,12 @@ function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
 function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   const markets = (settings?.exchange as any)?.enabled_markets || { spot: true, usdt_futures: true }
   const serverPaperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
+  const readBoundaries = (settings?.exchange as any)?.uta_read_boundaries || {}
+  const serverReadBoundary = String(readBoundaries[serverPaperMode] || 'legacy')
   const [spot, setSpot] = useState(!!markets.spot)
   const [futures, setFutures] = useState(!!markets.usdt_futures)
   const [paperMode, setPaperMode] = useState(serverPaperMode)
+  const [readBoundary, setReadBoundary] = useState(serverReadBoundary)
   const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -192,12 +195,17 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   const createsDivergence = paperMode !== serverPaperMode
     && executionExchange !== null
     && executionExchange !== dataExchange
+  const selectedServerReadBoundary = String(readBoundaries[paperMode] || 'legacy')
+  const supportsUTARead = ['okx_demo', 'binance_testnet', 'bitget_demo'].includes(paperMode)
 
   const mut = useMutation({
     mutationFn: () => api.setExchangeMarkets({
       spot,
       usdt_futures: futures,
       paper_execution_mode: paperMode,
+      ...(readBoundary !== selectedServerReadBoundary
+        ? { uta_read_boundary: readBoundary as 'legacy' | 'shadow_read' | 'uta_v1' }
+        : {}),
       confirm_exchange_divergence: confirmExchangeDivergence,
     }),
     onSuccess: () => { setConfirmExchangeDivergence(false); setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
@@ -205,7 +213,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   })
 
   const dirty = spot !== !!markets.spot || futures !== !!markets.usdt_futures
-    || paperMode !== serverPaperMode
+    || paperMode !== serverPaperMode || readBoundary !== selectedServerReadBoundary
 
   useSettingsDraftLifecycle({
     id: 'exchange-markets',
@@ -216,6 +224,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
       setSpot(!!markets.spot)
       setFutures(!!markets.usdt_futures)
       setPaperMode(serverPaperMode)
+      setReadBoundary(serverReadBoundary)
       setConfirmExchangeDivergence(false)
     },
   })
@@ -227,7 +236,13 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
         <Toggle checked={futures} persistence="staged" label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
       <Row label="Paper execution mode" hint="Where autonomous paper orders execute. okx_demo = OKX simulated trading (broad coverage); binance_testnet = Binance Futures Testnet (556 pairs); bitget_demo = Bitget demo API (42 pairs); paper_internal = local simulator (no exchange).">
-        <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setConfirmExchangeDivergence(false); setMsg(null) }} className="w-auto">
+        <select value={paperMode} onChange={e => {
+          const nextMode = e.target.value
+          setPaperMode(nextMode)
+          setReadBoundary(String(readBoundaries[nextMode] || 'legacy'))
+          setConfirmExchangeDivergence(false)
+          setMsg(null)
+        }} className="w-auto">
           <option value="okx_demo">OKX Demo</option>
           <option value="binance_testnet">Binance Testnet</option>
           <option value="bitget_demo">Bitget Demo</option>
@@ -247,6 +262,15 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
           </button>
         )}
       </Row>
+      {supportsUTARead && (
+        <Row label="UTA read backend" hint="legacy is the qualified rollback path; shadow compares UTA reads without changing authority. UTA v1 activation remains disabled until this exact account profile is qualified.">
+          <select value={readBoundary} onChange={e => { setReadBoundary(e.target.value); setMsg(null) }} className="w-auto">
+            <option value="legacy">Legacy (authoritative)</option>
+            <option value="shadow_read">UTA shadow read</option>
+            <option value="uta_v1" disabled>UTA v1 (qualification required)</option>
+          </select>
+        </Row>
+      )}
       <SaveMsg msg={msg} />
     </>
   )

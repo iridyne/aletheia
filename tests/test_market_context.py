@@ -456,13 +456,15 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
             "source": "technical-analysis-v1",
             "quality_state": "complete",
             "rendered_chars": 32,
+            "observed_at": "2026-07-19T00:00:00+00:00",
+            "timeframes": ["1h", "4h", "1d"],
         }
         return (
             "BTCUSDT verified snapshot here",
             {
                 "fallback": False,
                 "errors": [],
-                "symbols": {},
+                "symbols": {"BTC/USDT": {"1h": {"rsi_14": 70.0, "atr_pct": 1.0}}},
                 "technical_context": {
                     "adapter_id": "technical-context-v1",
                     "artifacts": [artifact],
@@ -494,6 +496,16 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
         )
         for call in captured_calls
     )
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT input_snapshot FROM filter_decisions "
+        "WHERE filter_name='observer_pre_filter' LIMIT 1"
+    ).fetchone()
+    inputs = json.loads(row["input_snapshot"])
+    assert inputs["technical_context"]["stable_id"] == (
+        "technical-context-v1:bitget:BTC/USDT:spot:abc"
+    )
 
     # Cleanup the in-process step counter.
     from aletheia.agents.helpers import _release_run_counter
@@ -507,6 +519,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     from tests.observer_admission_fixture import admit_observer_instrument
 
     owner = admit_observer_instrument(monkeypatch, mo)
+    technical_id = "technical-context-v1:bitget:BTC/USDT:spot:frozen"
 
     async def fake_llm_structured(*a, **kw):
         return ({
@@ -521,9 +534,28 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
     monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
+    monkeypatch.setattr(mo, "current_inference_call_id", lambda: "llm-call-frozen")
 
     async def fake_builder(symbols, market_type="spot", **kw):
-        return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
+        return (
+            "snapshot",
+            {
+                "fallback": False,
+                "errors": [],
+                "symbols": {"BTC/USDT": {"1h": {"rsi_14": 70.0, "atr_pct": 1.0}}},
+                "technical_context": {
+                    "adapter_id": "technical-context-v1",
+                    "artifacts": [{
+                        "stable_id": technical_id,
+                        "source": "technical-analysis-v1",
+                        "quality_state": "complete",
+                        "rendered_chars": 16,
+                        "observed_at": "2026-07-19T00:00:00+00:00",
+                        "timeframes": ["1h", "4h", "1d"],
+                    }],
+                },
+            },
+        )
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
@@ -546,6 +578,17 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     assert assessment["confidence_score"] == 65
     assert assessment["rationale"] == "Multi-tf agreement on BTC"
     assert len(assessment["key_observations"]) == 2
+    assert assessment["inference_call_id"] == "llm-call-frozen"
+    assert assessment["technical_context"]["source_id"] == technical_id
+    manifest = json.loads(opp["metadata"])["evidence_manifest"]
+    assert manifest["t1"]["technical_context"]["source_id"] == technical_id
+    assert manifest["t1"]["sources"]["technical_context"][0]["stable_id"] == technical_id
+
+    from aletheia.agent_shell.trading_context import _observer_assessment_from_metadata
+
+    rendered_assessment = _observer_assessment_from_metadata(opp["metadata"])
+    assert rendered_assessment["inference_call_id"] == "llm-call-frozen"
+    assert rendered_assessment["technical_context"]["source_id"] == technical_id
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-mo-2")

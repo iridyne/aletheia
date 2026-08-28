@@ -39,6 +39,12 @@ def test_max_drawdown_empty():
     assert max_drawdown([]) == 0.0
 
 
+def test_max_drawdown_counts_loss_before_first_gain():
+    assert max_drawdown(equity_curve([-100.0])) == 100.0
+    assert max_drawdown(equity_curve([-100.0, -50.0])) == 150.0
+    assert max_drawdown(equity_curve([-100.0, 200.0])) == 100.0
+
+
 def test_profit_factor_normal():
     # profits 3+2=5, losses 1+4=5 => factor 1.0
     assert math.isclose(profit_factor([3.0, -1.0, 2.0, -4.0]), 1.0)

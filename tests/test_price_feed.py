@@ -412,6 +412,37 @@ class TestRefreshWatchedPrices:
         "aletheia.data.price_feed.get_watched_instruments",
         return_value=[
             InstrumentId.from_parts("binance", "BTC/USDT", "spot"),
+            InstrumentId.from_parts("binance", "BTC/USDT", "perp"),
+        ],
+    )
+    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.config.loader.load_config")
+    def test_same_symbol_spot_perp_basis_does_not_trigger_price_event(
+        self, mock_cfg, mock_provider_fn, mock_symbols
+    ):
+        cfg = MagicMock()
+        cfg.event_triggers.enabled = True
+        cfg.event_triggers.price_move_pct_threshold = 5.0
+        cfg.event_triggers.volume_surge_multiplier = 2.0
+        mock_cfg.return_value = cfg
+
+        spot = MagicMock(last_price=100.0, volume_24h=100.0, provider="binance")
+        perp = MagicMock(last_price=120.0, volume_24h=300.0, provider="binance")
+        provider = AsyncMock()
+        provider.get_ticker = AsyncMock(side_effect=[spot, perp, spot, perp])
+        provider.close = AsyncMock()
+        mock_provider_fn.return_value = provider
+
+        with patch("aletheia.data.price_feed._check_event_triggers") as mock_events:
+            asyncio.run(refresh_watched_prices())
+            asyncio.run(refresh_watched_prices())
+
+        assert [call.args[1] for call in mock_events.call_args_list] == [0.0, 0.0]
+
+    @patch(
+        "aletheia.data.price_feed.get_watched_instruments",
+        return_value=[
+            InstrumentId.from_parts("binance", "BTC/USDT", "spot"),
             InstrumentId.from_parts("binance", "ETH/USDT", "spot"),
         ],
     )

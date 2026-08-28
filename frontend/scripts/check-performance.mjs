@@ -1,4 +1,3 @@
-import { brotliCompressSync, constants, gzipSync } from 'node:zlib'
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -9,7 +8,6 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 const entry = manifest['index.html']
 const failures = []
 const forbidden = ['recharts', 'lightweight-charts', 'cmdk']
-const brotliOptions = { params: { [constants.BROTLI_PARAM_QUALITY]: 5 } }
 
 if (!html.includes('id="boot-skeleton"')) failures.push('generated index.html is missing #boot-skeleton')
 if (!entry?.file) failures.push('manifest is missing index.html entry')
@@ -43,11 +41,15 @@ for (const file of closure) {
 
 const entryJs = [...closure].filter(file => file.endsWith('.js'))
 const entryCss = [...new Set([...closure, ...(entry?.css || [])])].filter(file => file.endsWith('.css'))
+const staticFiles = [join(output, 'index.html'), manifestPath, ...readdirSync(join(output, 'assets')).map(file => join(output, 'assets', file))]
+for (const path of staticFiles) {
+  if (!/\.(html|js|css|json|svg)$/.test(path) || statSync(path).size < 256) continue
+  if (!existsSync(`${path}.br`) || !existsSync(`${path}.gz`)) failures.push(`missing compression sidecar for ${path}`)
+}
 const size = (files, codec) => files.reduce((total, file) => {
-  const source = readFileSync(join(output, file))
-  if (codec === 'raw') return total + source.length
-  if (codec === 'gzip') return total + gzipSync(source, { level: 6, mtime: 0 }).length
-  return total + brotliCompressSync(source, brotliOptions).length
+  const raw = join(output, file)
+  const path = raw + (codec === 'raw' ? '' : codec === 'gzip' ? '.gz' : '.br')
+  return total + statSync(existsSync(path) ? path : raw).size
 }, 0)
 const metric = {
   schema_version: 'frontend-performance-v1',
@@ -58,8 +60,8 @@ const metric = {
   critical_css: { raw: size(entryCss, 'raw'), gzip: size(entryCss, 'gzip'), br: size(entryCss, 'br'), files: entryCss },
   total_static: {
     html_raw: Buffer.byteLength(html),
-    html_gzip: gzipSync(Buffer.from(html), { level: 6, mtime: 0 }).length,
-    html_br: brotliCompressSync(Buffer.from(html), brotliOptions).length,
+    html_gzip: size(['index.html'], 'gzip'),
+    html_br: size(['index.html'], 'br'),
   },
 }
 metric.total_static.critical_br = metric.total_static.html_br + metric.critical_js.br + metric.critical_css.br
@@ -73,11 +75,6 @@ if (metric.critical_js.br > budgets.critical_js_br) failures.push(`critical JS B
 if (metric.critical_css.br > budgets.critical_css_br) failures.push(`critical CSS Brotli ${metric.critical_css.br} exceeds ${budgets.critical_css_br}`)
 if (metric.total_static.critical_br > budgets.critical_static_br) failures.push(`critical static Brotli ${metric.total_static.critical_br} exceeds ${budgets.critical_static_br}`)
 
-const staticFiles = [join(output, 'index.html'), manifestPath, ...readdirSync(join(output, 'assets')).map(file => join(output, 'assets', file))]
-for (const path of staticFiles) {
-  if (!/\.(html|js|css|json|svg)$/.test(path) || statSync(path).size < 256) continue
-  if (!existsSync(`${path}.br`) || !existsSync(`${path}.gz`)) failures.push(`missing compression sidecar for ${path}`)
-}
 const artifact = { ...metric, budgets }
 writeFileSync(join(output, 'performance.json'), `${JSON.stringify(artifact, null, 2)}\n`)
 

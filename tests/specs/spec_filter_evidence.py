@@ -232,10 +232,21 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         "id": "historical-backlog",
         "outcome_candidate_key": "historical-candidate",
     }
-    current = {
+    current_ufc_1h = {
         **base,
-        "id": "current-ufc",
-        "outcome_candidate_key": "current-ufc-candidate",
+        "id": "current-ufc-1h",
+        "outcome_candidate_key": "current-ufc-1h-candidate",
+        "horizon": "1h",
+    }
+    current_ufc_4h = {
+        **base,
+        "id": "current-ufc-4h",
+        "outcome_candidate_key": "current-ufc-4h-candidate",
+    }
+    current_ranker = {
+        **base,
+        "id": "current-ranker-4h",
+        "outcome_candidate_key": "current-ranker-candidate",
     }
     previous_build = {
         **base,
@@ -256,17 +267,33 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         }
 
     key_queries = []
+    hash_horizons = []
+
+    monkeypatch.setattr(
+        filter_outcome_recorder.repo,
+        "list_open_learning_target_horizons",
+        lambda path_ids: {
+            ("universe_family_calibration", "1h"),
+            ("universe_family_calibration", "4h"),
+            ("ranker_case_score", "4h"),
+        },
+        raising=False,
+    )
 
     def open_learning_keys(path_ids, behavior_contract_hash=None):
         key_queries.append((tuple(path_ids), behavior_contract_hash))
-        return (
-            {"current-ufc-candidate:4h"}
-            if behavior_contract_hash == "current-behavior"
-            else {
-                "current-ufc-candidate:4h",
-                "previous-build-ufc-candidate:4h",
-            }
-        )
+        if behavior_contract_hash == "universe_family_calibration:1h":
+            return {"current-ufc-1h-candidate:1h"}
+        if behavior_contract_hash == "universe_family_calibration:4h":
+            return {"current-ufc-4h-candidate:4h"}
+        if behavior_contract_hash == "ranker_case_score:4h":
+            return {"current-ranker-candidate:4h"}
+        return {
+            "current-ufc-1h-candidate:1h",
+            "current-ufc-4h-candidate:4h",
+            "current-ranker-candidate:4h",
+            "previous-build-ufc-candidate:4h",
+        }
 
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
@@ -277,10 +304,14 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
 
     def pending_for_keys(before_ts, outcome_candidate_keys, limit, deadline=None):
         rows = []
+        if "current-ufc-1h-candidate:1h" in outcome_candidate_keys:
+            rows.append(current_ufc_1h)
+        if "current-ufc-4h-candidate:4h" in outcome_candidate_keys:
+            rows.append(current_ufc_4h)
+        if "current-ranker-candidate:4h" in outcome_candidate_keys:
+            rows.append(current_ranker)
         if "previous-build-ufc-candidate:4h" in outcome_candidate_keys:
             rows.append(previous_build)
-        if "current-ufc-candidate:4h" in outcome_candidate_keys:
-            rows.append(current)
         return rows[:limit], False
 
     monkeypatch.setattr(
@@ -295,7 +326,10 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
     )
     monkeypatch.setattr(
         "aletheia.learning.behavior_contracts.current_behavior_contract_hash",
-        lambda **_kwargs: "current-behavior",
+        lambda **kwargs: hash_horizons.append(
+            (kwargs["path_id"], kwargs["target_horizon"])
+        )
+        or f"{kwargs['path_id']}:{kwargs['target_horizon']}",
     )
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
@@ -334,15 +368,95 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         )
     ) == 3
     assert settled == [
-        "current-ufc",
-        "previous-build-ufc",
-        "historical-backlog",
+        "current-ufc-1h",
+        "current-ufc-4h",
+        "current-ranker-4h",
+    ]
+    assert hash_horizons == [
+        ("ranker_case_score", "4h"),
+        ("universe_family_calibration", "1h"),
+        ("universe_family_calibration", "4h"),
     ]
     assert key_queries == [
-        (("universe_family_calibration",), "current-behavior"),
-        (("ranker_case_score",), "current-behavior"),
+        (("ranker_case_score",), "ranker_case_score:4h"),
+        (("universe_family_calibration",), "universe_family_calibration:1h"),
+        (("universe_family_calibration",), "universe_family_calibration:4h"),
         (("universe_family_calibration", "ranker_case_score"), None),
     ]
+
+
+def test_open_learning_target_horizons_are_distinct_and_current():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    now = "2026-08-22T00:00:00+00:00"
+    db.execute(
+        "INSERT INTO learning_policy_epochs "
+        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
+        "affected_path_ids_json, started_at, ended_at, created_at) "
+        "VALUES (?, ?, ?, '{}', '[]', ?, NULL, ?)",
+        ("epoch-ufc", "decision_policy:universe_family_calibration", "hash-ufc", now, now),
+    )
+    db.execute(
+        "INSERT INTO learning_policy_epochs "
+        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
+        "affected_path_ids_json, started_at, ended_at, created_at) "
+        "VALUES (?, ?, ?, '{}', '[]', ?, NULL, ?)",
+        ("epoch-ranker", "decision_policy:ranker_case_score", "hash-ranker", now, now),
+    )
+    for path_id, horizon in (
+        ("universe_family_calibration", "1h"),
+        ("universe_family_calibration", "4h"),
+        ("ranker_case_score", "4h"),
+    ):
+        suffix = f"{path_id}-{horizon}"
+        db.execute(
+            "INSERT INTO learning_hypotheses "
+            "(hypothesis_id, fingerprint, cohort_id, path_id, overlap_group, "
+            "source_type, scope_json, action_json, consumer, target_horizon, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, 'cohort', ?, 'group', 'source', '{}', '{}', "
+            "'consumer', ?, ?, ?)",
+            (f"hyp-{suffix}", f"fp-{suffix}", path_id, horizon, now, now),
+        )
+        db.execute(
+            "INSERT INTO learning_experiments "
+            "(experiment_id, hypothesis_id, stage, assignment_salt, allocation_pct, "
+            "min_samples_per_arm, min_market_days, primary_metric, status, "
+            "started_at, created_at) "
+            "VALUES (?, ?, 'shadow', 'salt', 0.5, 1, 0, 'net', 'active', ?, ?)",
+            (f"exp-{suffix}", f"hyp-{suffix}", now, now),
+        )
+        db.execute(
+            "INSERT INTO learning_exposures "
+            "(exposure_id, dedup_key, experiment_id, hypothesis_id, assignment, "
+            "consumer, consumer_stage, path_id, overlap_group, candidate_key, "
+            "outcome_candidate_key, outcome_source, outcome_contract_version, "
+            "concurrent_policy_epoch, exposed_at) "
+            "VALUES (?, ?, ?, ?, 'control', 'consumer', 'stage', ?, 'group', "
+            "?, ?, 'fixed_horizon_candidate', 'v1', ?, ?)",
+            (
+                f"exposure-{suffix}",
+                f"dedup-{suffix}",
+                f"exp-{suffix}",
+                f"hyp-{suffix}",
+                path_id,
+                f"candidate-{suffix}",
+                f"candidate-{suffix}:{horizon}",
+                "epoch-ufc" if path_id == "universe_family_calibration" else "epoch-ranker",
+                now,
+            ),
+        )
+    db.commit()
+
+    assert repo.list_open_learning_target_horizons(
+        ("universe_family_calibration", "ranker_case_score")
+    ) == {
+        ("universe_family_calibration", "1h"),
+        ("universe_family_calibration", "4h"),
+        ("ranker_case_score", "4h"),
+    }
 
 
 @spec_claim(
@@ -380,7 +494,8 @@ def test_alpha_attribution_uses_canonical_fixed_horizon_net_outcomes():
     ).read_text(encoding="utf-8")
     assert "JOIN filter_candidate_outcomes fo" in source
     assert "fo.horizon='24h'" in source
-    assert "fo.net_return_pct" in source
+    assert "assess_candidate_outcome" in source
+    assert "as_of_at=as_of_at" in source
     assert "eligible_strategy_outcomes(closed_after=cutoff)" not in source
 
 
@@ -401,7 +516,8 @@ def test_alpha_controls_require_shared_net_outcomes():
         Path(__file__).parents[2] / "aletheia" / "analytics" / "alpha_attribution.py"
     ).read_text(encoding="utf-8")
     assert "outcome_candidate_key" in causal_source
-    assert "SELECT net_return_pct FROM filter_candidate_outcomes" in alpha_source
+    assert "SELECT * FROM filter_candidate_outcomes" in alpha_source
+    assert "assess_candidate_outcome" in alpha_source
 
 
 @spec_claim(

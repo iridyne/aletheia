@@ -482,9 +482,18 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     ).fetchone()[0] == 0
 
     fills_available = True
-    from aletheia.execution.reconciliation import reconcile
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history
 
-    result = reconcile()
+    uta_calls = []
+    patch_private_history(
+        monkeypatch,
+        reconciliation,
+        [_private_close_fill("EXEC-TP-X")],
+        calls=uta_calls,
+    )
+
+    result = reconciliation.reconcile()
     recovered_position = repo._select_one("positions", position.id)
     recovered_order = repo.get_order(close_order["id"])
     recovered_fill = db.execute(
@@ -497,8 +506,12 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     assert recovered_fill["fill_price"] == pytest.approx(59_000.0)
     assert exact_fill_calls == [
         ("EXEC-TP-X", "BTCUSDT", "usdt_futures"),
-        ("EXEC-TP-X", "BTCUSDT", "usdt_futures"),
     ]
+    assert [
+        query.venue_order_id
+        for method, _, query in uta_calls
+        if method == "get_fills" and query.venue_order_id
+    ] == ["EXEC-TP-X"]
 
 
 @spec_claim(

@@ -6,7 +6,11 @@ are consistent across the Analytics tab and Trade Insights panel.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from aletheia.analytics.streaks import summarize_streaks
+from aletheia.analytics.temporal import parse_utc_instant
+
+from aletheia.data.symbols import to_canonical
+from aletheia.analytics.holding_time import holding_hours
 
 # Keep in sync with aletheia/server/routes/analytics.py _ROUND1_START_UTC
 _SINCE_UTC = "2026-06-22"
@@ -59,6 +63,8 @@ def build_trade_insights(*, execution_mode: str | None = None) -> dict:
         "hold_vs_pnl":            _hold_vs_pnl(rows),
         "hour_day_heatmap":       _hour_day_heatmap(rows),
         "trade_frequency":        _trade_frequency(rows),
+        "temporal_unbucketed_count": _time_unbucketed_count(rows),
+        "heatmap_unbucketed_count": _time_unbucketed_count(rows, field="opened_at"),
         "symbol_direction_matrix": _symbol_direction_matrix(rows),
         "hold_duration_buckets":  _hold_duration_buckets(rows),
         # #2061: _r_multiple_distribution returns a dict with a "bins" list plus
@@ -85,25 +91,17 @@ def _pnl_pct(row) -> float:
 
 
 def _hold_hours(row) -> float | None:
-    try:
-        o = datetime.fromisoformat(str(row["opened_at"]).replace("Z", "+00:00"))
-        c = datetime.fromisoformat(str(row["closed_at"]).replace("Z", "+00:00"))
-        if o.tzinfo is None:
-            o = o.replace(tzinfo=timezone.utc)
-        if c.tzinfo is None:
-            c = c.replace(tzinfo=timezone.utc)
-        return max(0.0, (c - o).total_seconds() / 3600.0)
-    except Exception:
-        return None
+    return holding_hours(row.get("opened_at"), row.get("closed_at"))
 
 
 def _fmt_time(iso: str) -> str:
     """Shorten ISO timestamp for chart x-axis labels."""
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.strftime("%m/%d")
-    except Exception:
-        return iso[:10]
+    dt = parse_utc_instant(iso)
+    return dt.strftime("%m/%d") if dt else iso[:10]
+
+
+def _time_unbucketed_count(rows, *, field: str = "closed_at") -> int:
+    return sum(1 for row in rows if parse_utc_instant(row.get(field)) is None)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +144,8 @@ def _by_direction(rows) -> dict:
         d = r["direction"] or "unknown"
         if d not in buckets:
             buckets[d] = {"trade_count": 0, "wins": 0, "total_pnl": 0.0,
-                          "total_pnl_pct": 0.0, "total_hold": 0.0}
+                          "total_pnl_pct": 0.0, "total_hold": 0.0,
+                          "hold_time_available_count": 0}
         b = buckets[d]
         b["trade_count"] += 1
         pnl = r["realized_pnl"] or 0.0
@@ -157,16 +156,20 @@ def _by_direction(rows) -> dict:
         h = _hold_hours(r)
         if h is not None:
             b["total_hold"] += h
+            b["hold_time_available_count"] += 1
 
     result = {}
     for d, b in buckets.items():
         tc = b["trade_count"]
+        hold_count = b["hold_time_available_count"]
         result[d] = {
             "trade_count": tc,
             "win_rate": round(b["wins"] / tc * 100, 1) if tc else 0.0,
             "total_pnl": round(b["total_pnl"], 4),
             "avg_pnl_pct": round(b["total_pnl_pct"] / tc, 2) if tc else 0.0,
-            "avg_hold_hours": round(b["total_hold"] / tc, 1) if tc else 0.0,
+            "avg_hold_hours": round(b["total_hold"] / hold_count, 1) if hold_count else None,
+            "hold_time_available_count": hold_count,
+            "hold_time_unavailable_count": tc - hold_count,
         }
     return result
 
@@ -216,11 +219,10 @@ _DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 def _by_day_of_week(rows) -> list[dict]:
     buckets: dict[int, dict] = {i: {"trade_count": 0, "wins": 0, "total_pnl_pct": 0.0} for i in range(7)}
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00"))
-            dow = dt.weekday()  # 0=Mon
-        except Exception:
+        dt = parse_utc_instant(r.get("closed_at"))
+        if dt is None:
             continue
+        dow = dt.weekday()  # 0=Mon
         b = buckets[dow]
         b["trade_count"] += 1
         pnl = r["realized_pnl"] or 0.0
@@ -244,13 +246,10 @@ def _by_day_of_week(rows) -> list[dict]:
 def _by_hour(rows) -> list[dict]:
     buckets: dict[int, dict] = {h: {"trade_count": 0, "wins": 0, "total_pnl_pct": 0.0} for h in range(24)}
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            hour = dt.hour
-        except Exception:
+        dt = parse_utc_instant(r.get("closed_at"))
+        if dt is None:
             continue
+        hour = dt.hour
         b = buckets[hour]
         b["trade_count"] += 1
         if (r["realized_pnl"] or 0.0) > 0:
@@ -325,43 +324,18 @@ def _by_regime(rows) -> list[dict]:
 
 
 def _streaks(rows) -> dict:
-    max_wins = 0
-    max_losses = 0
-    cur_wins = 0
-    cur_losses = 0
-    overall_wins = 0
-    overall_losses = 0
-
-    for r in rows:
-        pnl = r["realized_pnl"] or 0.0
-        if pnl > 0:
-            overall_wins += 1
-            cur_wins += 1
-            cur_losses = 0
-            max_wins = max(max_wins, cur_wins)
-        else:
-            overall_losses += 1
-            cur_losses += 1
-            cur_wins = 0
-            max_losses = max(max_losses, cur_losses)
-
-    if cur_wins > 0:
-        current_streak = cur_wins
-        current_streak_type = "win"
-    elif cur_losses > 0:
-        current_streak = cur_losses
-        current_streak_type = "loss"
-    else:
-        current_streak = 0
-        current_streak_type = "none"
+    pnls = [r["realized_pnl"] or 0.0 for r in rows]
+    summary = summarize_streaks(pnls)
+    current_streak_type = summary["current_streak_sign"] or "none"
 
     return {
-        "max_consecutive_wins": max_wins,
-        "max_consecutive_losses": max_losses,
-        "current_streak": current_streak,
+        "max_consecutive_wins": summary["max_consecutive_wins"],
+        "max_consecutive_losses": summary["max_consecutive_losses"],
+        "current_streak": summary["current_streak_length"],
         "current_streak_type": current_streak_type,
-        "total_wins": overall_wins,
-        "total_losses": overall_losses,
+        "total_wins": sum(1 for p in pnls if p > 0),
+        "total_losses": sum(1 for p in pnls if p < 0),
+        "total_flats": sum(1 for p in pnls if p == 0),
     }
 
 
@@ -391,13 +365,10 @@ def _hour_day_heatmap(rows) -> list[dict]:
 
     cells: dict[tuple[int, int], list[float]] = defaultdict(list)
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["opened_at"]).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            cells[(dt.weekday(), dt.hour)].append(_pnl_pct(r))
-        except (ValueError, TypeError):
+        dt = parse_utc_instant(r.get("opened_at"))
+        if dt is None:
             continue
+        cells[(dt.weekday(), dt.hour)].append(_pnl_pct(r))
 
     result = []
     for day in range(7):
@@ -415,11 +386,10 @@ def _trade_frequency(rows) -> list[dict]:
 
     by_date: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00"))
-            date_str = dt.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
+        dt = parse_utc_instant(r.get("closed_at"))
+        if dt is None:
             continue
+        date_str = dt.strftime("%Y-%m-%d")
         by_date[date_str].append({
             "pnl_pct": round(_pnl_pct(r), 2),
             "direction": r["direction"] or "unknown",
@@ -430,29 +400,38 @@ def _trade_frequency(rows) -> list[dict]:
     return [{"date": d, "trades": by_date[d]} for d in sorted_dates]
 
 
+def _matrix_market_type(value) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"perp", "futures", "swap"}:
+        return "usdt_futures"
+    return raw or "unknown"
+
+
 def _symbol_direction_matrix(rows) -> list[dict]:
-    """Symbol × Direction win rate matrix."""
+    """Symbol × Market Type × Direction win rate matrix."""
     from collections import defaultdict
 
-    cells: dict[tuple[str, str], list[float]] = defaultdict(list)
+    cells: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for r in rows:
-        sym = r["symbol"] or "unknown"
-        direction = r["direction"] or "unknown"
-        cells[(sym, direction)].append(r["realized_pnl"] or 0.0)
+        raw_symbol = str(r.get("symbol") or "").strip()
+        sym = to_canonical(raw_symbol) if raw_symbol else "unknown"
+        market_type = _matrix_market_type(r.get("market_type"))
+        direction = str(r.get("direction") or "unknown").strip().lower() or "unknown"
+        cells[(sym, market_type, direction)].append(r)
 
     result = []
-    for (sym, direction), pnls in cells.items():
-        tc = len(pnls)
+    for (sym, market_type, direction), cell_rows in cells.items():
+        tc = len(cell_rows)
         if tc < 2:
             continue
+        pnls = [r["realized_pnl"] or 0.0 for r in cell_rows]
         wins = sum(1 for p in pnls if p > 0)
         result.append({
             "symbol": sym,
+            "market_type": market_type,
             "direction": direction,
             "win_rate": round(wins / tc * 100, 1),
-            "avg_pnl_pct": round(sum(_pnl_pct(r) for r in rows
-                                      if (r["symbol"] or "") == sym and (r["direction"] or "") == direction)
-                                  / tc, 2),
+            "avg_pnl_pct": round(sum(_pnl_pct(r) for r in cell_rows) / tc, 2),
             "trade_count": tc,
         })
     # Sort by trade_count desc

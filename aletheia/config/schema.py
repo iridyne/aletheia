@@ -24,6 +24,8 @@ _WILDCARD_HOSTS = {"0.0.0.0", "::"}
 # remain finite because urllib rejects non-finite or non-positive deadlines.
 NotificationHour = Annotated[int, Field(ge=0, le=23)]
 WebhookTimeoutSeconds = Annotated[FiniteFloat, Field(ge=1.0, le=60.0)]
+UTAReadBoundary = Literal["legacy", "shadow_read", "uta_v1"]
+UTAGeneration = Annotated[int, Field(ge=0)]
 
 
 class AppConfig(BaseModel):
@@ -311,6 +313,12 @@ class ExchangeConfig(BaseModel):
     #   "uta_v3"     → /api/v3/ Unified Trading Account (category, qty, posSide, cursor).
     #                  Experimental: Demo qualification required before any live use.
     bitget_profile: str = "classic_v2"
+    # Per-execution-mode UTA read selector. Missing entries are deliberately
+    # legacy until that exact account/profile generation is qualified.
+    uta_read_boundaries: dict[str, UTAReadBoundary] = Field(default_factory=dict)
+    # Non-secret configuration component of the exact account generation.
+    # Credential mutations carry a separate durable counter in secrets.enc.
+    uta_account_config_generations: dict[str, UTAGeneration] = Field(default_factory=dict)
 
     @field_validator("bitget_profile")
     @classmethod
@@ -319,6 +327,19 @@ class ExchangeConfig(BaseModel):
         if v not in allowed:
             raise ValueError(f"bitget_profile must be one of {sorted(allowed)}, got {v!r}")
         return v
+
+    @field_validator("uta_read_boundaries", "uta_account_config_generations")
+    @classmethod
+    def _validate_uta_mode_keys(cls, value: dict) -> dict:
+        if any(not isinstance(key, str) or not key.strip() for key in value):
+            raise ValueError("UTA account generation and boundary keys must be non-empty")
+        return value
+
+    def uta_read_boundary_for(self, execution_mode: str) -> UTAReadBoundary:
+        return self.uta_read_boundaries.get(execution_mode, "legacy")
+
+    def uta_account_config_generation_for(self, execution_mode: str) -> int:
+        return self.uta_account_config_generations.get(execution_mode, 0)
     # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
     futures_symbols: list[str] = Field(
         default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
@@ -1519,6 +1540,9 @@ class UniverseConfig(BaseModel):
     # symbol on the watchlist". Scanner refreshes every 10 min, so 15 min covers
     # one missed refresh + ranker processing latency (measured p75=25 min).
     entry_ttl_sec: int = Field(default=900, ge=300, le=3600)
+    # Frozen hard ceiling for one continuously compatible Candidate attention
+    # identity. Completed re-selection may extend the soft lease, never this age.
+    candidate_max_continuous_age_sec: int = Field(default=3600, ge=300, le=86_400)
     # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
     emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
@@ -1548,6 +1572,14 @@ class UniverseConfig(BaseModel):
             else:
                 _check_quota(v)
         return v
+
+    @model_validator(mode="after")
+    def _validate_candidate_attention_bounds(self):
+        if self.candidate_max_continuous_age_sec < self.entry_ttl_sec:
+            raise ValueError(
+                "candidate_max_continuous_age_sec must be >= entry_ttl_sec"
+            )
+        return self
 
 
 class FastTriggerConfig(BaseModel):

@@ -25,6 +25,7 @@ from aletheia.economics.tracing import (
     aggregate_agent_run_cost,
     initialize_runtime_tracing,
     normalize_usage,
+    record_llm_attempt,
 )
 from aletheia.model_provider.base import (
     ModelHealth,
@@ -32,6 +33,7 @@ from aletheia.model_provider.base import (
     ModelRequest,
     ModelResponse,
     StructuredModelRequest,
+    StreamChunk,
 )
 from aletheia.storage.models import AgentRun
 from aletheia.storage.repositories import insert_agent_run
@@ -131,7 +133,7 @@ def test_normalize_usage_prompt_details_cache_still_preferred():
         }
     )
     assert usage["cached_input_tokens"] == 40
-    assert usage["provider_cache_read_input_tokens"] is None
+    assert usage["provider_cache_read_input_tokens"] == 40
 
 
 @pytest.mark.asyncio
@@ -146,10 +148,14 @@ async def test_physical_provider_attempt_persists_usage_and_cost():
     finally:
         reset_current_agent_run_id(token)
 
-    row = get_db().execute(
-        "SELECT * FROM runtime_cost_events WHERE run_id=? AND event_type='llm'",
-        (run.id,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM runtime_cost_events WHERE run_id=? AND event_type='llm'",
+            (run.id,),
+        )
+        .fetchone()
+    )
     assert row is not None
     assert row["status"] == "success"
     assert row["cost_status"] == "estimated"
@@ -180,6 +186,33 @@ async def test_failed_attempt_is_not_assumed_free():
     assert aggregate["cost_estimate_usd"] is None
 
 
+def test_provider_reported_cost_wins_without_model_pricing():
+    event_id = record_llm_attempt(
+        call_id="provider-reported",
+        provider="unknown-provider",
+        model="hidden-model",
+        requested_model="requested-model",
+        attempt_index=0,
+        status="success",
+        started_at="2026-01-01T00:00:00+00:00",
+        finished_at="2026-01-01T00:00:01+00:00",
+        latency_ms=1000,
+        raw_usage={"provider_cost_usd": 0.0123},
+    )
+
+    row = (
+        get_db()
+        .execute(
+            "SELECT estimated_cost_usd,cost_status,metadata_json FROM runtime_cost_events WHERE id=?",
+            (event_id,),
+        )
+        .fetchone()
+    )
+    assert row["estimated_cost_usd"] == pytest.approx(0.0123)
+    assert row["cost_status"] == "known"
+    assert json.loads(row["metadata_json"])["cost_calculation"]["reason"] == "provider_reported"
+
+
 @pytest.mark.asyncio
 async def test_fallback_attempts_are_accounted_separately_on_one_request():
     ensure_economics_schema()
@@ -194,11 +227,15 @@ async def test_fallback_attempts_are_accounted_separately_on_one_request():
     finally:
         reset_current_agent_run_id(token)
 
-    rows = get_db().execute(
-        "SELECT attempt_index,status,cost_status FROM runtime_cost_events "
-        "WHERE run_id=? AND event_type='llm' ORDER BY attempt_index",
-        (run.id,),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT attempt_index,status,cost_status FROM runtime_cost_events "
+            "WHERE run_id=? AND event_type='llm' ORDER BY attempt_index",
+            (run.id,),
+        )
+        .fetchall()
+    )
     assert [(row["attempt_index"], row["status"]) for row in rows] == [
         (0, "error"),
         (1, "success"),
@@ -224,12 +261,16 @@ async def test_structured_fallbacks_share_logical_call_identity():
     finally:
         reset_current_agent_run_id(token)
 
-    rows = get_db().execute(
-        "SELECT call_id,attempt_index,status,requested_model,metadata_json "
-        "FROM runtime_cost_events WHERE run_id=? AND event_type='llm' "
-        "ORDER BY attempt_index",
-        (run.id,),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT call_id,attempt_index,status,requested_model,metadata_json "
+            "FROM runtime_cost_events WHERE run_id=? AND event_type='llm' "
+            "ORDER BY attempt_index",
+            (run.id,),
+        )
+        .fetchall()
+    )
     assert len(rows) == 2
     assert len({row["call_id"] for row in rows}) == 1
     assert [row["attempt_index"] for row in rows] == [0, 1]
@@ -250,10 +291,11 @@ async def test_direct_operator_call_uses_explicit_evaluation_identity():
     ):
         await _MeasuredProvider().complete(ModelRequest(messages=[]))
 
-    row = get_db().execute(
-        "SELECT * FROM runtime_cost_events WHERE event_type='llm' "
-        "ORDER BY rowid DESC LIMIT 1"
-    ).fetchone()
+    row = (
+        get_db()
+        .execute("SELECT * FROM runtime_cost_events WHERE event_type='llm' ORDER BY rowid DESC LIMIT 1")
+        .fetchone()
+    )
     assert row is not None
     assert row["run_id"] is None
     metadata = json.loads(row["metadata_json"])
@@ -311,15 +353,17 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
             )
 
     for pending_id in pending_ids:
-        insert_pi_decision(PiDecision(
-            id=pending_id,
-            action="signal_pending",
-            opportunity_id="opp-exact",
-            signal_source="market_observer",
-            symbol="BTC/USDT",
-            direction="long",
-            market_type="usdt_futures",
-        ))
+        insert_pi_decision(
+            PiDecision(
+                id=pending_id,
+                action="signal_pending",
+                opportunity_id="opp-exact",
+                signal_source="market_observer",
+                symbol="BTC/USDT",
+                direction="long",
+                market_type="usdt_futures",
+            )
+        )
     captured = {}
     context = {
         "layer1": {"data_health": {}},
@@ -343,9 +387,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
 
     async def capture_context(_ctx):
         captured.update(current_economic_attribution())
-        captured["pending_signals"] = (_ctx.get("layer2") or {}).get(
-            "pending_signals"
-        )
+        captured["pending_signals"] = (_ctx.get("layer2") or {}).get("pending_signals")
         data, error = await helpers.llm_structured(
             "system",
             "user",
@@ -360,8 +402,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
         lambda **_kwargs: context,
     )
     monkeypatch.setattr(
-        "aletheia.learning.opportunity_information_policy."
-        "ensure_opportunity_information_policy_epoch",
+        "aletheia.learning.opportunity_information_policy.ensure_opportunity_information_policy_epoch",
         lambda: "info-policy",
     )
     monkeypatch.setattr(
@@ -376,8 +417,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
         },
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.b2_evidence_policy."
-        "ensure_b2_candidate_evidence_policy_epoch",
+        "aletheia.agent_shell.b2_evidence_policy.ensure_b2_candidate_evidence_policy_epoch",
         lambda: "b2-policy",
     )
     monkeypatch.setattr(
@@ -418,6 +458,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
         lambda *_args, **_kwargs: None,
     )
     if lookup_failure:
+
         def fail_attribution_lookup(*_args, **_kwargs):
             raise RuntimeError("sensitive-attribution-read-detail")
 
@@ -437,9 +478,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
         with pytest.raises(DecisionUnavailable, match="stop_after_attribution_capture"):
             asyncio.run(commands.evaluate_trading_opportunity({}))
 
-    assert {key: captured[key] for key in (
-        "logical_agent", "evaluation_id", "trigger", "opportunity_id"
-    )} == {
+    assert {key: captured[key] for key in ("logical_agent", "evaluation_id", "trigger", "opportunity_id")} == {
         "logical_agent": "pi_trading_decision",
         "evaluation_id": "operator_eval_exact",
         "trigger": "signal",
@@ -452,8 +491,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
 
     db = get_db()
     logical = db.execute(
-        "SELECT run_id,metadata_json FROM llm_inference_calls "
-        "WHERE caller='system_operator.assess_opportunity'"
+        "SELECT run_id,metadata_json FROM llm_inference_calls WHERE caller='system_operator.assess_opportunity'"
     ).fetchone()
     assert logical is not None and logical["run_id"] is None
     logical_environment = json.loads(logical["metadata_json"])["environment"]
@@ -473,9 +511,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
     assert physical["opportunity_id"] == "opp-exact"
     assert physical["decision_id"] == expected_decision_id
     assert physical["proposal_id"] is None
-    assert json.loads(physical["metadata_json"])["evaluation_id"] == (
-        "operator_eval_exact"
-    )
+    assert json.loads(physical["metadata_json"])["evaluation_id"] == ("operator_eval_exact")
 
 
 def test_economic_attribution_rejects_unregistered_metadata_keys():
@@ -503,18 +539,56 @@ async def test_inherited_stream_records_one_physical_attempt_not_two():
     _add_test_pricing()
     token = set_current_agent_run_id(run.id)
     try:
-        chunks = [
-            chunk
-            async for chunk in _MeasuredProvider().stream(ModelRequest(messages=[]))
-        ]
+        chunks = [chunk async for chunk in _MeasuredProvider().stream(ModelRequest(messages=[]))]
     finally:
         reset_current_agent_run_id(token)
     assert chunks[-1].done is True
-    count = get_db().execute(
-        "SELECT COUNT(*) FROM runtime_cost_events WHERE run_id=? AND event_type='llm'",
-        (run.id,),
-    ).fetchone()[0]
+    count = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) FROM runtime_cost_events WHERE run_id=? AND event_type='llm'",
+            (run.id,),
+        )
+        .fetchone()[0]
+    )
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_stream_records_final_usage_once_with_actual_model():
+    class _DirectStreamProvider(ModelProvider):
+        name = "measured_test"
+        model = "requested-model"
+
+        async def stream(self, request: ModelRequest):
+            yield StreamChunk(content="ok", model="actual-model")
+            yield StreamChunk(
+                content="",
+                done=True,
+                model="actual-model",
+                usage={"prompt_tokens": 10, "completion_tokens": 5},
+            )
+
+    ensure_economics_schema()
+    add_catalog_pricing_snapshot(
+        provider="measured_test",
+        model="actual-model",
+        input_usd_per_million=1,
+        output_usd_per_million=2,
+        effective_from="2020-01-01T00:00:00+00:00",
+        source="litellm_public_median:test",
+        version="catalog-model-family-stream",
+    )
+
+    chunks = [chunk async for chunk in _DirectStreamProvider().stream(ModelRequest(messages=[]))]
+    rows = (
+        get_db().execute("SELECT model_or_tool,usage_json FROM runtime_cost_events WHERE event_type='llm'").fetchall()
+    )
+
+    assert chunks[-1].done is True
+    assert len(rows) == 1
+    assert rows[0]["model_or_tool"] == "actual-model"
+    assert json.loads(rows[0]["usage_json"])["normalized"]["input_tokens"] == 10
 
 
 def test_local_tool_ledger_is_mirrored_as_zero_external_cost():
@@ -527,9 +601,7 @@ def test_local_tool_ledger_is_mirrored_as_zero_external_cost():
                    '2026-07-16T00:00:00+00:00')""",
         (run.id,),
     )
-    row = get_db().execute(
-        "SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-economics-test'"
-    ).fetchone()
+    row = get_db().execute("SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-economics-test'").fetchone()
     assert row is not None
     assert row["event_type"] == "tool"
     assert row["cost_status"] == "estimated"
@@ -554,9 +626,7 @@ def test_preexisting_tool_rows_are_backfilled_idempotently():
     ensure_economics_schema(db)
     ensure_economics_schema(db)
 
-    rows = db.execute(
-        "SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-backfill-test'"
-    ).fetchall()
+    rows = db.execute("SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-backfill-test'").fetchall()
     assert len(rows) == 1
     assert rows[0]["cost_status"] == "estimated"
     assert rows[0]["estimated_cost_usd"] == 0
@@ -576,9 +646,7 @@ def test_denied_tool_call_is_known_zero_cost():
                    '2026-07-16T00:00:00+00:00')""",
         (run.id,),
     )
-    row = get_db().execute(
-        "SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-denied-test'"
-    ).fetchone()
+    row = get_db().execute("SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-denied-test'").fetchone()
     assert row is not None
     assert row["status"] == "denied"
     assert row["cost_status"] == "known"
@@ -595,9 +663,7 @@ def test_local_agent_tool_has_zero_external_cost_without_manual_profile():
                    '2026-07-16T00:00:00+00:00')""",
         (run.id,),
     )
-    row = get_db().execute(
-        "SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-profile-test'"
-    ).fetchone()
+    row = get_db().execute("SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-profile-test'").fetchone()
     assert row is not None
     assert row["cost_status"] == "estimated"
     assert row["estimated_cost_usd"] == pytest.approx(0.0)
@@ -617,9 +683,7 @@ def test_first_schema_install_refuses_to_commit_an_active_transaction():
     with pytest.raises(RuntimeError, match="active transaction"):
         ensure_economics_schema(db)
     db.rollback()
-    assert db.execute(
-        "SELECT value FROM settings WHERE key='economics-tx-test'"
-    ).fetchone() is None
+    assert db.execute("SELECT value FROM settings WHERE key='economics-tx-test'").fetchone() is None
 
 
 def test_initialized_schema_probe_does_not_commit_an_active_transaction():
@@ -632,6 +696,4 @@ def test_initialized_schema_probe_does_not_commit_an_active_transaction():
     assert ensure_economics_schema(db) is db
     assert db.in_transaction is True
     db.rollback()
-    assert db.execute(
-        "SELECT value FROM settings WHERE key='economics-tx-ready'"
-    ).fetchone() is None
+    assert db.execute("SELECT value FROM settings WHERE key='economics-tx-ready'").fetchone() is None

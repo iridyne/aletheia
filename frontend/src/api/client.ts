@@ -731,89 +731,76 @@ export interface ModelProviderHealth {
 	stale_after_seconds: number;
 }
 
-export type UsageInsightsAvailability =
-	| "available"
-	| "partial"
-	| "not_configured"
-	| "not_observed"
-	| "not_available";
-
-export interface UsageInsightsSection {
-	status: UsageInsightsAvailability;
-	reason: string | null;
+export interface UsageWindow {
+	days: 1 | 7 | 30 | 90;
+	started_at: string;
+	ended_at: string;
+	updated_at: string;
+	timezone: "UTC";
+	granularity: "hour" | "day" | "week";
 }
 
-export interface UsageInsightsRow {
-	[key: string]: unknown;
+export interface UsageOverview {
+	cost_usd: number | null;
+	total_tokens: number | null;
+	llm_calls: number | null;
+	success_rate_pct: number | null;
+	avg_cost_per_call_usd: number | null;
 }
 
-export interface UsageInsightsResponse {
-	window: {
-		days: number;
-		started_at: string;
-		ended_at: string;
-		as_of: string;
-		timezone: "UTC";
-	};
-	coverage: UsageInsightsSection & {
-		axes: Array<{
-			id: string;
-			label: string;
-			status: UsageInsightsAvailability;
-			coverage_pct: number | null;
-			reason: string | null;
-		}>;
-	};
-	token_mix: UsageInsightsSection & {
-		input_tokens: number | null;
-		output_tokens: number | null;
-		total_tokens: number | null;
-		reasoning_tokens: number | null;
-		cached_tokens: number | null;
-		event_count: number | null;
-		field_coverage_pct: Record<string, number | null>;
-	};
-	pricing: UsageInsightsSection & {
-		known_cost_usd: number | null;
-		estimated_cost_usd: number | null;
-		unknown_event_count: number | null;
-		pricing_coverage_pct: number | null;
-		gaps: UsageInsightsRow[];
-	};
-	attribution: UsageInsightsSection & { rows: UsageInsightsRow[] };
-	tools: UsageInsightsSection & {
-		rows: UsageInsightsRow[];
-		timing_coverage_pct: number | null;
-		pricing_coverage_pct: number | null;
-	};
-	reliability: UsageInsightsSection & {
-		logical: UsageInsightsRow;
-		physical: UsageInsightsRow;
-		current_model_cooldown: UsageInsightsSection & {
-			current: true;
-			fact_scope: "current_in_process";
-			as_of: string;
-			rows: UsageInsightsRow[];
-			cooling_down_count: number;
-		};
-	};
-	budgets: UsageInsightsSection & { rows: UsageInsightsRow[] };
-	trends: UsageInsightsSection & {
-		daily: UsageInsightsRow[];
-		baseline: UsageInsightsRow | null;
-		trace_coverage: UsageInsightsSection & UsageInsightsRow;
-	};
-	research_yield: UsageInsightsSection & {
-		artifacts: UsageInsightsRow[];
-		lineage: UsageInsightsRow[];
-	};
+export interface UsageComparison {
+	complete: boolean;
+	cost_usd_change_pct?: number | null;
+	total_tokens_change_pct?: number | null;
+	llm_calls_change_pct?: number | null;
+	success_rate_change_pct_points?: number | null;
+	avg_cost_per_call_usd_change_pct?: number | null;
 }
 
-export type UsageInsightsGroup = "summary" | "operations" | "analysis";
-export type UsageInsightsGroupResponse = Pick<
-	UsageInsightsResponse,
-	"window" | "coverage"
-> & Partial<Omit<UsageInsightsResponse, "window" | "coverage">>;
+export interface UsageTokenComposition {
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cache_read_tokens?: number;
+	cache_write_tokens?: number;
+	reasoning_tokens?: number;
+}
+
+export interface UsageTrendPoint {
+	started_at: string;
+	cost_usd: number | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	llm_calls: number | null;
+}
+
+export interface UsageAgentBreakdown { agent: string; runs: number; calls: number; success_rate_pct: number | null; tokens: number | null; cost_usd: number | null; p95_latency_ms: number | null }
+export interface UsageModelBreakdown { model: string; provider: string; calls: number; success_rate_pct: number | null; input_tokens: number | null; output_tokens: number | null; cost_usd: number | null; p95_latency_ms: number | null }
+export interface UsageProviderBreakdown { provider: string; models: number; calls: number; success_rate_pct: number | null; tokens: number | null; cost_usd: number | null; p95_latency_ms: number | null }
+export interface UsageToolBreakdown { tool: string; class: string; permitted: number; denied: number; calls: number; p50_latency_ms: number | null; p95_latency_ms: number | null }
+export interface UsageReliability { attempts: number; errors: number; retries: number; fallbacks: number; p50_latency_ms: number | null; p95_latency_ms: number | null; error_categories?: Array<{ category: string; count: number }> }
+export interface UsageCooldown { provider: string; model: string; remaining_seconds: number | null }
+export interface UsageBudget { limit_usd: number; spend_usd: number | null; remaining_usd: number | null; utilization_pct: number | null; period: string }
+
+export interface UsageSummaryResponse {
+	contract_version: 2;
+	window: UsageWindow;
+	overview: UsageOverview;
+	comparison: UsageComparison;
+	token_composition: UsageTokenComposition;
+	trend: UsageTrendPoint[];
+}
+
+export interface UsageOperationsResponse {
+	contract_version: 2;
+	window: UsageWindow;
+	breakdowns: { agents: UsageAgentBreakdown[]; models: UsageModelBreakdown[]; providers: UsageProviderBreakdown[]; tools: UsageToolBreakdown[] };
+	reliability: UsageReliability;
+	active_cooldowns: UsageCooldown[];
+	budgets: UsageBudget[];
+}
+
+export type UsageInsightsGroup = "summary" | "operations";
+export interface UsageInsightsByGroup { summary: UsageSummaryResponse; operations: UsageOperationsResponse }
 
 export interface PricingRefreshStatus {
 	status: "idle" | "running" | "succeeded" | "failed";
@@ -1119,10 +1106,10 @@ export const api = {
 	// Read-only economics surface (Phase 1 of the tokenomics harness).
 	// Mirrors `aletheia audit` CLI subcommands so operators can see LLM
 	// spend and cooldown state from the dashboard.
-	getUsageInsights: (days: 1 | 7 | 30 | 90, group?: UsageInsightsGroup) =>
-		fetchJson<UsageInsightsGroupResponse>(
-			`/economics/usage-insights?days=${days}${group ? `&group=${group}` : ""}`,
-		),
+		getUsageInsights: <G extends UsageInsightsGroup>(days: 1 | 7 | 30 | 90, group: G) =>
+			fetchJson<UsageInsightsByGroup[G]>(
+				`/economics/usage-insights?days=${days}&group=${group}`,
+			),
 	getPricingRefreshStatus: () =>
 		fetchJson<PricingRefreshStatus>("/economics/pricing/refresh-status"),
 	refreshPricing: () => post<PricingRefreshStatus>("/economics/pricing/refresh"),
@@ -1589,7 +1576,7 @@ export const api = {
 			};
 			fills: number;
 		}>(`/analytics/pipeline-funnel?hours=${hours}`),
-	// Recent terminal operator decisions — Candidate Ledger projection.
+	// Recent terminal operator decisions — legacy compatibility projection.
 	// Non-terminal conviction deferrals remain in the opportunity trace.
 	//
 	// Optional `outcome` / `symbol` filters are applied server-side AFTER the
@@ -1681,7 +1668,7 @@ export const api = {
 
 	// Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
 	// the operator (e.g. confidence gate, TTL expiry) — counterpart to the
-	// Blotter (formerly Approval Desk). Full-window response; see the compact
+	// legacy Opportunity diagnostics. Full-window response; see the compact
 	// /current-snapshot sibling for a faster subset when only `current.*` is
 	// needed.
 	getOpportunityFunnel: (hours = 24) =>
@@ -1876,8 +1863,7 @@ export const api = {
 		}>(`/analytics/opportunity-funnel?hours=${hours}`),
 
 	// Fast subset of getOpportunityFunnel — returns just `current` + config +
-	// family_ttl_sec. Used by the Blotter's Candidates panel, status-token
-	// strip, and Overview's shortcut strip. See
+	// family_ttl_sec. Retained for legacy Opportunity diagnostics. See
 	// docs/design/frontend/blotter_design.md#performance-backlog for why this
 	// split exists.
 	getOpportunityFunnelCurrentSnapshot: (hours = 24) =>
@@ -2064,6 +2050,7 @@ export const api = {
 		spot: boolean;
 		usdt_futures: boolean;
 		paper_execution_mode?: string;
+		uta_read_boundary?: "legacy" | "shadow_read" | "uta_v1";
 		confirm_exchange_divergence?: boolean;
 	}) => post<Record<string, any>>("/settings/exchange-markets", body),
 	setPrimaryExchange: (exchange_id: string) =>
@@ -2304,10 +2291,30 @@ export const api = {
 	approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
 	rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
 	getProposalRiskDecision: (id: string) =>
-		fetchJson<{ proposal_id: string; decision: any }>(
+		fetchJson<{
+			proposal_id: string;
+			status: string;
+			reason_code: string | null;
+			decision: any;
+			preflight_decision?: any;
+		}>(
 			`/proposals/${id}/risk-decision`,
 		),
-	getTrades: () => fetchJson<MarketTrade[]>("/trades"),
+	getOrderRiskDecision: (id: string) =>
+		fetchJson<{
+			order_id: string;
+			proposal_id: string | null;
+			risk_decision_id: string | null;
+			status: string;
+			reason_code: string | null;
+			decision: any;
+		}>(
+			`/orders/${id}/risk-decision`,
+		),
+	getTrades: (entryPlanId?: unknown) =>
+		fetchJson<MarketTrade[]>(typeof entryPlanId === "string" && entryPlanId
+			? `/trades?entry_plan_id=${encodeURIComponent(entryPlanId)}`
+			: "/trades"),
 	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
 	getPositions: () => fetchJson<Position[]>("/positions"),
 	getPositionsReconciliation: () =>
@@ -2756,13 +2763,22 @@ export const api = {
 	// Universe Generator endpoints
 	getUniverseCurrent: () =>
 		fetchJson<import("../types").UniverseCurrentResponse>("/universe/current"),
+	getEntryWorkbench: () =>
+		fetchJson<import("../types").EntryWorkbenchResponse>("/universe/workbench"),
+	getEntryPlan: (id: string) =>
+		fetchJson<import("../types").EntryPlan>(`/universe/entry-plans/${encodeURIComponent(id)}`),
+	getPlanningHistory: (limit = 50, before?: string | null) => {
+		const qs = new URLSearchParams({ limit: String(limit) });
+		if (before) qs.set("before", before);
+		return fetchJson<import("../types").PlanningHistoryResponse>(`/universe/planning-history?${qs}`);
+	},
 	getUniverseSnapshots: () =>
 		fetchJson<import("../types").UniverseSnapshot[]>("/universe/snapshots"),
 	getUniverseSnapshot: (id: string) =>
 		fetchJson<any>(`/universe/snapshots/${id}`),
-	getUniverseMember: (id: string) =>
-		fetchJson<import("../types").UniverseMemberDetail>(
-			`/universe/members/${id}`,
+	getCandidate: (id: string) =>
+		fetchJson<import("../types").CandidateDetail>(
+			`/universe/candidates/${encodeURIComponent(id)}`,
 		),
 	refreshUniverse: () =>
 		post<{ snapshot_id: string; status: string }>("/universe/refresh"),
@@ -2785,6 +2801,8 @@ export const api = {
 			explore_ratio: number;
 			snapshot_ttl_enabled: boolean;
 			snapshot_ttl_hours: number;
+			entry_ttl_sec: number;
+			candidate_max_continuous_age_sec: number;
 			blacklist: string[];
 			fallback_symbols: string[];
 			market_type: string;
@@ -3014,6 +3032,8 @@ export interface TradeStatsSource {
 	trade_count: number;
 	win_rate: number | null;
 	avg_hold_hours: number | null;
+	hold_time_available_count?: number;
+	hold_time_unavailable_count?: number;
 	expectancy_pct: number | null;
 	total_pnl: number | null;
 }
@@ -3023,6 +3043,8 @@ export interface TradeStatsFamily {
 	trade_count: number;
 	win_rate: number | null;
 	avg_hold_hours: number | null;
+	hold_time_available_count?: number;
+	hold_time_unavailable_count?: number;
 	expectancy_pct: number | null;
 }
 
@@ -3055,6 +3077,8 @@ export interface TradeStats extends OutcomeCohort {
 		win_rate: number | null;
 		avg_hold_hours: number | null;
 		median_hold_hours: number | null;
+		hold_time_available_count?: number;
+		hold_time_unavailable_count?: number;
 		total_pnl: number | null;
 	};
 }
@@ -3115,7 +3139,9 @@ export interface DirectionStats {
 	win_rate: number;
 	total_pnl: number;
 	avg_pnl_pct: number;
-	avg_hold_hours: number;
+	avg_hold_hours: number | null;
+	hold_time_available_count?: number;
+	hold_time_unavailable_count?: number;
 }
 
 export interface ProfitFactorData {
@@ -3164,6 +3190,7 @@ export interface StreakData {
 	current_streak_type: string;
 	total_wins: number;
 	total_losses: number;
+	total_flats: number;
 }
 
 export interface HoldPnlPoint {
@@ -3188,6 +3215,7 @@ export interface TradeFrequencyDay {
 
 export interface SymbolDirectionEntry {
 	symbol: string;
+	market_type: string;
 	direction: string;
 	win_rate: number;
 	avg_pnl_pct: number;

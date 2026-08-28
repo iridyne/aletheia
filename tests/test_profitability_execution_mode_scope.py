@@ -193,6 +193,83 @@ def test_order_stats_isolates_by_execution_mode(tmp_path, monkeypatch):
     assert mixed["execution_mode_status"] == "unavailable"
 
 
+def test_order_stats_conserves_every_lifecycle_status(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+
+    from aletheia.analytics.trade_stats import compute_order_stats
+    from aletheia.storage.sqlite import get_db
+
+    statuses = [
+        "filled",
+        "error",
+        "failed",
+        "rejected",
+        "cancelled",
+        "pending",
+        "submitted",
+        "submission_unknown",
+        "materialization_missing",
+        "partially_filled",
+        "overfilled",
+        "future_status",
+    ]
+    db = get_db()
+    for idx, status in enumerate(statuses):
+        db.execute(
+            "INSERT INTO orders "
+            "(id, symbol, market_type, direction, order_type, quantity, price, "
+            "execution_mode, status, created_at, error_reason) "
+            "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 'limit', 1, 100, "
+            "'paper_internal', ?, datetime('now'), ?)",
+            (f"stats-order-{idx}", status, "reason" if status == "error" else None),
+        )
+
+    result = compute_order_stats(days=30, execution_mode="paper_internal")
+
+    assert result["observed_order_count"] == len(statuses)
+    assert result["total"] == len(statuses)
+    assert sum(result["status_counts"].values()) == len(statuses)
+    assert result["status_counts"]["submission_unknown"] == 1
+    assert result["status_buckets"] == {
+        "completed_fills": 1,
+        "definitive_failures": 3,
+        "cancellations": 1,
+        "in_flight": 2,
+        "unresolved_or_integrity": 5,
+    }
+    assert result["resolved_fill_numerator"] == 1
+    assert result["resolved_fill_denominator"] == 5
+    assert result["resolved_fill_rate_pct"] == 20.0
+    assert result["unresolved_or_integrity_count"] == 5
+    assert result["unresolved_count"] == 7
+    assert result["delivery_status"] == "indeterminate"
+
+
+def test_order_stats_distinguishes_empty_from_unresolved(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+
+    from aletheia.analytics.trade_stats import compute_order_stats
+    from aletheia.storage.sqlite import get_db
+
+    empty = compute_order_stats(days=30, execution_mode="paper_internal")
+    db = get_db()
+    db.execute(
+        "INSERT INTO orders "
+        "(id, symbol, market_type, direction, order_type, quantity, price, "
+        "execution_mode, status, created_at) VALUES "
+        "('unresolved-order', 'BTC/USDT', 'usdt_futures', 'long', 'limit', 1, 100, "
+        "'paper_internal', 'submission_unknown', datetime('now'))"
+    )
+    unresolved = compute_order_stats(days=30, execution_mode="paper_internal")
+
+    assert empty["observed_order_count"] == 0
+    assert empty["delivery_status"] == "empty"
+    assert unresolved["observed_order_count"] == 1
+    assert unresolved["unresolved_count"] == 1
+    assert unresolved["resolved_fill_rate_pct"] is None
+    assert unresolved["delivery_status"] == "indeterminate"
+
+
 # ---------------------------------------------------------------------------
 # REST-level: every profitability endpoint must resolve + return one cohort.
 # ---------------------------------------------------------------------------

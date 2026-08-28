@@ -132,6 +132,23 @@ def _btc_price_at_close() -> float | None:
         return None
 
 
+def _btc_benchmark_applicable(row: dict) -> bool:
+    """Keep BTC exit evidence unavailable for explicitly non-crypto entries."""
+    raw_summary = row.get("entry_market_summary")
+    if not raw_summary:
+        return True  # legacy Position rows have no frozen applicability context
+    try:
+        summary = json.loads(raw_summary) if isinstance(raw_summary, str) else raw_summary
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return True
+    if not isinstance(summary, dict):
+        return True
+    context = summary.get("analysis_context")
+    if not isinstance(context, dict):
+        return True
+    return context.get("kind") == "crypto"
+
+
 def _close_provenance() -> dict:
     """Return only available producer identity for the close event."""
     try:
@@ -676,6 +693,7 @@ def close_position(
         closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
+    private_exchange_fill = verified_exit_evidence is not None
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
     fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
     # Sprint B (QR-2026-07-01-02): entry_fee=0.0 is a legitimate stored value (zero-cost
@@ -683,10 +701,10 @@ def close_position(
     # genuinely missing (NULL from pre-Sprint-B positions). Truthiness "or 0" had been
     # recomputing fees on legible zeros and inflating realized PnL.
     entry_fee = row.get("entry_fee")
-    if entry_fee is None:
+    if entry_fee is None and not private_exchange_fill:
         entry_fee = row["entry_price"] * row["quantity"] * fee_rate
     if actual_exit_fee is None:
-        exit_fee = exit_price * row["quantity"] * fee_rate
+        exit_fee = None if private_exchange_fill else exit_price * row["quantity"] * fee_rate
     else:
         exit_fee = float(actual_exit_fee)
         if not math.isfinite(exit_fee) or exit_fee < 0:
@@ -733,26 +751,30 @@ def close_position(
     # publish a reassuring PnL number, and move local-paper cash by that invented
     # amount.  Keep the lifecycle closed while leaving the net result unavailable.
     realized: float | None = None
-    if funding_cost is not None:
+    if funding_cost is not None and entry_fee is not None and exit_fee is not None:
         realized = gross_pnl - entry_fee - exit_fee - funding_cost
 
-    # BTC benchmark at exit for alpha/beta separation
-    btc_exit = _btc_price_at_close()
+    # BTC benchmark at exit for alpha/beta separation. Explicitly non-crypto
+    # entries carry no applicable benchmark pair.
+    btc_exit = _btc_price_at_close() if _btc_benchmark_applicable(row) else None
 
     execution_mode = str(row.get("execution_mode") or "")
     local_paper_fill = execution_mode == "paper_internal"
-    private_exchange_fill = verified_exit_evidence is not None
     if private_exchange_fill:
         if not isinstance(verified_exit_evidence, dict):
             raise ValueError("verified_exit_evidence must be a mapping")
         fill_ids = verified_exit_evidence.get("fill_ids")
+        fee_status = verified_exit_evidence.get("fee_status")
+        fee_in_quote = verified_exit_evidence.get("fee_in_quote")
+        fee_unavailable = fee_status == "unavailable" and fee_in_quote is None
         try:
             evidence_quantity = float(verified_exit_evidence.get("fill_quantity"))
         except (TypeError, ValueError):
             evidence_quantity = 0.0
         tolerance = max(1e-12, float(row["quantity"]) * 1e-9)
         if (
-            actual_exit_fee is None
+            (actual_exit_fee is None and not fee_unavailable)
+            or (actual_exit_fee is not None and fee_unavailable)
             or not supplied_closed_at
             or not isinstance(fill_ids, list)
             or not fill_ids
@@ -854,8 +876,8 @@ def close_position(
         "close_reason": reason,
         "closed_at": closed_at,
         "btc_exit_price": btc_exit,
-        "entry_fee": round(entry_fee, 8),
-        "exit_fee": round(exit_fee, 8),
+        "entry_fee": round(entry_fee, 8) if entry_fee is not None else None,
+        "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
         "funding_cost": funding_cost,
         "funding_source": funding_source,
         "slippage_cost": (row.get("slippage_cost") if local_paper_fill else None),
@@ -878,7 +900,10 @@ def close_position(
         ),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
-    if exit_fill_verified and funding_cost is None:
+    if exit_fill_verified and (entry_fee is None or exit_fee is None):
+        outcome_eligible = False
+        outcome_exclusion_reason = "incomplete_realized_economics"
+    elif exit_fill_verified and funding_cost is None:
         outcome_eligible = False
         outcome_exclusion_reason = "incomplete_funding_economics"
     else:
@@ -955,8 +980,8 @@ def close_position(
                 "exit_price": exit_price,
                 "closed_qty": row["quantity"],
                 "realized_pnl": realized,
-                "entry_fee": round(entry_fee, 8),
-                "exit_fee": round(exit_fee, 8),
+                "entry_fee": round(entry_fee, 8) if entry_fee is not None else None,
+                "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
                 "is_partial": 0,
                 "closed_at": closed_at,
             }
@@ -1002,7 +1027,7 @@ def close_position(
         pnl_emoji = "+" if realized is not None and realized > 0 else ""
         if realized is None:
             pnl_message = (
-                "Net PnL unavailable: funding economics are incomplete"
+                "Net PnL unavailable: close economics are incomplete"
                 "\nOutcome excluded from feedback: "
                 f"{outcome_exclusion_reason}"
             )
@@ -1377,10 +1402,10 @@ def today_pnl_by_symbol(
     result: dict[str, float | None] = {}
     for symbol, rows in grouped.items():
         total, unavailable = _complete_realized_total(rows)
-        # Return None when ALL closes for this symbol are unavailable so the
-        # tooltip can show '—' rather than a misleading 0.00.  The portfolio
-        # aggregate uses the partial sum instead (with a completeness flag).
-        result[symbol] = None if unavailable == len(rows) else round(total, 4)
+        # Per-symbol projection has no sibling completeness fields, so a
+        # partial subtotal would look final. The aggregate keeps partial +
+        # explicit unavailable count instead.
+        result[symbol] = None if unavailable > 0 else round(total, 4)
     return result
 
 
@@ -1411,9 +1436,13 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
+    unrealized_by_symbol: dict[str, float] = {}
     for p in positions:
         notional = p["quantity"] * (p.get("current_price") or p["entry_price"])
         exposure[p["symbol"]] = exposure.get(p["symbol"], 0.0) + notional
+        unrealized = _finite_number(p.get("unrealized_pnl"))
+        if unrealized is not None:
+            unrealized_by_symbol[p["symbol"]] = unrealized_by_symbol.get(p["symbol"], 0.0) + unrealized
 
     # Exchange-account view (real Bitget balance/positions, cached). Never blocks
     # on a network call here — the scheduler refreshes the cache out-of-band, so
@@ -1461,7 +1490,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                 # cache, which uses total_equity_usdt instead of the Bitget-specific
                 # equity_usdt. Fall back so exchange_equity_usdt isn't null on non-Bitget
                 # accounts (mirrors trading_context.py:64-65).
-                exchange_equity_usdt = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+                exchange_equity_usdt = exchange_sync.account_equity_value(cached)
                 exchange_state_age_sec = cached.get("age_seconds")
                 # Real account equity is the authoritative total value when present.
                 if exchange_equity_usdt is not None:
@@ -1512,27 +1541,25 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
             from aletheia.portfolio import exchange_sync
 
             unified = exchange_sync.get_unified_cached_state()
-            if unified is not None:
-                uta_age = unified.get("age_seconds")
-                if uta_age is not None and uta_age < 600:
-                    uta_state = unified
-                    # When unified state is available and has data, use as hero number
-                    uta_equity = unified.get("total_equity_usdt")
-                    if uta_equity and uta_equity > 0:
-                        final_total_value = float(uta_equity)
-                        account_equity_usdt = final_total_value
-                    # UTA uPnL is the authoritative cross-broker unrealized PnL. The
-                    # legacy single-broker Bitget cache above sets final_unrealized to
-                    # 0 when the active account is on another broker (e.g. OKX), which
-                    # contradicted the equity-curve's local estimate. Prefer UTA here
-                    # so the UNREALIZED card matches the real exchange mark-price uPnL.
-                    uta_count = len(unified.get("positions") or [])
-                    uta_upnl = unified.get("total_unrealized_pnl")
-                    if uta_upnl is not None:
-                        final_unrealized = float(uta_upnl)
-                        final_today_pnl = float(uta_upnl) + total_today_realized
-                    if uta_count:
-                        final_positions_count = uta_count
+            if exchange_sync.status_for(unified) == "ok":
+                uta_state = unified
+                # When unified state is available and has data, use as hero number
+                uta_equity = exchange_sync.account_equity_value(unified)
+                if uta_equity is not None:
+                    final_total_value = float(uta_equity)
+                    account_equity_usdt = final_total_value
+                # UTA uPnL is the authoritative cross-broker unrealized PnL. The
+                # legacy single-broker Bitget cache above sets final_unrealized to
+                # 0 when the active account is on another broker (e.g. OKX), which
+                # contradicted the equity-curve's local estimate. Prefer UTA here
+                # so the UNREALIZED card matches the real exchange mark-price uPnL.
+                uta_count = len(unified.get("positions") or [])
+                uta_upnl = unified.get("total_unrealized_pnl")
+                if uta_upnl is not None:
+                    final_unrealized = float(uta_upnl)
+                    final_today_pnl = float(uta_upnl) + total_today_realized
+                if uta_count:
+                    final_positions_count = uta_count
         except Exception:
             pass
 
@@ -1570,9 +1597,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
-        "unrealized_by_symbol": {
-            p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")
-        },
+        "unrealized_by_symbol": {k: round(v, 4) for k, v in unrealized_by_symbol.items()},
         "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
@@ -1630,8 +1655,14 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     uta_state = summary.get("uta_state")
     uta_equity = None
     if uta_state:
-        uta_equity = uta_state.get("total_equity_usdt")
-    exchange_equity = uta_equity or summary.get("exchange_equity_usdt")
+        from aletheia.portfolio.exchange_sync import account_equity_value
+
+        uta_equity = account_equity_value(uta_state)
+    exchange_equity = (
+        uta_equity
+        if uta_equity is not None
+        else summary.get("exchange_equity_usdt")
+    )
     # View-completeness gate (P0, 2026-07-02): the UNIFIED total (uta_equity) is a
     # multi-broker SUM. When the ACTIVE broker is missing from the unified view
     # (e.g. OKX API 50001 → the sum is only the idle bitget $167, not the real

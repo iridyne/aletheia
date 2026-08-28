@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import statistics
 
 # Reference eligible_strategy_outcomes through the module (not a copied name) so
 # monkeypatching aletheia.analytics.outcome_integrity.eligible_strategy_outcomes
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 # which under xdist can leak a stub into a later test (see test_outcome_consumers).
 from aletheia.analytics import outcome_integrity
 from aletheia.analytics.execution_mode import execution_mode_identity
+from aletheia.analytics.holding_time import holding_hours
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
@@ -75,11 +77,14 @@ def compute_rolling_trade_stats(
 def compute_order_stats(
     days: int = 7, *, execution_mode: str | None = None,
 ) -> dict:
-    """Compute order fill rate and error breakdown for the last N days.
+    """Compute lifecycle-conserving order stats for the last N days.
 
-    Returns: {total, filled, errors, fill_rate_pct, error_breakdown: [{pattern, count, symbols}]}
+    ``resolved_fill_rate_pct`` uses only orders with a definitive outcome as
+    its denominator.  Orders still in flight or with an integrity gap remain
+    visible in ``status_counts`` and make ``delivery_status`` indeterminate.
     Scoped to a single ``execution_mode`` when provided (#2181).
     """
+    from collections import Counter
     from aletheia.storage.sqlite import get_db
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -95,9 +100,56 @@ def compute_order_stats(
         tuple(params),
     ).fetchall()
 
-    filled = sum(1 for r in rows if r["status"] == "filled")
-    errored = [r for r in rows if r["status"] == "error"]
-    total = filled + len(errored)  # fill rate = filled / (filled + errors)
+    def normalize_status(value: object) -> str:
+        status = str(value or "").strip().lower()
+        return status or "unknown"
+
+    status_counts = Counter(normalize_status(r["status"]) for r in rows)
+    completed_fill_statuses = {"filled", "executed"}
+    definitive_failure_statuses = {"error", "failed", "rejected"}
+    cancellation_statuses = {"cancelled", "canceled", "expired"}
+    in_flight_statuses = {"pending", "submitted", "open", "ordered", "new", "accepted"}
+    integrity_gap_statuses = {
+        "submission_unknown", "materialization_missing", "partially_filled", "overfilled",
+    }
+
+    filled = sum(status_counts.get(status, 0) for status in completed_fill_statuses)
+    errored = [r for r in rows if normalize_status(r["status"]) == "error"]
+    definitive_failures = sum(
+        status_counts.get(status, 0) for status in definitive_failure_statuses
+    )
+    cancellations = sum(status_counts.get(status, 0) for status in cancellation_statuses)
+    in_flight = sum(status_counts.get(status, 0) for status in in_flight_statuses)
+    integrity_gaps = sum(
+        status_counts.get(status, 0) for status in integrity_gap_statuses
+    )
+    unclassified = sum(
+        count
+        for status, count in status_counts.items()
+        if status not in (
+            completed_fill_statuses
+            | definitive_failure_statuses
+            | cancellation_statuses
+            | in_flight_statuses
+            | integrity_gap_statuses
+        )
+    )
+    unresolved_or_integrity = integrity_gaps + unclassified
+    unresolved = in_flight + unresolved_or_integrity
+    observed = len(rows)
+    resolved_denominator = filled + definitive_failures + cancellations
+    resolved_rate = (
+        round(filled / resolved_denominator * 100, 1)
+        if resolved_denominator
+        else None
+    )
+    status_buckets = {
+        "completed_fills": filled,
+        "definitive_failures": definitive_failures,
+        "cancellations": cancellations,
+        "in_flight": in_flight,
+        "unresolved_or_integrity": unresolved_or_integrity,
+    }
 
     # Group errors by pattern — count occurrences + track affected symbols
     import re
@@ -120,10 +172,31 @@ def compute_order_stats(
 
     return {
         "days": days,
-        "total": total,
+        # ``total`` remains for callers that already consume it, but now
+        # correctly means every observed Order rather than a lossy subset.
+        "total": observed,
+        "observed_order_count": observed,
+        "status_counts": dict(sorted(status_counts.items())),
+        "status_buckets": status_buckets,
         "filled": filled,
         "errors": len(errored),
-        "fill_rate_pct": round(filled / total * 100, 1) if total else 0.0,
+        "cancelled": cancellations,
+        "definitive_failure_count": definitive_failures,
+        "in_flight_count": in_flight,
+        "integrity_gap_count": integrity_gaps,
+        "unresolved_or_integrity_count": unresolved_or_integrity,
+        "unresolved_count": unresolved,
+        "resolved_order_count": resolved_denominator,
+        "resolved_fill_numerator": filled,
+        "resolved_fill_denominator": resolved_denominator,
+        "resolved_fill_rate_pct": resolved_rate,
+        # Backward-compatible alias; consumers should use the explicit field.
+        "fill_rate_pct": resolved_rate,
+        "delivery_status": (
+            "empty" if observed == 0
+            else "resolved" if unresolved == 0
+            else "indeterminate"
+        ),
         "error_breakdown": breakdown[:5],
         **execution_mode_identity(execution_mode),
     }
@@ -164,6 +237,7 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
             source_agg[src] = {
                 "trade_count": 0, "wins": 0,
                 "total_pnl": 0.0, "total_pnl_pct": 0.0, "total_hold": 0.0,
+                "hold_time_available_count": 0,
             }
         a = source_agg[src]
         a["trade_count"] += 1
@@ -179,20 +253,27 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         a["total_pnl"] += pnl
         a["total_pnl_pct"] += pnl_pct
 
-        hours = _hold_hours(r.get("opened_at"), r.get("closed_at"))
+        hours = holding_hours(r.get("opened_at"), r.get("closed_at"))
         if hours is not None:
             a["total_hold"] += hours
+            a["hold_time_available_count"] += 1
             all_hold_hours.append(hours)
 
     by_source = []
     for src in ("ruleset", "opportunity"):
-        a = source_agg.get(src, {"trade_count": 0, "wins": 0, "total_pnl": 0.0, "total_pnl_pct": 0.0, "total_hold": 0.0})
+        a = source_agg.get(src, {
+            "trade_count": 0, "wins": 0, "total_pnl": 0.0, "total_pnl_pct": 0.0,
+            "total_hold": 0.0, "hold_time_available_count": 0,
+        })
         tc = a["trade_count"]
+        hold_count = a["hold_time_available_count"]
         by_source.append({
             "source_type": src,
             "trade_count": tc,
             "win_rate": round(a["wins"] / tc * 100, 1) if tc else None,
-            "avg_hold_hours": round(a["total_hold"] / tc, 1) if tc else None,
+            "avg_hold_hours": round(a["total_hold"] / hold_count, 1) if hold_count else None,
+            "hold_time_available_count": hold_count,
+            "hold_time_unavailable_count": tc - hold_count,
             "expectancy_pct": round(a["total_pnl_pct"] / tc, 2) if tc else None,
             "total_pnl": round(a["total_pnl"], 4) if tc else None,
         })
@@ -201,13 +282,14 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
 
     hold_distribution = _bucket_hold_times(all_hold_hours)
     total_count = len(rows)
-    sorted_hold = sorted(all_hold_hours)
 
     totals = {
         "trade_count": total_count,
         "win_rate": round(total_wins / total_count * 100, 1) if total_count else None,
         "avg_hold_hours": round(sum(all_hold_hours) / len(all_hold_hours), 1) if all_hold_hours else None,
-        "median_hold_hours": round(sorted_hold[len(sorted_hold) // 2], 2) if sorted_hold else None,
+        "median_hold_hours": round(statistics.median(all_hold_hours), 2) if all_hold_hours else None,
+        "hold_time_available_count": len(all_hold_hours),
+        "hold_time_unavailable_count": total_count - len(all_hold_hours),
         "total_pnl": round(total_pnl, 4) if total_count else None,
     }
 
@@ -222,21 +304,6 @@ def build_trade_stats(*, execution_mode: str | None = None) -> dict:
         **outcome_window_metadata(),
         **build_outcome_cohort_summary(execution_mode=execution_mode),
     }
-
-
-def _hold_hours(opened_at, closed_at) -> float | None:
-    if not opened_at or not closed_at:
-        return None
-    try:
-        o = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
-        c = datetime.fromisoformat(str(closed_at).replace("Z", "+00:00"))
-        if o.tzinfo is None:
-            o = o.replace(tzinfo=timezone.utc)
-        if c.tzinfo is None:
-            c = c.replace(tzinfo=timezone.utc)
-        return max(0.0, (c - o).total_seconds() / 3600.0)
-    except (ValueError, TypeError):
-        return None
 
 
 _BUCKETS = [

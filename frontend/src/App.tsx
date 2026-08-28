@@ -23,7 +23,6 @@ import Overview from './pages/Overview'
 // Legacy route contract: const Overview = lazy(() => import('./pages/Overview'))
 const AgentActivity = lazy(() => import('./pages/AgentActivity'))
 const Learning = lazy(() => import('./pages/Learning'))
-const Blotter = lazy(() => import('./pages/Blotter'))
 const TradesPositions = lazy(() => import('./pages/TradesPositions'))
 const Charts = lazy(() => import('./pages/Charts'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -49,6 +48,13 @@ function NotFound() {
       <Link className="btn btn-secondary" to="/">Return to Overview</Link>
     </section>
   )
+}
+
+function LegacyRedirect({ to, tab }: { to: string; tab: string }) {
+  const location = useLocation()
+  const search = new URLSearchParams(location.search)
+  search.set('tab', tab)
+  return <Navigate to={`${to}?${search.toString()}`} replace />
 }
 
 export function RouteLoading() {
@@ -182,17 +188,17 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Overview />} />
                 <Route path="/agent-activity" element={<AgentActivity />} />
-                <Route path="/agent-runs" element={<Navigate to="/agent-activity" replace />} />
-                <Route path="/opportunities" element={<Navigate to="/agent-activity" replace />} />
+                <Route path="/agent-runs" element={<LegacyRedirect to="/agent-activity" tab="runs" />} />
+                <Route path="/opportunities" element={<LegacyRedirect to="/agent-activity" tab="opps" />} />
                 <Route path="/learning" element={<Learning />} />
-                <Route path="/dreaming" element={<Navigate to="/learning" replace />} />
-                <Route path="/knowledge" element={<Navigate to="/learning" replace />} />
-                <Route path="/reports" element={<Navigate to="/learning" replace />} />
-                <Route path="/blotter" element={<Blotter />} />
-                <Route path="/proposals" element={<Navigate to="/blotter" replace />} />
+                <Route path="/dreaming" element={<LegacyRedirect to="/learning" tab="dreaming" />} />
+                <Route path="/knowledge" element={<LegacyRedirect to="/learning" tab="knowledge" />} />
+                <Route path="/reports" element={<LegacyRedirect to="/learning" tab="operations" />} />
+                <Route path="/blotter" element={<LegacyRedirect to="/universe" tab="plans" />} />
+                <Route path="/proposals" element={<LegacyRedirect to="/universe" tab="plans" />} />
                 <Route path="/trades" element={<TradesPositions />} />
-                <Route path="/paper-trades" element={<Navigate to="/trades" replace />} />
-                <Route path="/positions" element={<Navigate to="/trades" replace />} />
+                <Route path="/paper-trades" element={<LegacyRedirect to="/trades" tab="blotter" />} />
+                <Route path="/positions" element={<LegacyRedirect to="/trades" tab="blotter" />} />
                 <Route path="/charts" element={<Charts />} />
                 <Route path="/prediction-markets" element={<PredictionLens />} />
                 <Route path="/command-center" element={<CommandCenter />} />

@@ -9,7 +9,7 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.knowledge.manager import (
     create_daily_review, create_post_trade_review, create_research_note,
-    create_dreaming_log, create_strategy_memory,
+    create_dreaming_log, create_strategy_memory, create_trade_case_study,
     archive_item, deprecate_item, delete_item, detect_contradictions,
 )
 from aletheia.agents.post_trade_reviewer import run_post_trade_reviewer
@@ -370,4 +370,130 @@ def test_dedup_rejects_identical_content(tmp_path, monkeypatch):
     assert item2 is None  # Duplicate blocked
     items = repo.list_knowledge_items(item_type="research_note")
     assert len(items) == 1
+    reset_db()
+
+
+def test_trade_case_dedup_is_position_keyed(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    first = create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        _VALID_CONTENT,
+        metadata={"position_id": "pos-1", "symbol": "BTC/USDT"},
+        confidence="high_confidence",
+    )
+    second = create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        _VALID_CONTENT,
+        metadata={"position_id": "pos-2", "symbol": "BTC/USDT"},
+        confidence="high_confidence",
+    )
+    retry = create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        _VALID_CONTENT + " Extra retry prose with the same durable Position identity.",
+        metadata={"position_id": "pos-1", "symbol": "BTC/USDT"},
+        confidence="high_confidence",
+    )
+
+    assert first is not None
+    assert second is not None
+    assert retry is None
+    assert first.content_hash != second.content_hash
+    assert len(repo.list_knowledge_items(item_type="trade_case_study")) == 2
+    reset_db()
+
+
+def test_trade_case_requires_position_identity(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="metadata.position_id"):
+        create_trade_case_study(
+            "Case: missing identity",
+            _VALID_CONTENT,
+            metadata={"symbol": "BTC/USDT"},
+            confidence="high_confidence",
+        )
+
+
+@pytest.mark.parametrize(
+    ("create_name", "writer_name", "subdir", "kwargs"),
+    [
+        ("create_research_note", "write_research_note", "research_notes", {"confidence": "high_confidence"}),
+        ("create_post_trade_review", "write_post_trade_review", "post_trade_reviews", {}),
+    ],
+)
+def test_concurrent_content_hash_dedup_removes_loser_artifact(
+    tmp_path, monkeypatch, create_name, writer_name, subdir, kwargs,
+):
+    import concurrent.futures
+    import threading
+    import aletheia.knowledge.manager as manager
+    from aletheia.storage.sqlite import get_db
+
+    setup_test_env(tmp_path, monkeypatch)
+    original_writer = getattr(manager, writer_name)
+    barrier = threading.Barrier(2)
+
+    def racing_writer(*args, **writer_kwargs):
+        path = original_writer(*args, **writer_kwargs)
+        barrier.wait(timeout=5)
+        return path
+
+    monkeypatch.setattr(manager, writer_name, racing_writer)
+    create = getattr(manager, create_name)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda title: create(title, _VALID_CONTENT, **kwargs),
+                ("Race One", "Race Two"),
+            )
+        )
+
+    rows = get_db().execute(
+        "SELECT id, file_path FROM knowledge_items WHERE content_hash IS NOT NULL"
+    ).fetchall()
+    files = list((tmp_path / "knowledge" / subdir).glob("*.md"))
+
+    assert sum(item is not None for item in results) == 1
+    assert len(rows) == 1
+    assert len(files) == 1
+    assert files[0].as_posix() == rows[0]["file_path"]
+    reset_db()
+
+
+def test_concurrent_dreaming_title_window_removes_loser_artifact(tmp_path, monkeypatch):
+    import concurrent.futures
+    import threading
+    import aletheia.knowledge.manager as manager
+    from aletheia.storage.sqlite import get_db
+
+    setup_test_env(tmp_path, monkeypatch)
+    original_writer = manager.write_dreaming_log
+    barrier = threading.Barrier(2)
+
+    def racing_writer(*args, **kwargs):
+        path = original_writer(*args, **kwargs)
+        barrier.wait(timeout=5)
+        return path
+
+    monkeypatch.setattr(manager, "write_dreaming_log", racing_writer)
+    content_a = _VALID_CONTENT + " First concurrent dreaming synthesis."
+    content_b = _VALID_CONTENT + " Second concurrent dreaming synthesis."
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda content: manager.create_dreaming_log("Same Dream", content),
+                (content_a, content_b),
+            )
+        )
+
+    rows = get_db().execute(
+        "SELECT id, file_path FROM knowledge_items WHERE item_type='dreaming_log'"
+    ).fetchall()
+    files = list((tmp_path / "knowledge" / "dreaming_logs").glob("*.md"))
+
+    assert sum(item is not None for item in results) == 1
+    assert len(rows) == 1
+    assert len(files) == 1
+    assert files[0].as_posix() == rows[0]["file_path"]
     reset_db()

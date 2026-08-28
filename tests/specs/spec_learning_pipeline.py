@@ -188,7 +188,7 @@ _GUARDS_MODULE = "aletheia/knowledge/guards.py"
               status="implemented"),
 )
 def test_proposal_carries_opportunity_id():
-    """create_paper_proposal must NOT hard-code opportunity_id=None.
+    """The compatibility submitter must not rebuild away opportunity_id.
 
     That one line severs the attribution chain at the source: market_observer
     already writes scanner_family/universe/confidence into the opportunity, but
@@ -209,8 +209,10 @@ def test_proposal_carries_opportunity_id():
                     if kw.arg == "opportunity_id" and isinstance(kw.value, ast.Constant) \
                             and kw.value.value is None:
                         hardcoded_none = True
+            if name == "submit_prepared_paper_proposal":
+                found = True
 
-    assert found, "create_paper_proposal call not found — refactor likely happened"
+    assert found, "paper proposal submit call not found — refactor likely happened"
     assert not hardcoded_none, (
         "create_paper_proposal(opportunity_id=None) hard-codes None — attribution "
         "chain severed at the source. See round2_week1_decision_chain_fixes.md Fix L-Bug-C"
@@ -631,6 +633,44 @@ async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
 
     assert store.get(second.lesson_id).applied_policy_version == version.policy_version_id
     assert len(policies.list_versions("lesson_policy")) == 1
+
+
+async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monkeypatch):
+    import aletheia.agents.lesson_reviewer as lr
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.learning.skills import SkillStore
+    from aletheia.policies.store import PolicyStore
+
+    store = LessonStore()
+    lesson = store.create("recover draft", "trade_case_study", "case-recover")
+    store.accept(lesson.lesson_id)
+    policies = PolicyStore()
+    version = policies.create_version(
+        "lesson_policy",
+        {"accepted_lesson_ids": [lesson.lesson_id]},
+        created_by="lesson_reviewer",
+    )
+    store.mark_applied(lesson.lesson_id, version.policy_version_id)
+    assert SkillStore().get_by_source_lesson_id(lesson.lesson_id) is None
+
+    monkeypatch.setattr(
+        lr,
+        "_fetch_evidence",
+        lambda _lesson: {
+            "aggregate": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
+            "exact_scope": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
+        },
+    )
+
+    result = await lr.run_lesson_reviewer(run_id="test")
+
+    skill = SkillStore().get_by_source_lesson_id(lesson.lesson_id)
+    assert skill is not None
+    assert skill.status == "draft"
+    assert skill.source_lesson_id == lesson.lesson_id
+    assert store.get(lesson.lesson_id).status == "applied"
+    assert len(policies.list_versions("lesson_policy")) == 1
+    assert any(item.startswith("recovered_draft_skill:") for item in result["outputs"])
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PredictionMarket, PredictionStatus } from '../types'
 import { api } from '../api/client'
+import SRC from './PredictionLens.tsx?raw'
 
 vi.mock('../charts/ProbabilityChart', () => ({
   default: () => <div data-testid="prediction-chart" />,
@@ -38,9 +39,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function flushQueries() {
+async function waitForText(node: HTMLElement, text: string) {
   await act(async () => {
-    await new Promise(resolve => setTimeout(resolve, 10))
+    await vi.waitFor(() => expect(node.textContent).toContain(text))
   })
 }
 
@@ -51,6 +52,11 @@ function renderLens() {
   client.setQueryData(['prediction-status'], status)
   client.setQueryData(['prediction-markets'], [market])
   client.setQueryData(['prediction-runs'], [])
+  vi.spyOn(api, 'getPredictionMarketDetail').mockResolvedValue({
+    ...market,
+    question: market.event_title,
+    external_market_id: market.market_id,
+  } as any)
   vi.spyOn(api, 'getPredictionMarketHistory').mockRejectedValue(new Error('history unavailable'))
   vi.spyOn(api, 'getPredictionMarketClaims').mockRejectedValue(new Error('claims unavailable'))
   vi.spyOn(api, 'getSerenityEvidence').mockRejectedValue(new Error('evidence unavailable'))
@@ -74,11 +80,19 @@ describe('Prediction Lens read-state presentation', () => {
     const card = node.querySelector<HTMLElement>('.pred-market-card')
     expect(card).toBeTruthy()
     act(() => card!.click())
-    await flushQueries()
+    await waitForText(node, 'Probability history unavailable')
 
-    expect(node.textContent).toContain('Probability history unavailable')
     expect(node.textContent).toContain('Move explanations unavailable')
     expect(node.textContent).toContain('Linked Serenity evidence unavailable')
     expect(node.textContent).not.toContain('No probability history yet')
+  })
+
+  it('keeps Serenity cross-links bound to the owning theme ID', () => {
+    expect(SRC).toContain("searchParams.get('market_id')")
+    expect(SRC).toContain("queryKey: ['prediction-market-detail', selectedMarketId]")
+    expect(SRC).toContain('api.getPredictionMarketDetail(selectedMarketId!)')
+    expect(SRC).toContain('to={`/serenity-lens?tab=themes&theme_id=${encodeURIComponent(e.theme_id.trim())}`}')
+    expect(SRC).toContain('No fallback market was opened')
+    expect(SRC).not.toContain('href="/serenity-lens"')
   })
 })

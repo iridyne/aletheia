@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { RuntimeSystemTab } from './RuntimeSystemTab'
 import SRC from './RuntimeSystemTab.tsx?raw'
 
-function renderRuntimeTab() {
+function renderRuntimeTab(updateStatus: Record<string, unknown> = { ok: false }) {
   const client = new QueryClient()
   client.setQueryData(['remote-control-interfaces'], { interfaces: [] })
-  client.setQueryData(['update-status'], { ok: false })
+  client.setQueryData(['update-status'], updateStatus)
   client.setQueryData(['export-catalog'], { datasets: [] })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -69,5 +69,57 @@ describe('RuntimeSystemTab', () => {
     expect(SRC).toContain("clearImmediateError('app')")
     expect(SRC).toContain("clearImmediateError('runtime')")
     expect(SRC).toContain("clearImmediateError('remote')")
+  })
+
+  it('renders source update evidence as CLI guidance without browser apply', () => {
+    const html = renderRuntimeTab({
+      ok: true,
+      mode: 'development',
+      has_update: true,
+      behind_count: 2,
+      branch: 'master',
+      current_commit: '11111111',
+      remote_commit: '22222222',
+    })
+
+    expect(html).toContain('2 behind')
+    expect(html).toContain('master · 11111111')
+    expect(html).toContain('22222222')
+    expect(html).toContain('Run <code>aletheia update</code> from the controlling terminal')
+    expect(html).not.toContain('Apply update</button>')
+    expect(SRC).not.toContain('Pull latest code?')
+  })
+
+  it('keeps packaged update apply available', () => {
+    const html = renderRuntimeTab({
+      ok: true,
+      mode: 'packaged',
+      has_update: true,
+      behind_count: 1,
+      branch: 'stable',
+      current_commit: 'aaaaaaaa',
+      remote_commit: 'bbbbbbbb',
+    })
+
+    expect(html).toContain('Apply update</button>')
+    expect(SRC).toContain('Apply packaged update?')
+    expect(SRC).toContain('api.applyUpdate')
+  })
+
+  it('fails closed when update mode is missing or unknown', () => {
+    for (const mode of [undefined, 'unknown']) {
+      const html = renderRuntimeTab({
+        ok: true,
+        mode,
+        has_update: true,
+        behind_count: 1,
+        branch: 'master',
+        current_commit: '11111111',
+        remote_commit: '22222222',
+      })
+
+      expect(html).toContain('Update apply action unavailable')
+      expect(html).not.toContain('Apply update</button>')
+    }
   })
 })

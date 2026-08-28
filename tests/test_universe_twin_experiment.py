@@ -382,7 +382,18 @@ def test_task6_no_chase_proposed_direction_is_replayable() -> None:
     assert report.matches is True
 
 
-def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> None:
+def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote(monkeypatch) -> None:
+    from aletheia.universe import twin_evaluation
+
+    original = twin_evaluation.assess_candidate_outcome
+    as_of_values = []
+
+    def _record(row, *, as_of_at=None):
+        as_of_values.append(as_of_at)
+        return original(row, as_of_at=as_of_at)
+
+    monkeypatch.setattr(twin_evaluation, "assess_candidate_outcome", _record)
+
     bundles = []
     arms = set()
     index = 0
@@ -451,6 +462,8 @@ def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> No
     assert "feature_observation_lineage_not_available" in report["blocking_reasons"]
     assert "independent_dr_outcome_model_not_available" in report["blocking_reasons"]
     assert "anytime_valid_lower_bound_not_available" in report["blocking_reasons"]
+    assert len({value for value in as_of_values}) == 1
+    assert next(iter(as_of_values)).tzinfo is not None
     assert repo.get_db().execute(
         "SELECT COUNT(*) FROM learning_contribution_verdicts"
     ).fetchone()[0] == 0

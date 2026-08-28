@@ -13,8 +13,8 @@ import { parseDecisionRationale, stringList } from '../lib/decisionReasoning'
  * thesis paragraph.
  *
  * Previously lived inside pages/Proposals.tsx as an exported helper. That
- * page has been superseded by /blotter (2026-07-18 migration) but AgentFeed
- * still needs this component to render proposal detail inside its own
+ * page has been superseded; legacy AgentFeed rows still need this component
+ * to render proposal detail inside their own
  * drawer — moved here so the source of truth outlives the retired page.
  */
 

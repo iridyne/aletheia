@@ -54,9 +54,7 @@ def initialize_runtime_tracing() -> bool:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
-    )
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _float(value: Any) -> float | None:
@@ -83,6 +81,7 @@ def add_catalog_pricing_snapshot(
     output_usd_per_million: float,
     reasoning_usd_per_million: float | None = None,
     cached_input_usd_per_million: float | None = None,
+    cache_creation_input_usd_per_million: float | None = None,
     web_search_usd_per_request: float | None = None,
     effective_from: str | None = None,
     source: str,
@@ -106,6 +105,7 @@ def add_catalog_pricing_snapshot(
         "output_usd_per_million": output_usd_per_million,
         "reasoning_usd_per_million": reasoning_usd_per_million,
         "cached_input_usd_per_million": cached_input_usd_per_million,
+        "cache_creation_input_usd_per_million": cache_creation_input_usd_per_million,
         "web_search_usd_per_request": web_search_usd_per_request,
     }
     parsed_rates = {name: _float(value) for name, value in rates.items()}
@@ -132,6 +132,7 @@ def add_catalog_pricing_snapshot(
         "output_usd_per_million": parsed_rates["output_usd_per_million"],
         "reasoning_usd_per_million": parsed_rates["reasoning_usd_per_million"],
         "cached_input_usd_per_million": parsed_rates["cached_input_usd_per_million"],
+        "cache_creation_input_usd_per_million": parsed_rates["cache_creation_input_usd_per_million"],
         "web_search_usd_per_request": parsed_rates["web_search_usd_per_request"],
         "currency": "USD",
         "source": source,
@@ -143,14 +144,12 @@ def add_catalog_pricing_snapshot(
         """INSERT OR IGNORE INTO pricing_snapshots (
             id, provider, model, effective_from, input_usd_per_million,
             output_usd_per_million, reasoning_usd_per_million,
-            cached_input_usd_per_million, web_search_usd_per_request,
-            currency, source, version, created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            cached_input_usd_per_million, cache_creation_input_usd_per_million,
+            web_search_usd_per_request, currency, source, version, created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         tuple(row.values()),
     )
-    stored = db.execute(
-        "SELECT * FROM pricing_snapshots WHERE id=?", (snapshot_id,)
-    ).fetchone()
+    stored = db.execute("SELECT * FROM pricing_snapshots WHERE id=?", (snapshot_id,)).fetchone()
     return dict(stored) if stored else row
 
 
@@ -184,9 +183,7 @@ def list_pricing_snapshots(
     return [dict(row) for row in rows]
 
 
-def resolve_pricing_snapshot(
-    provider: str, model: str, at: str
-) -> dict[str, Any] | None:
+def resolve_pricing_snapshot(provider: str, model: str, at: str) -> dict[str, Any] | None:
     db = ensure_economics_schema()
     row = db.execute(
         """SELECT * FROM pricing_snapshots
@@ -226,14 +223,8 @@ def observe_token_integrity(usage: dict[str, int | None]) -> list[dict[str, str]
 def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
     """Normalize common provider usage shapes without inventing absent counters."""
     usage = raw_usage if isinstance(raw_usage, dict) else {}
-    prompt_details = (
-        usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
-    )
-    completion_details = (
-        usage.get("completion_tokens_details")
-        or usage.get("output_tokens_details")
-        or {}
-    )
+    prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+    completion_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
     server_tool_use = usage.get("server_tool_use") or {}
     server_side_tools = usage.get("server_side_tool_usage_details") or {}
 
@@ -262,8 +253,23 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         return None
 
     top_level_reasoning = token("reasoning_tokens")
-    cached_from_details = detail(
-        prompt_details, "cached_tokens", "cached_input_tokens"
+    top_level_cache_read = token("cache_read_input_tokens")
+    cache_read = (
+        top_level_cache_read
+        if top_level_cache_read is not None
+        else detail(prompt_details, "cached_tokens", "cached_input_tokens", "cache_read_input_tokens")
+    )
+    top_level_cache_creation = token("cache_creation_input_tokens", "cache_write_input_tokens")
+    cache_creation = (
+        top_level_cache_creation
+        if top_level_cache_creation is not None
+        else detail(
+            prompt_details,
+            "cache_creation_input_tokens",
+            "cache_creation_tokens",
+            "cache_write_input_tokens",
+            "cache_write_tokens",
+        )
     )
     web_search_requests = detail(prompt_details, "web_search_requests")
     if web_search_requests is None:
@@ -275,24 +281,29 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         "output_tokens": token("completion_tokens", "output_tokens"),
         "total_tokens": token("total_tokens"),
         "reasoning_tokens": (
-            top_level_reasoning
-            if top_level_reasoning is not None
-            else detail(completion_details, "reasoning_tokens")
+            top_level_reasoning if top_level_reasoning is not None else detail(completion_details, "reasoning_tokens")
         ),
         # Providers disagree on where cache hits live: OpenAI/Anthropic report
         # them under prompt_tokens_details.cached_tokens, while DeepSeek-style
         # providers (incl. sensenova) put them at the top level as
         # cache_read_input_tokens. Fall back so both shapes normalize to
         # cached_input_tokens instead of silently zeroing the counter.
-        "cached_input_tokens": (
-            cached_from_details
-            if cached_from_details is not None
-            else token("cache_read_input_tokens")
-        ),
-        "provider_cache_read_input_tokens": token("cache_read_input_tokens"),
-        "provider_cache_creation_input_tokens": token("cache_creation_input_tokens"),
+        "cached_input_tokens": (cache_read),
+        "provider_cache_read_input_tokens": cache_read,
+        "provider_cache_creation_input_tokens": cache_creation,
         "web_search_requests": web_search_requests,
     }
+
+
+def provider_reported_cost_usd(raw_usage: Any) -> float | None:
+    """Return only an explicitly USD-denominated provider amount."""
+    if not isinstance(raw_usage, dict):
+        return None
+    for key in ("provider_cost_usd", "total_cost_usd", "cost_usd"):
+        value = _float(raw_usage.get(key))
+        if value is not None and value >= 0:
+            return value
+    return None
 
 
 def estimate_llm_cost(
@@ -303,47 +314,41 @@ def estimate_llm_cost(
     input_tokens = usage.get("input_tokens")
     output_tokens = usage.get("output_tokens")
     reasoning_tokens = usage.get("reasoning_tokens") or 0
-    cached_tokens = usage.get("cached_input_tokens") or 0
-    provider_cache_read = usage.get("provider_cache_read_input_tokens") or 0
-    provider_cache_creation = usage.get("provider_cache_creation_input_tokens") or 0
+    provider_cache_read = usage.get("provider_cache_read_input_tokens")
+    cache_read = provider_cache_read if provider_cache_read is not None else usage.get("cached_input_tokens")
+    cache_creation = usage.get("provider_cache_creation_input_tokens")
     web_search_requests = usage.get("web_search_requests") or 0
-    if provider_cache_read or provider_cache_creation:
-        return (
-            None,
-            "unknown",
-            {
-                "reason": "provider_cache_pricing_contract_unsupported",
-                "cache_read_input_tokens": provider_cache_read,
-                "cache_creation_input_tokens": provider_cache_creation,
-            },
-        )
     if input_tokens is None or output_tokens is None:
-        return None, "unknown", {"reason": "billable_token_usage_incomplete"}
-    if cached_tokens > input_tokens:
-        return None, "unknown", {"reason": "cached_tokens_exceed_input_tokens"}
+        return None, "unknown", {"reason": "usage_incomplete"}
+    cache_read_tokens = cache_read or 0
+    cache_creation_tokens = cache_creation or 0
+    if cache_read_tokens + cache_creation_tokens > input_tokens:
+        return None, "unknown", {"reason": "cache_tokens_exceed_input_tokens"}
 
     input_rate = _float(pricing.get("input_usd_per_million"))
     output_rate = _float(pricing.get("output_usd_per_million"))
     reasoning_rate = _float(pricing.get("reasoning_usd_per_million"))
     cached_rate = _float(pricing.get("cached_input_usd_per_million"))
+    cache_creation_rate = _float(pricing.get("cache_creation_input_usd_per_million"))
     web_search_rate = _float(pricing.get("web_search_usd_per_request"))
     if input_rate is None or output_rate is None:
-        return None, "unknown", {"reason": "required_pricing_rate_missing"}
-    if cached_tokens and cached_rate is None:
-        return None, "unknown", {"reason": "cached_input_pricing_missing"}
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "base_tokens"}
+    if cache_read_tokens > 0 and cached_rate is None:
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "cache_read"}
+    if cache_creation_tokens > 0 and cache_creation_rate is None:
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "cache_creation"}
     if reasoning_tokens > output_tokens:
         return None, "unknown", {"reason": "reasoning_tokens_exceed_output_tokens"}
+    if reasoning_tokens > 0 and reasoning_rate is None:
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "reasoning"}
     if web_search_requests and web_search_rate is None:
-        return None, "unknown", {"reason": "web_search_pricing_missing"}
+        return None, "unknown", {"reason": "positive_special_rate_missing", "field": "web_search"}
 
-    ordinary_input = input_tokens - cached_tokens
-    ordinary_output = (
-        output_tokens - reasoning_tokens
-        if reasoning_rate is not None
-        else output_tokens
-    )
+    ordinary_input = input_tokens - cache_read_tokens - cache_creation_tokens
+    ordinary_output = output_tokens - reasoning_tokens if reasoning_rate is not None else output_tokens
     cost = ordinary_input * input_rate / 1_000_000
-    cost += cached_tokens * (cached_rate or 0.0) / 1_000_000
+    cost += cache_read_tokens * (cached_rate or 0.0) / 1_000_000
+    cost += cache_creation_tokens * (cache_creation_rate or 0.0) / 1_000_000
     cost += ordinary_output * output_rate / 1_000_000
     if reasoning_rate is not None:
         cost += reasoning_tokens * reasoning_rate / 1_000_000
@@ -352,8 +357,11 @@ def estimate_llm_cost(
         round(cost, 12),
         "estimated",
         {
+            "reason": "formula_priced",
             "ordinary_input_tokens": ordinary_input,
             "ordinary_output_tokens": ordinary_output,
+            "cache_read_input_tokens": cache_read_tokens,
+            "cache_creation_input_tokens": cache_creation_tokens,
             "reasoning_priced_separately": reasoning_rate is not None,
             "web_search_requests": web_search_requests,
             "web_search_cost_usd": web_search_requests * (web_search_rate or 0.0),
@@ -402,17 +410,43 @@ def record_llm_attempt(
     raw_usage: Any = None,
     error_type: str | None = None,
     metadata: dict[str, Any] | None = None,
+    pricing_observation: Any = None,
 ) -> str | None:
     """Persist one physical provider attempt. Measurement failure never blocks trading."""
     if not tracing_enabled():
         return None
     try:
         usage = normalize_usage(raw_usage)
-        pricing = resolve_pricing_snapshot(provider, model, started_at)
-        estimated_cost, cost_status, cost_meta = estimate_llm_cost(usage, pricing)
+        provider_cost = provider_reported_cost_usd(raw_usage)
+        if provider_cost is not None:
+            estimated_cost, cost_status = provider_cost, "known"
+            cost_meta = {"reason": "provider_reported"}
+            pricing = resolve_pricing_snapshot(provider, model, started_at)
+        else:
+            from aletheia.economics.pricing_sync import resolve_pricing_from_observation
+
+            pricing, pricing_reason = resolve_pricing_from_observation(provider, model, started_at, pricing_observation)
+            estimated_cost, cost_status, cost_meta = estimate_llm_cost(usage, pricing)
+            if (
+                estimated_cost is None
+                and cost_meta.get("reason") == "positive_special_rate_missing"
+                and pricing_observation is not None
+            ):
+                catalog_pricing, _ = resolve_pricing_from_observation(
+                    provider,
+                    model,
+                    started_at,
+                    pricing_observation,
+                    use_existing=False,
+                )
+                if catalog_pricing is not None:
+                    pricing = catalog_pricing
+                    estimated_cost, cost_status, cost_meta = estimate_llm_cost(usage, pricing)
+            if pricing is None:
+                cost_meta = {"reason": pricing_reason}
         if status != "success" and not raw_usage:
             estimated_cost, cost_status = None, "unknown"
-            cost_meta = {"reason": "failed_attempt_usage_unavailable"}
+            cost_meta = {"reason": "usage_incomplete"}
         event_id = "cost_" + uuid4().hex[:16]
         provenance = _current_provenance()
         row = (
@@ -438,11 +472,13 @@ def record_llm_attempt(
             "USD",
             cost_status,
             error_type,
-            _json({
-                **(metadata or {}),
-                "cost_calculation": cost_meta,
-                "token_integrity_observations": observe_token_integrity(usage),
-            }),
+            _json(
+                {
+                    **(metadata or {}),
+                    "cost_calculation": cost_meta,
+                    "token_integrity_observations": observe_token_integrity(usage),
+                }
+            ),
             _utcnow(),
         )
         db = ensure_economics_schema()
@@ -475,17 +511,10 @@ def record_fixed_cost_event(
     parsed = _float(cost_usd)
     if parsed is not None and parsed < 0:
         raise ValueError("cost_usd must be non-negative")
-    resolved_status = (
-        cost_status
-        if parsed is not None and cost_status in {"known", "estimated"}
-        else "unknown"
-    )
+    resolved_status = cost_status if parsed is not None and cost_status in {"known", "estimated"} else "unknown"
     event_id = "cost_" + uuid4().hex[:16]
     call_id = (
-        "fixed_"
-        + hashlib.sha256(
-            f"{event_type}:{name}:{started_at}:{finished_at or ''}".encode()
-        ).hexdigest()[:16]
+        "fixed_" + hashlib.sha256(f"{event_type}:{name}:{started_at}:{finished_at or ''}".encode()).hexdigest()[:16]
     )
     db = ensure_economics_schema()
     db.execute(
@@ -523,23 +552,11 @@ def aggregate_agent_run_cost(run_id: str) -> dict[str, Any]:
             (run_id,),
         ).fetchall()
     ]
-    known = sum(
-        (_float(row["estimated_cost_usd"]) or 0.0)
-        for row in rows
-        if row["estimated_cost_usd"] is not None
-    )
-    unknown = sum(
-        1
-        for row in rows
-        if row["cost_status"] == "unknown" or row["estimated_cost_usd"] is None
-    )
+    known = sum((_float(row["estimated_cost_usd"]) or 0.0) for row in rows if row["estimated_cost_usd"] is not None)
+    unknown = sum(1 for row in rows if row["cost_status"] == "unknown" or row["estimated_cost_usd"] is None)
     llm_rows = [row for row in rows if row["event_type"] == "llm"]
     final_model = next(
-        (
-            row["model_or_tool"]
-            for row in reversed(llm_rows)
-            if row["status"] == "success"
-        ),
+        (row["model_or_tool"] for row in reversed(llm_rows) if row["status"] == "success"),
         None,
     )
     return {
@@ -616,9 +633,7 @@ def list_token_summary(
             for observation in observations:
                 rule_id = observation.get("rule_id") if isinstance(observation, dict) else None
                 if isinstance(rule_id, str):
-                    token_integrity_observation_counts[rule_id] = (
-                        token_integrity_observation_counts.get(rule_id, 0) + 1
-                    )
+                    token_integrity_observation_counts[rule_id] = token_integrity_observation_counts.get(rule_id, 0) + 1
         agent_bucket = by_logical_agent.setdefault(
             str(logical_agent or "unattributed"),
             {"llm_attempt_count": 0, **{field: 0 for field in token_fields}},
@@ -693,13 +708,9 @@ def list_cost_summary(
         "window_start": window_start,
         "window_end": window_end,
         "event_count": len(rows),
-        "known_cost_subtotal_usd": round(
-            sum(_float(row["estimated_cost_usd"]) or 0.0 for row in rows), 12
-        ),
+        "known_cost_subtotal_usd": round(sum(_float(row["estimated_cost_usd"]) or 0.0 for row in rows), 12),
         "unknown_event_count": sum(
-            1
-            for row in rows
-            if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown"
+            1 for row in rows if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown"
         ),
         "by_type": by_type,
         "events": rows,
@@ -796,9 +807,7 @@ def list_cost_breakdown_by_provider(
         for row in db.execute(
             "SELECT provider, model_or_tool, started_at, latency_ms, status, "
             "estimated_cost_usd, cost_status, usage_json "
-            "FROM runtime_cost_events WHERE "
-            + " AND ".join(where)
-            + " ORDER BY started_at LIMIT ?",
+            "FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at LIMIT ?",
             (*params, int(event_limit)),
         ).fetchall()
     ]
@@ -866,9 +875,7 @@ def list_cost_breakdown_by_provider(
     def _finalize_bucket(bucket: dict[str, Any]) -> None:
         bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)
         if bucket["latency_count"]:
-            bucket["avg_latency_ms"] = round(
-                bucket["latency_ms_sum"] / bucket["latency_count"], 1
-            )
+            bucket["avg_latency_ms"] = round(bucket["latency_ms_sum"] / bucket["latency_count"], 1)
         else:
             bucket["avg_latency_ms"] = None
         bucket.pop("latency_ms_sum", None)
@@ -992,9 +999,7 @@ def list_cost_breakdown_by_tool(
         dict(row)
         for row in db.execute(
             "SELECT model_or_tool, status, estimated_cost_usd, cost_status "
-            "FROM runtime_cost_events WHERE "
-            + " AND ".join(where)
-            + " ORDER BY started_at LIMIT ?",
+            "FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at LIMIT ?",
             (*params, int(event_limit)),
         ).fetchall()
     ]

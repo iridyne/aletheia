@@ -8,6 +8,7 @@ Read-only. No DB mutations. No LLM calls.
 from __future__ import annotations
 
 import logging
+import math
 from collections import Counter, defaultdict
 from typing import Any
 
@@ -198,7 +199,8 @@ def _compute_group_stats(
         "avg_loss": round(avg_loss, 4),
         "expectancy": round(expectancy, 4),
         "total_pnl": round(total_pnl, 4),
-        "profit_factor": round(profit_factor, 4) if profit_factor != float("inf") else 999.0,
+        "profit_factor": None if math.isinf(profit_factor) else round(profit_factor, 4),
+        "profit_factor_state": "unbounded_no_losses" if math.isinf(profit_factor) else "finite",
         "max_consecutive_losses": max_consecutive_losses,
         "avg_holding_hours": avg_holding_hours,
         "most_common_close_reason": most_common_close_reason,
@@ -234,14 +236,16 @@ def _classify_factor(
 
     # P0-4: outlier detection — high PF with small sample may be single-trade outlier
     if profit_factor > 5.0 and trade_count < 15:
-        return "active", f"possible_outlier_driven(pf={profit_factor:.1f},n={trade_count})"
+        pf_label = "unbounded" if math.isinf(profit_factor) else f"{profit_factor:.1f}"
+        return "active", f"possible_outlier_driven(pf={pf_label},n={trade_count})"
 
     # P0-4: require n >= 8 and win_rate >= 0.45 for preferred promotion
     if (expectancy > 0 and profit_factor >= 1.2
             and win_rate >= 0.45
             and trade_count >= _MIN_TRADES_FOR_PREFERRED):
+        pf_label = "unbounded" if math.isinf(profit_factor) else f"{profit_factor:.2f}"
         return "preferred", (
-            f"positive_expectancy({expectancy:.4f})_pf({profit_factor:.2f})"
+            f"positive_expectancy({expectancy:.4f})_pf({pf_label})"
             f"_wr={win_rate:.2%}_n={trade_count}"
         )
 

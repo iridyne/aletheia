@@ -585,7 +585,11 @@ def test_invalid_native_proposal_fails_closed(
 
     from aletheia.execution import gateway
 
-    monkeypatch.setattr(gateway, "_capture_attribution_snapshot_json", lambda _symbol: None)
+    monkeypatch.setattr(
+        gateway,
+        "_capture_attribution_snapshot_json",
+        lambda _symbol, **_kwargs: None,
+    )
     payload = {
         "symbol": "BTC/USDT",
         "market_type": "spot",
@@ -1207,7 +1211,7 @@ def test_execution_does_not_backfill_hash_covered_attribution_snapshot(
     monkeypatch.setattr(
         gateway,
         "_capture_attribution_snapshot_json",
-        lambda _symbol: json.dumps({"regime_tag": "late-context"}),
+        lambda _symbol, **_kwargs: json.dumps({"regime_tag": "late-context"}),
     )
     monkeypatch.setattr(
         gateway,
@@ -1522,12 +1526,19 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         "id": None,
         "strategy_id": "altered-strategy",
         "opportunity_id": "altered-opportunity",
+        "entry_plan_id": "altered-entry-plan",
         "setup_id": "altered-setup",
         "authorization_id": "altered-authorization",
         "symbol": "ETH/USDT",
         "market_type": "usdt_futures",
         "direction": "short",
         "order_type": "limit",
+        "order_tactic": "POST_ONLY_LIMIT",
+        "time_in_force": "post_only",
+        "post_only": True,
+        "bbo_reference": "ask",
+        "max_slippage_bps": 1.0,
+        "worst_price": 61_000.0,
         "price": 61_000.0,
         "leverage": 2,
         "stop_price": 59_000.0,

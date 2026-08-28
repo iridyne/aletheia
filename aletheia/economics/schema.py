@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS pricing_snapshots (
     output_usd_per_million REAL NOT NULL CHECK(output_usd_per_million >= 0),
     reasoning_usd_per_million REAL,
     cached_input_usd_per_million REAL,
+    cache_creation_input_usd_per_million REAL,
     web_search_usd_per_request REAL,
     currency TEXT NOT NULL DEFAULT 'USD',
     source TEXT NOT NULL,
@@ -286,11 +287,11 @@ def _backfill_existing_tool_calls(db: sqlite3.Connection) -> None:
             status,started_at,finished_at,latency_ms,usage_json,pricing_snapshot_id,
             cost_profile_id,estimated_cost_usd,currency,cost_status,error_type,
             metadata_json,created_at
-        ) """ + _TOOL_COST_SELECT
+        ) """
+        + _TOOL_COST_SELECT
     )
     db.execute(
-        "INSERT OR REPLACE INTO economics_settings(key,value,updated_at) "
-        "VALUES (?,?,datetime('now'))",
+        "INSERT OR REPLACE INTO economics_settings(key,value,updated_at) VALUES (?,?,datetime('now'))",
         (_TOOL_BACKFILL_KEY, "complete"),
     )
 
@@ -359,25 +360,14 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         "llm_context_pair_reviews",
     }
     existing_tables = {
-        str(row[0])
-        for row in db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     trigger_row = db.execute(
-        "SELECT sql FROM sqlite_master WHERE type='trigger' "
-        "AND name='trg_agent_tool_call_cost_event'"
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='trg_agent_tool_call_cost_event'"
     ).fetchone()
-    tool_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
-    ).fetchone()
+    tool_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'").fetchone()
     tool_columns = (
-        {
-            str(row[1])
-            for row in db.execute("PRAGMA table_info(agent_tool_calls)").fetchall()
-        }
-        if tool_table
-        else set()
+        {str(row[1]) for row in db.execute("PRAGMA table_info(agent_tool_calls)").fetchall()} if tool_table else set()
     )
     tool_inference_link_ready = "inference_call_id" in tool_columns
     tool_duration_ready = "duration_ms" in tool_columns
@@ -390,44 +380,32 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
 
     if not required_tables.issubset(existing_tables):
         if db.in_transaction:
-            raise RuntimeError(
-                "economics schema initialization refused inside an active transaction"
-            )
+            raise RuntimeError("economics schema initialization refused inside an active transaction")
         db.executescript(ECONOMICS_DDL)
 
-    pricing_columns = {
-        str(row[1]) for row in db.execute("PRAGMA table_info(pricing_snapshots)")
-    }
+    pricing_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(pricing_snapshots)")}
     if "web_search_usd_per_request" not in pricing_columns:
         if db.in_transaction:
-            raise RuntimeError(
-                "economics pricing schema upgrade refused inside an active transaction"
-            )
-        db.execute(
-            "ALTER TABLE pricing_snapshots ADD COLUMN web_search_usd_per_request REAL"
-        )
+            raise RuntimeError("economics pricing schema upgrade refused inside an active transaction")
+        db.execute("ALTER TABLE pricing_snapshots ADD COLUMN web_search_usd_per_request REAL")
+    if "cache_creation_input_usd_per_million" not in pricing_columns:
+        if db.in_transaction:
+            raise RuntimeError("economics pricing schema upgrade refused inside an active transaction")
+        db.execute("ALTER TABLE pricing_snapshots ADD COLUMN cache_creation_input_usd_per_million REAL")
 
-    context_columns = {
-        str(row[1]) for row in db.execute("PRAGMA table_info(llm_context_artifacts)")
-    }
+    context_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(llm_context_artifacts)")}
     missing_context_columns = [
         ("logical_call_id", "TEXT"),
         ("evaluation_pair_id", "TEXT"),
         ("evaluation_arm", "TEXT"),
         ("fixture_id", "TEXT"),
     ]
-    missing_context_columns = [
-        item for item in missing_context_columns if item[0] not in context_columns
-    ]
+    missing_context_columns = [item for item in missing_context_columns if item[0] not in context_columns]
     if missing_context_columns:
         if db.in_transaction:
-            raise RuntimeError(
-                "economics context schema upgrade refused inside an active transaction"
-            )
+            raise RuntimeError("economics context schema upgrade refused inside an active transaction")
         for column, column_type in missing_context_columns:
-            db.execute(
-                f"ALTER TABLE llm_context_artifacts ADD COLUMN {column} {column_type}"
-            )
+            db.execute(f"ALTER TABLE llm_context_artifacts ADD COLUMN {column} {column_type}")
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_llm_context_artifacts_call "
             "ON llm_context_artifacts(logical_call_id, created_at)"
@@ -435,9 +413,7 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
 
     if tool_table and tool_inference_link_ready and tool_duration_ready and not trigger_ready:
         if db.in_transaction:
-            raise RuntimeError(
-                "economics trigger initialization refused inside an active transaction"
-            )
+            raise RuntimeError("economics trigger initialization refused inside an active transaction")
         _install_tool_trigger(db)
 
     if tool_table and tool_inference_link_ready:
