@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
-import { api } from '../api/client'
+import { ApiError, api } from '../api/client'
 import type { AgentRun, Opportunity } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { type DataState } from '../components/DataState'
@@ -45,6 +45,10 @@ function isAgentActivityTab(tab: string | null): tab is AgentActivityTab {
 function parseJson(raw: string | null): any[] {
   if (!raw) return []
   try { return JSON.parse(raw) } catch { return [] }
+}
+
+function isMissingAgentRun(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'agent_run_not_found'
 }
 
 const runColumns = [
@@ -306,12 +310,12 @@ function OpportunitiesTab({ opps, state }: { opps: Opportunity[], state?: DataSt
  * server/routes/data.py:236 for a while (#72 fix).
  */
 function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: string | null }) {
-  const { data: toolCalls = [] } = useQuery({
+  const { data: toolCalls = [], error: toolCallsError } = useQuery({
     queryKey: ['tool-calls', runId],
     queryFn: () => api.getAgentRunToolCalls(runId),
     enabled: !!runId,
   })
-  const { data: steps = [] } = useQuery({
+  const { data: steps = [], error: stepsError } = useQuery({
     queryKey: ['agent-run-steps', runId],
     queryFn: () => api.getAgentRunSteps(runId),
     enabled: !!runId,
@@ -320,10 +324,13 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
   const tools = toolCalls.length > 0
     ? toolCalls as any[]
     : (fallback ? (() => { try { return JSON.parse(fallback) } catch { return [] } })() : [])
+  const runNotFound = isMissingAgentRun(toolCallsError) || isMissingAgentRun(stepsError)
 
   return (
     <DrawerSection label="Reasoning Steps">
-      {(toolCalls as any[]).length > 0 ? (
+      {runNotFound ? (
+        <span className="text-muted text-sm">Run identity not found; trace unavailable.</span>
+      ) : (toolCalls as any[]).length > 0 ? (
         <table className="drawer-table">
           <thead>
             <tr><th>Tool</th><th>Class</th><th>Permitted</th><th>Time</th></tr>
@@ -344,7 +351,7 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
       ) : (
         <span className="text-muted text-sm">No tool calls recorded</span>
       )}
-      {(steps as any[]).length > 0 && (
+      {!runNotFound && (steps as any[]).length > 0 && (
         <table className="drawer-table mt-2">
           <thead>
             <tr><th>#</th><th>Action</th><th>Input</th><th>Output</th></tr>
