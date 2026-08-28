@@ -421,11 +421,7 @@ def get_cost_summary(execution_mode: str | None = None):
         }
 
     def _costs(rows: list[dict]) -> dict[str, float | None]:
-        if not rows or not any(
-            row.get(field) is not None
-            for row in rows
-            for field in ("entry_fee", "exit_fee", "slippage_cost")
-        ):
+        if not rows:
             return {
                 "total_entry_fees": None,
                 "total_exit_fees": None,
@@ -433,15 +429,28 @@ def get_cost_summary(execution_mode: str | None = None):
                 "total_slippage": None,
                 "total_costs": None,
             }
-        entry = sum(float(row.get("entry_fee") or 0) for row in rows)
-        exit_ = sum(float(row.get("exit_fee") or 0) for row in rows)
-        slippage = sum(float(row.get("slippage_cost") or 0) for row in rows)
+
+        def _total(field: str) -> float | None:
+            values = [row.get(field) for row in rows]
+            if any(value is None for value in values):
+                return None
+            return round(sum(float(value) for value in values), 8)
+
+        entry = _total("entry_fee")
+        exit_ = _total("exit_fee")
+        slippage = _total("slippage_cost")
+        total_fees = round(entry + exit_, 8) if entry is not None and exit_ is not None else None
+        total_costs = (
+            round(entry + exit_ + slippage, 8)
+            if entry is not None and exit_ is not None and slippage is not None
+            else None
+        )
         return {
-            "total_entry_fees": round(entry, 8),
-            "total_exit_fees": round(exit_, 8),
-            "total_fees": round(entry + exit_, 8),
-            "total_slippage": round(slippage, 8),
-            "total_costs": round(entry + exit_ + slippage, 8),
+            "total_entry_fees": entry,
+            "total_exit_fees": exit_,
+            "total_fees": total_fees,
+            "total_slippage": slippage,
+            "total_costs": total_costs,
         }
 
     verified = _costs(eligible_strategy_outcomes(execution_mode=mode))
