@@ -176,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
         "ok": not failures,
         "changed_files": changed_files,
         "failures": failures,
-        "release_please_exempt": "release-please" in pr_body.lower(),
+        # Local preflight has no trusted GitHub event metadata, so PR prose
+        # can never authorize the release exemption.
+        "release_please_exempt": False,
     }
     if args.json or failures:
         print(json.dumps(report, indent=2))
