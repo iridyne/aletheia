@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -33,6 +34,67 @@ requires-python = ">=3.12"
     for name in ("install-release.sh", "start-release.sh", "health-check.sh"):
         _write(root / runtime_source / name, (runtime_source / name).read_text(encoding="utf-8"))
     _write(root / runtime_source / "start-release.ps1", "Write-Output ok\n")
+
+
+def _run_health_check(tmp_path: Path, ready: dict, health: dict) -> subprocess.CompletedProcess[str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True)
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "url = sys.argv[-1]\n"
+        f"print({json.dumps(ready)!r} if url.endswith('/readyz') else {json.dumps(health)!r})\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    return subprocess.run(
+        [
+            "bash",
+            "scripts/runtime/health-check.sh",
+            "--base-url",
+            "http://example.test",
+            "--timeout-seconds",
+            "0",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+@_UNIX_ONLY
+def test_health_check_requires_healthy_readiness_and_health_payloads(tmp_path: Path) -> None:
+    healthy = _run_health_check(
+        tmp_path / "healthy",
+        {"ok": True},
+        {"status": "healthy", "issues": []},
+    )
+    assert healthy.returncode == 0
+    assert json.loads(healthy.stdout)["ok"] is True
+
+    not_ready = _run_health_check(
+        tmp_path / "not-ready",
+        {"ok": False},
+        {"status": "healthy", "issues": []},
+    )
+    assert not_ready.returncode != 0
+    not_ready_payload = json.loads(not_ready.stdout)
+    assert not_ready_payload["ok"] is False
+    assert not_ready_payload["ready"]["ok"] is False
+
+    degraded = _run_health_check(
+        tmp_path / "degraded",
+        {"ok": True},
+        {"status": "degraded", "issues": ["market_data_stale:45m"]},
+    )
+    assert degraded.returncode != 0
+    degraded_payload = json.loads(degraded.stdout)
+    assert degraded_payload["ok"] is False
+    assert degraded_payload["health"]["status"] == "degraded"
 
 
 @_UNIX_ONLY
