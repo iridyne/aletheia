@@ -10,8 +10,10 @@ import logging
 import math
 import os
 import time
+from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.files.jsonl import write_audit
 from aletheia.storage.repositories import list_agent_runs
 
@@ -61,6 +63,26 @@ _llm_consecutive_failures = 0
 _process_start_time: float = time.monotonic()
 
 
+class _FutureTimestampError(ValueError):
+    """A health timestamp is too far ahead of the host clock."""
+
+
+def _timestamp_age_minutes(value: object) -> float | None:
+    """Return signed age in minutes, rejecting impossible future observations."""
+    if not value:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid health timestamp: {value!r}") from None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    age_minutes = (datetime.now(timezone.utc) - timestamp).total_seconds() / 60.0
+    if age_minutes < -MAX_FUTURE_SKEW.total_seconds() / 60.0:
+        raise _FutureTimestampError(str(value))
+    return age_minutes
+
+
 def record_llm_failure() -> None:
     global _llm_consecutive_failures
     _llm_consecutive_failures += 1
@@ -92,7 +114,6 @@ def _market_data_stale_minutes(cfg) -> float | None:
     """
     if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
         return None
-    from datetime import datetime, timezone
     from aletheia.storage.repositories import list_market_snapshots
     rows = list_market_snapshots(limit=1)
     if not rows:
@@ -100,12 +121,7 @@ def _market_data_stale_minutes(cfg) -> float | None:
     snapshot_at = rows[0].get("snapshot_at")
     if not snapshot_at:
         return float("inf")
-    ts = datetime.fromisoformat(snapshot_at)
-    # Snapshots are stored as tz-aware UTC isoformat; older rows may be naive.
-    # Normalize both sides to aware-UTC before subtracting.
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
+    return _timestamp_age_minutes(snapshot_at)
 
 
 def _mo_ran_in_current_session() -> bool:
@@ -152,7 +168,6 @@ def _observer_latest_session_run_info() -> dict | None:
     error (caller should treat this as unknown/initializing, not healthy).
     """
     try:
-        from datetime import datetime, timezone
         from aletheia.storage.sqlite import get_db
         db = get_db()
         session_row = db.execute(
@@ -172,15 +187,7 @@ def _observer_latest_session_run_info() -> dict | None:
             return None
 
         def _age_minutes(timestamp: str | None) -> float | None:
-            if not timestamp:
-                return None
-            run_dt = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
-            if run_dt.tzinfo is None:
-                run_dt = run_dt.replace(tzinfo=timezone.utc)
-            return max(
-                0.0,
-                (datetime.now(timezone.utc) - run_dt).total_seconds() / 60.0,
-            )
+            return _timestamp_age_minutes(timestamp)
 
         latest_success_row = db.execute(
             "SELECT started_at, ended_at FROM agent_runs"
@@ -200,6 +207,8 @@ def _observer_latest_session_run_info() -> dict | None:
                 else None
             ),
         }
+    except _FutureTimestampError:
+        return {"status": "completed", "timestamp_issue": "future"}
     except Exception:
         return None
 
@@ -285,6 +294,9 @@ def compute_health() -> dict:
     # never collected (initializing or degraded depending on uptime), and stale.
     try:
         stale_min = _market_data_stale_minutes(cfg)
+    except _FutureTimestampError:
+        issues.append("market_data_timestamp_future")
+        stale_min = None
     except Exception as e:
         logger.warning("market-data staleness probe error: %s", e)
         stale_min = None
@@ -320,6 +332,8 @@ def compute_health() -> dict:
                 if not _mo_ran_in_current_session()
                 else "observer_run_unknown"
             )
+        elif run_info.get("timestamp_issue") == "future":
+            issues.append("observer_timestamp_future")
         elif run_info["status"] in _FAILED_STATUSES:
             # A rejected/cancelled/failed first run is a real negative signal,
             # not warmup; do not let the successful-run predicate hide it.

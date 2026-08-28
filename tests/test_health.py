@@ -179,6 +179,33 @@ def test_fresh_market_data_not_stale(tmp_path, monkeypatch):
     assert not any("market_data_stale" in i for i in h["issues"])
 
 
+def test_future_market_data_is_degraded(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    real_fn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _add_snapshot((datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat())
+
+    h = health.compute_health()
+
+    assert h["status"] == "degraded"
+    assert "market_data_timestamp_future" in h["issues"]
+
+
+def test_small_future_market_clock_skew_is_tolerated(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    real_fn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _add_snapshot((datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat())
+
+    h = health.compute_health()
+
+    assert h["status"] == "healthy"
+
+
 def test_stale_market_data_flagged(tmp_path, monkeypatch):
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
@@ -550,6 +577,40 @@ def test_observer_run_info_reads_completion_timestamp(tmp_path, monkeypatch):
     assert info is not None
     assert info["status"] == "completed"
     assert 3.0 <= info["latest_run_age_min"] <= 5.0
+
+
+def test_future_observer_run_is_degraded(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.agent_runtime import health
+    real_observer_info = health._observer_latest_session_run_info
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(health, "_observer_latest_session_run_info", real_observer_info)
+
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    session_start = (now - timedelta(minutes=1)).isoformat()
+    future = (now + timedelta(minutes=10)).isoformat()
+    get_db().execute(
+        "INSERT INTO runtime_sessions (session_id, started_at) VALUES (?, ?)",
+        ("session-health-future", session_start),
+    )
+    get_db().commit()
+    repo.insert_agent_run(
+        AgentRun(
+            agent_name="market_observer",
+            permission_mode="Observe",
+            started_at=future,
+            ended_at=future,
+            status="completed",
+        )
+    )
+
+    h = health.compute_health()
+
+    assert h["status"] == "degraded"
+    assert "observer_timestamp_future" in h["issues"]
 
 
 def test_observer_queued_run_does_not_hide_stale_success(tmp_path, monkeypatch):
