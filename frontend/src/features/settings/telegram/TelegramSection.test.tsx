@@ -4,13 +4,13 @@ import { describe, expect, it } from "vitest";
 import { parseTelegramDraft, TelegramSection } from "./TelegramSection";
 import { TELEGRAM_SECTION } from "./telegramState";
 
-function renderTelegram(health: {
+function renderTelegram(health?: {
 	reachable: boolean;
 	username?: string;
 	error?: string;
 }) {
 	const client = new QueryClient();
-	client.setQueryData(["telegram-health"], health);
+	if (health) client.setQueryData(["telegram-health"], health);
 	return renderToStaticMarkup(
 		<QueryClientProvider client={client}>
 			<TelegramSection settings={{ telegram: {} }} qc={client} />
@@ -89,5 +89,12 @@ describe("TelegramSection", () => {
 
 		expect(html).toContain("✗ network_timeout");
 		expect(html).not.toContain("reachable</");
+	});
+
+	it("does not call an unresolved health query not configured", () => {
+		const html = renderTelegram();
+
+		expect(html).toContain("checking…");
+		expect(html).not.toContain("not configured");
 	});
 });
