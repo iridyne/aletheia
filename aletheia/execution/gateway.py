@@ -529,6 +529,15 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     return {"status": "cancelled", "entry_plan_id": plan_id}
 
 
+def _qualified_uta_mutation_selected(cfg, execution_mode: str) -> bool:
+    if cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
+        return False
+    from aletheia.trust.uta_qualification import require_uta_mutation_qualification
+
+    require_uta_mutation_qualification(execution_mode, cfg)
+    return True
+
+
 def close_exchange_position(
     position_id: str,
     reason: str,
@@ -542,9 +551,8 @@ def close_exchange_position(
     if row is None:
         raise ValueError(f"position not found: {position_id}")
     mode = row.get("execution_mode")
-    if (
-        mode == "binance_testnet"
-        and load_config().exchange.uta_read_boundary_for(mode) == "uta_v1"
+    if mode == "binance_testnet" and _qualified_uta_mutation_selected(
+        load_config(), mode
     ):
         from aletheia.execution.coordinator import close_position
 
@@ -1501,7 +1509,7 @@ def _execute_proposal(
             # remains semantically trade_school=proposal.trade_school.
             try:
                 if allowed_mode == "binance_testnet":
-                    if cfg.exchange.uta_read_boundary_for(allowed_mode) == "uta_v1":
+                    if _qualified_uta_mutation_selected(cfg, allowed_mode):
                         from aletheia.execution.coordinator import execute_order as execute_live_order
                     else:
                         from aletheia.execution.binance_broker import execute_live_order
@@ -1568,12 +1576,16 @@ def _execute_proposal(
                 # errors carry request URLs / partial headers. Route through
                 # clean_error_message (already used by broker error paths) and
                 # cap length so the API response stays a summary.
-                return {
+                response = {
                     "status": "error",
                     "proposal_id": proposal.id,
                     "message": "Broker rejected or failed the order before acceptance was confirmed.",
                     "exchange_order_id": exchange_oid,
                 }
+                reason_code = getattr(e, "reason_code", None)
+                if reason_code:
+                    response["reason_code"] = reason_code
+                return response
             accepted_exchange_result = result
             accepted_exchange_channel = "demo"
             return _record_exchange_result(

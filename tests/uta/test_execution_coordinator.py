@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.uta.models import (
     CommandEvidence,
     SubmissionReport,
@@ -28,6 +30,10 @@ def _setup_db(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.require_uta_mutation_qualification",
+        lambda _mode: None,
+    )
     return conn
 
 
@@ -153,6 +159,33 @@ def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeyp
     assert result["exchange_order_id"] == "venue-1"
 
 
+def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.trust.uta_qualification import UTAQualificationError
+
+    proposal_id, risk_id = "proposal-stale", "risk-stale"
+    _authority(proposal_id, risk_id)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.require_uta_mutation_qualification",
+        lambda _mode: (_ for _ in ()).throw(
+            UTAQualificationError("qualification_code_mismatch")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter",
+        lambda _mode: (_ for _ in ()).throw(
+            AssertionError("UTA adapter must not be created")
+        ),
+    )
+
+    with pytest.raises(UTAQualificationError) as caught:
+        _execute(proposal_id, risk_id)
+
+    assert caught.value.reason_code == "qualification_code_mismatch"
+    assert repo.list_orders(limit=10) == []
+
+
 def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
@@ -252,7 +285,7 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
     assert result["closed"] is True
 
 
-def test_gateway_close_selector_is_configuration_only(tmp_path, monkeypatch):
+def test_gateway_close_selector_requires_current_qualification(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
@@ -280,6 +313,13 @@ def test_gateway_close_selector_is_configuration_only(tmp_path, monkeypatch):
     )
     from aletheia.execution import gateway
 
+    qualification_checks = []
+    monkeypatch.setattr(
+        gateway,
+        "_qualified_uta_mutation_selected",
+        lambda _cfg, mode: qualification_checks.append(mode) or True,
+    )
+
     monkeypatch.setattr(
         gateway,
         "load_config",
@@ -291,14 +331,53 @@ def test_gateway_close_selector_is_configuration_only(tmp_path, monkeypatch):
     )
     gateway.close_exchange_position(position.id, "operator_close")
     monkeypatch.setattr(
-        gateway,
-        "load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(
-                uta_read_boundary_for=lambda _mode: "legacy"
-            )
-        ),
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False,
     )
     gateway.close_exchange_position(position.id, "operator_close")
 
     assert selected == [("uta", position.id), ("legacy", position.id)]
+    assert qualification_checks == ["binance_testnet"]
+
+
+def test_gateway_stale_close_qualification_calls_no_backend(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.trust.uta_qualification import UTAQualificationError
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    repo.insert_position(position)
+    from aletheia.execution import gateway
+
+    monkeypatch.setattr(
+        gateway,
+        "_qualified_uta_mutation_selected",
+        lambda _cfg, _mode: (_ for _ in ()).throw(
+            UTAQualificationError("qualification_identity_mismatch")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.close_position",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("UTA backend must not be called")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.binance_broker.close_testnet_position",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy backend must not be called")
+        ),
+    )
+
+    with pytest.raises(UTAQualificationError) as caught:
+        gateway.close_exchange_position(position.id, "operator_close")
+
+    assert caught.value.reason_code == "qualification_identity_mismatch"

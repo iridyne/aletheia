@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 
 def _artifact(identity, sha, **updates):
     value = {
@@ -63,10 +65,48 @@ def test_uta_qualification_is_bound_to_exact_sha_and_identity(tmp_path, monkeypa
 
     assert uta_profile_qualified("binance_testnet", object()) == (True, "qualified")
 
-    path.write_text(
-        json.dumps(_artifact(identity, "head-1", credential_generation=2)),
-        encoding="utf-8",
+    mismatches = (
+        ({"code_sha": "head-0"}, "qualification_code_mismatch"),
+        ({"uta_contract_version": 2}, "qualification_contract_mismatch"),
+        ({"profile": "other-profile"}, "qualification_identity_mismatch"),
+        ({"adapter": "OtherAdapter"}, "qualification_identity_mismatch"),
+        ({"adapter_version": "2"}, "qualification_identity_mismatch"),
+        ({"driver_version": "4.6"}, "qualification_identity_mismatch"),
+        ({"account_fingerprint": "sha256:other"}, "qualification_identity_mismatch"),
+        ({"credential_generation": 2}, "qualification_identity_mismatch"),
+        ({"environment": "demo"}, "qualification_identity_mismatch"),
     )
-    assert uta_profile_qualified("binance_testnet", object()) == (
-        False, "qualification_identity_mismatch"
+    for updates, reason in mismatches:
+        path.write_text(
+            json.dumps(_artifact(identity, "head-1", **updates)),
+            encoding="utf-8",
+        )
+        assert uta_profile_qualified("binance_testnet", object()) == (False, reason)
+
+
+def test_uta_mutation_qualification_fails_closed_with_bounded_reason(monkeypatch):
+    from aletheia.trust.uta_qualification import (
+        UTAQualificationError,
+        require_uta_mutation_qualification,
     )
+
+    cfg = SimpleNamespace(
+        exchange=SimpleNamespace(
+            uta_read_boundary_for=lambda _mode: "uta_v1"
+        )
+    )
+    monkeypatch.setattr(
+        "aletheia.trust.uta_qualification.uta_profile_qualified",
+        lambda _mode, _cfg: (True, "qualified"),
+    )
+    require_uta_mutation_qualification("binance_testnet", cfg)
+    monkeypatch.setattr(
+        "aletheia.trust.uta_qualification.uta_profile_qualified",
+        lambda _mode, _cfg: (False, "qualification_code_mismatch"),
+    )
+
+    with pytest.raises(UTAQualificationError) as caught:
+        require_uta_mutation_qualification("binance_testnet", cfg)
+
+    assert caught.value.reason_code == "qualification_code_mismatch"
+    assert str(caught.value) == "UTA mutation requires current qualification"
