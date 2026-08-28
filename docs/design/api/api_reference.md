@@ -166,7 +166,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/exit-policy-advice` | Exit policy recommendations |
 | GET | `/analytics/trade-paths` | Trade decision path visualization data |
 | GET | `/analytics/go-live-scorecard` | 10-criteria composite go-live score |
-| GET | `/analytics/cost-summary` | LLM and execution cost breakdown |
+| GET | `/analytics/cost-summary` | Verified economic and execution-cost breakdown, including signed funding and missing-component counts |
 | GET | `/analytics/confidence-calibration` | ECE calibration by conviction bucket |
 | GET | `/analytics/reasoning-feedback` | Per-bucket rejection/win rates |
 | GET | `/analytics/filter-controller` | Shadow-only first-exposure cohorts, retry telemetry, bounded fixed-version replays, and preregistered prospective experiment status; never mutates config |
@@ -239,6 +239,11 @@ Judgement metrics default to the eligible cohort. `/analytics/equity-curve` retu
 `raw_recorded_points` and `genuine_points` with stable labels; its compatibility `points` field is an
 alias of `genuine_points`. Current unrealized PnL remains a separate field and is not folded into either
 realized curve. Cost responses expose verified totals and a separate `raw_recorded_costs` object.
+For each projection, `total_funding_cost` preserves signed funding, `total_economic_costs`
+(`entry_fee + exit_fee + funding_cost`) is the reconcilable total, and
+`total_execution_drag` keeps the diagnostic `slippage_cost` separate. The legacy `total_costs`
+field is an alias of `total_economic_costs`; `missing_cost_counts` identifies incomplete
+components, and any total requiring a missing component is `null` rather than an apparent zero.
 Strategy KPI and family scorecard responses wrap their rows under `strategies` and `families` so the
 same cohort metadata can be returned without hiding its scope. Missing
 or insufficient genuine data is not serialized as a zero return, zero win rate, or healthy state.

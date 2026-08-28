@@ -74,6 +74,52 @@ def test_cohort_summary_counts_raw_verified_and_exclusion_reasons():
     }
 
 
+def test_cost_summary_keeps_signed_funding_and_marks_incomplete_raw_costs(monkeypatch):
+    from aletheia.analytics import outcome_integrity
+    from aletheia.server.routes.analytics import get_cost_summary
+
+    verified = [
+        {
+            "entry_fee": 1.0,
+            "exit_fee": 1.0,
+            "funding_cost": 10.0,
+            "slippage_cost": 0.5,
+        },
+        {
+            "entry_fee": 1.0,
+            "exit_fee": 1.0,
+            "funding_cost": -3.0,
+            "slippage_cost": 0.25,
+        },
+    ]
+    raw = [
+        *verified,
+        {
+            "entry_fee": 1.0,
+            "exit_fee": 1.0,
+            "funding_cost": None,
+            "slippage_cost": 0.1,
+        },
+    ]
+    monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", lambda **_: verified)
+    monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **_: raw)
+    monkeypatch.setattr(
+        outcome_integrity,
+        "build_outcome_cohort_summary",
+        lambda **_: {"outcome_status": "available"},
+    )
+
+    payload = get_cost_summary(execution_mode="paper_internal")
+
+    assert payload["total_funding_cost"] == 7.0
+    assert payload["total_costs"] == 11.0
+    assert payload["total_economic_costs"] == 11.0
+    assert payload["total_execution_drag"] == 4.75
+    assert payload["raw_recorded_costs"]["total_funding_cost"] is None
+    assert payload["raw_recorded_costs"]["total_costs"] is None
+    assert payload["raw_recorded_costs"]["missing_cost_counts"]["funding_cost"] == 1
+
+
 def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
     from aletheia.server.routes.analytics import (
         get_confidence_calibration,
@@ -148,8 +194,18 @@ def test_cost_summary_preserves_unknown_fee_legs(monkeypatch):
     from aletheia.analytics import outcome_integrity
     from aletheia.server.routes.analytics import get_cost_summary
 
-    complete = {"entry_fee": 1.25, "exit_fee": 0.75, "slippage_cost": 0.1}
-    unknown_exit = {"entry_fee": 0.5, "exit_fee": None, "slippage_cost": 0.2}
+    complete = {
+        "entry_fee": 1.25,
+        "exit_fee": 0.75,
+        "funding_cost": 0.0,
+        "slippage_cost": 0.1,
+    }
+    unknown_exit = {
+        "entry_fee": 0.5,
+        "exit_fee": None,
+        "funding_cost": 0.0,
+        "slippage_cost": 0.2,
+    }
     monkeypatch.setattr(
         outcome_integrity, "eligible_strategy_outcomes", lambda **_: [complete]
     )
@@ -166,13 +222,23 @@ def test_cost_summary_preserves_unknown_fee_legs(monkeypatch):
     assert costs["total_exit_fees"] == 0.75
     assert costs["total_fees"] == 2.0
     assert costs["total_slippage"] == 0.1
-    assert costs["total_costs"] == 2.1
+    assert costs["total_costs"] == 2.0
+    assert costs["total_execution_drag"] == 2.1
     assert costs["raw_recorded_costs"] == {
         "total_entry_fees": 1.75,
         "total_exit_fees": None,
+        "total_funding_cost": 0.0,
         "total_fees": None,
         "total_slippage": 0.3,
         "total_costs": None,
+        "total_economic_costs": None,
+        "total_execution_drag": None,
+        "missing_cost_counts": {
+            "entry_fee": 0,
+            "exit_fee": 1,
+            "funding_cost": 0,
+            "slippage_cost": 0,
+        },
     }
 
 
@@ -180,7 +246,12 @@ def test_cost_summary_keeps_explicit_zero_fees_numeric(monkeypatch):
     from aletheia.analytics import outcome_integrity
     from aletheia.server.routes.analytics import get_cost_summary
 
-    zero = {"entry_fee": 0.0, "exit_fee": 0.0, "slippage_cost": 0.0}
+    zero = {
+        "entry_fee": 0.0,
+        "exit_fee": 0.0,
+        "funding_cost": 0.0,
+        "slippage_cost": 0.0,
+    }
     monkeypatch.setattr(
         outcome_integrity, "eligible_strategy_outcomes", lambda **_: [zero]
     )

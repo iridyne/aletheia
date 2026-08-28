@@ -3308,15 +3308,24 @@ export interface GoLiveScorecard {
 export interface CostSummary extends OutcomeCohort {
 	total_entry_fees: number | null;
 	total_exit_fees: number | null;
+	total_funding_cost: number | null;
 	total_fees: number | null;
 	total_slippage: number | null;
+	/** Backward-compatible alias for the verified economic total. */
 	total_costs: number | null;
+	total_economic_costs: number | null;
+	total_execution_drag: number | null;
+	missing_cost_counts: Record<"entry_fee" | "exit_fee" | "funding_cost" | "slippage_cost", number>;
 	raw_recorded_costs: {
 		total_entry_fees: number | null;
 		total_exit_fees: number | null;
+		total_funding_cost: number | null;
 		total_fees: number | null;
 		total_slippage: number | null;
 		total_costs: number | null;
+		total_economic_costs: number | null;
+		total_execution_drag: number | null;
+		missing_cost_counts: Record<"entry_fee" | "exit_fee" | "funding_cost" | "slippage_cost", number>;
 	};
 }
 
