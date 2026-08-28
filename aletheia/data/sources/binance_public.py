@@ -8,6 +8,7 @@ limit (1200 req/min) so no per-call throttle needed.
 from __future__ import annotations
 
 import logging
+import time
 
 from aletheia.data.providers import (
     OHLCVAttempt,
@@ -15,6 +16,12 @@ from aletheia.data.providers import (
     Ticker,
     classify_ohlcv_outcome,
     parse_ohlcv_candle,
+)
+from aletheia.data.symbols import (
+    InstrumentId,
+    MARKET_SPOT,
+    canonical_of,
+    to_binance,
 )
 
 logger = logging.getLogger("aletheia.data.sources.binance_public")
@@ -33,16 +40,21 @@ _TF_MAP = {
 }
 
 
+def _spot_canonical(symbol: InstrumentId | str) -> str:
+    if isinstance(symbol, InstrumentId) and symbol.market_type != MARKET_SPOT:
+        raise NotImplementedError("Binance public supports spot instruments only")
+    return canonical_of(symbol)
+
+
 class BinancePublicProvider:
     """MarketDataProvider backed by Binance public REST (no auth)."""
 
     venue_name = "binance"
 
     async def get_ticker(self, symbol) -> Ticker:
-        from aletheia.data.symbols import canonical_of, to_binance
         from aletheia.net import httpx_client
 
-        canon = canonical_of(symbol)
+        canon = _spot_canonical(symbol)
         bn_sym = to_binance(canon)
 
         try:
@@ -80,10 +92,9 @@ class BinancePublicProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> OHLCVResult:
-        from aletheia.data.symbols import canonical_of, to_binance
         from aletheia.net import httpx_client
 
-        canon = canonical_of(symbol)
+        canon = _spot_canonical(symbol)
         bn_sym = to_binance(canon)
         interval = _TF_MAP.get(timeframe)
         if interval is None:
@@ -123,6 +134,15 @@ class BinancePublicProvider:
             for row in rows
         ]
         candles = [candle for candle in parsed if candle is not None]
+        if candles:
+            from aletheia.data.ccxt_provider import timeframe_ms
+
+            tf_ms = timeframe_ms(timeframe)
+            if (
+                tf_ms > 0
+                and candles[-1].timestamp + tf_ms > time.time_ns() // 1_000_000
+            ):
+                candles[-1].is_closed = False
         rejected = len(parsed) - len(candles)
         attempt = OHLCVAttempt(
             provider="binance_public",

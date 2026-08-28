@@ -354,6 +354,57 @@ def test_latest_excludes_forming_bar_and_empty_source_is_explicit():
     assert empty.unavailable_reason == "empty_ohlcv"
 
 
+def test_latest_excludes_provider_closed_bar_before_its_close(monkeypatch):
+    import aletheia.data.market_structure as market_structure
+
+    rows = [_bar(index) for index in range(28)]
+    rows.extend([
+        _bar(28, open_=100.0, high=101.0, low=90.0, close=100.0),
+        _bar(29, open_=102.0, high=106.0, low=101.0, close=105.0),
+        _bar(30, open_=111.0, high=112.0, low=110.0, close=111.0),
+    ])
+    now_ms = 30 * TF_MS
+    monkeypatch.setattr(market_structure.time, "time_ns", lambda: now_ms * 1_000_000)
+
+    snapshot = _snapshot(_Provider(rows), enrichments=frozenset({"fvg"}))
+
+    assert snapshot.availability == "available"
+    assert snapshot.as_of_ms == now_ms
+    assert snapshot.provenance.admitted_bar_count == 30
+    assert all(swing.known_at_ms <= snapshot.as_of_ms for swing in snapshot.swings)
+    assert all(event.known_at_ms <= snapshot.as_of_ms for event in snapshot.events)
+    assert all(
+        zone.known_at_ms <= snapshot.as_of_ms for zone in snapshot.fvg_zones
+    )
+    assert not any(swing.origin_at_ms == 28 * TF_MS for swing in snapshot.swings)
+    assert not any(
+        zone.origin_at_ms == 29 * TF_MS for zone in snapshot.fvg_zones
+    )
+
+
+def test_binance_public_cannot_supply_non_spot_market_structure(monkeypatch):
+    from aletheia.data.market_structure import MarketStructureProvider
+    from aletheia.data.sources.binance_public import BinancePublicProvider
+
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+    monkeypatch.setattr(
+        "aletheia.net.httpx_client",
+        lambda **_kwargs: pytest.fail("unexpected network I/O"),
+    )
+
+    snapshot = asyncio.run(
+        MarketStructureProvider(BinancePublicProvider()).get_snapshot(
+            instrument, "1m"
+        )
+    )
+
+    assert snapshot.instrument == instrument
+    assert snapshot.availability == "unavailable"
+    assert snapshot.unavailable_reason == "provider_unavailable"
+    assert snapshot.provenance.provider_failure_reason == "NotImplementedError"
+    assert snapshot.swings == snapshot.events == snapshot.fvg_zones == ()
+
+
 def test_zero_atr_is_a_real_available_value_not_missing_evidence():
     rows = [
         _bar(index, open_=100.0, high=100.0, low=100.0, close=100.0)
