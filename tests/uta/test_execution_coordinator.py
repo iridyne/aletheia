@@ -363,6 +363,59 @@ def test_venue_rejected_close_stays_claimed_and_is_not_resubmitted(
     assert adapter.calls == 1
 
 
+def test_unreached_venue_rejected_close_is_owner_releasable(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import close_position
+    from aletheia.execution.pending_close_recovery import release_rate_limited_close_claim
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.uta.errors import UTAErrorCode
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    repo.insert_position(position)
+
+    async def reject(command):
+        return SubmissionReport(
+            identity=command.expected_account,
+            command_id=command.command_id,
+            evidence=CommandEvidence.VENUE_REJECTED,
+            received_at=datetime.now(timezone.utc),
+            client_order_id=command.client_order_id,
+            error_code=UTAErrorCode.VENUE_REJECTED.value,
+            reason_code="invalid_position_mode",
+            profile_version="1",
+        )
+
+    adapter = _Adapter(reject)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+    )
+
+    with pytest.raises(RuntimeError, match="invalid_position_mode"):
+        close_position(position.id, "stop_loss")
+
+    [stored_order] = repo.list_orders(limit=10)
+    stored_position = repo.get_position(position.id)
+    assert stored_order["status"] == "error"
+    assert stored_order["exchange_order_id"] is None
+    assert stored_position["pending_close_status"] == "submission_rejected"
+
+    released = release_rate_limited_close_claim(
+        position.id, actor="human", reason="owner fixed rejected close cause"
+    )
+    assert released["released"] is True
+    assert repo.get_position(position.id)["pending_close_order_id"] is None
+    assert adapter.calls == 1
+
+
 def test_gateway_close_selector_requires_current_qualification(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
