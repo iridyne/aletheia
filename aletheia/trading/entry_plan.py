@@ -233,15 +233,18 @@ class EntryPlan(BaseModel):
         if low <= 0 or high < low:
             raise ValueError("entry_plan_entry_zone_invalid")
         entry = self.limit_price if self.limit_price is not None else (low + high) / 2
+        invalidation_reference = self.limit_price if self.limit_price is not None else (
+            low if self.direction == "long" else high
+        )
         if self.direction == "long":
             if not (self.stop_price < entry < self.target_price):
                 raise ValueError("long_entry_plan_geometry_invalid")
-            if self.invalidation_price > high:
+            if self.invalidation_price >= invalidation_reference:
                 raise ValueError("long_invalidation_above_entry")
         else:
             if not (self.target_price < entry < self.stop_price):
                 raise ValueError("short_entry_plan_geometry_invalid")
-            if self.invalidation_price < low:
+            if self.invalidation_price <= invalidation_reference:
                 raise ValueError("short_invalidation_below_entry")
         computed = calculate_entry_plan_risk_reward(entry, self.stop_price, self.target_price)
         if computed is None or not entry_plan_risk_reward_is_plausible(computed):

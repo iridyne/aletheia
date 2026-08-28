@@ -114,6 +114,44 @@ def test_urgent_entry_cannot_escape_the_plan_zone():
         )
 
 
+@pytest.mark.parametrize(
+    "direction,invalidation,stop_price,target_price,error",
+    [
+        ("long", 100.5, 98, 105, "long_invalidation_above_entry"),
+        ("short", 99.5, 102, 95, "short_invalidation_below_entry"),
+    ],
+)
+def test_entry_plan_invalidation_must_stay_protective_to_selected_entry(
+    direction, invalidation, stop_price, target_price, error,
+):
+    payload = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT").model_dump()
+    payload.update(
+        direction=direction,
+        entry_zone=(99, 101),
+        limit_price=100,
+        invalidation_price=invalidation,
+        stop_price=stop_price,
+        target_price=target_price,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        EntryPlan(**payload)
+
+
+def test_dynamic_entry_plan_invalidation_covers_the_full_entry_zone():
+    payload = _plan().model_dump()
+    payload.update(entry_zone=(99, 101), invalidation_price=99.5)
+    payload["trigger_params"] = {
+        **payload["trigger_params"],
+        "entry_low": 99,
+        "entry_high": 101,
+        "invalidation_price": 99.5,
+    }
+
+    with pytest.raises(ValueError, match="long_invalidation_above_entry"):
+        EntryPlan(**payload)
+
+
 def test_realized_liquidity_comes_only_from_private_fill_evidence():
     from aletheia.execution.exchange_materialization import parse_bitget_private_fills
 
