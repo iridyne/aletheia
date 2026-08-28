@@ -30,6 +30,7 @@ from aletheia.uta.models import (
     VerifiedExitState,
 )
 from aletheia.uta.profiles import (
+    BinanceLiveProfile,
     BinanceTestnetProfile,
     BitgetClassicV2Profile,
     BitgetUTAV3Profile,
@@ -769,6 +770,48 @@ def _binance_command(identity, **updates):
     )
     values.update(updates)
     return SubmitOrderCommand(**values)
+
+
+@pytest.mark.asyncio
+async def test_binance_live_profile_refuses_all_mutations_before_phase_seven(
+    monkeypatch,
+):
+    profile = BinanceLiveProfile(api_key="key", secret="secret")
+    exchange = FakeExchange()
+    _session, calls = _install(monkeypatch, exchange)
+    identity = _identity(profile).model_copy(
+        update={"execution_mode": profile.expected_execution_mode}
+    )
+    adapter = CCXTUTAAdapter(identity, profile)
+    instrument = _binance_command(identity).instrument
+
+    submitted = await adapter.submit_order(_binance_command(identity))
+    modified = await adapter.modify_order(ModifyOrderCommand(
+        command_id="modify-1", expected_account=identity, instrument=instrument,
+        purpose="entry", target_venue_order_id="venue-1", limit_price="101",
+    ))
+    cancelled = await adapter.cancel_order(CancelOrderCommand(
+        command_id="cancel-1", expected_account=identity, instrument=instrument,
+        purpose="entry", target_venue_order_id="venue-1", reason="operator_cancel",
+    ))
+
+    mutation_capabilities = (
+        adapter.capabilities.market_order,
+        adapter.capabilities.limit_order,
+        adapter.capabilities.modify_order,
+        adapter.capabilities.cancel_order,
+        adapter.capabilities.reduce_only,
+        adapter.capabilities.leverage,
+        adapter.capabilities.post_only,
+        adapter.capabilities.client_order_id,
+    )
+    assert all(value.value == "unsupported" for value in mutation_capabilities)
+    for report in (submitted, modified, cancelled):
+        assert report.evidence is CommandEvidence.NOT_SENT
+        assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
+    assert adapter.capabilities.account_read.value == "supported"
+    assert adapter.capabilities.position_read.value == "supported"
+    assert calls == []
 
 
 @pytest.mark.asyncio
