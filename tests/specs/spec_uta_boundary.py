@@ -117,6 +117,8 @@ def test_selected_reads_use_canonical_manager_and_unmigrated_mutations_stay_disa
     )
 )
 def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
+    from aletheia.uta.profiles import BinanceLiveProfile
+
     coordinator_path = ROOT / "aletheia" / "execution" / "coordinator.py"
     coordinator = coordinator_path.read_text(encoding="utf-8")
     gateway = (ROOT / "aletheia" / "execution" / "gateway.py").read_text(
@@ -144,6 +146,16 @@ def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
         )):
             command_importers.append(str(path.relative_to(ROOT)))
     assert command_importers == []
+    assert not any((
+        BinanceLiveProfile.mutation_market_order,
+        BinanceLiveProfile.mutation_limit_order,
+        BinanceLiveProfile.mutation_modify_order,
+        BinanceLiveProfile.mutation_cancel_order,
+        BinanceLiveProfile.mutation_reduce_only,
+        BinanceLiveProfile.mutation_leverage,
+        BinanceLiveProfile.mutation_post_only,
+        BinanceLiveProfile.mutation_client_order_id,
+    ))
 
 
 @spec_claim(
