@@ -1,4 +1,5 @@
 """Tests for CLI basic functionality."""
+import pytest
 from typer.testing import CliRunner
 
 from aletheia.main import app
@@ -131,6 +132,36 @@ def test_model_probe_reports_real_inference_result(monkeypatch):
     assert "usable" in result.output
 
 
+@pytest.mark.parametrize(
+    ("results", "exit_code"),
+    [
+        ([], 1),
+        ([{"provider": "openai", "available": False, "state": "unavailable"}], 1),
+        ([{"provider": "openai", "available": True, "state": "reachable"}], 0),
+        (
+            [
+                {"provider": "openai", "available": True, "state": "reachable"},
+                {"provider": "backup", "available": False, "state": "unavailable"},
+            ],
+            0,
+        ),
+    ],
+)
+def test_model_test_exit_reflects_aggregate_provider_health(monkeypatch, results, exit_code):
+    from aletheia.model_provider.base import ModelHealth
+
+    async def fake_healthcheck_all():
+        return [ModelHealth(enabled=True, **result) for result in results]
+
+    monkeypatch.setattr("aletheia.model_provider.router.healthcheck_all", fake_healthcheck_all)
+
+    result = runner.invoke(app, ["model", "test"])
+
+    assert result.exit_code == exit_code
+    if exit_code:
+        assert "No enabled model provider is reachable." in result.output
+
+
 def test_permission_status(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -143,9 +174,6 @@ def test_permission_status(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # inspect status / pnl / orders --stats
 # ---------------------------------------------------------------------------
-
-import pytest
-
 
 @pytest.fixture()
 def cli_db(tmp_path, monkeypatch):
