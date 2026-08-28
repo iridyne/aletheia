@@ -150,6 +150,7 @@ _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
 _DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / "dashboard_static"
 _STAGED_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-next"
 _PREVIOUS_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-previous"
+_DASHBOARD_FRONTEND_TREE = ".aletheia-frontend-tree"
 
 
 def _frontend_deps_changed(changed_files: list[str]) -> bool:
@@ -157,6 +158,25 @@ def _frontend_deps_changed(changed_files: list[str]) -> bool:
         path in {"frontend/package.json", "frontend/package-lock.json"}
         for path in changed_files
     )
+
+
+def _dashboard_build_required(frontend_tree: str) -> bool:
+    marker = _DASHBOARD_STATIC / _DASHBOARD_FRONTEND_TREE
+    try:
+        if not frontend_tree or marker.read_text().strip() != frontend_tree:
+            return True
+    except OSError:
+        return True
+    if not (
+        (_DASHBOARD_STATIC / ".vite" / "manifest.json").is_file()
+        and (_DASHBOARD_STATIC / "performance.json").is_file()
+        and (_DASHBOARD_STATIC / "assets").is_dir()
+        and any((_DASHBOARD_STATIC / "assets").iterdir())
+    ):
+        return True
+    from aletheia.gateway.preflight import dashboard_artifact_errors
+
+    return bool(dashboard_artifact_errors(_DASHBOARD_STATIC))
 
 
 def _run_npm(args: list[str], *, env: dict) -> subprocess.CompletedProcess | None:
@@ -186,7 +206,7 @@ def _install_frontend_deps() -> dict:
     }
 
 
-def _build_frontend() -> dict:
+def _build_frontend(frontend_tree: str) -> dict:
     """Build staging output, then validate it with target-loaded Python code."""
     shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
     env = _safe_env()
@@ -216,6 +236,17 @@ def _build_frontend() -> dict:
             "ok": False,
             "reason": "frontend_artifact_validation_failed",
             "detail": validated.get("detail") or validated.get("reason"),
+        }
+    try:
+        (_STAGED_DASHBOARD_STATIC / _DASHBOARD_FRONTEND_TREE).write_text(
+            frontend_tree + "\n"
+        )
+    except OSError as exc:
+        shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+        return {
+            "ok": False,
+            "reason": "frontend_artifact_fingerprint_failed",
+            "detail": str(exc),
         }
     return {"ok": True}
 
@@ -481,10 +512,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=False,
                 restart=restart, failure_reason=install["reason"],
             )
-    if restart:
+    frontend_tree = git_ops.tree_hash(new, "frontend") if restart else ""
+    dashboard_build_required = restart and _dashboard_build_required(frontend_tree)
+    if dashboard_build_required:
         if progress:
             progress("Building dashboard")
-        build = _build_frontend()
+        build = _build_frontend(frontend_tree)
         if not build.get("ok"):
             return _rollback_update(
                 old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=frontend_deps_changed,
@@ -506,8 +539,10 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
 
     frontend_built = False
     if restart:
-        had_previous_static = _activate_frontend_build()
-        frontend_built = True
+        had_previous_static = False
+        if dashboard_build_required:
+            had_previous_static = _activate_frontend_build()
+            frontend_built = True
         if progress:
             progress("Restarting gateway")
         restarted = _restart_gateway()
@@ -539,7 +574,8 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                     ),
                     **_metadata_fields(metadata),
                 }
-            _restore_frontend_build(had_previous_static)
+            if frontend_built:
+                _restore_frontend_build(had_previous_static)
             rollback = git_ops.reset_hard(old)
             if python_deps_changed:
                 _reinstall_deps()
@@ -567,7 +603,8 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 ),
                 **_metadata_fields(metadata),
             }
-        shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
+        if frontend_built:
+            shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
 
     metadata = _persist_current_commit_fresh(new)
     _record_metadata_failure(new, metadata)

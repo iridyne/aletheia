@@ -585,6 +585,7 @@ def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
     changed = changed_files if changed_files is not None else (["pyproject.toml"] if pyproject_changed else ["aletheia/x.py"])
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: changed)
+    monkeypatch.setattr(git_ops, "tree_hash", lambda commit, path: "frontend-tree")
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: {"ok": True})
 
 
@@ -627,7 +628,7 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     calls = []
-    monkeypatch.setattr(applier, "_build_frontend", lambda: calls.append("build") or {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: calls.append("build") or {"ok": True})
     monkeypatch.setattr(applier, "_activate_frontend_build", lambda: calls.append("activate") or True)
     monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
 
@@ -637,6 +638,67 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
     assert result["frontend_built"] is True
     assert result["restart_completed"] is True
     assert calls == ["build", "activate", "restart"]
+
+
+def test_dashboard_build_required_for_matching_tree_and_complete_artifact(tmp_path, monkeypatch):
+    from aletheia.update import applier
+
+    static = tmp_path / "dashboard_static"
+    (static / ".vite").mkdir(parents=True)
+    (static / "assets").mkdir()
+    (static / "index.html").write_text("<html>valid legacy dashboard fixture</html>")
+    (static / ".vite" / "manifest.json").write_text("{}")
+    (static / "performance.json").write_text("{}")
+    (static / "assets" / "app.js").write_text("ok")
+    (static / applier._DASHBOARD_FRONTEND_TREE).write_text("frontend-tree\n")
+    monkeypatch.setattr(applier, "_DASHBOARD_STATIC", static)
+
+    assert applier._dashboard_build_required("frontend-tree") is False
+    assert applier._dashboard_build_required("new-frontend-tree") is True
+    (static / applier._DASHBOARD_FRONTEND_TREE).unlink()
+    assert applier._dashboard_build_required("frontend-tree") is True
+    (static / applier._DASHBOARD_FRONTEND_TREE).write_text("frontend-tree\n")
+    (static / ".vite" / "manifest.json").unlink()
+    assert applier._dashboard_build_required("frontend-tree") is True
+
+
+def test_build_frontend_records_validated_tree_fingerprint(tmp_path, monkeypatch):
+    from aletheia.update import applier
+
+    staged = tmp_path / "dashboard-next"
+    monkeypatch.setattr(applier, "_STAGED_DASHBOARD_STATIC", staged)
+
+    def build(_args, *, env):
+        staged.mkdir()
+        (staged / "index.html").write_text("ok")
+        return _FakeProc()
+
+    monkeypatch.setattr(applier, "_run_npm", build)
+    monkeypatch.setattr(
+        applier.target_fresh,
+        "validate_dashboard_artifacts",
+        lambda *_args, **_kwargs: {"ok": True},
+    )
+
+    assert applier._build_frontend("frontend-tree") == {"ok": True}
+    assert (staged / applier._DASHBOARD_FRONTEND_TREE).read_text() == "frontend-tree\n"
+
+
+def test_apply_restart_installs_changed_frontend_deps_before_build(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+    _stub_clean_pull(monkeypatch, changed_files=["frontend/package-lock.json"])
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True})
+    calls = []
+    monkeypatch.setattr(applier, "_install_frontend_deps", lambda: calls.append("npm-ci") or {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: calls.append("build") or {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is True
+    assert calls == ["npm-ci", "build", "activate", "restart"]
 
 
 def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
@@ -670,13 +732,13 @@ def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch)
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
 
-    _stub_clean_pull(monkeypatch)
+    _stub_clean_pull(monkeypatch, changed_files=["frontend/src/App.tsx"])
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     backup = tmp_path / ".dashboard_static-previous"
     backup.mkdir()
     (backup / "old.html").write_text("old dashboard")
     monkeypatch.setattr(applier, "_PREVIOUS_DASHBOARD_STATIC", backup)
-    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": True})
     monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
 
@@ -691,7 +753,7 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     from aletheia.update import applier, git_ops
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
-    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": True})
     monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
     restored = []
     monkeypatch.setattr(applier, "_restore_frontend_build", lambda had_previous: restored.append(had_previous))
@@ -719,7 +781,7 @@ def test_apply_restart_keeps_new_code_after_schema_change(tmp_path, monkeypatch)
         changed_files=["aletheia/storage/migrations.py"],
     )
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True})
-    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": True})
     monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": False})
     monkeypatch.setattr(
@@ -735,21 +797,39 @@ def test_apply_restart_keeps_new_code_after_schema_change(tmp_path, monkeypatch)
     assert result["reason"] == "gateway_restart_failed_after_schema_change"
 
 
-def test_apply_restart_rebuilds_frontend_without_source_changes(tmp_path, monkeypatch):
+def test_apply_restart_skips_valid_frontend_without_source_changes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     calls = []
-    monkeypatch.setattr(applier, "_build_frontend", lambda: calls.append("build") or {"ok": True})
-    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: False)
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: pytest.fail("valid unchanged dashboard must not rebuild"))
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: pytest.fail("no staged dashboard to activate"))
     monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
 
     result = applier.apply_update(restart=True)
 
     assert result["applied"] is True
-    assert result["frontend_built"] is True
+    assert result["frontend_built"] is False
     assert result["restart_completed"] is True
+    assert calls == ["restart"]
+
+
+def test_apply_restart_rebuilds_after_deferred_frontend_restart(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+    _stub_clean_pull(monkeypatch)
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+    calls = []
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda tree: tree != "old-frontend-tree")
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: calls.append("build") or {"ok": True})
+    monkeypatch.setattr(applier, "_activate_frontend_build", lambda: calls.append("activate") or True)
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
+
+    result = applier.apply_update(restart=True)
+
+    assert result["frontend_built"] is True
     assert calls == ["build", "activate", "restart"]
 
 
@@ -759,7 +839,7 @@ def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatc
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
     resets = []
     monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
-    monkeypatch.setattr(applier, "_build_frontend", lambda: {"ok": False, "reason": "frontend_build_failed"})
+    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": False, "reason": "frontend_build_failed"})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: pytest.fail("gateway must not restart"))
 
     result = applier.apply_update(restart=True)
