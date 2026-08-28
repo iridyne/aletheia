@@ -7,7 +7,7 @@ always an ISO-8601 UTC string.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OrderbookSnapshot(BaseModel):
@@ -161,20 +161,22 @@ class OptionsMarketStructureSnapshot(BaseModel):
         negative net_gex → put OI heavy → commonly "negative gamma" (amplifying) regime
     """
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
     symbol: str  # BTC or ETH
     source: str = "deribit_public"
     gex_convention: str = "v1_retail_call_minus_put"
-    underlying_price: float | None = None
+    underlying_price: float | None = Field(default=None, gt=0)
     net_gex_estimate: float | None = None  # USD per 1% spot move
     gamma_regime: str | None = None  # "positive" | "negative" | "neutral"
-    gamma_flip_estimate: float | None = None  # spot level where net GEX crosses zero
-    call_gamma_wall: float | None = None  # strike with highest call gamma exposure
-    put_gamma_wall: float | None = None  # strike with highest put gamma exposure
-    nearest_gamma_wall_distance: float | None = None  # % from current spot
-    options_open_interest: float | None = None  # total OI in base currency contracts
-    call_oi: float | None = None
-    put_oi: float | None = None
-    valid_strike_count: int | None = None
+    gamma_flip_estimate: float | None = Field(default=None, gt=0)  # spot level where net GEX crosses zero
+    call_gamma_wall: float | None = Field(default=None, gt=0)  # strike with highest call gamma exposure
+    put_gamma_wall: float | None = Field(default=None, gt=0)  # strike with highest put gamma exposure
+    nearest_gamma_wall_distance: float | None = Field(default=None, ge=0)  # % from current spot
+    options_open_interest: float | None = Field(default=None, ge=0)  # total OI in base currency contracts
+    call_oi: float | None = Field(default=None, ge=0)
+    put_oi: float | None = Field(default=None, ge=0)
+    valid_strike_count: int | None = Field(default=None, ge=0)
     data_quality: str = "ok"
     observed_at: str
 

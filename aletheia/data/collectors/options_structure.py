@@ -71,13 +71,21 @@ async def _collect_currency(currency: str) -> OptionsMarketStructureSnapshot | N
 
     underlying_price: float | None = None
     entries: list[dict] = []
+    invalid_numeric_inputs = 0
 
     for item in items:
         name = item.get("instrument_name", "")
-        oi = float(item.get("open_interest") or 0.0)
+        try:
+            oi = float(item.get("open_interest") or 0.0)
+            mid_iv = float(item.get("mid_iv") or item.get("mark_iv") or 0.0)
+            spot = float(item.get("underlying_price") or 0.0)
+        except (TypeError, ValueError):
+            invalid_numeric_inputs += 1
+            continue
+        if not all(math.isfinite(value) for value in (oi, mid_iv, spot)) or oi < 0:
+            invalid_numeric_inputs += 1
+            continue
         # Deribit returns mid_iv as a percentage (e.g. 65.0 means 65% annual vol)
-        mid_iv = float(item.get("mid_iv") or item.get("mark_iv") or 0.0)
-        spot = float(item.get("underlying_price") or 0.0)
 
         if spot and underlying_price is None:
             underlying_price = spot
@@ -89,7 +97,10 @@ async def _collect_currency(currency: str) -> OptionsMarketStructureSnapshot | N
             continue
         strike, option_type, expiry_dt = parsed
 
-        if spot <= 0 or mid_iv <= 0 or strike <= 0:
+        if not math.isfinite(strike) or strike <= 0:
+            invalid_numeric_inputs += 1
+            continue
+        if spot <= 0 or mid_iv <= 0:
             continue
 
         T = (expiry_dt - datetime.now(timezone.utc)).total_seconds() / (365.25 * 86400)
@@ -109,6 +120,9 @@ async def _collect_currency(currency: str) -> OptionsMarketStructureSnapshot | N
             "T": T,
             "sigma": sigma,
         })
+
+    if invalid_numeric_inputs:
+        raise ValueError(f"invalid_numeric_inputs:{invalid_numeric_inputs}")
 
     if len(entries) < _MIN_VALID_ENTRIES:
         logger.debug(
@@ -144,11 +158,14 @@ def _parse_instrument_name(name: str) -> tuple[float, str, datetime] | None:
 def _bsm_gamma(S: float, K: float, T: float, sigma: float) -> float | None:
     """Black-Scholes gamma (r=0; adequate for crypto short-dated options)."""
     try:
+        if not all(math.isfinite(value) for value in (S, K, T, sigma)):
+            return None
         if sigma <= 0 or T <= 0 or S <= 0 or K <= 0:
             return None
         d1 = (math.log(S / K) + 0.5 * sigma**2 * T) / (sigma * math.sqrt(T))
         nd1 = math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)
-        return nd1 / (S * sigma * math.sqrt(T))
+        gamma = nd1 / (S * sigma * math.sqrt(T))
+        return gamma if math.isfinite(gamma) else None
     except (ValueError, ZeroDivisionError):
         return None
 
@@ -159,6 +176,9 @@ def _build_snapshot(
     entries: list[dict],
     observed_at: str,
 ) -> OptionsMarketStructureSnapshot:
+    if not math.isfinite(spot) or spot <= 0:
+        raise ValueError("invalid_spot")
+
     call_gex_by_strike: dict[float, float] = {}
     put_gex_by_strike: dict[float, float] = {}
     total_call_oi = 0.0
@@ -166,26 +186,46 @@ def _build_snapshot(
 
     for e in entries:
         s = e["strike"]
+        oi = e["oi"]
+        gamma = e["gamma"]
+        if (
+            not all(math.isfinite(value) for value in (s, oi, gamma, e["T"], e["sigma"]))
+            or s <= 0
+            or oi < 0
+            or gamma < 0
+            or e["T"] <= 0
+            or e["sigma"] <= 0
+        ):
+            raise ValueError("invalid_option_entry")
         # USD exposure per 1% spot move: gamma * OI_contracts * spot² * 0.01
         # Deribit BTC/ETH options: 1 contract = 1 BTC or 1 ETH
-        gex = e["gamma"] * e["oi"] * spot * spot * 0.01
+        gex = gamma * oi * spot * spot * 0.01
+        if not math.isfinite(gex):
+            raise ValueError("non_finite_gex")
         if e["type"] == "C":
             call_gex_by_strike[s] = call_gex_by_strike.get(s, 0.0) + gex
-            total_call_oi += e["oi"]
+            total_call_oi += oi
         else:
             put_gex_by_strike[s] = put_gex_by_strike.get(s, 0.0) + gex
-            total_put_oi += e["oi"]
+            total_put_oi += oi
+
+    if not all(math.isfinite(value) for value in (total_call_oi, total_put_oi)):
+        raise ValueError("non_finite_open_interest")
 
     all_strikes = set(call_gex_by_strike) | set(put_gex_by_strike)
     net_gex = sum(
         call_gex_by_strike.get(s, 0.0) - put_gex_by_strike.get(s, 0.0)
         for s in all_strikes
     )
+    if not math.isfinite(net_gex):
+        raise ValueError("non_finite_gex")
 
     call_wall = max(call_gex_by_strike, key=call_gex_by_strike.__getitem__) if call_gex_by_strike else None
     put_wall = max(put_gex_by_strike, key=put_gex_by_strike.__getitem__) if put_gex_by_strike else None
     nearest_wall = _nearest_wall(spot, call_wall, put_wall)
     nearest_wall_dist = abs(nearest_wall - spot) / spot * 100.0 if nearest_wall else None
+    if nearest_wall_dist is not None and not math.isfinite(nearest_wall_dist):
+        raise ValueError("non_finite_wall_distance")
 
     # Threshold for regime: 1M USD/1%move is a reasonable noise floor
     _REGIME_THRESHOLD = 1_000_000.0
@@ -196,12 +236,16 @@ def _build_snapshot(
     else:
         gamma_regime = "negative"
 
+    gamma_flip = _gamma_flip_spot_sweep(entries, spot)
+    if gamma_flip is not None and (not math.isfinite(gamma_flip) or gamma_flip <= 0):
+        raise ValueError("invalid_gamma_flip")
+
     return OptionsMarketStructureSnapshot(
         symbol=currency,
         underlying_price=spot,
         net_gex_estimate=net_gex,
         gamma_regime=gamma_regime,
-        gamma_flip_estimate=_gamma_flip_spot_sweep(entries, spot),
+        gamma_flip_estimate=gamma_flip,
         call_gamma_wall=float(call_wall) if call_wall is not None else None,
         put_gamma_wall=float(put_wall) if put_wall is not None else None,
         nearest_gamma_wall_distance=nearest_wall_dist,
@@ -232,7 +276,15 @@ def _gamma_flip_spot_sweep(
     gamma for each option at each candidate spot, and interpolates the crossing.
     Each entry must have: strike, type ('C'/'P'), oi, T (years), sigma (annual vol).
     """
-    if not entries:
+    if (
+        not entries
+        or not math.isfinite(spot)
+        or spot <= 0
+        or not math.isfinite(grid_pct)
+        or not 0 < grid_pct < 1
+        or not isinstance(n_points, int)
+        or n_points <= 0
+    ):
         return None
 
     lo = spot * (1.0 - grid_pct)
@@ -243,7 +295,7 @@ def _gamma_flip_spot_sweep(
         total = 0.0
         for e in entries:
             g = _bsm_gamma(s, e["strike"], e["T"], e["sigma"])
-            if g is None:
+            if g is None or not math.isfinite(e["oi"]):
                 continue
             sign = 1.0 if e["type"] == "C" else -1.0
             total += sign * g * e["oi"] * s * s * 0.01
