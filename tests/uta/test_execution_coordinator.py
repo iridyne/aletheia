@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.uta.models import (
     CommandEvidence,
     SubmissionReport,
@@ -250,6 +252,57 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
     assert stored_order["status"] == "filled"
     assert stored_position["status"] == "closed"
     assert result["closed"] is True
+
+
+def test_venue_rejected_close_keeps_one_unresolved_claim(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.execution.coordinator import close_position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    repo.insert_position(position)
+
+    async def submit(command):
+        return SubmissionReport(
+            identity=command.expected_account,
+            command_id=command.command_id,
+            evidence=CommandEvidence.VENUE_REJECTED,
+            received_at=datetime.now(timezone.utc),
+            client_order_id=command.client_order_id,
+            error_code="UTA_VENUE_REJECTED",
+            reason_code="venue_rejected_command",
+            profile_version="1",
+        )
+
+    adapter = _Adapter(submit)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+    )
+
+    with pytest.raises(RuntimeError, match="venue_rejected_command"):
+        close_position(position.id, "stop_loss")
+
+    stored_position = repo.get_position(position.id)
+    stored_order = repo.list_orders(limit=10)[0]
+    assert stored_order["status"] == "error"
+    assert stored_position["pending_close_status"] == "submission_rejected"
+
+    retry = close_position(position.id, "stop_loss")
+
+    assert retry["already_pending"] is True
+    assert retry["status"] == "submission_rejected"
+    assert adapter.calls == 1
+    assert len(repo.list_orders(limit=10)) == 1
 
 
 def test_gateway_close_selector_is_configuration_only(tmp_path, monkeypatch):

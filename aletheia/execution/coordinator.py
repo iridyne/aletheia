@@ -106,6 +106,11 @@ def _status(report) -> tuple[str, str | None]:
 
 def _apply_report(order: Order, report, *, close_position_id: str | None = None) -> dict:
     status, reason = _status(report)
+    pending_close_status = (
+        "submission_rejected"
+        if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED
+        else status
+    )
     try:
         acknowledgement = finalize_exchange_acknowledgement(
             order.id,
@@ -113,7 +118,7 @@ def _apply_report(order: Order, report, *, close_position_id: str | None = None)
             status=status,
             error_reason=reason,
             close_position_id=close_position_id,
-            pending_close_status=status if close_position_id else None,
+            pending_close_status=pending_close_status if close_position_id else None,
         )
     except Exception as exc:
         raise PostSubmitDBError(
