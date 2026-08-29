@@ -168,6 +168,53 @@ def test_batches_stream_counted_with_exclusions():
     assert counts["unavailable_units"] == 2
 
 
+def test_window_counts_do_not_return_historical_identity_rows():
+    db = sq.get_db()
+    for index in range(256):
+        _decision(
+            db,
+            f"historical-{index}",
+            "2026-07-01T00:00:00+00:00",
+            outcome_key=f"historical-candidate-{index}",
+        )
+    _decision(
+        db,
+        "current",
+        "2026-08-05T00:00:00+00:00",
+        outcome_key="current-candidate",
+    )
+
+    explicit_candidate_rows = []
+
+    class _CursorProbe:
+        def __init__(self, cursor, sql):
+            self._cursor = cursor
+            self._sql = sql
+
+        def __iter__(self):
+            for row in self._cursor:
+                if "FROM filter_decisions" in self._sql and "COUNT(*)" not in self._sql:
+                    explicit_candidate_rows.append(row)
+                yield row
+
+        def fetchone(self):
+            return self._cursor.fetchone()
+
+    class _ConnectionProbe:
+        def create_function(self, *args, **kwargs):
+            db.create_function(*args, **kwargs)
+
+        def execute(self, sql, params=()):
+            return _CursorProbe(db.execute(sql, params), sql)
+
+    counts = candidate_facts.candidate_coverage_counts(
+        _ConnectionProbe(), horizon="24h", lower=LOWER, upper=UPPER
+    )
+
+    assert counts["candidate_units"] == 1
+    assert len(explicit_candidate_rows) == 1
+
+
 def test_candidate_facts_epoch_start_excludes_pre_epoch_malformed_batches():
     db = sq.get_db()
     _batch(db, "old-bad", "2026-07-20T00:00:00+00:00", "{not-json")
