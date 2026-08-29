@@ -414,7 +414,7 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Inputs**: All knowledge_items from past 24h, closed positions, agent run summaries
 - **LLM**: Yes (synthesis)
 - **Outputs**: knowledge_items (item_type=dreaming_log, daily_review), serenity research runs/themes/evidence/opportunities
-- **24h trading-performance block**: Every `daily_review` begins with a deterministic block (`_build_daily_trading_performance`) reading `outcome_eligible=True` closed positions from the last 24h. Labels: `PROFIT_DAY` / `LOSS_DAY` / `FLAT_DAY` / `NOT_AVAILABLE`. NULL `realized_pnl` is never coerced to zero — any NULL on an eligible close causes `NOT_AVAILABLE`. The block is also included in the LLM prompt so the narrative reflects the day's actual P&L.
+- **24h trading-performance block**: Every `daily_review` begins with a deterministic block (`_build_daily_trading_performance`) reading the central `eligible_strategy_outcomes()` cohort from the last 24h; raw lifecycle flags are not sufficient evidence. Labels: `PROFIT_DAY` / `LOSS_DAY` / `FLAT_DAY` / `NOT_AVAILABLE`. Excluded, unavailable, truncated, inconsistent, or invalid outcome evidence remains `NOT_AVAILABLE` and is reported with the raw/excluded counts; no P&L is coerced to zero. The block is also included in the LLM prompt so the narrative reflects the day's verified cost-complete P&L.
 - **Side effects**: The Serenity portion uses `serenity:scheduled:YYYY-MM-DD` idempotency and successful-run freshness. Restart-interrupted queued/running rows are marked failed before a catch-up is considered; lesson extraction uses `learning_job_health.input_watermark` to catch up one missed date-window without duplicate restart runs
 
 #### insight_synthesizer

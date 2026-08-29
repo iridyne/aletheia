@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import time
 from typing import Literal
 
@@ -88,37 +89,93 @@ def _aggregate_case_facts(
 def _build_daily_trading_performance(cutoff_iso: str) -> str:
     """Deterministic 24h closed-trade P&L block.
 
-    Only outcome_eligible=True closes count. NULL realized_pnl is never
-    coerced to zero; if any eligible close is missing it, the block reports
-    NOT_AVAILABLE so the daily review remains honest.
+    The central outcome authority decides which closes are reportable. Raw
+    lifecycle flags and recorded P&L are never sufficient evidence by
+    themselves.
     """
-    from aletheia.storage.repositories import list_closed_positions
+
+    from aletheia.analytics.outcome_integrity import (
+        build_outcome_cohort_summary,
+        eligible_strategy_outcomes,
+    )
+
+    section = "\n\n## 24h Trading Performance\n"
 
     try:
-        all_closes = list_closed_positions(since_iso=cutoff_iso)
+        cohort = build_outcome_cohort_summary(closed_after=cutoff_iso)
     except Exception:
-        return (
-            "\n\n## 24h Trading Performance\n"
-            "**Label: NOT_AVAILABLE** — closed-positions query failed.\n"
+        return section + "**Label: NOT_AVAILABLE** — outcome cohort query failed.\n"
+
+    if not isinstance(cohort, dict):
+        return section + "**Label: NOT_AVAILABLE** — outcome cohort is unavailable.\n"
+
+    raw_count = cohort.get("raw_event_count")
+    eligible_count = cohort.get("eligible_outcome_count")
+    excluded_count = cohort.get("excluded_outcome_count")
+    if any(
+        type(value) is not int or value < 0
+        for value in (raw_count, eligible_count, excluded_count)
+    ) or excluded_count != raw_count - eligible_count:
+        return section + (
+            "**Label: NOT_AVAILABLE** — outcome cohort counts are unavailable "
+            "or inconsistent.\n"
         )
 
-    eligible = [p for p in all_closes if p.get("outcome_eligible")]
+    # raw_account_events has a bounded 10,000-row read. A full page is not a
+    # complete 24h cohort, so never turn it into a seemingly authoritative day.
+    if raw_count >= 10_000:
+        return section + (
+            f"**Label: NOT_AVAILABLE** — outcome cohort reached its read limit "
+            f"({raw_count} close(s)).\n"
+        )
+
+    if cohort.get("cohort_state") == "unavailable":
+        return section + "**Label: NOT_AVAILABLE** — outcome cohort is unavailable.\n"
+
+    try:
+        eligible = eligible_strategy_outcomes(closed_after=cutoff_iso)
+    except Exception:
+        return section + "**Label: NOT_AVAILABLE** — eligible outcome query failed.\n"
+
+    if not isinstance(eligible, list) or len(eligible) != eligible_count:
+        return section + (
+            "**Label: NOT_AVAILABLE** — outcome cohort changed while it was "
+            "being read.\n"
+        )
 
     if not eligible:
-        return (
-            "\n\n## 24h Trading Performance\n"
-            "**Label: NOT_AVAILABLE** — no outcome_eligible closed positions in the last 24h.\n"
-        )
+        if not raw_count:
+            detail = "no closed trade events in the last 24h."
+        else:
+            reasons = cohort.get("outcome_exclusion_reasons") or {}
+            reason_text = ", ".join(
+                f"{reason}:{count}" for reason, count in sorted(reasons.items())
+            )
+            detail = f"{excluded_count} close(s) excluded by outcome integrity"
+            if reason_text:
+                detail += f" ({reason_text})"
+            detail += "."
+        return section + f"**Label: NOT_AVAILABLE** — {detail}\n"
 
-    if any(p.get("realized_pnl") is None for p in eligible):
-        n = len(eligible)
-        return (
-            "\n\n## 24h Trading Performance\n"
-            f"**Label: NOT_AVAILABLE** — {n} eligible close(s) but "
-            "one or more have NULL realized_pnl (outcome-integrity incomplete).\n"
-        )
+    pnl_values: list[float] = []
+    for position in eligible:
+        try:
+            pnl = float(position["realized_pnl"])
+        except (KeyError, TypeError, ValueError):
+            return section + (
+                "**Label: NOT_AVAILABLE** — an eligible close has invalid "
+                "realized P&L.\n"
+            )
+        if not math.isfinite(pnl):
+            return section + (
+                "**Label: NOT_AVAILABLE** — an eligible close has non-finite "
+                "realized P&L.\n"
+            )
+        pnl_values.append(pnl)
 
-    total_pnl = sum(float(p["realized_pnl"]) for p in eligible)
+    total_pnl = sum(pnl_values)
+    if not math.isfinite(total_pnl):
+        return section + "**Label: NOT_AVAILABLE** — net realized P&L is non-finite.\n"
     n = len(eligible)
     if total_pnl > 0:
         label = "PROFIT_DAY"
@@ -128,9 +185,11 @@ def _build_daily_trading_performance(cutoff_iso: str) -> str:
         label = "FLAT_DAY"
 
     return (
-        "\n\n## 24h Trading Performance\n"
-        f"**Label: {label}** — {n} eligible close(s), net realized P&L: {total_pnl:+.4f} USDT\n"
-        "*Source: outcome_eligible closed positions only.*\n"
+        section +
+        f"**Label: {label}** — {n} verified cost-complete close(s), "
+        f"net realized P&L: {total_pnl:+.4f} USDT\n"
+        f"*Source: central eligible_strategy_outcomes(); raw close events: "
+        f"{raw_count}, excluded: {excluded_count}.*\n"
     )
 
 
@@ -254,60 +313,6 @@ def _build_learning_ledger() -> str:
         f"- Lessons consulted (24h): {lessons_consulted} "
         "(retrieve_lessons calls returning >=1 lesson — real FTS retrieval, not bare calls)\n"
         f"- Playbook reads (24h): {playbook_reads} (load_playbooks calls)\n"
-    )
-
-
-def _build_trading_performance_block() -> str:
-    """Deterministic 24h trading-performance block from outcome-eligible closed positions.
-
-    Returns PROFIT_DAY, LOSS_DAY, FLAT_DAY, or NOT_AVAILABLE.
-    Missing evidence is reported explicitly — never coerced to zero or FLAT.
-    """
-    from datetime import datetime, timezone, timedelta
-    from aletheia.storage.sqlite import get_db
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    try:
-        db = get_db()
-        rows = db.execute(
-            "SELECT realized_pnl, direction, symbol "
-            "FROM positions "
-            "WHERE status='closed' AND outcome_eligible=1 "
-            "AND closed_at >= ? "
-            "ORDER BY closed_at DESC",
-            (cutoff,),
-        ).fetchall()
-    except Exception as e:
-        return (
-            "\n\n## Trading Performance (24h)\n"
-            "- Status: NOT_AVAILABLE\n"
-            f"- Reason: query_failed:{e}\n"
-        )
-
-    if not rows:
-        return (
-            "\n\n## Trading Performance (24h)\n"
-            "- Status: NOT_AVAILABLE\n"
-            "- Reason: no_eligible_closed_trades\n"
-        )
-
-    net_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
-    wins = [r for r in rows if float(r["realized_pnl"] or 0) > 0]
-    losses = [r for r in rows if float(r["realized_pnl"] or 0) < 0]
-
-    if net_pnl > 0:
-        verdict = "PROFIT_DAY"
-    elif net_pnl < 0:
-        verdict = "LOSS_DAY"
-    else:
-        verdict = "FLAT_DAY"
-
-    return (
-        "\n\n## Trading Performance (24h) [authoritative — not LLM narrative]\n"
-        f"- Verdict: {verdict}\n"
-        f"- Net P&L: {net_pnl:+.4f} "
-        "(sum of realized_pnl from outcome-eligible closed positions)\n"
-        f"- Trades: {len(rows)} total ({len(wins)} wins / {len(losses)} losses)\n"
     )
 
 
