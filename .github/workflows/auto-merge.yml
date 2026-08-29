@@ -498,6 +498,8 @@ jobs:
                 previous_filename: file.previous_filename || null,
                 status: file.status || 'modified',
               }));
+              const labelArgs = (pullRequest.labels?.nodes || [])
+                .flatMap(({name}) => ['--trusted-label', name]);
               const plannerInput = path.join(process.env.RUNNER_TEMP, 'ci-plan-files.json');
               fs.writeFileSync(plannerInput, JSON.stringify(changedFilePayload), 'utf8');
               return JSON.parse(execFileSync('uv', [
@@ -513,6 +515,7 @@ jobs:
                 pullRequest.headRefOid || pullRequest.head.sha,
                 '--changed-files-json',
                 plannerInput,
+                ...labelArgs,
               ], {encoding: 'utf8'}));
             };
             if (operation === 'disable') {

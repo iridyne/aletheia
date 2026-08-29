@@ -97,6 +97,10 @@ def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
     assert integration["mode"] == "deep"
     assert integration["required"]["integration"] is True
 
+    route_integration = _plan(["tests/test_operator_routes.py"])
+    assert route_integration["mode"] == "deep"
+    assert route_integration["required"]["integration"] is True
+
     spec = _plan(["tests/specs/spec_risk_engine.py"])
     assert spec["mode"] == "deep"
     assert spec["required"]["specifications"] is True

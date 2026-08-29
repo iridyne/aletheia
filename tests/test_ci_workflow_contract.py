@@ -22,6 +22,20 @@ RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869
 SELF_HOSTED_CASI = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "casi"]
 SELF_HOSTED_FEDORA = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "fedora"]
 SELF_HOSTED_PR = ["pr-ephemeral"]
+SAFE_DOC_PATH_IGNORES = [
+    "README.md",
+    *[
+        f"{prefix}/**/*{suffix}"
+        for prefix in (
+            "docs/archive",
+            "docs/diagrams",
+            "docs/references",
+            "docs/research",
+            "docs/superpowers",
+        )
+        for suffix in (".avif", ".gif", ".jpeg", ".jpg", ".md", ".png", ".svg", ".webp")
+    ],
+]
 
 
 def _workflow() -> dict:
@@ -152,6 +166,16 @@ def test_ci_has_independent_review_and_regression_jobs() -> None:
     assert "-connectivity" in runtime_regression
 
 
+def test_ci_planner_receives_trusted_escalation_labels() -> None:
+    plan = _workflow()["jobs"]["plan"]
+    script = _run_commands(plan)
+
+    assert "label_args=()" in script
+    assert "payload.get(\"pull_request\", {}).get(\"labels\", [])" in script
+    assert "--trusted-label" in script
+    assert '"${label_args[@]}"' in script
+
+
 def test_ci_never_builds_or_distributes_release_artifacts() -> None:
     source = WORKFLOW_PATH.read_text(encoding="utf-8").lower()
     forbidden = (
@@ -251,28 +275,15 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
         "pull_request": {
             "branches": ["master"],
             "types": ["opened", "synchronize", "reopened", "edited"],
-            "paths-ignore": [
-                "README.md",
-                "docs/archive/**",
-                "docs/diagrams/**",
-                "docs/references/**",
-                "docs/research/**",
-                "docs/superpowers/**",
-            ],
+            "paths-ignore": SAFE_DOC_PATH_IGNORES,
         },
     }
     # Deep CI intentionally keeps the GitHub default code-changing PR events;
     # it must not re-run/skipped-pass on a PR-body-only metadata edit.
     assert ci_triggers["pull_request"] == {
         "branches": ["master"],
-        "paths-ignore": [
-            "README.md",
-            "docs/archive/**",
-            "docs/diagrams/**",
-            "docs/references/**",
-            "docs/research/**",
-            "docs/superpowers/**",
-        ],
+        "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"],
+        "paths-ignore": SAFE_DOC_PATH_IGNORES,
     }
 
     assert gate["permissions"] == {"contents": "read"}
@@ -944,6 +955,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "scripts/ci_plan.py" in update_script
     assert "ciPlan.github_ci !== 'none'" in update_script
     assert "classified this head as docs_only" in update_script
+    assert "const labelArgs = (pullRequest.labels?.nodes || [])" in update_script
+    assert "--trusted-label" in update_script
     assert "candidate.app?.slug === 'github-actions'" in update_script
     assert "check.conclusion === 'success'" in update_script
     assert "exactHeadCheckPassed(changeContractCheckName)" in update_script

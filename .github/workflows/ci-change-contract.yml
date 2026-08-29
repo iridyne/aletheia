@@ -28,11 +28,46 @@ on:
     types: [opened, synchronize, reopened, edited]
     paths-ignore:
       - README.md
-      - docs/archive/**
-      - docs/diagrams/**
-      - docs/references/**
-      - docs/research/**
-      - docs/superpowers/**
+      - docs/archive/**/*.avif
+      - docs/archive/**/*.gif
+      - docs/archive/**/*.jpeg
+      - docs/archive/**/*.jpg
+      - docs/archive/**/*.md
+      - docs/archive/**/*.png
+      - docs/archive/**/*.svg
+      - docs/archive/**/*.webp
+      - docs/diagrams/**/*.avif
+      - docs/diagrams/**/*.gif
+      - docs/diagrams/**/*.jpeg
+      - docs/diagrams/**/*.jpg
+      - docs/diagrams/**/*.md
+      - docs/diagrams/**/*.png
+      - docs/diagrams/**/*.svg
+      - docs/diagrams/**/*.webp
+      - docs/references/**/*.avif
+      - docs/references/**/*.gif
+      - docs/references/**/*.jpeg
+      - docs/references/**/*.jpg
+      - docs/references/**/*.md
+      - docs/references/**/*.png
+      - docs/references/**/*.svg
+      - docs/references/**/*.webp
+      - docs/research/**/*.avif
+      - docs/research/**/*.gif
+      - docs/research/**/*.jpeg
+      - docs/research/**/*.jpg
+      - docs/research/**/*.md
+      - docs/research/**/*.png
+      - docs/research/**/*.svg
+      - docs/research/**/*.webp
+      - docs/superpowers/**/*.avif
+      - docs/superpowers/**/*.gif
+      - docs/superpowers/**/*.jpeg
+      - docs/superpowers/**/*.jpg
+      - docs/superpowers/**/*.md
+      - docs/superpowers/**/*.png
+      - docs/superpowers/**/*.svg
+      - docs/superpowers/**/*.webp
 
 permissions:
   contents: read

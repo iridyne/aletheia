@@ -138,7 +138,7 @@ jobs:
     name: Codex PR shepherd
     permissions:
       actions: read
-      contents: read
+      contents: write
       issues: write
       pull-requests: write
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
@@ -536,6 +536,7 @@ jobs:
               previous_filename: file.previous_filename || null,
               status: file.status || 'modified',
             }));
+            const labelArgs = pullRequest.labels.flatMap(({name}) => ['--trusted-label', name]);
             const plannerInput = path.join(process.env.RUNNER_TEMP, 'ci-plan-files.json');
             fs.writeFileSync(plannerInput, JSON.stringify(changedFilePayload), 'utf8');
             let ciPlan;
@@ -553,6 +554,7 @@ jobs:
                 expectedHeadSha,
                 '--changed-files-json',
                 plannerInput,
+                ...labelArgs,
               ], {encoding: 'utf8'}));
             } catch (error) {
               await holdForOwner(
@@ -665,13 +667,23 @@ jobs:
             if (context.eventName === 'issue_comment') {
               if (!connectorCleanExactHead) return;
               const run = await latestCiRun();
-              if (
-                !run ||
-                run.status !== 'completed' ||
-                !repairableCiConclusions.has(run.conclusion)
-              ) {
+              if (!run || run.status !== 'completed') {
                 return;
               }
+              if (run.conclusion === 'success') {
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: 'auto_merge_update',
+                  client_payload: {
+                    operation: 'enable',
+                    pull_request_number: pullRequest.number,
+                    expected_head_sha: expectedHeadSha,
+                    expected_base_sha: pullRequest.base.sha,
+                  },
+                });
+                return;
+              }
+              if (!repairableCiConclusions.has(run.conclusion)) return;
               const failure = await failedJobAndStep(run);
               if (failure.category === 'preflight_metadata') {
                 core.info('metadata failure is recoverable by a same-head PR body edit');

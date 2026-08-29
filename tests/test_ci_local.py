@@ -47,3 +47,32 @@ def test_local_ci_planned_mode_lists_planner_required_checks(monkeypatch, tmp_pa
     output = capsys.readouterr().out
     assert '"result": "planned"' in output
     assert '"frontend tests"' in output
+
+
+def test_local_ci_changed_file_override_still_binds_head_identity(monkeypatch, tmp_path, capsys) -> None:
+    body = tmp_path / "body.md"
+    body.write_text("References #1", encoding="utf-8")
+    base = "b" * 40
+    head = "a" * 40
+
+    def fake_git(args):
+        if args == ["rev-parse", "origin/master"]:
+            return base
+        if args == ["rev-parse", "HEAD"]:
+            return head
+        raise AssertionError(args)
+
+    monkeypatch.setattr(ci_local.ci_plan, "_git", fake_git)
+
+    assert ci_local.main([
+        "--pr-body-file",
+        str(body),
+        "--base-ref",
+        "origin/master",
+        "--changed-file",
+        "scripts/ci_plan.py",
+        "--skip-execute",
+    ]) == 0
+    output = capsys.readouterr().out
+    assert f'"base_sha": "{base}"' in output
+    assert f'"head_sha": "{head}"' in output

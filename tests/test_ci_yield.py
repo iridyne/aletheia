@@ -64,6 +64,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             "head_sha": head,
             "run_attempt": 2,
             "created_at": "2026-08-24T00:00:01Z",
+            "pull_requests": [{"number": 2171}],
         },
         {
             "id": 20,
@@ -71,6 +72,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             "head_sha": head,
             "run_attempt": 1,
             "created_at": "2026-08-24T00:00:01Z",
+            "pull_requests": [{"number": 2171}],
         },
         {
             "id": 21,
@@ -78,6 +80,15 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             "head_sha": head,
             "run_attempt": 1,
             "created_at": "2026-08-24T00:00:30Z",
+            "pull_requests": [{"number": 2171}],
+        },
+        {
+            "id": 99,
+            "name": ci_yield.PRIMARY_WORKFLOW,
+            "head_sha": head,
+            "run_attempt": 1,
+            "created_at": "2026-08-24T00:00:35Z",
+            "pull_requests": [{"number": 9999}],
         },
     ]
 
@@ -143,6 +154,8 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             return {"jobs": []}
         if path.startswith("actions/runs/21/"):
             return {"jobs": []}
+        if path.startswith("actions/runs/99/"):
+            raise AssertionError("foreign PR run must not be collected")
         raise AssertionError(path)
 
     monkeypatch.setattr(ci_yield, "_api", fake_api)

@@ -61,7 +61,7 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert job["runs-on"] == SELF_HOSTED_CASI
     assert job["permissions"] == {
         "actions": "read",
-        "contents": "read",
+        "contents": "write",
         "issues": "write",
         "pull-requests": "write",
     }
@@ -218,6 +218,8 @@ def test_codex_shepherd_requests_only_planned_review_after_trusted_verdict() -> 
     assert "scripts/ci_plan.py" in script
     assert "const codexRequired = ciPlan?.review?.codex_required === true" in script
     assert "trusted CI planner says Codex review is not required" in script
+    assert "const labelArgs = pullRequest.labels.flatMap" in script
+    assert "--trusted-label" in script
     assert "exactHeadGithubActionsCheckPassed('Trusted CI verdict')" in script
     assert "waiting for exact-head Trusted CI verdict before requesting Codex review" in script
     assert "@codex review" in script
@@ -235,6 +237,16 @@ def test_codex_shepherd_requests_only_planned_review_after_trusted_verdict() -> 
     assert "Codex Cloud repair is not authorized to push back" in script
     assert "review-finding" in script
     assert "ci-failure" in script
+
+
+def test_codex_shepherd_retriggers_auto_merge_after_clean_review_comment() -> None:
+    script = _script()
+    issue_comment_handler = script[script.index("if (context.eventName === 'issue_comment')") :]
+
+    assert "run.conclusion === 'success'" in issue_comment_handler
+    assert "event_type: 'auto_merge_update'" in issue_comment_handler
+    assert "expected_head_sha: expectedHeadSha" in issue_comment_handler
+    assert "expected_base_sha: pullRequest.base.sha" in issue_comment_handler
 
 
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:

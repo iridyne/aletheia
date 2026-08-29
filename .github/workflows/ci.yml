@@ -8,13 +8,49 @@ name: Aletheia CI
 on:
   pull_request:
     branches: [master]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths-ignore:
       - README.md
-      - docs/archive/**
-      - docs/diagrams/**
-      - docs/references/**
-      - docs/research/**
-      - docs/superpowers/**
+      - docs/archive/**/*.avif
+      - docs/archive/**/*.gif
+      - docs/archive/**/*.jpeg
+      - docs/archive/**/*.jpg
+      - docs/archive/**/*.md
+      - docs/archive/**/*.png
+      - docs/archive/**/*.svg
+      - docs/archive/**/*.webp
+      - docs/diagrams/**/*.avif
+      - docs/diagrams/**/*.gif
+      - docs/diagrams/**/*.jpeg
+      - docs/diagrams/**/*.jpg
+      - docs/diagrams/**/*.md
+      - docs/diagrams/**/*.png
+      - docs/diagrams/**/*.svg
+      - docs/diagrams/**/*.webp
+      - docs/references/**/*.avif
+      - docs/references/**/*.gif
+      - docs/references/**/*.jpeg
+      - docs/references/**/*.jpg
+      - docs/references/**/*.md
+      - docs/references/**/*.png
+      - docs/references/**/*.svg
+      - docs/references/**/*.webp
+      - docs/research/**/*.avif
+      - docs/research/**/*.gif
+      - docs/research/**/*.jpeg
+      - docs/research/**/*.jpg
+      - docs/research/**/*.md
+      - docs/research/**/*.png
+      - docs/research/**/*.svg
+      - docs/research/**/*.webp
+      - docs/superpowers/**/*.avif
+      - docs/superpowers/**/*.gif
+      - docs/superpowers/**/*.jpeg
+      - docs/superpowers/**/*.jpg
+      - docs/superpowers/**/*.md
+      - docs/superpowers/**/*.png
+      - docs/superpowers/**/*.svg
+      - docs/superpowers/**/*.webp
   merge_group:
   workflow_dispatch:
 
@@ -126,8 +162,26 @@ jobs:
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
+          label_args=()
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            while IFS= read -r label; do
+              label_args+=(--trusted-label "$label")
+            done < <(python - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          for label in payload.get("pull_request", {}).get("labels", []):
+              name = label.get("name")
+              if name:
+                  print(name)
+          PY
+          )
+          fi
           uv run --no-sync python scripts/ci_plan.py \
             --event "$GITHUB_EVENT_NAME" \
+            "${label_args[@]}" \
             --github-output "$GITHUB_OUTPUT"
 
   review-core:

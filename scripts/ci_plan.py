@@ -128,6 +128,26 @@ CRITICAL_TOKENS = (
     "scheduler",
     "settlement",
 )
+INTEGRATION_TEST_TOKENS = (
+    "acceptance",
+    "broker",
+    "daemon",
+    "frontdoor",
+    "gateway",
+    "integration",
+    "lifecycle",
+    "routes",
+    "runtime",
+    "scheduler",
+    "server",
+    "service",
+    "shell",
+    "status",
+    "storage",
+    "supervisor",
+    "workflow",
+    "workbench",
+)
 PYTHON_CONTRACT_PREFIXES = (
     "aletheia/config/",
     "aletheia/server/routes/settings.py",
@@ -297,7 +317,7 @@ def _test_tier(path: str) -> str | None:
         return "e2e"
     if path.startswith("tests/specs/") or name.startswith("spec_") or name == "test_spec_conformance.py":
         return "specifications"
-    if "integration" in name or path.startswith("tests/integration/"):
+    if path.startswith("tests/integration/") or any(token in name for token in INTEGRATION_TEST_TOKENS):
         return "integration"
     return "python_unit"
 
@@ -533,6 +553,10 @@ def _load_changes(args: argparse.Namespace) -> tuple[str, str, list[PathChange]]
         git_base, git_head, changes = _git_changes(base_ref, head_ref)
         base_sha = base_sha or git_base
         head_sha = head_sha or git_head
+    elif not base_sha or not head_sha:
+        base_ref, head_ref = (args.base_ref, args.head_ref) if args.base_ref else _default_git_refs(args.event)
+        base_sha = base_sha or _git(["rev-parse", base_ref])
+        head_sha = head_sha or _git(["rev-parse", head_ref])
     return base_sha or "", head_sha or "", changes
 
 
