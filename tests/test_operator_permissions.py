@@ -28,6 +28,20 @@ def test_worker_permissions_preserve_existing_modes():
     assert reason is None
 
 
+@pytest.mark.parametrize("permission_scope", ["worker", "operator"])
+def test_unknown_permission_modes_fail_closed(permission_scope):
+    allowed, reason = check_permission(
+        "get_system_status",
+        "unknown",
+        permission_scope=permission_scope,
+    )
+
+    assert allowed is False
+    assert reason is not None
+    assert "invalid_permission_mode" in reason
+    assert allowed_commands("unknown", permission_scope=permission_scope) == []
+
+
 def test_operator_permissions_use_canonical_ladder():
     allowed, reason = check_permission(
         "create_research_note",

@@ -59,7 +59,12 @@ def check_permission(
     permission_attr, mode_ranks, required_ranks, scope_label = _permission_context(permission_scope)
     required_mode = getattr(cmd, permission_attr)
 
-    mode_rank = mode_ranks.get(current_mode, 0)
+    mode_rank = mode_ranks.get(current_mode)
+    if mode_rank is None:
+        return False, (
+            f"invalid_permission_mode: unknown {scope_label} permission mode "
+            f"'{current_mode}'."
+        )
     required_rank = required_ranks.get(required_mode, 99)
 
     if mode_rank >= required_rank:
@@ -75,7 +80,9 @@ def check_permission(
 def allowed_commands(current_mode: str, *, permission_scope: str = "worker") -> list[str]:
     """Return list of command names allowed under the given mode."""
     permission_attr, mode_ranks, required_ranks, _ = _permission_context(permission_scope)
-    mode_rank = mode_ranks.get(current_mode, 0)
+    mode_rank = mode_ranks.get(current_mode)
+    if mode_rank is None:
+        return []
     return [
         name for name, cmd in COMMANDS.items()
         if required_ranks.get(getattr(cmd, permission_attr), 99) <= mode_rank
