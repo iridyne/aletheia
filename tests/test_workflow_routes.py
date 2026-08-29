@@ -1,5 +1,7 @@
 """Phase 4 tests: proposal approve/reject, strategy promote/retire, portfolio, playbooks."""
 
+import json
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 
@@ -143,6 +145,76 @@ async def test_approve_paper_rechecks_status_inside_writer_transaction(client, m
 
 
 @pytest.mark.anyio
+async def test_approve_commits_structured_audit_before_best_effort_jsonl(
+    client, monkeypatch
+):
+    import aletheia.execution.gateway as gateway
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    gateway_calls = []
+    monkeypatch.setattr(
+        gateway,
+        "execute_existing_proposal",
+        lambda *args, **kwargs: gateway_calls.append((args, kwargs)) or {"status": "accepted"},
+    )
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: False)
+
+    response = await client.post(f"/api/proposals/{proposal.id}/approve-paper")
+
+    assert response.status_code == 200
+    assert repo.get_trade_proposal(proposal.id)["status"] == "approved"
+    assert len(gateway_calls) == 1
+    events = [
+        event for event in repo.list_audit_events(limit=20)
+        if event["event_type"] == "proposal_approved"
+        and event["entity_id"] == proposal.id
+    ]
+    assert len(events) == 1
+    assert json.loads(events[0]["before_state"]) == {"status": "pending"}
+    assert json.loads(events[0]["after_state"]) == {"status": "approved"}
+
+
+@pytest.mark.anyio
+async def test_approve_rolls_back_when_structured_audit_fails(client, monkeypatch):
+    import aletheia.execution.gateway as gateway
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    gateway_calls = []
+    monkeypatch.setattr(
+        gateway,
+        "execute_existing_proposal",
+        lambda *args, **kwargs: gateway_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        repo,
+        "insert_audit_event",
+        lambda _event: (_ for _ in ()).throw(RuntimeError("sqlite audit unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="sqlite audit unavailable"):
+        await client.post(f"/api/proposals/{proposal.id}/approve-paper")
+
+    assert repo.get_trade_proposal(proposal.id)["status"] == "pending"
+    assert gateway_calls == []
+
+
+@pytest.mark.anyio
 async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -252,6 +324,81 @@ async def test_reject_proposal(client):
     assert resp.status_code == 200
     assert resp.json()["status"] == "rejected"
     assert repo.get_entry_risk_reservation(p.id) is None
+
+
+@pytest.mark.anyio
+async def test_reject_commits_state_reservation_and_structured_audit_together(
+    client, monkeypatch
+):
+    proposal = TradeProposal(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=3_000.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=proposal.id,
+        proposal_commit_hash=proposal.commit_hash,
+        symbol=proposal.symbol,
+        execution_mode=proposal.execution_mode,
+        quantity=proposal.quantity,
+        price=proposal.price,
+    )
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("jsonl unavailable")),
+    )
+
+    response = await client.post(f"/api/proposals/{proposal.id}/reject")
+
+    assert response.status_code == 200
+    assert repo.get_trade_proposal(proposal.id)["status"] == "rejected"
+    assert repo.get_entry_risk_reservation(proposal.id) is None
+    events = [
+        event for event in repo.list_audit_events(limit=20)
+        if event["event_type"] == "proposal_rejected"
+        and event["entity_id"] == proposal.id
+    ]
+    assert len(events) == 1
+    assert json.loads(events[0]["before_state"]) == {"status": "pending"}
+    assert json.loads(events[0]["after_state"]) == {"status": "rejected"}
+
+
+@pytest.mark.anyio
+async def test_reject_rolls_back_state_and_reservation_when_structured_audit_fails(
+    client, monkeypatch
+):
+    proposal = TradeProposal(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=3_000.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=proposal.id,
+        proposal_commit_hash=proposal.commit_hash,
+        symbol=proposal.symbol,
+        execution_mode=proposal.execution_mode,
+        quantity=proposal.quantity,
+        price=proposal.price,
+    )
+    monkeypatch.setattr(
+        repo,
+        "insert_audit_event",
+        lambda _event: (_ for _ in ()).throw(RuntimeError("sqlite audit unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="sqlite audit unavailable"):
+        await client.post(f"/api/proposals/{proposal.id}/reject")
+
+    assert repo.get_trade_proposal(proposal.id)["status"] == "pending"
+    assert repo.get_entry_risk_reservation(proposal.id) is not None
 
 
 @pytest.mark.anyio
