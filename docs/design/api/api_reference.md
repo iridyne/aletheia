@@ -139,6 +139,11 @@ Closed rows returned by `GET /positions` add `realized_pnl_complete` and
 operator read model re-computes the close from entry/exit price, quantity, fees, direction, and trusted funding.
 If it cannot reproduce the stored number, `realized_pnl=null`. `/trades/export` applies the same rule and includes
 the same two completeness columns; it writes an empty realized-PnL cell rather than exporting a legacy false value.
+Both the Position read model and CSV export expose signed `funding_cost`, its validated `funding_source`, and
+`funding_status` (`complete`, `not_applicable`, or `unavailable`). Complete futures rows reconcile as
+`gross - entry_fee - exit_fee - funding_cost = realized_pnl`; incomplete futures rows keep funding blank and
+unavailable. Spot rows explicitly use `funding_cost=0` and `funding_source=not_applicable`. CSV `slippage_cost`
+remains a diagnostic execution-drag field and is not subtracted a second time from fill-based realized PnL.
 
 ---
 
@@ -166,7 +171,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/exit-policy-advice` | Exit policy recommendations |
 | GET | `/analytics/trade-paths` | Trade decision path visualization data |
 | GET | `/analytics/go-live-scorecard` | 10-criteria composite go-live score |
-| GET | `/analytics/cost-summary` | LLM and execution cost breakdown |
+| GET | `/analytics/cost-summary` | Verified economic and execution-cost breakdown, including signed funding and missing-component counts |
 | GET | `/analytics/confidence-calibration` | ECE calibration by conviction bucket |
 | GET | `/analytics/reasoning-feedback` | Per-bucket rejection/win rates |
 | GET | `/analytics/filter-controller` | Shadow-only first-exposure cohorts, retry telemetry, bounded fixed-version replays, and preregistered prospective experiment status; never mutates config |
@@ -239,6 +244,12 @@ Judgement metrics default to the eligible cohort. `/analytics/equity-curve` retu
 `raw_recorded_points` and `genuine_points` with stable labels; its compatibility `points` field is an
 alias of `genuine_points`. Current unrealized PnL remains a separate field and is not folded into either
 realized curve. Cost responses expose verified totals and a separate `raw_recorded_costs` object.
+For each projection, `total_funding_cost` preserves signed funding, `total_economic_costs`
+(`entry_fee + exit_fee + funding_cost`) is the reconcilable total, and
+`total_execution_drag` keeps the diagnostic `slippage_cost` separate. The legacy `total_costs`
+field remains the execution-cost total (`entry_fee + exit_fee + slippage_cost`);
+`missing_cost_counts` identifies incomplete
+components, and any total requiring a missing component is `null` rather than an apparent zero.
 Strategy KPI and family scorecard responses wrap their rows under `strategies` and `families` so the
 same cohort metadata can be returned without hiding its scope. Missing
 or insufficient genuine data is not serialized as a zero return, zero win rate, or healthy state.

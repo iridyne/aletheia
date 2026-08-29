@@ -47,9 +47,16 @@ const openPosition: Position = {
 
 const closedPosition: Position = {
 	...openPosition,
+	market_type: "usdt_futures",
 	current_price: 110,
 	unrealized_pnl: null,
 	realized_pnl: 10,
+	entry_fee: 1,
+	exit_fee: 1,
+	funding_cost: 10,
+	funding_source: "local_simulation",
+	funding_status: "complete",
+	slippage_cost: 0.5,
 	status: "closed",
 	close_reason: "take_profit",
 	closed_at: "2026-08-13T01:00:00Z",
@@ -161,7 +168,39 @@ describe("TradesPositions drawer selection freshness", () => {
 		const updated = drawerText(node);
 		expect(updated).toContain("Closed");
 		expect(updated).toContain("110");
+		expect(updated).toContain("Funding");
+		expect(updated).toContain("-10.00");
+		expect(updated).toContain("Local Simulation");
+		expect(updated).toContain("Slippage (diagnostic)");
 		expect(updated).not.toContain("Close at market price");
+
+		await updateQuery(client, ["positions"], [{
+			...closedPosition,
+			funding_cost: -3,
+		}]);
+		expect(drawerText(node)).toContain("+3.00");
+	});
+
+	it("keeps unavailable funding explicit instead of displaying a zero", async () => {
+		const { node, client } = await renderPage();
+
+		await act(async () => rowContaining(node, "ETHUSDT").click());
+		await updateQuery(client, ["positions"], [{
+			...closedPosition,
+			funding_cost: null,
+			funding_source: "unavailable",
+			funding_status: "unavailable",
+			realized_pnl: null,
+			realized_pnl_complete: false,
+			realized_pnl_unavailable_reason: "incomplete_funding_economics",
+		}]);
+
+		const updated = drawerText(node);
+		expect(updated).toContain("Funding status");
+		expect(updated).toContain("Unavailable");
+		expect(updated).not.toContain("-0.00");
+		expect(updated).not.toContain("+0.00");
+		expect(updated).toContain("Incomplete Funding Economics");
 	});
 
 	it("resolves order status changes and missing rows from current query data", async () => {

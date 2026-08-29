@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 import time
 from datetime import datetime, timedelta, timezone
 import json
@@ -420,27 +421,39 @@ def get_cost_summary(execution_mode: str | None = None):
             **execution_mode_identity(None),
         }
 
-    def _costs(rows: list[dict]) -> dict[str, float | None]:
-        if not rows:
-            return {
-                "total_entry_fees": None,
-                "total_exit_fees": None,
-                "total_fees": None,
-                "total_slippage": None,
-                "total_costs": None,
-            }
+    def _costs(rows: list[dict]) -> dict[str, object]:
+        """Aggregate complete cost components without turning missing values into zero."""
 
-        def _total(field: str) -> float | None:
-            values = [row.get(field) for row in rows]
-            if any(value is None for value in values):
+        fields = ("entry_fee", "exit_fee", "funding_cost", "slippage_cost")
+
+        def _number(row: dict, field: str) -> float | None:
+            try:
+                value = float(row.get(field))
+            except (TypeError, ValueError):
                 return None
-            return round(sum(float(value) for value in values), 8)
+            return value if math.isfinite(value) else None
 
-        entry = _total("entry_fee")
-        exit_ = _total("exit_fee")
-        slippage = _total("slippage_cost")
-        total_fees = round(entry + exit_, 8) if entry is not None and exit_ is not None else None
-        total_costs = (
+        missing = {
+            field: sum(_number(row, field) is None for row in rows)
+            for field in fields
+        }
+
+        def _sum(field: str) -> float | None:
+            if not rows or missing[field]:
+                return None
+            return round(sum(_number(row, field) or 0.0 for row in rows), 8)
+
+        entry = _sum("entry_fee")
+        exit_ = _sum("exit_fee")
+        funding = _sum("funding_cost")
+        slippage = _sum("slippage_cost")
+        fees = round(entry + exit_, 8) if entry is not None and exit_ is not None else None
+        economic = (
+            round(entry + exit_ + funding, 8)
+            if entry is not None and exit_ is not None and funding is not None
+            else None
+        )
+        execution_drag = (
             round(entry + exit_ + slippage, 8)
             if entry is not None and exit_ is not None and slippage is not None
             else None
@@ -448,9 +461,15 @@ def get_cost_summary(execution_mode: str | None = None):
         return {
             "total_entry_fees": entry,
             "total_exit_fees": exit_,
-            "total_fees": total_fees,
+            "total_funding_cost": funding,
+            "total_fees": fees,
             "total_slippage": slippage,
-            "total_costs": total_costs,
+            # Preserve the legacy execution-cost contract; funding-inclusive
+            # economics are exposed separately below.
+            "total_costs": execution_drag,
+            "total_economic_costs": economic,
+            "total_execution_drag": execution_drag,
+            "missing_cost_counts": missing,
         }
 
     verified = _costs(eligible_strategy_outcomes(execution_mode=mode))

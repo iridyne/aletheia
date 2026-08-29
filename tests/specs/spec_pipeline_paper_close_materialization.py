@@ -1398,6 +1398,9 @@ async def test_positions_api_and_export_mask_legacy_unknown_funding_pnl(
     assert api_row["realized_pnl_unavailable_reason"] == (
         "incomplete_funding_economics"
     )
+    assert api_row["funding_cost"] is None
+    assert api_row["funding_source"] == "unavailable"
+    assert api_row["funding_status"] == "unavailable"
 
     assert export_response.status_code == 200
     csv_row = next(csv.DictReader(io.StringIO(export_response.text)))
@@ -1407,6 +1410,138 @@ async def test_positions_api_and_export_mask_legacy_unknown_funding_pnl(
     assert csv_row["realized_pnl_unavailable_reason"] == (
         "incomplete_funding_economics"
     )
+    assert csv_row["funding_cost"] == ""
+    assert csv_row["funding_source"] == "unavailable"
+    assert csv_row["funding_status"] == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_positions_and_export_expose_signed_funding_contract(
+    tmp_path, monkeypatch,
+):
+    """The read model and tax export share the validated cost identity."""
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import csv
+    import io
+
+    from httpx import ASGITransport, AsyncClient
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    rows = (
+        Position(
+            id="complete-funding-debit",
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            current_price=110.0,
+            unrealized_pnl=0.0,
+            realized_pnl=-2.0,
+            execution_mode="paper_internal",
+            status="closed",
+            entry_fee=1.0,
+            exit_fee=1.0,
+            funding_cost=10.0,
+            funding_source="local_simulation",
+        ),
+        Position(
+            id="complete-funding-credit",
+            symbol="ETH/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            current_price=110.0,
+            unrealized_pnl=0.0,
+            realized_pnl=11.0,
+            execution_mode="paper_internal",
+            status="closed",
+            entry_fee=1.0,
+            exit_fee=1.0,
+            funding_cost=-3.0,
+            funding_source="local_simulation",
+        ),
+        Position(
+            id="complete-spot-no-funding",
+            symbol="SOL/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            current_price=110.0,
+            unrealized_pnl=0.0,
+            realized_pnl=8.0,
+            execution_mode="paper_internal",
+            status="closed",
+            entry_fee=1.0,
+            exit_fee=1.0,
+            funding_cost=0.0,
+            funding_source="not_applicable",
+        ),
+    )
+    for position in rows:
+        repo.insert_position(position)
+
+    from aletheia.server.app import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        positions_response = await client.get("/api/positions")
+        export_response = await client.get("/api/trades/export?fmt=csv")
+
+    assert positions_response.status_code == 200
+    position_by_id = {
+        row["id"]: row for row in positions_response.json()
+    }
+    assert position_by_id["complete-funding-debit"]["funding_cost"] == 10.0
+    assert position_by_id["complete-funding-debit"]["funding_source"] == (
+        "local_simulation"
+    )
+    assert position_by_id["complete-funding-debit"]["funding_status"] == "complete"
+    assert position_by_id["complete-funding-credit"]["funding_cost"] == -3.0
+    assert position_by_id["complete-funding-credit"]["funding_status"] == "complete"
+    assert position_by_id["complete-spot-no-funding"]["funding_cost"] == 0.0
+    assert position_by_id["complete-spot-no-funding"]["funding_source"] == (
+        "not_applicable"
+    )
+    assert position_by_id["complete-spot-no-funding"]["funding_status"] == (
+        "not_applicable"
+    )
+
+    assert export_response.status_code == 200
+    exported = {
+        row["position_id"]: row
+        for row in csv.DictReader(io.StringIO(export_response.text))
+    }
+    assert set(exported) == {position.id for position in rows}
+    assert exported["complete-funding-debit"]["funding_cost"] == "10.0"
+    assert exported["complete-funding-debit"]["funding_source"] == (
+        "local_simulation"
+    )
+    assert exported["complete-funding-debit"]["funding_status"] == "complete"
+    assert exported["complete-funding-debit"]["realized_pnl"] == "-2.0"
+    assert exported["complete-funding-credit"]["funding_cost"] == "-3.0"
+    assert exported["complete-funding-credit"]["funding_status"] == "complete"
+    assert exported["complete-funding-credit"]["realized_pnl"] == "11.0"
+    assert exported["complete-spot-no-funding"]["funding_cost"] == "0.0"
+    assert exported["complete-spot-no-funding"]["funding_source"] == (
+        "not_applicable"
+    )
+    assert exported["complete-spot-no-funding"]["funding_status"] == (
+        "not_applicable"
+    )
+
+    for row in exported.values():
+        assert row["realized_pnl_complete"] == "True"
+        funding = float(row["funding_cost"])
+        gross = 10.0
+        economic_cost = 2.0 + funding
+        assert gross - economic_cost == pytest.approx(float(row["realized_pnl"]))
 
 
 # ---------------------------------------------------------------------------

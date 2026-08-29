@@ -999,7 +999,10 @@ function PositionDetail({
 			</DrawerSection>
 			{(position.entry_fee != null ||
 				position.exit_fee != null ||
-				position.slippage_cost != null) && (
+				position.slippage_cost != null ||
+				position.funding_status != null ||
+				position.funding_cost != null ||
+				position.funding_source != null) && (
 				<DrawerSection label="Costs">
 					<DrawerField
 						label="Entry Fee"
@@ -1018,13 +1021,33 @@ function PositionDetail({
 						mono
 					/>
 					<DrawerField
-						label="Slippage (est.)"
+						label="Slippage (diagnostic)"
 						value={
 							position.slippage_cost != null
 								? `-${fmtNum(position.slippage_cost)}`
 								: null
 						}
 						mono
+					/>
+					<DrawerField
+						label="Funding"
+						value={
+							position.funding_status === "complete" &&
+							position.funding_cost != null
+								? fmtSigned(-position.funding_cost)
+								: position.funding_status === "not_applicable"
+									? fmtNum(0)
+									: null
+						}
+						mono
+					/>
+					<DrawerField
+						label="Funding source"
+						value={humanize(position.funding_source)}
+					/>
+					<DrawerField
+						label="Funding status"
+						value={humanize(position.funding_status)}
 					/>
 				</DrawerSection>
 			)}
