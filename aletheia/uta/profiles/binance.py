@@ -129,11 +129,3 @@ class BinanceLiveProfile(BinanceTestnetProfile):
     expected_environment = "live"
     expected_profile = "binance_live"
     sandbox = False
-    mutation_market_order = False
-    mutation_limit_order = False
-    mutation_modify_order = False
-    mutation_cancel_order = False
-    mutation_reduce_only = False
-    mutation_leverage = False
-    mutation_post_only = False
-    mutation_client_order_id = False

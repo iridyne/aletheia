@@ -139,9 +139,13 @@ def test_command_identity_is_separate_and_account_bound(identity, instrument):
         side="buy",
         quantity="0.01",
         order_type="market",
+        stop_loss_price="99.5",
+        take_profit_price="102.25",
     )
     assert command.command_id != command.client_order_id != command.proposal_id
     assert command.expected_account.credential_generation == 3
+    assert command.stop_loss_price == Decimal("99.5")
+    assert command.take_profit_price == Decimal("102.25")
     assert set(CommandEvidence) == {
         CommandEvidence.NOT_SENT,
         CommandEvidence.VENUE_REJECTED,

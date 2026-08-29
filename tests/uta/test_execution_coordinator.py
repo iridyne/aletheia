@@ -38,7 +38,7 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-def _authority(proposal_id: str, risk_id: str):
+def _authority(proposal_id: str, risk_id: str, *, order_type: str = "market"):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RiskDecision, TradeProposal
 
@@ -47,7 +47,7 @@ def _authority(proposal_id: str, risk_id: str):
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        order_type="market",
+        order_type=order_type,
         quantity=0.01,
         price=100.0,
         execution_mode="binance_testnet",
@@ -181,6 +181,48 @@ def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeyp
     assert adapter.calls == 1
     assert result["order_status"] == "submitted"
     assert result["exchange_order_id"] == "venue-1"
+
+
+def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    proposal_id, risk_id = "proposal-protected", "risk-protected"
+    _authority(proposal_id, risk_id, order_type="limit")
+    captured = []
+
+    async def submit(command):
+        captured.append(command)
+        return _ack(command)
+
+    adapter = _Adapter(submit)
+    from aletheia.uta.models import CapabilitySupport
+
+    adapter.capabilities = SimpleNamespace(native_tpsl=CapabilitySupport.SUPPORTED)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+    )
+    from aletheia.execution.coordinator import execute_order
+
+    execute_order(
+        proposal_id=proposal_id,
+        risk_decision_id=risk_id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="limit",
+        quantity=0.01,
+        price=100.0,
+        execution_mode="binance_testnet",
+        stop_price=95.0,
+        take_profit_price=110.0,
+        time_in_force="GTC",
+        post_only=True,
+    )
+
+    [command] = captured
+    assert command.stop_loss_price == 95
+    assert command.take_profit_price == 110
+    assert command.time_in_force == "GTC"
+    assert command.post_only is True
 
 
 def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeypatch):
@@ -538,6 +580,48 @@ def test_gateway_bitget_close_selector_uses_same_qualified_coordinator(
     )
     monkeypatch.setattr(
         "aletheia.execution.bitget_broker.close_demo_position",
+        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
+        or {"status": "submitted"},
+    )
+    from aletheia.execution import gateway
+
+    monkeypatch.setattr(
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: True
+    )
+    gateway.close_exchange_position(position.id, "operator_close")
+    monkeypatch.setattr(
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False
+    )
+    gateway.close_exchange_position(position.id, "operator_close")
+
+    assert selected == [("uta", position.id), ("legacy", position.id)]
+
+
+def test_gateway_live_close_selector_uses_same_qualified_coordinator(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="okx_live_limited",
+        status="open",
+    )
+    repo.insert_position(position)
+    selected = []
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.close_position",
+        lambda position_id, **_kwargs: selected.append(("uta", position_id))
+        or {"status": "submitted"},
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.okx_broker.close_okx_position",
         lambda position_id, **_kwargs: selected.append(("legacy", position_id))
         or {"status": "submitted"},
     )

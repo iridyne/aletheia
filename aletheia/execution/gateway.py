@@ -625,7 +625,14 @@ def close_exchange_position(
     if row is None:
         raise ValueError(f"position not found: {position_id}")
     mode = row.get("execution_mode")
-    if mode in {"binance_testnet", "okx_demo", "bitget_demo"} and _qualified_uta_mutation_selected(
+    if mode in {
+        "binance_testnet",
+        "okx_demo",
+        "bitget_demo",
+        "binance_live_limited",
+        "okx_live_limited",
+        "bitget_live_limited",
+    } and _qualified_uta_mutation_selected(
         load_config(), mode
     ):
         from aletheia.execution.coordinator import close_position
@@ -1647,8 +1654,10 @@ def _execute_proposal(
             # execution_proposal is a quantity-only copy, so its broker argument
             # remains semantically trade_school=proposal.trade_school.
             try:
+                uta_selected = False
                 if allowed_mode in {"binance_testnet", "okx_demo", "bitget_demo"}:
                     if _qualified_uta_mutation_selected(cfg, allowed_mode):
+                        uta_selected = True
                         from aletheia.execution.coordinator import execute_order as execute_live_order
                     elif allowed_mode == "binance_testnet":
                         from aletheia.execution.binance_broker import execute_live_order
@@ -1669,12 +1678,16 @@ def _execute_proposal(
                     strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
-                    take_profit_price=(execution_proposal.take_profit if allowed_mode == "bitget_demo" else None),
+                    take_profit_price=(
+                        execution_proposal.take_profit
+                        if uta_selected or allowed_mode == "bitget_demo"
+                        else None
+                    ),
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
-                if allowed_mode == "bitget_demo":
+                if uta_selected or allowed_mode == "bitget_demo":
                     order_kwargs.update(
                         entry_plan_id=execution_proposal.entry_plan_id,
                         order_tactic=execution_proposal.order_tactic,
@@ -1841,7 +1854,10 @@ def _execute_proposal(
                 )
                 return {"status": "rejected", "proposal_id": proposal.id, "message": "Live trading is disabled"}
             try:
-                if allowed_mode == "okx_live_limited":
+                uta_selected = _qualified_uta_mutation_selected(cfg, allowed_mode)
+                if uta_selected:
+                    from aletheia.execution.coordinator import execute_order as execute_live_order
+                elif allowed_mode == "okx_live_limited":
                     from aletheia.execution.okx_broker import execute_live_order
                 elif allowed_mode == "binance_live_limited":
                     from aletheia.execution.binance_broker import execute_live_order
@@ -1861,13 +1877,15 @@ def _execute_proposal(
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
                     take_profit_price=(
-                        execution_proposal.take_profit if allowed_mode == "bitget_live_limited" else None
+                        execution_proposal.take_profit
+                        if uta_selected or allowed_mode == "bitget_live_limited"
+                        else None
                     ),
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
-                if allowed_mode == "bitget_demo":
+                if uta_selected or allowed_mode == "bitget_live_limited":
                     order_kwargs.update(
                         entry_plan_id=execution_proposal.entry_plan_id,
                         order_tactic=execution_proposal.order_tactic,

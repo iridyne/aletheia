@@ -117,6 +117,10 @@ class _BitgetDemoProfile(CCXTProfile):
             params["timeInForce"] = command.time_in_force
         if command.post_only:
             params["postOnly"] = True
+        if command.stop_loss_price is not None:
+            params["stopLoss"] = {"triggerPrice": command.stop_loss_price}
+        if command.take_profit_price is not None:
+            params["takeProfit"] = {"triggerPrice": command.take_profit_price}
         if command.trigger_price is not None:
             if command.instrument.market_type == "spot":
                 raise UTAError(
@@ -292,33 +296,9 @@ class BitgetClassicV2LiveProfile(BitgetClassicV2Profile):
     expected_execution_mode = "bitget_live_limited"
     expected_environment = "live"
     sandbox = False
-    mutation_market_order = False
-    mutation_limit_order = False
-    mutation_modify_order = False
-    mutation_cancel_order = False
-    mutation_reduce_only = False
-    mutation_leverage = False
-    mutation_post_only = False
-    mutation_client_order_id = False
-    mutation_trigger_order = False
-    native_tpsl = False
-    protection_replace = False
-    protection_cancel = False
 
 
 class BitgetUTAV3LiveProfile(BitgetUTAV3Profile):
     expected_execution_mode = "bitget_live_limited"
     expected_environment = "live"
     sandbox = False
-    mutation_market_order = False
-    mutation_limit_order = False
-    mutation_modify_order = False
-    mutation_cancel_order = False
-    mutation_reduce_only = False
-    mutation_leverage = False
-    mutation_post_only = False
-    mutation_client_order_id = False
-    mutation_trigger_order = False
-    native_tpsl = False
-    protection_replace = False
-    protection_cancel = False

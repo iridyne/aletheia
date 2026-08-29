@@ -81,7 +81,7 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 | `bitget_demo` | 是(demo 账户) | bitget_broker | `bitget_broker.py:53` |
 | `okx_demo` | 是(demo) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise okx_broker | `gateway.py` / `execution/coordinator.py` |
 | `binance_testnet` | 是(testnet) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise binance_broker | `gateway.py` / `execution/coordinator.py` |
-| `bitget/okx/binance_live_limited` | 是(**真实资金**) | 同上 broker 同函数 | — |
+| `bitget/okx/binance_live_limited` | 是(**真实资金**) | exact qualified `uta_v1`: Gateway → Coordinator → UTA；否则原 broker | `gateway.py` / `execution/coordinator.py` |
 
 `_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
 
@@ -693,7 +693,12 @@ spot/perp contract-size 换算、demo client-id、entry/full-close、原生保�
 protection 与 replacement 只有在 exact-code/account/profile/generation qualification 通过时才走
 Gateway → Coordinator → UTA；否则继续使用 native legacy broker。因 owner 无法提供交易所凭据，
 本阶段只完成静态 conformance，未声称任一 Bitget profile 已获运行时资格。live-limited profile
-mutation 仍未切换。
+在 Phase 7 已完成静态接线：既有 Live Trust state、authorization reference/account-equivalence 与
+exact-code/account/profile/generation qualification 全部通过后，entry/full-close 才选择同一
+Coordinator；stale、mismatch 或 disabled authority 都在 selector/UTA send 之前拒绝。canonical
+entry command 同时保留 post-only/TIF，以及仅在 profile 声明原生支持时保留 attached TP/SL。
+未获资格的 live profile 继续使用既有 legacy broker；本阶段没有生成 live qualification artifact、
+没有发送真实或 demo 订单，也没有激活任何 live selector。
 
 后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
 UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction

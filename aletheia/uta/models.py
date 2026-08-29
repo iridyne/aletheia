@@ -515,6 +515,8 @@ class SubmitOrderCommand(MutationCommand):
     order_type: str
     limit_price: PositiveDecimalValue | None = None
     trigger_price: PositiveDecimalValue | None = None
+    stop_loss_price: PositiveDecimalValue | None = None
+    take_profit_price: PositiveDecimalValue | None = None
     time_in_force: str | None = None
     post_only: bool = False
     reduce_only: bool = False

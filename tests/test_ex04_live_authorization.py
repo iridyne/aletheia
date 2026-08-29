@@ -245,6 +245,10 @@ def test_execution_rejects_scope_mismatch_after_reunlock(tmp_path, monkeypatch):
         "aletheia.execution.gateway._prepare_exchange_quantity",
         lambda mode, sym, mt, q, p: (q, None),
     )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway._qualified_uta_mutation_selected",
+        lambda *_args: pytest.fail("qualification selection ran before live authorization"),
+    )
 
     result = execute_existing_proposal(proposal.id, "okx_live_limited")
     assert result["status"] == "rejected"
@@ -280,6 +284,10 @@ def test_execution_rejects_when_authorization_missing_at_dispatch(tmp_path, monk
     cfg2.live.state = "live_disabled"
     cfg2.live.unlock_evidence = None
     save_config(cfg2)
+    monkeypatch.setattr(
+        "aletheia.execution.gateway._qualified_uta_mutation_selected",
+        lambda *_args: pytest.fail("qualification selection ran while live was disabled"),
+    )
 
     result = execute_existing_proposal(proposal.id, "okx_live_limited")
     assert result["status"] == "rejected"
@@ -296,6 +304,124 @@ def test_execution_rejects_when_authorization_missing_at_dispatch(tmp_path, monk
         or "no_active_live_authorization" in reason_blob
         or "missing_live_authorization_ref" in reason_blob
     ), result
+
+
+def test_execution_rejects_stale_live_evidence_before_uta_selection(
+    tmp_path, monkeypatch
+):
+    cfg, trust = _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=True)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.execution import gateway
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.repositories import insert_trade_proposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        price=60000.0,
+        leverage=1,
+        execution_mode="okx_live_limited",
+        live_authorization_ref=trust.current_authorization_ref(cfg),
+    )
+    insert_trade_proposal(proposal)
+    stale = load_config()
+    stale.live.unlock_evidence["expires_at"] = "2020-01-01T00:00:00+00:00"
+    save_config(stale)
+    monkeypatch.setattr(
+        gateway,
+        "evaluate_proposal",
+        lambda *_args, **_kwargs: type("Risk", (), {
+            "approved": True,
+            "allowed_execution_mode": "okx_live_limited",
+            "decision_id": "risk-stale-live",
+            "violations": [],
+            "message": "ok",
+        })(),
+    )
+    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *_args: (0.001, None))
+    monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
+    monkeypatch.setattr(
+        gateway,
+        "_qualified_uta_mutation_selected",
+        lambda *_args: pytest.fail("stale live evidence reached UTA selection"),
+    )
+
+    result = gateway.execute_existing_proposal(
+        proposal.id, execution_mode="okx_live_limited"
+    )
+
+    assert result["status"] == "rejected"
+    assert "stale" in result["message"].lower()
+
+
+def test_qualified_live_entry_selects_coordinator_after_all_live_gates(
+    tmp_path, monkeypatch
+):
+    cfg, trust = _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=True)
+    from aletheia.execution import gateway
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.repositories import insert_trade_proposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        order_type="limit",
+        order_tactic="POST_ONLY_LIMIT",
+        time_in_force="post_only",
+        post_only=True,
+        price=60000.0,
+        leverage=1,
+        stop_price=59000.0,
+        take_profit=62000.0,
+        execution_mode="okx_live_limited",
+        live_authorization_ref=trust.current_authorization_ref(cfg),
+    )
+    insert_trade_proposal(proposal)
+    monkeypatch.setattr(
+        gateway,
+        "evaluate_proposal",
+        lambda *_args, **_kwargs: type("Risk", (), {
+            "approved": True,
+            "allowed_execution_mode": "okx_live_limited",
+            "decision_id": "risk-live-qualified",
+            "violations": [],
+            "message": "ok",
+        })(),
+    )
+    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *_args: (0.001, None))
+    monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
+    selected = []
+    monkeypatch.setattr(
+        gateway,
+        "_qualified_uta_mutation_selected",
+        lambda _cfg, mode: selected.append(("qualification", mode)) or True,
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.execute_order",
+        lambda **kwargs: selected.append(("coordinator", kwargs))
+        or {"order_id": "missing-local-order", "exchange_order_id": "venue-live-1"},
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.okx_broker.execute_live_order",
+        lambda **_kwargs: pytest.fail("qualified live entry used the legacy broker"),
+    )
+
+    gateway.execute_existing_proposal(
+        proposal.id, execution_mode="okx_live_limited"
+    )
+
+    assert selected[0] == ("qualification", "okx_live_limited")
+    channel, command = selected[1]
+    assert channel == "coordinator"
+    assert command["execution_mode"] == "okx_live_limited"
+    assert command["stop_price"] == 59000.0
+    assert command["take_profit_price"] == 62000.0
+    assert command["time_in_force"] == "post_only"
+    assert command["post_only"] is True
 
 
 def test_replayed_executed_live_proposal_is_not_reauthorized(tmp_path, monkeypatch):
