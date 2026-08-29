@@ -110,6 +110,12 @@ jobs:
                 changesMergeAuthority ||
                 pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
               ) ? 'disable' : 'enable';
+              const minimumCheckStartedAt = eventName === 'pull_request_target'
+                ? new Date().toISOString()
+                : '';
+              const acceptedWorkflowRunId = eventName === 'workflow_run'
+                ? String(payload.workflow_run.id)
+                : '';
               await github.rest.repos.createDispatchEvent({
                 ...context.repo,
                 event_type: 'auto_merge_update',
@@ -118,6 +124,8 @@ jobs:
                   pull_request_number: pullRequest.number,
                   expected_head_sha: pullRequest.head.sha,
                   expected_base_sha: pullRequest.base.sha,
+                  minimum_check_started_at: minimumCheckStartedAt,
+                  accepted_workflow_run_id: acceptedWorkflowRunId,
                 },
               });
             }
@@ -266,6 +274,8 @@ jobs:
       EXPECTED_HEAD_SHA: ${{ github.event.client_payload.expected_head_sha }}
       EXPECTED_BASE_SHA: ${{ github.event.client_payload.expected_base_sha || '' }}
       RELEASE_AFTER_MERGE: ${{ github.event.client_payload.release_after_merge || 'false' }}
+      MINIMUM_CHECK_STARTED_AT: ${{ github.event.client_payload.minimum_check_started_at || '' }}
+      ACCEPTED_WORKFLOW_RUN_ID: ${{ github.event.client_payload.accepted_workflow_run_id || '' }}
     steps:
       - name: Check out trusted CI planner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -287,6 +297,8 @@ jobs:
             const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
             const expectedBaseSha = process.env.EXPECTED_BASE_SHA;
             const releaseAfterMerge = process.env.RELEASE_AFTER_MERGE === 'true';
+            const minimumCheckStartedAt = process.env.MINIMUM_CHECK_STARTED_AT;
+            const acceptedWorkflowRunId = process.env.ACCEPTED_WORKFLOW_RUN_ID;
             const changeContractCheckName = 'Verify Change Contract';
             const trustedCiCheckName = 'Trusted CI verdict';
             const {execFileSync} = require('child_process');
@@ -387,7 +399,7 @@ jobs:
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
             };
-            const exactHeadCheckPassed = async (checkName) => {
+            const exactHeadCheckPassed = async (checkName, options = {}) => {
               try {
                 const {data} = await github.rest.checks.listForRef({
                   ...context.repo,
@@ -399,7 +411,16 @@ jobs:
                 const check = data.check_runs
                   .filter((candidate) =>
                     candidate.name === checkName &&
-                    candidate.app?.slug === 'github-actions'
+                    candidate.app?.slug === 'github-actions' &&
+                    (
+                      !options.requireAcceptedWorkflowRun ||
+                      String(candidate.details_url || '').includes(`/actions/runs/${acceptedWorkflowRunId}`)
+                    ) &&
+                    (
+                      !minimumCheckStartedAt ||
+                      Date.parse(candidate.started_at || candidate.completed_at || 0) >=
+                        Date.parse(minimumCheckStartedAt)
+                    )
                   )
                   .sort((left, right) =>
                     Date.parse(right.completed_at || right.started_at || 0) -
@@ -424,14 +445,24 @@ jobs:
             };
             const isConnectorLogin = (login) =>
               ['chatgpt-codex-connector[bot]', 'chatgpt-codex-connector'].includes(login || '');
-            const resolveReviewedCommitSha = (body) => {
+            const resolveReviewedCommitSha = async (body) => {
               const text = String(body || '');
-              const exact = text.match(/Reviewed commit:\*\*\s*`([0-9a-f]{40})`/i);
-              if (exact) return exact[1];
-              const short = text.match(/Reviewed commit:\*\*\s*`([0-9a-f]{10})`/i);
-              return short ? short[1] : null;
+              const match = text.match(/Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i);
+              if (!match) return null;
+              const reviewed = match[1].toLowerCase();
+              if (reviewed.length === 40) return reviewed;
+              try {
+                const {data: commit} = await github.rest.repos.getCommit({
+                  ...context.repo,
+                  ref: reviewed,
+                });
+                return commit.sha;
+              } catch (error) {
+                core.warning(`could not resolve Codex reviewed commit ${reviewed}: ${error}`);
+                return null;
+              }
             };
-            const hasCleanExactHeadCodexReview = (pullRequest) => {
+            const hasCleanExactHeadCodexReview = async (pullRequest) => {
               for (const comment of pullRequest.comments.nodes || []) {
                 if (
                   !isConnectorLogin(comment.author?.login) ||
@@ -439,8 +470,8 @@ jobs:
                 ) {
                   continue;
                 }
-                const reviewed = resolveReviewedCommitSha(comment.body);
-                if (reviewed && (reviewed === expectedHeadSha || expectedHeadSha.startsWith(reviewed))) {
+                const reviewed = await resolveReviewedCommitSha(comment.body);
+                if (reviewed === expectedHeadSha) {
                   return true;
                 }
               }
@@ -647,13 +678,13 @@ jobs:
                 if (!(await exactHeadCheckPassed(changeContractCheckName))) {
                   return;
                 }
-                if (!(await exactHeadCheckPassed(trustedCiCheckName))) {
+                if (!(await exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun: Boolean(acceptedWorkflowRunId)}))) {
                   return;
                 }
               } else {
                 core.info('trusted CI planner classified this head as docs_only; validation CI checks are not required');
               }
-              if (ciPlan?.review?.codex_required === true && !hasCleanExactHeadCodexReview(pullRequest)) {
+              if (ciPlan?.review?.codex_required === true && !(await hasCleanExactHeadCodexReview(pullRequest))) {
                 core.info('trusted CI planner requires a clean exact-head Codex review; exact-head merge remains disabled');
                 return;
               }

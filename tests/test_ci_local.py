@@ -31,6 +31,7 @@ def test_local_ci_reports_failure_when_required_check_fails(monkeypatch, tmp_pat
     output = capsys.readouterr().out
     assert '"result": "fail"' in output
     assert calls[0][:5] == ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py"]
+    assert ["git", "diff", "--check", f"{'b' * 40}...{'a' * 40}", "--"] in calls
     assert any(any("test_ci_plan.py" in part for part in command) for command in calls)
 
 

@@ -57,7 +57,18 @@ def test_failed_test_lane_stays_unknown_without_bounded_log_evidence() -> None:
 
 def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monkeypatch) -> None:
     head = "a" * 40
+    earlier = "b" * 40
+    pr = _pr()
+    pr["commits"] = [{"oid": earlier}, {"oid": head}]
     runs = [
+        {
+            "id": 9,
+            "name": ci_yield.PRIMARY_WORKFLOW,
+            "head_sha": earlier,
+            "run_attempt": 1,
+            "created_at": "2026-08-24T00:00:00Z",
+            "pull_requests": [],
+        },
         {
             "id": 10,
             "name": ci_yield.PRIMARY_WORKFLOW,
@@ -127,6 +138,24 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
         }
         if path in attempts:
             return attempts[path]
+        if path == "actions/runs/9/attempts/1/jobs?per_page=100":
+            return {"jobs": [{
+                "id": 0,
+                "name": "Change Contract preflight for deep CI",
+                "conclusion": "failure",
+                "started_at": "2026-08-24T00:00:01Z",
+                "completed_at": "2026-08-24T00:00:10Z",
+                "steps": [],
+                "labels": ["self-hosted", "pr-ephemeral"],
+            }]}
+        if path == "actions/runs/9/attempts/1":
+            return {
+                "head_sha": earlier,
+                "created_at": "2026-08-24T00:00:00Z",
+                "run_started_at": "2026-08-24T00:00:01Z",
+                "updated_at": "2026-08-24T00:00:10Z",
+                "conclusion": "failure",
+            }
         if path == "actions/runs/10/attempts/1/jobs?per_page=100":
             return {"jobs": [{
                 "id": 1,
@@ -159,21 +188,33 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
         raise AssertionError(path)
 
     monkeypatch.setattr(ci_yield, "_api", fake_api)
-    collected = ci_yield._collect_pr("iridyne/aletheia", _pr())
+    collected = ci_yield._collect_pr("iridyne/aletheia", pr)
     primary = [
         item for item in collected["attempts"]
         if item["workflow_name"] == ci_yield.PRIMARY_WORKFLOW
     ]
 
-    assert primary[0]["phase1_failure_category"] == "preflight_metadata"
-    assert primary[0]["next_event"] == "pr_body_only_repair"
-    assert primary[0]["next_event_confidence"] == "high"
-    assert primary[1]["next_event"] == "merge"
-    assert collected["pr"]["ci_attempts_before_merge"] == 2
-    assert collected["lanes"][0]["independent_defect"] == "no"
-    assert collected["lanes"][0]["eligible_at_estimate"] == "2026-08-24T00:00:01Z"
-    assert collected["lanes"][0]["runner_queue_wait_seconds_estimate"] == 1
-    assert collected["lanes"][0]["runner_class"] == "pr-ephemeral"
+    body_repair = next(
+        item for item in primary
+        if item["workflow_run_id"] == 10 and item["run_attempt"] == 1
+    )
+    repaired = next(
+        item for item in primary
+        if item["workflow_run_id"] == 10 and item["run_attempt"] == 2
+    )
+    assert body_repair["phase1_failure_category"] == "preflight_metadata"
+    assert body_repair["next_event"] == "pr_body_only_repair"
+    assert body_repair["next_event_confidence"] == "high"
+    assert repaired["next_event"] == "merge"
+    assert collected["pr"]["ci_attempts_before_merge"] == 3
+    body_repair_lane = next(
+        item for item in collected["lanes"]
+        if item["workflow_run_id"] == 10 and item["run_attempt"] == 1
+    )
+    assert body_repair_lane["independent_defect"] == "no"
+    assert body_repair_lane["eligible_at_estimate"] == "2026-08-24T00:00:01Z"
+    assert body_repair_lane["runner_queue_wait_seconds_estimate"] == 1
+    assert body_repair_lane["runner_class"] == "pr-ephemeral"
 
 
 def test_matrix_lanes_are_normalized_before_dependency_estimates(monkeypatch) -> None:

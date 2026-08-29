@@ -35,6 +35,10 @@ def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     assert agents["mode"] == "full"
     assert agents["review"]["codex_required"] is True
 
+    nested_agents = _plan(["scripts/AGENTS.md"])
+    assert nested_agents["mode"] == "full"
+    assert nested_agents["review"]["codex_required"] is True
+
 
 def test_non_safe_docs_file_invalidates_zero_ci() -> None:
     report = _plan(["README.md", "aletheia/cli/doctor_cmd.py"])
@@ -126,6 +130,7 @@ def test_operational_scripts_are_full_ci() -> None:
         "scripts/runtime/install-release.sh",
         "scripts/runtime/start-release.ps1",
         "scripts/dev/dev-init.sh",
+        "scripts/watch_backend.py",
     ):
         report = _plan([path])
         assert report["mode"] == "full"
@@ -135,7 +140,14 @@ def test_operational_scripts_are_full_ci() -> None:
 def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:
     for path in (
         "aletheia/analytics/profit_gradient.py",
+        "aletheia/analytics/profit_gradient_estimators.py",
+        "aletheia/analytics/profit_gradient_evidence.py",
+        "aletheia/analytics/position_replay.py",
+        "aletheia/counterfactual/filter_replay.py",
+        "aletheia/economics/context_artifacts.py",
         "aletheia/execution/reconciliation.py",
+        "aletheia/learning/evidence_epoch.py",
+        "aletheia/learning/policy_epochs.py",
         "scripts/coverage_floors.py",
         "tests/test_reconciliation.py",
     ):

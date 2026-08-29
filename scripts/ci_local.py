@@ -74,7 +74,15 @@ def main(argv: list[str] | None = None) -> int:
         "--changed-files",
         *changed_files,
     ]
-    checks = [{"name": "change contract preflight", "command": preflight_command}, *report["local_checks"]]
+    local_checks = []
+    for check in report["local_checks"]:
+        if check["command"] == ["git", "diff", "--check"]:
+            check = {
+                **check,
+                "command": ["git", "diff", "--check", f"{report['base_sha']}...{report['head_sha']}", "--"],
+            }
+        local_checks.append(check)
+    checks = [{"name": "change contract preflight", "command": preflight_command}, *local_checks]
     receipt: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "plan_fingerprint": report["plan_fingerprint"],

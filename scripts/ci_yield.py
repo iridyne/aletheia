@@ -271,6 +271,11 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
     opened = (_dt(pr.get("createdAt")) or datetime.min.replace(tzinfo=UTC)) - timedelta(minutes=5)
     merged = (_dt(pr.get("mergedAt")) or datetime.max.replace(tzinfo=UTC)) + timedelta(minutes=5)
     pr_number = int(pr["number"])
+    commit_oids = {
+        commit.get("oid") for commit in pr.get("commits") or []
+        if commit.get("oid")
+    }
+    commit_oids.add(pr.get("headRefOid"))
     runs = [
         run for run in runs
         if run.get("name") in {PRIMARY_WORKFLOW, METADATA_WORKFLOW}
@@ -279,7 +284,7 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
             any(item.get("number") == pr_number for item in run.get("pull_requests") or [])
             or (
                 not run.get("pull_requests")
-                and run.get("head_sha") == pr.get("headRefOid")
+                and run.get("head_sha") in commit_oids
             )
         )
     ]

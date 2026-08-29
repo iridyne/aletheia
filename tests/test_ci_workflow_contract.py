@@ -914,6 +914,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "EXPECTED_HEAD_SHA",
         "EXPECTED_BASE_SHA",
         "RELEASE_AFTER_MERGE",
+        "MINIMUM_CHECK_STARTED_AT",
+        "ACCEPTED_WORKFLOW_RUN_ID",
     }
     assert len(update["steps"]) == 3
     update_step = update["steps"][-1]
@@ -921,6 +923,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert update_step["uses"] == GITHUB_SCRIPT_ACTION
     assert update_step["with"]["retries"] == "3"
     update_script = update_step["with"]["script"]
+    schedule_script = _script_step(schedule)
     assert "repository(owner:" in update_script
     assert "pullRequest(number:" in update_script
     assert "mergeStateStatus" in update_script
@@ -935,6 +938,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "pullRequest.baseRefOid !== expectedBaseSha" in update_script
     assert "issues.addLabels" in update_script
     assert "expected_base_sha: expectedBaseSha" in update_script
+    assert "minimum_check_started_at: minimumCheckStartedAt" in schedule_script
+    assert "accepted_workflow_run_id: acceptedWorkflowRunId" in schedule_script
     assert "event_type: 'release_candidate_merged'" in update_script
     assert "github.rest.checks.listForRef" in update_script
     assert "changeContractCheckName = 'Verify Change Contract'" in update_script
@@ -946,11 +951,17 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "const labelArgs = (pullRequest.labels?.nodes || [])" in update_script
     assert "--trusted-label" in update_script
     assert "candidate.app?.slug === 'github-actions'" in update_script
+    assert "minimumCheckStartedAt" in update_script
+    assert "requireAcceptedWorkflowRun" in update_script
+    assert "acceptedWorkflowRunId" in update_script
+    assert ".includes(`/actions/runs/${acceptedWorkflowRunId}`)" in update_script
     assert "check.conclusion === 'success'" in update_script
     assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
-    assert "exactHeadCheckPassed(trustedCiCheckName)" in update_script
+    assert "exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun:" in update_script
 
     assert "reviews(last: 100)" not in update_script
+    assert "github.rest.repos.getCommit" in update_script
+    assert "[0-9a-f]{7,40}" in update_script
     assert "hasCleanExactHeadCodexReview" in update_script
     assert "trusted CI planner requires a clean exact-head Codex review" in update_script
     assert "ciPlan?.review?.codex_required === true" in update_script
@@ -988,6 +999,8 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
         "EXPECTED_HEAD_SHA",
         "EXPECTED_BASE_SHA",
         "RELEASE_AFTER_MERGE",
+        "MINIMUM_CHECK_STARTED_AT",
+        "ACCEPTED_WORKFLOW_RUN_ID",
     }
     update_script = _script_step(update)
     assert "headRefOid" in update_script
@@ -995,7 +1008,7 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
     assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
-    assert "exactHeadCheckPassed(trustedCiCheckName)" in update_script
+    assert "exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun:" in update_script
     assert "pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge" in update_script
     assert "releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE'" in update_script
     assert "github.rest.pulls.merge" in update_script

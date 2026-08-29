@@ -258,6 +258,8 @@ def test_auto_merge_paginates_clean_codex_review_comments() -> None:
     assert "comments.push(...page.comments.nodes)" in source
     assert "page.comments.pageInfo" in source
     assert "pullRequest.comments.nodes = comments" in source
+    assert "github.rest.repos.getCommit" in source
+    assert "[0-9a-f]{7,40}" in source
 
 
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:

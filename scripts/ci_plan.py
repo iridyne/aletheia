@@ -156,7 +156,14 @@ PYTHON_CONTRACT_PREFIXES = (
 )
 COVERAGE_PATHS = (
     "aletheia/analytics/profit_gradient.py",
+    "aletheia/analytics/profit_gradient_estimators.py",
+    "aletheia/analytics/profit_gradient_evidence.py",
+    "aletheia/analytics/position_replay.py",
+    "aletheia/counterfactual/filter_replay.py",
+    "aletheia/economics/context_artifacts.py",
     "aletheia/execution/reconciliation.py",
+    "aletheia/learning/evidence_epoch.py",
+    "aletheia/learning/policy_epochs.py",
     "scripts/coverage_floors.py",
     "tests/test_profit_gradient.py",
     "tests/test_profit_gradient_properties.py",
@@ -273,8 +280,12 @@ def _safe_docs_path(path: str) -> bool:
     return path.startswith(SAFE_DOC_PREFIXES) and path.endswith(SAFE_DOC_ASSET_SUFFIXES)
 
 
+def _agents_path(path: str) -> bool:
+    return path.rsplit("/", 1)[-1] == "AGENTS.md"
+
+
 def _docs_path(path: str) -> bool:
-    return path == "README.md" or path == "AGENTS.md" or path.startswith("docs/")
+    return path == "README.md" or _agents_path(path) or path.startswith("docs/")
 
 
 def _full_path(path: str) -> bool:
@@ -300,7 +311,11 @@ def _coverage_path(path: str) -> bool:
 
 
 def _operational_script_path(path: str) -> bool:
-    return path.startswith("scripts/") and not path.endswith((".md", ".py"))
+    return path.startswith(("scripts/runtime/", "scripts/dev/")) or path in {
+        "scripts/dev.ps1",
+        "scripts/test_ai.ps1",
+        "scripts/watch_backend.py",
+    }
 
 
 def _unknown_executable_path(path: str) -> bool:
@@ -431,7 +446,7 @@ def plan(
                 continue
             mode = _mode_at_least(mode, "quick")
             if _docs_path(path):
-                if path == "AGENTS.md" or path.startswith(AUTHORITY_DOC_PREFIXES):
+                if _agents_path(path) or path.startswith(AUTHORITY_DOC_PREFIXES):
                     mode = "full"
                     reason_codes.update({"AUTHORITATIVE_DOCS", "FULL_AUTHORITY_OR_INFRA"})
                 else:
