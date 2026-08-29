@@ -136,6 +136,12 @@ def test_ci_has_independent_review_and_regression_jobs() -> None:
     assert jobs["end-to-end"]["name"] == "Python end-to-end"
     assert jobs["trusted-ci-verdict"]["name"] == "Trusted CI verdict"
     assert jobs["full-ci-verdict"]["name"] == "Full CI verdict"
+    assert jobs["trusted-ci-verdict"]["steps"][0]["name"] == (
+        "Enforce planned lanes [fingerprint=${{ needs.plan.outputs.plan_fingerprint }}]"
+    )
+    assert jobs["full-ci-verdict"]["steps"][0]["name"] == (
+        "Enforce full qualification lanes [fingerprint=${{ needs.plan.outputs.plan_fingerprint }}]"
+    )
 
     unit_regression = _run_commands(jobs["unit"])
     spec_regression = _run_commands(jobs["specifications"])
@@ -899,6 +905,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert "event.sender.login == 'github-actions[bot]'" in update["if"]
     assert update["permissions"] == {
+        "actions": "read",
         "checks": "read",
         "contents": "write",
         "issues": "write",
@@ -957,8 +964,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "acceptedWorkflowRunId" in update_script
     assert "workflowRunIdForCheck(candidate) === acceptedWorkflowRunId" in update_script
     assert "captureWorkflowRun: checkName === trustedCiCheckName" in update_script
-    assert "candidate.output?.summary" in update_script
-    assert ".includes(`fingerprint=${options.expectedPlanFingerprint}`)" in update_script
+    assert "github.rest.actions.getWorkflowRun" in update_script
+    assert "github.rest.actions.listJobsForWorkflowRun" in update_script
+    assert "run.path !== '.github/workflows/ci.yml'" in update_script
+    assert "run.event !== 'pull_request'" in update_script
+    assert "run.head_sha !== expectedHeadSha" in update_script
+    assert "step.name.endsWith(marker)" in update_script
     assert "check.conclusion === 'success'" in update_script
     assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
     assert "ciPlan.github_checks.filter" in update_script

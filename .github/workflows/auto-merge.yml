@@ -261,6 +261,7 @@ jobs:
       github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'auto_merge_update'
     permissions:
+      actions: read
       checks: read
       contents: write
       issues: write
@@ -404,6 +405,35 @@ jobs:
             };
             const workflowRunIdForCheck = (check) =>
               String(check?.details_url || '').match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1] || '';
+            const exactPlanEvidencePassed = async (checkName, check, planFingerprint) => {
+              const workflowRunId = workflowRunIdForCheck(check);
+              if (!workflowRunId) return false;
+              const {data: run} = await github.rest.actions.getWorkflowRun({
+                ...context.repo,
+                run_id: Number(workflowRunId),
+              });
+              if (
+                run.path !== '.github/workflows/ci.yml' ||
+                run.event !== 'pull_request' ||
+                run.head_sha !== expectedHeadSha ||
+                run.repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                run.conclusion !== 'success'
+              ) {
+                core.info(`workflow run ${workflowRunId} does not match exact-head Aletheia CI`);
+                return false;
+              }
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                ...context.repo,
+                run_id: Number(workflowRunId),
+                filter: 'latest',
+                per_page: 100,
+              });
+              const marker = `[fingerprint=${planFingerprint}]`;
+              const job = jobs.find((candidate) => candidate.name === checkName);
+              return job?.conclusion === 'success' && (job.steps || []).some(
+                (step) => step.name.endsWith(marker) && step.conclusion === 'success',
+              );
+            };
             const exactHeadCheckPassed = async (checkName, options = {}) => {
               try {
                 const {data} = await github.rest.checks.listForRef({
@@ -422,13 +452,6 @@ jobs:
                       workflowRunIdForCheck(candidate) === acceptedWorkflowRunId
                     ) &&
                     (
-                      !options.expectedPlanFingerprint ||
-                      String(candidate.output?.summary || '')
-                        .split(/\r?\n/)
-                        .map((line) => line.trim())
-                        .includes(`fingerprint=${options.expectedPlanFingerprint}`)
-                    ) &&
-                    (
                       !minimumCheckStartedAt ||
                       Date.parse(candidate.started_at || candidate.completed_at || 0) >=
                         Date.parse(minimumCheckStartedAt)
@@ -445,6 +468,17 @@ jobs:
                       core.info(`exact-head ${checkName} has no workflow run identity`);
                       return false;
                     }
+                  }
+                  if (
+                    options.expectedPlanFingerprint &&
+                    !(await exactPlanEvidencePassed(
+                      checkName,
+                      check,
+                      options.expectedPlanFingerprint,
+                    ))
+                  ) {
+                    core.info(`exact-head ${checkName} does not match the recomputed CI plan`);
+                    return false;
                   }
                   return true;
                 }

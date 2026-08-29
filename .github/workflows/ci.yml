@@ -613,7 +613,7 @@ jobs:
     runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
-      - name: Enforce planned lanes
+      - name: Enforce planned lanes [fingerprint=${{ needs.plan.outputs.plan_fingerprint }}]
         env:
           POLICY_VERSION: ${{ needs.plan.outputs.policy_version }}
           PLAN_MODE: ${{ needs.plan.outputs.mode }}
@@ -696,7 +696,7 @@ jobs:
     runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
-      - name: Enforce full qualification lanes
+      - name: Enforce full qualification lanes [fingerprint=${{ needs.plan.outputs.plan_fingerprint }}]
         env:
           TRUSTED_RESULT: ${{ needs.trusted-ci-verdict.result }}
           COVERAGE_RESULT: ${{ needs.review-coverage.result }}
