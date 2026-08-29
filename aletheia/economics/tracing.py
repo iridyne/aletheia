@@ -762,7 +762,6 @@ def list_cost_breakdown_by_provider(
     window_start: str,
     window_end: str,
     run_id: str | None = None,
-    event_limit: int = 10_000,
 ) -> dict[str, Any]:
     """Per-provider/model token breakdown + daily time series for the Usage dashboard.
 
@@ -802,19 +801,17 @@ def list_cost_breakdown_by_provider(
     if run_id:
         where.append("run_id=?")
         params.append(run_id)
-    rows = [
-        dict(row)
-        for row in db.execute(
-            "SELECT provider, model_or_tool, started_at, latency_ms, status, "
-            "estimated_cost_usd, cost_status, usage_json "
-            "FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at LIMIT ?",
-            (*params, int(event_limit)),
-        ).fetchall()
-    ]
+    rows = db.execute(
+        "SELECT provider, model_or_tool, started_at, latency_ms, status, "
+        "estimated_cost_usd, cost_status, usage_json "
+        "FROM runtime_cost_events WHERE " + " AND ".join(where),
+        params,
+    )
 
     providers: dict[str, dict[str, Any]] = {}
     models: dict[str, dict[str, dict[str, Any]]] = {}
     daily_map: dict[tuple[str, str], dict[str, Any]] = {}
+    event_count = 0
     parse_errors = 0
 
     def _new_bucket() -> dict[str, Any]:
@@ -881,7 +878,9 @@ def list_cost_breakdown_by_provider(
         bucket.pop("latency_ms_sum", None)
         bucket.pop("latency_count", None)
 
-    for row in rows:
+    for db_row in rows:
+        event_count += 1
+        row = dict(db_row)
         provider = row.get("provider") or "unknown"
         model = row.get("model_or_tool") or "unknown"
         started_at = row.get("started_at") or _utcnow()
@@ -950,7 +949,7 @@ def list_cost_breakdown_by_provider(
         "window_start": window_start,
         "window_end": window_end,
         "tracing_enabled": True,
-        "event_count": len(rows),
+        "event_count": event_count,
         "parse_errors": parse_errors,
         "providers": providers,
         "models": models,
@@ -963,7 +962,6 @@ def list_cost_breakdown_by_tool(
     window_start: str,
     window_end: str,
     run_id: str | None = None,
-    event_limit: int = 10_000,
 ) -> dict[str, Any]:
     """Per-tool call rollup for the Usage dashboard.
 
@@ -995,14 +993,11 @@ def list_cost_breakdown_by_tool(
     if run_id:
         where.append("run_id=?")
         params.append(run_id)
-    rows = [
-        dict(row)
-        for row in db.execute(
-            "SELECT model_or_tool, status, estimated_cost_usd, cost_status "
-            "FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at LIMIT ?",
-            (*params, int(event_limit)),
-        ).fetchall()
-    ]
+    rows = db.execute(
+        "SELECT model_or_tool, status, estimated_cost_usd, cost_status "
+        "FROM runtime_cost_events WHERE " + " AND ".join(where),
+        params,
+    )
 
     def _new_tool_bucket() -> dict[str, Any]:
         return {
@@ -1014,7 +1009,10 @@ def list_cost_breakdown_by_tool(
         }
 
     tools: dict[str, dict[str, Any]] = {}
-    for row in rows:
+    event_count = 0
+    for db_row in rows:
+        event_count += 1
+        row = dict(db_row)
         name = row.get("model_or_tool") or "unknown"
         bucket = tools.setdefault(name, _new_tool_bucket())
         bucket["event_count"] += 1
@@ -1034,6 +1032,6 @@ def list_cost_breakdown_by_tool(
         "window_start": window_start,
         "window_end": window_end,
         "tracing_enabled": True,
-        "event_count": len(rows),
+        "event_count": event_count,
         "tools": tools,
     }

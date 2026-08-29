@@ -111,11 +111,17 @@ def tokens(
 def costs_by_provider(
     days: int = Query(7, ge=1, le=365),
     run_id: Optional[str] = None,
-    event_limit: int = Query(1_000, ge=1, le=100_000),
+    event_limit: Optional[int] = Query(
+        None,
+        ge=1,
+        le=100_000,
+        deprecated=True,
+        description="Deprecated compatibility parameter; provider aggregates always cover the full selected window.",
+    ),
 ) -> dict:
     """Per-provider token breakdown + daily time series for the Usage dashboard.
 
-    Pivots LLM ``runtime_cost_events`` rows by ``provider`` and UTC date, parses
+    Pivots all selected LLM ``runtime_cost_events`` rows by ``provider`` and UTC date, parses
     the persisted ``usage_json`` blob (which stores the normalized token fields),
     and returns aggregations compact enough to poll at the same cadence as
     ``/costs``. Read-only; writers stay CLI-only per ``economics.py`` contract.
@@ -126,7 +132,6 @@ def costs_by_provider(
         window_start=start.isoformat(),
         window_end=end.isoformat(),
         run_id=run_id,
-        event_limit=event_limit,
     )
 
 
@@ -134,11 +139,17 @@ def costs_by_provider(
 def costs_by_tool(
     days: int = Query(7, ge=1, le=365),
     run_id: Optional[str] = None,
-    event_limit: int = Query(10_000, ge=1, le=100_000),
+    event_limit: Optional[int] = Query(
+        None,
+        ge=1,
+        le=100_000,
+        deprecated=True,
+        description="Deprecated compatibility parameter; tool aggregates always cover the full selected window.",
+    ),
 ) -> dict:
     """Per-tool call rollup for the Usage dashboard.
 
-    Mirrors ``/costs/by-provider`` for ``event_type='tool'`` rows (the
+    Mirrors ``/costs/by-provider`` for all selected ``event_type='tool'`` rows (the
     ``agent_tool_calls`` mirror): call counts split by recorded/denied. Local
     orchestration calls have zero external marginal cost; provider-native tool
     charges are included in their LLM event from LiteLLM catalog usage fields.
@@ -149,7 +160,6 @@ def costs_by_tool(
         window_start=start.isoformat(),
         window_end=end.isoformat(),
         run_id=run_id,
-        event_limit=event_limit,
     )
 
 

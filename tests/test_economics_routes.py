@@ -272,6 +272,48 @@ def _usage_json(*, input_t: int = 0, output_t: int = 0, reasoning: int = 0, cach
     )
 
 
+def test_cost_breakdowns_iterate_query_rows_without_materializing(monkeypatch):
+    from aletheia.economics import tracing
+
+    class IterableOnlyDb:
+        def execute(self, sql, _params):
+            if "event_type='llm'" in sql:
+                return iter(
+                    [
+                        {
+                            "provider": "openai",
+                            "model_or_tool": "gpt-4",
+                            "started_at": "2026-08-29T00:00:00+00:00",
+                            "latency_ms": 10.0,
+                            "status": "success",
+                            "estimated_cost_usd": 0.1,
+                            "cost_status": "known",
+                            "usage_json": _usage_json(input_t=1, output_t=1),
+                        }
+                    ]
+                )
+            return iter(
+                [
+                    {
+                        "model_or_tool": "search",
+                        "status": "recorded",
+                        "estimated_cost_usd": None,
+                        "cost_status": "unknown",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(tracing, "ensure_economics_schema", lambda: IterableOnlyDb())
+    monkeypatch.setenv("ALETHEIA_COST_TRACING", "1")
+
+    window = {
+        "window_start": "2026-08-28T00:00:00+00:00",
+        "window_end": "2026-08-30T00:00:00+00:00",
+    }
+    assert tracing.list_cost_breakdown_by_provider(**window)["event_count"] == 1
+    assert tracing.list_cost_breakdown_by_tool(**window)["event_count"] == 1
+
+
 @pytest.mark.anyio
 async def test_costs_by_provider_empty_ledger(client):
     resp = await client.get("/api/economics/costs/by-provider?days=1")
@@ -334,6 +376,41 @@ async def test_costs_by_provider_aggregates_tokens(client):
     assert openrouter["input_tokens"] == 200
     assert openrouter["cached_input_tokens"] == 30
     assert openrouter["known_cost_usd"] == pytest.approx(0.02)
+
+
+@pytest.mark.anyio
+async def test_costs_by_provider_legacy_limit_does_not_truncate_totals(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="limit-provider-1",
+        cost=0.10,
+        provider="openai",
+        usage_json=_usage_json(input_t=100, output_t=10),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="limit-provider-2",
+        cost=None,
+        provider="openai",
+        usage_json=_usage_json(input_t=200, output_t=20),
+        status="error",
+    )
+
+    resp = await client.get("/api/economics/costs/by-provider?days=1&event_limit=1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    provider = data["providers"]["openai"]
+    assert data["event_count"] == provider["event_count"] == 2
+    assert provider["known_cost_usd"] == pytest.approx(0.10)
+    assert provider["input_tokens"] == 300
+    assert provider["output_tokens"] == 30
+    assert provider["success_count"] == 1
+    assert provider["error_count"] == 1
+    assert provider["unknown_count"] == 1
 
 
 @pytest.mark.anyio
@@ -542,6 +619,25 @@ async def test_costs_by_tool_rolls_up_recorded_denied_and_cost(client):
     assert create["denied_count"] == 0
     assert create["known_cost_usd"] == 0
     assert create["unknown_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_costs_by_tool_legacy_limit_does_not_truncate_totals(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_tool_cost(db, event_id="limit-tool-1", tool="search", cost=None)
+    _seed_tool_cost(db, event_id="limit-tool-2", tool="search", cost=None, status="denied")
+
+    resp = await client.get("/api/economics/costs/by-tool?days=1&event_limit=1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    tool = data["tools"]["search"]
+    assert data["event_count"] == tool["event_count"] == 2
+    assert tool["recorded_count"] == 1
+    assert tool["denied_count"] == 1
+    assert tool["known_cost_usd"] == 0
 
 
 @pytest.mark.anyio
