@@ -2811,7 +2811,9 @@ def test_re_b17_check14_is_family_evidence_gate():
         "family×direction expectancy is negative with enough samples, or when a "
         "same-symbol reverse follows a stop_loss inside 24h. paper_internal "
         "and live #14 stay unchanged. Tokens: regime_confidence_standdown / "
-        "regime_sideways_standdown / family_not_demo_eligible / reverse_after_stop.",
+        "regime_sideways_standdown / family_not_demo_eligible / reverse_after_stop. "
+        "Authority read failures emit demo_entry_quality_unavailable:<source> "
+        "and fail closed; honestly absent evidence remains fail-open.",
         status="implemented",
     ),
 )
@@ -2827,6 +2829,7 @@ def test_re_s07_demo_entry_quality_gate_is_wired():
     assert "regime_sideways_standdown" in quality
     assert "family_not_demo_eligible" in quality
     assert "reverse_after_stop" in quality
+    assert "demo_entry_quality_unavailable" in quality
     assert "paper_internal" in quality
 
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 
-POLICY_EPOCH_LABEL = "demo_entry_quality/v2"
+POLICY_EPOCH_LABEL = "demo_entry_quality/v3"
 _EPOCH_KIND = "demo_entry_quality"
 _EFFECTIVE_VALUES = {
-    "version": "v2",
+    "version": "v3",
     "applies_to": ["bitget_demo", "okx_demo", "binance_testnet"],
     "paper_internal_unchanged": True,
     "live_family_gate_unchanged": True,
@@ -19,6 +19,7 @@ _EFFECTIVE_VALUES = {
     "family_min_samples": 20,
     "family_min_expectancy": 0.0,
     "insufficient_family_evidence_fail_open": True,
+    "authority_read_failure_fail_closed": True,
     "reverse_after_stop_hours": 24,
     "sideways_stop_mult": 2.0,
 }

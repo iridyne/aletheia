@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from aletheia.risk.demo_entry_quality import (
     DEMO_ENTRY_QUALITY_UNAVAILABLE,
     FAMILY_NOT_DEMO_ELIGIBLE,
@@ -114,6 +116,42 @@ def test_collect_marks_each_unreadable_authority_source(monkeypatch):
         f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:family_edge",
         f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:recent_stops",
     }
+
+
+def test_strict_regime_read_uses_the_authoritative_row_once(monkeypatch):
+    import aletheia.regime.detector as detector
+    import aletheia.storage.repositories as repositories
+    import aletheia.risk.demo_entry_quality as quality
+
+    detector.reset_state()
+    monkeypatch.setattr(
+        repositories,
+        "get_latest_market_regime",
+        lambda: {"state": "bull", "confidence": 0.80},
+    )
+
+    def unexpected_second_read():
+        raise AssertionError("strict regime recovery must not read the repository twice")
+
+    monkeypatch.setattr(detector, "get_current_regime", unexpected_second_read)
+
+    assert quality.load_published_regime(fail_open=False) == ("bull", 0.80)
+
+
+def test_strict_regime_read_rejects_non_finite_confidence(monkeypatch):
+    import aletheia.regime.detector as detector
+    import aletheia.storage.repositories as repositories
+    import aletheia.risk.demo_entry_quality as quality
+
+    detector.reset_state()
+    monkeypatch.setattr(
+        repositories,
+        "get_latest_market_regime",
+        lambda: {"state": "bull", "confidence": "nan"},
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        quality.load_published_regime(fail_open=False)
 
 
 def test_evaluate_stands_down_published_sideways_and_low_confidence():

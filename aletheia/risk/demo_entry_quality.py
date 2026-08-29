@@ -19,6 +19,8 @@ Open positions are not closed. A zero/None threshold disables that clause.
 
 from __future__ import annotations
 
+import math
+
 from aletheia.risk.policy import DEMO_EXECUTION_MODES
 
 EXCHANGE_DEMO_MODES = frozenset({
@@ -189,6 +191,18 @@ def collect_demo_entry_quality_violations(
     )
 
 
+def _regime_values(
+    state: object,
+    confidence: object,
+) -> tuple[str | None, float | None]:
+    if confidence is None:
+        return (str(state) if state is not None else None), None
+    parsed = float(confidence)
+    if not math.isfinite(parsed):
+        raise ValueError("regime confidence must be finite")
+    return (str(state) if state is not None else None), parsed
+
+
 def load_published_regime(*, fail_open: bool = True) -> tuple[str | None, float | None]:
     """Return (state, confidence) only when a regime has been published.
 
@@ -208,13 +222,15 @@ def load_published_regime(*, fail_open: bool = True) -> tuple[str | None, float 
                 timestamp_field="detected_at",
             )
             if verdict.usable:
-                return getattr(published, "state", None), getattr(published, "confidence", None)
+                return _regime_values(
+                    getattr(published, "state", None),
+                    getattr(published, "confidence", None),
+                )
         from aletheia.storage.repositories import get_latest_market_regime
         regime = get_latest_market_regime()
         if not regime or not regime.get("state"):
             return None, None
-        regime = regime_mod.get_current_regime()
-        return getattr(regime, "state", None), getattr(regime, "confidence", None)
+        return _regime_values(regime.get("state"), regime.get("confidence"))
     except Exception:
         if not fail_open:
             raise
