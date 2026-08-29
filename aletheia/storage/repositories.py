@@ -2367,9 +2367,14 @@ def list_probability_snapshots(market_id: str, since: str | None = None, limit: 
         parts.append("ts >= ?")
         params.append(since)
     where = " AND ".join(parts)
-    return _select_all(
-        "prediction_probability_snapshots", where=where, params=tuple(params), order="ts ASC", limit=limit
+    snapshots = _select_all(
+        "prediction_probability_snapshots",
+        where=where,
+        params=tuple(params),
+        order="ts DESC, rowid DESC",
+        limit=limit,
     )
+    return list(reversed(snapshots))
 
 
 def insert_prediction_claim(data: dict) -> None:
