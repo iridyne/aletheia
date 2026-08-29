@@ -969,6 +969,13 @@ class KnowledgeItem(BaseModel):
     tags: str = "[]"
     content: str | None = None
     content_hash: str | None = None
+    content_format: str | None = None
+    content_sha256: str | None = None
+    metadata_json: str | None = None
+    symbol: str | None = None
+    direction: str | None = None
+    scanner_family: str | None = None
+    outcome: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 

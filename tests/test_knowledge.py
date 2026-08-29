@@ -456,7 +456,7 @@ def test_concurrent_content_hash_dedup_removes_loser_artifact(
     assert sum(item is not None for item in results) == 1
     assert len(rows) == 1
     assert len(files) == 1
-    assert files[0].as_posix() == rows[0]["file_path"]
+    assert files[0].relative_to(tmp_path).as_posix() == rows[0]["file_path"]
     reset_db()
 
 
@@ -495,5 +495,5 @@ def test_concurrent_dreaming_title_window_removes_loser_artifact(tmp_path, monke
     assert sum(item is not None for item in results) == 1
     assert len(rows) == 1
     assert len(files) == 1
-    assert files[0].as_posix() == rows[0]["file_path"]
+    assert files[0].relative_to(tmp_path).as_posix() == rows[0]["file_path"]
     reset_db()

@@ -12,6 +12,21 @@ aletheia learning yield report --start <ISO-8601> --end <ISO-8601>
 aletheia learning meta-recommendations --start <ISO-8601> --end <ISO-8601>
 ```
 
+After deploying a build that introduces a new Knowledge document schema, run
+the current-root-only migration before observing Learning:
+
+```text
+aletheia knowledge scan-recovery-sources
+aletheia knowledge backfill-content --dry-run
+aletheia knowledge backfill-content
+aletheia knowledge reindex
+```
+
+`scan-recovery-sources` is report-only. Backfill never follows a stored
+absolute path into another Runtime; it accepts only the corresponding relative
+document under the selected current data root. Hash conflicts remain
+unavailable rather than silently selecting file or database content.
+
 All output is JSON. `knowledge list` reports `current_qualified_n: 0` and
 `production_economic_contribution_state: none` when the Runtime has no current
 qualified positive fact. Paper test fixtures demonstrate code semantics only and

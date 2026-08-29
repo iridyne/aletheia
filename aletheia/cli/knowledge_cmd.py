@@ -92,11 +92,10 @@ def downgrade_unindexable_high_confidence(
 def backfill_content(
     dry_run: bool = typer.Option(False, "--dry-run", help="Only count matching items."),
 ):
-    """Copy Markdown bodies from disk into knowledge_items.content.
+    """Canonicalize legacy Knowledge documents from the current data root.
 
-    Rebuilds the FTS index at the end. Safe to re-run — only touches rows whose
-    DB content is empty and whose file_path resolves to a readable Markdown
-    file (via the Windows/POSIX legacy-path migration).
+    Persists the complete Markdown, portable path, SHA-256, metadata snapshot,
+    and structured query projections, then rebuilds FTS. Safe to re-run.
     """
     from aletheia.storage.migrations import assert_migrations_current
     from aletheia.knowledge.maintenance import backfill_content_from_disk

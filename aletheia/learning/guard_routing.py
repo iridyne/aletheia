@@ -96,11 +96,10 @@ async def route_automatic_block_recommendation(
         "block_candidate": True,
         "score_penalty": 0,
     }
-    hypothesis_scope: dict[str, Any] = {
-        "guard_id": guard_id,
-        "applies_to": scope,
-    }
-    source_cohort = f"learned_guard:{guard_id}:research-v1"
+    # Match the exact identity consumed by learned_guard_block_authorized().
+    # ``guard_id`` already hashes the bounded applies_to scope.
+    hypothesis_scope: dict[str, Any] = {"guard_id": guard_id}
+    source_cohort = f"learned_guard:{guard_id}:v1"
     from aletheia.learning.hypotheses import (
         hypothesis_fingerprint,
         nominate_learning_hypothesis,

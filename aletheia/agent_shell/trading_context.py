@@ -2361,6 +2361,15 @@ def _build_layer2_short_term() -> dict[str, Any]:
 def _build_layer3_wisdom() -> dict[str, Any]:
     """Lessons + guard candidates — natural language, not truncated."""
     layer: dict[str, Any] = {}
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.knowledge.frontmatter import parse_frontmatter_text
+
+    def _document_parts(item: dict) -> tuple[dict, str]:
+        document = read_knowledge_document(item)
+        if document.state == "integrity_conflict":
+            return {}, item.get("title") or ""
+        _metadata, body = parse_frontmatter_text(document.text)
+        return document.metadata, body.strip() or item.get("title") or ""
 
     # Active lessons (full text, not truncated)
     try:
@@ -2374,35 +2383,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         case_items = list_knowledge_items(item_type="trade_case_study", limit=7)
         lessons: list[dict] = []
         for item in case_items:
-            meta = item.get("metadata") or {}
-            raw_content = item.get("content") or item.get("summary") or ""
-            if not raw_content:
-                # L-Bug-D fix: DB content=NULL; actual content lives on disk at file_path.
-                # Read frontmatter (outcome/pnl/factor_key) + body prefix to give PI real data.
-                fpath = item.get("file_path")
-                if fpath:
-                    try:
-                        from pathlib import Path as _Path
-
-                        from aletheia.knowledge.frontmatter import parse_frontmatter as _pfm
-                        _meta, _body = _pfm(_Path(fpath))
-                        parts: list[str] = []
-                        if _meta:
-                            if _meta.get("outcome"):
-                                parts.append(
-                                    f"outcome={_meta['outcome']} pnl={_meta.get('realized_pnl_pct', '?')}%"
-                                )
-                            if _meta.get("factor_key"):
-                                parts.append(
-                                    f"factor={_meta['factor_key']} scanner={_meta.get('scanner_family', '?')}"
-                                )
-                            if _meta.get("close_reason"):
-                                parts.append(f"close={_meta['close_reason']}")
-                        if _body:
-                            parts.append(_body[:150].strip())
-                        raw_content = " | ".join(parts) if parts else (item.get("title") or "")
-                    except Exception:
-                        raw_content = item.get("title") or ""
+            meta, raw_content = _document_parts(item)
             lessons.append({
                 "type": item.get("item_type"),
                 "symbol": meta.get("symbol"),
@@ -2423,31 +2404,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         items = list_knowledge_items(item_type="guard_candidate", limit=3)
         guards: list[dict] = []
         for item in items:
-            meta = item.get("metadata") or {}
-            raw_content = item.get("content") or item.get("summary") or item.get("title") or ""
-            if not raw_content:
-                # Phase 3b: guard_candidate content lives on disk; DB content may be NULL.
-                fpath = item.get("file_path")
-                if fpath:
-                    try:
-                        from pathlib import Path as _Path
-
-                        from aletheia.knowledge.frontmatter import parse_frontmatter as _pfm
-                        _meta, _body = _pfm(_Path(fpath))
-                        parts: list[str] = []
-                        if _meta:
-                            if _meta.get("outcome"):
-                                parts.append(
-                                    f"outcome={_meta['outcome']} "
-                                    f"net={_meta.get('net_return_pct', '?')}%"
-                                )
-                            if _meta.get("scanner_family"):
-                                parts.append(f"scanner={_meta['scanner_family']}")
-                        if _body:
-                            parts.append(_body[:150].strip())
-                        raw_content = " | ".join(parts) if parts else (item.get("title") or "")
-                    except Exception:
-                        raw_content = item.get("title") or ""
+            meta, raw_content = _document_parts(item)
             guards.append({
                 "symbol": meta.get("symbol"),
                 "content": raw_content[:200],

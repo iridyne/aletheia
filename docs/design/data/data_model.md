@@ -114,7 +114,7 @@ automatic close or stop change.
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `knowledge_items` | Research notes, reviews, lessons | item_type, content (TEXT), tags, confidence |
+| `knowledge_items` | Canonical rendered Knowledge documents and their advisory retrieval projection | item_type, data-root-relative file_path, complete content, content_format, content_sha256, metadata_json, symbol, direction, scanner_family, outcome, tags, confidence |
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity. Explicit offline compact may cluster the composite PK as `WITHOUT ROWID`; the logical schema is unchanged. | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 

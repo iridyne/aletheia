@@ -6,7 +6,6 @@ import json
 import math
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -322,7 +321,7 @@ def _assemble_exact_context(
     artifact_ids: list[str], target_horizon: str,
 ) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
     from aletheia.analytics.trade_attribution import build_trade_attribution_for_position
-    from aletheia.knowledge.frontmatter import parse_frontmatter
+    from aletheia.knowledge.document import read_knowledge_document
     from aletheia.storage import repositories as repo
 
     recorded: dict[str, list[dict[str, Any]]] = {}
@@ -334,14 +333,10 @@ def _assemble_exact_context(
         if item is None or item.get("item_type") != "trade_case_study":
             missing.append(f"source_artifact_unavailable:{artifact_id}")
             continue
-        metadata: dict[str, Any] = {}
-        file_path = str(item.get("file_path") or "").strip()
-        if file_path:
-            try:
-                metadata, _ = parse_frontmatter(Path(file_path))
-                metadata = metadata or {}
-            except Exception:
-                missing.append(f"source_frontmatter_unavailable:{artifact_id}")
+        document = read_knowledge_document(item)
+        metadata = document.metadata
+        if document.state in {"integrity_conflict", "unavailable"}:
+            missing.append(f"source_frontmatter_unavailable:{artifact_id}")
         position_id = str(metadata.get("position_id") or "").strip()
         if not position_id:
             missing.append(f"position_identity_unavailable:{artifact_id}")

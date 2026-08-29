@@ -96,12 +96,6 @@ def resolve_orphan_body(
     if not file_path:
         return None, ""
 
-    try:
-        direct = Path(file_path)
-        if direct.is_file():
-            return direct, "existing"
-    except Exception:
-        pass
 
     rel = _legacy_relative(file_path)
     if rel is not None:
