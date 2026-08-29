@@ -1,6 +1,7 @@
 """OKX Demo adapter — IBroker implementation wrapping OKXClient for UTA queries."""
 
 import logging
+import math
 
 from aletheia.portfolio.uta.broker_protocol import (
     AccountInfo,
@@ -40,14 +41,20 @@ class OkxDemoAdapter:
         # (includes all spot holdings + derivatives equity, priced by OKX).
         # Fallback to balance.total.USDT only if totalEq is unavailable.
         info = balance.get("info", {})
-        total_equity = 0.0
+        total_equity = None
         for detail in info.get("data", []) or []:
             total_eq_raw = detail.get("totalEq")
-            if total_eq_raw:
-                total_equity = float(total_eq_raw)
-                break
-        if total_equity <= 0:
-            total_equity = float(balance.get("total", {}).get("USDT", 0) or 0)
+            if total_eq_raw is None or total_eq_raw == "":
+                continue
+            total_equity = float(total_eq_raw)
+            break
+        if total_equity is None:
+            fallback_raw = balance.get("total", {}).get("USDT")
+            if fallback_raw is None or fallback_raw == "":
+                raise ValueError("OKX account equity is unavailable")
+            total_equity = float(fallback_raw)
+        if not math.isfinite(total_equity):
+            raise ValueError("OKX account equity must be finite")
 
         free = float(balance.get("free", {}).get("USDT", 0) or 0)
         used = float(balance.get("used", {}).get("USDT", 0) or 0)
