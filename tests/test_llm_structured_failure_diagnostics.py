@@ -122,7 +122,7 @@ async def test_schema_failure_persists_only_bounded_content_free_diagnostics():
         "WHERE logical_call_id=? ORDER BY structured_attempt_index",
         (row["logical_call_id"],),
     ).fetchall()
-    assert [item["outcome"] for item in outcomes] == ["schema_invalid"] * 3
+    assert [item["outcome"] for item in outcomes] == ["schema_invalid"] * 2
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,7 @@ async def test_parse_failure_classifies_text_without_retaining_it():
         "WHERE logical_call_id=? ORDER BY structured_attempt_index",
         (row["logical_call_id"],),
     ).fetchall()
-    assert [item["outcome"] for item in outcomes] == ["parse_error"] * 3
+    assert [item["outcome"] for item in outcomes] == ["parse_error"] * 2
 
 
 @pytest.mark.asyncio

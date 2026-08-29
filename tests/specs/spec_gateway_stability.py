@@ -8,7 +8,7 @@ mid-flight → the daemon thread is abandoned and LEAKS, starving the frontdoor.
 Two fixes, locked here:
   GS-S01  market_observer uses one run deadline, including prefetch, below job timeout.
   GS-B01  llm_structured retries ONCE on a parse failure (recovers prose-prefixed JSON).
-  GS-B02  llm_structured does NOT retry on empty content (reasoning-budget exhaustion).
+  GS-B02  llm_structured retries ONCE on empty content with a fresh request.
 
 Claims attach to gateway_stability_contract.
 
@@ -190,40 +190,37 @@ def test_llm_structured_retries_and_recovers(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GS-B02 — empty content with reasoning-budget exhaustion IS retried with more tokens
+# GS-B02 — empty content gets one bounded fresh retry
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-B02", _CONTRACT, "§structured retry", "L2b",
-        "Empty content with completion_tokens>0 (reasoning-budget exhaustion) is "
-        "retried with an increased token budget — reasoning models often exhaust the "
-        "budget on the thinking phase and produce empty text; more tokens lets them "
-        "complete the output. Still bounded at max_attempts to avoid runaway load.",
+        "Empty structured output gets one bounded retry. The retry keeps the same "
+        "token budget and does not create an unbounded reasoning-model loop.",
     ),
 )
-def test_llm_structured_retries_empty_with_more_tokens(monkeypatch):
+def test_llm_structured_retries_empty_once(monkeypatch):
     from aletheia.agents import helpers
     calls = _patch_llm(monkeypatch, [
-        _Resp("", completion_tokens=42),   # attempt 0: empty, reasoning exhausted
-        _Resp("", completion_tokens=100),  # attempt 1: still empty with more budget
-        _Resp('{"x": 1}'),                 # attempt 2: succeeds with 2x budget
+        _Resp("", completion_tokens=42),
+        _Resp('{"x": 1}'),
     ])
     data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
-    assert data == {"x": 1}, f"should recover after retry with more tokens, got err: {err}"
+    assert data == {"x": 1}, f"should recover after one empty retry, got err: {err}"
     assert err is None
-    assert calls["n"] == 3, "should retry twice (3 total attempts) for empty+reasoning"
+    assert calls["n"] == 2, "empty content must receive one bounded retry"
 
 
 # ---------------------------------------------------------------------------
-# GS-B03 — two consecutive parse failures surface a parse error (bounded retry)
+# GS-B03 — one corrective retry is bounded
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-B03", _CONTRACT, "§structured retry", "L2b",
-        "Retry is bounded at two retries (3 total attempts): three consecutive non-JSON "
-        "replies return a structured_parse_error (no infinite retry loop).",
+        "Two consecutive non-JSON replies return a structured_parse_error after one "
+        "corrective retry (no infinite retry loop).",
     ),
 )
 def test_llm_structured_retry_is_bounded(monkeypatch):
@@ -231,25 +228,23 @@ def test_llm_structured_retry_is_bounded(monkeypatch):
     calls = _patch_llm(monkeypatch, [
         _Resp("no json here"),
         _Resp("still no json"),
-        _Resp("nope still not json"),
-        _Resp('{"x": 9}'),  # must NOT be reached — retry is bounded at 3 attempts
+        _Resp("must not be reached"),
     ])
     data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
     assert data is None
     assert err is not None and "structured_parse_error" in err
-    assert calls["n"] == 3, "must attempt at most 3 times (two retries)"
+    assert calls["n"] == 2, "must attempt at most 2 times (one retry)"
 
 
 # ---------------------------------------------------------------------------
-# GS-B06 — repair-mode: third attempt sends back the previous bad output
+# GS-B06 — repair attempt is nonce-bearing and does not replay stale output
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-B06", _CONTRACT, "§structured retry", "L2b",
-        "The third (final) retry uses 'repair mode': it sends the model's previous "
-        "bad output back and asks to fix it, rather than re-generating from scratch. "
-        "This recovers from malformed JSON that the model would otherwise keep repeating.",
+        "The single final retry sends a nonce-bearing repair instruction rather "
+        "than a third replay of the same prompt.",
     ),
 )
 def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
@@ -258,8 +253,7 @@ def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
 
     async def fake_complete(req, provider=None, provider_name=None):
         captured_messages.append(req.messages)
-        # First two: bad JSON; third: valid (after seeing repair prompt)
-        if len(captured_messages) < 3:
+        if len(captured_messages) < 2:
             return _Resp("not json at all")
         return _Resp('{"x": 42}')
 
@@ -268,17 +262,13 @@ def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
     monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
 
     data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
-    assert err is None, f"should recover on third attempt, got: {err}"
+    assert err is None, f"should recover on second attempt, got: {err}"
     assert data == {"x": 42}
-    assert len(captured_messages) == 3, "should have made 3 attempts"
-    # Third attempt messages should contain "FIX THIS JSON" (repair mode)
-    last_msg = captured_messages[2][-1]["content"]
-    assert "FIX THIS JSON" in last_msg, (
-        "third attempt should use repair-mode prompt with 'FIX THIS JSON'"
-    )
-    assert "not json at all" in last_msg, (
-        "repair-mode prompt must include the previous malformed output"
-    )
+    assert len(captured_messages) == 2, "should have made 2 attempts"
+    last_msg = captured_messages[1][-1]["content"]
+    assert last_msg.startswith("[repair:")
+    assert "FIX THIS JSON" not in last_msg
+    assert "not json at all" not in last_msg
 
 
 # ---------------------------------------------------------------------------

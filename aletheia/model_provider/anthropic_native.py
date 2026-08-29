@@ -13,7 +13,7 @@ from aletheia.model_provider.base import (
     StreamChunk,
     StructuredModelRequest,
     health_from_model_catalogue,
-    model_json_schema_payload,
+    portable_json_schema_payload,
 )
 
 BASE_URL = "https://api.anthropic.com"
@@ -66,6 +66,13 @@ class AnthropicNativeProvider(ModelProvider):
         }
         if request.system:
             payload["system"] = request.system
+        if request.response_format == "json_schema" and request.structured_schema is not None:
+            payload["output_config"] = {
+                "format": {
+                    "type": "json_schema",
+                    "schema": request.structured_schema,
+                }
+            }
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{BASE_URL}/v1/messages", json=payload, headers=self._headers())
         raise_for_status_without_secrets(resp)
@@ -120,19 +127,13 @@ class AnthropicNativeProvider(ModelProvider):
                     usage.update(data.get("usage") or {})
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        messages = list(request.messages)
-        schema_json = json.dumps(model_json_schema_payload(schema))
-        messages.append(
-            {
-                "role": "user",
-                "content": f"Respond with valid JSON matching this schema: {schema_json}",
-            }
-        )
         mr = ModelRequest(
-            messages=messages,
+            messages=list(request.messages),
             system=request.system,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            response_format="json_schema",
+            structured_schema=portable_json_schema_payload(schema),
         )
         resp = await self.complete(mr)
         return json.loads(resp.content)

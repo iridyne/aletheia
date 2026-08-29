@@ -13,7 +13,7 @@ from aletheia.model_provider.base import (
     ModelHealth,
     StreamChunk,
     health_from_model_catalogue,
-    model_json_schema_payload,
+    portable_json_schema_payload,
 )
 
 BASE_URL = "https://api.openai.com/v1"
@@ -84,6 +84,17 @@ class OpenAINativeProvider(ModelProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
+        if request.response_format == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+        elif request.response_format == "json_schema" and request.structured_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": request.structured_schema_name,
+                    "strict": True,
+                    "schema": request.structured_schema,
+                },
+            }
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{BASE_URL}/chat/completions", json=payload, headers=self._headers())
         raise_for_status_without_secrets(resp)
@@ -139,20 +150,13 @@ class OpenAINativeProvider(ModelProvider):
                     yield StreamChunk(content="", done=True, usage=usage, model=actual_model)
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        messages = list(request.messages)
-        if request.system:
-            messages.insert(0, {"role": "system", "content": request.system})
-        schema_json = json.dumps(model_json_schema_payload(schema))
-        messages.append(
-            {
-                "role": "user",
-                "content": f"Respond with valid JSON matching this schema: {schema_json}",
-            }
-        )
         mr = ModelRequest(
-            messages=messages,
+            messages=list(request.messages),
+            system=request.system,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            response_format="json_schema",
+            structured_schema=portable_json_schema_payload(schema),
         )
         resp = await self.complete(mr)
         return json.loads(resp.content)

@@ -362,7 +362,7 @@ async def test_schema_invalid_object_never_becomes_success():
         "status": "error",
         "parse_valid": 1,
         "schema_valid": 0,
-        "attempt_count": 3,
+        "attempt_count": 2,
         "error_type": "structured_schema_invalid",
     }
     outcomes = (
@@ -377,7 +377,6 @@ async def test_schema_invalid_object_never_becomes_success():
     assert [tuple(row) for row in outcomes] == [
         (0, "schema_invalid"),
         (1, "schema_invalid"),
-        (2, "schema_invalid"),
     ]
 
 

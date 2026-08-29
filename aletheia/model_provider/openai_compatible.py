@@ -14,7 +14,7 @@ from aletheia.model_provider.base import (
     ProviderResponseError,
     StructuredModelRequest,
     health_from_model_catalogue,
-    model_json_schema_payload,
+    portable_json_schema_payload,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
 
@@ -153,6 +153,15 @@ class OpenAICompatibleProvider(ModelProvider):
             payload["reasoning_effort"] = request.reasoning_effort
         if request.response_format == "json_object":
             payload["response_format"] = {"type": "json_object"}
+        elif request.response_format == "json_schema" and request.structured_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": request.structured_schema_name,
+                    "strict": True,
+                    "schema": request.structured_schema,
+                },
+            }
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
         for _ in range(2):
@@ -162,6 +171,17 @@ class OpenAICompatibleProvider(ModelProvider):
             elif payload.get("response_format") is not None and _json_object_is_unsupported(resp):
                 payload = dict(payload)
                 payload.pop("response_format", None)
+                if request.structured_schema is not None:
+                    payload["messages"] = [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                "Respond with valid JSON matching this schema: "
+                                f"{json.dumps(request.structured_schema)}"
+                            ),
+                        },
+                    ]
             else:
                 break
             resp = await client.post(
@@ -207,12 +227,14 @@ class OpenAICompatibleProvider(ModelProvider):
         )
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        messages = list(request.messages)
-        if request.system:
-            messages.insert(0, {"role": "system", "content": request.system})
-        schema_json = json.dumps(model_json_schema_payload(schema))
-        messages.append({"role": "user", "content": f"Respond with valid JSON matching this schema: {schema_json}"})
-        mr = ModelRequest(messages=messages, temperature=request.temperature, max_tokens=request.max_tokens)
+        mr = ModelRequest(
+            messages=list(request.messages),
+            system=request.system,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            response_format="json_schema",
+            structured_schema=portable_json_schema_payload(schema),
+        )
         resp = await self.complete(mr)
         return json.loads(resp.content)
 

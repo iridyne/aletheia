@@ -306,12 +306,14 @@ async def test_real_universe_refresh_reaches_one_durable_no_plan(
     assert generation["last_candidate_id"] == candidates[0]["id"]
     assert repo.list_opportunities(limit=10) == []
 
-    from aletheia.agent_shell.entry_planner import EntryPlanDraft, plan_next_candidate
+    from aletheia.agent_shell.entry_planner import PlanIntent, plan_next_candidate
 
     async def no_plan(_context):
-        return EntryPlanDraft(
-            result="NO_PLAN",
-            reasoning="The bounded fixture does not authorize a complete Entry Plan.",
+        return PlanIntent(
+            decision="NO_PLAN",
+            reason_code="INSUFFICIENT_EVIDENCE",
+            thesis="",
+            scenario="",
         )
 
     planning = await plan_next_candidate(no_plan)

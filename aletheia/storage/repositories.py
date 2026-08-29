@@ -8859,6 +8859,29 @@ def defer_candidate_planning(
     return updated.rowcount == 1
 
 
+def defer_candidate_planning_with_code(
+    generation_id: str,
+    owner_token: str,
+    code: str,
+    detail: str = "",
+    *,
+    retry_seconds: int = 60,
+    max_attempts: int = 3,
+    now: datetime | None = None,
+) -> bool:
+    """Persist a bounded planner reason code while retaining retry semantics."""
+
+    reason = f"{str(code)}:{str(detail)}"[:160]
+    return defer_candidate_planning(
+        generation_id,
+        owner_token,
+        reason,
+        retry_seconds=retry_seconds,
+        max_attempts=max_attempts,
+        now=now,
+    )
+
+
 def release_candidate_planning_claim(
     generation_id: str,
     owner_token: str,

@@ -33,6 +33,104 @@ def model_json_schema_payload(schema: Any) -> dict[str, Any]:
     return schema_json
 
 
+_PORTABLE_SCHEMA_REMOVED_KEYS = frozenset(
+    {
+        "title",
+        "description",
+        "format",
+        "examples",
+        "pattern",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "contains",
+        "patternProperties",
+        "dependencies",
+        "dependentRequired",
+        "dependentSchemas",
+        "allOf",
+        "oneOf",
+    }
+)
+
+
+def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
+    """Return a strict JSON-Schema subset shared by native providers."""
+
+    source = model_json_schema_payload(schema)
+    resolving: set[str] = set()
+
+    def normalize(node: Any) -> Any:
+        if isinstance(node, list):
+            return [normalize(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            if not ref.startswith("#/"):
+                raise ValueError("portable_schema_external_ref")
+            target: Any = source
+            for part in ref[2:].split("/"):
+                if not isinstance(target, dict) or part not in target:
+                    raise ValueError("portable_schema_unresolved_ref")
+                target = target[part]
+            if ref in resolving:
+                raise ValueError("portable_schema_recursive_ref")
+            resolving.add(ref)
+            try:
+                expanded = normalize(target)
+            finally:
+                resolving.remove(ref)
+            overlay = {key: value for key, value in node.items() if key != "$ref"}
+            if overlay:
+                expanded = {**expanded, **overlay}
+            return normalize(expanded)
+
+        variants = node.get("anyOf")
+        if isinstance(variants, list) and len(variants) == 2:
+            non_null = [
+                variant
+                for variant in variants
+                if not (isinstance(variant, dict) and variant.get("type") == "null")
+            ]
+            has_null = len(non_null) == 1 and len(variants) == 2
+            if has_null:
+                primary = normalize(non_null[0])
+                if isinstance(primary, dict) and primary.get("type"):
+                    node = {
+                        **primary,
+                        **{key: value for key, value in node.items() if key != "anyOf"},
+                    }
+                    primary_type = primary["type"]
+                    if isinstance(primary_type, list):
+                        node["type"] = [*primary_type, "null"]
+                    else:
+                        node["type"] = [primary_type, "null"]
+
+        normalized: dict[str, Any] = {}
+        for key, value in node.items():
+            if key in _PORTABLE_SCHEMA_REMOVED_KEYS or key in {"$defs", "definitions", "$ref"}:
+                continue
+            if key == "anyOf":
+                raise ValueError("portable_schema_unsupported_anyOf")
+            normalized[key] = normalize(value)
+        if normalized.get("type") == "object" or "properties" in normalized:
+            properties = normalized.get("properties")
+            normalized["additionalProperties"] = False
+            if isinstance(properties, dict):
+                normalized["required"] = list(properties)
+        return normalized
+
+    payload = normalize(source)
+    if not isinstance(payload, dict):
+        raise TypeError("portable JSON schema must be an object")
+    return payload
+
+
 def _configured_provider_name(provider: Any) -> str:
     """Resolve an exact configured alias without changing provider routing."""
     existing = str(getattr(provider, "_aletheia_provider_name", "") or "").strip()
@@ -121,7 +219,9 @@ class ModelRequest:
     inference: Any | None = None
     allow_model_fallback: bool = True
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
-    response_format: Literal["json_object"] | None = None
+    response_format: Literal["json_object", "json_schema"] | None = None
+    structured_schema: dict[str, Any] | None = None
+    structured_schema_name: str = "structured_output"
     # Trade JSON: keep glm-5.2 in the later fallback pool; do not promote it first.
     prefer_json_reliable_models: bool = False
     exclude_models: tuple[str, ...] = ()

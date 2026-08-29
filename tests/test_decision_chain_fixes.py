@@ -593,7 +593,7 @@ def test_real_structured_validator_exhaustion_is_typed_and_content_free(
     ) as exc_info:
         asyncio.run(td._assess_opportunity({"layer1": {}, "layer2": {}, "layer3": {}}))
 
-    assert attempts == 3
+    assert attempts == 2
     assert exc_info.value.stage == "operator_output_validation"
     assert response_text not in exc_info.value.reason
 
@@ -633,7 +633,7 @@ def test_structured_empty_content_keeps_existing_daemon_retry_semantics(
     ) as exc_info:
         asyncio.run(td._assess_opportunity({"layer1": {}, "layer2": {}, "layer3": {}}))
 
-    assert attempts == 3
+    assert attempts == 2
     assert exc_info.value.stage == "operator_evaluation"
 
 

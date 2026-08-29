@@ -5,6 +5,7 @@ import logging
 import json
 import re
 import time
+from uuid import uuid4
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -13,8 +14,7 @@ import threading
 from contextvars import ContextVar
 from typing import Literal
 
-from aletheia.model_provider.base import ModelRequest, StreamChunk
-from aletheia.model_provider.base import model_json_schema_payload
+from aletheia.model_provider.base import ModelRequest, StreamChunk, portable_json_schema_payload
 from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
 from aletheia.model_provider.router import get_provider_async, get_provider
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
@@ -34,6 +34,7 @@ _TRADE_JSON_CALLER_PREFIXES = (
     "risk_critic.",
     "agent_shell.portfolio_review",
     "post_trade_reviewer.",
+    "agent_shell.entry_planner",
 )
 
 _PYDANTIC_SCHEMA_ERROR_CODES = {
@@ -88,6 +89,10 @@ def _structured_response_model_ids(resp) -> tuple[str, ...]:
         meta = raw.get("aletheia_model_fallback")
         if isinstance(meta, dict):
             _add(meta.get("final_model"))
+            attempted = meta.get("attempted_models")
+            if isinstance(attempted, (list, tuple)):
+                for model_id in attempted:
+                    _add(model_id)
     return tuple(ids)
 
 
@@ -656,10 +661,11 @@ async def llm_structured(
         the global default.
     reasoning_effort: optional OpenAI-compatible request control.  Defaults to
         None so existing providers and callers keep their exact request shape.
-        Structured calls also request ``response_format=json_object``; providers
-        that do not implement it retry without the field. Trade JSON callers
-        keep glm-5.2 as a later fallback (not the primary) and skip a model that
-        already returned unusable JSON for this logical call.
+        Structured calls request strict ``response_format=json_schema`` with a
+        portable schema; providers that do not implement it use their own
+        compatibility fallback. Trade JSON callers keep glm-5.2 as a later
+        fallback (not the primary) and skip a model that already returned
+        unusable JSON for this logical call.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
@@ -716,38 +722,25 @@ async def llm_structured(
 
     try:
         provider_instance = await get_provider_async(provider_name)
-        schema_dict = model_json_schema_payload(schema)
-        schema_json = json.dumps(schema_dict)
-        base_messages = [
-            {"role": "user", "content": user},
-            {
-                "role": "user",
-                "content": (
-                    f"Respond with ONLY a raw JSON object matching this schema (no markdown fences, "
-                    f"no explanation, no text before or after — just the JSON): {schema_json}"
-                ),
-            },
-        ]
-        # Prepend /no_think for Qwen3-series reasoning models: without it the model
-        # exhausts the token budget on internal reasoning and returns empty text output.
-        # Other models ignore this prefix safely.
+        schema_dict = portable_json_schema_payload(schema)
+        base_messages = [{"role": "user", "content": user}]
         caller_system, adapter_id, context_manifest = _prepare_context_adapter(
             system,
             include=include_harness_header,
             adapter=context_adapter,
             context_artifacts=context_artifacts,
         )
-        structured_system = f"/no_think\n{caller_system}" if caller_system else "/no_think"
+        structured_system = caller_system
         inference_call = build_inference_call(
             caller=caller,
             system=structured_system,
-            prompt_static_text=f"/no_think\n{system}" if system else "/no_think",
+            prompt_static_text=system or "",
             messages=base_messages,
             context_adapter_id=adapter_id,
             context_manifest=context_manifest,
             schema=schema,
             requested_provider=provider_name,
-            temperature=0.3,
+            temperature=0.0,
             max_tokens=max_tokens,
             allow_model_fallback=allow_model_fallback,
             evaluation=evaluation,
@@ -759,13 +752,10 @@ async def llm_structured(
         # Never exceed the global ceiling even when the caller passes a deadline.
         deadline = min(deadline, loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC)
 
-        # 3 attempts with escalating token budget + corrective strategy:
-        #   attempt 0: base max_tokens at temperature 0.3, standard prompt
-        #   attempt 1: +50% tokens, temperature 0, stronger JSON-only prompt
-        #   attempt 2: 2x tokens, temperature 0, repair-mode prompt (send back previous bad output)
-        last_bad_output = ""
+        # Two strict-schema attempts: a fresh request and one nonce-bearing repair.
+        last_schema_error_text = ""
         last_err = "structured_parse_error: no valid JSON object found in response"
-        max_attempts = 3
+        max_attempts = 2
         failed_models: list[str] = []
         prefer_json_reliable = _prefers_json_reliable_models(caller)
 
@@ -778,42 +768,19 @@ async def llm_structured(
 
         for attempt in range(max_attempts):
             active_structured_attempt = attempt
-            # Escalate token budget on each retry
-            attempt_max_tokens = max_tokens
-            if attempt == 1:
-                attempt_max_tokens = int(max_tokens * 1.5)
-            elif attempt >= 2:
-                attempt_max_tokens = max_tokens * 2
-
             messages = list(base_messages)
             if attempt == 1:
-                # Stronger corrective prompt + emphasize immediate JSON output
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "IMPORTANT: Your previous reply was invalid. "
-                            "Output ONLY the JSON object now. "
-                            "Do NOT include any thinking, explanation, or markdown. "
-                            "Start your reply with '{' and end with '}'. Nothing else."
-                        ),
-                    }
+                repair_message = (
+                    f"[repair:{uuid4().hex[:12]}] "
+                    "Output ONLY the JSON object now. Do not include thinking, "
+                    "explanation, markdown, or any text outside the object."
                 )
-            elif attempt >= 2:
-                # Final attempt: repair mode — show the model its previous bad output
-                # and ask it to fix it. Simpler task than generating from scratch.
-                repair_hint = last_bad_output[:500] if last_bad_output else "(empty)"
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"FIX THIS JSON. Your previous output was:\n"
-                            f"```\n{repair_hint}\n```\n"
-                            f"Reply with ONLY the corrected JSON. Start with '{{' and end with '}}'. "
-                            f"No extra text, no explanation."
-                        ),
-                    }
-                )
+                if last_schema_error_text:
+                    repair_message += (
+                        f"\nThe exact validator error from the previous response was:\n"
+                        f"{last_schema_error_text}"
+                    )
+                messages.append({"role": "user", "content": repair_message})
             remaining = deadline - loop.time()
             if remaining <= 0:
                 logger.warning(
@@ -828,10 +795,11 @@ async def llm_structured(
                         ModelRequest(
                             messages=messages,
                             system=structured_system,
-                            temperature=0.3 if attempt == 0 else 0.0,
-                            max_tokens=attempt_max_tokens,
+                            temperature=0.0,
+                            max_tokens=max_tokens,
                             reasoning_effort=reasoning_effort,
-                            response_format="json_object",
+                            response_format="json_schema",
+                            structured_schema=schema_dict,
                             prefer_json_reliable_models=prefer_json_reliable,
                             exclude_models=tuple(failed_models),
                             inference=inference_call,
@@ -855,44 +823,22 @@ async def llm_structured(
             content = (resp.content or "").strip()
             usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
             output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
-            last_bad_output = content
             last_schema_error_code = None
+            last_schema_error_text = ""
 
             if not content:
                 last_response_shape = "empty"
                 _record_structured_outcome("empty_content")
                 _remember_failed_model(resp)
-                if output_tokens > 0:
-                    # Reasoning model exhausted budget on thinking phase → retry with more
-                    if attempt < max_attempts - 1:
-                        next_budget = int(max_tokens * (1.5 if attempt == 0 else 2))
-                        logger.warning(
-                            "LLM structured call: empty content with %d output_tokens "
-                            "(reasoning model exhausted budget) — retrying with %d tokens "
-                            "(attempt %d/%d)",
-                            output_tokens,
-                            next_budget,
-                            attempt + 1,
-                            max_attempts,
-                        )
-                        continue
-                    logger.warning(
-                        "LLM structured call: empty content with %d output_tokens — "
-                        "reasoning model exhausted budget on reasoning phase",
-                        output_tokens,
-                    )
-                    _record_llm(False)
-                    return _failure("structured_empty_content")
                 if attempt < max_attempts - 1:
                     logger.warning(
-                        "LLM structured call: empty content, no output_tokens — retrying (attempt %d/%d)",
+                        "LLM structured call: empty content — retrying (attempt %d/%d)",
                         attempt + 1,
                         max_attempts,
                     )
                     continue
-                logger.warning("LLM structured call: empty content, no completion tokens")
                 _record_llm(False)
-                return _failure("llm_unavailable: empty_response")
+                return _failure("structured_empty_content")
 
             data = _extract_json_object(content)
             last_response_shape = _classify_structured_response(content, data)
@@ -901,6 +847,7 @@ async def llm_structured(
                     _validate_structured_payload(data, schema, schema_dict)
                 except (TypeError, ValueError) as exc:
                     last_schema_error_code = _classify_schema_validation_error(exc)
+                    last_schema_error_text = str(exc)
                     last_err = f"structured_schema_invalid: {last_schema_error_code}"
                     _record_structured_outcome("schema_invalid")
                     _remember_failed_model(resp)
@@ -924,7 +871,7 @@ async def llm_structured(
                 _record_llm(True)
                 return data, None
             if data is not None:
-                last_err = "structured_non_dict"
+                last_err = "structured_parse_error: expected JSON object"
                 _record_structured_outcome("non_object_json")
                 _remember_failed_model(resp)
                 if attempt < max_attempts - 1:
@@ -936,22 +883,10 @@ async def llm_structured(
                     continue
                 break
 
-            # Parse failed — check if output was truncated (near token limit)
-            truncated = output_tokens > 0 and output_tokens >= attempt_max_tokens * 0.9
+            # Parse failure — retry once with a nonce-bearing repair message.
+            truncated = output_tokens > 0 and output_tokens >= max_tokens * 0.9
             _record_structured_outcome("truncated_output" if truncated else "parse_error")
             _remember_failed_model(resp)
-            if truncated and attempt < max_attempts - 1:
-                logger.warning(
-                    "LLM structured call: parse failure, output likely truncated "
-                    "(%d/%d tokens used) — retrying with more tokens (attempt %d/%d)",
-                    output_tokens,
-                    attempt_max_tokens,
-                    attempt + 1,
-                    max_attempts,
-                )
-                continue
-
-            # Parse failure, not obviously truncated → corrective retry
             if attempt < max_attempts - 1:
                 logger.warning(
                     "LLM structured call: parse failure (attempt %d/%d), content_len=%d — retrying",
@@ -960,6 +895,7 @@ async def llm_structured(
                     len(content),
                 )
                 continue
+
             last_err = "structured_parse_error: no valid JSON object found in response"
 
         logger.warning("LLM structured call: no valid JSON after %d attempts", max_attempts)

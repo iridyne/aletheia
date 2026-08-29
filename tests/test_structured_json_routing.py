@@ -55,7 +55,7 @@ def test_prefers_json_reliable_models_only_for_trade_json_callers():
     assert _prefers_json_reliable_models("system_operator.assess_opportunity") is True
     assert _prefers_json_reliable_models("system_operator.debate_bull") is True
     assert _prefers_json_reliable_models("risk_critic.review") is True
-    assert _prefers_json_reliable_models("agent_shell.portfolio_review") is True
+    assert _prefers_json_reliable_models("agent_shell.entry_planner") is True
     assert _prefers_json_reliable_models("news_analyzer.analysis") is False
     assert _prefers_json_reliable_models("market_observer.market_read") is False
 
@@ -254,8 +254,42 @@ async def test_complete_with_fallback_uses_injected_glm_after_flash_429(monkeypa
     assert glm.calls == ["glm-5.2"]
 
 
+
 @pytest.mark.asyncio
-async def test_llm_structured_requests_json_object_and_skips_failed_flash_model(tmp_path, monkeypatch):
+async def test_complete_with_fallback_reaches_operator_configured_deepseek_last(monkeypatch):
+    _patch_candidates(
+        monkeypatch,
+        ["llama-4-maverick", "@deepseek:deepseek-v4-flash"],
+    )
+    from aletheia.model_provider import fallback
+
+    free = FakeProvider(
+        model="llama-4-maverick",
+        fail_models={"llama-4-maverick": "429 Too Many Requests"},
+    )
+    deepseek = FakeProvider(model="deepseek-v4-flash")
+    monkeypatch.setattr(
+        fallback.provider_router,
+        "get_provider",
+        lambda name: {"deepseek": deepseek}[name],
+    )
+
+    response = await fallback.complete_with_fallback(
+        ModelRequest(
+            messages=[{"role": "user", "content": "x"}],
+            prefer_json_reliable_models=True,
+        ),
+        provider=free,
+        provider_name="databricks_free",
+    )
+
+    assert response.content == "ok:deepseek-v4-flash"
+    assert free.calls == ["llama-4-maverick"]
+    assert deepseek.calls == ["deepseek-v4-flash"]
+    assert response.raw["aletheia_model_fallback"]["final_model"] == "deepseek-v4-flash"
+
+@pytest.mark.asyncio
+async def test_llm_structured_requests_json_schema_and_skips_all_failed_models(tmp_path, monkeypatch):
     monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
     from aletheia.agents import helpers
 
@@ -264,8 +298,14 @@ async def test_llm_structured_requests_json_object_and_skips_failed_flash_model(
         [
             ModelResponse(
                 content="not json",
-                model="deepseek-v4-flash",
-                raw={"usage": {"completion_tokens": 2}},
+                model="llama-4-maverick",
+                raw={
+                    "usage": {"completion_tokens": 2},
+                    "aletheia_model_fallback": {
+                        "final_model": "llama-4-maverick",
+                        "attempted_models": ["qwen35-122b-a10b", "llama-4-maverick"],
+                    },
+                },
             ),
             ModelResponse(
                 content='{"value": 7}',
@@ -295,10 +335,16 @@ async def test_llm_structured_requests_json_object_and_skips_failed_flash_model(
     assert err is None
     assert data == {"value": 7}
     assert len(captured) == 2
-    assert all(request.response_format == "json_object" for request in captured)
+    assert all(request.response_format == "json_schema" for request in captured)
+    assert all(request.structured_schema == {
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+        "additionalProperties": False,
+        "required": ["value"],
+    } for request in captured)
     assert all(request.prefer_json_reliable_models is True for request in captured)
     assert captured[0].exclude_models == ()
-    assert captured[1].exclude_models == ("deepseek-v4-flash",)
+    assert captured[1].exclude_models == ("llama-4-maverick", "qwen35-122b-a10b")
 
 
 @pytest.mark.asyncio
@@ -331,9 +377,39 @@ async def test_llm_structured_news_keeps_default_model_order_but_still_uses_json
 
     assert err is None
     assert data == {"value": 1}
-    assert captured[0].response_format == "json_object"
-    assert captured[0].prefer_json_reliable_models is False
+    assert captured[0].response_format == "json_schema"
+    assert captured[0].structured_schema["required"] == ["value"]
 
+@pytest.mark.asyncio
+async def test_llm_structured_repair_attempt_uses_a_nonce_and_new_messages(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+
+    captured = []
+    responses = iter(
+        [
+            ModelResponse(content="not json", model="m1", raw={"usage": {}}),
+            ModelResponse(content='{"value": 3}', model="m2", raw={"usage": {}}),
+        ]
+    )
+
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+        captured.append(request)
+        return next(responses)
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", fake_complete_with_fallback)
+
+    async def fake_get_provider_async(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "get_provider_async", fake_get_provider_async)
+    data, err = await helpers.llm_structured("sys", "user", schema=_ObjectSchema)
+
+    assert err is None
+    assert data == {"value": 3}
+    assert len(captured) == 2
+    assert captured[0].messages != captured[1].messages
+    assert captured[1].messages[-1]["content"].startswith("[repair:")
 
 class _FakeHttpResponse:
     def __init__(self, status_code, payload):
@@ -384,6 +460,102 @@ async def test_openai_compatible_sends_json_object_response_format(monkeypatch):
     )
     assert resp.content == '{"ok": true}'
     assert payloads[0]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_sends_strict_json_schema(monkeypatch):
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    payloads = []
+    schema = {
+        "type": "object",
+        "properties": {"decision": {"type": "string", "enum": ["ENTRY_PLAN", "NO_PLAN"]}},
+        "required": ["decision"],
+        "additionalProperties": False,
+    }
+
+    class FakeClient:
+        async def post(self, url, json=None, headers=None):  # noqa: ARG002
+            payloads.append(json)
+            return _FakeHttpResponse(
+                200,
+                {
+                    "choices": [{"message": {"content": '{"decision": "NO_PLAN"}'}}],
+                    "model": "m1",
+                    "usage": {},
+                },
+            )
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        "aletheia.model_provider.openai_compatible.httpx_client",
+        lambda *, timeout: FakeClient(),
+    )
+    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
+    await provider.complete(
+        ModelRequest(
+            messages=[{"role": "user", "content": "x"}],
+            response_format="json_schema",
+            structured_schema=schema,
+            structured_schema_name="plan_intent",
+        )
+    )
+
+    assert payloads[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "plan_intent",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_anthropic_compatible_sends_strict_json_schema(monkeypatch):
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+
+    payloads = []
+    schema = {
+        "type": "object",
+        "properties": {"decision": {"type": "string"}},
+        "required": ["decision"],
+        "additionalProperties": False,
+    }
+
+    class FakeClient:
+        async def post(self, url, json=None, headers=None):  # noqa: ARG002
+            payloads.append(json)
+            return _FakeHttpResponse(
+                200,
+                {
+                    "content": [{"type": "text", "text": '{"decision": "NO_PLAN"}'}],
+                    "model": "claude",
+                    "usage": {},
+                },
+            )
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        "aletheia.model_provider.anthropic_compatible.httpx_client",
+        lambda *, timeout: FakeClient(),
+    )
+    provider = AnthropicCompatibleProvider(base_url="http://model.test", model="claude")
+    await provider.complete(
+        ModelRequest(
+            messages=[{"role": "user", "content": "x"}],
+            response_format="json_schema",
+            structured_schema=schema,
+        )
+    )
+
+    assert payloads[0]["output_config"] == {
+        "format": {"type": "json_schema", "schema": schema}
+    }
 
 
 @pytest.mark.asyncio
