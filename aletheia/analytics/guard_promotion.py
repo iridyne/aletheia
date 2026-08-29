@@ -16,6 +16,10 @@ from pathlib import Path
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+from aletheia.knowledge.document import (
+    canonicalize_inline_document,
+    relative_knowledge_path,
+)
 from aletheia.knowledge.guards import load_trading_guards, guard_origin
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
@@ -308,11 +312,16 @@ def _persist_guard_promotion(
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import transaction
 
+    active_document = {
+        "file_path": relative_knowledge_path(active_path),
+        **canonicalize_inline_document(render_frontmatter(active_meta, body)),
+    }
+    source_file_path = relative_knowledge_path(Path(source_path))
     with transaction(immediate=True):
         active_rows = repo._select_all(
             "knowledge_items",
             where="item_type = ? AND file_path = ?",
-            params=("trading_guard", str(active_path)),
+            params=("trading_guard", active_document["file_path"]),
             limit=1,
         )
         if active_rows:
@@ -320,23 +329,24 @@ def _persist_guard_promotion(
                 active_rows[0]["id"],
                 status="active",
                 title=active_meta.get("title") or active_path.stem,
-                content=body,
+                **active_document,
             )
         elif not active_existing:
-            repo.insert_knowledge_item(KnowledgeItem(
-                item_type="trading_guard",
-                title=active_meta.get("title") or active_path.stem,
-                file_path=str(active_path),
-                content=body,
-                confidence="high_confidence",
-                status="active",
-            ))
+            repo.insert_knowledge_item(
+                KnowledgeItem(
+                    item_type="trading_guard",
+                    title=active_meta.get("title") or active_path.stem,
+                    confidence="high_confidence",
+                    status="active",
+                    **active_document,
+                )
+            )
 
         if source_path_is_candidate:
             candidate_rows = repo._select_all(
                 "knowledge_items",
                 where="item_type = ? AND file_path = ?",
-                params=("guard_candidate", source_path),
+                params=("guard_candidate", source_file_path),
                 limit=10,
             )
             for row in candidate_rows:
@@ -364,10 +374,11 @@ def _update_candidate_row_status(path) -> None:
     try:
         from aletheia.storage import repositories as repo
 
+        file_path = relative_knowledge_path(Path(path))
         rows = repo._select_all(
             "knowledge_items",
             where="file_path = ? AND item_type = ?",
-            params=(str(path), "guard_candidate"),
+            params=(file_path, "guard_candidate"),
             limit=1,
         )
         for row in rows:

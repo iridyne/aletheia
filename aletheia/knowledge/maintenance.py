@@ -224,7 +224,7 @@ def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
     db = get_db()
     rows = db.execute(
         "SELECT id, file_path FROM knowledge_items "
-        "WHERE status='active' AND content_format IS NULL "
+        "WHERE content_format IS NULL "
         "AND file_path IS NOT NULL AND TRIM(file_path) != ''"
     ).fetchall()
     to_update: list[tuple[str, dict]] = []

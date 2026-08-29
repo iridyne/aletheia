@@ -32,6 +32,25 @@ def test_writer_persists_one_canonical_relative_document(tmp_path, monkeypatch):
     assert item.scanner_family == "fast_trigger"
     assert item.outcome == "win"
 
+def test_repository_canonicalizes_inline_knowledge_writes(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.document import CONTENT_FORMAT, read_knowledge_document
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import get_knowledge_item, insert_knowledge_item
+
+    item = KnowledgeItem(
+        item_type="operator_assessment",
+        title="Inline assessment",
+        content="A database-only assessment with explicit advisory evidence.",
+        confidence="high_confidence",
+    )
+    insert_knowledge_item(item)
+    row = get_knowledge_item(item.id)
+
+    assert row is not None
+    assert row["content_format"] == CONTENT_FORMAT
+    assert read_knowledge_document(row).state == "available_inline"
+
 def test_yaml_timestamp_metadata_has_stable_json_provenance(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.knowledge.document import (
@@ -70,6 +89,17 @@ def test_foreign_absolute_path_never_becomes_read_authority(tmp_path, monkeypatc
     restored = read_knowledge_document({"file_path": str(foreign), "content": None})
     assert restored.state == "legacy_current_root"
     assert restored.text == "current restored body"
+
+def test_legacy_path_uses_knowledge_segment_below_data_root(tmp_path, monkeypatch):
+    data_root = tmp_path / "knowledge" / "runtime"
+    setup_env(data_root, monkeypatch)
+    from aletheia.knowledge.document import resolve_knowledge_path
+
+    current = data_root / "knowledge" / "research_notes" / "item.md"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.write_text("current body", encoding="utf-8")
+
+    assert resolve_knowledge_path(str(current)) == current
 
 
 def test_tampered_file_is_not_retrieved(tmp_path, monkeypatch):
@@ -111,6 +141,46 @@ def test_invalid_metadata_snapshot_is_an_integrity_conflict(tmp_path, monkeypatc
     canonical["metadata_json"] = "not-json"
 
     assert read_knowledge_document(canonical).state == "integrity_conflict"
+    canonical = canonicalize_written_document(path)
+    canonical["symbol"] = "ETHUSDT"
+    assert read_knowledge_document(canonical).state == "integrity_conflict"
+
+
+def test_old_schema_reindex_does_not_write_v51_columns(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import sqlite3
+
+    from aletheia.knowledge.retrieval import reindex_all
+
+    path = tmp_path / "knowledge" / "research_notes" / "legacy.md"
+    path.write_text("# Legacy\n\nLegacy body", encoding="utf-8")
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute(
+        "CREATE TABLE knowledge_items (id TEXT PRIMARY KEY, item_type TEXT, "
+        "title TEXT, file_path TEXT, confidence TEXT, status TEXT, content TEXT, "
+        "created_at TEXT)"
+    )
+    db.execute(
+        "CREATE VIRTUAL TABLE knowledge_fts USING fts5("
+        "title, body, item_type UNINDEXED, item_id UNINDEXED, confidence UNINDEXED, "
+        "created_at UNINDEXED, outcome UNINDEXED)"
+    )
+    db.execute(
+        "INSERT INTO knowledge_items VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "legacy",
+            "research_note",
+            "Legacy",
+            str(path),
+            "high_confidence",
+            "active",
+            None,
+            "2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+    assert reindex_all(db=db, strict=True) == 1
 
 
 def test_structured_filters_apply_before_candidate_limit(tmp_path, monkeypatch):

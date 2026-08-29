@@ -446,6 +446,8 @@ def _item_meta_and_body(item: dict) -> tuple[dict, str]:
     document = read_knowledge_document(item)
     if document.state == "integrity_conflict":
         return {}, ""
+    if not document.text and isinstance(item.get("metadata"), dict):
+        return dict(item["metadata"]), ""
     meta = dict(document.metadata)
     _ignored, body = parse_frontmatter_text(document.text)
     return meta, body

@@ -3900,9 +3900,15 @@ _KNOWLEDGE_DOCUMENT_COLUMNS = (
     ("scanner_family", "TEXT"),
     ("outcome", "TEXT"),
 )
+_KNOWLEDGE_DOCUMENT_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_knowledge_structured_retrieval "
+    "ON knowledge_items(status, confidence, item_type, symbol, direction, scanner_family)"
+)
 _KNOWLEDGE_DOCUMENT_CHECKSUM = hashlib.sha256(
     (
         repr(_KNOWLEDGE_DOCUMENT_COLUMNS)
+        + "\n"
+        + _KNOWLEDGE_DOCUMENT_INDEX_SQL
         + "\ncanonical_knowledge_document_v1"
     ).encode("utf-8")
 ).hexdigest()
@@ -5743,10 +5749,7 @@ def _apply_knowledge_document_v51(db: sqlite3.Connection) -> None:
             db.execute(
                 f"ALTER TABLE knowledge_items ADD COLUMN {column} {column_type}"
             )
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_knowledge_structured_retrieval "
-        "ON knowledge_items(status, confidence, item_type, symbol, direction, scanner_family)"
-    )
+    db.execute(_KNOWLEDGE_DOCUMENT_INDEX_SQL)
     db.execute("PRAGMA optimize")
 
 

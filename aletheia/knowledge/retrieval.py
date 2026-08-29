@@ -170,7 +170,8 @@ def reindex_all(*, db=None, strict: bool = False) -> int:
                     skipped_empty += 1
                     continue
                 if (
-                    document.state == "legacy_current_root"
+                    "content_format" in row
+                    and document.state == "legacy_current_root"
                     and document.resolved_path is not None
                 ):
                     canonical = canonicalize_written_document(document.resolved_path)

@@ -2364,10 +2364,10 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     from aletheia.knowledge.document import read_knowledge_document
     from aletheia.knowledge.frontmatter import parse_frontmatter_text
 
-    def _document_parts(item: dict) -> tuple[dict, str]:
+    def _document_parts(item: dict) -> tuple[dict, str] | None:
         document = read_knowledge_document(item)
         if document.state == "integrity_conflict":
-            return {}, item.get("title") or ""
+            return None
         _metadata, body = parse_frontmatter_text(document.text)
         return document.metadata, body.strip() or item.get("title") or ""
 
@@ -2383,7 +2383,10 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         case_items = list_knowledge_items(item_type="trade_case_study", limit=7)
         lessons: list[dict] = []
         for item in case_items:
-            meta, raw_content = _document_parts(item)
+            parts = _document_parts(item)
+            if parts is None:
+                continue
+            meta, raw_content = parts
             lessons.append({
                 "type": item.get("item_type"),
                 "symbol": meta.get("symbol"),
@@ -2404,7 +2407,10 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         items = list_knowledge_items(item_type="guard_candidate", limit=3)
         guards: list[dict] = []
         for item in items:
-            meta, raw_content = _document_parts(item)
+            parts = _document_parts(item)
+            if parts is None:
+                continue
+            meta, raw_content = parts
             guards.append({
                 "symbol": meta.get("symbol"),
                 "content": raw_content[:200],

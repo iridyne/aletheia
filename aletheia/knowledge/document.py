@@ -56,7 +56,7 @@ def resolve_knowledge_path(file_path: str | None) -> Path | None:
         lowered = [part.lower() for part in parts]
         if "knowledge" not in lowered:
             continue
-        index = lowered.index("knowledge")
+        index = len(lowered) - 1 - lowered[::-1].index("knowledge")
         relative = Path(*parts[index:])
         break
     if relative is None:
@@ -75,14 +75,15 @@ def _json_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Normalize YAML scalar types into a stable JSON-compatible snapshot."""
     return json.loads(json.dumps(metadata, default=str))
 
-
-def canonicalize_written_document(path: Path) -> dict[str, Any]:
-    """Return fields persisted for a newly written canonical Markdown document."""
-    text = path.read_text(encoding="utf-8")
+def canonicalize_inline_document(text: str) -> dict[str, Any]:
+    """Return canonical integrity fields for a database-only Knowledge document."""
     metadata, _ = parse_frontmatter_text(text)
     metadata = metadata if isinstance(metadata, dict) else {}
+    return _canonical_fields(text, metadata)
+
+
+def _canonical_fields(text: str, metadata: dict[str, Any]) -> dict[str, Any]:
     return {
-        "file_path": relative_knowledge_path(path),
         "content": text,
         "content_format": CONTENT_FORMAT,
         "content_sha256": content_sha256(text),
@@ -96,6 +97,17 @@ def canonicalize_written_document(path: Path) -> dict[str, Any]:
         "direction": _normalise_token(metadata.get("direction")),
         "scanner_family": _normalise_token(metadata.get("scanner_family")),
         "outcome": _normalise_token(metadata.get("outcome")),
+    }
+
+
+def canonicalize_written_document(path: Path) -> dict[str, Any]:
+    """Return fields persisted for a newly written canonical Markdown document."""
+    text = path.read_text(encoding="utf-8")
+    metadata, _ = parse_frontmatter_text(text)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    return {
+        "file_path": relative_knowledge_path(path),
+        **_canonical_fields(text, metadata),
     }
 
 
@@ -123,7 +135,17 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         metadata, _ = parse_frontmatter_text(inline)
         expected_metadata = _metadata_from_json(row.get("metadata_json"))
-        if expected_metadata is None or _json_metadata(metadata) != expected_metadata:
+        projections = {
+            "symbol": _normalise_symbol(metadata.get("symbol")),
+            "direction": _normalise_token(metadata.get("direction")),
+            "scanner_family": _normalise_token(metadata.get("scanner_family")),
+            "outcome": _normalise_token(metadata.get("outcome")),
+        }
+        if (
+            expected_metadata is None
+            or _json_metadata(metadata) != expected_metadata
+            or any(str(row.get(key) or "") != value for key, value in projections.items())
+        ):
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         return KnowledgeDocument(
             inline,
