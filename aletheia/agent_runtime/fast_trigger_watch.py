@@ -106,8 +106,6 @@ def start_fast_trigger_watch(
 
 def _configured_block_reason(cfg) -> str | None:
     reason = validate_fast_trigger_stream(cfg)
-    if reason is None and cfg.agent.permission_mode not in {"Paper", "Full"}:
-        reason = "entry_plan_permission_revoked"
     if reason is None and (cfg.runtime.paused or cfg.runtime.kill_switch_active):
         reason = "fast_trigger_runtime_paused" if cfg.runtime.paused else "fast_trigger_kill_switch_active"
     return reason
@@ -153,6 +151,9 @@ async def reconfigure_fast_trigger_watch(cfg, loop: asyncio.AbstractEventLoop) -
         await asyncio.gather(previous, return_exceptions=True)
     _watch_task = None
     _stop_event = None
+    reason = _configured_block_reason(cfg)
+    if reason:
+        await _cancel_open_entry_plans(reason)
     task = start_fast_trigger_watch(loop, cfg)
     status = fast_trigger_watch_status()
     status["configured_mode"] = cfg.fast_trigger.mode
