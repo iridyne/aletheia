@@ -1,5 +1,6 @@
 """OKX Demo UTA profile."""
 
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from aletheia.uta.models import AccountBalance
@@ -17,6 +18,14 @@ class OKXDemoProfile(CCXTProfile):
     closed_order_requests = open_order_requests
     fill_requests = open_order_requests
     supported_market_types = ("spot", "usdt_futures")
+
+    def funding_ledger_requests(
+        self, *, start_at: datetime, received_at: datetime
+    ) -> tuple[dict[str, object], ...]:
+        requests = ({},)
+        if start_at < received_at - timedelta(days=7):
+            requests += ({"method": "privateGetAccountBillsArchive"},)
+        return requests
 
     def __init__(self, *, api_key: str, secret: str, passphrase: str) -> None:
         super().__init__(

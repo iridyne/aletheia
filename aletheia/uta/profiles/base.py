@@ -88,6 +88,11 @@ class CCXTProfile:
             raise ValueError("UTA profile credentials are incomplete")
         self._client_options = dict(client_options)
 
+    def funding_ledger_requests(
+        self, *, start_at: datetime, received_at: datetime
+    ) -> tuple[dict[str, object], ...]:
+        return self.ledger_requests
+
     def validate_identity(self, identity: UTAAccountIdentity) -> None:
         expected = (
             self.expected_execution_mode,
