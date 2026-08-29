@@ -2092,11 +2092,15 @@ def _family_live_edge(
     family: str,
     direction: str,
     market_type: str = "spot",
+    *,
+    fail_open: bool = True,
 ) -> dict | None:
     """Matching family/direction/market edge from settled net outcomes.
 
     Returns the matching family_direction_edge row ({n, win_rate (0-100), ...}) or
-    None when the family has no settled evidence in the 7d clean window / on error.
+    None when the family has no settled evidence in the 7d clean window. By
+    default lookup errors also return None; authoritative risk callers can set
+    ``fail_open=False`` to distinguish an unreadable evidence store.
     Check #14 (live-eligibility) gates on this — see engine §14.
     """
     normalized_market = (
@@ -2121,6 +2125,8 @@ def _family_live_edge(
             ):
                 return row
     except Exception:
+        if not fail_open:
+            raise
         return None
     return None
 

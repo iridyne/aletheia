@@ -11,6 +11,8 @@ Default policy (demo, exchange-backed venues only):
   is sideways
 - refuse a family×direction with enough settled evidence and negative expectancy
 - refuse a same-symbol reverse after a recent ``stop_loss`` on that symbol
+- fail closed with ``demo_entry_quality_unavailable:<source>`` when an authority
+  read fails; honestly empty evidence remains fail-open
 
 Open positions are not closed. A zero/None threshold disables that clause.
 """
@@ -29,6 +31,7 @@ REGIME_CONFIDENCE_STANDDOWN = "regime_confidence_standdown"
 REGIME_SIDEWAYS_STANDDOWN = "regime_sideways_standdown"
 FAMILY_NOT_DEMO_ELIGIBLE = "family_not_demo_eligible"
 REVERSE_AFTER_STOP = "reverse_after_stop"
+DEMO_ENTRY_QUALITY_UNAVAILABLE = "demo_entry_quality_unavailable"
 
 # Same-symbol reverse after a stop_loss: NEAR short stop then NEAR long next day.
 REVERSE_AFTER_STOP_HOURS = 24
@@ -38,6 +41,7 @@ _RANK_SKIP_PREFIXES = (
     REGIME_SIDEWAYS_STANDDOWN,
     FAMILY_NOT_DEMO_ELIGIBLE,
     REVERSE_AFTER_STOP,
+    DEMO_ENTRY_QUALITY_UNAVAILABLE,
 )
 
 
@@ -130,28 +134,50 @@ def collect_demo_entry_quality_violations(
     market_type: str | None = "spot",
     symbol: str | None = None,
 ) -> list[str]:
-    """Load regime + family edge + recent stops, then evaluate. Fail-open on lookup errors."""
+    """Load evidence and evaluate the demo entry-quality brake.
+
+    Empty evidence remains a valid fail-open policy state. A read failure is a
+    different state because Risk cannot prove that the brake was evaluated.
+    """
     if not applies_to_execution_mode(execution_mode) or eligibility is None:
         return []
+    unavailable: list[str] = []
     try:
         from aletheia.learning.demo_entry_quality import (
             ensure_demo_entry_quality_policy_epoch,
         )
         ensure_demo_entry_quality_policy_epoch()
     except Exception:
-        pass
+        unavailable.append(f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:policy_epoch")
 
-    state, confidence = load_published_regime()
+    try:
+        state, confidence = load_published_regime(fail_open=False)
+    except Exception:
+        state, confidence = None, None
+        unavailable.append(f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:regime")
 
     edge = None
     if scanner_family and direction:
         try:
             from aletheia.risk.engine import _family_live_edge
-            edge = _family_live_edge(scanner_family, direction, market_type or "spot")
+            edge = _family_live_edge(
+                scanner_family,
+                direction,
+                market_type or "spot",
+                fail_open=False,
+            )
         except Exception:
-            edge = None
+            unavailable.append(f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:family_edge")
 
-    return evaluate_demo_entry_quality(
+    try:
+        recent_stop_directions = load_recent_stop_directions(
+            symbol, execution_mode, fail_open=False
+        )
+    except Exception:
+        recent_stop_directions = set()
+        unavailable.append(f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:recent_stops")
+
+    return unavailable + evaluate_demo_entry_quality(
         execution_mode=execution_mode,
         eligibility=eligibility,
         scanner_family=scanner_family,
@@ -159,13 +185,11 @@ def collect_demo_entry_quality_violations(
         regime_state=state,
         regime_confidence=confidence,
         family_edge=edge,
-        recent_stop_directions=load_recent_stop_directions(
-            symbol, execution_mode
-        ),
+        recent_stop_directions=recent_stop_directions,
     )
 
 
-def load_published_regime() -> tuple[str | None, float | None]:
+def load_published_regime(*, fail_open: bool = True) -> tuple[str | None, float | None]:
     """Return (state, confidence) only when a regime has been published.
 
     ``get_current_regime()`` fabricates sideways/0.5 when nothing is published.
@@ -192,15 +216,22 @@ def load_published_regime() -> tuple[str | None, float | None]:
         regime = regime_mod.get_current_regime()
         return getattr(regime, "state", None), getattr(regime, "confidence", None)
     except Exception:
+        if not fail_open:
+            raise
         return None, None
 
 
 def load_recent_stop_directions(
-    symbol: str | None, execution_mode: str | None
+    symbol: str | None,
+    execution_mode: str | None,
+    *,
+    fail_open: bool = True,
 ) -> set[str]:
     """Directions of ``stop_loss`` closes on this symbol inside the cooldown.
 
-    Fail-open: lookup errors and missing identity return an empty set.
+    Missing identity and empty query results remain valid empty evidence. Set
+    ``fail_open=False`` for authoritative callers that must distinguish a read
+    failure from an empty result.
     """
     if not symbol or not applies_to_execution_mode(execution_mode):
         return set()
@@ -231,6 +262,8 @@ def load_recent_stop_directions(
                 found.add(side)
         return found
     except Exception:
+        if not fail_open:
+            raise
         return set()
 
 
