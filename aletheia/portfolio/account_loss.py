@@ -49,6 +49,7 @@ paper_funding_settler resolves funding and calls settle_position_closed().
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -363,9 +364,16 @@ def _partial_close_realized_today(execution_mode: str, today_start: str) -> floa
         events = list_position_close_events(since_iso=today_start, execution_mode=execution_mode)
     except Exception:
         return None
-    return round(
-        sum(float(e.get("realized_pnl") or 0.0) for e in events if e.get("is_partial")), 8
-    )
+    partial_events = [event for event in events if event.get("is_partial")]
+    if any(event.get("realized_pnl") is None for event in partial_events):
+        return None
+    try:
+        values = [float(event["realized_pnl"]) for event in partial_events]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in values):
+        return None
+    return round(sum(values), 8)
 
 
 def _unavailable(reason: str, *, event_count: int = 0) -> AccountLossSnapshot:
