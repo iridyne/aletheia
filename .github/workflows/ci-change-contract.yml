@@ -25,7 +25,7 @@ name: Aletheia Change Contract gate
 on:
   pull_request:
     branches: [master]
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, closed]
 
 permissions:
   contents: read
@@ -44,6 +44,7 @@ concurrency:
 jobs:
   verify-change-contract:
     name: Verify Change Contract
+    if: ${{ github.event.action != 'closed' }}
     runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
