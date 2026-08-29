@@ -530,7 +530,8 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
 
 def _qualified_uta_mutation_selected(cfg, execution_mode: str) -> bool:
-    if cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
+    exchange = getattr(cfg, "exchange", None)
+    if exchange is None or exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
         return False
     from aletheia.trust.uta_qualification import require_uta_mutation_qualification
 
@@ -551,7 +552,7 @@ def close_exchange_position(
     if row is None:
         raise ValueError(f"position not found: {position_id}")
     mode = row.get("execution_mode")
-    if mode == "binance_testnet" and _qualified_uta_mutation_selected(
+    if mode in {"binance_testnet", "okx_demo"} and _qualified_uta_mutation_selected(
         load_config(), mode
     ):
         from aletheia.execution.coordinator import close_position
@@ -565,7 +566,57 @@ def close_exchange_position(
         return close_testnet_position(
             position_id, reason=reason, close_reasoning=close_reasoning
         )
+    if mode in {"okx_demo", "okx_live_limited"}:
+        from aletheia.execution.okx_broker import close_okx_position
+
+        return close_okx_position(
+            position_id, reason=reason, close_reasoning=close_reasoning
+        )
     raise ValueError(f"Gateway close route does not support mode {mode!r}")
+
+
+def place_exchange_protection(position_id: str) -> dict:
+    """Authorize one selected protection backend for an existing OKX demo Position."""
+    from aletheia.storage import repositories as repo
+
+    row = repo.get_position(position_id)
+    if row is None or row.get("execution_mode") != "okx_demo":
+        raise ValueError(f"Gateway protection route does not support position {position_id!r}")
+    if _qualified_uta_mutation_selected(load_config(), "okx_demo"):
+        from aletheia.execution.coordinator import place_protection
+
+        return place_protection(position_id)
+    from aletheia.execution.okx_broker import place_okx_protective_orders
+
+    return place_okx_protective_orders(
+        position_id=position_id,
+        symbol=row["symbol"],
+        market_type=row.get("market_type") or "usdt_futures",
+        direction=row["direction"],
+        quantity=float(row.get("quantity") or 0),
+        stop_price=row.get("stop_price"),
+        take_profit_price=row.get("take_profit_price"),
+        execution_mode="okx_demo",
+    )
+
+
+def replace_exchange_protective_stop(
+    position_id: str, new_stop_price: float
+) -> bool:
+    """Authorize one selected stop-replacement backend for OKX demo."""
+    from aletheia.storage import repositories as repo
+
+    row = repo.get_position(position_id)
+    if row is None or row.get("execution_mode") != "okx_demo":
+        return False
+    if _qualified_uta_mutation_selected(load_config(), "okx_demo"):
+        from aletheia.execution.coordinator import replace_protective_stop
+
+        return replace_protective_stop(position_id, new_stop_price)
+    from aletheia.execution.okx_broker import replace_okx_exchange_stop
+
+    replace_okx_exchange_stop(position_id, new_stop_price)
+    return True
 
 
 _EXECUTION_MODE_TO_VENUE = _venue_capabilities.EXECUTION_MODE_TO_VENUE
@@ -1508,13 +1559,13 @@ def _execute_proposal(
             # execution_proposal is a quantity-only copy, so its broker argument
             # remains semantically trade_school=proposal.trade_school.
             try:
-                if allowed_mode == "binance_testnet":
+                if allowed_mode in {"binance_testnet", "okx_demo"}:
                     if _qualified_uta_mutation_selected(cfg, allowed_mode):
                         from aletheia.execution.coordinator import execute_order as execute_live_order
-                    else:
+                    elif allowed_mode == "binance_testnet":
                         from aletheia.execution.binance_broker import execute_live_order
-                elif allowed_mode == "okx_demo":
-                    from aletheia.execution.okx_broker import execute_live_order
+                    else:
+                        from aletheia.execution.okx_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
                 _entry = execution_proposal.price or 0.0

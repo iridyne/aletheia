@@ -75,9 +75,7 @@ async def _wait_fills(adapter, command, venue_order_id: str, start: datetime):
 
 
 async def _wait_order(adapter, instrument, venue_order_id: str, state):
-    query = OrderQuery(
-        scope=QueryScope(instrument=instrument), venue_order_id=venue_order_id
-    )
+    query = OrderQuery(scope=QueryScope(instrument=instrument), venue_order_id=venue_order_id)
     for _ in range(10):
         report = await adapter.get_order(query)
         if (
@@ -116,10 +114,11 @@ def _command(
 
 
 async def _qualify(args) -> dict:
-    if args.execution_mode != "binance_testnet":
-        raise ValueError("Phase 4 qualification supports binance_testnet only")
-    if args.execution_probe and not args.confirm_testnet_order:
-        raise ValueError("--execution-probe requires --confirm-testnet-order")
+    if args.execution_mode not in {"binance_testnet", "okx_demo"}:
+        raise ValueError("qualification supports binance_testnet and okx_demo only")
+    confirmed = getattr(args, "confirm_testnet_order", False) or getattr(args, "confirm_demo_order", False)
+    if args.execution_probe and not confirmed:
+        raise ValueError("--execution-probe requires explicit order confirmation")
     if is_worktree_dirty():
         raise RuntimeError("qualification_worktree_dirty")
     cfg = load_config()
@@ -157,9 +156,7 @@ async def _qualify(args) -> dict:
         if legacy is None:
             raise RuntimeError("legacy parity adapter unavailable")
         legacy_account, legacy_positions = await _query_legacy(legacy)
-        differences = _shadow_differences(
-            legacy_account, legacy_positions, account, positions
-        )
+        differences = _shadow_differences(legacy_account, legacy_positions, account, positions)
         artifact["read_parity"] = {
             "account_completeness": account.completeness.value,
             "position_completeness": positions.completeness.value,
@@ -179,12 +176,8 @@ async def _qualify(args) -> dict:
             return artifact
 
         instrument = instrument_from_local(args.symbol, "usdt_futures")
-        constraints = get_order_constraints(
-            args.execution_mode, args.symbol, "usdt_futures"
-        )
-        quantity = normalize_quantity(
-            float(constraints.amount_step), args.reference_price, constraints
-        )
+        constraints = get_order_constraints(args.execution_mode, args.symbol, "usdt_futures")
+        quantity = normalize_quantity(float(constraints.amount_step), args.reference_price, constraints)
         started = datetime.now(timezone.utc) - timedelta(minutes=1)
 
         # Exercise modify/cancel on a far-away post-only order before exposure.
@@ -193,7 +186,7 @@ async def _qualify(args) -> dict:
             expected_account=identity,
             instrument=instrument,
             purpose="entry",
-            client_order_id=f"uta-qual-limit-{uuid4().hex[:12]}",
+            client_order_id=f"utaquallimit{uuid4().hex[:12]}",
             side="buy",
             quantity=Decimal(str(quantity)),
             order_type="limit",
@@ -205,34 +198,34 @@ async def _qualify(args) -> dict:
         if (
             limit_report.evidence is not CommandEvidence.ACKNOWLEDGED
             or not limit_report.venue_order_id
-            or (limit_report.order and limit_report.order.state not in {
-                OrderLifecycle.ACCEPTED, OrderLifecycle.OPEN
-            })
+            or (limit_report.order and limit_report.order.state not in {OrderLifecycle.ACCEPTED, OrderLifecycle.OPEN})
         ):
             raise RuntimeError("resting limit qualification was not acknowledged open")
-        modified = await adapter.modify_order(ModifyOrderCommand(
-            command_id=str(uuid4()),
-            expected_account=identity,
-            instrument=instrument,
-            purpose="entry",
-            target_venue_order_id=limit_report.venue_order_id,
-            limit_price=Decimal(str(args.reference_price * Decimal("0.49"))),
-        ))
+        modified = await adapter.modify_order(
+            ModifyOrderCommand(
+                command_id=str(uuid4()),
+                expected_account=identity,
+                instrument=instrument,
+                purpose="entry",
+                target_venue_order_id=limit_report.venue_order_id,
+                limit_price=Decimal(str(args.reference_price * Decimal("0.49"))),
+            )
+        )
         if modified.evidence is not CommandEvidence.ACKNOWLEDGED:
             raise RuntimeError("modify qualification was not acknowledged")
-        cancelled = await adapter.cancel_order(CancelOrderCommand(
-            command_id=str(uuid4()),
-            expected_account=identity,
-            instrument=instrument,
-            purpose="entry",
-            target_venue_order_id=limit_report.venue_order_id,
-            reason="qualification_cleanup",
-        ))
+        cancelled = await adapter.cancel_order(
+            CancelOrderCommand(
+                command_id=str(uuid4()),
+                expected_account=identity,
+                instrument=instrument,
+                purpose="entry",
+                target_venue_order_id=limit_report.venue_order_id,
+                reason="qualification_cleanup",
+            )
+        )
         if cancelled.evidence is not CommandEvidence.ACKNOWLEDGED:
             raise RuntimeError("cancel qualification was not acknowledged")
-        cancelled_exact = await _wait_order(
-            adapter, instrument, limit_report.venue_order_id, OrderLifecycle.CANCELED
-        )
+        cancelled_exact = await _wait_order(adapter, instrument, limit_report.venue_order_id, OrderLifecycle.CANCELED)
         if (
             cancelled_exact.completeness is not ReadCompleteness.COMPLETE
             or cancelled_exact.found is None
@@ -246,19 +239,49 @@ async def _qualify(args) -> dict:
             purpose="entry",
             side="buy",
             quantity=quantity,
-            client_order_id=f"uta-qual-entry-{uuid4().hex[:12]}",
+            client_order_id=f"utaqualentry{uuid4().hex[:12]}",
             leverage=args.leverage,
         )
         entry_report = await adapter.submit_order(entry)
         if entry_report.evidence is not CommandEvidence.ACKNOWLEDGED or not entry_report.venue_order_id:
             raise RuntimeError("entry qualification acknowledgement unavailable")
-        entry_fills = await _wait_fills(
-            adapter, entry, entry_report.venue_order_id, started
-        )
+        entry_fills = await _wait_fills(adapter, entry, entry_report.venue_order_id, started)
         if entry_fills.completeness is not ReadCompleteness.COMPLETE or not entry_fills.fills:
             artifact["unresolved_items"].append("entry_private_fill_unavailable")
             raise RuntimeError("entry private fill qualification unavailable")
         filled_quantity = sum((fill.quantity for fill in entry_fills.fills), Decimal(0))
+
+        protection_submit = protection_cancel = None
+        if args.execution_mode == "okx_demo":
+            protection = SubmitOrderCommand(
+                command_id=str(uuid4()),
+                expected_account=identity,
+                instrument=instrument,
+                purpose="protective_stop",
+                client_order_id=f"utaqualstop{uuid4().hex[:12]}",
+                side="sell",
+                quantity=filled_quantity,
+                order_type="market",
+                trigger_price=Decimal(str(args.reference_price / 2)),
+                reduce_only=True,
+            )
+            protection_report = await adapter.submit_order(protection)
+            protection_submit = protection_report.evidence.value
+            if not protection_report.venue_order_id:
+                raise RuntimeError("protection qualification acknowledgement unavailable")
+            protection_report_cancel = await adapter.cancel_order(
+                CancelOrderCommand(
+                    command_id=str(uuid4()),
+                    expected_account=identity,
+                    instrument=instrument,
+                    purpose="protective_stop",
+                    target_venue_order_id=protection_report.venue_order_id,
+                    reason="qualification_cleanup",
+                )
+            )
+            protection_cancel = protection_report_cancel.evidence.value
+            if protection_report_cancel.evidence is not CommandEvidence.ACKNOWLEDGED:
+                raise RuntimeError("protection cancel qualification was not acknowledged")
 
         close = _command(
             adapter,
@@ -266,33 +289,35 @@ async def _qualify(args) -> dict:
             purpose="exit",
             side="sell",
             quantity=filled_quantity,
-            client_order_id=f"uta-qual-close-{uuid4().hex[:12]}",
+            client_order_id=f"utaqualclose{uuid4().hex[:12]}",
             reduce_only=True,
         )
         close_report = await adapter.submit_order(close)
         if close_report.evidence is not CommandEvidence.ACKNOWLEDGED or not close_report.venue_order_id:
             artifact["unresolved_items"].append("close_acknowledgement_unavailable")
             raise RuntimeError("close qualification acknowledgement unavailable")
-        close_fills = await _wait_fills(
-            adapter, close, close_report.venue_order_id, started
-        )
+        close_fills = await _wait_fills(adapter, close, close_report.venue_order_id, started)
         if close_fills.completeness is not ReadCompleteness.COMPLETE or not close_fills.fills:
             artifact["unresolved_items"].append("close_private_fill_unavailable")
             raise RuntimeError("close private fill qualification unavailable")
-        verified = await adapter.verify_position_exit(VerifiedExitQuery(
-            identity=identity,
-            local_position_id="uta-qualification",
-            instrument=instrument,
-            direction="long",
-            expected_quantity=filled_quantity,
-            history_start_at=started,
-            history_end_at=datetime.now(timezone.utc) + timedelta(minutes=2),
-            local_order_ids=(entry.client_order_id, close.client_order_id),
-        ))
-        exact = await adapter.get_order(OrderQuery(
-            scope=QueryScope(instrument=instrument),
-            venue_order_id=close_report.venue_order_id,
-        ))
+        verified = await adapter.verify_position_exit(
+            VerifiedExitQuery(
+                identity=identity,
+                local_position_id="uta-qualification",
+                instrument=instrument,
+                direction="long",
+                expected_quantity=filled_quantity,
+                history_start_at=started,
+                history_end_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+                local_order_ids=(entry.client_order_id, close.client_order_id),
+            )
+        )
+        exact = await adapter.get_order(
+            OrderQuery(
+                scope=QueryScope(instrument=instrument),
+                venue_order_id=close_report.venue_order_id,
+            )
+        )
         artifact["execution_probe"] = {
             "quantity": str(quantity),
             "entry": {
@@ -305,6 +330,8 @@ async def _qualify(args) -> dict:
             },
             "modify": modified.evidence.value,
             "cancel": cancelled.evidence.value,
+            "protection_submit": protection_submit,
+            "protection_cancel": protection_cancel,
             "close": {
                 "command_id": close.command_id,
                 "client_order_id": close.client_order_id,
@@ -323,9 +350,7 @@ async def _qualify(args) -> dict:
         )
         if is_worktree_dirty():
             artifact["unresolved_items"].append("qualification_worktree_dirty")
-        artifact["qualified"] = (
-            read_ok and execution_ok and not artifact["unresolved_items"]
-        )
+        artifact["qualified"] = read_ok and execution_ok and not artifact["unresolved_items"]
         if not artifact["qualified"]:
             artifact["unresolved_items"].append("qualification_gate_failed")
         return artifact
@@ -340,6 +365,7 @@ def main() -> int:
     parser.add_argument("--read-parity", action="store_true")
     parser.add_argument("--execution-probe", action="store_true")
     parser.add_argument("--confirm-testnet-order", action="store_true")
+    parser.add_argument("--confirm-demo-order", action="store_true")
     parser.add_argument("--symbol", default="BTC/USDT")
     parser.add_argument("--reference-price", type=Decimal)
     parser.add_argument("--leverage", type=int, default=1)
@@ -347,9 +373,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.read_parity:
         parser.error("--read-parity is required")
-    if args.execution_probe and (
-        args.reference_price is None or args.reference_price <= 0
-    ):
+    if args.execution_probe and (args.reference_price is None or args.reference_price <= 0):
         parser.error("--execution-probe requires positive --reference-price")
     path = _artifact_path(args.execution_mode, args.artifact)
     try:

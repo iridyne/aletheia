@@ -87,6 +87,17 @@ entry/private-Fill/reduce-only-close/verified-exit evidence, and writes a
 credential-free artifact bound to code SHA, account fingerprint and credential
 generation. Missing credentials exits non-zero with `qualified=false`.
 
+## Phase 5 OKX demo execution slice
+
+Fixing baseline: `master@de924e04aaae7f83fabbaab52797c9082e346a41`.
+
+| Boundary | Phase 5 implementation state | Authority result |
+|---|---|---|
+| OKX profile | `OKXDemoProfile` owns spot/perp quantity translation, exact integer contract conversion, demo `clOrdId`, leverage/margin mode, reduce-only, trigger TP/SL, modify and cancel parameters. `OKXLiveProfile` remains mutation-disabled. | Unknown contract size or non-integral contract quantity is `NOT_SENT`; raw OKX params remain below `uta/profiles/`. |
+| Entry/full close | Gateway selects the existing Coordinator only for an exact current `okx_demo + uta_v1` qualification; Position Manager returns close intent to Gateway. | Pending local Order precedes external I/O; acknowledgement uses the shared CAS and legacy remains the rollback path. |
+| Protection | `execution/stops.py` returns OKX demo protection authority to Gateway. Coordinator persists each protection child before UTA submission and cancels the proven old stop before a replacement. | No direct Position Manager/protection UTA call and no dual submission; successful venue TP/SL identities remain on the Position. |
+| Qualification | The secret-safe script accepts `okx_demo`, uses venue-valid client ids, and requires submit/modify/cancel, private entry/close fills, verified exit plus protection submit/cancel evidence. | No credential probe has been authorized or run on this baseline, so OKX demo remains unqualified and legacy-selected. |
+
 ## Adjacent execution findings
 
 | Issue | Exact-head evidence | Composition decision |

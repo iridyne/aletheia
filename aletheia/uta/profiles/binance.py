@@ -68,6 +68,7 @@ class BinanceTestnetProfile(CCXTProfile):
             await exchange.set_leverage(
                 int(command.leverage), command.instrument.venue_symbol
             )
+        return command
 
     @staticmethod
     def _params(command) -> dict:

@@ -79,7 +79,7 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 |------|--------|--------|------|
 | `paper_internal` | 否(本地模拟) | paper_broker | `paper_broker.py:17` |
 | `bitget_demo` | 是(demo 账户) | bitget_broker | `bitget_broker.py:53` |
-| `okx_demo` | 是(demo) | okx_broker | `okx_broker.py:96` |
+| `okx_demo` | 是(demo) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise okx_broker | `gateway.py` / `execution/coordinator.py` |
 | `binance_testnet` | 是(testnet) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise binance_broker | `gateway.py` / `execution/coordinator.py` |
 | `bitget/okx/binance_live_limited` | 是(**真实资金**) | 同上 broker 同函数 | — |
 
@@ -400,7 +400,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   只返回原 claim，不得覆盖。Position 保持 open 且 `exit_reasoning` 为空，直到完整 private Fill
   在共享 materializer 中验证通过。非空 carrier 损坏或与 `close_reason` 不一致时必须
   `materialization_missing`，不得降级成 generic actor/source；历史 `NULL` carrier 保持兼容。
-- 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→Gateway close route（qualified uta_v1 时 Coordinator → UTA，否则 legacy broker）` / `paper_internal→本地 close`。
+- 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo、binance_testnet→Gateway close route（qualified uta_v1 时 Coordinator → UTA，否则 legacy broker）` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
 - **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
@@ -685,7 +685,10 @@ Risk 或本地存储的既有权威。Phase 0～2 已实现冻结合同、Decima
 parity 和 account/position read projection；Phase 3 把 reconciliation、stale/pending recovery、
 verified exit、funding settlement 与 Live Trust 的私有读取切到 UTA 规范化报告。Phase 4 已实现
 Binance testnet 的配置门控 entry/full-close 垂直切片与 submit/modify/cancel command evidence；凭据
-qualification 未通过时选择器仍必须保持 legacy，其他 profile mutation 仍返回 `NOT_SENT`。
+qualification 未通过时选择器仍必须保持 legacy。Phase 5 已实现 OKX demo 的
+spot/perp contract-size 换算、demo client-id、entry/full-close、原生保护单与替换路径；它同样只在
+当前代码/账户资格 artifact 通过后由 Gateway 选择，否则继续使用 OKX legacy broker。Bitget 与
+live-limited profile mutation 尚未切换。
 
 后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
 UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction
