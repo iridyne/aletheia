@@ -26,13 +26,21 @@ from aletheia.data.price_feed import (
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Reset module-level cache before each test."""
+    from aletheia.data import price_feed
+
     with _cache_lock:
         _price_cache.clear()
         _instrument_price_cache.clear()
+    with price_feed._tick_lock:
+        price_feed._tick_counter = 0
+        price_feed._universe_round = 0
     yield
     with _cache_lock:
         _price_cache.clear()
         _instrument_price_cache.clear()
+    with price_feed._tick_lock:
+        price_feed._tick_counter = 0
+        price_feed._universe_round = 0
 
 
 class TestGetCachedPrice:
@@ -240,13 +248,20 @@ class TestGetWatchedSymbols:
         cfg.event_triggers.watch_universe_members = True
         mock_cfg.return_value = cfg
 
+        always_on: set[tuple[str, str, str]] = set()
+        universe_rounds: dict[tuple[str, str, str], int] = {}
         with patch("aletheia.data.price_feed._UNIVERSE_TICK_EVERY", 1):
-            result = get_watched_instruments()
+            result = get_watched_instruments(
+                _always_on_identities=always_on,
+                _universe_round_by_identity=universe_rounds,
+            )
 
         assert [str(item) for item in result] == [
             "okx:BTC/USDT:perp",
             "okx:ETH/USDT:perp",
         ]
+        assert always_on == {("okx", "BTC/USDT", "perp")}
+        assert universe_rounds == {("okx", "ETH/USDT", "perp"): 1}
 
     @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_all_open_positions")
@@ -290,10 +305,50 @@ class TestGetWatchedSymbols:
             ],
         )
 
-        assert [str(item) for item in get_watched_instruments()] == [
+        always_on: set[tuple[str, str, str]] = set()
+        assert [
+            str(item)
+            for item in get_watched_instruments(_always_on_identities=always_on)
+        ] == [
             "okx:BTC/USDT:spot",
             "binance:BTC/USDT:perp",
         ]
+        assert always_on == {
+            ("okx", "BTC/USDT", "spot"),
+            ("binance", "BTC/USDT", "perp"),
+        }
+
+    @patch("aletheia.config.loader.load_config")
+    @patch("aletheia.storage.repositories.get_universe_asset")
+    @patch("aletheia.storage.repositories.get_active_universe_members")
+    @patch(
+        "aletheia.storage.repositories.list_all_open_positions",
+        side_effect=Exception("db error"),
+    )
+    def test_always_on_source_failure_uses_strict_cadence(
+        self, mock_positions, mock_members, mock_asset, mock_cfg
+    ):
+        mock_members.return_value = [
+            {
+                "asset_id": "asset-eth",
+                "symbol": "ETH/USDT",
+                "market_type": "perp",
+                "execution_eligible": 1,
+            }
+        ]
+        mock_asset.return_value = {"venue": "okx", "market_type": "perp"}
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "okx"
+        cfg.event_triggers.enabled = True
+        cfg.event_triggers.watch_universe_members = True
+        mock_cfg.return_value = cfg
+
+        always_on: set[tuple[str, str, str]] = set()
+        with patch("aletheia.data.price_feed._UNIVERSE_TICK_EVERY", 1):
+            result = get_watched_instruments(_always_on_identities=always_on)
+
+        assert [str(item) for item in result] == ["okx:ETH/USDT:perp"]
+        assert always_on == {("okx", "ETH/USDT", "perp")}
 
     @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_all_open_positions")
@@ -338,7 +393,11 @@ class TestRefreshWatchedPrices:
         import aletheia.data.ccxt_provider as providers
 
         instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
-        monkeypatch.setattr(price_feed, "get_watched_instruments", lambda: [instrument])
+        monkeypatch.setattr(
+            price_feed,
+            "get_watched_instruments",
+            lambda **_kwargs: [instrument],
+        )
         monkeypatch.setattr(
             candidate_market_facts,
             "pending_candidate_instruments",
@@ -456,41 +515,265 @@ class TestRefreshWatchedPrices:
     )
     @patch("aletheia.data.ccxt_provider.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
-    def test_stale_instrument_cache_starts_a_new_event_continuity_segment(
-        self, mock_cfg, mock_provider_fn, mock_symbols
+    @pytest.mark.parametrize(
+        ("previous_age_sec", "always_on", "expects_event"),
+        [
+            (360, False, True),
+            (361, False, False),
+            (90, True, True),
+            (91, True, False),
+            (-1, False, False),
+            ("malformed", False, False),
+            ("naive", False, False),
+        ],
+    )
+    def test_event_continuity_respects_watcher_cadence_and_invalid_timestamps(
+        self,
+        mock_cfg,
+        mock_provider_fn,
+        mock_symbols,
+        previous_age_sec,
+        always_on,
+        expects_event,
     ):
         from aletheia.data import price_feed
 
+        instrument = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+        instrument_key = ("binance", "BTC/USDT", "spot")
+        universe_round = 2
+
+        def watched(*, _always_on_identities, _universe_round_by_identity):
+            nonlocal universe_round
+            if always_on:
+                _always_on_identities.add(instrument_key)
+            else:
+                _universe_round_by_identity[instrument_key] = universe_round
+                universe_round += 1
+            return [instrument]
+
+        mock_symbols.side_effect = watched
         cfg = MagicMock()
         cfg.event_triggers.enabled = True
         cfg.event_triggers.price_move_pct_threshold = 5.0
         cfg.event_triggers.volume_surge_multiplier = 2.0
         mock_cfg.return_value = cfg
 
-        stale_ts = datetime.now(timezone.utc) - timedelta(
-            seconds=_STALE_THRESHOLD_SEC + 1
-        )
+        observed_at = datetime(2026, 8, 29, tzinfo=timezone.utc)
+        if previous_age_sec == "malformed":
+            previous_ts = "not-a-timestamp"
+        elif previous_age_sec == "naive":
+            previous_ts = observed_at.replace(tzinfo=None)
+        else:
+            previous_ts = observed_at - timedelta(seconds=previous_age_sec)
         with _cache_lock:
-            price_feed._instrument_price_cache[("binance", "BTC/USDT", "spot")] = {
+            price_feed._instrument_price_cache[instrument_key] = {
                 "price": 100.0,
-                "ts": stale_ts,
+                "ts": previous_ts,
                 "volume_24h": 100.0,
+                "event_universe_round": 1,
             }
 
         provider = AsyncMock()
         provider.get_ticker = AsyncMock(
-            return_value=MagicMock(last_price=110.0, volume_24h=300.0, provider="binance")
+            return_value=Ticker(
+                symbol="BTC/USDT",
+                last_price=110.0,
+                volume_24h=300.0,
+                change_pct_24h=0.0,
+                provider="binance",
+            )
         )
         provider.close = AsyncMock()
         mock_provider_fn.return_value = provider
 
-        with patch("aletheia.data.price_feed._check_event_triggers") as mock_events:
+        with (
+            patch("aletheia.data.price_feed.datetime") as clock,
+            patch("aletheia.data.price_feed._check_event_triggers") as mock_events,
+        ):
+            clock.now.return_value = observed_at
             asyncio.run(refresh_watched_prices())
 
-        mock_events.assert_not_called()
-        assert price_feed._instrument_price_cache[("binance", "BTC/USDT", "spot")][
-            "prev_price"
-        ] is None
+            if expects_event:
+                mock_events.assert_called_once()
+            else:
+                mock_events.assert_not_called()
+            assert price_feed._instrument_price_cache[instrument_key]["prev_price"] == (
+                100.0 if expects_event else None
+            )
+
+            if previous_age_sec == 361:
+                clock.now.return_value = observed_at + timedelta(seconds=1)
+                asyncio.run(refresh_watched_prices())
+                mock_events.assert_called_once()
+
+    def test_universe_events_survive_slow_scheduler_tick_gate(self, monkeypatch):
+        from aletheia.data import candidate_market_facts, ccxt_provider, price_feed
+        import aletheia.config.loader as loader
+        import aletheia.storage.repositories as repo
+
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "binance"
+        cfg.event_triggers.enabled = True
+        cfg.event_triggers.watch_universe_members = True
+        cfg.event_triggers.price_move_pct_threshold = 5.0
+        cfg.event_triggers.volume_surge_multiplier = 2.0
+        monkeypatch.setattr(loader, "load_config", lambda: cfg)
+        monkeypatch.setattr(repo, "list_all_open_positions", lambda: [])
+        monkeypatch.setattr(
+            candidate_market_facts, "pending_candidate_instruments", lambda: [],
+        )
+        monkeypatch.setattr(
+            repo,
+            "get_active_universe_members",
+            lambda **_kwargs: [{
+                "asset_id": "asset-btc",
+                "symbol": "BTC/USDT",
+                "market_type": "spot",
+                "execution_eligible": 1,
+            }],
+        )
+        monkeypatch.setattr(
+            repo, "get_universe_asset", lambda _asset_id: {"venue": "binance"},
+        )
+
+        provider = MagicMock()
+        provider.get_ticker = AsyncMock(
+            side_effect=[
+                Ticker(
+                    symbol="BTC/USDT", last_price=100.0, volume_24h=100.0,
+                    change_pct_24h=0.0, provider="binance",
+                ),
+                Ticker(
+                    symbol="BTC/USDT", last_price=110.0, volume_24h=300.0,
+                    change_pct_24h=0.0, provider="binance",
+                ),
+            ]
+        )
+        provider.close = AsyncMock()
+        monkeypatch.setattr(
+            ccxt_provider, "get_market_data_provider", lambda **_kwargs: provider,
+        )
+
+        first_observed = datetime(2026, 8, 29, tzinfo=timezone.utc)
+        # Three actual calls can be 90s apart when a late 45s invocation crosses
+        # two 30s fire points; a late serial quote adds another 45s.
+        second_observed = first_observed + timedelta(seconds=(3 * 90) + 45)
+        with (
+            patch("aletheia.data.price_feed.datetime") as clock,
+            patch("aletheia.data.price_feed._check_event_triggers") as mock_events,
+        ):
+            clock.now.side_effect = [first_observed, second_observed]
+            results = [asyncio.run(refresh_watched_prices()) for _ in range(6)]
+
+        assert [item["refreshed"] for item in results] == [0, 0, 1, 0, 0, 1]
+        mock_events.assert_called_once()
+        assert provider.get_ticker.await_count == 2
+
+    @pytest.mark.parametrize(
+        "discontinuity",
+        [
+            "left_watch",
+            "quote_outage",
+            "expansion_failure",
+            "always_on_transition",
+        ],
+    )
+    def test_universe_recovery_requires_a_new_sampling_segment(
+        self, monkeypatch, discontinuity
+    ):
+        from aletheia.data import candidate_market_facts, ccxt_provider
+        import aletheia.config.loader as loader
+        import aletheia.storage.repositories as repo
+
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "binance"
+        cfg.event_triggers.enabled = True
+        cfg.event_triggers.watch_universe_members = True
+        cfg.event_triggers.price_move_pct_threshold = 5.0
+        cfg.event_triggers.volume_surge_multiplier = 2.0
+        monkeypatch.setattr(loader, "load_config", lambda: cfg)
+        position_call = 0
+
+        def open_positions():
+            nonlocal position_call
+            position_call += 1
+            if discontinuity == "always_on_transition" and position_call == 1:
+                return [{
+                    "id": "position-btc",
+                    "symbol": "BTC/USDT",
+                    "market_type": "spot",
+                    "execution_mode": "paper_internal",
+                }]
+            return []
+
+        monkeypatch.setattr(repo, "list_all_open_positions", open_positions)
+        monkeypatch.setattr(
+            candidate_market_facts, "pending_candidate_instruments", lambda: [],
+        )
+
+        member = {
+            "asset_id": "asset-btc",
+            "symbol": "BTC/USDT",
+            "market_type": "spot",
+            "execution_eligible": 1,
+        }
+        round_index = 0
+
+        def active_members(**_kwargs):
+            nonlocal round_index
+            round_index += 1
+            if discontinuity == "left_watch" and round_index == 2:
+                return []
+            if discontinuity == "expansion_failure" and round_index == 2:
+                raise RuntimeError("universe expansion failed")
+            return [member]
+
+        monkeypatch.setattr(repo, "get_active_universe_members", active_members)
+        monkeypatch.setattr(
+            repo, "get_universe_asset", lambda _asset_id: {"venue": "binance"},
+        )
+
+        quotes = [
+            Ticker(
+                symbol="BTC/USDT", last_price=100.0, volume_24h=100.0,
+                change_pct_24h=0.0, provider="binance",
+            ),
+            Ticker(
+                symbol="BTC/USDT", last_price=110.0, volume_24h=200.0,
+                change_pct_24h=0.0, provider="binance",
+            ),
+            Ticker(
+                symbol="BTC/USDT", last_price=120.0, volume_24h=300.0,
+                change_pct_24h=0.0, provider="binance",
+            ),
+        ]
+        if discontinuity == "quote_outage":
+            quotes.insert(1, RuntimeError("quote timeout"))
+        provider = MagicMock()
+        provider.get_ticker = AsyncMock(side_effect=quotes)
+        provider.close = AsyncMock()
+        monkeypatch.setattr(
+            ccxt_provider, "get_market_data_provider", lambda **_kwargs: provider,
+        )
+
+        first_observed = datetime(2026, 8, 29, tzinfo=timezone.utc)
+        with (
+            patch("aletheia.data.price_feed._UNIVERSE_TICK_EVERY", 1),
+            patch("aletheia.data.price_feed.datetime") as clock,
+            patch("aletheia.data.price_feed._check_event_triggers") as mock_events,
+        ):
+            clock.now.side_effect = [
+                first_observed,
+                first_observed + timedelta(seconds=180),
+                first_observed + timedelta(seconds=270),
+            ]
+            refresh_count = 3 if discontinuity == "always_on_transition" else 4
+            for _ in range(refresh_count):
+                asyncio.run(refresh_watched_prices())
+
+        # The first sample after a missed round or watcher-authority transition
+        # is a new baseline. Only the following consecutive round may emit.
+        mock_events.assert_called_once()
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",
