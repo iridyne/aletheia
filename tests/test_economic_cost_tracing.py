@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 
 async def _make_async_provider(provider):
     """Helper for tests: wrap sync mock provider in async."""
@@ -13,6 +15,23 @@ import json
 import pytest
 
 pytestmark = pytest.mark.domain_runtime
+
+
+@pytest.fixture(autouse=True)
+def _cost_file_db(_inmemory_db, tmp_path, monkeypatch):
+    """Use a file DB because tracing is intentionally persisted off-loop."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    reset_db()
+    sq._db_conn = None
+    run_migrations()
+    yield
+    reset_db()
 
 from aletheia.agent_runtime.run_context import (
     bind_economic_attribution,
@@ -166,6 +185,31 @@ async def test_physical_provider_attempt_persists_usage_and_cost():
     assert aggregate["cost_complete"] is True
     assert aggregate["cost_estimate_usd"] == pytest.approx(0.002)
     assert aggregate["final_model"] == "measured-model"
+
+
+@pytest.mark.asyncio
+async def test_cost_tracing_write_does_not_block_provider_loop(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_record(**_kwargs):
+        entered.set()
+        release.wait(timeout=2.0)
+
+    monkeypatch.setattr(
+        "aletheia.economics.tracing.record_llm_attempt", blocked_record
+    )
+    provider_task = asyncio.create_task(
+        _MeasuredProvider().complete(ModelRequest(messages=[]))
+    )
+    assert await asyncio.to_thread(entered.wait, 1.0)
+
+    loop_tick = asyncio.Event()
+    asyncio.get_running_loop().call_soon(loop_tick.set)
+    await asyncio.wait_for(loop_tick.wait(), timeout=0.2)
+
+    release.set()
+    await provider_task
 
 
 @pytest.mark.asyncio

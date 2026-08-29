@@ -33,6 +33,7 @@ _readonly_local = threading.local()
 _connection_generation = 0
 _injected_db_path: Path | None = None
 _injected_db_active = False
+_injected_db_connection: sqlite3.Connection | None = None
 
 _logger = logging.getLogger("aletheia.storage.sqlite")
 _T = TypeVar("_T")
@@ -741,6 +742,8 @@ def get_db() -> sqlite3.Connection:
         return readonly_connection
     if getattr(_readonly_local, "block_missing", False):
         raise FileNotFoundError(db_path())
+    if _injected_db_connection is not None:
+        return _injected_db_connection
     conn = getattr(_local, "conn", None)
     if conn is not None and getattr(_local, "generation", -1) != _connection_generation:
         conn.close()
@@ -765,8 +768,12 @@ def get_db() -> sqlite3.Connection:
 
 
 def close_db() -> None:
+    global _injected_db_connection
+
     conn = getattr(_local, "conn", None)
     if conn:
+        if conn is _injected_db_connection:
+            _injected_db_connection = None
         conn.close()
         _local.conn = None
 
@@ -789,13 +796,14 @@ def rollback_if_in_transaction() -> bool:
 
 def reset_db() -> None:
     """Reset connection for this thread (for testing)."""
-    global _connection_generation, _injected_db_path, _injected_db_active
+    global _connection_generation, _injected_db_path, _injected_db_active, _injected_db_connection
 
     shutdown_writer()
     close_db()
     _connection_generation += 1
     _injected_db_path = None
     _injected_db_active = False
+    _injected_db_connection = None
 
 
 # ---------------------------------------------------------------------------
@@ -812,13 +820,14 @@ class _DbConnDescriptor:
         return getattr(_local, "conn", None)
 
     def __set__(self, obj, value):
-        global _connection_generation, _injected_db_path, _injected_db_active
+        global _connection_generation, _injected_db_path, _injected_db_active, _injected_db_connection
 
         shutdown_writer()
         _local.conn = value
         _connection_generation += 1
         _local.generation = _connection_generation
         _injected_db_active = value is not None
+        _injected_db_connection = None
         if value is None:
             _injected_db_path = None
             return
@@ -831,6 +840,11 @@ class _DbConnDescriptor:
             row = value.execute("PRAGMA database_list").fetchone()
             raw_path = row[2] if row else ""
             _injected_db_path = Path(raw_path) if raw_path else None
+            if _injected_db_path is None:
+                # In-memory test databases have no path to reopen in a worker.
+                # Share the explicitly injected, check_same_thread=False handle
+                # so async offloads observe the same test state.
+                _injected_db_connection = value
         except sqlite3.Error:
             _injected_db_path = None
 
