@@ -251,8 +251,10 @@ sink 不会产生重复记录。Order、结果类型或 reason 改变代表不�
 ### §6.3c Funding settlement audit outbox
 
 新发生的 paper 与 exchange funding settlement/correction 使用 versioned canonical tuple
-`(position_id, event_type, funding_accounting_version, funding_economics_fingerprint)` 派生 stable
-audit ID。Position/PnL、close projection、paper cash、Outcome hook intent 与同一 `AuditEvent`
+`(position_id, event_type, funding_accounting_version, funding_economics_fingerprint,
+transition_fingerprint, occurred_at)` 派生每次会计 transition occurrence 的 stable audit ID。
+`transition_fingerprint` 绑定完整 before/after 会计事实，`occurred_at` 区分相同事实再次损坏并修复的独立发生。
+Position/PnL、close projection、paper cash、Outcome hook intent 与同一 `AuditEvent`
 在一个 SQLite transaction 内提交；JSONL mirror 失败不得回滚或重放这些会计事实。
 
 `audit_events.jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at`

@@ -700,7 +700,9 @@ def test_broker_funding_audit_failure_replays_without_reapplying_settlement(
     )
 
     real_writer = jsonl_mod.write_audits_deduplicated
-    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", lambda _events: set())
+    monkeypatch.setattr(
+        jsonl_mod, "write_audits_deduplicated", lambda _events, **_kwargs: set(),
+    )
     first = materialize_broker_funding_economics(
         incomplete,
         funding_cost=funding.funding_cost,

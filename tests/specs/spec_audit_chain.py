@@ -392,6 +392,7 @@ def test_funding_audit_reconciler_acks_append_before_crash_without_duplicate(
         accounting_version="broker-funding-v1",
         fingerprint=fingerprint,
         transition_fingerprint="sha256:" + "b" * 64,
+        occurred_at="2026-08-23T00:00:00+00:00",
     )
     event = AuditEvent(
         id=audit_id,
@@ -483,7 +484,8 @@ def test_funding_audit_reconciler_persists_only_error_class(
     with repo.transaction(immediate=True):
         insert_pending_funding_audit(event)
 
-    def _fail_write(_events):
+    def _fail_write(_events, *, lock_timeout_sec=None):
+        assert lock_timeout_sec == 1.0
         raise OSError("private sink path and provider detail")
 
     monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", _fail_write)
@@ -498,6 +500,43 @@ def test_funding_audit_reconciler_persists_only_error_class(
     assert result["pending"] == 1
     assert tuple(row) == ("failed", 1, "OSError", None)
     assert "private sink" not in repr(dict(row))
+
+
+def test_funding_audit_reconciler_bounds_jsonl_file_lock(tmp_path, monkeypatch):
+    from tests.test_demo_trading import setup_env
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.files.jsonl as jsonl_mod
+    from aletheia.portfolio.funding_audit import (
+        insert_pending_funding_audit,
+        reconcile_funding_audits,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    event = AuditEvent(
+        id="funding-audit-bounded-lock",
+        actor="system",
+        source="broker_funding_settler",
+        event_type="exchange_position_funding_settled",
+        entity_type="position",
+        entity_id="position-bounded-lock",
+        before_state="{}",
+        after_state="{}",
+        message="Materialized broker funding economics",
+    )
+    with repo.transaction(immediate=True):
+        insert_pending_funding_audit(event)
+
+    def _timed_lock(_path, *, timeout_sec=None):
+        assert timeout_sec == 1.0
+        raise jsonl_mod._AuditLockTimeout("held")
+
+    monkeypatch.setattr(jsonl_mod, "_exclusive_file_lock", _timed_lock)
+    result = reconcile_funding_audits()
+
+    assert result["attempted"] == 1
+    assert result["failed"] == 1
+    assert result["pending"] == 1
 
 
 def test_audit_batch_scans_chain_once(audit_tmp, monkeypatch):

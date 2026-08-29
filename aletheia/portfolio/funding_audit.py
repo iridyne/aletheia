@@ -25,6 +25,7 @@ def funding_audit_id(
     accounting_version: str,
     fingerprint: str,
     transition_fingerprint: str,
+    occurred_at: str,
 ) -> str:
     """Return the stable identity shared by SQLite and the JSONL mirror."""
     canonical = json.dumps(
@@ -34,6 +35,7 @@ def funding_audit_id(
             accounting_version,
             fingerprint,
             transition_fingerprint,
+            occurred_at,
         ],
         separators=(",", ":"),
     )
@@ -147,7 +149,7 @@ def reconcile_funding_audits(
     events = [_payload(row) for row in rows]
     error_class: str | None = None
     try:
-        mirrored_ids = write_audits_deduplicated(events)
+        mirrored_ids = write_audits_deduplicated(events, lock_timeout_sec=1.0)
     except Exception as exc:
         mirrored_ids = set()
         error_class = type(exc).__name__

@@ -1786,8 +1786,8 @@ def test_repeated_repairs_with_same_funding_evidence_keep_distinct_audits(
         realized_pnl=0.36,
         funding_cost=0.02,
         funding_evidence=evidence,
-        outcome_eligible=True,
-        outcome_exclusion_reason="eligible",
+        outcome_eligible=False,
+        outcome_exclusion_reason="attribution_pending",
     )
 
     repairs = conn.execute(
@@ -1918,7 +1918,9 @@ def test_paper_funding_audit_failure_replays_without_reapplying_settlement(
     _seed_null_close_event(position_id, closed_at.isoformat())
     evidence = _complete_recovered_funding(position_id, cost=0.02)
     real_writer = jsonl_mod.write_audits_deduplicated
-    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", lambda _events: set())
+    monkeypatch.setattr(
+        jsonl_mod, "write_audits_deduplicated", lambda _events, **_kwargs: set(),
+    )
 
     first = materialize_position_economics(
         position_id,

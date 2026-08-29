@@ -313,7 +313,9 @@ def _repair_incomplete_final_line(path: Path, events: list[dict]) -> None:
         stream.write(suffix)
 
 
-def write_audits_deduplicated(events: list[dict]) -> set[str]:
+def write_audits_deduplicated(
+    events: list[dict], *, lock_timeout_sec: float | None = None,
+) -> set[str]:
     """Append a durable-outbox batch once per stable event id.
 
     The chain is scanned once and the entire batch is appended under one
@@ -331,7 +333,9 @@ def write_audits_deduplicated(events: list[dict]) -> set[str]:
     completed: set[str] = set()
     try:
         with _audit_hash_lock:
-            with _exclusive_file_lock(_log_dir() / ".audit.lock"):
+            with _exclusive_file_lock(
+                _log_dir() / ".audit.lock", timeout_sec=lock_timeout_sec,
+            ):
                 _repair_incomplete_final_line(audit_path, events)
                 completed = _audit_record_ids(audit_path, set(event_ids))
                 prev_hash = _get_last_audit_hash(use_cache=False)

@@ -677,6 +677,7 @@ def materialize_position_economics(
             "corrected": "paper_position_economics_corrected",
             "repaired": "paper_position_economics_repaired",
         }.get(status, "paper_position_funding_settled")
+        occurred_at = datetime.now(timezone.utc).isoformat()
         audit_event_id = funding_audit_id(
             position_id=position_id,
             event_type=event_type,
@@ -686,9 +687,11 @@ def materialize_position_economics(
                 "before": before,
                 "after": after,
             }),
+            occurred_at=occurred_at,
         )
         insert_pending_funding_audit(AuditEvent(
             id=audit_event_id,
+            timestamp=occurred_at,
             actor=actor,
             source=source,
             event_type=event_type,

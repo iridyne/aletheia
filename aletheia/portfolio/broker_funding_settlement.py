@@ -275,6 +275,7 @@ def materialize_broker_funding_economics(
             "outcome_exclusion_reason": outcome_reason,
             "funding_economics_fingerprint": fingerprint,
         }
+        occurred_at = datetime.now(timezone.utc).isoformat()
         audit_event_id = funding_audit_id(
             position_id=position_id,
             event_type="exchange_position_funding_settled",
@@ -284,9 +285,11 @@ def materialize_broker_funding_economics(
                 "before": before,
                 "after": after,
             }),
+            occurred_at=occurred_at,
         )
         insert_pending_funding_audit(AuditEvent(
             id=audit_event_id,
+            timestamp=occurred_at,
             actor="system",
             source="broker_funding_settler",
             event_type="exchange_position_funding_settled",
