@@ -71,6 +71,10 @@ def resolve_knowledge_path(file_path: str | None) -> Path | None:
         return None
     return candidate if candidate.is_file() else None
 
+def _json_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Normalize YAML scalar types into a stable JSON-compatible snapshot."""
+    return json.loads(json.dumps(metadata, default=str))
+
 
 def canonicalize_written_document(path: Path) -> dict[str, Any]:
     """Return fields persisted for a newly written canonical Markdown document."""
@@ -83,7 +87,10 @@ def canonicalize_written_document(path: Path) -> dict[str, Any]:
         "content_format": CONTENT_FORMAT,
         "content_sha256": content_sha256(text),
         "metadata_json": json.dumps(
-            metadata, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            _json_metadata(metadata),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
         ),
         "symbol": _normalise_symbol(metadata.get("symbol")),
         "direction": _normalise_token(metadata.get("direction")),
@@ -116,7 +123,7 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         metadata, _ = parse_frontmatter_text(inline)
         expected_metadata = _metadata_from_json(row.get("metadata_json"))
-        if expected_metadata is not None and metadata != expected_metadata:
+        if expected_metadata is not None and _json_metadata(metadata) != expected_metadata:
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         return KnowledgeDocument(
             inline,

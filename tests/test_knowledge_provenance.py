@@ -32,6 +32,25 @@ def test_writer_persists_one_canonical_relative_document(tmp_path, monkeypatch):
     assert item.scanner_family == "fast_trigger"
     assert item.outcome == "win"
 
+def test_yaml_timestamp_metadata_has_stable_json_provenance(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.document import (
+        canonicalize_written_document,
+        read_knowledge_document,
+    )
+
+    path = tmp_path / "knowledge" / "research_notes" / "timestamp.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\nobserved_at: 2026-08-29T13:00:00Z\n---\nTimestamp evidence.",
+        encoding="utf-8",
+    )
+    canonical = canonicalize_written_document(path)
+    document = read_knowledge_document(canonical)
+
+    assert document.state == "available"
+    assert str(document.metadata["observed_at"]) == "2026-08-29 13:00:00+00:00"
+
 
 def test_foreign_absolute_path_never_becomes_read_authority(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
