@@ -94,6 +94,8 @@ def test_tampered_file_is_not_retrieved(tmp_path, monkeypatch):
     assert row is not None
     assert read_knowledge_document(row).state == "integrity_conflict"
     assert retrieve_lessons("Tamper sentinel evidence", k=3) == []
+    path.write_text("", encoding="utf-8")
+    assert read_knowledge_document(row).state == "integrity_conflict"
 
 def test_invalid_metadata_snapshot_is_an_integrity_conflict(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)

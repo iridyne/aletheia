@@ -35,7 +35,7 @@ def relative_knowledge_path(path: Path) -> str:
         relative = resolved.relative_to(root)
     except ValueError as exc:
         raise ValueError("Knowledge path is outside the selected data root") from exc
-    if not relative.parts or relative.parts[0].lower() != "knowledge":
+    if not relative.parts or relative.parts[0] != "knowledge":
         raise ValueError("Knowledge path is outside the Knowledge root")
     return relative.as_posix()
 
@@ -119,7 +119,7 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
             path = None
 
     if inline_canonical:
-        if file_text and content_sha256(file_text) != inline_hash:
+        if path is not None and content_sha256(file_text) != inline_hash:
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         metadata, _ = parse_frontmatter_text(inline)
         expected_metadata = _metadata_from_json(row.get("metadata_json"))
