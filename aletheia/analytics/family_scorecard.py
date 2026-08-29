@@ -41,10 +41,13 @@ def compute_family_scorecard_with_epoch(
         {
             "families": list[dict],      # per-family stats
             "shadow_epoch_id": str|None, # epoch used for shadow counts
-            "shadow_epoch_status": str,  # "single"|"mixed"|"all_null"
+            "shadow_epoch_status": str,  # "single"|"mixed"|"all_null"|"unavailable"
+            "shadow_epoch_error": str|None,
+            "errors": list[str],
         }
-    Shadow counts are set to None for each family when epoch_status=="mixed" to
-    avoid presenting pooled non-exchangeable cohorts as one valid measurement.
+    Shadow counts are set to None for each family when epoch_status is not a
+    usable single/legacy cohort to avoid presenting pooled or unavailable data
+    as one valid measurement.
     """
     from aletheia.storage.sqlite import get_db
 
@@ -104,14 +107,23 @@ def compute_family_scorecard_with_epoch(
     # Count shadow candidates per family, deduped by outcome_candidate_key.
     # Epoch guard: only count shadows within a single policy epoch to avoid
     # pooling non-exchangeable cohorts (CF-I04).
-    from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
+    from aletheia.counterfactual.trades import (
+        _EPOCH_DETECTION_FAILURE_REASON,
+        _detect_window_epochs,
+        list_deduped_shadows,
+    )
 
+    shadow_epoch_error = None
     try:
         shadow_epoch_id, shadow_epoch_status = _detect_window_epochs(days=90)
     except Exception:
-        shadow_epoch_id, shadow_epoch_status = None, "all_null"
+        shadow_epoch_id, shadow_epoch_status = None, "unavailable"
+        shadow_epoch_error = _EPOCH_DETECTION_FAILURE_REASON
+    if shadow_epoch_status not in {"single", "mixed", "all_null"}:
+        shadow_epoch_id, shadow_epoch_status = None, "unavailable"
+        shadow_epoch_error = _EPOCH_DETECTION_FAILURE_REASON
 
-    if shadow_epoch_status != "mixed":
+    if shadow_epoch_status in {"single", "all_null"}:
         shadow_rows = list_deduped_shadows(
             days=90,
             columns=("scanner_family",),
@@ -138,7 +150,7 @@ def compute_family_scorecard_with_epoch(
             ),
             "hold_time_available_count": f["hold_time_available_count"],
             "hold_time_unavailable_count": tc - f["hold_time_available_count"],
-            "shadow_count": f["shadow_count"] if shadow_epoch_status != "mixed" else None,
+            "shadow_count": f["shadow_count"] if shadow_epoch_status in {"single", "all_null"} else None,
             "alpha_vs_btc_pct": round(f["total_alpha_pct"] / f["alpha_count"], 2) if f["alpha_count"] > 0 else None,
             "outcome_status": "available" if tc else "insufficient",
             **execution_mode_identity(execution_mode),
@@ -148,6 +160,8 @@ def compute_family_scorecard_with_epoch(
         "families": result,
         "shadow_epoch_id": shadow_epoch_id,
         "shadow_epoch_status": shadow_epoch_status,
+        "shadow_epoch_error": shadow_epoch_error,
+        "errors": [shadow_epoch_error] if shadow_epoch_error else [],
         **execution_mode_identity(execution_mode),
     }
 

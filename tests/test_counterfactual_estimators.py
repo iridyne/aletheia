@@ -1,7 +1,7 @@
 """Tests for aletheia.counterfactual.estimators and DR-mode calibration."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from aletheia.counterfactual.calibration import build_calibration
 from aletheia.counterfactual.estimators import (
@@ -296,3 +296,88 @@ def test_mixed_epoch_propensity_returns_error():
     _insert_row_with_epoch("opp-prop-b", "epoch_B")
     report = build_propensity_report(days=9999)
     assert any("mixed_policy_epoch" in e for e in report["errors"])
+
+
+def test_epoch_detection_failure_calibration_does_not_use_legacy_aggregate(monkeypatch):
+    import aletheia.counterfactual.calibration as calibration
+
+    def fail_detector(**_kwargs):
+        raise RuntimeError("temporary database lock")
+
+    reader = Mock(return_value=[{"trade_score": 60.0, "net_pnl_pct": 1.0}])
+
+    monkeypatch.setattr(calibration, "_detect_window_epochs", fail_detector)
+    monkeypatch.setattr(calibration, "list_deduped_shadows", reader)
+
+    report = calibration.build_calibration(days=9999)
+
+    assert report["policy_epoch_status"] == "unavailable"
+    assert report["policy_epoch_error"] == "policy_epoch_detection_failed"
+    assert report["errors"] == ["policy_epoch_detection_failed"]
+    assert report["bands"] == []
+    reader.assert_not_called()
+
+
+def test_epoch_detection_failure_propensity_does_not_use_legacy_aggregate(monkeypatch):
+    import aletheia.counterfactual.propensity as propensity
+
+    def fail_detector(**_kwargs):
+        raise RuntimeError("temporary database lock")
+
+    reader = Mock(return_value=[{"trade_score": 60.0, "net_pnl_pct": 1.0}])
+
+    monkeypatch.setattr(propensity, "_detect_window_epochs", fail_detector)
+    monkeypatch.setattr(propensity, "list_deduped_shadows", reader)
+
+    report = propensity.build_propensity_report(days=9999)
+
+    assert report["policy_epoch_status"] == "unavailable"
+    assert report["policy_epoch_error"] == "policy_epoch_detection_failed"
+    assert report["errors"] == ["policy_epoch_detection_failed"]
+    assert report["n_total"] == 0
+    reader.assert_not_called()
+
+
+def test_epoch_detection_failure_scorecard_does_not_use_legacy_aggregate(monkeypatch):
+    import aletheia.analytics.family_scorecard as family_scorecard
+    import aletheia.counterfactual.trades as shadow_trades
+
+    def fail_detector(**_kwargs):
+        raise RuntimeError("temporary database lock")
+
+    reader = Mock(return_value=[{"scanner_family": "momentum"}])
+
+    monkeypatch.setattr(shadow_trades, "_detect_window_epochs", fail_detector)
+    monkeypatch.setattr(shadow_trades, "list_deduped_shadows", reader)
+
+    result = family_scorecard.compute_family_scorecard_with_epoch()
+
+    assert result["shadow_epoch_status"] == "unavailable"
+    assert result["shadow_epoch_error"] == "policy_epoch_detection_failed"
+    assert result["errors"] == ["policy_epoch_detection_failed"]
+    assert result["families"] == []
+    reader.assert_not_called()
+
+
+def test_successful_all_null_epoch_detection_keeps_legacy_reader(monkeypatch):
+    import aletheia.counterfactual.calibration as calibration
+
+    seen = []
+
+    monkeypatch.setattr(
+        calibration,
+        "_detect_window_epochs",
+        lambda **_kwargs: (None, "all_null"),
+    )
+    monkeypatch.setattr(
+        calibration,
+        "list_deduped_shadows",
+        lambda **kwargs: seen.append(kwargs) or [],
+    )
+
+    report = calibration.build_calibration(days=9999)
+
+    assert report["policy_epoch_status"] == "all_null"
+    assert report["policy_epoch_error"] is None
+    assert not report["errors"]
+    assert seen and seen[0]["policy_epoch_id"] is None

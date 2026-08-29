@@ -23,7 +23,11 @@ from aletheia.counterfactual.advisories import (
     build_rotation_advisories,
     render_advisories,
 )
-from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
+from aletheia.counterfactual.trades import (
+    _EPOCH_DETECTION_FAILURE_REASON,
+    _detect_window_epochs,
+    list_deduped_shadows,
+)
 
 # Band edges (trade_score). Chosen to straddle the gate so the sign flip is
 # visible on both sides. The gate itself is drawn in as a marker at runtime.
@@ -128,6 +132,8 @@ def build_calibration(
         "crossover_band": None,
         "notes": [],
         "errors": [],
+        "policy_epoch_status": "explicit" if policy_epoch_id is not None else None,
+        "policy_epoch_error": None,
     }
 
     if getattr(sqlite_store, "_db_conn", None) is None and not sqlite_store.db_path().exists():
@@ -143,7 +149,16 @@ def build_calibration(
         try:
             _epoch_id, _epoch_status = _detect_window_epochs(days=days)
         except Exception:
-            _epoch_status, _epoch_id = "all_null", None
+            report["policy_epoch_status"] = "unavailable"
+            report["policy_epoch_error"] = _EPOCH_DETECTION_FAILURE_REASON
+            report["errors"].append(_EPOCH_DETECTION_FAILURE_REASON)
+            return report
+        report["policy_epoch_status"] = _epoch_status
+        if _epoch_status not in {"single", "mixed", "all_null"}:
+            report["policy_epoch_status"] = "unavailable"
+            report["policy_epoch_error"] = _EPOCH_DETECTION_FAILURE_REASON
+            report["errors"].append(_EPOCH_DETECTION_FAILURE_REASON)
+            return report
         if _epoch_status == "mixed":
             report["errors"].append(
                 "mixed_policy_epoch: window spans multiple policy epochs; "

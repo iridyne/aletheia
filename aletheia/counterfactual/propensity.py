@@ -17,7 +17,11 @@ import logging
 import random
 from typing import Any
 
-from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
+from aletheia.counterfactual.trades import (
+    _EPOCH_DETECTION_FAILURE_REASON,
+    _detect_window_epochs,
+    list_deduped_shadows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -276,12 +280,39 @@ def build_propensity_report(
     errors: list[str] = []
     warnings: list[str] = []
     notes: list[str] = []
+    epoch_status = "explicit" if policy_epoch_id is not None else None
+    epoch_error = None
 
     if policy_epoch_id is None:
         try:
             _epoch_id, _epoch_status = _detect_window_epochs(days=days)
         except Exception:
-            _epoch_status, _epoch_id = "all_null", None
+            epoch_status = "unavailable"
+            epoch_error = _EPOCH_DETECTION_FAILURE_REASON
+            errors.append(epoch_error)
+            return {
+                "n_total": 0, "n_treated": 0, "n_control": 0,
+                "treatment_rate": None, "auc": None,
+                "feature_names": [], "coefficients": [], "propensity_stats": {},
+                "by_family": {}, "window_days": days, "k_folds": k_folds,
+                "notes": notes, "warnings": warnings, "errors": errors,
+                "policy_epoch_status": epoch_status,
+                "policy_epoch_error": epoch_error,
+            }
+        epoch_status = _epoch_status
+        if _epoch_status not in {"single", "mixed", "all_null"}:
+            epoch_status = "unavailable"
+            epoch_error = _EPOCH_DETECTION_FAILURE_REASON
+            errors.append(epoch_error)
+            return {
+                "n_total": 0, "n_treated": 0, "n_control": 0,
+                "treatment_rate": None, "auc": None,
+                "feature_names": [], "coefficients": [], "propensity_stats": {},
+                "by_family": {}, "window_days": days, "k_folds": k_folds,
+                "notes": notes, "warnings": warnings, "errors": errors,
+                "policy_epoch_status": epoch_status,
+                "policy_epoch_error": epoch_error,
+            }
         if _epoch_status == "mixed":
             errors.append(
                 "mixed_policy_epoch: window spans multiple policy epochs; "
@@ -293,6 +324,8 @@ def build_propensity_report(
                 "feature_names": [], "coefficients": [], "propensity_stats": {},
                 "by_family": {}, "window_days": days, "k_folds": k_folds,
                 "notes": notes, "warnings": warnings, "errors": errors,
+                "policy_epoch_status": epoch_status,
+                "policy_epoch_error": epoch_error,
             }
         if _epoch_status == "single":
             policy_epoch_id = _epoch_id
@@ -319,6 +352,8 @@ def build_propensity_report(
         "notes": notes,
         "warnings": warnings,
         "errors": errors,
+        "policy_epoch_status": epoch_status,
+        "policy_epoch_error": epoch_error,
     }
 
     if len(rows) < min_samples:

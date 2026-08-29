@@ -636,6 +636,9 @@ def _detect_window_epochs(
     return None, "all_null"
 
 
+_EPOCH_DETECTION_FAILURE_REASON = "policy_epoch_detection_failed"
+
+
 def _current_regime() -> str:
     """Return the current macro regime tag from the latest macro snapshot."""
     try:
