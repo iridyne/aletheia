@@ -27,7 +27,7 @@ def test_writer_persists_one_canonical_relative_document(tmp_path, monkeypatch):
     assert not item.file_path.startswith("/")
     assert item.content_format == CONTENT_FORMAT
     assert item.content_sha256 == content_sha256(item.content or "")
-    assert item.symbol == "BTCUSDT"
+    assert item.symbol == "BTC/USDT"
     assert item.direction == "long"
     assert item.scanner_family == "fast_trigger"
     assert item.outcome == "win"
@@ -142,7 +142,7 @@ def test_invalid_metadata_snapshot_is_an_integrity_conflict(tmp_path, monkeypatc
 
     assert read_knowledge_document(canonical).state == "integrity_conflict"
     canonical = canonicalize_written_document(path)
-    canonical["symbol"] = "ETHUSDT"
+    canonical["symbol"] = "ETH/USDT"
     assert read_knowledge_document(canonical).state == "integrity_conflict"
 
 
@@ -213,3 +213,36 @@ def test_structured_filters_apply_before_candidate_limit(tmp_path, monkeypatch):
         scanner_family="fast",
     )
     assert [hit.item_id for hit in hits] == [target.id]
+
+def test_result_limit_applies_after_recency_scoring(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_research_note
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    from aletheia.storage.sqlite import get_db
+
+    old = create_research_note(
+        "Old exact match",
+        ("needle " * 12) + "old exact evidence remains independently checkable.",
+        confidence="high_confidence",
+    )
+    recent = create_research_note(
+        "Recent match",
+        "needle recent evidence remains independently checkable and sufficiently detailed.",
+        confidence="high_confidence",
+    )
+    assert old is not None and recent is not None
+    db = get_db()
+    db.execute(
+        "UPDATE knowledge_items SET created_at='2020-01-01T00:00:00+00:00' WHERE id=?",
+        (old.id,),
+    )
+    db.execute(
+        "UPDATE knowledge_fts SET created_at='2020-01-01T00:00:00+00:00' WHERE item_id=?",
+        (old.id,),
+    )
+    db.commit()
+
+    top_one = retrieve_lessons("needle", k=1)
+    top_two = retrieve_lessons("needle", k=2)
+    assert top_one and top_two
+    assert top_one[0].item_id == top_two[0].item_id == recent.id

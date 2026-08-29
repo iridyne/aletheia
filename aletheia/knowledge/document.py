@@ -182,9 +182,10 @@ def _metadata_from_json(value: Any) -> dict[str, Any] | None:
         return None
     return decoded if isinstance(decoded, dict) else None
 
-
 def _normalise_symbol(value: Any) -> str:
-    return "".join(char for char in str(value or "").upper() if char.isalnum())
+    from aletheia.data.symbols import canonical_of
+
+    return canonical_of(value) if str(value or "").strip() else ""
 
 
 def _normalise_token(value: Any) -> str:

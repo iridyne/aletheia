@@ -18,6 +18,7 @@ from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 from aletheia.knowledge.document import (
     canonicalize_inline_document,
+    canonicalize_written_document,
     relative_knowledge_path,
 )
 from aletheia.knowledge.guards import load_trading_guards, guard_origin
@@ -282,6 +283,7 @@ def promote_guard_candidate_to_active(
                     source_meta["promoted_to"] = guard_id
                     source_meta["promotion_reason"] = reason
                     _atomic_write(path, render_frontmatter(source_meta, body))
+                    _update_candidate_row_status(path)
                 else:
                     _atomic_write(path, active_content)
                 _notify_ranker_guard_change()
@@ -381,8 +383,14 @@ def _update_candidate_row_status(path) -> None:
             params=(file_path, "guard_candidate"),
             limit=1,
         )
+        canonical = canonicalize_written_document(Path(path))
         for row in rows:
-            repo.update_knowledge_item(row["id"], status="deprecated", confidence="deprecated")
+            repo.update_knowledge_item(
+                row["id"],
+                status="deprecated",
+                confidence="deprecated",
+                **canonical,
+            )
     except Exception:
         logger.debug("Failed to update promoted guard candidate DB row", exc_info=True)
 

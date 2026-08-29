@@ -260,7 +260,9 @@ def _fts_query(query: str) -> str:
 
 
 def _normalise_symbol(value: Any) -> str:
-    return "".join(c for c in str(value or "").upper() if c.isalnum())
+    from aletheia.data.symbols import canonical_of
+
+    return canonical_of(value) if str(value or "").strip() else ""
 
 
 def _normalise_token(value: Any) -> str:
@@ -318,7 +320,7 @@ def retrieve_lessons(
             sql += " AND ki.scanner_family=?"
             params.append(_normalise_token(scanner_family))
         sql += " ORDER BY bm LIMIT ?"
-        params.append(k)
+        params.append(max(k, 50))
 
         rows = db.execute(sql, params).fetchall()
         if not rows:

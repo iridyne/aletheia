@@ -91,12 +91,14 @@ class TestGuardPromotionChain:
     def test_manual_candidate_can_still_be_promoted_by_owner(self, e2e_db):
         """The promotion MECHANISM is intact: an owner-authored (non-shadow, non-learned)
         candidate is promotable via the explicit owner route."""
-        from aletheia.knowledge.manager import create_guard_candidate
-        from aletheia.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+        from aletheia.knowledge.document import read_knowledge_document
+        from aletheia.knowledge.guards import load_trading_guards, guard_origin
+        from aletheia.knowledge.manager import create_guard_candidate
+        from aletheia.storage.repositories import get_knowledge_item
 
         guard_id = "manual-sol-momentum-block"
-        create_guard_candidate(
+        candidate = create_guard_candidate(
             title="Owner guard: block SOL momentum",
             content="Owner-authored block on SOL/USDT momentum longs.",
             metadata={"guard_id": guard_id, "status": "candidate", "symbol": "SOL/USDT",
@@ -113,6 +115,11 @@ class TestGuardPromotionChain:
         active = [g for g in load_trading_guards(status="active") if g.guard_id == guard_id]
         assert active, "owner-authored guard should promote to active"
         assert active[0].block_candidate is True
+        assert candidate is not None
+        candidate_row = get_knowledge_item(candidate.id)
+        assert candidate_row is not None
+        assert candidate_row["status"] == "deprecated"
+        assert read_knowledge_document(candidate_row).state == "available"
 
     def test_event_failure_does_not_publish_guard_state(self, e2e_db, monkeypatch):
         """A failed durable provenance write leaves the candidate untouched."""
