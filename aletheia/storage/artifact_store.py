@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,10 +82,7 @@ class ArtifactStore:
             "created_at": _utcnow_iso(),
             "machine_id": platform.node() or "unknown",
             **metadata,
-            "objects": [
-                {"path": r.path, "sha256": r.sha256, "content_type": r.content_type}
-                for r in refs
-            ],
+            "objects": [{"path": r.path, "sha256": r.sha256, "content_type": r.content_type} for r in refs],
         }
         manifest_path = f"{bundle_path}/manifest.yaml"
         return self.put_yaml(manifest_path, manifest)
@@ -94,17 +92,24 @@ class ArtifactStore:
     # ------------------------------------------------------------------
 
     def _atomic_write(self, relative_path: str, data: bytes, content_type: str) -> PSArtifactRef:
-        """Write data to path atomically (write .tmp then rename)."""
+        """Write data to path atomically through a unique sibling file."""
         target = self._root / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
 
-        tmp_path = target.with_suffix(target.suffix + ".tmp")
-        tmp_path.write_bytes(data)
-
-        # Atomic rename (on Windows this requires removing target first if exists)
-        if os.name == "nt" and target.exists():
-            target.unlink()
-        tmp_path.rename(target)
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                tmp_file.write(data)
+            os.replace(tmp_path, target)
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
 
         file_hash = sha256_bytes(data)
         return PSArtifactRef(
