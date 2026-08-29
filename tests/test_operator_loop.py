@@ -786,6 +786,36 @@ class TestPersistentActionLog:
         last = _last_action_time_persistent("config_patch", "test_param")
         assert last is not None
 
+    def test_persistent_helpers_ignore_future_and_naive_audit_timestamps(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        import aletheia.agent_shell.operator_loop as operator_loop
+
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(hours=1)).isoformat()
+        future = (now + timedelta(hours=1)).isoformat()
+        rows = [
+            {"timestamp": future},
+            {"timestamp": "2026-08-28T12:00:00"},
+            {"timestamp": recent},
+            {"timestamp": "not-a-timestamp"},
+        ]
+        calls = {}
+
+        def select_all(*args, **kwargs):
+            calls.update(kwargs)
+            return rows
+
+        monkeypatch.setattr(operator_loop.repo, "_select_all", select_all)
+        operator_loop._action_log.clear()
+
+        last = operator_loop._last_action_time_persistent("config_patch", "test_param")
+        assert last is not None
+        assert last <= now
+        assert (now - last).total_seconds() < 2 * 3600
+        assert operator_loop._count_actions_today_persistent("config_patch", "test_param") == 1
+        assert calls["limit"] == 100
+
 
 class TestLoosenHandlers:
     def test_loosen_confidence_never_below_neutral(self, tmp_path, monkeypatch):

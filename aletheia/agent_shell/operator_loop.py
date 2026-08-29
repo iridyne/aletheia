@@ -117,6 +117,23 @@ def _get_param_drift(param_name: str) -> str:
 # ─── Persistent Action Log ───────────────────────────────────────────────────
 
 _CONSECUTIVE_ESCALATION_THRESHOLD = 3
+_ACTION_WINDOW = timedelta(hours=24)
+
+
+def _parse_audit_timestamp(raw: Any) -> datetime | None:
+    """Return an aware UTC timestamp; malformed/naive values are untrusted."""
+    if isinstance(raw, datetime):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _persist_action(event_type: str, param: str | None = None,
@@ -157,44 +174,57 @@ def _persist_action(event_type: str, param: str | None = None,
 
 def _count_actions_today_persistent(event_type: str, param: str | None = None) -> int:
     """Count actions in last 24h from DB (survives restarts)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    now = datetime.now(timezone.utc)
+    cutoff_dt = now - _ACTION_WINDOW
+    cutoff = cutoff_dt.isoformat()
     try:
-        where = "actor = 'operator_loop' AND event_type = ? AND timestamp > ?"
-        params_tup: tuple = (event_type, cutoff)
+        where = "actor = 'operator_loop' AND event_type = ? AND timestamp > ? AND timestamp <= ?"
+        params_tup: tuple = (event_type, cutoff, now.isoformat())
         if param:
             where += " AND entity_id = ?"
-            params_tup = (event_type, cutoff, param)
+            params_tup = (event_type, cutoff, now.isoformat(), param)
         rows = repo._select_all("audit_events", where=where, params=params_tup, limit=100)
-        return len(rows)
+        return sum(
+            1 for row in rows
+            if (timestamp := _parse_audit_timestamp(row.get("timestamp"))) is not None
+            and cutoff_dt < timestamp <= now
+        )
     except Exception:
-        cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=24)
+        cutoff_dt = now - _ACTION_WINDOW
         return sum(
             1 for a in _action_log
-            if a["type"] == event_type and a["ts"] > cutoff_dt
+            if a["type"] == event_type
+            and (timestamp := _parse_audit_timestamp(a.get("ts"))) is not None
+            and cutoff_dt < timestamp <= now
             and (param is None or a.get("param") == param)
         )
 
 
 def _last_action_time_persistent(event_type: str, param: str | None = None) -> datetime | None:
     """Get last action time from DB (survives restarts)."""
+    now = datetime.now(timezone.utc)
     try:
         where = "actor = 'operator_loop' AND event_type = ?"
         params_tup: tuple = (event_type,)
         if param:
             where += " AND entity_id = ?"
             params_tup = (event_type, param)
-        rows = repo._select_all("audit_events", where=where, params=params_tup,
-                                order="timestamp DESC", limit=1)
-        if rows:
-            ts_str = rows[0].get("timestamp", "")
-            if ts_str:
-                return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        rows = repo._select_all(
+            "audit_events", where=where, params=params_tup,
+            order="timestamp DESC", limit=100,
+        )
+        for row in rows:
+            timestamp = _parse_audit_timestamp(row.get("timestamp"))
+            if timestamp is not None and timestamp <= now:
+                return timestamp
     except Exception:
         pass
     for a in reversed(_action_log):
         if a["type"] == event_type:
             if param is None or a.get("param") == param:
-                return a["ts"]
+                timestamp = _parse_audit_timestamp(a.get("ts"))
+                if timestamp is not None and timestamp <= now:
+                    return timestamp
     return None
 
 
