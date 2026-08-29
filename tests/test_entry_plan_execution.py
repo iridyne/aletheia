@@ -552,7 +552,10 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
     async def exact_order(*_args, **_kwargs):
         return SimpleNamespace(
             completeness=ReadCompleteness.COMPLETE,
-            found=SimpleNamespace(state=OrderLifecycle.CANCELED),
+            found=SimpleNamespace(
+                state=OrderLifecycle.CANCELED,
+                filled_quantity=0.5,
+            ),
         )
 
     async def exact_fills(self, **_kwargs):
@@ -610,6 +613,44 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
     assert repo.get_order(order.id)["status"] == "submitted"
 
 
+def test_gateway_cancel_waits_when_order_quantity_leads_fill_history(monkeypatch):
+    from aletheia.execution import bitget_broker, gateway, reconciliation
+    from aletheia.uta import manager
+    from aletheia.uta.models import OrderLifecycle, ReadCompleteness
+
+    plan, order = _persist_ordered_plan()
+    monkeypatch.setattr(
+        bitget_broker,
+        "cancel_entry_order",
+        lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
+    )
+
+    async def terminal_order(*_args, **_kwargs):
+        return SimpleNamespace(
+            completeness=ReadCompleteness.COMPLETE,
+            found=SimpleNamespace(
+                state=OrderLifecycle.CANCELED,
+                filled_quantity=0.5,
+            ),
+        )
+
+    async def lagging_fills(self, **_kwargs):
+        return []
+
+    monkeypatch.setattr(manager, "query_uta", terminal_order)
+    monkeypatch.setattr(
+        reconciliation._UTAReconciliationProjection,
+        "get_order_fills",
+        lagging_fills,
+    )
+
+    result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
+
+    assert result["status"] == "cancel_pending"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+    assert repo.get_order(order.id)["status"] == "submitted"
+
+
 @pytest.mark.parametrize(
     "materialized_state,starting_status,expected_reason",
     [
@@ -639,7 +680,22 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
         return []
 
     async def terminal_order(self, **_kwargs):
-        return SimpleNamespace(state=OrderLifecycle.CANCELED)
+        return SimpleNamespace(
+            state=OrderLifecycle.CANCELED,
+            filled_quantity=0.5 if materialized_state == "partially_filled" else 0,
+        )
+
+    def materialize_ioc(order_id, *_args, **_kwargs):
+        if materialized_state == "partially_filled" and not repo.list_fills(order_id=order_id):
+            repo.insert_fill(
+                Fill(
+                    order_id=order_id,
+                    fill_price=100,
+                    fill_quantity=0.5,
+                    fee_source="reconciled",
+                )
+            )
+        return SimpleNamespace(state=materialized_state, new_fill_count=0)
 
     monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_open_orders", no_rows)
     monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_fills", no_rows)
@@ -652,10 +708,7 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     monkeypatch.setattr(
         reconciliation,
         "materialize_bitget_entry",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            state=materialized_state,
-            new_fill_count=0,
-        ),
+        materialize_ioc,
     )
 
     reconciliation.reconcile()
@@ -665,3 +718,47 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     assert stored["status"] == "cancelled"
     assert stored["error_reason"] == expected_reason
     assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
+
+
+def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):
+    from aletheia.execution import reconciliation
+    from aletheia.uta.models import OrderLifecycle
+
+    plan, order = _persist_ordered_plan()
+    repo.update_order(
+        order.id,
+        source="native",
+        order_tactic="OPPOSING_BBO_IOC",
+        time_in_force="ioc",
+    )
+
+    async def no_rows(self, **_kwargs):
+        return []
+
+    async def terminal_before_fills(self, **_kwargs):
+        return SimpleNamespace(
+            state=OrderLifecycle.CANCELED,
+            filled_quantity=0.5,
+        )
+
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_open_orders", no_rows)
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_fills", no_rows)
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_order_fills", no_rows)
+    monkeypatch.setattr(
+        reconciliation._UTAReconciliationProjection,
+        "get_order_status",
+        terminal_before_fills,
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "materialize_bitget_entry",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            state="evidence_missing",
+            new_fill_count=0,
+        ),
+    )
+
+    reconciliation.reconcile()
+
+    assert repo.get_order(order.id)["status"] == "submitted"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"

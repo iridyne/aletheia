@@ -1544,6 +1544,7 @@ def reconcile() -> dict:
                     f"{execution_mode}/{market_type}: default private fill history unavailable"
                 )
             ioc_terminal = False
+            ioc_terminal_quantity: float | None = None
             if (
                 order.get("source") == "native"
                 and order.get("order_tactic") == "OPPOSING_BBO_IOC"
@@ -1569,6 +1570,8 @@ def reconcile() -> dict:
                             OrderLifecycle.REJECTED,
                         }
                     )
+                    if ioc_terminal:
+                        ioc_terminal_quantity = float(exact_order.filled_quantity)
                 except Exception as exc:
                     logger.warning(
                         "reconcile: exact IOC status failed for order %s (%s)",
@@ -1650,6 +1653,15 @@ def reconcile() -> dict:
                     continue
 
                 materialized_fills += result.new_fill_count
+                if ioc_terminal_quantity is not None:
+                    local_fill_row = get_db().execute(
+                        "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity "
+                        "FROM fills WHERE order_id=?",
+                        (order["id"],),
+                    ).fetchone()
+                    local_quantity = float(local_fill_row["quantity"] or 0.0)
+                    tolerance = max(1e-12, float(order["quantity"]) * 1e-9)
+                    ioc_terminal = abs(local_quantity - ioc_terminal_quantity) <= tolerance
                 if result.state == "filled":
                     filled += 1
                     _write_reconcile_event(

@@ -472,13 +472,15 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     if order.get("execution_mode") != "bitget_demo":
         return {"status": "capability_unavailable", "entry_plan_id": plan_id}
 
-    def fully_filled(current_order: dict) -> bool:
+    def filled_quantity(current_order: dict) -> float:
         row = repo.get_db().execute(
             "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity FROM fills WHERE order_id=?",
             (current_order["id"],),
         ).fetchone()
-        filled = float(row["quantity"] or 0.0)
-        return filled + 1e-12 >= float(current_order["quantity"])
+        return float(row["quantity"] or 0.0)
+
+    def fully_filled(current_order: dict) -> bool:
+        return filled_quantity(current_order) + 1e-12 >= float(current_order["quantity"])
 
     if fully_filled(order):
         repo.transition_entry_plan(
@@ -548,6 +550,10 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         if rows:
             materialize_bitget_entry(order["id"], rows)
         exact_state = report.found.state
+        exact_filled = float(report.found.filled_quantity)
+        local_filled = filled_quantity(repo.get_order(order["id"]))
+        if abs(exact_filled - local_filled) > max(1e-12, float(order["quantity"]) * 1e-9):
+            return {"status": "cancel_pending", "entry_plan_id": plan_id}
         if exact_state not in {
             OrderLifecycle.CANCELED,
             OrderLifecycle.EXPIRED,
