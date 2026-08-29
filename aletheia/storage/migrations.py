@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v49"
+SCHEMA_VERSION = "aletheia-sqlite-v51"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3888,6 +3888,28 @@ _LEARNING_HYPOTHESIS_NOMINATIONS_CHECKSUM = hashlib.sha256(
     (
         _LEARNING_HYPOTHESIS_NOMINATIONS_SQL
         + "\nlearning_hypothesis_nominations_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_KNOWLEDGE_DOCUMENT_COLUMNS = (
+    ("content_format", "TEXT"),
+    ("content_sha256", "TEXT"),
+    ("metadata_json", "TEXT"),
+    ("symbol", "TEXT"),
+    ("direction", "TEXT"),
+    ("scanner_family", "TEXT"),
+    ("outcome", "TEXT"),
+)
+_KNOWLEDGE_DOCUMENT_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_knowledge_structured_retrieval "
+    "ON knowledge_items(status, confidence, item_type, symbol, direction, scanner_family)"
+)
+_KNOWLEDGE_DOCUMENT_CHECKSUM = hashlib.sha256(
+    (
+        repr(_KNOWLEDGE_DOCUMENT_COLUMNS)
+        + "\n"
+        + _KNOWLEDGE_DOCUMENT_INDEX_SQL
+        + "\ncanonical_knowledge_document_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5711,6 +5733,26 @@ def _apply_learning_hypothesis_nominations_v50(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_knowledge_document_v51(db: sqlite3.Connection) -> None:
+    """Add canonical Knowledge integrity and structured-query projections."""
+    table_exists = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_items'"
+    ).fetchone()
+    if table_exists is None:
+        return
+    existing = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(knowledge_items)").fetchall()
+    }
+    for column, column_type in _KNOWLEDGE_DOCUMENT_COLUMNS:
+        if column not in existing:
+            db.execute(
+                f"ALTER TABLE knowledge_items ADD COLUMN {column} {column_type}"
+            )
+    db.execute(_KNOWLEDGE_DOCUMENT_INDEX_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_controller_recommendation_cost_model_v45(db: sqlite3.Connection) -> None:
     """Persist the cost-model identity behind each controller evidence row."""
 
@@ -6494,6 +6536,12 @@ _MIGRATIONS = (
         checksum=_LEARNING_HYPOTHESIS_NOMINATIONS_CHECKSUM,
         schema_version="aletheia-sqlite-v50",
         apply=_apply_learning_hypothesis_nominations_v50,
+    ),
+    MigrationStep(
+        migration_id="20260829_0050_knowledge_document_v51",
+        checksum=_KNOWLEDGE_DOCUMENT_CHECKSUM,
+        schema_version="aletheia-sqlite-v51",
+        apply=_apply_knowledge_document_v51,
     ),
 )
 

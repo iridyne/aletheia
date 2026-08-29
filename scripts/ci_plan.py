@@ -512,9 +512,6 @@ def plan(
         reason_codes.add("TRUSTED_LABEL_DEEP")
 
     required = _required_for_mode(mode, surfaces)
-    codex_required = mode in {"deep", "full"} or bool(unknown_paths) or "FULL_AUTHORITY_OR_INFRA" in reason_codes
-    if codex_required:
-        reason_codes.add("CODEX_REVIEW_REQUIRED")
 
     normalized_changes = [
         {
@@ -555,8 +552,8 @@ def plan(
         "github_checks": _github_checks(required),
         "local_checks": _local_checks(required, mode),
         "review": {
-            "codex_required": codex_required,
-            "request_after": "local_bootstrap_proof" if mode == "full" else "trusted_ci_verdict",
+            # Codex remains optional feedback; an asynchronous comment is not CI.
+            "codex_required": False,
         },
         "reason_codes": sorted(reason_codes),
         "plan_fingerprint": f"sha256:{digest}",

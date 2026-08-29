@@ -26,6 +26,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.storage.sqlite import get_db
+from aletheia.knowledge.document import (
+    canonicalize_written_document,
+    read_knowledge_document,
+    resolve_knowledge_path,
+)
 
 logger = logging.getLogger("aletheia.retrieval")
 
@@ -160,27 +165,40 @@ def reindex_all(*, db=None, strict: bool = False) -> int:
                 row = dict(raw)
                 if row.get("confidence") not in _ALLOWED_CONFIDENCE:
                     continue
-                # DB content is authoritative when populated — Phase E1 writers
-                # dual-write so migrations/backup/rename cannot break the index.
-                # Disk body is a fallback for legacy rows and for hand-authored
-                # Markdown recovered via scan-recovery-sources.
-                db_content = row.get("content") or ""
-                body = db_content if db_content.strip() else _read_body(row.get("file_path"))
-                if not body.strip():
-                    # Root Cause B: neither DB content nor disk file. Indexing a
-                    # blank body would create an invisible FTS row (BM25 returns
-                    # nothing for zero tokens) — skip instead.
+                document = read_knowledge_document(row)
+                if not document.text.strip() or document.state == "integrity_conflict":
                     skipped_empty += 1
                     continue
-                item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
-                # Extract outcome from frontmatter for structured ranker scoring.
-                outcome = ""
-                try:
-                    from aletheia.knowledge.frontmatter import parse_frontmatter_text
-                    meta, _ = parse_frontmatter_text(body)
-                    outcome = (meta.get("outcome") or "") if meta else ""
-                except Exception:
-                    pass
+                if (
+                    "content_format" in row
+                    and document.state == "legacy_current_root"
+                    and document.resolved_path is not None
+                ):
+                    canonical = canonicalize_written_document(document.resolved_path)
+                    connection.execute(
+                        "UPDATE knowledge_items SET file_path=?, content=?, "
+                        "content_format=?, content_sha256=?, metadata_json=?, symbol=?, "
+                        "direction=?, scanner_family=?, outcome=? WHERE id=?",
+                        (
+                            canonical["file_path"],
+                            canonical["content"],
+                            canonical["content_format"],
+                            canonical["content_sha256"],
+                            canonical["metadata_json"],
+                            canonical["symbol"],
+                            canonical["direction"],
+                            canonical["scanner_family"],
+                            canonical["outcome"],
+                            row["id"],
+                        ),
+                    )
+                    row.update(canonical)
+                    document = read_knowledge_document(row)
+                body = document.text
+                item = KnowledgeItem(
+                    **{k: row[k] for k in row if k in KnowledgeItem.model_fields}
+                )
+                outcome = str(row.get("outcome") or document.metadata.get("outcome") or "")
                 if index_knowledge_item(
                     item,
                     body,
@@ -210,31 +228,12 @@ def reindex_all(*, db=None, strict: bool = False) -> int:
 
 
 def _read_body(file_path: str | None) -> str:
-    if not file_path:
+    path = resolve_knowledge_path(file_path)
+    if path is None:
         return ""
     try:
-        from pathlib import Path, PurePosixPath, PureWindowsPath
-        from aletheia.config.loader import get_data_dir
-
-        p = Path(file_path)
-        if not p.exists():
-            root = get_data_dir().resolve()
-            for path_type in (PureWindowsPath, PurePosixPath):
-                parts = path_type(file_path).parts
-                lowered = [part.lower() for part in parts]
-                if "data" not in lowered:
-                    continue
-                index = lowered.index("data")
-                candidate = root.joinpath(*parts[index + 1:]).resolve()
-                try:
-                    candidate.relative_to(root)
-                except ValueError:
-                    continue
-                if candidate.is_file():
-                    p = candidate
-                    break
-        return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
-    except Exception:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
         return ""
 
 
@@ -261,50 +260,15 @@ def _fts_query(query: str) -> str:
 
 
 def _normalise_symbol(value: Any) -> str:
-    return "".join(c for c in str(value or "").upper() if c.isalnum())
+    from aletheia.data.symbols import canonical_of
+
+    return canonical_of(value) if str(value or "").strip() else ""
 
 
 def _normalise_token(value: Any) -> str:
     return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def _read_item_text(canon: dict) -> str:
-    body = _read_body(canon.get("file_path"))
-    if body.strip():
-        return body
-    return canon.get("content") or ""
-
-
-def _frontmatter_for_item(canon: dict) -> dict:
-    try:
-        from aletheia.knowledge.frontmatter import parse_frontmatter_text
-
-        meta, _ = parse_frontmatter_text(_read_item_text(canon))
-        return meta if isinstance(meta, dict) else {}
-    except Exception:
-        return {}
-
-
-def _matches_structured_filters(
-    canon: dict,
-    *,
-    symbol: str | None,
-    direction: str | None,
-    scanner_family: str | None,
-) -> bool:
-    if not any((symbol, direction, scanner_family)):
-        return True
-    meta = _frontmatter_for_item(canon)
-    if not meta:
-        return False
-
-    if symbol and _normalise_symbol(meta.get("symbol")) != _normalise_symbol(symbol):
-        return False
-    if direction and _normalise_token(meta.get("direction")) != _normalise_token(direction):
-        return False
-    if scanner_family and _normalise_token(meta.get("scanner_family")) != _normalise_token(scanner_family):
-        return False
-    return True
 
 
 def retrieve_lessons(
@@ -316,13 +280,11 @@ def retrieve_lessons(
     direction: str | None = None,
     scanner_family: str | None = None,
 ) -> list[Lesson]:
-    """Return the top-k most relevant prior lessons for a decision.
+    """Return the top-k relevant active, high-confidence lessons.
 
-    Quality gate: only high_confidence + active items. Scoring: BM25 relevance ×
-    recency decay × importance. Optional structured filters are applied against the
-    canonical knowledge item frontmatter after FTS candidate generation, so a broad
-    token match cannot recall a different symbol/direction/scanner case study.
-    Returns [] on any failure (agent then runs un-augmented).
+    Structured provenance predicates run in SQL before ``LIMIT``. Canonical
+    document integrity is then verified before any lesson reaches a prompt.
+    Returns [] on any failure (the caller runs un-augmented).
     """
     try:
         db = get_db()
@@ -332,50 +294,64 @@ def retrieve_lessons(
         if not match:
             return []
 
-        _conf_placeholders = ", ".join("?" for _ in _ALLOWED_CONFIDENCE)
+        if k <= 0:
+            return []
+        confidence_placeholders = ", ".join("?" for _ in _ALLOWED_CONFIDENCE)
         sql = (
-            "SELECT item_id, item_type, title, confidence, created_at, "
-            "snippet(knowledge_fts, 1, '', '', ' … ', 48) AS snip, bm25(knowledge_fts) AS bm, "
-            "outcome "
-            f"FROM knowledge_fts WHERE knowledge_fts MATCH ? AND confidence IN ({_conf_placeholders})"
+            "SELECT f.item_id, f.item_type, f.title, f.confidence, f.created_at, "
+            "snippet(knowledge_fts, 1, '', '', ' … ', 48) AS snip, "
+            "bm25(knowledge_fts) AS bm, COALESCE(ki.outcome, f.outcome) AS outcome "
+            "FROM knowledge_fts AS f JOIN knowledge_items AS ki ON ki.id=f.item_id "
+            "WHERE knowledge_fts MATCH ? AND ki.status='active' "
+            f"AND ki.confidence IN ({confidence_placeholders})"
         )
-        params: list = [match, *_ALLOWED_CONFIDENCE]
+        params: list[Any] = [match, *_ALLOWED_CONFIDENCE]
         if item_types:
             placeholders = ", ".join("?" for _ in item_types)
-            sql += f" AND item_type IN ({placeholders})"
+            sql += f" AND ki.item_type IN ({placeholders})"
             params.extend(item_types)
-        sql += " ORDER BY bm LIMIT 50"  # bm25: lower = more relevant; cap candidates
+        if symbol:
+            sql += " AND ki.symbol=?"
+            params.append(_normalise_symbol(symbol))
+        if direction:
+            sql += " AND ki.direction=?"
+            params.append(_normalise_token(direction))
+        if scanner_family:
+            sql += " AND ki.scanner_family=?"
+            params.append(_normalise_token(scanner_family))
+        sql += " ORDER BY bm LIMIT ?"
+        params.append(max(k, 50))
 
         rows = db.execute(sql, params).fetchall()
         if not rows:
             return []
 
-        # Cross-check status against the canonical table (FTS row could lag a
-        # deprecate that failed to remove). Only keep still-active items.
         from aletheia.storage.repositories import _select_one
+
         lessons: list[Lesson] = []
-        for r in rows:
-            canon = _select_one("knowledge_items", r["item_id"])
+        for row in rows:
+            canon = _select_one("knowledge_items", row["item_id"])
             if canon is None or (canon.get("status") or "active") != "active":
                 continue
-            if not _matches_structured_filters(
-                canon,
-                symbol=symbol,
-                direction=direction,
-                scanner_family=scanner_family,
-            ):
+            document = read_knowledge_document(canon)
+            if not document.text or document.state == "integrity_conflict":
                 continue
-            # BM25 is negative (more negative = better). Map to positive relevance.
-            relevance = 1.0 / (1.0 + math.exp(r["bm"]))  # logistic on -bm25
-            score = relevance * _recency_weight(r["created_at"] or "")
-            lessons.append(Lesson(
-                item_id=r["item_id"], item_type=r["item_type"], title=r["title"] or "",
-                snippet=(r["snip"] or "").strip(), confidence=r["confidence"],
-                created_at=r["created_at"] or "", score=round(score, 6),
-                outcome=r["outcome"] or "",
-            ))
+            relevance = 1.0 / (1.0 + math.exp(row["bm"]))
+            score = relevance * _recency_weight(row["created_at"] or "")
+            lessons.append(
+                Lesson(
+                    item_id=row["item_id"],
+                    item_type=row["item_type"],
+                    title=row["title"] or "",
+                    snippet=_clean_body(document.text, title=row["title"] or "")[:240],
+                    confidence=row["confidence"],
+                    created_at=row["created_at"] or "",
+                    score=round(score, 6),
+                    outcome=row["outcome"] or "",
+                )
+            )
 
-        lessons.sort(key=lambda x: x.score, reverse=True)
+        lessons.sort(key=lambda lesson: lesson.score, reverse=True)
         return lessons[:k]
     except Exception as e:
         logger.warning("retrieve_lessons failed: %s", e)

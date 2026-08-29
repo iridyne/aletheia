@@ -10,6 +10,7 @@ from aletheia.storage.repositories import (
     list_knowledge_items,
 )
 
+from aletheia.knowledge.document import canonicalize_written_document
 logger = logging.getLogger("aletheia.knowledge.manager")
 
 _MIN_CONTENT_LENGTH = 80
@@ -54,34 +55,19 @@ VALID_STATUSES = {"active", "archived", "deprecated"}
 
 
 def _index(item, content: str) -> None:
-    """Best-effort full-text index of a knowledge item (experience loop, §6).
-
-    Only high_confidence items become retrievable (the quality gate); others are
-    written/audited as before but kept out of decision retrieval. Never raises.
-    """
+    """Best-effort full-text index of a canonical Knowledge document."""
     try:
         if item.confidence != "high_confidence":
             return
         from aletheia.knowledge.retrieval import index_knowledge_item
-        # Extract outcome from frontmatter for structured ranker scoring (Phase 1a).
-        outcome = ""
-        try:
-            from aletheia.knowledge.frontmatter import parse_frontmatter_text
-            meta, _ = parse_frontmatter_text(content)
-            outcome = (meta.get("outcome") or "") if meta else ""
-            if not outcome and getattr(item, "file_path", None):
-                from pathlib import Path
-                path = Path(item.file_path)
-                if path.exists():
-                    file_meta, _ = parse_frontmatter_text(
-                        path.read_text(encoding="utf-8", errors="replace")
-                    )
-                    outcome = (file_meta.get("outcome") or "") if file_meta else ""
-        except Exception:
-            pass
-        index_knowledge_item(item, content, outcome=outcome)
+
+        index_knowledge_item(item, item.content or content, outcome=item.outcome or "")
     except Exception as e:
         logger.warning("_index failed for %s: %s", getattr(item, "id", "?"), e)
+
+
+def _canonicalize_item(item: KnowledgeItem, path: Path) -> KnowledgeItem:
+    return item.model_copy(update=canonicalize_written_document(path))
 
 
 def _publish_idempotent(
@@ -91,6 +77,7 @@ def _publish_idempotent(
     *,
     title_window_hours: int | None = None,
 ) -> KnowledgeItem | None:
+    item = _canonicalize_item(item, path)
     try:
         created, existing_id, reason = insert_knowledge_item_if_absent(
             item,
@@ -110,7 +97,7 @@ def _publish_idempotent(
             item.title,
         )
         return None
-    _index(item, content)
+    _index(item, item.content or content)
     return item
 
 
@@ -164,6 +151,7 @@ def create_daily_review(title: str, content: str) -> KnowledgeItem | None:
         content=content,  # dual-write for FTS resilience
         confidence="high_confidence",
     )
+    item = _canonicalize_item(item, path)
     try:
         insert_knowledge_item(item)
     except Exception:
@@ -211,6 +199,7 @@ def create_strategy_memory(strategy_id: str, title: str, content: str) -> Knowle
         content=content,  # dual-write for FTS resilience
         confidence="high_confidence",
     )
+    item = _canonicalize_item(item, path)
     try:
         insert_knowledge_item(item)
     except Exception:
@@ -268,6 +257,7 @@ def create_trading_guard(
         content=content,  # dual-write for FTS resilience
         confidence=confidence,
     )
+    item = _canonicalize_item(item, path)
     try:
         insert_knowledge_item(item)
     except Exception:
@@ -343,6 +333,7 @@ def create_guard_candidate(
         strategy_id=strategy_id,
         confidence="medium_confidence",
     )
+    item = _canonicalize_item(item, path)
     try:
         insert_knowledge_item(item)
     except Exception:
@@ -416,7 +407,10 @@ def _extract_contradiction_signal(item: dict) -> dict | None:
     if status not in ("active", ""):
         return None
 
-    meta, body = _item_meta_and_body(item)
+    document_parts = _item_meta_and_body(item)
+    if document_parts is None:
+        return None
+    meta, body = document_parts
     text = " ".join(
         str(part or "")
         for part in (
@@ -448,37 +442,22 @@ def _extract_contradiction_signal(item: dict) -> dict | None:
     }
 
 
-def _item_meta_and_body(item: dict) -> tuple[dict, str]:
-    from pathlib import Path
-    import json
+def _item_meta_and_body(item: dict) -> tuple[dict, str] | None:
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.knowledge.frontmatter import parse_frontmatter_text
 
-    from aletheia.knowledge.frontmatter import parse_frontmatter, parse_frontmatter_text
-
-    meta: dict = {}
-    body = ""
-    metadata = item.get("metadata")
-    if isinstance(metadata, dict):
-        meta.update(metadata)
-    elif isinstance(metadata, str) and metadata.strip():
-        try:
-            parsed = json.loads(metadata)
-            if isinstance(parsed, dict):
-                meta.update(parsed)
-        except Exception:
-            pass
-
-    file_path = item.get("file_path")
-    if file_path:
-        try:
-            path = Path(str(file_path))
-            if path.exists():
-                meta2, body = parse_frontmatter(path)
-                meta.update(meta2)
-        except Exception:
-            pass
-    elif str(item.get("content") or "").strip():
-        meta2, body = parse_frontmatter_text(str(item.get("content")))
-        meta.update(meta2)
+    document = read_knowledge_document(item)
+    if "content_format" in item and document.state not in {
+        "available",
+        "available_inline",
+    }:
+        return None
+    if not document.text:
+        if isinstance(item.get("metadata"), dict):
+            return dict(item["metadata"]), ""
+        return None
+    meta = dict(document.metadata)
+    _ignored, body = parse_frontmatter_text(document.text)
     return meta, body
 
 

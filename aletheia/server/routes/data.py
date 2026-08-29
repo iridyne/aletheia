@@ -2427,38 +2427,19 @@ def get_reviews_summary():
 
 @router.get("/knowledge/{item_id}/content")
 def get_knowledge_content(item_id: str):
-    """Read file-backed Markdown, falling back to persisted inline content."""
+    """Read a verified, current-root-bound Knowledge document."""
     _ensure_db()
-    from pathlib import Path
+    from aletheia.knowledge.document import read_knowledge_document
 
     items = repo._select_all("knowledge_items", where="id = ?", params=(item_id,), limit=1)
     if not items:
         raise HTTPException(404, "Knowledge item not found")
-    item = items[0]
-    inline_content = item.get("content") or ""
-    file_path = item.get("file_path")
-    if not file_path:
-        return (
-            {"id": item_id, "content": inline_content}
-            if inline_content
-            else {"id": item_id, "content": "", "error": "no_file_path"}
-        )
-    p = Path(file_path)
-    if not p.exists():
-        return (
-            {"id": item_id, "content": inline_content}
-            if inline_content
-            else {"id": item_id, "content": "", "error": "file_not_found"}
-        )
-    try:
-        content = p.read_text(encoding="utf-8")
-    except Exception:
-        return (
-            {"id": item_id, "content": inline_content}
-            if inline_content
-            else {"id": item_id, "content": "", "error": "read_failed"}
-        )
-    return {"id": item_id, "content": content}
+    document = read_knowledge_document(items[0])
+    if document.state == "integrity_conflict":
+        return {"id": item_id, "content": "", "error": "integrity_conflict"}
+    if not document.text:
+        return {"id": item_id, "content": "", "error": document.state}
+    return {"id": item_id, "content": document.text, "source_state": document.state}
 
 
 # ---------------------------------------------------------------------------

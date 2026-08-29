@@ -17,7 +17,9 @@ from tests.test_experience_loop import setup_env
 
 
 def _delete_markdown_body(file_path: str) -> None:
-    p = Path(file_path)
+    from aletheia.config.loader import get_data_dir
+
+    p = get_data_dir() / file_path
     assert p.is_file(), f"expected disk body at {file_path}"
     p.unlink()
     assert not p.exists()

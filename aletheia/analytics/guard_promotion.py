@@ -16,6 +16,11 @@ from pathlib import Path
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+from aletheia.knowledge.document import (
+    canonicalize_inline_document,
+    canonicalize_written_document,
+    relative_knowledge_path,
+)
 from aletheia.knowledge.guards import load_trading_guards, guard_origin
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
@@ -78,7 +83,14 @@ def _deprecate_expired_learned_guards() -> int:
                 new_meta["status"] = "deprecated"
                 new_meta.setdefault("deprecated_reason", "ttl_expired")
                 path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
-                _update_candidate_row_status(path)
+                _update_candidate_row_status(
+                    path,
+                    item_type=(
+                        "trading_guard"
+                        if guards_dir.name == "guards"
+                        else "guard_candidate"
+                    ),
+                )
                 _record_guard_candidate_deprecated_event(gid, str(path))
                 deprecated += 1
                 logger.info(
@@ -278,6 +290,7 @@ def promote_guard_candidate_to_active(
                     source_meta["promoted_to"] = guard_id
                     source_meta["promotion_reason"] = reason
                     _atomic_write(path, render_frontmatter(source_meta, body))
+                    _update_candidate_row_status(path)
                 else:
                     _atomic_write(path, active_content)
                 _notify_ranker_guard_change()
@@ -308,11 +321,16 @@ def _persist_guard_promotion(
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import transaction
 
+    active_document = {
+        "file_path": relative_knowledge_path(active_path),
+        **canonicalize_inline_document(render_frontmatter(active_meta, body)),
+    }
+    source_file_path = relative_knowledge_path(Path(source_path))
     with transaction(immediate=True):
         active_rows = repo._select_all(
             "knowledge_items",
             where="item_type = ? AND file_path = ?",
-            params=("trading_guard", str(active_path)),
+            params=("trading_guard", active_document["file_path"]),
             limit=1,
         )
         if active_rows:
@@ -320,23 +338,24 @@ def _persist_guard_promotion(
                 active_rows[0]["id"],
                 status="active",
                 title=active_meta.get("title") or active_path.stem,
-                content=body,
+                **active_document,
             )
         elif not active_existing:
-            repo.insert_knowledge_item(KnowledgeItem(
-                item_type="trading_guard",
-                title=active_meta.get("title") or active_path.stem,
-                file_path=str(active_path),
-                content=body,
-                confidence="high_confidence",
-                status="active",
-            ))
+            repo.insert_knowledge_item(
+                KnowledgeItem(
+                    item_type="trading_guard",
+                    title=active_meta.get("title") or active_path.stem,
+                    confidence="high_confidence",
+                    status="active",
+                    **active_document,
+                )
+            )
 
         if source_path_is_candidate:
             candidate_rows = repo._select_all(
                 "knowledge_items",
                 where="item_type = ? AND file_path = ?",
-                params=("guard_candidate", source_path),
+                params=("guard_candidate", source_file_path),
                 limit=10,
             )
             for row in candidate_rows:
@@ -359,19 +378,32 @@ def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
     return promote_guard_candidate_to_active(guard_id, loss_rate=loss_rate)
 
 
-def _update_candidate_row_status(path) -> None:
-    """Best-effort DB downgrade for the source candidate row."""
+def _update_candidate_row_status(
+    path,
+    *,
+    item_type: str = "guard_candidate",
+    status: str | None = "deprecated",
+    confidence: str | None = "deprecated",
+) -> None:
+    """Synchronize a rewritten guard document with its retained database row."""
     try:
         from aletheia.storage import repositories as repo
 
+        file_path = relative_knowledge_path(Path(path))
         rows = repo._select_all(
             "knowledge_items",
             where="file_path = ? AND item_type = ?",
-            params=(str(path), "guard_candidate"),
+            params=(file_path, item_type),
             limit=1,
         )
+        canonical = canonicalize_written_document(Path(path))
         for row in rows:
-            repo.update_knowledge_item(row["id"], status="deprecated", confidence="deprecated")
+            updates = dict(canonical)
+            if status is not None:
+                updates["status"] = status
+            if confidence is not None:
+                updates["confidence"] = confidence
+            repo.update_knowledge_item(row["id"], **updates)
     except Exception:
         logger.debug("Failed to update promoted guard candidate DB row", exc_info=True)
 
@@ -427,6 +459,15 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
                 meta["status"] = new_status
                 content = render_frontmatter(meta, body)
                 path.write_text(content, encoding="utf-8")
+                if new_status == "deprecated":
+                    _update_candidate_row_status(
+                        path,
+                        item_type=(
+                            "trading_guard"
+                            if search_dir == guards_dir
+                            else "guard_candidate"
+                        ),
+                    )
 
                 if new_status == "active" and search_dir == candidates_dir:
                     target = guards_dir / path.name
@@ -546,6 +587,12 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
                     tags.append("shadow-only")
                 new_meta["tags"] = tags
                 path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(
+                    path,
+                    item_type="trading_guard",
+                    status=None,
+                    confidence=None,
+                )
                 _record_guard_downgrade_event(str(meta.get("guard_id")), before)
             except Exception as e:
                 logger.warning("Failed to downgrade guard at %s: %s", path, e)

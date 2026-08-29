@@ -461,6 +461,17 @@ Relevant Learning item types:
 High-confidence active knowledge is indexed into FTS and can be retrieved through
 `retrieve_lessons()`. This path is separate from `ps_lessons`.
 
+One canonical Knowledge document is retained in `knowledge_items.content` as the
+complete rendered Markdown. `content_format`, the full SHA-256
+`content_sha256`, and canonical `metadata_json` define its integrity boundary;
+`file_path` is portable and relative to the selected data root. Symbol,
+direction, scanner-family, and outcome columns are query projections of that
+same document, not independent truth. Readers never follow an absolute path
+into another Runtime. Legacy rows may be rebound only to the same relative
+location under the current data root; ambiguous or hash-conflicting rows remain
+explicitly unavailable. Structured retrieval predicates run before its result
+limit, then document integrity is checked before prompt use.
+
 ---
 
 ## 5. Two Artifact-Retrieval Paths

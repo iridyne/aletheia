@@ -46,13 +46,25 @@ def _mock_llm_unavailable(monkeypatch):
 def _seed_trade_case_study(
     case_id: str = "case-1", created_at: str | None = None,
 ) -> None:
+    from aletheia.knowledge.document import canonicalize_inline_document
     from aletheia.storage.sqlite import get_db
 
     now = created_at or datetime.now(timezone.utc).isoformat()
+    document = canonicalize_inline_document(
+        "---\n"
+        "outcome: loss\n"
+        "realized_pnl_pct: -2.0\n"
+        "factor_key: momentum:BTC/USDT:long:medium_confidence:not_late\n"
+        "scanner_family: momentum\n"
+        "close_reason: stop_loss\n"
+        "---\n"
+        f"# Case: {case_id}\n"
+    )
     get_db().execute(
         "INSERT INTO knowledge_items "
-        "(id,item_type,title,status,confidence,created_at,updated_at) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "(id,item_type,title,status,confidence,created_at,updated_at,content,"
+        "content_format,content_sha256,metadata_json,symbol,direction,"
+        "scanner_family,outcome) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             case_id,
             "trade_case_study",
@@ -61,9 +73,57 @@ def _seed_trade_case_study(
             "high_confidence",
             now,
             now,
+            document["content"],
+            document["content_format"],
+            document["content_sha256"],
+            document["metadata_json"],
+            document["symbol"],
+            document["direction"],
+            document["scanner_family"],
+            document["outcome"],
         ),
     )
     get_db().commit()
+
+
+@pytest.mark.asyncio
+async def test_lesson_extraction_leaves_unavailable_cases_pending(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents import dreaming_agent
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO knowledge_items "
+        "(id,item_type,title,status,confidence,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "case-unavailable",
+            "trade_case_study",
+            "Unavailable case",
+            "active",
+            "high_confidence",
+            now,
+            now,
+        ),
+    )
+    db.commit()
+    called = False
+
+    async def unexpected_llm(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return {"lessons": []}, None
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", unexpected_llm)
+    outputs: list[str] = []
+    await dreaming_agent._extract_lessons(None, outputs, [])
+
+    assert not called
+    assert outputs == []
+    assert db.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0] == 0
+
 
 
 def test_lesson_extraction_declares_its_structured_transport_contract():
@@ -225,7 +285,8 @@ async def test_reopened_prefix_does_not_starve_forward_cases(tmp_path, monkeypat
 
     def seed_case(case_id: str, created_at: str) -> None:
         factor = factor_by_case[case_id]
-        path = Path(tmp_path) / f"{case_id}.md"
+        path = Path(tmp_path) / "knowledge" / "trade_case_studies" / f"{case_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "---\n"
             "outcome: loss\n"
@@ -304,7 +365,8 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     from tests.specs.spec_learning_attribution import _ready_research
 
     factor = "momentum:BTC/USDT:long:medium_confidence:not_late"
-    path = Path(tmp_path) / "case-retry.md"
+    path = Path(tmp_path) / "knowledge" / "trade_case_studies" / "case-retry.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "---\n"
         "outcome: loss\n"
@@ -327,6 +389,12 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     )
     db.commit()
     observed_deadlines = []
+    from aletheia.knowledge.document import read_knowledge_document
+
+    stored_case = dict(
+        db.execute("SELECT * FROM knowledge_items WHERE id='case-retry'").fetchone()
+    )
+    assert read_knowledge_document(stored_case).metadata["factor_key"] == factor
 
     async def _structured_recommendation(*_args, **_kwargs):
         observed_deadlines.append(_kwargs.get("deadline"))
@@ -347,7 +415,7 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(guard_routing, "research_learning_hypothesis", ready_research)
     monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
 
-    with pytest.raises(RuntimeError, match="temporary nomination failure"):
+    with pytest.raises(RuntimeError, match="hypothesis nomination failed"):
         await dreaming_agent._extract_lessons(None, [], [], deadline=123.0)
 
     assert observed_deadlines == [123.0, 123.0]
@@ -388,7 +456,8 @@ async def test_lesson_extraction_links_each_lesson_to_its_supporting_case(
     db = get_db()
     for case_id, factor in (("case-1", "momentum:BTC/USDT:long"),
                             ("case-2", "volatility:ETH/USDT:short")):
-        path = Path(tmp_path) / f"{case_id}.md"
+        path = Path(tmp_path) / "knowledge" / "trade_case_studies" / f"{case_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"---\nfactor_key: {factor}\n---\n", encoding="utf-8")
         db.execute(
             "INSERT INTO knowledge_items "

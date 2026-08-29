@@ -78,7 +78,7 @@ def _legacy_relative(file_path: str) -> Path | None:
         lowered = [p.lower() for p in parts]
         if "knowledge" not in lowered:
             continue
-        idx = lowered.index("knowledge")
+        idx = len(lowered) - 1 - lowered[::-1].index("knowledge")
         rel_parts = parts[idx + 1 :]
         if rel_parts:
             return Path(*rel_parts)
@@ -96,12 +96,6 @@ def resolve_orphan_body(
     if not file_path:
         return None, ""
 
-    try:
-        direct = Path(file_path)
-        if direct.is_file():
-            return direct, "existing"
-    except Exception:
-        pass
 
     rel = _legacy_relative(file_path)
     if rel is not None:
@@ -151,7 +145,7 @@ def scan_orphan_bodies(
         "SELECT id, item_type, title, file_path, content "
         "FROM knowledge_items "
         "WHERE status='active' AND confidence='high_confidence' "
-        "AND COALESCE(TRIM(content), '') = '' "
+        "AND content_format IS NULL "
         "ORDER BY created_at DESC"
     ).fetchall()
 

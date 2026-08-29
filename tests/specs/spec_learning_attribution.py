@@ -263,7 +263,6 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert hypothesis_row["target_horizon"] == "4h"
     assert hypothesis_row["source_type"] == "guard_candidate"
     assert json.loads(hypothesis_row["scope_json"]) == {
-        "applies_to": {"scanner_family": ["momentum"], "symbol": ["btcusdt"]},
         "guard_id": routed["guard_id"],
     }
     assert json.loads(hypothesis_row["action_json"]) == {
@@ -284,7 +283,24 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert repeated["hypothesis_id"] == routed["hypothesis_id"]
     assert repeated["guard_candidate_id"] == "candidate-item"
     assert len(list_records("learning_hypotheses")) == 1
-    assert list_records("learning_experiments") == []
+    from aletheia.learning.experiments import _ensure_experiment
+
+    consumed_hypothesis, experiment = _ensure_experiment(
+        path_id="ranker_learned_guard",
+        scope={"guard_id": routed["guard_id"]},
+        action={
+            "type": "candidate_guard",
+            "guard_id": routed["guard_id"],
+            "block_candidate": True,
+            "score_penalty": 0,
+        },
+        source_cohort=f"learned_guard:{routed['guard_id']}:v1",
+        target_horizon="4h",
+        consumer="paper_trader_ranker",
+    )
+    assert consumed_hypothesis.hypothesis_id == routed["hypothesis_id"]
+    assert experiment is not None
+    assert len(list_records("learning_experiments")) == 1
     assert list_records("learning_exposures") == []
     assert list_records("learning_contribution_verdicts") == []
     assert captured["status"] == "candidate"

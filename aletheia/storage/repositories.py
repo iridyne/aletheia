@@ -5197,6 +5197,10 @@ def list_strategies(limit: int = 50) -> list[dict]:
 
 
 def insert_knowledge_item(k: KnowledgeItem) -> None:
+    if k.content is not None and k.content_format is None:
+        from aletheia.knowledge.document import canonicalize_inline_document
+
+        k = k.model_copy(update=canonicalize_inline_document(k.content))
     _insert("knowledge_items", k.model_dump())
 
 
@@ -5206,6 +5210,10 @@ def insert_knowledge_item_if_absent(
     title_window_hours: int | None = None,
 ) -> tuple[bool, str | None, str | None]:
     """Atomically insert a knowledge item unless its semantic identity exists."""
+    if k.content is not None and k.content_format is None:
+        from aletheia.knowledge.document import canonicalize_inline_document
+
+        k = k.model_copy(update=canonicalize_inline_document(k.content))
 
     db = get_db()
     content_hash = str(k.content_hash or "").strip()

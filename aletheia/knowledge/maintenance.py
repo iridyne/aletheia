@@ -149,32 +149,23 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
 
 
 def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dict:
-    """Downgrade active high-confidence knowledge rows that have no retrievable body.
-
-    A high-confidence knowledge item is expected to be reconstructable into FTS from
-    either its markdown file or the DB `content` column. Rows with neither are audit
-    stubs, not learnable material. This keeps the row intact but changes confidence
-    to medium_confidence so FTS coverage probes stop counting it as eligible.
-    """
-    from aletheia.storage.sqlite import get_db
+    """Downgrade active high-confidence rows with no verified document."""
+    from aletheia.knowledge.document import read_knowledge_document
     from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     rows = db.execute(
-        "SELECT id, item_type, file_path, content FROM knowledge_items "
+        "SELECT * FROM knowledge_items "
         "WHERE status='active' AND confidence='high_confidence'"
     ).fetchall()
 
-    from aletheia.knowledge.retrieval import _read_body
-
     matched_ids: list[str] = []
     by_type: dict[str, int] = {}
-    for row in rows:
-        # Reuse retrieval._read_body so the Windows/POSIX legacy path migration
-        # logic is applied — otherwise rows that could still be recovered via
-        # scan-recovery-sources would be silently downgraded.
-        body = _read_body(row["file_path"])
-        if body.strip() or str(row["content"] or "").strip():
+    for raw_row in rows:
+        row = dict(raw_row)
+        document = read_knowledge_document(row)
+        if document.text and document.state != "integrity_conflict":
             continue
         matched_ids.append(row["id"])
         item_type = row["item_type"] or "unknown"
@@ -222,29 +213,29 @@ def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dic
 
 
 def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
-    """Copy Markdown bodies from disk into ``knowledge_items.content``.
-
-    Complements Phase E1's dual-write writers: pre-existing rows still have an
-    empty ``content`` column but readable ``file_path``. This backfill closes
-    that gap so a subsequent runtime move / disk cleanup cannot break FTS.
-    Idempotent, additive — never truncates or hard-deletes.
-    """
+    """Backfill canonical documents and provenance from the current data root."""
+    from aletheia.knowledge.document import (
+        canonicalize_written_document,
+        read_knowledge_document,
+    )
+    from aletheia.knowledge.retrieval import reindex_all
     from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.retrieval import _read_body, reindex_all
 
     db = get_db()
     rows = db.execute(
-        "SELECT id, file_path FROM knowledge_items "
-        "WHERE status='active' AND COALESCE(TRIM(content), '') = '' "
+        "SELECT * FROM knowledge_items "
+        "WHERE content_format IS NULL "
         "AND file_path IS NOT NULL AND TRIM(file_path) != ''"
     ).fetchall()
-
-    to_update: list[tuple[str, str]] = []
-    for row in rows:
-        body = _read_body(row["file_path"])
-        if not body.strip():
+    to_update: list[tuple[str, dict]] = []
+    for raw_row in rows:
+        row = dict(raw_row)
+        document = read_knowledge_document(row)
+        if document.state != "legacy_current_root" or document.resolved_path is None:
             continue
-        to_update.append((row["id"], body))
+        to_update.append(
+            (row["id"], canonicalize_written_document(document.resolved_path))
+        )
 
     if dry_run or not to_update:
         return {
@@ -255,10 +246,24 @@ def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
         }
 
     was_in_tx = db.in_transaction
-    for item_id, body in to_update:
+    for item_id, canonical in to_update:
         db.execute(
-            "UPDATE knowledge_items SET content=?, updated_at=? WHERE id=?",
-            (body, datetime.now(timezone.utc).isoformat(), item_id),
+            "UPDATE knowledge_items SET file_path=?, content=?, content_format=?, "
+            "content_sha256=?, metadata_json=?, symbol=?, direction=?, scanner_family=?, "
+            "outcome=?, updated_at=? WHERE id=?",
+            (
+                canonical["file_path"],
+                canonical["content"],
+                canonical["content_format"],
+                canonical["content_sha256"],
+                canonical["metadata_json"],
+                canonical["symbol"],
+                canonical["direction"],
+                canonical["scanner_family"],
+                canonical["outcome"],
+                datetime.now(timezone.utc).isoformat(),
+                item_id,
+            ),
         )
     if not was_in_tx:
         db.commit()
@@ -283,31 +288,22 @@ def downgrade_unattributed_trade_case_studies(*, dry_run: bool = False) -> dict:
     direction, or prose would fabricate attribution. Keep the row active/auditable,
     but move it out of the high-confidence learning pool.
     """
-    from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.frontmatter import parse_frontmatter, parse_frontmatter_text
+    from aletheia.knowledge.document import read_knowledge_document
     from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     rows = db.execute(
-        "SELECT id, file_path, content FROM knowledge_items "
+        "SELECT * FROM knowledge_items "
         "WHERE item_type='trade_case_study' "
         "AND status='active' AND confidence='high_confidence'"
     ).fetchall()
 
     matched_ids: list[str] = []
-    for row in rows:
-        meta = {}
-        file_path = row["file_path"]
-        if file_path:
-            try:
-                path = Path(file_path)
-                if path.exists():
-                    meta, _ = parse_frontmatter(path)
-            except Exception:
-                meta = {}
-        if not meta and str(row["content"] or "").strip():
-            meta, _ = parse_frontmatter_text(str(row["content"]))
-        if not str(meta.get("scanner_family") or "").strip():
+    for raw_row in rows:
+        row = dict(raw_row)
+        document = read_knowledge_document(row)
+        if not str(document.metadata.get("scanner_family") or "").strip():
             matched_ids.append(row["id"])
 
     if dry_run or not matched_ids:

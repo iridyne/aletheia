@@ -361,21 +361,27 @@ async def _extract_lessons(
         wrapped = bool(reviews)
     if not reviews:
         return []
+    from aletheia.knowledge.document import read_knowledge_document
+
+    verified_documents = {}
+    verified_reviews = []
+    for review in reviews:
+        document = read_knowledge_document(review)
+        if not document.text:
+            continue
+        verified_reviews.append(review)
+        verified_documents[str(review.get("id") or "")] = document
+    reviews = verified_reviews
+    if not reviews:
+        return []
+
 
     # Build rich case lines including PnL metrics so the LLM has something
     # concrete to summarise and the evidence_json is populated for lesson_reviewer.
     case_lines = []
     for r in reviews:
-        from aletheia.knowledge.frontmatter import parse_frontmatter
-        from pathlib import Path
-        meta: dict = {}
-        fpath = r.get("file_path")
-        if fpath:
-            try:
-                meta, _ = parse_frontmatter(Path(fpath))
-                meta = meta or {}
-            except Exception:
-                pass
+        document = verified_documents[str(r.get("id") or "")]
+        meta = document.metadata
         outcome = meta.get("outcome", "?")
         pnl = meta.get("realized_pnl_pct", "?")
         factor = meta.get("factor_key", "?")
@@ -437,42 +443,36 @@ async def _extract_lessons(
     # lesson_reviewer deterministic numbers even if the LLM skipped the evidence field.
     agg_evidence: dict = {}
     if reviews:
-        from pathlib import Path
-        from aletheia.knowledge.frontmatter import parse_frontmatter
         case_facts: dict[str, dict] = {}
         factor_source_ids: dict[str, list[str]] = {}
         for r in reviews:
             source_id = str(r.get("id") or "")
             if source_id:
                 case_facts[source_id] = {}
-            fpath = r.get("file_path")
-            if fpath:
+            document = verified_documents[source_id]
+            meta = document.metadata
+            if source_id:
+                case_facts[source_id] = {
+                    key: meta.get(key)
+                    for key in (
+                        "outcome",
+                        "realized_pnl_pct",
+                        "factor_key",
+                        "scanner_family",
+                    )
+                }
+            if meta.get("realized_pnl_pct") is not None:
                 try:
-                    meta, _ = parse_frontmatter(Path(fpath))
-                    meta = meta or {}
                     if source_id:
-                        case_facts[source_id] = {
-                            key: meta.get(key)
-                            for key in (
-                                "outcome", "realized_pnl_pct", "factor_key",
-                                "scanner_family",
-                            )
-                        }
-                    if meta.get("realized_pnl_pct") is not None:
-                        try:
-                            if source_id:
-                                case_facts[source_id]["realized_pnl_pct"] = float(
-                                    meta["realized_pnl_pct"]
-                                )
-                        except (ValueError, TypeError):
-                            if source_id:
-                                case_facts[source_id]["realized_pnl_pct"] = None
-                    if meta.get("factor_key"):
-                        factor_key = str(meta["factor_key"])
-                        if source_id:
-                            factor_source_ids.setdefault(factor_key, []).append(source_id)
-                except Exception:
-                    pass
+                        case_facts[source_id]["realized_pnl_pct"] = float(
+                            meta["realized_pnl_pct"]
+                        )
+                except (ValueError, TypeError):
+                    if source_id:
+                        case_facts[source_id]["realized_pnl_pct"] = None
+            if meta.get("factor_key") and source_id:
+                factor_key = str(meta["factor_key"])
+                factor_source_ids.setdefault(factor_key, []).append(source_id)
         agg_evidence = _aggregate_case_facts(
             case_facts,
             [str(row["id"]) for row in reviews if row.get("id")],
@@ -528,6 +528,8 @@ async def _extract_lessons(
             rec = await route_automatic_block_recommendation(
                 rec, evidence=evidence, source_id=source_id, deadline=deadline,
             )
+            if rec.get("reason") == "hypothesis_nomination_failed":
+                raise RuntimeError("hypothesis nomination failed")
         started_at = time.monotonic()
         created = store.create(
             summary=lesson["summary"],
