@@ -55,3 +55,7 @@ Proposal freeze, Position Replay exposure, and descriptive compliance reports.
 The [Settings Control Persistence Contract](settings_control_contract.md) owns
 the explicit immediate-versus-staged frontend control semantics and the checked-in
 Settings switch inventory.
+
+The [Configuration Loading Contract](configuration_contract.md) owns the
+strict persisted-config boundary, safe validation errors, and Doctor blocker
+projection.

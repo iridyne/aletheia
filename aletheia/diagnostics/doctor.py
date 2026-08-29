@@ -726,7 +726,27 @@ def _probe_gateway_restart_history(report: Report) -> None:
 
 def _probe_config_gates(report: Report) -> None:
     from aletheia.config.loader import load_config
-    cfg = load_config()
+    from pydantic import ValidationError
+    try:
+        cfg = load_config()
+    except ValidationError as exc:
+        paths = ", ".join(
+            sorted(
+                {
+                    ".".join(str(part) for part in error.get("loc", ()))
+                    for error in exc.errors(include_input=False)
+                    if error.get("type") == "extra_forbidden"
+                }
+            )
+        ) or "invalid persisted value"
+        report.add(
+            "config.validation",
+            "blocker",
+            f"persisted configuration rejected at: {paths}",
+            "repair config.yaml by removing the unknown key or adding an explicit migration; "
+            "no source values were rewritten",
+        )
+        return
     report.add("config.permission", "info", f"permission_mode={cfg.agent.permission_mode}")
     report.add("config.live", "info",
                f"live.state={cfg.live.state}, exchange.mode={cfg.exchange.mode}, "

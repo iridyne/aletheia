@@ -131,6 +131,76 @@ def test_restored_invalid_execution_cost_config_fails_closed(
             load_config()
 
 
+@pytest.mark.parametrize(
+    "yaml_text",
+    [
+        "unknown_root: true\n",
+        "runtime:\n  pausedd: true\n",
+        "runtime:\n  scheduler_enabledd: false\n",
+        "remote_control:\n  require_tokn: true\n",
+        "agent:\n  permission_mode_typo: Observe\n",
+    ],
+)
+def test_unknown_config_keys_fail_closed_without_rewriting_source(tmp_path, yaml_text):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    with patch("aletheia.config.loader.DATA_DIR", tmp_path), patch(
+        "aletheia.config.loader.CONFIG_PATH", config_file
+    ):
+        with pytest.raises(ValidationError) as exc_info:
+            load_config()
+
+    assert any(error["type"] == "extra_forbidden" for error in exc_info.value.errors())
+    assert config_file.read_text(encoding="utf-8") == yaml_text
+
+
+def test_unknown_config_error_exposes_safe_path_and_repair_hint(tmp_path):
+    secret = "do-not-log-this-token"
+    config_file = tmp_path / "config.yaml"
+    yaml_text = f"remote_control:\n  require_tokn: {secret}\n"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    with patch("aletheia.config.loader.DATA_DIR", tmp_path), patch(
+        "aletheia.config.loader.CONFIG_PATH", config_file
+    ):
+        with pytest.raises(ValidationError) as exc_info:
+            load_config()
+
+    error = exc_info.value
+    assert any(
+        tuple(item["loc"]) == ("remote_control", "require_tokn")
+        for item in error.errors(include_input=False)
+    )
+    assert "remote_control.require_tokn" in str(error)
+    assert secret not in str(error)
+    assert secret not in error.json()
+    assert all(item.get("input") is None for item in error.errors())
+    assert config_file.read_text(encoding="utf-8") == yaml_text
+
+
+def test_strict_config_load_preserves_dynamic_mappings(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data = AletheiaConfig().model_dump(mode="json")
+    data["models"]["providers"]["operator_selected"] = {
+        "type": "openai_compatible",
+        "base_url": "https://example.invalid",
+    }
+    data["universe"]["family_quota"] = {
+        "momentum": 0.5,
+        "mean_reversion": 0.5,
+    }
+    config_file.write_text(yaml.dump(data, sort_keys=False), encoding="utf-8")
+
+    with patch("aletheia.config.loader.DATA_DIR", tmp_path), patch(
+        "aletheia.config.loader.CONFIG_PATH", config_file
+    ):
+        loaded = load_config(persist_migrations=False)
+
+    assert loaded.models.providers["operator_selected"].type == "openai_compatible"
+    assert loaded.universe.family_quota == {"momentum": 0.5, "mean_reversion": 0.5}
+
+
 def test_bootstrap_creates_dirs(tmp_path):
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path
