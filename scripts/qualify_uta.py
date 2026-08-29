@@ -309,7 +309,7 @@ async def _qualify(args) -> dict:
                 expected_quantity=filled_quantity,
                 history_start_at=started,
                 history_end_at=datetime.now(timezone.utc) + timedelta(minutes=2),
-                local_order_ids=(entry.client_order_id, close.client_order_id),
+                local_order_ids=(entry.client_order_id,),
             )
         )
         exact = await adapter.get_order(

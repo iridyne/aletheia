@@ -657,6 +657,46 @@ async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
     await adapter.close()
 
 
+@pytest.mark.asyncio
+async def test_okx_verified_exit_normalizes_local_entry_client_id(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    timestamp = int((now - timedelta(seconds=1)).timestamp() * 1000)
+    exchange.positions = []
+    exchange.trades = [
+        {
+            "id": "entry-fill", "order": "entry-order-id",
+            "clientOrderId": "entryorder", "symbol": "BTC/USDT:USDT",
+            "side": "buy", "amount": "1", "price": "60000",
+            "timestamp": timestamp, "info": {"posSide": "long", "tradeSide": "open"},
+        },
+        {
+            "id": "close-fill", "order": "close-order-id",
+            "clientOrderId": "closeposition", "symbol": "BTC/USDT:USDT",
+            "side": "sell", "amount": "1", "price": "60100",
+            "timestamp": timestamp, "info": {"posSide": "long", "tradeSide": "close"},
+        },
+    ]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    instrument = InstrumentIdentity(
+        canonical_symbol="BTC/USDT", venue_symbol="BTC/USDT:USDT",
+        market_type="usdt_futures", base_currency="BTC",
+        quote_currency="USDT", settlement_currency="USDT",
+    )
+
+    report = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity, local_position_id="position-1",
+        instrument=instrument, direction="long", expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1), history_end_at=now,
+        local_order_ids=("entry-order",),
+    ))
+
+    assert report.state is VerifiedExitState.VERIFIED_FILL_EXIT
+    assert [fill.venue_fill_id for fill in report.exit_fills] == ["close-fill"]
+
+
 def _okx_funding_row(event_id: str, amount: str, timestamp: int) -> dict:
     return {"info": {
         "billId": event_id,

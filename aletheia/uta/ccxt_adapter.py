@@ -890,10 +890,15 @@ class CCXTUTAAdapter:
                 state=VerifiedExitState.INCONCLUSIVE,
                 local_position_id=query.local_position_id,
             )
+        external_entry_ids = {
+            self._profile.external_client_order_id(value)
+            for value in query.local_order_ids
+        }
         non_entry_fills = tuple(
             fill
             for fill in fills.fills
-            if fill.client_order_id not in query.local_order_ids and fill.venue_order_id not in query.local_order_ids
+            if fill.client_order_id not in external_entry_ids
+            and fill.venue_order_id not in query.local_order_ids
         )
         close_side = "sell" if direction == "long" else "buy"
 
