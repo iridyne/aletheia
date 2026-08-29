@@ -33,6 +33,7 @@ _OUTCOME_HORIZONS = frozenset({"15m", "1h", "4h", "24h"})
 _PRIMARY_HORIZON = "24h"
 _PRIMARY_HORIZON_HOURS = 24
 _MIN_SETTLED_PER_COHORT = 5
+_PENDING_TEMPORAL_REASONS = frozenset({"unsettled", "settlement_after_as_of"})
 
 
 @dataclass(frozen=True)
@@ -276,20 +277,30 @@ def _diagnose(
 
     settled_skip_nets: list[float] = []
     unsettled = 0
+    invalid_temporal_reasons: Counter[str] = Counter()
     for key in mature_keys:
         primary = next((row for row in outcomes[key] if row["horizon"] == _PRIMARY_HORIZON), None)
-        if (
-            primary is None
-            or primary["economics_complete"] != 1
-            or candidate_outcome_temporal_reason(
-                dict(primary), as_of_at=observed_end
-            ) is not None
-        ):
+        if primary is None:
+            unsettled += 1
+            continue
+        temporal_reason = _skip_temporal_reason(
+            dict(primary), observed_end=observed_end
+        )
+        if temporal_reason is not None and temporal_reason not in _PENDING_TEMPORAL_REASONS:
+            invalid_temporal_reasons[temporal_reason] += 1
+        elif primary["economics_complete"] != 1 or temporal_reason in _PENDING_TEMPORAL_REASONS:
             unsettled += 1
         else:
             settled_skip_nets.append(float(primary["net_return_pct"]))
     counts["settled_candidate_skips"] = len(settled_skip_nets)
     counts["unsettled_candidate_skips"] = unsettled
+    if invalid_temporal_reasons:
+        counts["invalid_temporal_outcomes"] = sum(invalid_temporal_reasons.values())
+        reason_codes.update(invalid_temporal_reasons)
+        return _report(
+            "recording_incident", "create_recording_repair_task", start, end,
+            counts=counts, metrics={}, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,
+        )
     if unsettled:
         return _report(
             "awaiting_outcomes", "await_fixed_horizon_settlement", start, end,
@@ -342,6 +353,30 @@ def _diagnose(
         "operator_liveness_incident", "create_non_executable_replay_draft", start, end,
         counts=counts, metrics=metrics, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,
     )
+
+
+def _skip_temporal_reason(row: dict, *, observed_end: datetime) -> str | None:
+    """Keep pending rows pending while surfacing impossible timeline facts."""
+    status = str(row.get("status") or "").strip().lower()
+    reason = candidate_outcome_temporal_reason(row, as_of_at=observed_end)
+    if status != "pending":
+        return (
+            f"terminal_status_{status or 'unknown'}"
+            if reason == "unsettled" else reason
+        )
+    if reason != "unsettled":
+        return reason
+    timeline = dict(row)
+    timeline["status"] = "settled"
+    timeline_reason = candidate_outcome_temporal_reason(
+        timeline, as_of_at=observed_end
+    )
+    if timeline_reason in {None, "missing_settled_at", "settlement_after_as_of"}:
+        return (
+            "settlement_after_as_of"
+            if timeline_reason == "settlement_after_as_of" else "unsettled"
+        )
+    return timeline_reason
 
 
 def _report(

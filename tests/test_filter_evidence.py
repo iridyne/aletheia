@@ -1528,7 +1528,7 @@ def test_controller_persists_new_observational_verdict_through_legacy_schema(mon
     monkeypatch.setattr(
         filter_controller,
         "compute_filter_feedback",
-        lambda min_samples=20: [recommendation],
+        lambda min_samples=20, **_kwargs: [recommendation],
     )
 
     result = filter_controller.run_controller_observe()

@@ -736,7 +736,10 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         )
 
     run_id = uuid.uuid4().hex
-    recs = compute_filter_feedback(min_samples=min_samples)
+    recs = compute_filter_feedback(
+        min_samples=min_samples,
+        as_of_at=generated_at,
+    )
     persist_failed = False
     written = 0
     skipped_insufficient = 0
@@ -857,7 +860,11 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         )
         from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
 
-        replays = build_bounded_filter_replays(recs, min_samples=min_samples)
+        replays = build_bounded_filter_replays(
+            recs,
+            min_samples=min_samples,
+            as_of_at=generated_at,
+        )
         experiment_registration = register_replay_ready_experiments(replays)
     except Exception as exc:  # pragma: no cover - defensive scheduler boundary
         logger.warning("filter_controller: replay registration failed: %s", exc)
@@ -967,6 +974,7 @@ def build_filter_controller_report(
             "assignment_policy": "first_exposure",
             "read_only": True,
             "evaluated_since": evaluated_since,
+            "observed_end": observed_end,
             "row_count": 0,
             "cohort_count": 0,
             "cohorts": [],

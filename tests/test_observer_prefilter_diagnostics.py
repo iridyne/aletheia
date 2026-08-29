@@ -97,13 +97,13 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
     db.commit()
     before = db.total_changes
 
-    report = observer_pre_filter_diagnostics(
-        as_of_at=(now + timedelta(days=2)).isoformat()
-    )
+    observed_end = (now + timedelta(days=2)).isoformat()
+    report = observer_pre_filter_diagnostics(as_of_at=observed_end)
 
     assert db.total_changes == before
     assert report["read_only"] is True
     assert report["assignment_policy"] == "first_exposure"
+    assert report["observed_end"] == observed_end
     assert report["row_count"] == 8  # two candidates × four horizons
     assert {
         (row["decision"], row["rule_cohort"])

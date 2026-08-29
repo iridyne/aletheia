@@ -202,10 +202,20 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
 
 def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
     calls = {"registered": 0, "evaluated": 0}
-    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    cutoffs = {}
+
+    def fake_compute(min_samples=20, *, as_of_at=None):
+        cutoffs["compute"] = as_of_at
+        return []
+
+    def fake_replays(*args, as_of_at=None, **kwargs):
+        cutoffs["replay"] = as_of_at
+        return [{"filter_name": "family_ttl"}]
+
+    monkeypatch.setattr(fc, "compute_filter_feedback", fake_compute)
     monkeypatch.setattr(
         "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
-        lambda *args, **kwargs: [{"filter_name": "family_ttl"}],
+        fake_replays,
     )
 
     def fake_register(replays):
@@ -236,6 +246,8 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
     assert calls == {"registered": 1, "evaluated": 1}
     assert summary["experiments_registered"] == 1
     assert summary["experiments_evaluated"] == 1
+    assert cutoffs["compute"] is not None
+    assert cutoffs["compute"] == cutoffs["replay"]
 
 
 def test_insufficient_data_when_no_stats(monkeypatch):
@@ -489,7 +501,9 @@ def test_render_report_shows_persistent_section(monkeypatch):
 
 def test_observe_pass_status_success_when_all_clean(monkeypatch):
     """Clean pass → pass_status=success, pass_reason=None."""
-    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: []
+    )
     monkeypatch.setattr(
         "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
@@ -518,7 +532,7 @@ def test_observe_pass_status_success_when_all_clean(monkeypatch):
 
 def test_observe_pass_status_failed_when_persist_fails(monkeypatch):
     """DB persistence exception → pass_status=failed."""
-    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: [
         type("Rec", (), {
             "filter_name": "family_ttl",
             "scanner_family": "momentum",
@@ -580,7 +594,9 @@ def test_observe_pass_status_failed_when_persist_fails(monkeypatch):
 
 def test_observe_pass_status_partial_when_lab_windows_errored(monkeypatch):
     """Lab window errors → pass_status=partial."""
-    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: []
+    )
     monkeypatch.setattr(
         "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],
@@ -608,7 +624,9 @@ def test_observe_pass_status_partial_when_lab_windows_errored(monkeypatch):
 
 def test_observe_pass_status_partial_when_ufc_mismatch(monkeypatch):
     """UFC shadow equivalence mismatch → pass_status=partial."""
-    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        fc, "compute_filter_feedback", lambda min_samples=20, **_kwargs: []
+    )
     monkeypatch.setattr(
         "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
         lambda *args, **kwargs: [],

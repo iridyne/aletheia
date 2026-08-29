@@ -486,7 +486,11 @@ def filter_feedback_stats(
 
     from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
-    observed_end = as_of_at or _utcnow()
+    observed_end = (
+        as_of_at.isoformat()
+        if isinstance(as_of_at, datetime)
+        else as_of_at or _utcnow()
+    )
 
     # A candidate can be evaluated on multiple scheduler ticks (fresh first,
     # expired later). Assign it once by its first persisted exposure so pass and
@@ -511,55 +515,88 @@ def filter_feedback_stats(
         "WHERE fd.exposure_rank = 1 "
         f"{time_clause} "
         "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
-        "fd.direction, fd.market_type, fo.horizon, fo.cost_model_version, "
+        "fd.parameter_snapshot, fd.direction, fd.market_type, fo.horizon, "
+        "fo.cost_model_version, "
         "fd.decision, fd.outcome_candidate_key",
         params,
-    ).fetchall()
-    grouped: dict[tuple, dict[str, Any]] = {}
+    )
+    raw: list[dict[str, Any]] = []
+    current_key: tuple[Any, ...] | None = None
+    current_group: dict[str, Any] | None = None
+
+    def _new_group(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "filter_name": row.get("filter_name"),
+            "stage": row.get("stage"),
+            "filter_version": row.get("filter_version"),
+            "parameter_snapshot": row.get("parameter_snapshot"),
+            "decision": row.get("decision"),
+            "scanner_family": row.get("scanner_family") or "unknown",
+            "direction": row.get("direction"),
+            "market_type": row.get("market_type"),
+            "horizon": row.get("horizon"),
+            "cost_model_version": row.get("cost_model_version"),
+            "_n_total": 0,
+            "_n_net": 0,
+            "_net_sum": 0.0,
+            "_last_candidate_key": None,
+            "_candidate_net_recorded": False,
+            "gains": 0.0,
+            "losses": 0.0,
+            "blocked_avoided_loss_count": 0,
+            "blocked_missed_alpha_count": 0,
+            "blocked_net_sum": 0.0,
+        }
+
+    def _finish_group(group: dict[str, Any]) -> dict[str, Any]:
+        n = int(group.pop("_n_net"))
+        group["n_total"] = int(group.pop("_n_total"))
+        net_sum = float(group.pop("_net_sum"))
+        group.pop("_last_candidate_key")
+        group.pop("_candidate_net_recorded")
+        group["n_net"] = n
+        group["avg_net"] = net_sum / n if n else None
+        return group
+
     for source in rows:
         row = dict(source)
         group_key = (
-            row.get("filter_name"), row.get("stage"), row.get("filter_version"),
-            row.get("parameter_snapshot"), row.get("decision"),
-            row.get("scanner_family") or "unknown", row.get("direction"),
-            row.get("market_type"), row.get("horizon"),
+            row.get("filter_name"),
+            row.get("stage"),
+            row.get("filter_version"),
+            row.get("scanner_family") or "unknown",
+            row.get("parameter_snapshot"),
+            row.get("direction"),
+            row.get("market_type"),
+            row.get("horizon"),
             row.get("cost_model_version"),
+            row.get("decision"),
         )
-        group = grouped.setdefault(
-            group_key,
-            {
-                "filter_name": row.get("filter_name"),
-                "stage": row.get("stage"),
-                "filter_version": row.get("filter_version"),
-                "parameter_snapshot": row.get("parameter_snapshot"),
-                "decision": row.get("decision"),
-                "scanner_family": row.get("scanner_family") or "unknown",
-                "direction": row.get("direction"),
-                "market_type": row.get("market_type"),
-                "horizon": row.get("horizon"),
-                "cost_model_version": row.get("cost_model_version"),
-                "_candidate_keys": set(),
-                "_nets": {},
-                "gains": 0.0,
-                "losses": 0.0,
-                "blocked_avoided_loss_count": 0,
-                "blocked_missed_alpha_count": 0,
-                "blocked_net_sum": 0.0,
-            },
-        )
+        if group_key != current_key:
+            if current_group is not None:
+                raw.append(_finish_group(current_group))
+            current_key = group_key
+            current_group = _new_group(row)
+        group = current_group
+        assert group is not None
         candidate_key = str(row.get("outcome_candidate_key") or "")
         if not candidate_key:
             continue
-        group["_candidate_keys"].add(candidate_key)
+        if candidate_key != group["_last_candidate_key"]:
+            group["_last_candidate_key"] = candidate_key
+            group["_candidate_net_recorded"] = False
+            group["_n_total"] += 1
         if (
             row.get("economics_complete") != 1
             or candidate_outcome_temporal_reason(row, as_of_at=observed_end)
             is not None
-            or candidate_key in group["_nets"]
+            or group["_candidate_net_recorded"]
         ):
             continue
+        group["_candidate_net_recorded"] = True
         net = float(row["net_return_pct"])
-        group["_nets"][candidate_key] = net
+        group["_n_net"] += 1
+        group["_net_sum"] += net
         if net > 0:
             group["gains"] += net
         elif net < 0:
@@ -570,14 +607,8 @@ def filter_feedback_stats(
             if net > float(row.get("min_tradable_edge_pct") or 0.0):
                 group["blocked_missed_alpha_count"] += 1
             group["blocked_net_sum"] += net
-
-    raw: list[dict[str, Any]] = []
-    for group in grouped.values():
-        nets = list(group.pop("_nets").values())
-        group["n_total"] = len(group.pop("_candidate_keys"))
-        group["n_net"] = len(nets)
-        group["avg_net"] = sum(nets) / len(nets) if nets else None
-        raw.append(group)
+    if current_group is not None:
+        raw.append(_finish_group(current_group))
     priors: dict[tuple, tuple[int, float]] = {}
     for row in raw:
         key = _cohort_key(row)
@@ -700,7 +731,11 @@ def observer_pre_filter_diagnostics(
     from aletheia.storage.sqlite import get_db
     from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
-    observed_end = as_of_at or _utcnow()
+    observed_end = (
+        as_of_at.isoformat()
+        if isinstance(as_of_at, datetime)
+        else as_of_at or _utcnow()
+    )
 
     time_clause = (
         " AND datetime(fd.first_evaluated_at) >= datetime(?)"
@@ -839,6 +874,7 @@ def observer_pre_filter_diagnostics(
         "assignment_policy": "first_exposure",
         "read_only": True,
         "evaluated_since": evaluated_since,
+        "observed_end": observed_end,
         "rsi_deviation_boundaries": [6.0, 9.0, 12.0, 16.0],
         "atr_pct_boundaries": [0.4, 0.6, 0.8, 1.2],
         "row_count": len(rows),
