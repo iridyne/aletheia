@@ -452,7 +452,11 @@ def materialize_position_economics(
     allow_correction: bool = False,
 ) -> dict:
     """Atomically converge every durable projection of one paper close."""
-    from aletheia.files.jsonl import write_audit
+    from aletheia.portfolio.funding_audit import (
+        funding_audit_id,
+        insert_pending_funding_audit,
+        reconcile_position_funding_audits,
+    )
     from aletheia.portfolio.outcome_hooks import (
         SERENITY_POST_MORTEM_HOOK,
         SHADOW_TRADES_HOOK,
@@ -470,7 +474,17 @@ def materialize_position_economics(
 
     ensure_paper_account()
     fingerprint = _economics_fingerprint(funding_evidence)
-    audit_payload: dict | None = None
+    accounting_version = str(
+        funding_evidence.get("accounting_version") or "local-paper-funding-v2"
+    )
+    try:
+        audit_mirror_status = reconcile_position_funding_audits(position_id)
+    except Exception as exc:
+        logger.error(
+            "paper economics audit reconcile failed (%s)", type(exc).__name__,
+        )
+        audit_mirror_status = "pending"
+    audit_event_id: str | None = None
     status = "settled"
     compensation = 0.0
 
@@ -564,6 +578,7 @@ def materialize_position_economics(
                 "funding_cost": funding,
                 "fingerprint": fingerprint,
                 "cash_compensation": 0.0,
+                "audit_mirror_status": audit_mirror_status,
             }
         if same_fingerprint and same_realized and same_funding:
             status = "repaired"
@@ -662,7 +677,21 @@ def materialize_position_economics(
             "corrected": "paper_position_economics_corrected",
             "repaired": "paper_position_economics_repaired",
         }.get(status, "paper_position_funding_settled")
-        repo.insert_audit_event(AuditEvent(
+        occurred_at = datetime.now(timezone.utc).isoformat()
+        audit_event_id = funding_audit_id(
+            position_id=position_id,
+            event_type=event_type,
+            accounting_version=accounting_version,
+            fingerprint=fingerprint,
+            transition_fingerprint=_economics_fingerprint({
+                "before": before,
+                "after": after,
+            }),
+            occurred_at=occurred_at,
+        )
+        insert_pending_funding_audit(AuditEvent(
+            id=audit_event_id,
+            timestamp=occurred_at,
             actor=actor,
             source=source,
             event_type=event_type,
@@ -675,24 +704,15 @@ def materialize_position_economics(
                 f"realized_pnl={realized}; compensation={compensation}"
             ),
         ))
-        audit_payload = {
-            "actor": actor,
-            "source": source,
-            "event_type": event_type,
-            "entity_type": "position",
-            "entity_id": position_id,
-            "before": before,
-            "after": after,
-            "message": f"Materialized paper funding economics for {position_id}",
-        }
 
-    if audit_payload is not None:
+    if audit_event_id is not None:
         try:
-            write_audit(audit_payload, mirror_db=False)
+            audit_mirror_status = reconcile_position_funding_audits(position_id)
         except Exception as exc:
             logger.error(
-                "paper economics JSONL audit sink failed (%s)", type(exc).__name__,
+                "paper economics audit reconcile failed (%s)", type(exc).__name__,
             )
+            audit_mirror_status = "pending"
     return {
         "position_id": position_id,
         "status": status,
@@ -700,6 +720,7 @@ def materialize_position_economics(
         "funding_cost": funding,
         "fingerprint": fingerprint,
         "cash_compensation": compensation,
+        "audit_mirror_status": audit_mirror_status,
     }
 
 
@@ -775,14 +796,14 @@ async def _backfill_historical_funding_for_position(row: dict) -> int:
     return n
 
 
-def _persist_complete_paper_funding(row: dict, result) -> float:
+def _persist_complete_paper_funding(row: dict, result) -> tuple[float, str]:
     """Compute realized PnL from a COMPLETE local-funding result and persist it.
 
     Writes the positions row and the paper cash ledger via
     ``materialize_position_economics`` (one transaction).  Shared by the
     settler's first-pass settle and the terminal-revival pass so the two paths
     can never diverge.  Raises ``ValueError`` for an unusable direction or a
-    non-finite PnL; returns the realized_pnl written.
+    non-finite PnL; returns the realized PnL and orthogonal audit mirror status.
     """
     from aletheia.analytics.outcome_integrity import outcome_write_eligibility
 
@@ -815,7 +836,7 @@ def _persist_complete_paper_funding(row: dict, result) -> float:
     outcome_eligible, outcome_reason = outcome_write_eligibility(
         check_row, exit_fill_verified=True,
     )
-    materialize_position_economics(
+    materialized = materialize_position_economics(
         str(row.get("id") or ""),
         realized_pnl=realized_pnl,
         funding_cost=funding_cost,
@@ -823,7 +844,7 @@ def _persist_complete_paper_funding(row: dict, result) -> float:
         outcome_eligible=outcome_eligible,
         outcome_exclusion_reason=outcome_reason,
     )
-    return realized_pnl
+    return realized_pnl, str(materialized["audit_mirror_status"])
 
 
 async def settle_unsettled_paper_closes() -> dict:
@@ -868,6 +889,7 @@ async def settle_unsettled_paper_closes() -> dict:
     revived = 0
     still_pending = 0
     gave_up = 0
+    audit_pending = 0
     errors: list[str] = []
     now_utc = datetime.now(timezone.utc)
 
@@ -942,7 +964,7 @@ async def settle_unsettled_paper_closes() -> dict:
                 continue
 
             try:
-                realized_pnl = _persist_complete_paper_funding(row, result)
+                realized_pnl, audit_status = _persist_complete_paper_funding(row, result)
             except ValueError as exc:
                 errors.append(f"{position_id}: {exc}")
                 still_pending += 1
@@ -952,6 +974,7 @@ async def settle_unsettled_paper_closes() -> dict:
                 sym, position_id, realized_pnl,
             )
             settled += 1
+            audit_pending += int(audit_status != "mirrored")
 
         except Exception as exc:
             logger.warning(
@@ -997,7 +1020,7 @@ async def settle_unsettled_paper_closes() -> dict:
                 # re-checking it must not resurrect it into the pending count.
                 continue
             try:
-                realized_pnl = _persist_complete_paper_funding(row, result)
+                realized_pnl, audit_status = _persist_complete_paper_funding(row, result)
             except ValueError as exc:
                 errors.append(f"{position_id}:revive: {exc}")
                 continue
@@ -1023,6 +1046,7 @@ async def settle_unsettled_paper_closes() -> dict:
                 sym, position_id, realized_pnl,
             )
             revived += 1
+            audit_pending += int(audit_status != "mirrored")
         except Exception as exc:
             logger.warning(
                 "paper_funding_settler: error reviving %s position %s: %s",
@@ -1085,5 +1109,6 @@ async def settle_unsettled_paper_closes() -> dict:
         "revived": revived,
         "still_pending": still_pending,
         "gave_up": gave_up,
+        "audit_pending": audit_pending,
         "errors": errors,
     }

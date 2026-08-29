@@ -356,6 +356,215 @@ def test_audit_writer_reports_failure_and_deduplicates_retry(
     ) is False
 
 
+@spec_claim(
+    SpecClaim(
+        "AU-C05",
+        "audit_chain_contract",
+        "§6.4 funding audit outbox",
+        "L2c",
+        "A funding audit appended before acknowledgement is recognized by stable "
+        "ID after restart and acknowledged without a duplicate JSONL append.",
+        status="implemented",
+    ),
+)
+def test_funding_audit_reconciler_acks_append_before_crash_without_duplicate(
+    audit_tmp, tmp_path, monkeypatch,
+):
+    from tests.test_demo_trading import setup_env
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.files.jsonl as jsonl_mod
+    monkeypatch.setattr(jsonl_mod, "_log_dir", lambda: audit_tmp)
+    _reset_audit_hash_cache()
+
+    from aletheia.portfolio.funding_audit import (
+        funding_audit_id,
+        insert_pending_funding_audit,
+        reconcile_funding_audits,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+    from aletheia.storage.sqlite import get_db
+
+    fingerprint = "sha256:" + "a" * 64
+    audit_id = funding_audit_id(
+        position_id="position-crash",
+        event_type="exchange_position_funding_settled",
+        accounting_version="broker-funding-v1",
+        fingerprint=fingerprint,
+        transition_fingerprint="sha256:" + "b" * 64,
+        occurred_at="2026-08-23T00:00:00+00:00",
+    )
+    event = AuditEvent(
+        id=audit_id,
+        timestamp="2026-08-23T00:00:00+00:00",
+        actor="system",
+        source="broker_funding_settler",
+        event_type="exchange_position_funding_settled",
+        entity_type="position",
+        entity_id="position-crash",
+        before_state=json.dumps({"realized_pnl": None}),
+        after_state=json.dumps({"funding_economics_fingerprint": fingerprint}),
+        message="Materialized broker funding economics for position-crash",
+    )
+    with repo.transaction(immediate=True):
+        insert_pending_funding_audit(event)
+    payload = {
+        "id": event.id,
+        "timestamp": event.timestamp,
+        "actor": event.actor,
+        "source": event.source,
+        "event_type": event.event_type,
+        "entity_type": event.entity_type,
+        "entity_id": event.entity_id,
+        "before": json.loads(event.before_state),
+        "after": json.loads(event.after_state),
+        "message": event.message,
+    }
+    assert jsonl_mod.write_audits_deduplicated([payload]) == {audit_id}
+    assert get_db().execute(
+        "SELECT jsonl_mirror_status FROM audit_events WHERE id=?", (audit_id,),
+    ).fetchone()[0] == "pending"
+
+    _reset_audit_hash_cache()
+    append_calls = 0
+
+    def _unexpected_append(*_args, **_kwargs):
+        nonlocal append_calls
+        append_calls += 1
+        raise AssertionError("stable-ID retry attempted a duplicate append")
+
+    monkeypatch.setattr(jsonl_mod, "_append_jsonl_line", _unexpected_append)
+    result = reconcile_funding_audits()
+    assert result == {
+        "attempted": 1,
+        "mirrored": 1,
+        "failed": 0,
+        "pending": 0,
+        "oldest_pending_at": None,
+    }
+    assert append_calls == 0
+    assert get_db().execute(
+        "SELECT jsonl_mirror_status FROM audit_events WHERE id=?", (audit_id,),
+    ).fetchone()[0] == "mirrored"
+    records = [
+        json.loads(line)
+        for line in (audit_tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [record["id"] for record in records] == [audit_id]
+    assert jsonl_mod.verify_audit_chain()["valid"] is True
+
+
+def test_funding_audit_reconciler_persists_only_error_class(
+    tmp_path, monkeypatch,
+):
+    from tests.test_demo_trading import setup_env
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.files.jsonl as jsonl_mod
+    from aletheia.portfolio.funding_audit import (
+        insert_pending_funding_audit,
+        reconcile_funding_audits,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+    from aletheia.storage.sqlite import get_db
+
+    event = AuditEvent(
+        id="funding-audit-error-class",
+        timestamp="2026-08-23T00:00:00+00:00",
+        actor="system",
+        source="broker_funding_settler",
+        event_type="exchange_position_funding_settled",
+        entity_type="position",
+        entity_id="position-error-class",
+        before_state="{}",
+        after_state="{}",
+        message="Materialized broker funding economics",
+    )
+    with repo.transaction(immediate=True):
+        insert_pending_funding_audit(event)
+
+    def _fail_write(_events, *, lock_timeout_sec=None):
+        assert lock_timeout_sec == 1.0
+        raise OSError("private sink path and provider detail")
+
+    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", _fail_write)
+    result = reconcile_funding_audits()
+    row = get_db().execute(
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, "
+        "jsonl_last_error_class, jsonl_mirrored_at FROM audit_events WHERE id=?",
+        (event.id,),
+    ).fetchone()
+    assert result["attempted"] == 1
+    assert result["failed"] == 1
+    assert result["pending"] == 1
+    assert tuple(row) == ("failed", 1, "OSError", None)
+    assert "private sink" not in repr(dict(row))
+
+
+def test_funding_audit_reconciler_bounds_jsonl_file_lock(tmp_path, monkeypatch):
+    from tests.test_demo_trading import setup_env
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.files.jsonl as jsonl_mod
+    from aletheia.portfolio.funding_audit import (
+        insert_pending_funding_audit,
+        reconcile_funding_audits,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    event = AuditEvent(
+        id="funding-audit-bounded-lock",
+        actor="system",
+        source="broker_funding_settler",
+        event_type="exchange_position_funding_settled",
+        entity_type="position",
+        entity_id="position-bounded-lock",
+        before_state="{}",
+        after_state="{}",
+        message="Materialized broker funding economics",
+    )
+    with repo.transaction(immediate=True):
+        insert_pending_funding_audit(event)
+
+    def _timed_lock(_path, *, timeout_sec=None):
+        assert timeout_sec is not None
+        assert 0 < timeout_sec <= 1.0
+        raise jsonl_mod._AuditLockTimeout("held")
+
+    monkeypatch.setattr(jsonl_mod, "_exclusive_file_lock", _timed_lock)
+    result = reconcile_funding_audits()
+
+    assert result["attempted"] == 1
+    assert result["failed"] == 1
+    assert result["pending"] == 1
+
+
+def test_deduplicated_audit_write_bounds_in_process_mutex(
+    audit_tmp, monkeypatch,
+):
+    import aletheia.files.jsonl as jsonl_mod
+
+    class BusyLock:
+        timeout: float | None = None
+
+        def acquire(self, *, timeout):
+            self.timeout = timeout
+            return False
+
+        def release(self):
+            raise AssertionError("unacquired lock must not be released")
+
+    busy = BusyLock()
+    monkeypatch.setattr(jsonl_mod, "_audit_hash_lock", busy)
+
+    assert jsonl_mod.write_audits_deduplicated(
+        [{"id": "bounded-in-process-lock"}], lock_timeout_sec=0.01,
+    ) == set()
+    assert busy.timeout is not None
+    assert 0 < busy.timeout <= 0.01
+
+
 def test_audit_batch_scans_chain_once(audit_tmp, monkeypatch):
     import aletheia.files.jsonl as jsonl_mod
 

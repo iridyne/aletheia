@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-08-26 (Momentum conditional authorization + Fast Trigger)
+> Last updated: 2026-08-30 (durable funding-audit JSONL delivery)
 
 ---
 
@@ -58,11 +58,13 @@
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
 | 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | learning_measurement | Before the first regular evaluator interval, re-run `learning_contribution_evaluator` only when its successful watermark/deadline is missing or invalid, or its persisted cadence deadline is reached; shares its serial non-starving lane and remains independent of autonomous Learning and paper influence |
 | 42 | learning_lifecycle_audit_reconciler | every 5min | io | Retry bounded pending lifecycle JSONL mirrors by stable event id; never replay a transition and continue during layered pause |
+| 42a | funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in paper/broker funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
 
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
 reviewer, promoter, controller, or learned rollout runs. Measurement-only
-`outcome_settler`, `paper_funding_settler`, `outcome_hook_replay`, `shadow_resolver`, and
+`outcome_settler`, `paper_funding_settler`, `funding_audit_reconciler`,
+`outcome_hook_replay`, `shadow_resolver`, and
 `learning_contribution_evaluator` continue so disabling
 Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
 the lifecycle controller is a separate gated consumer. Successful, partial/degraded, failed and
@@ -78,6 +80,13 @@ collector. It runs during layered pause, keeps incomplete facts `NULL`, and may 
 settlements only as `local_simulation` evidence. It never labels age alone as structural failure.
 When evidence becomes complete it calls the single atomic materializer; downstream feedback is
 durably queued and independently retried by `outcome_hook_replay`.
+
+`funding_audit_reconciler` is audit delivery maintenance, not an accounting or trading job. New
+paper/broker funding settlements commit the authoritative SQLite audit with their economics and
+enroll only that audit for JSONL delivery. The essential reconciler starts one minute after boot,
+runs every five minutes on the isolated `audit` executor, and retries at most 100 oldest rows with a
+15-second bounded worker. Failure degrades audit/job health but never changes accounting status,
+replays cash/Position/hook facts, pauses scheduling, or changes infrastructure readiness.
 
 ### OS Session-service Contract
 

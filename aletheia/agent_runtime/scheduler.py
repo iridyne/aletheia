@@ -58,6 +58,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "outcome_settler",
     "paper_funding_settler",
     "broker_funding_settler",
+    "funding_audit_reconciler",
     "outcome_hook_replay",
     "shadow_resolver",
     "learning_contribution_evaluator",
@@ -144,6 +145,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "outcome_settler": 300.0,
     "paper_funding_settler": 60.0,
     "broker_funding_settler": 120.0,
+    "funding_audit_reconciler": 15.0,
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
     "learning_lifecycle_audit_reconciler": 30.0,
@@ -1517,6 +1519,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
         id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=120),
+    )
+    _scheduler.add_job(
+        _guarded("funding_audit_reconciler", _run_funding_audit_reconciler),
+        "interval", minutes=5,
+        id="funding_audit_reconciler", misfire_grace_time=120,
+        max_instances=1, coalesce=True, executor="audit",
+        next_run_time=datetime.now() + timedelta(minutes=1),
     )
     _scheduler.add_job(
         _guarded("paper_funding_settler", _run_paper_funding_settler),
@@ -3860,6 +3869,28 @@ def _run_learning_lifecycle_audit_reconciler():
         _record_job_failure("learning_lifecycle_audit_reconciler", str(e))
 
 
+def _run_funding_audit_reconciler():
+    """Retry funding audit mirrors without replaying accounting transitions."""
+    try:
+        from aletheia.portfolio.funding_audit import reconcile_funding_audits
+
+        result = _run_sync_with_timeout(
+            "funding_audit_reconciler",
+            reconcile_funding_audits,
+            worker=_universe_audit_timeout_worker,
+        )
+        if result["pending"]:
+            _record_job_failure(
+                "funding_audit_reconciler",
+                f"audit_mirror_pending:{result['pending']}",
+            )
+        return result
+    except Exception as e:
+        logger.warning("funding_audit_reconciler failed: %s", e)
+        _record_job_failure("funding_audit_reconciler", str(e))
+        return None
+
+
 def _run_measurement_startup_catchup():
     """Recover at most one current measurement window, independent of autonomy."""
     try:
@@ -4013,6 +4044,11 @@ def _run_paper_funding_settler():
             _record_job_failure(
                 "paper_funding_settler", "paper_funding_settler_reported_errors"
             )
+        elif result.get("audit_pending"):
+            _record_job_failure(
+                "paper_funding_settler",
+                f"audit_mirror_pending:{result['audit_pending']}",
+            )
         else:
             _record_job_success("paper_funding_settler")
     except TimeoutError:
@@ -4049,6 +4085,11 @@ def _run_broker_funding_settler():
         if result.get("errors"):
             _record_job_failure(
                 "broker_funding_settler", "broker_funding_settler_reported_errors"
+            )
+        elif result.get("audit_pending"):
+            _record_job_failure(
+                "broker_funding_settler",
+                f"audit_mirror_pending:{result['audit_pending']}",
             )
         else:
             _record_job_success("broker_funding_settler")

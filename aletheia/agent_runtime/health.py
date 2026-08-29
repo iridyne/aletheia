@@ -404,6 +404,20 @@ def compute_health() -> dict:
         logger.warning("runtime session provenance health probe failed: %s", type(exc).__name__)
         initializing.append("runtime_session_provenance_unknown")
 
+    try:
+        from aletheia.portfolio.funding_audit import funding_audit_backlog
+
+        audit_backlog = funding_audit_backlog()
+        if audit_backlog["count"]:
+            issues.append(
+                f"funding_audit_mirror_backlog:{audit_backlog['count']}"
+            )
+    except Exception as exc:
+        logger.warning(
+            "funding audit mirror health probe failed: %s", type(exc).__name__,
+        )
+        initializing.append("funding_audit_mirror_unknown")
+
     if not issues and not initializing:
         status = "healthy"
     elif not issues:

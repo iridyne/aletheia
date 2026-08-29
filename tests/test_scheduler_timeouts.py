@@ -285,6 +285,49 @@ def test_universe_audit_timeout_preserves_failure_telemetry(monkeypatch):
     assert scheduler._universe_scanner_audit_mirror_done is False
     assert scheduler._consecutive_failures[job_id] == 1
 
+
+def test_funding_audit_reconciler_uses_audit_worker_and_records_backlog(
+    monkeypatch,
+):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.portfolio.funding_audit import reconcile_funding_audits
+
+    timeout_calls = []
+    failures = []
+
+    def pending(job, fn, *, worker=None):
+        timeout_calls.append((job, fn, worker))
+        return {"pending": 2}
+
+    monkeypatch.setattr(scheduler, "_run_sync_with_timeout", pending)
+    monkeypatch.setattr(
+        scheduler,
+        "_record_job_failure",
+        lambda job, reason: failures.append((job, reason)),
+    )
+
+    assert scheduler._run_funding_audit_reconciler() == {"pending": 2}
+    assert timeout_calls == [(
+        "funding_audit_reconciler",
+        reconcile_funding_audits,
+        scheduler._universe_audit_timeout_worker,
+    )]
+    assert failures == [(
+        "funding_audit_reconciler",
+        "audit_mirror_pending:2",
+    )]
+
+    def unavailable(*_args, **_kwargs):
+        raise OSError("sink unavailable")
+
+    monkeypatch.setattr(scheduler, "_run_sync_with_timeout", unavailable)
+    assert scheduler._run_funding_audit_reconciler() is None
+    assert failures[-1] == (
+        "funding_audit_reconciler",
+        "sink unavailable",
+    )
+
+
 def test_stale_agent_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler
     from aletheia.storage import repositories as repo

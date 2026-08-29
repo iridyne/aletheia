@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -684,6 +685,76 @@ def test_delayed_funding_revalidates_candidates_inside_writer_transaction(
         "SELECT COUNT(*) FROM audit_events "
         "WHERE event_type='exchange_position_funding_settled' AND entity_id=?",
         (target.id,),
+    ).fetchone()[0] == 0
+
+
+def test_broker_funding_audit_failure_replays_without_reapplying_settlement(
+    tmp_path, monkeypatch,
+):
+    position_id, incomplete, funding, ledger = _seed_pending_broker_funding_close(
+        tmp_path, monkeypatch,
+    )
+    from aletheia.files import jsonl as jsonl_mod
+    from aletheia.portfolio.broker_funding_settlement import (
+        materialize_broker_funding_economics,
+    )
+
+    real_writer = jsonl_mod.write_audits_deduplicated
+    monkeypatch.setattr(
+        jsonl_mod, "write_audits_deduplicated", lambda _events, **_kwargs: set(),
+    )
+    first = materialize_broker_funding_economics(
+        incomplete,
+        funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence,
+        funding_ledger=ledger,
+    )
+    stored = dict(repo._select_one("positions", position_id))
+    audit = dict(repo.get_db().execute(
+        "SELECT * FROM audit_events WHERE entity_id=? AND "
+        "event_type='exchange_position_funding_settled'",
+        (position_id,),
+    ).fetchone())
+    assert first["status"] == "settled"
+    assert first["audit_mirror_status"] == "pending"
+    assert audit["jsonl_mirror_status"] == "failed"
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events WHERE position_id=?",
+        (position_id,),
+    ).fetchone()[0] == 0
+
+    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", real_writer)
+    repeated = materialize_broker_funding_economics(
+        incomplete,
+        funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence,
+        funding_ledger=ledger,
+    )
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "audit.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and json.loads(line).get("id") == audit["id"]
+    ]
+    assert repeated["status"] == "already_current"
+    assert repeated["audit_mirror_status"] == "mirrored"
+    assert len(records) == 1
+    assert records[0]["timestamp"] == audit["timestamp"]
+    assert records[0]["after"]["funding_economics_fingerprint"] == (
+        json.loads(stored["reconciliation_evidence"])[
+            "funding_economics_fingerprint"
+        ]
+    )
+    assert dict(repo._select_one("positions", position_id)) == stored
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE entity_id=? AND "
+        "event_type='exchange_position_funding_settled'",
+        (position_id,),
+    ).fetchone()[0] == 1
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events WHERE position_id=?",
+        (position_id,),
     ).fetchone()[0] == 0
 
 

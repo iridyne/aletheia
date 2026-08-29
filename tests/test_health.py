@@ -94,6 +94,62 @@ def test_compute_health_healthy(tmp_path, monkeypatch):
     assert h["issues"] == []
 
 
+def test_funding_audit_backlog_degrades_health_and_warns_doctor(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.diagnostics import doctor
+    from aletheia.portfolio.funding_audit import insert_pending_funding_audit
+    from aletheia.storage.models import AuditEvent
+
+    with repo.transaction(immediate=True):
+        insert_pending_funding_audit(AuditEvent(
+            id="funding-audit-health",
+            timestamp="2026-08-23T00:00:00+00:00",
+            actor="system",
+            source="paper_funding_settler",
+            event_type="paper_position_funding_settled",
+            entity_type="position",
+            entity_id="position-health",
+            before_state="{}",
+            after_state="{}",
+            message="funding audit pending",
+        ))
+
+    result = health.compute_health()
+    assert result["status"] == "degraded"
+    assert "funding_audit_mirror_backlog:1" in result["issues"]
+
+    report = doctor.Report()
+    doctor._probe_funding_audit_mirror(report)
+    check = next(
+        item for item in report.checks
+        if item.name == "trust.audit_mirror_backlog"
+    )
+    assert check.severity == "warn"
+    assert "1 funding audit mirror(s) pending" in check.detail
+    assert "2026-08-23T00:00:00+00:00" in check.detail
+
+
+def test_funding_audit_probe_unavailable_is_not_reported_healthy(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.portfolio import funding_audit
+
+    def unavailable():
+        raise RuntimeError("audit schema unavailable")
+
+    monkeypatch.setattr(funding_audit, "funding_audit_backlog", unavailable)
+    result = health.compute_health()
+
+    assert result["healthy"] is False
+    assert result["status"] == "initializing"
+    assert "funding_audit_mirror_unknown" in result["issues"]
+
+
 def test_compute_health_flags_high_failure_ratio(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
