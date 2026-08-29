@@ -528,7 +528,8 @@ def test_funding_audit_reconciler_bounds_jsonl_file_lock(tmp_path, monkeypatch):
         insert_pending_funding_audit(event)
 
     def _timed_lock(_path, *, timeout_sec=None):
-        assert timeout_sec == 1.0
+        assert timeout_sec is not None
+        assert 0 < timeout_sec <= 1.0
         raise jsonl_mod._AuditLockTimeout("held")
 
     monkeypatch.setattr(jsonl_mod, "_exclusive_file_lock", _timed_lock)
@@ -537,6 +538,29 @@ def test_funding_audit_reconciler_bounds_jsonl_file_lock(tmp_path, monkeypatch):
     assert result["attempted"] == 1
     assert result["failed"] == 1
     assert result["pending"] == 1
+
+
+def test_deduplicated_audit_write_bounds_in_process_mutex(monkeypatch):
+    import aletheia.files.jsonl as jsonl_mod
+
+    class BusyLock:
+        timeout: float | None = None
+
+        def acquire(self, *, timeout):
+            self.timeout = timeout
+            return False
+
+        def release(self):
+            raise AssertionError("unacquired lock must not be released")
+
+    busy = BusyLock()
+    monkeypatch.setattr(jsonl_mod, "_audit_hash_lock", busy)
+
+    assert jsonl_mod.write_audits_deduplicated(
+        [{"id": "bounded-in-process-lock"}], lock_timeout_sec=0.01,
+    ) == set()
+    assert busy.timeout is not None
+    assert 0 < busy.timeout <= 0.01
 
 
 def test_audit_batch_scans_chain_once(audit_tmp, monkeypatch):

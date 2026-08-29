@@ -331,29 +331,54 @@ def write_audits_deduplicated(
 
     audit_path = _log_dir() / "audit.jsonl"
     completed: set[str] = set()
+    deadline = (
+        time.monotonic() + lock_timeout_sec
+        if lock_timeout_sec is not None and lock_timeout_sec > 0
+        else None
+    )
+    hash_lock_acquired = False
     try:
-        with _audit_hash_lock:
-            with _exclusive_file_lock(
-                _log_dir() / ".audit.lock", timeout_sec=lock_timeout_sec,
-            ):
-                _repair_incomplete_final_line(audit_path, events)
-                completed = _audit_record_ids(audit_path, set(event_ids))
-                prev_hash = _get_last_audit_hash(use_cache=False)
-                for event, event_id in zip(events, event_ids, strict=True):
-                    if event_id in completed:
-                        continue
-                    if "timestamp" not in event:
-                        event["timestamp"] = datetime.now(timezone.utc).isoformat()
-                    event["_prev_hash"] = prev_hash
-                    line = json.dumps(event, default=str, ensure_ascii=False)
-                    _append_jsonl_line(audit_path, line)
-                    prev_hash = _hash_record(line)
-                    _last_audit_hash = prev_hash
-                    completed.add(event_id)
+        if deadline is None:
+            hash_lock_acquired = _audit_hash_lock.acquire()
+        else:
+            hash_lock_acquired = _audit_hash_lock.acquire(
+                timeout=max(0.0, deadline - time.monotonic()),
+            )
+            if not hash_lock_acquired:
+                raise _AuditLockTimeout(
+                    f"in-process audit lock not acquired within {lock_timeout_sec:.1f}s"
+                )
+        file_lock_timeout = None
+        if deadline is not None:
+            file_lock_timeout = deadline - time.monotonic()
+            if file_lock_timeout <= 0:
+                raise _AuditLockTimeout(
+                    f"audit lock budget {lock_timeout_sec:.1f}s exhausted"
+                )
+        with _exclusive_file_lock(
+            _log_dir() / ".audit.lock", timeout_sec=file_lock_timeout,
+        ):
+            _repair_incomplete_final_line(audit_path, events)
+            completed = _audit_record_ids(audit_path, set(event_ids))
+            prev_hash = _get_last_audit_hash(use_cache=False)
+            for event, event_id in zip(events, event_ids, strict=True):
+                if event_id in completed:
+                    continue
+                if "timestamp" not in event:
+                    event["timestamp"] = datetime.now(timezone.utc).isoformat()
+                event["_prev_hash"] = prev_hash
+                line = json.dumps(event, default=str, ensure_ascii=False)
+                _append_jsonl_line(audit_path, line)
+                prev_hash = _hash_record(line)
+                _last_audit_hash = prev_hash
+                completed.add(event_id)
     except _AuditLockTimeout as e:
         logger.warning("audit jsonl batch lock timed out: %s", e)
     except OSError as e:
         logger.warning("audit jsonl batch write failed: %s", e)
+    finally:
+        if hash_lock_acquired:
+            _audit_hash_lock.release()
     return completed
 
 
