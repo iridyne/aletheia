@@ -9,48 +9,6 @@ on:
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, labeled, unlabeled]
-    paths-ignore:
-      - README.md
-      - docs/archive/**/*.avif
-      - docs/archive/**/*.gif
-      - docs/archive/**/*.jpeg
-      - docs/archive/**/*.jpg
-      - docs/archive/**/*.md
-      - docs/archive/**/*.png
-      - docs/archive/**/*.svg
-      - docs/archive/**/*.webp
-      - docs/diagrams/**/*.avif
-      - docs/diagrams/**/*.gif
-      - docs/diagrams/**/*.jpeg
-      - docs/diagrams/**/*.jpg
-      - docs/diagrams/**/*.md
-      - docs/diagrams/**/*.png
-      - docs/diagrams/**/*.svg
-      - docs/diagrams/**/*.webp
-      - docs/references/**/*.avif
-      - docs/references/**/*.gif
-      - docs/references/**/*.jpeg
-      - docs/references/**/*.jpg
-      - docs/references/**/*.md
-      - docs/references/**/*.png
-      - docs/references/**/*.svg
-      - docs/references/**/*.webp
-      - docs/research/**/*.avif
-      - docs/research/**/*.gif
-      - docs/research/**/*.jpeg
-      - docs/research/**/*.jpg
-      - docs/research/**/*.md
-      - docs/research/**/*.png
-      - docs/research/**/*.svg
-      - docs/research/**/*.webp
-      - docs/superpowers/**/*.avif
-      - docs/superpowers/**/*.gif
-      - docs/superpowers/**/*.jpeg
-      - docs/superpowers/**/*.jpg
-      - docs/superpowers/**/*.md
-      - docs/superpowers/**/*.png
-      - docs/superpowers/**/*.svg
-      - docs/superpowers/**/*.webp
   merge_group:
   workflow_dispatch:
 
@@ -403,7 +361,7 @@ jobs:
   review:
     name: Review checks
     needs: [plan, review-core, review-coverage, review-node, review-native]
-    if: ${{ always() }}
+    if: ${{ !cancelled() && needs.plan.outputs.required_quick == 'true' }}
     runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
@@ -531,6 +489,9 @@ jobs:
               -n 1 -q --tb=short --timeout=120
           ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-connectivity" \
             uv run pytest tests/test_connectivity.py \
+              -n 1 -q --tb=short --timeout=120
+          ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-simulation" \
+            uv run pytest tests/simulation \
               -n 1 -q --tb=short --timeout=120
 
   # Lane B head. Only Runtime State and Integration are eligible when Stage 2

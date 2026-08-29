@@ -22,20 +22,6 @@ RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869
 SELF_HOSTED_CASI = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "casi"]
 SELF_HOSTED_FEDORA = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "fedora"]
 SELF_HOSTED_PR = ["pr-ephemeral"]
-SAFE_DOC_PATH_IGNORES = [
-    "README.md",
-    *[
-        f"{prefix}/**/*{suffix}"
-        for prefix in (
-            "docs/archive",
-            "docs/diagrams",
-            "docs/references",
-            "docs/research",
-            "docs/superpowers",
-        )
-        for suffix in (".avif", ".gif", ".jpeg", ".jpg", ".md", ".png", ".svg", ".webp")
-    ],
-]
 
 
 def _workflow() -> dict:
@@ -258,7 +244,7 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
         "review-node",
         "review-native",
     ]
-    assert "always()" in gate["if"]
+    assert gate["if"] == "${{ !cancelled() && needs.plan.outputs.required_quick == 'true' }}"
     aggregate = _run_commands(gate)
     assert "CORE_RESULT" in aggregate
     assert "success|skipped" in aggregate
@@ -274,8 +260,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert triggers == {
         "pull_request": {
             "branches": ["master"],
-            "types": ["opened", "synchronize", "reopened", "edited"],
-            "paths-ignore": SAFE_DOC_PATH_IGNORES,
+            "types": ["opened", "synchronize", "reopened", "edited", "labeled", "unlabeled"],
         },
     }
     # Deep CI intentionally keeps the GitHub default code-changing PR events;
@@ -283,8 +268,9 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert ci_triggers["pull_request"] == {
         "branches": ["master"],
         "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"],
-        "paths-ignore": SAFE_DOC_PATH_IGNORES,
     }
+    assert "paths-ignore" not in triggers["pull_request"]
+    assert "paths-ignore" not in ci_triggers["pull_request"]
 
     assert gate["permissions"] == {"contents": "read"}
     assert gate["env"] == {
@@ -720,6 +706,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         assert f"needs.{predecessor}.result == 'success'" not in condition
 
     unit_commands = _run_commands(unit_job)
+    runtime_commands = _run_commands(runtime_job)
     integration_commands = _run_commands(integration_job)
     spec_commands = _run_commands(spec_job)
     e2e_commands = _run_commands(e2e_job)
@@ -748,6 +735,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     assert '-m "tier_unit"' in unit_commands
     assert "-n " not in unit_commands
     assert "--dist " not in unit_commands
+    assert "uv run pytest tests/simulation" in runtime_commands
     assert '-m "tier_integration"' in integration_commands
     assert '-m "tier_spec"' in spec_commands
     assert '-m "tier_e2e"' in e2e_commands

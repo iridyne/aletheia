@@ -309,6 +309,7 @@ jobs:
               $owner: String!,
               $repo: String!,
               $number: Int!,
+              $commentsAfter: String,
               $closingIssuesAfter: String,
             ) {
               repository(owner: $owner, name: $repo) {
@@ -322,13 +323,14 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
-                  comments(last: 100) {
+                  comments(first: 100, after: $commentsAfter) {
                     nodes {
                       author { login }
                       authorAssociation
                       body
                       createdAt
                     }
+                    pageInfo { hasNextPage endCursor }
                   }
                   closingIssuesReferences(first: 100, after: $closingIssuesAfter) {
                     nodes {
@@ -346,13 +348,31 @@ jobs:
               }
             }`;
             const fetchPullRequest = async () => {
-              let closingIssuesAfter = null;
               let pullRequest = null;
-              const closingIssues = [];
+              const comments = [];
+              let commentsAfter = null;
               while (true) {
                 const result = await github.graphql(pullRequestQuery, {
                   ...context.repo,
                   number: pullRequestNumber,
+                  commentsAfter,
+                  closingIssuesAfter: null,
+                });
+                const page = result.repository.pullRequest;
+                if (!page) return null;
+                if (!pullRequest) pullRequest = page;
+                comments.push(...page.comments.nodes);
+                const {hasNextPage, endCursor} = page.comments.pageInfo;
+                if (!hasNextPage) break;
+                commentsAfter = endCursor;
+              }
+              const closingIssues = [];
+              let closingIssuesAfter = null;
+              while (true) {
+                const result = await github.graphql(pullRequestQuery, {
+                  ...context.repo,
+                  number: pullRequestNumber,
+                  commentsAfter: null,
                   closingIssuesAfter,
                 });
                 const page = result.repository.pullRequest;
@@ -363,6 +383,7 @@ jobs:
                 if (!hasNextPage) break;
                 closingIssuesAfter = endCursor;
               }
+              pullRequest.comments.nodes = comments;
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
             };

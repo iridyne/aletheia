@@ -249,6 +249,17 @@ def test_codex_shepherd_retriggers_auto_merge_after_clean_review_comment() -> No
     assert "expected_base_sha: pullRequest.base.sha" in issue_comment_handler
 
 
+def test_auto_merge_paginates_clean_codex_review_comments() -> None:
+    source = _auto_merge_source()
+
+    assert "$commentsAfter: String" in source
+    assert "comments(first: 100, after: $commentsAfter)" in source
+    assert "const comments = []" in source
+    assert "comments.push(...page.comments.nodes)" in source
+    assert "page.comments.pageInfo" in source
+    assert "pullRequest.comments.nodes = comments" in source
+
+
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     script = _script()
 

@@ -359,6 +359,64 @@ def test_missing_slo_evidence_is_unknown() -> None:
     }
 
 
+def test_full_ci_latency_uses_only_full_verdict_attempts() -> None:
+    attempts = [
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "execution_seconds": 30,
+            "queue_seconds": 1,
+            "run_attempt": 1,
+            "attempt_key": "quick",
+            "phase1_failure_category": None,
+            "next_event": None,
+        },
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "execution_seconds": 300,
+            "queue_seconds": 2,
+            "run_attempt": 1,
+            "attempt_key": "full",
+            "phase1_failure_category": None,
+            "next_event": None,
+        },
+    ]
+    lanes = [
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "lane": "Trusted CI verdict",
+            "runner_minutes": 0.1,
+            "independent_defect": "no",
+            "unknown_defect_failures": 0,
+            "runner_queue_wait_seconds_estimate": 1,
+            "orchestration_and_queue_wait_seconds": 1,
+            "runner_name": "pr-quick",
+            "attempt_key": "quick",
+            "execution_seconds": 1,
+        },
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "lane": "Full CI verdict",
+            "runner_minutes": 0.1,
+            "independent_defect": "no",
+            "unknown_defect_failures": 0,
+            "runner_queue_wait_seconds_estimate": 2,
+            "orchestration_and_queue_wait_seconds": 2,
+            "runner_name": "pr-full",
+            "attempt_key": "full",
+            "execution_seconds": 1,
+        },
+    ]
+
+    summary = ci_yield._summary([], attempts, lanes)
+
+    assert summary["successful_primary_ci_count"] == 2
+    assert summary["full_required_ci_execution_seconds"] == {"p50": 300, "p95": 300}
+
+
 def test_markdown_keeps_unknown_yield_visible() -> None:
     report = {
         "summary": {

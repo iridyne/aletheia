@@ -109,12 +109,39 @@ def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
     assert e2e["mode"] == "deep"
     assert e2e["required"]["e2e"] is True
 
+    simulation = _plan(["tests/simulation/control_loop/test_stateful_control_loop.py"])
+    assert simulation["mode"] == "deep"
+    assert simulation["required"]["runtime"] is True
+
 
 def test_policy_changes_themselves_are_full_and_fingerprint_is_stable() -> None:
     left = _plan(["scripts/ci_plan.py"])
     right = _plan(["scripts/ci_plan.py"])
     assert left["mode"] == "full"
     assert left["plan_fingerprint"] == right["plan_fingerprint"]
+
+
+def test_operational_scripts_are_full_ci() -> None:
+    for path in (
+        "scripts/runtime/install-release.sh",
+        "scripts/runtime/start-release.ps1",
+        "scripts/dev/dev-init.sh",
+    ):
+        report = _plan([path])
+        assert report["mode"] == "full"
+        assert report["review"]["codex_required"] is True
+
+
+def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:
+    for path in (
+        "aletheia/analytics/profit_gradient.py",
+        "aletheia/execution/reconciliation.py",
+        "scripts/coverage_floors.py",
+        "tests/test_reconciliation.py",
+    ):
+        report = _plan([path])
+        assert report["mode"] == "deep"
+        assert report["required"]["coverage"] is True
 
 
 def test_labels_only_escalate() -> None:

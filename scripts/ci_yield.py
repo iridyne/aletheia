@@ -530,8 +530,18 @@ def _summary(prs: list[dict[str, Any]], attempts: list[dict[str, Any]], lanes: l
     cancelled_attempts = {
         item["attempt_key"] for item in primary if item["result"] == "cancelled"
     }
-    full_p50 = _percentile([item["execution_seconds"] for item in successful if item["execution_seconds"] is not None], 0.50)
-    full_p95 = _percentile([item["execution_seconds"] for item in successful if item["execution_seconds"] is not None], 0.95)
+    full_success_keys = {
+        item["attempt_key"] for item in lanes
+        if item["workflow_name"] == PRIMARY_WORKFLOW
+        and item["lane"] == "Full CI verdict"
+        and item["result"] == "success"
+    }
+    successful_full = [
+        item for item in successful
+        if item["attempt_key"] in full_success_keys
+    ]
+    full_p50 = _percentile([item["execution_seconds"] for item in successful_full if item["execution_seconds"] is not None], 0.50)
+    full_p95 = _percentile([item["execution_seconds"] for item in successful_full if item["execution_seconds"] is not None], 0.95)
     queue_p50 = _percentile(runner_queue_estimates, 0.50)
     queue_p95 = _percentile(runner_queue_estimates, 0.95)
     return {

@@ -154,11 +154,36 @@ PYTHON_CONTRACT_PREFIXES = (
     "aletheia/server/routes/ui.py",
     "aletheia/data/models.py",
 )
+COVERAGE_PATHS = (
+    "aletheia/analytics/profit_gradient.py",
+    "aletheia/execution/reconciliation.py",
+    "scripts/coverage_floors.py",
+    "tests/test_profit_gradient.py",
+    "tests/test_profit_gradient_properties.py",
+    "tests/test_profit_gradient_evidence.py",
+    "tests/test_p3_evidence_epoch.py",
+    "tests/test_filter_replay.py",
+    "tests/test_position_replay.py",
+    "tests/test_reconciliation.py",
+    "tests/test_oco_reconcile.py",
+    "tests/test_cr_ex01_reconcile.py",
+    "tests/test_position_reconciler.py",
+    "tests/test_scheduler_reconcile.py",
+    "tests/test_reconciliation_integrity_incident.py",
+    "tests/test_reconciliation_properties.py",
+    "tests/test_context_effectiveness.py",
+    "tests/test_context_artifacts_properties.py",
+    "tests/test_filter_replay_properties.py",
+    "tests/test_policy_epoch_properties.py",
+    "tests/test_profit_gradient_evidence_properties.py",
+)
 SURFACE_DEPENDENCIES = {
     "frontend_contract": ("frontend", "python_unit"),
     "storage": ("runtime", "integration"),
     "execution": ("runtime", "integration", "specifications", "e2e"),
     "risk": ("runtime", "integration", "specifications", "e2e"),
+    "coverage": ("coverage",),
+    "runtime_test": ("runtime",),
 }
 
 
@@ -270,6 +295,14 @@ def _critical_path(path: str) -> bool:
     return path.startswith("aletheia/") and any(token in path for token in CRITICAL_TOKENS)
 
 
+def _coverage_path(path: str) -> bool:
+    return path in COVERAGE_PATHS
+
+
+def _operational_script_path(path: str) -> bool:
+    return path.startswith("scripts/") and not path.endswith((".md", ".py"))
+
+
 def _unknown_executable_path(path: str) -> bool:
     known_prefixes = (
         "AGENTS.md",
@@ -306,6 +339,10 @@ def _path_surfaces(path: str) -> set[str]:
         surfaces.add("execution")
     if path.startswith("aletheia/risk/"):
         surfaces.add("risk")
+    if _coverage_path(path):
+        surfaces.add("coverage")
+    if path.startswith("tests/simulation/"):
+        surfaces.add("runtime_test")
     return surfaces
 
 
@@ -339,6 +376,10 @@ def _required_for_mode(mode: str, surfaces: set[str]) -> dict[str, bool]:
             required["operator"] = True
         elif surface == "native":
             required["native"] = True
+        elif surface == "coverage":
+            required["coverage"] = True
+        elif surface == "runtime_test":
+            required["runtime"] = True
         for dependent in SURFACE_DEPENDENCIES.get(surface, ()):
             required[dependent] = True
     if mode in {"deep", "full"}:
@@ -400,10 +441,22 @@ def plan(
                 mode = "full"
                 reason_codes.add("FULL_AUTHORITY_OR_INFRA")
                 continue
+            if _operational_script_path(path):
+                mode = "full"
+                reason_codes.add("FULL_OPERATIONAL_SCRIPT")
+                continue
             tier = _test_tier(path)
+            if path.startswith("tests/simulation/"):
+                mode = _mode_at_least(mode, "deep")
+                reason_codes.add("RUNTIME_SIMULATION_TEST")
+                continue
             if tier in {"integration", "specifications", "e2e"}:
                 mode = _mode_at_least(mode, "deep")
                 reason_codes.add("TEST_TIER_DEEP")
+                continue
+            if _coverage_path(path):
+                mode = _mode_at_least(mode, "deep")
+                reason_codes.add("COVERAGE_TRUST_BOUNDARY")
                 continue
             if _critical_path(path):
                 mode = _mode_at_least(mode, "deep")
