@@ -272,8 +272,6 @@ class CCXTProvider:
                 raw = await ensure().fetch_ohlcv(
                     ccxt_symbol, timeframe=timeframe, since=since, limit=limit
                 )
-                if _record_venue_health:
-                    record_venue_success(name)
                 parsed = [
                     parse_ohlcv_candle(row, provider="ccxt", exchange=name)
                     for row in raw
@@ -299,6 +297,8 @@ class CCXTProvider:
                     )
                 if not candles:
                     continue
+                if _record_venue_health:
+                    record_venue_success(name)
                 # Mark the trailing bar as open when its close time is still in
                 # the future. CCXT always returns the currently-forming bar as
                 # the last element; treat it as unconfirmed so callers can
