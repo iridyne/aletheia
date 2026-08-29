@@ -1516,7 +1516,7 @@ def factor_feedback(
 @inspect_app.command("microstructure")
 def microstructure(
     symbol: Optional[str] = typer.Option(None, "--symbol", "-s", help="Show single symbol details"),
-    limit: int = typer.Option(10, "--limit", "-n"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=500),
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show latest funding rate, OI, and orderbook data per symbol."""
@@ -1525,9 +1525,9 @@ def microstructure(
     if symbol:
         instruments = [(symbol, "", "")]
     else:
-        members = get_active_universe_members()
+        members = get_active_universe_members(limit=limit)
         instruments = []
-        for member in members[:limit]:
+        for member in members:
             asset = get_universe_asset(member.get("asset_id")) or {}
             if member.get("symbol"):
                 instruments.append((
