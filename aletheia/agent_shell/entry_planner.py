@@ -54,6 +54,10 @@ ENTRY_PLANNER_MIN_CONCURRENCY = 3
 ENTRY_PLANNER_MAX_CONCURRENCY = 15
 
 
+class PlannerBackpressure(RuntimeError):
+    """Local broker admission refusal; no physical model attempt was consumed."""
+
+
 def _candidate_context(generation: dict) -> dict:
     candidate = repo.get_candidate(generation["last_candidate_id"])
     if candidate is None:
@@ -222,6 +226,20 @@ async def plan_next_candidate(
         }
     try:
         raw = await planner(context)
+    except asyncio.CancelledError:
+        repo.release_candidate_planning_claim(
+            generation["id"], owner, "planner_preempted"
+        )
+        raise
+    except PlannerBackpressure as exc:
+        repo.release_candidate_planning_claim(
+            generation["id"], owner, str(exc), retry_seconds=1
+        )
+        return {
+            "status": "backpressure",
+            "planning_generation_id": generation["id"],
+            "model_invoked": False,
+        }
     except Exception as exc:
         repo.defer_candidate_planning(generation["id"], owner, type(exc).__name__)
         return {
@@ -266,21 +284,25 @@ async def system_operator_entry_planner(context: dict) -> EntryPlanDraft | None:
     """Canonical slow AI producer; all output is validated before persistence."""
 
     from aletheia.agents.helpers import llm_structured
+    from aletheia.model_provider.broker import InferencePriority, inference_priority
 
-    result, _error = await llm_structured(
-        "You are Aletheia System Operator acting before any time-critical event. "
-        "Return NO_PLAN when the bounded facts cannot support a complete plan. "
-        "Otherwise select RESTING_MAKER or TRIGGERED, and for TRIGGERED select only "
-        "a registered TriggerSpec id/version with bounded numeric params. Maker means "
-        "true Post-Only; urgent execution means opposing-BBO IOC with a bounded envelope. "
-        "Never authorize Live, invent another trigger language, or weaken Risk.",
-        json.dumps(context, sort_keys=True, default=str),
-        schema=EntryPlanDraft,
-        fallback_to_defaults=False,
-        caller="agent_shell.entry_planner",
-        context_symbol=str((context.get("candidate") or {}).get("symbol") or ""),
-        reasoning_effort="medium",
-    )
+    with inference_priority(InferencePriority.DEFAULT):
+        result, error = await llm_structured(
+            "You are Aletheia System Operator acting before any time-critical event. "
+            "Return NO_PLAN when the bounded facts cannot support a complete plan. "
+            "Otherwise select RESTING_MAKER or TRIGGERED, and for TRIGGERED select only "
+            "a registered TriggerSpec id/version with bounded numeric params. Maker means "
+            "true Post-Only; urgent execution means opposing-BBO IOC with a bounded envelope. "
+            "Never authorize Live, invent another trigger language, or weaken Risk.",
+            json.dumps(context, sort_keys=True, default=str),
+            schema=EntryPlanDraft,
+            fallback_to_defaults=False,
+            caller="agent_shell.entry_planner",
+            context_symbol=str((context.get("candidate") or {}).get("symbol") or ""),
+            reasoning_effort="medium",
+        )
+    if error and "InferenceQueueFull" in error:
+        raise PlannerBackpressure("inference_queue_full")
     return EntryPlanDraft.model_validate(result) if result is not None else None
 
 
@@ -291,14 +313,39 @@ async def run_entry_planner_once(cfg=None) -> dict[str, Any]:
 async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
     """Plan one rank-ordered durable batch with bounded model concurrency."""
 
+    from aletheia.config.loader import load_config
+    from aletheia.model_provider.broker import (
+        InferencePriority,
+        inference_broker,
+    )
+
+    cfg = cfg or load_config(persist_migrations=False)
     pending = repo.count_pending_candidate_planning()
+    provider_name = str(cfg.models.default_provider)
+    available = await inference_broker.available_capacity(
+        provider_name,
+        priority=InferencePriority.DEFAULT,
+    )
     worker_count = min(
         max(pending, ENTRY_PLANNER_MIN_CONCURRENCY),
         ENTRY_PLANNER_MAX_CONCURRENCY,
+        available,
     )
-    results = await asyncio.gather(
-        *(run_entry_planner_once(cfg=cfg) for _ in range(worker_count))
-    )
+    if worker_count <= 0:
+        return {
+            "status": "backpressure" if pending else "idle",
+            "results": [],
+            "planning_attempts": 0,
+            "model_invoked": False,
+            "pending_queue_remaining": pending,
+        }
+    tasks: list[asyncio.Task[dict[str, Any]]] = []
+    async with asyncio.TaskGroup() as group:
+        tasks = [
+            group.create_task(run_entry_planner_once(cfg=cfg))
+            for _ in range(worker_count)
+        ]
+    results = [task.result() for task in tasks]
     claimed = [result for result in results if result.get("status") != "idle"]
     return {
         "status": "batch" if claimed else "idle",

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from aletheia.agent_shell.entry_planner import (
     ENTRY_PLANNER_MAX_CONCURRENCY,
     ENTRY_PLANNER_MIN_CONCURRENCY,
+    PlannerBackpressure,
     plan_next_candidate,
     run_entry_planner_batch,
 )
@@ -138,25 +139,30 @@ def test_candidate_planning_claim_prefers_current_rank_over_fifo_age():
     assert claimed["id"] != older_generation["id"]
 
 
-def test_candidate_planning_claim_has_stable_fifo_fallback_without_rank():
+def test_candidate_planning_claim_has_stable_fifo_tie_breaker():
     start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
     older = _candidate(asset_id="asset-eth", symbol="ETH/USDT")
     older_generation, _ = repo.ensure_candidate_planning_generation(older.id, now=start)
     newer = _candidate()
     repo.ensure_candidate_planning_generation(newer.id, now=start + timedelta(seconds=1))
-    db = repo.get_db()
-    db.execute(
-        "DELETE FROM universe_members WHERE id IN (?, ?)",
-        (older.id, newer.id),
-    )
-    db.commit()
-
     claimed = repo.claim_next_candidate_planning(
         "fallback-owner",
         now=start + timedelta(seconds=2),
     )
 
     assert claimed["id"] == older_generation["id"]
+
+
+def test_candidate_planning_claim_fails_closed_without_candidate_evidence():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    db = repo.get_db()
+    db.execute("DELETE FROM universe_members WHERE id=?", (candidate.id,))
+    db.commit()
+
+    assert repo.count_pending_candidate_planning() == 0
+    assert repo.claim_next_candidate_planning("orphan-owner") is None
+    assert repo.get_candidate_planning_generation(generation["id"])["attempt_count"] == 0
 
 
 def test_candidate_attention_requalification_preserves_hard_deadline():
@@ -451,6 +457,66 @@ def test_ineligible_candidate_cannot_complete_claimed_entry_plan():
     assert status == "stale"
     assert record is None
     assert repo.get_entry_plan(plan.plan_id) is None
+
+
+def test_local_broker_backpressure_does_not_consume_attempt():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    async def refused(_context):
+        raise PlannerBackpressure("inference_queue_full")
+
+    result = asyncio.run(plan_next_candidate(refused, owner_token="pressure-owner"))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+
+    assert result["status"] == "backpressure"
+    assert result["model_invoked"] is False
+    assert stored["attempt_count"] == 0
+    assert stored["status"] == "unavailable"
+    assert stored["attention_status"] == "active"
+
+
+def test_entry_planner_batch_cancels_and_awaits_siblings_on_fatal_failure(monkeypatch):
+    started = 0
+    all_started = asyncio.Event()
+    cancelled = 0
+
+    async def worker(cfg=None):
+        nonlocal started, cancelled
+        index = started
+        started += 1
+        if started == 3:
+            all_started.set()
+        await all_started.wait()
+        if index == 0:
+            raise RuntimeError("fatal storage failure")
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled += 1
+            raise
+
+    async def capacity(*_args, **_kwargs):
+        return 3
+
+    monkeypatch.setattr(repo, "count_pending_candidate_planning", lambda: 3)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.run_entry_planner_once", worker
+    )
+    monkeypatch.setattr(
+        "aletheia.model_provider.broker.inference_broker.available_capacity",
+        capacity,
+    )
+
+    try:
+        asyncio.run(run_entry_planner_batch())
+    except ExceptionGroup as exc:
+        assert any(isinstance(item, RuntimeError) for item in exc.exceptions)
+    else:
+        raise AssertionError("fatal worker failure must propagate")
+
+    assert started == 3
+    assert cancelled == 2
 
 
 def test_expired_planning_claim_is_recovered_after_restart():

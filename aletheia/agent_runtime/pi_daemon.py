@@ -70,12 +70,53 @@ _EVALUATION_RETRY_PENDING = -1
 # A no-model defer does not need the LLM cooldown. Keep a short bounded delay so
 # a due cohort drains without waiting the LLM interval or busy-spinning.
 _EVALUATION_NO_MODEL_PENDING = -2
+# Ordinary Candidate planning yielded to an exact portfolio wake.  The loop
+# skips cooldown and immediately drains the preserved wake event.
+_EVALUATION_PREEMPTED = -3
 
 
 def _evaluation_cooldown_delay(remaining: int, configured_sec: float) -> float:
+    if remaining == _EVALUATION_PREEMPTED:
+        return 0.0
     if remaining == _EVALUATION_NO_MODEL_PENDING:
         return min(configured_sec, _NO_MODEL_COOLDOWN_MAX_SEC) if configured_sec > 0 else _NO_MODEL_COOLDOWN_MAX_SEC
     return max(configured_sec, 0.0)
+
+
+async def _run_interruptible_planner_batch(run_entry_planner_batch):
+    """Own one low-priority batch and cancel it before an exact portfolio wake."""
+
+    task = asyncio.create_task(run_entry_planner_batch(), name="pi-entry-planner-batch")
+    try:
+        while not task.done():
+            if _pending_events:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                return None
+            if _signal_event is None:
+                return await task
+            signal_wait = asyncio.create_task(_signal_event.wait())
+            done, _ = await asyncio.wait(
+                {task, signal_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if task in done:
+                signal_wait.cancel()
+                await asyncio.gather(signal_wait, return_exceptions=True)
+                if _generic_wake_pending:
+                    _signal_event.set()
+                return task.result()
+            # A generic Candidate wake must not cancel the current batch. Preserve
+            # its durable flag, clear only the edge, and keep watching for an exact
+            # portfolio event.
+            _signal_event.clear()
+        if _generic_wake_pending and _signal_event is not None:
+            _signal_event.set()
+        return task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +641,13 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             if evaluation_params.get("wake_batches"):
                 result = await asyncio.wait_for(review_portfolio_state(evaluation_params), timeout=300.0)
             else:
-                result = await asyncio.wait_for(run_entry_planner_batch(), timeout=300.0)
+                result = await asyncio.wait_for(
+                    _run_interruptible_planner_batch(run_entry_planner_batch),
+                    timeout=300.0,
+                )
+                if result is None:
+                    logger.info("pi_daemon: Candidate planning yielded to portfolio wake")
+                    return _EVALUATION_PREEMPTED
                 if result.get("status") == "idle":
                     result = await asyncio.wait_for(evaluate_trading_opportunity(evaluation_params), timeout=300.0)
         action = result.get("action") or result.get("status") or "unknown" if isinstance(result, dict) else "unknown"

@@ -58,6 +58,37 @@ def reset_daemon_state():
 def test_notify_noop_when_not_started():
     """notify_pi_daemon() must never raise when the daemon is not running."""
     assert not is_daemon_running()
+
+
+@pytest.mark.asyncio
+async def test_candidate_planner_batch_yields_and_awaits_cancellation_for_portfolio_wake():
+    pd._signal_event = asyncio.Event()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_batch():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(pd._run_interruptible_planner_batch(slow_batch))
+    await started.wait()
+    pd._pending_events.append(
+        WakeEvent(
+            position_id="urgent-position",
+            kind=STOP_LOSS_NEAR,
+            ts=0.0,
+            payload={"dist_pct": 0.2},
+        )
+    )
+    pd._signal_event.set()
+
+    assert await asyncio.wait_for(task, timeout=1) is None
+    assert cancelled.is_set()
+    assert pd._evaluation_cooldown_delay(pd._EVALUATION_PREEMPTED, 60.0) == 0.0
     assert notify_pi_daemon(source="test") is False
     assert daemon_status() == {
         "running": False,

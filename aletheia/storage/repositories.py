@@ -8695,9 +8695,9 @@ def claim_next_candidate_planning(
             get_db()
             .execute(
                 "SELECT pg.* FROM candidate_planning_generations pg "
-                "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+                "JOIN universe_members um ON um.id=pg.last_candidate_id "
                 "WHERE pg.is_current=1 AND pg.attention_status='active' "
-                "AND (um.id IS NULL OR um.execution_eligible=1) "
+                "AND um.execution_eligible=1 "
                 "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
                 "AND pg.attempt_count<? AND (pg.status='pending' "
                 "OR (pg.status='unavailable' "
@@ -8717,9 +8717,9 @@ def claim_next_candidate_planning(
             "owner_token=?, claim_expires_at=?, retry_not_before=NULL, "
             "attempt_count=attempt_count+1, updated_at=? WHERE id=? AND is_current=1 "
             "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
-            "AND attempt_count<? AND NOT EXISTS (SELECT 1 FROM universe_members um "
+            "AND attempt_count<? AND EXISTS (SELECT 1 FROM universe_members um "
             "WHERE um.id=candidate_planning_generations.last_candidate_id "
-            "AND um.execution_eligible=0) AND (status='pending' "
+            "AND um.execution_eligible=1) AND (status='pending' "
             "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
             "OR (status='planning' AND claim_expires_at<=?))",
             (
@@ -8759,9 +8759,9 @@ def count_pending_candidate_planning(
         get_db()
         .execute(
             "SELECT COUNT(*) FROM candidate_planning_generations pg "
-            "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
-            "AND (um.id IS NULL OR um.execution_eligible=1) "
+            "AND um.execution_eligible=1 "
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
             "AND pg.attempt_count<? AND (pg.status='pending' "
             "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
@@ -8855,6 +8855,31 @@ def defer_candidate_planning(
             generation_id,
             owner_token,
         ),
+    )
+    return updated.rowcount == 1
+
+
+def release_candidate_planning_claim(
+    generation_id: str,
+    owner_token: str,
+    reason: str,
+    *,
+    retry_seconds: int = 0,
+    now: datetime | None = None,
+) -> bool:
+    """Release locally refused/cancelled work without consuming a model attempt."""
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    retry_at = (current + timedelta(seconds=max(int(retry_seconds), 0))).isoformat()
+    payload = json.dumps({"reason": str(reason)[:160]}, sort_keys=True)
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET status='unavailable', "
+        "attempt_count=MAX(attempt_count-1, 0), result_kind='unavailable', "
+        "result_json=?, retry_not_before=?, owner_token=NULL, claim_expires_at=NULL, "
+        "completed_at=NULL, updated_at=? WHERE id=? AND is_current=1 "
+        "AND attention_status='active' AND status='planning' AND owner_token=?",
+        (payload, retry_at, timestamp, generation_id, owner_token),
     )
     return updated.rowcount == 1
 

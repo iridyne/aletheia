@@ -211,6 +211,40 @@ async def test_queue_reserves_capacity_for_high_priority_and_fails_closed():
 
 
 @pytest.mark.anyio
+async def test_available_capacity_excludes_reserved_and_outstanding_slots():
+    policy = _policy(
+        max_concurrency=1,
+        queue_capacity=4,
+        reserved_high_priority_slots=1,
+    )
+    broker = InferenceBroker(policy_loader=lambda _name: policy)
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocker():
+        started.set()
+        await asyncio.to_thread(release.wait)
+
+    try:
+        assert await broker.available_capacity(
+            "provider-a", priority=InferencePriority.DEFAULT
+        ) == 3
+        task = asyncio.create_task(broker.submit("provider-a", blocker))
+        assert await asyncio.to_thread(started.wait, 1)
+        assert await broker.available_capacity(
+            "provider-a", priority=InferencePriority.DEFAULT
+        ) == 2
+        assert await broker.available_capacity(
+            "provider-a", priority=InferencePriority.TRADING
+        ) == 3
+    finally:
+        release.set()
+        if "task" in locals():
+            await task
+        await broker.aclose()
+
+
+@pytest.mark.anyio
 async def test_rpm_waits_and_tpm_rejects_impossible_request():
     rpm_policy = _policy(requests_per_minute=1, rate_window_sec=0.05)
     broker = InferenceBroker(policy_loader=lambda _name: rpm_policy)

@@ -614,6 +614,53 @@ class InferenceBroker:
         future = asyncio.run_coroutine_threadsafe(self._snapshot_coro(), loop)
         return await asyncio.wrap_future(future)
 
+    async def available_capacity(
+        self,
+        provider_name: str,
+        *,
+        priority: InferencePriority = InferencePriority.DEFAULT,
+    ) -> int:
+        """Return currently usable admission slots without consuming reserved lanes."""
+
+        policy = self._policy_loader(provider_name).normalized()
+        if not self.running or self._loop is None:
+            limit = policy.queue_capacity
+            if priority > InferencePriority.TRADING:
+                limit -= policy.reserved_high_priority_slots
+            return max(limit, 0)
+        loop = self._loop
+        if asyncio.get_running_loop() is loop:
+            return self._available_capacity_in_loop(provider_name, priority, policy)
+        future = asyncio.run_coroutine_threadsafe(
+            self._available_capacity_coro(provider_name, priority, policy),
+            loop,
+        )
+        return await asyncio.wrap_future(future)
+
+    async def _available_capacity_coro(
+        self,
+        provider_name: str,
+        priority: InferencePriority,
+        policy: ProviderPolicy,
+    ) -> int:
+        return self._available_capacity_in_loop(provider_name, priority, policy)
+
+    def _available_capacity_in_loop(
+        self,
+        provider_name: str,
+        priority: InferencePriority,
+        policy: ProviderPolicy,
+    ) -> int:
+        state = self._states.get(provider_name)
+        if state is not None and state.retiring:
+            return 0
+        active_policy = state.policy if state is not None else policy
+        limit = active_policy.queue_capacity
+        if priority > InferencePriority.TRADING:
+            limit -= active_policy.reserved_high_priority_slots
+        outstanding = state.metrics.outstanding if state is not None else 0
+        return max(limit - outstanding, 0)
+
     async def run_auxiliary(self, operation_factory: Callable[[], Awaitable[T]]) -> T:
         """Run non-inference Provider maintenance on the broker-owned loop."""
 
