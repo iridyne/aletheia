@@ -985,6 +985,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "github.rest.pulls.listFiles" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script
     assert "previous_filename" in update_script
+    assert "status: file.status || 'modified'" in update_script
     assert update_script.index("if (!releaseAfterMerge)") < update_script.index("const maxAttempts = 150")
     ordinary_path = update_script[
         update_script.index("if (!releaseAfterMerge)") : update_script.index("const autoMergeStates")
