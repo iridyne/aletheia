@@ -10,12 +10,31 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
+from pathlib import Path
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 from aletheia.knowledge.guards import load_trading_guards, guard_origin
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Publish one guard projection without exposing a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _notify_ranker_guard_change() -> None:
@@ -191,7 +210,6 @@ def promote_guard_candidate_to_active(
     guards_dir = get_data_dir() / "knowledge" / "guards"
     candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
     active_existing = any(g.guard_id == guard_id for g in load_trading_guards(status="active"))
-
     for search_dir in [guards_dir, candidates_dir]:
         if not search_dir.exists():
             continue
@@ -224,22 +242,26 @@ def promote_guard_candidate_to_active(
                     if not active_meta.get("block_candidate"):
                         active_meta["block_candidate"] = True
 
-                if search_dir == candidates_dir:
-                    if not active_existing:
-                        from aletheia.knowledge.manager import create_trading_guard
+                active_path = guards_dir / path.name
+                active_content = render_frontmatter(active_meta, body)
+                _persist_guard_promotion(
+                    guard_id=guard_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    loss_rate=loss_rate,
+                    reason=reason,
+                    source_path=str(path),
+                    active_path=active_path,
+                    active_meta=active_meta,
+                    body=body,
+                    source_path_is_candidate=search_dir == candidates_dir,
+                    active_existing=active_existing,
+                )
 
-                        create_trading_guard(
-                            title=active_meta.get("title") or path.stem,
-                            content=body,
-                            metadata=active_meta,
-                        )
-                    source_meta["status"] = "deprecated"
-                    source_meta["promoted_to"] = guard_id
-                    source_meta["promotion_reason"] = reason
-                    path.write_text(render_frontmatter(source_meta, body), encoding="utf-8")
-                    _update_candidate_row_status(path)
-                else:
-                    path.write_text(render_frontmatter(active_meta, body), encoding="utf-8")
+                # EventStore's SQLite row is authoritative.  Calling the same
+                # idempotent append after the transaction commits only performs its
+                # existing JSONL mirror; a mirror outage leaves the durable event
+                # available for reconciliation and never rolls back guard state.
                 _record_guard_promotion_event(
                     guard_id,
                     actor_type=actor_type,
@@ -248,6 +270,16 @@ def promote_guard_candidate_to_active(
                     reason=reason,
                     source_path=str(path),
                 )
+
+                if search_dir == candidates_dir:
+                    if not active_existing:
+                        _atomic_write(active_path, active_content)
+                    source_meta["status"] = "deprecated"
+                    source_meta["promoted_to"] = guard_id
+                    source_meta["promotion_reason"] = reason
+                    _atomic_write(path, render_frontmatter(source_meta, body))
+                else:
+                    _atomic_write(path, active_content)
                 _notify_ranker_guard_change()
                 return True
             except Exception as e:
@@ -255,6 +287,71 @@ def promote_guard_candidate_to_active(
                 continue
 
     return False
+
+
+def _persist_guard_promotion(
+    *,
+    guard_id: str,
+    actor_type: str,
+    actor_id: str,
+    loss_rate: float | None,
+    reason: str,
+    source_path: str,
+    active_path: Path,
+    active_meta: dict,
+    body: str,
+    source_path_is_candidate: bool,
+    active_existing: bool,
+) -> None:
+    """Persist the durable guard row and promotion event in one commit."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import transaction
+
+    with transaction(immediate=True):
+        active_rows = repo._select_all(
+            "knowledge_items",
+            where="item_type = ? AND file_path = ?",
+            params=("trading_guard", str(active_path)),
+            limit=1,
+        )
+        if active_rows:
+            repo.update_knowledge_item(
+                active_rows[0]["id"],
+                status="active",
+                title=active_meta.get("title") or active_path.stem,
+                content=body,
+            )
+        elif not active_existing:
+            repo.insert_knowledge_item(KnowledgeItem(
+                item_type="trading_guard",
+                title=active_meta.get("title") or active_path.stem,
+                file_path=str(active_path),
+                content=body,
+                confidence="high_confidence",
+                status="active",
+            ))
+
+        if source_path_is_candidate:
+            candidate_rows = repo._select_all(
+                "knowledge_items",
+                where="item_type = ? AND file_path = ?",
+                params=("guard_candidate", source_path),
+                limit=10,
+            )
+            for row in candidate_rows:
+                repo.update_knowledge_item(
+                    row["id"], status="deprecated", confidence="deprecated"
+                )
+
+        _record_guard_promotion_event(
+            guard_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            loss_rate=loss_rate,
+            reason=reason,
+            source_path=source_path,
+        )
 
 
 def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
@@ -298,6 +395,7 @@ def _record_guard_promotion_event(
             aggregate_id=guard_id,
             actor_type=actor_type,
             actor_id=actor_id,
+            idempotency_key=f"guard-promotion:{guard_id}",
             payload_json=json.dumps({
                 "guard_id": guard_id,
                 "loss_rate": loss_rate,
