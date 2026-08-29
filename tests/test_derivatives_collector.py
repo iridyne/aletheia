@@ -311,6 +311,49 @@ def test_extract_oi_usd_none_when_not_derivable():
     ) is None
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"fundingRate": "NaN"},
+        {"fundingRate": "Infinity"},
+        {"fundingRate": "-Infinity"},
+        {"fundingRate": 0.0001, "markPrice": "NaN"},
+        {"fundingRate": 0.0001, "markPrice": "Infinity"},
+        {"fundingRate": 0.0001, "markPrice": "-Infinity"},
+        {"fundingRate": 0.0001, "markPrice": 0},
+        {"fundingRate": 0.0001, "markPrice": -1},
+    ],
+)
+def test_parse_funding_rejects_nonfinite_or_nonpositive_mark(raw):
+    from aletheia.data.collectors.derivatives import _parse_funding
+
+    assert _parse_funding("BTC/USDT", "okx", raw) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "mark_price"),
+    [
+        ({"openInterestValue": "NaN"}, None),
+        ({"openInterestValue": "Infinity"}, None),
+        ({"openInterestValue": "-Infinity"}, None),
+        ({"openInterestValue": -1}, None),
+        ({"openInterestValue": 100, "openInterestAmount": "NaN"}, None),
+        ({"openInterestValue": 100, "openInterestAmount": "Infinity"}, None),
+        ({"openInterestValue": 100, "openInterestAmount": "-Infinity"}, None),
+        ({"openInterestValue": 100, "openInterestAmount": -1}, None),
+        ({"openInterestAmount": 10}, "NaN"),
+        ({"openInterestAmount": 10}, "Infinity"),
+        ({"openInterestAmount": 10}, "-Infinity"),
+        ({"openInterestAmount": 10}, 0),
+        ({"openInterestAmount": 10}, -1),
+    ],
+)
+def test_extract_oi_usd_rejects_nonfinite_or_impossible_values(raw, mark_price):
+    from aletheia.data.collectors.derivatives import extract_oi_usd
+
+    assert extract_oi_usd(raw, mark_price=mark_price) is None
+
+
 def test_parse_oi_returns_none_without_usd():
     """_parse_oi drops a row it cannot express in USD (honest gap over garbage)."""
     from aletheia.data.collectors.derivatives import _parse_oi
@@ -494,6 +537,108 @@ def test_collect_per_symbol_path_converts_amount_to_usd(tmp_path, monkeypatch):
     assert len(result["open_interest"]) == 1
     assert result["open_interest"][0].open_interest_usd == 100.0 * 65000.0
     from aletheia.storage import sqlite as sq
+    sq.close_db()
+
+
+def test_live_collect_rejects_invalid_rows_before_persistence(tmp_path, monkeypatch):
+    class _InvalidExchange:
+        id = "bitget"
+        has = {}
+        markets = {"BTC/USDT:USDT": {}}
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_funding_rate(self, _symbol):
+            return {"fundingRate": "NaN", "markPrice": "Infinity"}
+
+        async def fetch_open_interest(self, _symbol):
+            return {"openInterestAmount": 10, "openInterestValue": None}
+
+    mod = _patch_collect_env(monkeypatch, tmp_path, _InvalidExchange())
+    result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT"]))
+
+    assert result["funding"] == []
+    assert result["open_interest"] == []
+    assert result["errors"] == [
+        "funding_invalid BTC/USDT",
+        "open_interest_invalid BTC/USDT",
+    ]
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
+
+    repo.insert_collector_snapshot_batch(
+        funding=[row.model_dump() for row in result["funding"]],
+        open_interest=[row.model_dump() for row in result["open_interest"]],
+    )
+    assert repo._select_all("funding_rate_snapshots") == []
+    assert repo._select_all("open_interest_snapshots") == []
+    sq.close_db()
+
+
+def test_history_backfill_rejects_invalid_rows_before_persistence(
+    tmp_path, monkeypatch
+):
+    from aletheia.config import loader as cfg_loader
+
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
+
+    sq.close_db()
+    mig.run_migrations()
+
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    class _InvalidHistoryExchange:
+        async def fetch_funding_rate_history(self, _symbol, limit=24):
+            return [{"timestamp": now_ms, "fundingRate": "-Infinity"}]
+
+        async def fetch_open_interest_history(self, _symbol, _timeframe, limit=24):
+            return [
+                {
+                    "timestamp": now_ms,
+                    "openInterestValue": "Infinity",
+                    "openInterestAmount": -1,
+                }
+            ]
+
+    from aletheia.data.collectors.derivatives import (
+        _maybe_backfill_funding_history,
+        _maybe_backfill_oi_history,
+    )
+
+    errors: list[str] = []
+    funding_count = asyncio.run(
+        _maybe_backfill_funding_history(
+            _InvalidHistoryExchange(),
+            "BTC/USDT",
+            "BTC/USDT:USDT",
+            "bitget",
+            since_hours=24,
+            errors=errors,
+        )
+    )
+    oi_count = asyncio.run(
+        _maybe_backfill_oi_history(
+            _InvalidHistoryExchange(),
+            "BTC/USDT",
+            "BTC/USDT:USDT",
+            "bitget",
+            since_hours=24,
+            errors=errors,
+        )
+    )
+
+    assert (funding_count, oi_count) == (0, 0)
+    assert errors == [
+        "funding_history_invalid BTC/USDT",
+        "oi_history_invalid BTC/USDT",
+    ]
+    assert repo._select_all("funding_rate_snapshots") == []
+    assert repo._select_all("open_interest_snapshots") == []
     sq.close_db()
 
 
