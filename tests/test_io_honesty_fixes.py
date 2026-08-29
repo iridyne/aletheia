@@ -798,6 +798,102 @@ def test_import_row_values_bound_by_column_name_not_order(tmp_path, monkeypatch)
     )
 
 
+@pytest.mark.parametrize("rich_row_first", [False, True])
+def test_import_binds_each_row_using_its_own_columns(
+    tmp_path, monkeypatch, rich_row_first
+):
+    """#1171: legal nullable columns must survive heterogeneous row shapes,
+    regardless of which shape appears first in the JSONL file."""
+    from aletheia.storage.hashing import sha256_file
+
+    _setup_env(tmp_path, monkeypatch)
+
+    base_row = {
+        "source_type": "test",
+        "source_id": "s1",
+        "category": "risk",
+        "severity": "medium",
+        "status": "accepted",
+        "summary": "heterogeneous row",
+        "evidence_json": "{}",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    sparse_row = {"lesson_id": "shape-sparse", **base_row}
+    sentinel = '{"sentinel":"issue-1171"}'
+    rich_row = {
+        "lesson_id": "shape-rich",
+        **base_row,
+        "recommendation_json": sentinel,
+    }
+    rows = [rich_row, sparse_row] if rich_row_first else [sparse_row, rich_row]
+
+    staging = tmp_path / "staging_row_shapes"
+    db_dir = staging / "db"
+    db_dir.mkdir(parents=True)
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+    )
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "row_shapes.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="row_shapes")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert not result.errors, f"unexpected errors: {result.errors}"
+    assert result.new_rows.get("ps_lessons") == 2
+
+    conn = sqlite3.connect(str(tmp_path / "test.db"))
+    stored = dict(
+        conn.execute(
+            "SELECT lesson_id, recommendation_json FROM ps_lessons "
+            "WHERE lesson_id IN ('shape-sparse','shape-rich')"
+        ).fetchall()
+    )
+    conn.close()
+    assert stored == {"shape-sparse": None, "shape-rich": sentinel}
+
+
+@pytest.mark.parametrize("pk_case", ["missing", "null", "empty"])
+def test_import_rejects_missing_or_empty_primary_key(tmp_path, monkeypatch, pk_case):
+    """#1171: SQLite rowid tables must not accept absent/NULL/empty TEXT PKs."""
+    _setup_env(tmp_path, monkeypatch)
+
+    row = {
+        "source_type": "test",
+        "source_id": "s1",
+        "category": "risk",
+        "severity": "medium",
+        "status": "accepted",
+        "summary": f"invalid primary key: {pk_case}",
+        "evidence_json": "{}",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    if pk_case != "missing":
+        row["lesson_id"] = None if pk_case == "null" else ""
+
+    archive = _build_bundle_with_arbitrary_table(
+        tmp_path, f"invalid_pk_{pk_case}", "ps_lessons", row
+    )
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert any(
+        "primary key" in error.lower() and "lesson_id" in error
+        for error in result.errors
+    ), result.errors
+    assert not result.new_rows
+
+    conn = sqlite3.connect(str(tmp_path / "test.db"))
+    count = conn.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
 # ---------------------------------------------------------------------------
 # #277 — concurrent imports use distinct staging directories
 # ---------------------------------------------------------------------------

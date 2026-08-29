@@ -201,6 +201,7 @@ class ImportService:
         - Reject tables not in _IMPORT_ALLOWED_TABLES.
         - Reject rows that are not plain JSON objects.
         - Reject rows containing columns absent from the local schema.
+        - Reject rows with missing or empty primary-key values.
         Any preflight failure aborts the entire import before any DB mutation.
 
         Classification phase (read-only):
@@ -217,12 +218,15 @@ class ImportService:
         db = get_db()
 
         # ── Discover local schema for allowed tables ──────────────────────────
-        def _schema_cols(table: str) -> frozenset[str]:
+        def _schema(table: str) -> tuple[frozenset[str], frozenset[str]]:
             try:
                 rows = db.execute(f'PRAGMA table_info("{table}")').fetchall()
-                return frozenset(r["name"] for r in rows)
+                return (
+                    frozenset(r["name"] for r in rows),
+                    frozenset(r["name"] for r in rows if r["pk"]),
+                )
             except Exception:
-                return frozenset()
+                return frozenset(), frozenset()
 
         # ── Preflight pass ────────────────────────────────────────────────────
         preflight_tables: list[tuple[str, list[dict]]] = []
@@ -234,7 +238,7 @@ class ImportService:
                 )
                 return
 
-            allowed_cols = _schema_cols(table_name)
+            allowed_cols, primary_key_cols = _schema(table_name)
             rows_for_table: list[dict] = []
             with open(jsonl_file, "r", encoding="utf-8") as f:
                 for lineno, line in enumerate(f, 1):
@@ -258,6 +262,16 @@ class ImportService:
                         result.errors.append(
                             f"{table_name} line {lineno}: columns not in local schema: "
                             f"{', '.join(sorted(unknown_cols))}"
+                        )
+                        return
+                    invalid_primary_keys = sorted(
+                        column for column in primary_key_cols
+                        if column not in row or row[column] is None or row[column] == ""
+                    )
+                    if invalid_primary_keys:
+                        result.errors.append(
+                            f"{table_name} line {lineno}: primary key columns must be "
+                            f"present and non-empty: {', '.join(invalid_primary_keys)}"
                         )
                         return
                     rows_for_table.append(row)
@@ -314,10 +328,10 @@ class ImportService:
         try:
             with _db_transaction():
                 for table_name, rows in insert_queue:
-                    columns = tuple(rows[0].keys())
-                    quoted_cols = ", ".join(f'"{c}"' for c in columns)
-                    placeholders = ", ".join(["?"] * len(columns))
                     for row in rows:
+                        columns = tuple(row.keys())
+                        quoted_cols = ", ".join(f'"{c}"' for c in columns)
+                        placeholders = ", ".join(["?"] * len(columns))
                         db.execute(
                             f'INSERT INTO "{table_name}" ({quoted_cols}) '
                             f"VALUES ({placeholders})",
