@@ -40,6 +40,20 @@ class T0ContextDomainV1(BaseModel):
     def _state_is_honest(self) -> "T0ContextDomainV1":
         if self.state == "available" and (not self.values or not self.source_refs):
             raise ValueError("available T0 domains require values and source refs")
+        if self.state == "available" and (
+            not self.source_hashes
+            or not self.source_observed_at
+            or not self.received_at
+        ):
+            raise ValueError(
+                "available T0 domains require source hash, observed_at, and received_at"
+            )
+        if (
+            self.state == "available"
+            and self.source_class == "deterministic_derived"
+            and not self.calculation_version
+        ):
+            raise ValueError("derived T0 domains require a calculation version")
         if self.state not in {"available", "not_applicable"} and not self.unavailable_reason:
             raise ValueError("unavailable T0 domains require an explicit reason")
         return self

@@ -1,5 +1,7 @@
 """Executable causal-boundary claims for the Learning T0 foundation."""
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -293,3 +295,23 @@ def test_observed_after_boundary_is_future_information():
     assert assessment.temporal_integrity is False
     assert assessment.status == "advisory_only"
     assert "future_observation:candidate" in assessment.reasons
+
+
+@spec_claim(SpecClaim(
+    "LT0-S14", _CONTRACT, "T0 provenance completeness", "L2a",
+    "An available fact must preserve source hash, observation/receive times, and derivation version.",
+    status="implemented",
+))
+def test_available_domain_requires_complete_provenance():
+    from pydantic import ValidationError
+
+    domain = _domain("candidate")
+    with pytest.raises(ValidationError, match="source hash"):
+        domain.__class__(**domain.model_dump() | {"source_hashes": []})
+
+    domain = _domain("derived")
+    with pytest.raises(ValidationError, match="calculation version"):
+        domain.__class__(
+            **domain.model_dump()
+            | {"source_class": "deterministic_derived", "calculation_version": None}
+        )
