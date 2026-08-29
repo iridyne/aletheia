@@ -681,14 +681,15 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         assert "--ignore=tests/test_connectivity.py" in commands
         assert "--ignore=tests/test_operator_cli.py" in commands
         assert "--ignore=tests/test_pause_ownership.py" in commands
-        assert "--dist loadfile" in commands
     assert '-m "tier_unit"' in unit_commands
-    assert "-n 2" in unit_commands
+    assert "-n " not in unit_commands
+    assert "--dist " not in unit_commands
     assert '-m "tier_integration"' in integration_commands
     assert '-m "tier_spec"' in spec_commands
     assert '-m "tier_e2e"' in e2e_commands
     for commands in (integration_commands, spec_commands, e2e_commands):
         assert "-n 4" in commands
+        assert "--dist loadfile" in commands
 
     unit_env = unit_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
     assert "${{ runner.temp }}" in unit_env
