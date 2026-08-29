@@ -1079,7 +1079,7 @@ export function MarkdownContent({ itemId }: { itemId: string }) {
   if (isLoading) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
   if (isError && !data) return <LearningReadMessage state="unavailable" subject="Knowledge content" />
   const warning = isError ? <LearningReadMessage state="stale" subject="Knowledge content" /> : null
-  if (!data || data.error) return <>{warning}<p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : 'No content available.'}</p></>
+  if (!data || data.error) return <>{warning}<p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : data?.error === 'integrity_conflict' ? 'Content unavailable: integrity verification failed.' : 'No content available.'}</p></>
   if (!data.content) return <>{warning}<p className="text-muted text-sm">Empty file.</p></>
   return <>
     {warning}

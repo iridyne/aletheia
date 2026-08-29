@@ -316,3 +316,35 @@ def test_legacy_dual_write_mismatch_is_an_integrity_conflict(tmp_path, monkeypat
     path = tmp_path / item.file_path
     path.write_text("Changed evidence from a different source.", encoding="utf-8")
     assert read_knowledge_document(row).state == "integrity_conflict"
+
+
+def test_legacy_frontmatter_conflict_is_not_backfilled(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.knowledge.maintenance import backfill_content_from_disk
+    from aletheia.knowledge.manager import create_research_note
+    from aletheia.storage.repositories import get_knowledge_item
+    from aletheia.storage.sqlite import get_db
+
+    item = create_research_note(
+        "Legacy provenance conflict",
+        "The same evidence body remains sufficiently detailed and independently "
+        "checkable while its structured source identity conflicts.",
+        confidence="high_confidence",
+        metadata={"symbol": "BTC/USDT"},
+    )
+    assert item is not None and item.file_path is not None
+    row = get_knowledge_item(item.id)
+    assert row is not None
+    inline = str(row["content"]).replace("BTC/USDT", "ETH/USDT", 1)
+    db = get_db()
+    db.execute(
+        "UPDATE knowledge_items SET content=?, content_format=NULL, "
+        "content_sha256=NULL, metadata_json=NULL WHERE id=?",
+        (inline, item.id),
+    )
+    db.commit()
+    legacy = get_knowledge_item(item.id)
+    assert legacy is not None
+    assert read_knowledge_document(legacy).state == "integrity_conflict"
+    assert backfill_content_from_disk(dry_run=True)["matched"] == 0

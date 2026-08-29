@@ -361,15 +361,27 @@ async def _extract_lessons(
         wrapped = bool(reviews)
     if not reviews:
         return []
+    from aletheia.knowledge.document import read_knowledge_document
+
+    verified_documents = {}
+    verified_reviews = []
+    for review in reviews:
+        document = read_knowledge_document(review)
+        if not document.text:
+            continue
+        verified_reviews.append(review)
+        verified_documents[str(review.get("id") or "")] = document
+    reviews = verified_reviews
+    if not reviews:
+        return []
+
 
     # Build rich case lines including PnL metrics so the LLM has something
     # concrete to summarise and the evidence_json is populated for lesson_reviewer.
     case_lines = []
     for r in reviews:
-        from aletheia.knowledge.document import read_knowledge_document
-
-        document = read_knowledge_document(r)
-        meta = document.metadata if document.text else {}
+        document = verified_documents[str(r.get("id") or "")]
+        meta = document.metadata
         outcome = meta.get("outcome", "?")
         pnl = meta.get("realized_pnl_pct", "?")
         factor = meta.get("factor_key", "?")
@@ -431,17 +443,13 @@ async def _extract_lessons(
     # lesson_reviewer deterministic numbers even if the LLM skipped the evidence field.
     agg_evidence: dict = {}
     if reviews:
-        from aletheia.knowledge.document import read_knowledge_document
-
         case_facts: dict[str, dict] = {}
         factor_source_ids: dict[str, list[str]] = {}
         for r in reviews:
             source_id = str(r.get("id") or "")
             if source_id:
                 case_facts[source_id] = {}
-            document = read_knowledge_document(r)
-            if not document.text:
-                continue
+            document = verified_documents[source_id]
             meta = document.metadata
             if source_id:
                 case_facts[source_id] = {

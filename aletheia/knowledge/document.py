@@ -161,9 +161,12 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
     if file_text:
         metadata, _ = parse_frontmatter_text(file_text)
         if inline:
-            _inline_metadata, inline_body = parse_frontmatter_text(inline)
-            _file_metadata, file_body = parse_frontmatter_text(file_text)
-            if inline_body.strip() != file_body.strip():
+            inline_metadata, inline_body = parse_frontmatter_text(inline)
+            file_metadata, file_body = parse_frontmatter_text(file_text)
+            if inline_body.strip() != file_body.strip() or (
+                inline_metadata
+                and _json_metadata(inline_metadata) != _json_metadata(file_metadata)
+            ):
                 return KnowledgeDocument("", {}, "integrity_conflict", path)
         return KnowledgeDocument(
             file_text,

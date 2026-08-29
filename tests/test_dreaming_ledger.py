@@ -46,13 +46,25 @@ def _mock_llm_unavailable(monkeypatch):
 def _seed_trade_case_study(
     case_id: str = "case-1", created_at: str | None = None,
 ) -> None:
+    from aletheia.knowledge.document import canonicalize_inline_document
     from aletheia.storage.sqlite import get_db
 
     now = created_at or datetime.now(timezone.utc).isoformat()
+    document = canonicalize_inline_document(
+        "---\n"
+        "outcome: loss\n"
+        "realized_pnl_pct: -2.0\n"
+        "factor_key: momentum:BTC/USDT:long:medium_confidence:not_late\n"
+        "scanner_family: momentum\n"
+        "close_reason: stop_loss\n"
+        "---\n"
+        f"# Case: {case_id}\n"
+    )
     get_db().execute(
         "INSERT INTO knowledge_items "
-        "(id,item_type,title,status,confidence,created_at,updated_at) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "(id,item_type,title,status,confidence,created_at,updated_at,content,"
+        "content_format,content_sha256,metadata_json,symbol,direction,"
+        "scanner_family,outcome) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             case_id,
             "trade_case_study",
@@ -61,9 +73,57 @@ def _seed_trade_case_study(
             "high_confidence",
             now,
             now,
+            document["content"],
+            document["content_format"],
+            document["content_sha256"],
+            document["metadata_json"],
+            document["symbol"],
+            document["direction"],
+            document["scanner_family"],
+            document["outcome"],
         ),
     )
     get_db().commit()
+
+
+@pytest.mark.asyncio
+async def test_lesson_extraction_leaves_unavailable_cases_pending(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents import dreaming_agent
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO knowledge_items "
+        "(id,item_type,title,status,confidence,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "case-unavailable",
+            "trade_case_study",
+            "Unavailable case",
+            "active",
+            "high_confidence",
+            now,
+            now,
+        ),
+    )
+    db.commit()
+    called = False
+
+    async def unexpected_llm(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return {"lessons": []}, None
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", unexpected_llm)
+    outputs: list[str] = []
+    await dreaming_agent._extract_lessons(None, outputs, [])
+
+    assert not called
+    assert outputs == []
+    assert db.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0] == 0
+
 
 
 def test_lesson_extraction_declares_its_structured_transport_contract():

@@ -216,22 +216,26 @@ def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
     """Backfill canonical documents and provenance from the current data root."""
     from aletheia.knowledge.document import (
         canonicalize_written_document,
-        resolve_knowledge_path,
+        read_knowledge_document,
     )
     from aletheia.knowledge.retrieval import reindex_all
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     rows = db.execute(
-        "SELECT id, file_path FROM knowledge_items "
+        "SELECT * FROM knowledge_items "
         "WHERE content_format IS NULL "
         "AND file_path IS NOT NULL AND TRIM(file_path) != ''"
     ).fetchall()
     to_update: list[tuple[str, dict]] = []
-    for row in rows:
-        path = resolve_knowledge_path(row["file_path"])
-        if path is not None:
-            to_update.append((row["id"], canonicalize_written_document(path)))
+    for raw_row in rows:
+        row = dict(raw_row)
+        document = read_knowledge_document(row)
+        if document.state != "legacy_current_root" or document.resolved_path is None:
+            continue
+        to_update.append(
+            (row["id"], canonicalize_written_document(document.resolved_path))
+        )
 
     if dry_run or not to_update:
         return {

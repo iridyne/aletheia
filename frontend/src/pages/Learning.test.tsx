@@ -193,10 +193,13 @@ describe('Learning workbench query honesty', () => {
 
     queryState.markdownData = { error: 'file_not_found' }
     const missingHtml = renderToStaticMarkup(<MarkdownContent itemId="missing" />)
+    queryState.markdownData = { error: 'integrity_conflict' }
+    const conflictHtml = renderToStaticMarkup(<MarkdownContent itemId="conflict" />)
 
     expect(emptyHtml).toContain('Knowledge content is stale')
     expect(emptyHtml).toContain('Empty file')
     expect(missingHtml).toContain('Knowledge content is stale')
     expect(missingHtml).toContain('File not found on disk')
+    expect(conflictHtml).toContain('Content unavailable: integrity verification failed')
   })
 })

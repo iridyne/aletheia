@@ -447,6 +447,11 @@ def _item_meta_and_body(item: dict) -> tuple[dict, str] | None:
     from aletheia.knowledge.frontmatter import parse_frontmatter_text
 
     document = read_knowledge_document(item)
+    if "content_format" in item and document.state not in {
+        "available",
+        "available_inline",
+    }:
+        return None
     if not document.text:
         if isinstance(item.get("metadata"), dict):
             return dict(item["metadata"]), ""
