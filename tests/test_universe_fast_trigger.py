@@ -893,6 +893,77 @@ async def test_superseded_resting_plan_cancels_only_through_gateway(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "integrity", "expected_action"),
+    [
+        ("ordered", "hash", "cancel"),
+        ("partially_filled", "hash", "cancel"),
+        ("ordered", "contract", "cancel"),
+        ("partially_filled", "contract", "cancel"),
+        ("waiting", "hash", "fail"),
+    ],
+)
+async def test_integrity_failure_preserves_order_lifecycle(
+    monkeypatch, status, integrity, expected_action
+):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": f"{status}-{integrity}-plan",
+        "status": status,
+        "plan_json": payload,
+        "plan_hash": (
+            hashlib.sha256(payload.encode()).hexdigest()
+            if integrity == "contract"
+            else "0" * 64
+        ),
+        "order_id": "order-1" if status in {"ordered", "partially_filled"} else None,
+    }
+    transitions = []
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    if integrity == "contract":
+        monkeypatch.setattr(
+            watch.EntryPlan,
+            "model_validate_json",
+            lambda _payload: (_ for _ in ()).throw(ValueError("invalid")),
+        )
+    monkeypatch.setattr(
+        watch.repo,
+        "transition_entry_plan",
+        lambda plan_id, **kwargs: transitions.append((plan_id, kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason))
+        or {"status": "cancelled"},
+    )
+
+    await watch._load_entry_plan_watchers(
+        SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10))
+    )
+
+    if expected_action == "cancel":
+        assert transitions == []
+        assert cancellations == [(row["id"], f"entry_plan_{integrity}_mismatch" if integrity == "hash" else "entry_plan_contract_invalid")]
+    else:
+        assert cancellations == []
+        assert transitions == [
+            (
+                row["id"],
+                {
+                    "expected_status": status,
+                    "status": "failed",
+                    "reason": "entry_plan_hash_mismatch",
+                },
+            )
+        ]
+
+
+@pytest.mark.asyncio
 async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypatch):
     from aletheia.agent_runtime import fast_trigger_watch as watch
 
