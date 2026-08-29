@@ -464,9 +464,9 @@ def get_cost_summary(execution_mode: str | None = None):
             "total_funding_cost": funding,
             "total_fees": fees,
             "total_slippage": slippage,
-            # Keep the old key as a compatibility alias, but make its meaning
-            # match the verified PnL formula rather than diagnostic slippage.
-            "total_costs": economic,
+            # Preserve the legacy execution-cost contract; funding-inclusive
+            # economics are exposed separately below.
+            "total_costs": execution_drag,
             "total_economic_costs": economic,
             "total_execution_drag": execution_drag,
             "missing_cost_counts": missing,

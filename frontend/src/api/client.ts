@@ -3311,7 +3311,7 @@ export interface CostSummary extends OutcomeCohort {
 	total_funding_cost: number | null;
 	total_fees: number | null;
 	total_slippage: number | null;
-	/** Backward-compatible alias for the verified economic total. */
+	/** Backward-compatible execution-cost total (fees plus slippage). */
 	total_costs: number | null;
 	total_economic_costs: number | null;
 	total_execution_drag: number | null;

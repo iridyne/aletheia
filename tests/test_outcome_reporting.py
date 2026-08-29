@@ -222,7 +222,7 @@ def test_cost_summary_preserves_unknown_fee_legs(monkeypatch):
     assert costs["total_exit_fees"] == 0.75
     assert costs["total_fees"] == 2.0
     assert costs["total_slippage"] == 0.1
-    assert costs["total_costs"] == 2.0
+    assert costs["total_costs"] == 2.1
     assert costs["total_execution_drag"] == 2.1
     assert costs["raw_recorded_costs"] == {
         "total_entry_fees": 1.75,

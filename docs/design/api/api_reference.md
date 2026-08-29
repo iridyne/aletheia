@@ -242,7 +242,8 @@ realized curve. Cost responses expose verified totals and a separate `raw_record
 For each projection, `total_funding_cost` preserves signed funding, `total_economic_costs`
 (`entry_fee + exit_fee + funding_cost`) is the reconcilable total, and
 `total_execution_drag` keeps the diagnostic `slippage_cost` separate. The legacy `total_costs`
-field is an alias of `total_economic_costs`; `missing_cost_counts` identifies incomplete
+field remains the execution-cost total (`entry_fee + exit_fee + slippage_cost`);
+`missing_cost_counts` identifies incomplete
 components, and any total requiring a missing component is `null` rather than an apparent zero.
 Strategy KPI and family scorecard responses wrap their rows under `strategies` and `families` so the
 same cohort metadata can be returned without hiding its scope. Missing
