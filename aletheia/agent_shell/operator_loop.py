@@ -147,6 +147,7 @@ def _persist_action(event_type: str, param: str | None = None,
     if reason:
         message = f"{message} | reason={reason}"
     event = AuditEvent(
+        timestamp=datetime.now(timezone.utc).isoformat(),
         actor="operator_loop",
         source="operator_loop",
         event_type=event_type,

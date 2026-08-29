@@ -23,7 +23,11 @@ def _workflow() -> dict:
 
 
 def _script() -> str:
-    return _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+    return next(
+        step["with"]["script"]
+        for step in _workflow()["jobs"]["shepherd"]["steps"]
+        if isinstance(step, dict) and "script" in step.get("with", {})
+    )
 
 
 def _auto_merge_source() -> str:
@@ -43,13 +47,7 @@ def _auto_merge_source() -> str:
 def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     workflow = _workflow()
     triggers = workflow["on"]
-    assert triggers["pull_request_target"]["types"] == [
-        "opened",
-        "reopened",
-        "ready_for_review",
-        "synchronize",
-        "unlabeled",
-    ]
+    assert triggers["pull_request_target"]["types"] == ["unlabeled"]
     assert triggers["pull_request_review"]["types"] == ["submitted"]
     assert triggers["issue_comment"]["types"] == ["created"]
     assert triggers["workflow_run"]["workflows"] == [
@@ -63,7 +61,7 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert job["runs-on"] == SELF_HOSTED_CASI
     assert job["permissions"] == {
         "actions": "read",
-        "contents": "read",
+        "contents": "write",
         "issues": "write",
         "pull-requests": "write",
     }
@@ -77,9 +75,14 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
         "cancel-in-progress": "true",
     }
 
-    step = job["steps"][0]
+    step = next(
+        step
+        for step in job["steps"]
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/github-script@")
+    )
     assert step["uses"].startswith("actions/github-script@")
-    assert "actions/checkout" not in str(job)
+    assert "actions/checkout" in str(job)
+    assert job["steps"][0]["with"] == {"ref": "master"}
     script = step["with"]["script"]
     assert "github.rest.pulls.merge" not in script
     assert "github.rest.repos.createOrUpdateFileContents" not in script
@@ -164,37 +167,11 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     # two independent workflows.
     shepherd_token = "'.github/workflows/codex-shepherd.yml'"
     authority_message = "merge-authority workflow changes require an explicit manual merge"
-    assert source.count(shepherd_token) == 3
-    assert source.count("'.github/workflows/auto-merge.yml'") >= 3
+    assert source.count(shepherd_token) == 0
+    assert "path.startsWith('.github/workflows/')" in source
+    assert "'scripts/ci_plan.py'" in source
+    assert "'scripts/ci_local.py'" in source
     assert source.count(authority_message) == 2
-
-    shepherd_positions: list[int] = []
-    start = 0
-    while True:
-        position = source.find(shepherd_token, start)
-        if position < 0:
-            break
-        shepherd_positions.append(position)
-        start = position + len(shepherd_token)
-
-    message_positions: list[int] = []
-    start = 0
-    while True:
-        position = source.find(authority_message, start)
-        if position < 0:
-            break
-        message_positions.append(position)
-        start = position + len(authority_message)
-
-    assert len(shepherd_positions) == 3
-    assert len(message_positions) == 2
-    assert (
-        shepherd_positions[0]
-        < shepherd_positions[1]
-        < message_positions[0]
-        < shepherd_positions[2]
-        < message_positions[1]
-    )
 
     # Every authority decision must fail closed when GitHub's files endpoint is
     # truncated. Schedule can disable directly; release and ordinary merge return.
@@ -202,8 +179,8 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
         "const changedFilesComplete = changedFiles.length === pullRequest.changed_files"
     )
     schedule_authority = source.index("const changesMergeAuthority", schedule_complete)
-    assert "!changedFilesComplete ||" in source[schedule_authority : schedule_authority + 700]
-    assert schedule_complete < schedule_authority < shepherd_positions[0]
+    assert "!changedFilesComplete ||" in source[schedule_authority : schedule_authority + 1400]
+    assert schedule_complete < schedule_authority
 
     release_summary = source.index("const [pullRequestSummary] = candidates")
     release_metadata = source.index(
@@ -212,53 +189,44 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     release_complete = source.index(
         "if (changedFiles.length !== pullRequest.changed_files)", release_metadata
     )
-    assert release_summary < release_metadata < release_complete < shepherd_positions[1]
-    assert shepherd_positions[1] < message_positions[0]
+    release_authority = source.index(authority_message, release_complete)
+    assert release_summary < release_metadata < release_complete < release_authority
     assert "pull_number: pullRequestSummary.number" in source[release_metadata:release_complete]
     assert "release candidate changed after discovery; owner hold remains" in source[
         release_metadata:release_complete
     ]
-    assert "owner hold remains" in source[release_complete:shepherd_positions[1]]
+    assert "owner hold remains" in source[release_complete:release_authority]
 
     ordinary_metadata = source.index("const {data: pullRequestMetadata} = await github.rest.pulls.get")
     ordinary_complete = source.index(
         "if (changedFiles.length !== pullRequestMetadata.changed_files)", ordinary_metadata
     )
-    assert ordinary_metadata < ordinary_complete < shepherd_positions[2] < message_positions[1]
+    ordinary_authority = source.index(authority_message, ordinary_complete)
+    assert ordinary_metadata < ordinary_complete < ordinary_authority
     assert "pullRequestMetadata.head.sha !== expectedHeadSha" in source[
         ordinary_metadata:ordinary_complete
     ]
     assert "exact-head merge remains disabled" in source[
-        ordinary_complete:shepherd_positions[2]
+        ordinary_complete:ordinary_authority
     ]
 
 
-def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
+def test_codex_shepherd_requests_only_planned_review_after_trusted_verdict() -> None:
     script = _script()
 
-    assert "const reviewTriggerActions = new Set" in script
-    for action in (
-        "'opened'",
-        "'reopened'",
-        "'ready_for_review'",
-        "'synchronize'",
-        "'unlabeled'",
-    ):
-        assert action in script
-    assert "reviewTriggerActions.has(context.payload.action)" in script
+    assert "const reviewTriggerActions = new Set" not in script
+    assert "scripts/ci_plan.py" in script
+    assert "const codexRequired = ciPlan?.review?.codex_required === true" in script
+    assert "trusted CI planner says Codex review is not required" in script
+    assert "const labelArgs = pullRequest.labels.flatMap" in script
+    assert "--trusted-label" in script
+    assert "exactHeadGithubActionsCheckPassed('Trusted CI verdict')" in script
+    assert "waiting for exact-head Trusted CI verdict before requesting Codex review" in script
     assert "@codex review" in script
     assert "kind=review" in script
     assert "const exactHeadReviewRequest" in script
     assert "!exactHeadReviewRequest" in script
     assert "!connectorCleanExactHead" in script
-
-    # Missing review creation is a convergence gate shared by every surviving
-    # callback; it must run before event-specific CI/comment handling.
-    request_gate = script.index("!exactHeadReviewRequest")
-    pull_request_return = script.index("if (context.eventName === 'pull_request_target') return", request_gate)
-    issue_handler = script.index("if (context.eventName === 'issue_comment')", pull_request_return)
-    workflow_handler = script.index("if (context.eventName === 'workflow_run')", issue_handler)
-    assert request_gate < pull_request_return < issue_handler < workflow_handler
     assert "surviving trusted callback" in script
 
     # Runtime evidence showed the current Codex Cloud task can create a local
@@ -269,6 +237,29 @@ def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_
     assert "Codex Cloud repair is not authorized to push back" in script
     assert "review-finding" in script
     assert "ci-failure" in script
+
+
+def test_codex_shepherd_retriggers_auto_merge_after_clean_review_comment() -> None:
+    script = _script()
+    issue_comment_handler = script[script.index("if (context.eventName === 'issue_comment')") :]
+
+    assert "run.conclusion === 'success'" in issue_comment_handler
+    assert "event_type: 'auto_merge_update'" in issue_comment_handler
+    assert "expected_head_sha: expectedHeadSha" in issue_comment_handler
+    assert "expected_base_sha: pullRequest.base.sha" in issue_comment_handler
+
+
+def test_auto_merge_paginates_clean_codex_review_comments() -> None:
+    source = _auto_merge_source()
+
+    assert "$commentsAfter: String" in source
+    assert "comments(first: 100, after: $commentsAfter)" in source
+    assert "const comments = []" in source
+    assert "comments.push(...page.comments.nodes)" in source
+    assert "page.comments.pageInfo" in source
+    assert "pullRequest.comments.nodes = comments" in source
+    assert "github.rest.repos.getCommit" in source
+    assert "[0-9a-f]{7,40}" in source
 
 
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:

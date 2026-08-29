@@ -90,14 +90,32 @@ jobs:
               }
               const changesMergeAuthority = changedFilesComplete && changedFiles.some(
                 ({filename, previous_filename}) =>
-                  [filename, previous_filename].includes('.github/workflows/auto-merge.yml') ||
-                  [filename, previous_filename].includes('.github/workflows/codex-shepherd.yml'),
+                  [filename, previous_filename].some((path) =>
+                    path &&
+                    (
+                      path.startsWith('.github/workflows/') ||
+                      [
+                        'scripts/check_change_contract.py',
+                        'scripts/ci_failure_handoff.py',
+                        'scripts/ci_local.py',
+                        'scripts/ci_plan.py',
+                        'scripts/ci_preflight.py',
+                        'scripts/ci_yield.py',
+                      ].includes(path)
+                    )
+                  ),
               );
               const operation = (
                 !changedFilesComplete ||
                 changesMergeAuthority ||
                 pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
               ) ? 'disable' : 'enable';
+              const minimumCheckStartedAt = eventName === 'pull_request_target'
+                ? new Date().toISOString()
+                : '';
+              const acceptedWorkflowRunId = eventName === 'workflow_run'
+                ? String(payload.workflow_run.id)
+                : '';
               await github.rest.repos.createDispatchEvent({
                 ...context.repo,
                 event_type: 'auto_merge_update',
@@ -105,6 +123,9 @@ jobs:
                   operation,
                   pull_request_number: pullRequest.number,
                   expected_head_sha: pullRequest.head.sha,
+                  expected_base_sha: pullRequest.base.sha,
+                  minimum_check_started_at: minimumCheckStartedAt,
+                  accepted_workflow_run_id: acceptedWorkflowRunId,
                 },
               });
             }
@@ -120,7 +141,6 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-      statuses: write
     # Metadata-only control plane; do not contend with scarce self-hosted test runners.
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
     timeout-minutes: 10
@@ -167,6 +187,10 @@ jobs:
               core.info('release candidate changed after discovery; owner hold remains');
               return;
             }
+            if (run.expected_base_sha && pullRequest.base.sha !== run.expected_base_sha) {
+              core.info('release candidate base changed; rerun the manual release workflow');
+              return;
+            }
             const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
               ...context.repo,
               basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
@@ -193,31 +217,22 @@ jobs:
             }
             if (changedFiles.some(({filename, previous_filename}) =>
               [filename, previous_filename].some((path) =>
-                [
-                  '.github/workflows/auto-merge.yml',
-                  '.github/workflows/codex-shepherd.yml',
-                ].includes(path)
+                path &&
+                (
+                  path.startsWith('.github/workflows/') ||
+                  [
+                    'scripts/check_change_contract.py',
+                    'scripts/ci_failure_handoff.py',
+                    'scripts/ci_local.py',
+                    'scripts/ci_plan.py',
+                    'scripts/ci_preflight.py',
+                    'scripts/ci_yield.py',
+                  ].includes(path)
+                )
               )
             )) {
               core.info('merge-authority workflow changes require an explicit manual merge');
               return;
-            }
-            const requiredChecks = [
-              'Review checks',
-              'Python specifications',
-              'Python unit',
-              'Python integration',
-              'Python end-to-end',
-              'Python runtime state',
-            ];
-            for (const check of requiredChecks) {
-              await github.rest.repos.createCommitStatus({
-                ...context.repo,
-                sha: run.head_sha,
-                state: 'success',
-                context: check,
-                description: 'Verified by exact release candidate CI',
-              });
             }
             await github.rest.issues.removeLabel({
               ...context.repo,
@@ -259,7 +274,19 @@ jobs:
       EXPECTED_HEAD_SHA: ${{ github.event.client_payload.expected_head_sha }}
       EXPECTED_BASE_SHA: ${{ github.event.client_payload.expected_base_sha || '' }}
       RELEASE_AFTER_MERGE: ${{ github.event.client_payload.release_after_merge || 'false' }}
+      MINIMUM_CHECK_STARTED_AT: ${{ github.event.client_payload.minimum_check_started_at || '' }}
+      ACCEPTED_WORKFLOW_RUN_ID: ${{ github.event.client_payload.accepted_workflow_run_id || '' }}
     steps:
+      - name: Check out trusted CI planner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: master
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
       - name: Apply pull request auto-merge state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
@@ -270,7 +297,13 @@ jobs:
             const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
             const expectedBaseSha = process.env.EXPECTED_BASE_SHA;
             const releaseAfterMerge = process.env.RELEASE_AFTER_MERGE === 'true';
+            const minimumCheckStartedAt = process.env.MINIMUM_CHECK_STARTED_AT;
+            const acceptedWorkflowRunId = process.env.ACCEPTED_WORKFLOW_RUN_ID;
             const changeContractCheckName = 'Verify Change Contract';
+            const trustedCiCheckName = 'Trusted CI verdict';
+            const {execFileSync} = require('child_process');
+            const fs = require('fs');
+            const path = require('path');
             if (!['enable', 'disable'].includes(operation)) {
               throw new Error(`unsupported auto-merge operation: ${operation}`);
             }
@@ -280,14 +313,15 @@ jobs:
             if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
               throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
             }
-            if (releaseAfterMerge && !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
-              throw new Error('expected release base SHA must be a 40-character lowercase Git object ID');
+            if (expectedBaseSha && !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
+              throw new Error('expected base SHA must be a 40-character lowercase Git object ID');
             }
 
             const pullRequestQuery = `query(
               $owner: String!,
               $repo: String!,
               $number: Int!,
+              $commentsAfter: String,
               $closingIssuesAfter: String,
             ) {
               repository(owner: $owner, name: $repo) {
@@ -301,13 +335,14 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
-                  comments(last: 100) {
+                  comments(first: 100, after: $commentsAfter) {
                     nodes {
                       author { login }
                       authorAssociation
                       body
                       createdAt
                     }
+                    pageInfo { hasNextPage endCursor }
                   }
                   closingIssuesReferences(first: 100, after: $closingIssuesAfter) {
                     nodes {
@@ -325,13 +360,31 @@ jobs:
               }
             }`;
             const fetchPullRequest = async () => {
-              let closingIssuesAfter = null;
               let pullRequest = null;
-              const closingIssues = [];
+              const comments = [];
+              let commentsAfter = null;
               while (true) {
                 const result = await github.graphql(pullRequestQuery, {
                   ...context.repo,
                   number: pullRequestNumber,
+                  commentsAfter,
+                  closingIssuesAfter: null,
+                });
+                const page = result.repository.pullRequest;
+                if (!page) return null;
+                if (!pullRequest) pullRequest = page;
+                comments.push(...page.comments.nodes);
+                const {hasNextPage, endCursor} = page.comments.pageInfo;
+                if (!hasNextPage) break;
+                commentsAfter = endCursor;
+              }
+              const closingIssues = [];
+              let closingIssuesAfter = null;
+              while (true) {
+                const result = await github.graphql(pullRequestQuery, {
+                  ...context.repo,
+                  number: pullRequestNumber,
+                  commentsAfter: null,
                   closingIssuesAfter,
                 });
                 const page = result.repository.pullRequest;
@@ -342,22 +395,32 @@ jobs:
                 if (!hasNextPage) break;
                 closingIssuesAfter = endCursor;
               }
+              pullRequest.comments.nodes = comments;
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
             };
-            const exactHeadChangeContractPassed = async () => {
+            const exactHeadCheckPassed = async (checkName, options = {}) => {
               try {
                 const {data} = await github.rest.checks.listForRef({
                   ...context.repo,
                   ref: expectedHeadSha,
-                  check_name: changeContractCheckName,
+                  check_name: checkName,
                   filter: 'latest',
                   per_page: 100,
                 });
                 const check = data.check_runs
                   .filter((candidate) =>
-                    candidate.name === changeContractCheckName &&
-                    candidate.app?.slug === 'github-actions'
+                    candidate.name === checkName &&
+                    candidate.app?.slug === 'github-actions' &&
+                    (
+                      !options.requireAcceptedWorkflowRun ||
+                      String(candidate.details_url || '').includes(`/actions/runs/${acceptedWorkflowRunId}`)
+                    ) &&
+                    (
+                      !minimumCheckStartedAt ||
+                      Date.parse(candidate.started_at || candidate.completed_at || 0) >=
+                        Date.parse(minimumCheckStartedAt)
+                    )
                   )
                   .sort((left, right) =>
                     Date.parse(right.completed_at || right.started_at || 0) -
@@ -367,18 +430,52 @@ jobs:
                   return true;
                 }
                 core.info(
-                  `exact-head ${changeContractCheckName} is not successful ` +
+                  `exact-head ${checkName} is not successful ` +
                   `(${check ? `${check.status}/${check.conclusion}` : 'missing'}); ` +
                   'auto-merge remains disabled',
                 );
                 return false;
               } catch (error) {
                 core.warning(
-                  `could not verify exact-head ${changeContractCheckName}; ` +
+                  `could not verify exact-head ${checkName}; ` +
                   `auto-merge remains disabled: ${error}`,
                 );
                 return false;
               }
+            };
+            const isConnectorLogin = (login) =>
+              ['chatgpt-codex-connector[bot]', 'chatgpt-codex-connector'].includes(login || '');
+            const resolveReviewedCommitSha = async (body) => {
+              const text = String(body || '');
+              const match = text.match(/Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i);
+              if (!match) return null;
+              const reviewed = match[1].toLowerCase();
+              if (reviewed.length === 40) return reviewed;
+              try {
+                const {data: commit} = await github.rest.repos.getCommit({
+                  ...context.repo,
+                  ref: reviewed,
+                });
+                return commit.sha;
+              } catch (error) {
+                core.warning(`could not resolve Codex reviewed commit ${reviewed}: ${error}`);
+                return null;
+              }
+            };
+            const hasCleanExactHeadCodexReview = async (pullRequest) => {
+              for (const comment of pullRequest.comments.nodes || []) {
+                if (
+                  !isConnectorLogin(comment.author?.login) ||
+                  !/Didn't find any major issues\./i.test(String(comment.body || ''))
+                ) {
+                  continue;
+                }
+                const reviewed = await resolveReviewedCommitSha(comment.body);
+                if (reviewed === expectedHeadSha) {
+                  return true;
+                }
+              }
+              return false;
             };
             const closeLinkedIssues = async (pullRequest) => {
               const repositoryName = `${context.repo.owner}/${context.repo.repo}`;
@@ -447,6 +544,32 @@ jobs:
                 { pullRequestId: pullRequest.id },
               );
             };
+            const planForPullRequest = (pullRequest, changedFiles) => {
+              const changedFilePayload = changedFiles.map((file) => ({
+                filename: file.filename,
+                previous_filename: file.previous_filename || null,
+                status: file.status || 'modified',
+              }));
+              const labelArgs = (pullRequest.labels?.nodes || [])
+                .flatMap(({name}) => ['--trusted-label', name]);
+              const plannerInput = path.join(process.env.RUNNER_TEMP, 'ci-plan-files.json');
+              fs.writeFileSync(plannerInput, JSON.stringify(changedFilePayload), 'utf8');
+              return JSON.parse(execFileSync('uv', [
+                'run',
+                '--no-sync',
+                'python',
+                'scripts/ci_plan.py',
+                '--event',
+                'pull_request',
+                '--base-sha',
+                pullRequest.baseRefOid || pullRequest.base.sha,
+                '--head-sha',
+                pullRequest.headRefOid || pullRequest.head.sha,
+                '--changed-files-json',
+                plannerInput,
+                ...labelArgs,
+              ], {encoding: 'utf8'}));
+            };
             if (operation === 'disable') {
               const pullRequest = await fetchPullRequest();
               if (!pullRequest || pullRequest.state !== 'OPEN') {
@@ -486,6 +609,13 @@ jobs:
                 );
                 return;
               }
+              if (expectedBaseSha && pullRequest.baseRefOid !== expectedBaseSha) {
+                core.info(
+                  `pull request base changed from ${expectedBaseSha} to ${pullRequest.baseRefOid}; ` +
+                  'a newer exact-base event must authorize the merge',
+                );
+                return;
+              }
               const {data: pullRequestMetadata} = await github.rest.pulls.get({
                 ...context.repo,
                 pull_number: pullRequest.number,
@@ -512,13 +642,28 @@ jobs:
               }
               if (changedFiles.some(({filename, previous_filename}) =>
                 [filename, previous_filename].some((path) =>
-                  [
-                    '.github/workflows/auto-merge.yml',
-                    '.github/workflows/codex-shepherd.yml',
-                  ].includes(path)
+                  path &&
+                  (
+                    path.startsWith('.github/workflows/') ||
+                    [
+                      'scripts/check_change_contract.py',
+                      'scripts/ci_failure_handoff.py',
+                      'scripts/ci_local.py',
+                      'scripts/ci_plan.py',
+                      'scripts/ci_preflight.py',
+                      'scripts/ci_yield.py',
+                    ].includes(path)
+                  )
                 )
               )) {
                 core.info('merge-authority workflow changes require an explicit manual merge');
+                return;
+              }
+              let ciPlan;
+              try {
+                ciPlan = planForPullRequest(pullRequest, changedFiles);
+              } catch (error) {
+                core.info(`trusted CI planner failed; exact-head merge remains disabled: ${error}`);
                 return;
               }
 
@@ -529,7 +674,18 @@ jobs:
                 core.info('do-not-auto-merge holds this pull request');
                 return;
               }
-              if (!(await exactHeadChangeContractPassed())) {
+              if (ciPlan.github_ci !== 'none') {
+                if (!(await exactHeadCheckPassed(changeContractCheckName))) {
+                  return;
+                }
+                if (!(await exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun: Boolean(acceptedWorkflowRunId)}))) {
+                  return;
+                }
+              } else {
+                core.info('trusted CI planner classified this head as docs_only; validation CI checks are not required');
+              }
+              if (ciPlan?.review?.codex_required === true && !(await hasCleanExactHeadCodexReview(pullRequest))) {
+                core.info('trusted CI planner requires a clean exact-head Codex review; exact-head merge remains disabled');
                 return;
               }
 

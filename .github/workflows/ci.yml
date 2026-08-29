@@ -1,20 +1,14 @@
 # RUNNER SECURITY CONTRACT (#1356)
-# Control-plane / metadata jobs pin label `casi`; deep PR test jobs pin `fedora`.
-# #1356 ephemeral isolation is still a known gap: both classes remain persistent
-# self-hosted workers. This split only stops control-plane jobs from queueing
-# behind Unit / Stage 2 pytest on the Fedora pair.
-# Required: PR-controlled jobs (review-*, unit, integration, etc.) MUST run on a
-# dedicated one-job ephemeral/JIT runner group that is destroyed after each job,
-# has no access to runtime credentials/secrets/keyring, and is isolated from the
-# privileged release-handoff job. See Issue #1356 for resolution path.
-# Until the ephemeral runner group is provisioned, treat CI evidence as potentially
-# contaminated by prior PR runs on the same host.
+# Every job in this PR/merge validation workflow executes on the dedicated
+# one-job disposable runner class. Privileged release handoff is intentionally
+# absent: the default-branch workflow_run controller revalidates this run.
 
 name: Aletheia CI
 
 on:
   pull_request:
     branches: [master]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   merge_group:
   workflow_dispatch:
 
@@ -42,7 +36,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
+    runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Check out source
@@ -83,147 +77,82 @@ jobs:
           CHANGE_CONTRACT_PR_BODY_FILE: ${{ github.event_name == 'pull_request' && format('{0}/current-pr-body.md', runner.temp) || '' }}
         run: uv run --no-sync python scripts/check_change_contract.py
 
-  review-core:
-    name: Review core
+  plan:
+    name: Plan CI lanes
     needs: [change-contract-preflight]
     if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
-    timeout-minutes: 10
+    runs-on: [pr-ephemeral]
+    timeout-minutes: 5
     outputs:
-      base: ${{ steps.changes.outputs.base }}
-      coverage: ${{ steps.changes.outputs.coverage }}
-      frontend: ${{ steps.changes.outputs.frontend }}
-      operator: ${{ steps.changes.outputs.operator }}
-      native: ${{ steps.changes.outputs.native }}
-
+      schema_version: ${{ steps.plan.outputs.schema_version }}
+      policy_version: ${{ steps.plan.outputs.policy_version }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+      mode: ${{ steps.plan.outputs.mode }}
+      github_ci: ${{ steps.plan.outputs.github_ci }}
+      plan_fingerprint: ${{ steps.plan.outputs.plan_fingerprint }}
+      codex_required: ${{ steps.plan.outputs.codex_required }}
+      required_quick: ${{ steps.plan.outputs.required_quick }}
+      required_python_unit: ${{ steps.plan.outputs.required_python_unit }}
+      required_runtime: ${{ steps.plan.outputs.required_runtime }}
+      required_integration: ${{ steps.plan.outputs.required_integration }}
+      required_specifications: ${{ steps.plan.outputs.required_specifications }}
+      required_e2e: ${{ steps.plan.outputs.required_e2e }}
+      required_frontend: ${{ steps.plan.outputs.required_frontend }}
+      required_operator: ${{ steps.plan.outputs.required_operator }}
+      required_native: ${{ steps.plan.outputs.required_native }}
+      required_coverage: ${{ steps.plan.outputs.required_coverage }}
+      required_full_ci: ${{ steps.plan.outputs.required_full_ci }}
+      required_shadow_backstop: ${{ steps.plan.outputs.required_shadow_backstop }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-
-      - name: Detect affected review surfaces
-        id: changes
-        shell: bash
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Compute deterministic CI plan
+        id: plan
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo 'coverage=true' >> "$GITHUB_OUTPUT"
-            echo 'frontend=true' >> "$GITHUB_OUTPUT"
-            echo 'operator=true' >> "$GITHUB_OUTPUT"
-            echo 'native=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          label_args=()
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            while IFS= read -r label; do
+              label_args+=(--trusted-label "$label")
+            done < <(python - <<'PY'
+          import json
+          import os
 
-          # actions/checkout checks out GitHub's synthetic PR merge commit.
-          # Parent 1 is the exact current base snapshot for this CI head; parent
-          # 2 must be the exact PR head. Using payload.base.sha is wrong for a
-          # long-lived PR because it stays pinned to the base from PR creation
-          # and attributes later base-branch changes to the PR.
-          base="$(git rev-parse HEAD^1)"
-          merge_pr_head="$(git rev-parse HEAD^2)"
-          expected_pr_head="${{ github.event.pull_request.head.sha }}"
-          if [ "$merge_pr_head" != "$expected_pr_head" ]; then
-            echo "pull-request merge ref does not match exact PR head" >&2
-            exit 1
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          for label in payload.get("pull_request", {}).get("labels", []):
+              name = label.get("name")
+              if name:
+                  print(name)
+          PY
+          )
           fi
-          echo "base=$base" >> "$GITHUB_OUTPUT"
+          uv run --no-sync python scripts/ci_plan.py \
+            --event "$GITHUB_EVENT_NAME" \
+            "${label_args[@]}" \
+            --github-output "$GITHUB_OUTPUT"
 
-          # Changes to the CI controller must exercise every conditional path.
-          if ! git diff --quiet "$base"...HEAD -- .github/workflows/ci.yml; then
-            echo 'coverage=true' >> "$GITHUB_OUTPUT"
-            echo 'frontend=true' >> "$GITHUB_OUTPUT"
-            echo 'operator=true' >> "$GITHUB_OUTPUT"
-            echo 'native=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Coverage is expensive (~60s in a recent Review job), so ordinary
-          # PRs pay for it only when a measured trust boundary, its direct test
-          # surface, or coverage/pytest tooling and configuration changes.
-          if git diff --quiet "$base"...HEAD -- \
-            .coveragerc \
-            pyproject.toml \
-            pytest.toml \
-            .pytest.toml \
-            pytest.ini \
-            .pytest.ini \
-            tox.ini \
-            setup.cfg \
-            conftest.py \
-            uv.lock \
-            scripts/coverage_floors.py \
-            tests/conftest.py \
-            aletheia/analytics/profit_gradient.py \
-            aletheia/analytics/profit_gradient_estimators.py \
-            aletheia/analytics/profit_gradient_evidence.py \
-            aletheia/analytics/position_replay.py \
-            aletheia/counterfactual/filter_replay.py \
-            aletheia/economics/context_artifacts.py \
-            aletheia/execution/reconciliation.py \
-            aletheia/learning/evidence_epoch.py \
-            aletheia/learning/policy_epochs.py \
-            tests/test_profit_gradient.py \
-            tests/test_profit_gradient_properties.py \
-            tests/test_profit_gradient_evidence.py \
-            tests/test_p3_evidence_epoch.py \
-            tests/test_filter_replay.py \
-            tests/test_position_replay.py \
-            tests/test_reconciliation.py \
-            tests/test_oco_reconcile.py \
-            tests/test_cr_ex01_reconcile.py \
-            tests/test_position_reconciler.py \
-            tests/test_scheduler_reconcile.py \
-            tests/test_reconciliation_integrity_incident.py \
-            tests/test_reconciliation_properties.py \
-            tests/test_context_effectiveness.py \
-            tests/test_context_artifacts_properties.py \
-            tests/test_filter_replay_properties.py \
-            tests/test_policy_epoch_properties.py \
-            tests/test_profit_gradient_evidence_properties.py; then
-            echo 'coverage=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'coverage=true' >> "$GITHUB_OUTPUT"
-          fi
-
-          # npm workspaces can make commands launched from a child project
-          # inherit the repository-root manifest, lockfile, and npm config.
-          # The settings type check imports this backend contract, so backend-
-          # only schema changes must not leave settings.d.ts stale.
-          if git diff --quiet "$base"...HEAD -- \
-            frontend/ \
-            package.json \
-            package-lock.json \
-            npm-shrinkwrap.json \
-            .npmrc \
-            aletheia/server/routes/settings.py \
-            aletheia/config/schema.py \
-            scripts/export_openapi_schema.py; then
-            echo 'frontend=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'frontend=true' >> "$GITHUB_OUTPUT"
-          fi
-          if git diff --quiet "$base"...HEAD -- \
-            operator-shell/ \
-            package.json \
-            package-lock.json \
-            npm-shrinkwrap.json \
-            .npmrc; then
-            echo 'operator=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'operator=true' >> "$GITHUB_OUTPUT"
-          fi
-          if git diff --quiet "$base"...HEAD -- \
-            native/ \
-            .cargo/ \
-            Cargo.toml \
-            Cargo.lock \
-            rust-toolchain \
-            rust-toolchain.toml; then
-            echo 'native=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'native=true' >> "$GITHUB_OUTPUT"
-          fi
+  review-core:
+    name: Review core
+    needs: [plan]
+    if: ${{ !cancelled() && needs.plan.outputs.required_quick == 'true' }}
+    runs-on: [pr-ephemeral]
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -277,7 +206,7 @@ jobs:
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" gitleaks
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            pr_base="${{ steps.changes.outputs.base }}"
+            pr_base="${{ needs.plan.outputs.base_sha }}"
             if [ -z "$pr_base" ]; then
               echo "missing resolved pull-request base" >&2
               exit 1
@@ -290,9 +219,9 @@ jobs:
 
   review-coverage:
     name: Review trust-boundary coverage
-    needs: review-core
-    if: ${{ needs.review-core.outputs.coverage == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    needs: [plan, review-core]
+    if: ${{ needs.plan.outputs.required_coverage == 'true' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -339,9 +268,9 @@ jobs:
 
   review-node:
     name: Review Node surfaces
-    needs: review-core
-    if: ${{ needs.review-core.outputs.frontend == 'true' || needs.review-core.outputs.operator == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    needs: [plan, review-core]
+    if: ${{ needs.plan.outputs.required_frontend == 'true' || needs.plan.outputs.required_operator == 'true' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -353,7 +282,7 @@ jobs:
           node-version: 22
 
       - name: Install uv and Python 3.12 for generated API contracts
-        if: ${{ needs.review-core.outputs.frontend == 'true' }}
+        if: ${{ needs.plan.outputs.required_frontend == 'true' }}
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.0"
@@ -361,16 +290,18 @@ jobs:
           enable-cache: false
 
       - name: Synchronize Python dependencies for generated API contracts
-        if: ${{ needs.review-core.outputs.frontend == 'true' }}
+        if: ${{ needs.plan.outputs.required_frontend == 'true' }}
         run: uv sync --locked --all-groups
 
       - name: Check dashboard
-        if: ${{ needs.review-core.outputs.frontend == 'true' }}
+        if: ${{ needs.plan.outputs.required_frontend == 'true' }}
         working-directory: frontend
         run: |
           npm ci
           npm run check:settings-types
-          npm run lint
+          while IFS= read -r -d '' target; do
+            npx eslint "$target"
+          done < <(find src -mindepth 1 -maxdepth 1 -print0 | sort -z)
           npm test
           # Do not add a direct "npx tsc -b" here; npm run build owns the type-check.
           build_dir="${RUNNER_TEMP}/aletheia-dashboard-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -378,7 +309,7 @@ jobs:
           test -s "$build_dir/performance.json"
 
       - name: Check Operator Shell
-        if: ${{ always() && needs.review-core.outputs.operator == 'true' }}
+        if: ${{ always() && needs.plan.outputs.required_operator == 'true' }}
         working-directory: operator-shell
         run: |
           # The package test uses explicit file paths, so this is the single
@@ -389,9 +320,9 @@ jobs:
 
   review-native:
     name: Review native host
-    needs: review-core
-    if: ${{ needs.review-core.outputs.native == 'true' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    needs: [plan, review-core]
+    if: ${{ needs.plan.outputs.required_native == 'true' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -429,9 +360,9 @@ jobs:
 
   review:
     name: Review checks
-    needs: [review-core, review-coverage, review-node, review-native]
-    if: ${{ always() }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
+    needs: [plan, review-core, review-coverage, review-node, review-native]
+    if: ${{ !cancelled() && needs.plan.outputs.required_quick == 'true' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
       - name: Aggregate review results
@@ -464,10 +395,14 @@ jobs:
 
   unit:
     name: Python unit
-    needs: [change-contract-preflight]
-    if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    needs: [plan]
+    if: ${{ !cancelled() && needs.plan.outputs.required_python_unit == 'true' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -485,28 +420,28 @@ jobs:
         run: uv sync --locked --all-groups
       - name: Run unit regression tier
         env:
-          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "tier_unit"
-          -n 6
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit-${{ matrix.shard }}
+        run: |
+          mapfile -t test_files < <(
+            find tests -type f -name 'test_*.py' \
+              ! -path 'tests/simulation/*' \
+              ! -path 'tests/test_auto_resume.py' \
+              ! -path 'tests/test_connectivity.py' \
+              ! -path 'tests/test_operator_cli.py' \
+              ! -path 'tests/test_pause_ownership.py' \
+              | sort | awk -v shard="${{ matrix.shard }}" 'NR % 4 == shard'
+          )
+          uv run pytest "${test_files[@]}" \
+            -m "tier_unit" -q --tb=short --timeout=120
 
   # Lane A head: Runtime State is the short, high-value prerequisite. Specs are
   # intentionally ineligible until this job finishes, so they can never steal a
   # runner ahead of Runtime while still running even when Runtime itself fails.
   runtime-state-tests:
     name: Python runtime state
-    needs: [review, unit]
-    if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    needs: [plan, review, unit]
+    if: ${{ !cancelled() && needs.plan.outputs.required_runtime == 'true' && needs.review.result == 'success' && needs.unit.result == 'success' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 15
     steps:
       - name: Check out source
@@ -555,14 +490,17 @@ jobs:
           ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-connectivity" \
             uv run pytest tests/test_connectivity.py \
               -n 1 -q --tb=short --timeout=120
+          ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-simulation" \
+            uv run pytest tests/simulation \
+              -n 1 -q --tb=short --timeout=120
 
   # Lane B head. Only Runtime State and Integration are eligible when Stage 2
   # opens, giving the two Fedora runners deterministic lane ownership.
   integration:
     name: Python integration
-    needs: [review, unit]
-    if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    needs: [plan, review, unit]
+    if: ${{ !cancelled() && needs.plan.outputs.required_integration == 'true' && needs.review.result == 'success' && needs.unit.result == 'success' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -586,18 +524,16 @@ jobs:
           --ignore=tests/test_operator_cli.py
           --ignore=tests/test_pause_ownership.py
           -m "tier_integration"
-          -n 4
-          --dist loadfile
           -q --tb=short
           --timeout=120
 
   specifications:
     name: Python specifications
-    needs: [review, unit, runtime-state-tests]
+    needs: [plan, review, unit, runtime-state-tests]
     # The lane predecessor is ordering only. A Runtime failure is itself useful
     # evidence and must not hide the independent Specifications regression.
-    if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    if: ${{ !cancelled() && needs.plan.outputs.required_specifications == 'true' && needs.review.result == 'success' && needs.unit.result == 'success' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -621,17 +557,17 @@ jobs:
           --ignore=tests/test_operator_cli.py
           --ignore=tests/test_pause_ownership.py
           -m "tier_spec"
-          -n 4
+          -n 2
           --dist loadfile
           -q --tb=short
           --timeout=120
 
   end-to-end:
     name: Python end-to-end
-    needs: [review, unit, integration]
+    needs: [plan, review, unit, integration]
     # Integration orders this lane but does not suppress E2E failure evidence.
-    if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, fedora]
+    if: ${{ !cancelled() && needs.plan.outputs.required_e2e == 'true' && needs.review.result == 'success' && needs.unit.result == 'success' }}
+    runs-on: [pr-ephemeral]
     timeout-minutes: 20
     steps:
       - name: Check out source
@@ -655,57 +591,137 @@ jobs:
           --ignore=tests/test_operator_cli.py
           --ignore=tests/test_pause_ownership.py
           -m "tier_e2e"
-          -n 4
+          -n 2
           --dist loadfile
           -q --tb=short
           --timeout=120
 
-  release-candidate:
-    name: Hand off verified release candidate
-    needs: [review, unit, runtime-state-tests, specifications, integration, end-to-end]
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      startsWith(github.ref_name, 'release-please--branches--master')
-    permissions:
-      contents: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
+  trusted-ci-verdict:
+    name: Trusted CI verdict
+    needs:
+      - plan
+      - review
+      - unit
+      - runtime-state-tests
+      - integration
+      - specifications
+      - end-to-end
+      - review-coverage
+      - review-node
+      - review-native
+    if: ${{ always() }}
+    runs-on: [pr-ephemeral]
+    timeout-minutes: 5
     steps:
-      - name: Dispatch verified candidate
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
-        with:
-          retries: 3
-          script: |
-            await github.rest.repos.createDispatchEvent({
-              ...context.repo,
-              event_type: 'release_candidate_verified',
-              client_payload: {
-                head_branch: context.ref.replace('refs/heads/', ''),
-                head_sha: context.sha,
-              },
-            });
+      - name: Enforce planned lanes
+        env:
+          POLICY_VERSION: ${{ needs.plan.outputs.policy_version }}
+          PLAN_MODE: ${{ needs.plan.outputs.mode }}
+          PLAN_FINGERPRINT: ${{ needs.plan.outputs.plan_fingerprint }}
+          PLAN_BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+          PLAN_HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          QUICK_REQUIRED: ${{ needs.plan.outputs.required_quick }}
+          QUICK_RESULT: ${{ needs.review.result }}
+          UNIT_REQUIRED: ${{ needs.plan.outputs.required_python_unit }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          RUNTIME_REQUIRED: ${{ needs.plan.outputs.required_runtime }}
+          RUNTIME_RESULT: ${{ needs.runtime-state-tests.result }}
+          INTEGRATION_REQUIRED: ${{ needs.plan.outputs.required_integration }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          SPEC_REQUIRED: ${{ needs.plan.outputs.required_specifications }}
+          SPEC_RESULT: ${{ needs.specifications.result }}
+          E2E_REQUIRED: ${{ needs.plan.outputs.required_e2e }}
+          E2E_RESULT: ${{ needs.end-to-end.result }}
+          COVERAGE_REQUIRED: ${{ needs.plan.outputs.required_coverage }}
+          COVERAGE_RESULT: ${{ needs.review-coverage.result }}
+          FRONTEND_REQUIRED: ${{ needs.plan.outputs.required_frontend }}
+          OPERATOR_REQUIRED: ${{ needs.plan.outputs.required_operator }}
+          NODE_RESULT: ${{ needs.review-node.result }}
+          NATIVE_REQUIRED: ${{ needs.plan.outputs.required_native }}
+          NATIVE_RESULT: ${{ needs.review-native.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$PLAN_RESULT" != "success" ]; then
+            echo "CI planner result: $PLAN_RESULT" >&2
+            exit 1
+          fi
+          require_lane() {
+            local name="$1" required="$2" result="$3"
+            if [ "$required" = "true" ] && [ "$result" != "success" ]; then
+              echo "required lane $name result: $result" >&2
+              exit 1
+            fi
+            if [ "$required" != "true" ]; then
+              case "$result" in
+                success|skipped) ;;
+                *)
+                  echo "unplanned lane $name result: $result" >&2
+                  exit 1
+                  ;;
+              esac
+            fi
+          }
+          require_lane quick "$QUICK_REQUIRED" "$QUICK_RESULT"
+          require_lane python_unit "$UNIT_REQUIRED" "$UNIT_RESULT"
+          require_lane runtime "$RUNTIME_REQUIRED" "$RUNTIME_RESULT"
+          require_lane integration "$INTEGRATION_REQUIRED" "$INTEGRATION_RESULT"
+          require_lane specifications "$SPEC_REQUIRED" "$SPEC_RESULT"
+          require_lane e2e "$E2E_REQUIRED" "$E2E_RESULT"
+          require_lane coverage "$COVERAGE_REQUIRED" "$COVERAGE_RESULT"
+          if [ "$FRONTEND_REQUIRED" = "true" ] || [ "$OPERATOR_REQUIRED" = "true" ]; then
+            require_lane node true "$NODE_RESULT"
+          else
+            require_lane node false "$NODE_RESULT"
+          fi
+          require_lane native "$NATIVE_REQUIRED" "$NATIVE_RESULT"
+          {
+            echo "policy_version=$POLICY_VERSION"
+            echo "mode=$PLAN_MODE"
+            echo "fingerprint=$PLAN_FINGERPRINT"
+            echo "base_sha=$PLAN_BASE_SHA"
+            echo "head_sha=$PLAN_HEAD_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  release-pr-ci:
-    name: Hand off verified release pull request
-    needs: [review, unit, runtime-state-tests, specifications, integration, end-to-end]
-    if: >-
-      github.event_name == 'pull_request' &&
-      startsWith(github.head_ref, 'release-please--branches--master')
-    permissions:
-      contents: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
+  full-ci-verdict:
+    name: Full CI verdict
+    needs:
+      - plan
+      - trusted-ci-verdict
+      - review-coverage
+      - review-node
+      - review-native
+    if: ${{ always() && needs.plan.outputs.required_full_ci == 'true' }}
+    runs-on: [pr-ephemeral]
+    timeout-minutes: 5
     steps:
-      - name: Dispatch verified release pull request
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
-        with:
-          retries: 3
-          script: |
-            await github.rest.repos.createDispatchEvent({
-              ...context.repo,
-              event_type: 'auto_merge_update',
-              client_payload: {
-                operation: 'enable',
-                pull_request_number: context.payload.pull_request.number,
-                expected_head_sha: context.payload.pull_request.head.sha,
-                release_after_merge: true,
-              },
-            });
+      - name: Enforce full qualification lanes
+        env:
+          TRUSTED_RESULT: ${{ needs.trusted-ci-verdict.result }}
+          COVERAGE_RESULT: ${{ needs.review-coverage.result }}
+          NODE_RESULT: ${{ needs.review-node.result }}
+          NATIVE_RESULT: ${{ needs.review-native.result }}
+          PLAN_FINGERPRINT: ${{ needs.plan.outputs.plan_fingerprint }}
+          PLAN_BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+          PLAN_HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pair in \
+            "trusted:$TRUSTED_RESULT" \
+            "coverage:$COVERAGE_RESULT" \
+            "node:$NODE_RESULT" \
+            "native:$NATIVE_RESULT"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            if [ "$result" != "success" ]; then
+              echo "required full lane $name result: $result" >&2
+              exit 1
+            fi
+          done
+          {
+            echo "fingerprint=$PLAN_FINGERPRINT"
+            echo "base_sha=$PLAN_BASE_SHA"
+            echo "head_sha=$PLAN_HEAD_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"

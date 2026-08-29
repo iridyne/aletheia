@@ -7,7 +7,8 @@ import yaml
 
 WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
 EXPECTED_STAGE1_GATE = (
-    "${{ !cancelled() && needs.review.result == 'success' && "
+    "${{ !cancelled() && needs.plan.outputs.required_RUNTIME == 'true' && "
+    "needs.review.result == 'success' && "
     "needs.unit.result == 'success' }}"
 )
 
@@ -21,5 +22,6 @@ def test_stage2_lane_heads_override_skipped_review_ancestors() -> None:
 
     for job_name in ("runtime-state-tests", "integration"):
         job = jobs[job_name]
-        assert job["needs"] == ["review", "unit"]
-        assert job["if"] == EXPECTED_STAGE1_GATE
+        assert job["needs"] == ["plan", "review", "unit"]
+        required = "runtime" if job_name == "runtime-state-tests" else "integration"
+        assert job["if"] == EXPECTED_STAGE1_GATE.replace("RUNTIME", required)

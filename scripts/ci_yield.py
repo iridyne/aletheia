@@ -24,7 +24,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ci_failure_handoff import fingerprint  # noqa: E402
 
-SCHEMA_VERSION = "ci_yield.v1"
+SCHEMA_VERSION = "ci_yield.v2"
 PRIMARY_WORKFLOW = "Aletheia CI"
 METADATA_WORKFLOW = "Aletheia Change Contract gate"
 PR_FIELDS = (
@@ -44,15 +44,41 @@ AUTHORITY_SURFACES = {
     "identity_reconciliation",
     "runtime",
 }
+JOB_NEEDS = {
+    "Plan CI lanes": ("Change Contract preflight for deep CI",),
+    "Change Contract preflight for deep CI": (),
+    "Review core": ("Plan CI lanes",),
+    "Review trust-boundary coverage": ("Review core",),
+    "Review Node surfaces": ("Review core",),
+    "Review native host": ("Review core",),
+    "Review checks": (
+        "Review core", "Review trust-boundary coverage",
+        "Review Node surfaces", "Review native host",
+    ),
+    "Python unit": ("Plan CI lanes",),
+    "Python runtime state": ("Review checks", "Python unit"),
+    "Python integration": ("Review checks", "Python unit"),
+    "Python specifications": ("Review checks", "Python unit", "Python runtime state"),
+    "Python end-to-end": ("Review checks", "Python unit", "Python integration"),
+    "Trusted CI verdict": (
+        "Plan CI lanes", "Review checks", "Python unit", "Python runtime state",
+        "Python integration", "Python specifications", "Python end-to-end",
+        "Review trust-boundary coverage", "Review Node surfaces", "Review native host",
+    ),
+    "Full CI verdict": ("Trusted CI verdict",),
+}
 
 
 def _gh_json(args: list[str]) -> Any:
-    result = subprocess.run(
-        ["gh", *args], check=False, capture_output=True, text=True,
-    )
-    if result.returncode:
-        message = " ".join(result.stderr.split())[:500]
-        raise RuntimeError(f"gh {' '.join(args[:3])} failed: {message}")
+    for attempt in range(3):
+        result = subprocess.run(
+            ["gh", *args], check=False, capture_output=True, text=True,
+        )
+        if not result.returncode:
+            break
+        if attempt == 2:
+            message = " ".join(result.stderr.split())[:500]
+            raise RuntimeError(f"gh {' '.join(args[:3])} failed: {message}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -72,6 +98,17 @@ def _dt(value: str | None) -> datetime | None:
 def _seconds(start: str | None, end: str | None) -> float | None:
     left, right = _dt(start), _dt(end)
     return max(0.0, (right - left).total_seconds()) if left and right else None
+
+
+def _logical_lane(name: str | None) -> str:
+    return re.sub(r" \(\d+\)$", "", str(name or "unknown"))
+
+
+def _attempt_created_at(run: dict[str, Any], attempt: dict[str, Any], attempt_number: int) -> str | None:
+    created = attempt.get("created_at")
+    if attempt_number > 1 and created == run.get("created_at"):
+        return None
+    return created
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
@@ -233,10 +270,23 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
     ).get("workflow_runs", [])
     opened = (_dt(pr.get("createdAt")) or datetime.min.replace(tzinfo=UTC)) - timedelta(minutes=5)
     merged = (_dt(pr.get("mergedAt")) or datetime.max.replace(tzinfo=UTC)) + timedelta(minutes=5)
+    pr_number = int(pr["number"])
+    commit_oids = {
+        commit.get("oid") for commit in pr.get("commits") or []
+        if commit.get("oid")
+    }
+    commit_oids.add(pr.get("headRefOid"))
     runs = [
         run for run in runs
         if run.get("name") in {PRIMARY_WORKFLOW, METADATA_WORKFLOW}
         and opened <= (_dt(run.get("created_at")) or opened) <= merged
+        and (
+            any(item.get("number") == pr_number for item in run.get("pull_requests") or [])
+            or (
+                not run.get("pull_requests")
+                and run.get("head_sha") in commit_oids
+            )
+        )
     ]
 
     attempts: list[dict[str, Any]] = []
@@ -244,6 +294,7 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
     for run in runs:
         for attempt_number in range(1, int(run.get("run_attempt") or 1) + 1):
             attempt = _api(repo, f"actions/runs/{run['id']}/attempts/{attempt_number}")
+            attempt_created_at = _attempt_created_at(run, attempt, attempt_number)
             jobs = _api(
                 repo,
                 f"actions/runs/{run['id']}/attempts/{attempt_number}/jobs?per_page=100",
@@ -256,6 +307,16 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "",
             ))
+            completed_by_name: dict[str, str] = {}
+            for job in jobs:
+                logical = _logical_lane(job.get("name"))
+                completed = job.get("completed_at")
+                if completed and (
+                    logical not in completed_by_name
+                    or (_dt(completed) or datetime.min.replace(tzinfo=UTC))
+                    > (_dt(completed_by_name[logical]) or datetime.min.replace(tzinfo=UTC))
+                ):
+                    completed_by_name[logical] = completed
             attempt_key = f"{run['id']}:{attempt_number}"
             attempts.append({
                 "pr_number": pr["number"],
@@ -266,11 +327,11 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 "head_sha": attempt.get("head_sha") or run.get("head_sha"),
                 "base_sha": pr.get("baseRefOid"),
                 "synthetic_merge_sha": None,
-                "queued_at": attempt.get("created_at"),
+                "queued_at": attempt_created_at,
                 "started_at": attempt.get("run_started_at"),
                 "completed_at": attempt.get("updated_at"),
                 "queue_seconds": _seconds(
-                    attempt.get("created_at"), attempt.get("run_started_at")
+                    attempt_created_at, attempt.get("run_started_at")
                 ),
                 "execution_seconds": _seconds(
                     attempt.get("run_started_at"), attempt.get("updated_at")
@@ -282,10 +343,11 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 "next_event_confidence": None,
             })
             for job in jobs:
+                logical_lane = _logical_lane(job.get("name"))
                 failure = _failure(job)
                 result = job.get("conclusion") or job.get("status")
                 if result in {"failure", "timed_out"}:
-                    if job.get("name") == "Review checks":
+                    if logical_lane == "Review checks":
                         independent, independent_reason = "no", "aggregate_duplicate"
                     elif failure and failure["category"] in NON_ACTIONABLE_CATEGORIES:
                         independent, independent_reason = "no", "non_actionable_category"
@@ -294,6 +356,19 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 else:
                     independent, independent_reason = "no", "no_failure"
                 execution = _seconds(job.get("started_at"), job.get("completed_at"))
+                dependencies = JOB_NEEDS.get(logical_lane)
+                dependency_ends = [
+                    _dt(completed_by_name.get(name))
+                    for name in dependencies or ()
+                    if completed_by_name.get(name)
+                ]
+                eligible = (
+                    attempt_created_at
+                    if dependencies == ()
+                    else max(dependency_ends).isoformat()
+                    if dependencies is not None and len(dependency_ends) == len(dependencies)
+                    else None
+                )
                 lanes.append({
                     "pr_number": pr["number"],
                     "attempt_key": attempt_key,
@@ -301,12 +376,27 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                     "run_attempt": attempt_number,
                     "workflow_name": run.get("name"),
                     "head_sha": attempt.get("head_sha") or run.get("head_sha"),
-                    "lane": job.get("name"),
+                    "lane": logical_lane,
+                    "job_name": job.get("name"),
                     "job_id": job.get("id"),
                     "runner_name": job.get("runner_name"),
                     "runner_group_name": job.get("runner_group_name"),
+                    "runner_class": (
+                        "pr-ephemeral"
+                        if "pr-ephemeral" in {
+                            str(label).strip().lower()
+                            for label in job.get("labels") or []
+                        }
+                        else job.get("runner_group_name") or "unknown"
+                    ),
+                    "runner_registration_id": None,
+                    "runner_registration_id_status": "unavailable_from_historical_jobs_api",
                     "started_at": job.get("started_at"),
                     "completed_at": job.get("completed_at"),
+                    "eligible_at_estimate": eligible,
+                    "runner_queue_wait_seconds_estimate": _seconds(
+                        eligible, job.get("started_at")
+                    ),
                     "orchestration_and_queue_wait_seconds": _seconds(
                         attempt.get("run_started_at"), job.get("started_at")
                     ),
@@ -432,17 +522,63 @@ def _summary(prs: list[dict[str, Any]], attempts: list[dict[str, Any]], lanes: l
         and item["orchestration_and_queue_wait_seconds"] is not None
         and item["result"] != "skipped"
     ]
+    runner_queue_estimates = [
+        item["runner_queue_wait_seconds_estimate"] for item in lanes
+        if item["workflow_name"] == PRIMARY_WORKFLOW
+        and item["runner_queue_wait_seconds_estimate"] is not None
+        and item["result"] != "skipped"
+    ]
+    jobs_per_runner: dict[str, int] = {}
+    for lane in lanes:
+        if lane.get("runner_name"):
+            jobs_per_runner[lane["runner_name"]] = jobs_per_runner.get(lane["runner_name"], 0) + 1
+    cancelled_attempts = {
+        item["attempt_key"] for item in primary if item["result"] == "cancelled"
+    }
+    full_success_keys = {
+        item["attempt_key"] for item in lanes
+        if item["workflow_name"] == PRIMARY_WORKFLOW
+        and item["lane"] == "Full CI verdict"
+        and item["result"] == "success"
+    }
+    successful_full = [
+        item for item in successful
+        if item["attempt_key"] in full_success_keys
+    ]
+    full_p50 = _percentile([item["execution_seconds"] for item in successful_full if item["execution_seconds"] is not None], 0.50)
+    full_p95 = _percentile([item["execution_seconds"] for item in successful_full if item["execution_seconds"] is not None], 0.95)
+    queue_p50 = _percentile(runner_queue_estimates, 0.50)
+    queue_p95 = _percentile(runner_queue_estimates, 0.95)
     return {
         "ordinary_pr_count": len(prs),
         "primary_ci_attempt_count": len(primary),
         "successful_primary_ci_count": len(successful),
         "full_required_ci_execution_seconds": {
-            "p50": _percentile([item["execution_seconds"] for item in successful if item["execution_seconds"] is not None], 0.50),
-            "p95": _percentile([item["execution_seconds"] for item in successful if item["execution_seconds"] is not None], 0.95),
+            "p50": full_p50,
+            "p95": full_p95,
         },
         "workflow_queue_seconds": {
             "p50": _percentile([item["queue_seconds"] for item in primary if item["queue_seconds"] is not None], 0.50),
             "p95": _percentile([item["queue_seconds"] for item in primary if item["queue_seconds"] is not None], 0.95),
+        },
+        "initial_dispatch_wait_seconds": {
+            "p50": _percentile([item["queue_seconds"] for item in primary if item["run_attempt"] == 1 and item["queue_seconds"] is not None], 0.50),
+            "p95": _percentile([item["queue_seconds"] for item in primary if item["run_attempt"] == 1 and item["queue_seconds"] is not None], 0.95),
+        },
+        "rerun_attempt_wait_seconds": {
+            "p50": _percentile([item["queue_seconds"] for item in primary if item["run_attempt"] > 1 and item["queue_seconds"] is not None], 0.50),
+            "p95": _percentile([item["queue_seconds"] for item in primary if item["run_attempt"] > 1 and item["queue_seconds"] is not None], 0.95),
+        },
+        "runner_queue_wait_seconds_estimate": {
+            "p50": queue_p50,
+            "p95": queue_p95,
+            "source": "eligible_at_estimate_from_direct_needs_completion",
+        },
+        "slo": {
+            "full_ci_p50_le_420": None if full_p50 is None else full_p50 <= 420,
+            "full_ci_p95_le_600": None if full_p95 is None else full_p95 <= 600,
+            "runner_wait_p50_le_15_estimate": None if queue_p50 is None else queue_p50 <= 15,
+            "runner_wait_p95_le_120_estimate": None if queue_p95 is None else queue_p95 <= 120,
         },
         "lane_orchestration_and_queue_wait_seconds": {
             "p50": _percentile(lane_wait_seconds, 0.50),
@@ -450,6 +586,26 @@ def _summary(prs: list[dict[str, Any]], attempts: list[dict[str, Any]], lanes: l
             "note": "dependency orchestration and runner queue cannot be separated by the Jobs API",
         },
         "local_preflight_seconds": {"p95": None, "source": "not recorded by GitHub Actions"},
+        "planner_decisions": {
+            "policy_version": None,
+            "plan_mode_counts": {},
+            "plan_fingerprints": [],
+            "source": "historical merged PR metadata predates stable planner artifacts",
+        },
+        "trusted_ci_verdict_seconds": {
+            "p95": _percentile([
+                item["execution_seconds"] for item in lanes
+                if item["lane"] == "Trusted CI verdict"
+                and item["execution_seconds"] is not None
+            ], 0.95),
+        },
+        "full_ci_verdict_seconds": {
+            "p95": _percentile([
+                item["execution_seconds"] for item in lanes
+                if item["lane"] == "Full CI verdict"
+                and item["execution_seconds"] is not None
+            ], 0.95),
+        },
         "github_change_contract_preflight_seconds": {"p95": _percentile(preflight_seconds, 0.95)},
         "ci_attempts_per_merged_pr": {
             "median": statistics.median([item["ci_attempts_before_merge"] for item in prs]) if prs else None,
@@ -463,17 +619,54 @@ def _summary(prs: list[dict[str, Any]], attempts: list[dict[str, Any]], lanes: l
         "unit_accidental_network_timeout_count": None,
         "unit_accidental_network_timeout_note": "historical bounded job metadata has no log evidence",
         "lanes": dict(sorted(lane_summary.items())),
+        "runner_jobs": dict(sorted(jobs_per_runner.items())),
+        "runner_minutes": round(sum(item["runner_minutes"] or 0 for item in lanes), 4),
+        "cancelled_runner_minutes": round(sum(
+            item["runner_minutes"] or 0 for item in lanes
+            if item["attempt_key"] in cancelled_attempts
+        ), 4),
+        "ephemeral_destruction": {
+            "status": "unavailable",
+            "reason": "historical Jobs API has no registration lifecycle or external log retention evidence",
+        },
+        "cancelled_or_superseded_attempt_count": sum(
+            item["result"] == "cancelled" for item in primary
+        ),
         "batch_size_correlations": correlations,
     }
 
 
 def collect(repo: str, limit: int, workers: int = 4) -> dict[str, Any]:
-    candidates = _gh_json([
-        "pr", "list", "--repo", repo, "--state", "merged",
-        "--limit", str(limit), "--json", PR_FIELDS,
-    ])
-    selected = [pr for pr in candidates if _is_ordinary_code_pr(pr)][:limit]
+    try:
+        pages = _gh_json([
+            "api", "--paginate", "--slurp",
+            f"repos/{repo}/pulls?state=closed&per_page=100",
+        ])
+        numbers = [
+            item["number"] for page in pages for item in page
+            if item.get("merged_at")
+        ]
+    except RuntimeError as exc:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "repository": repo,
+            "requested_pr_limit": limit,
+            "data_quality": {"status": "unavailable", "reason": str(exc)},
+            "summary": {}, "pull_requests": [], "attempts": [], "lanes": [],
+        }
+    selected = []
     errors: list[dict[str, Any]] = []
+    for number in numbers:
+        try:
+            pr = _gh_json(["pr", "view", str(number), "--repo", repo, "--json", PR_FIELDS])
+        except RuntimeError as exc:
+            errors.append({"pr_number": number, "error": str(exc)[:500]})
+            continue
+        if _is_ordinary_code_pr(pr):
+            selected.append(pr)
+        if len(selected) == limit:
+            break
     collected: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [(pr, pool.submit(_collect_pr, repo, pr)) for pr in selected]
@@ -491,10 +684,11 @@ def collect(repo: str, limit: int, workers: int = 4) -> dict[str, Any]:
         "repository": repo,
         "requested_pr_limit": limit,
         "data_quality": {
+            "status": "complete" if not errors and len(prs) == limit else "partial",
             "complete_prs": len(prs),
             "collection_errors": errors,
             "independent_defect_rule": "unknown unless bounded evidence proves unique actionable repair",
-            "queue_note": "workflow queue is separate; lane wait combines dependency orchestration and runner queue",
+            "queue_note": "runner queue is an estimate derived from direct-needs completion, not a GitHub native field",
             "synthetic_merge_note": "historical Actions API does not expose the checked-out synthetic merge SHA",
         },
         "summary": _summary(prs, attempts, lanes),
@@ -505,7 +699,14 @@ def collect(repo: str, limit: int, workers: int = 4) -> dict[str, Any]:
 
 
 def markdown_report(report: dict[str, Any]) -> str:
-    summary = report["summary"]
+    summary = report.get("summary") or {}
+    if "full_required_ci_execution_seconds" not in summary:
+        quality = report.get("data_quality") or {}
+        reason = quality.get("reason") or quality.get("status") or "unavailable"
+        return (
+            "# CI Yield baseline\n\n"
+            f"Data unavailable: `{reason}`. No SLO judgment is emitted.\n"
+        )
     full = summary["full_required_ci_execution_seconds"]
     queue = summary["workflow_queue_seconds"]
     lines = [
@@ -521,6 +722,7 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"| Successful full CI P95 | {full['p95']}s |",
         f"| Workflow queue P50 | {queue['p50']}s |",
         f"| Workflow queue P95 | {queue['p95']}s |",
+        f"| Estimated eligible runner wait P95 | {summary.get('runner_queue_wait_seconds_estimate', {}).get('p95')}s |",
         f"| Median attempts / merged PR | {summary['ci_attempts_per_merged_pr']['median']} |",
         f"| Metadata-only red | {summary['metadata_only_red_count']} |",
         "",

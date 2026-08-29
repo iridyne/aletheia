@@ -57,13 +57,25 @@ def test_failed_test_lane_stays_unknown_without_bounded_log_evidence() -> None:
 
 def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monkeypatch) -> None:
     head = "a" * 40
+    earlier = "b" * 40
+    pr = _pr()
+    pr["commits"] = [{"oid": earlier}, {"oid": head}]
     runs = [
+        {
+            "id": 9,
+            "name": ci_yield.PRIMARY_WORKFLOW,
+            "head_sha": earlier,
+            "run_attempt": 1,
+            "created_at": "2026-08-24T00:00:00Z",
+            "pull_requests": [],
+        },
         {
             "id": 10,
             "name": ci_yield.PRIMARY_WORKFLOW,
             "head_sha": head,
             "run_attempt": 2,
             "created_at": "2026-08-24T00:00:01Z",
+            "pull_requests": [{"number": 2171}],
         },
         {
             "id": 20,
@@ -71,6 +83,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             "head_sha": head,
             "run_attempt": 1,
             "created_at": "2026-08-24T00:00:01Z",
+            "pull_requests": [{"number": 2171}],
         },
         {
             "id": 21,
@@ -78,6 +91,15 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             "head_sha": head,
             "run_attempt": 1,
             "created_at": "2026-08-24T00:00:30Z",
+            "pull_requests": [{"number": 2171}],
+        },
+        {
+            "id": 99,
+            "name": ci_yield.PRIMARY_WORKFLOW,
+            "head_sha": head,
+            "run_attempt": 1,
+            "created_at": "2026-08-24T00:00:35Z",
+            "pull_requests": [{"number": 9999}],
         },
     ]
 
@@ -116,6 +138,24 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
         }
         if path in attempts:
             return attempts[path]
+        if path == "actions/runs/9/attempts/1/jobs?per_page=100":
+            return {"jobs": [{
+                "id": 0,
+                "name": "Change Contract preflight for deep CI",
+                "conclusion": "failure",
+                "started_at": "2026-08-24T00:00:01Z",
+                "completed_at": "2026-08-24T00:00:10Z",
+                "steps": [],
+                "labels": ["self-hosted", "pr-ephemeral"],
+            }]}
+        if path == "actions/runs/9/attempts/1":
+            return {
+                "head_sha": earlier,
+                "created_at": "2026-08-24T00:00:00Z",
+                "run_started_at": "2026-08-24T00:00:01Z",
+                "updated_at": "2026-08-24T00:00:10Z",
+                "conclusion": "failure",
+            }
         if path == "actions/runs/10/attempts/1/jobs?per_page=100":
             return {"jobs": [{
                 "id": 1,
@@ -123,10 +163,11 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
                 "conclusion": "failure",
                 "started_at": "2026-08-24T00:00:02Z",
                 "completed_at": "2026-08-24T00:00:20Z",
-                "steps": [{
-                    "name": "Verify Change Contract before deep CI",
-                    "conclusion": "failure",
-                }],
+            "steps": [{
+                "name": "Verify Change Contract before deep CI",
+                "conclusion": "failure",
+            }],
+                "labels": ["self-hosted", "pr-ephemeral"],
             }]}
         if path == "actions/runs/10/attempts/2/jobs?per_page=100":
             return {"jobs": [{
@@ -135,27 +176,286 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
                 "conclusion": "success",
                 "started_at": "2026-08-24T00:01:00Z",
                 "completed_at": "2026-08-24T00:01:10Z",
-                "steps": [],
+            "steps": [],
+                "labels": ["self-hosted", "pr-ephemeral"],
             }]}
         if path.startswith("actions/runs/20/"):
             return {"jobs": []}
         if path.startswith("actions/runs/21/"):
             return {"jobs": []}
+        if path.startswith("actions/runs/99/"):
+            raise AssertionError("foreign PR run must not be collected")
         raise AssertionError(path)
 
     monkeypatch.setattr(ci_yield, "_api", fake_api)
-    collected = ci_yield._collect_pr("iridyne/aletheia", _pr())
+    collected = ci_yield._collect_pr("iridyne/aletheia", pr)
     primary = [
         item for item in collected["attempts"]
         if item["workflow_name"] == ci_yield.PRIMARY_WORKFLOW
     ]
 
-    assert primary[0]["phase1_failure_category"] == "preflight_metadata"
-    assert primary[0]["next_event"] == "pr_body_only_repair"
-    assert primary[0]["next_event_confidence"] == "high"
-    assert primary[1]["next_event"] == "merge"
-    assert collected["pr"]["ci_attempts_before_merge"] == 2
-    assert collected["lanes"][0]["independent_defect"] == "no"
+    body_repair = next(
+        item for item in primary
+        if item["workflow_run_id"] == 10 and item["run_attempt"] == 1
+    )
+    repaired = next(
+        item for item in primary
+        if item["workflow_run_id"] == 10 and item["run_attempt"] == 2
+    )
+    assert body_repair["phase1_failure_category"] == "preflight_metadata"
+    assert body_repair["next_event"] == "pr_body_only_repair"
+    assert body_repair["next_event_confidence"] == "high"
+    assert repaired["next_event"] == "merge"
+    assert collected["pr"]["ci_attempts_before_merge"] == 3
+    body_repair_lane = next(
+        item for item in collected["lanes"]
+        if item["workflow_run_id"] == 10 and item["run_attempt"] == 1
+    )
+    assert body_repair_lane["independent_defect"] == "no"
+    assert body_repair_lane["eligible_at_estimate"] == "2026-08-24T00:00:01Z"
+    assert body_repair_lane["runner_queue_wait_seconds_estimate"] == 1
+    assert body_repair_lane["runner_class"] == "pr-ephemeral"
+
+
+def test_matrix_lanes_are_normalized_before_dependency_estimates(monkeypatch) -> None:
+    head = "a" * 40
+
+    def fake_api(repo: str, path: str) -> Any:  # noqa: ARG001
+        if path.startswith("actions/runs?branch="):
+            return {"workflow_runs": [{
+                "id": 30,
+                "name": ci_yield.PRIMARY_WORKFLOW,
+                "head_sha": head,
+                "run_attempt": 1,
+                "created_at": "2026-08-24T00:00:00Z",
+            }]}
+        if path == "actions/runs/30/attempts/1":
+            return {
+                "head_sha": head,
+                "created_at": "2026-08-24T00:00:00Z",
+                "run_started_at": "2026-08-24T00:00:01Z",
+                "updated_at": "2026-08-24T00:02:00Z",
+                "conclusion": "success",
+            }
+        if path == "actions/runs/30/attempts/1/jobs?per_page=100":
+            return {"jobs": [
+                {
+                    "id": 1,
+                    "name": "Change Contract preflight for deep CI",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:03Z",
+                    "completed_at": "2026-08-24T00:00:05Z",
+                    "steps": [],
+                },
+                {
+                    "id": 2,
+                    "name": "Plan CI lanes",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:05Z",
+                    "completed_at": "2026-08-24T00:00:06Z",
+                    "steps": [],
+                },
+                {
+                    "id": 3,
+                    "name": "Review core",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:06Z",
+                    "completed_at": "2026-08-24T00:00:07Z",
+                    "steps": [],
+                },
+                {
+                    "id": 4,
+                    "name": "Review checks",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:07Z",
+                    "completed_at": "2026-08-24T00:00:08Z",
+                    "steps": [],
+                },
+                {
+                    "id": 5,
+                    "name": "Python unit (0)",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:10Z",
+                    "completed_at": "2026-08-24T00:00:20Z",
+                    "steps": [],
+                },
+                {
+                    "id": 6,
+                    "name": "Python unit (1)",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:11Z",
+                    "completed_at": "2026-08-24T00:00:30Z",
+                    "steps": [],
+                },
+                {
+                    "id": 7,
+                    "name": "Python integration",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:40Z",
+                    "completed_at": "2026-08-24T00:01:00Z",
+                    "steps": [],
+                },
+            ]}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(ci_yield, "_api", fake_api)
+    collected = ci_yield._collect_pr("iridyne/aletheia", _pr())
+    integration = next(item for item in collected["lanes"] if item["lane"] == "Python integration")
+    review_core = next(item for item in collected["lanes"] if item["lane"] == "Review core")
+    unit = next(item for item in collected["lanes"] if item["job_name"] == "Python unit (0)")
+
+    assert [item["lane"] for item in collected["lanes"]].count("Python unit") == 2
+    assert review_core["eligible_at_estimate"] == "2026-08-24T00:00:06+00:00"
+    assert unit["eligible_at_estimate"] == "2026-08-24T00:00:06+00:00"
+    assert integration["eligible_at_estimate"] == "2026-08-24T00:00:30+00:00"
+
+
+def test_limit_50_pages_numbers_before_bounded_pr_details(monkeypatch) -> None:
+    calls = []
+
+    def fake_gh(args):
+        calls.append(args)
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return [[{"number": number, "merged_at": "2026-08-24T00:00:00Z"} for number in range(1, 51)]]
+        pr = _pr()
+        pr["number"] = int(args[2])
+        return pr
+
+    monkeypatch.setattr(ci_yield, "_gh_json", fake_gh)
+    def fake_collect(_repo, pr):
+        shape = ci_yield._pr_shape(pr)
+        shape.update(ci_attempts_before_merge=0, failed_ci_attempts=0)
+        return {"pr": shape, "attempts": [], "lanes": []}
+
+    monkeypatch.setattr(ci_yield, "_collect_pr", fake_collect)
+
+    report = ci_yield.collect("iridyne/aletheia", 50, workers=1)
+
+    assert report["schema_version"] == "ci_yield.v2"
+    assert report["data_quality"]["status"] == "complete"
+    assert len(report["pull_requests"]) == 50
+    assert calls[0][:3] == ["api", "--paginate", "--slurp"]
+
+
+def test_listing_failure_is_structured_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ci_yield, "_gh_json", lambda _args: (_ for _ in ()).throw(RuntimeError("node limit")),
+    )
+
+    report = ci_yield.collect("iridyne/aletheia", 50)
+
+    assert report["schema_version"] == "ci_yield.v2"
+    assert report["data_quality"] == {
+        "status": "unavailable",
+        "reason": "node limit",
+    }
+    assert report["pull_requests"] == []
+
+
+def test_detail_failure_is_partial_and_does_not_abort_selection(monkeypatch) -> None:
+    calls = []
+
+    def fake_gh(args):
+        calls.append(args)
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return [[
+                {"number": 1, "merged_at": "2026-08-24T00:00:00Z"},
+                {"number": 2, "merged_at": "2026-08-24T00:00:00Z"},
+            ]]
+        if args[0:2] == ["pr", "view"] and args[2] == "1":
+            raise RuntimeError("transient detail failure")
+        pr = _pr()
+        pr["number"] = int(args[2])
+        return pr
+
+    monkeypatch.setattr(ci_yield, "_gh_json", fake_gh)
+    monkeypatch.setattr(
+        ci_yield,
+        "_collect_pr",
+        lambda _repo, pr: {
+            "pr": {"pr_number": pr["number"], "ci_attempts_before_merge": 0, "failed_ci_attempts": 0},
+            "attempts": [],
+            "lanes": [],
+        },
+    )
+
+    report = ci_yield.collect("iridyne/aletheia", 1, workers=1)
+
+    assert report["data_quality"]["status"] == "partial"
+    assert report["data_quality"]["complete_prs"] == 1
+    assert report["data_quality"]["collection_errors"] == [
+        {"pr_number": 1, "error": "transient detail failure"},
+    ]
+    assert report["pull_requests"][0]["pr_number"] == 2
+
+
+def test_missing_slo_evidence_is_unknown() -> None:
+    summary = ci_yield._summary([], [], [])
+
+    assert summary["slo"] == {
+        "full_ci_p50_le_420": None,
+        "full_ci_p95_le_600": None,
+        "runner_wait_p50_le_15_estimate": None,
+        "runner_wait_p95_le_120_estimate": None,
+    }
+
+
+def test_full_ci_latency_uses_only_full_verdict_attempts() -> None:
+    attempts = [
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "execution_seconds": 30,
+            "queue_seconds": 1,
+            "run_attempt": 1,
+            "attempt_key": "quick",
+            "phase1_failure_category": None,
+            "next_event": None,
+        },
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "execution_seconds": 300,
+            "queue_seconds": 2,
+            "run_attempt": 1,
+            "attempt_key": "full",
+            "phase1_failure_category": None,
+            "next_event": None,
+        },
+    ]
+    lanes = [
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "lane": "Trusted CI verdict",
+            "runner_minutes": 0.1,
+            "independent_defect": "no",
+            "unknown_defect_failures": 0,
+            "runner_queue_wait_seconds_estimate": 1,
+            "orchestration_and_queue_wait_seconds": 1,
+            "runner_name": "pr-quick",
+            "attempt_key": "quick",
+            "execution_seconds": 1,
+        },
+        {
+            "workflow_name": ci_yield.PRIMARY_WORKFLOW,
+            "result": "success",
+            "lane": "Full CI verdict",
+            "runner_minutes": 0.1,
+            "independent_defect": "no",
+            "unknown_defect_failures": 0,
+            "runner_queue_wait_seconds_estimate": 2,
+            "orchestration_and_queue_wait_seconds": 2,
+            "runner_name": "pr-full",
+            "attempt_key": "full",
+            "execution_seconds": 1,
+        },
+    ]
+
+    summary = ci_yield._summary([], attempts, lanes)
+
+    assert summary["successful_primary_ci_count"] == 2
+    assert summary["full_required_ci_execution_seconds"] == {"p50": 300, "p95": 300}
 
 
 def test_markdown_keeps_unknown_yield_visible() -> None:
@@ -183,3 +483,12 @@ def test_markdown_keeps_unknown_yield_visible() -> None:
     markdown = ci_yield.markdown_report(report)
     assert "Independent-defect ambiguity remains `unknown`" in markdown
     assert "| Python integration | 1 | 1 | 2.0 | 0 | 1 | None |" in markdown
+
+
+def test_markdown_reports_unavailable_without_summary_shape() -> None:
+    markdown = ci_yield.markdown_report({
+        "data_quality": {"status": "unavailable", "reason": "node limit"},
+        "summary": {},
+    })
+
+    assert "Data unavailable: `node limit`" in markdown

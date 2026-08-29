@@ -14,12 +14,14 @@ AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
 REFRESH_RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "refresh-release-candidate.yml"
+RELEASE_CI_HANDOFF_WORKFLOW_PATH = WORKFLOW_DIR / "release-ci-handoff.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4"
 SELF_HOSTED_CASI = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "casi"]
 SELF_HOSTED_FEDORA = ["self-hosted", "Linux", "X64", "ubuntu-24.04", "fedora"]
+SELF_HOSTED_PR = ["pr-ephemeral"]
 
 
 def _workflow() -> dict:
@@ -61,11 +63,26 @@ def _release_workflow() -> dict:
     )
 
 
+def _release_ci_handoff_workflow() -> dict:
+    return yaml.load(
+        RELEASE_CI_HANDOFF_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
 def _run_commands(job: dict) -> str:
     return "\n".join(
         str(step.get("run") or "")
         for step in job.get("steps", [])
         if isinstance(step, dict)
+    )
+
+
+def _script_step(job: dict) -> str:
+    return next(
+        step["with"]["script"]
+        for step in job.get("steps", [])
+        if isinstance(step, dict) and "script" in step.get("with", {})
     )
 
 
@@ -77,6 +94,7 @@ def test_only_expected_workflows_are_active() -> None:
         "codex-shepherd.yml",
         "delete-merged-branch.yml",
         "refresh-release-candidate.yml",
+        "release-ci-handoff.yml",
         "release-please.yml",
     ]
 
@@ -88,11 +106,12 @@ def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs()
     assert triggers["pull_request"]["branches"] == ["master"]
 
 
-def test_ci_has_independent_review_regression_and_release_jobs() -> None:
+def test_ci_has_independent_review_and_regression_jobs() -> None:
     jobs = _workflow()["jobs"]
 
     assert set(jobs) == {
         "change-contract-preflight",
+        "plan",
         "review-core",
         "review-coverage",
         "review-node",
@@ -103,10 +122,11 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "integration",
         "specifications",
         "end-to-end",
-        "release-candidate",
-        "release-pr-ci",
+        "trusted-ci-verdict",
+        "full-ci-verdict",
     }
     assert jobs["change-contract-preflight"]["name"] == "Change Contract preflight for deep CI"
+    assert jobs["plan"]["name"] == "Plan CI lanes"
     assert jobs["review-core"]["name"] == "Review core"
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["unit"]["name"] == "Python unit"
@@ -114,38 +134,8 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert jobs["integration"]["name"] == "Python integration"
     assert jobs["specifications"]["name"] == "Python specifications"
     assert jobs["end-to-end"]["name"] == "Python end-to-end"
-
-    expected_handoff_needs = [
-        "review",
-        "unit",
-        "runtime-state-tests",
-        "specifications",
-        "integration",
-        "end-to-end",
-    ]
-    handoff = jobs["release-candidate"]
-    assert handoff["name"] == "Hand off verified release candidate"
-    assert handoff["needs"] == expected_handoff_needs
-    assert "event_name == 'workflow_dispatch'" in handoff["if"]
-    assert "release-please--branches--master" in handoff["if"]
-    assert handoff["permissions"] == {"contents": "write"}
-    assert handoff["runs-on"] == SELF_HOSTED_CASI
-    assert len(handoff["steps"]) == 1
-    step = handoff["steps"][0]
-    assert step["uses"] == GITHUB_SCRIPT_ACTION
-    assert step["with"]["retries"] == "3"
-    assert "release_candidate_verified" in step["with"]["script"]
-    assert "head_branch" in step["with"]["script"]
-    assert "head_sha: context.sha" in step["with"]["script"]
-
-    pr_handoff = jobs["release-pr-ci"]
-    assert pr_handoff["name"] == "Hand off verified release pull request"
-    assert pr_handoff["needs"] == expected_handoff_needs
-    assert "event_name == 'pull_request'" in pr_handoff["if"]
-    assert "release-please--branches--master" in pr_handoff["if"]
-    pr_script = pr_handoff["steps"][0]["with"]["script"]
-    assert "event_type: 'auto_merge_update'" in pr_script
-    assert "release_after_merge: true" in pr_script
+    assert jobs["trusted-ci-verdict"]["name"] == "Trusted CI verdict"
+    assert jobs["full-ci-verdict"]["name"] == "Full CI verdict"
 
     unit_regression = _run_commands(jobs["unit"])
     spec_regression = _run_commands(jobs["specifications"])
@@ -160,6 +150,16 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert '-m "tier_e2e"' in e2e_regression
     assert "uv run pytest tests/test_connectivity.py" in runtime_regression
     assert "-connectivity" in runtime_regression
+
+
+def test_ci_planner_receives_trusted_escalation_labels() -> None:
+    plan = _workflow()["jobs"]["plan"]
+    script = _run_commands(plan)
+
+    assert "label_args=()" in script
+    assert "payload.get(\"pull_request\", {}).get(\"labels\", [])" in script
+    assert "--trusted-label" in script
+    assert '"${label_args[@]}"' in script
 
 
 def test_ci_never_builds_or_distributes_release_artifacts() -> None:
@@ -183,27 +183,8 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
 
     assert workflow["permissions"] == {"contents": "read"}
 
-    # Cheap control-plane jobs pin CASI; deep pytest pins Fedora.
-    for job_name in (
-        "change-contract-preflight",
-        "review",
-        "release-candidate",
-        "release-pr-ci",
-    ):
-        assert jobs[job_name]["runs-on"] == SELF_HOSTED_CASI
-
-    for job_name in (
-        "review-core",
-        "review-coverage",
-        "review-node",
-        "review-native",
-        "unit",
-        "runtime-state-tests",
-        "integration",
-        "specifications",
-        "end-to-end",
-    ):
-        assert jobs[job_name]["runs-on"] == SELF_HOSTED_FEDORA
+    assert all(job["runs-on"] == SELF_HOSTED_PR for job in jobs.values())
+    assert all(job.get("permissions", {}).get("contents") != "write" for job in jobs.values())
 
     for job_name in (
         "change-contract-preflight",
@@ -238,15 +219,15 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
     native = jobs["review-native"]
     gate = jobs["review"]
 
-    assert core["needs"] == ["change-contract-preflight"]
-    assert "needs.change-contract-preflight.result == 'success'" in core["if"]
-    assert coverage["needs"] == "review-core"
-    assert "needs.review-core.outputs.coverage == 'true'" in coverage["if"]
-    assert node["needs"] == "review-core"
-    assert "needs.review-core.outputs.frontend == 'true'" in node["if"]
-    assert "needs.review-core.outputs.operator == 'true'" in node["if"]
-    assert native["needs"] == "review-core"
-    assert "needs.review-core.outputs.native == 'true'" in native["if"]
+    assert core["needs"] == ["plan"]
+    assert "needs.plan.outputs.required_quick == 'true'" in core["if"]
+    assert coverage["needs"] == ["plan", "review-core"]
+    assert "needs.plan.outputs.required_coverage == 'true'" in coverage["if"]
+    assert node["needs"] == ["plan", "review-core"]
+    assert "needs.plan.outputs.required_frontend == 'true'" in node["if"]
+    assert "needs.plan.outputs.required_operator == 'true'" in node["if"]
+    assert native["needs"] == ["plan", "review-core"]
+    assert "needs.plan.outputs.required_native == 'true'" in native["if"]
 
     core_uses = {
         str(step.get("uses"))
@@ -257,12 +238,13 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
     assert RUST_TOOLCHAIN_ACTION not in core_uses
 
     assert gate["needs"] == [
+        "plan",
         "review-core",
         "review-coverage",
         "review-node",
         "review-native",
     ]
-    assert "always()" in gate["if"]
+    assert gate["if"] == "${{ !cancelled() && needs.plan.outputs.required_quick == 'true' }}"
     aggregate = _run_commands(gate)
     assert "CORE_RESULT" in aggregate
     assert "success|skipped" in aggregate
@@ -278,12 +260,17 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert triggers == {
         "pull_request": {
             "branches": ["master"],
-            "types": ["opened", "synchronize", "reopened", "edited"],
+            "types": ["opened", "synchronize", "reopened", "edited", "labeled", "unlabeled"],
         },
     }
     # Deep CI intentionally keeps the GitHub default code-changing PR events;
     # it must not re-run/skipped-pass on a PR-body-only metadata edit.
-    assert ci_triggers["pull_request"] == {"branches": ["master"]}
+    assert ci_triggers["pull_request"] == {
+        "branches": ["master"],
+        "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"],
+    }
+    assert "paths-ignore" not in triggers["pull_request"]
+    assert "paths-ignore" not in ci_triggers["pull_request"]
 
     assert gate["permissions"] == {"contents": "read"}
     assert gate["env"] == {
@@ -300,7 +287,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert set(gate["jobs"]) == {"verify-change-contract"}
     job = gate["jobs"]["verify-change-contract"]
     assert job["name"] == "Verify Change Contract"
-    assert job["runs-on"] == SELF_HOSTED_CASI
+    assert job["runs-on"] == SELF_HOSTED_PR
     assert job["timeout-minutes"] == "5"
 
     checkout = job["steps"][0]
@@ -323,7 +310,7 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
         "GIT_HTTP_LOW_SPEED_TIME": "30",
     }
     deep_preflight = workflow_jobs["change-contract-preflight"]
-    assert deep_preflight["runs-on"] == SELF_HOSTED_CASI
+    assert deep_preflight["runs-on"] == SELF_HOSTED_PR
     assert deep_preflight["timeout-minutes"] == "5"
     preflight_commands = _run_commands(deep_preflight)
     assert "uv run --no-sync python scripts/check_change_contract.py" in preflight_commands
@@ -339,9 +326,11 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
         deep_preflight["steps"][2]["with"]["script"]
     )
     assert "CHANGE_CONTRACT_PR_BODY_FILE" in deep_preflight["steps"][3]["env"]
-    assert workflow_jobs["review-core"]["needs"] == ["change-contract-preflight"]
-    assert workflow_jobs["unit"]["needs"] == ["change-contract-preflight"]
-    assert "needs.change-contract-preflight.result == 'success'" in workflow_jobs["unit"]["if"]
+    assert workflow_jobs["plan"]["needs"] == ["change-contract-preflight"]
+    assert "ci_plan.py" in _run_commands(workflow_jobs["plan"])
+    assert workflow_jobs["review-core"]["needs"] == ["plan"]
+    assert workflow_jobs["unit"]["needs"] == ["plan"]
+    assert "needs.plan.outputs.required_python_unit == 'true'" in workflow_jobs["unit"]["if"]
 
     review_commands = _run_commands(workflow_jobs["review-core"])
     assert "check_change_contract.py" not in review_commands
@@ -356,7 +345,7 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
         "types": ["completed"],
     }
 
-    script = shepherd["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+    script = _script_step(shepherd["jobs"]["shepherd"])
     for token in (
         "ci_failure_handoff.v1",
         "preflight_metadata",
@@ -636,7 +625,8 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
     assert "ruff check" in commands
     assert "test_architecture_fitness.py" in commands
     assert "python scripts/check_docs.py" in commands
-    assert "npm run lint" in commands
+    assert 'npx eslint "$target"' in commands
+    assert "find src -mindepth 1 -maxdepth 1 -print0 | sort -z" in commands
     assert "npm test" in commands
     assert "npm run build" in commands
     assert "test_frontend_ci_build_contract.py" in commands
@@ -679,11 +669,12 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     spec_job = jobs["specifications"]
     e2e_job = jobs["end-to-end"]
 
-    assert review_core["needs"] == ["change-contract-preflight"]
-    assert "needs.change-contract-preflight.result == 'success'" in review_core["if"]
-    assert unit_job["needs"] == ["change-contract-preflight"]
-    assert "needs.change-contract-preflight.result == 'success'" in unit_job["if"]
+    assert review_core["needs"] == ["plan"]
+    assert "needs.plan.outputs.required_quick == 'true'" in review_core["if"]
+    assert unit_job["needs"] == ["plan"]
+    assert "needs.plan.outputs.required_python_unit == 'true'" in unit_job["if"]
     assert review_job["needs"] == [
+        "plan",
         "review-core",
         "review-coverage",
         "review-node",
@@ -697,10 +688,10 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     )
 
     # Stage 2 has exactly two deterministic lane heads.
-    assert runtime_job["needs"] == ["review", "unit"]
-    assert integration_job["needs"] == ["review", "unit"]
-    assert spec_job["needs"] == ["review", "unit", "runtime-state-tests"]
-    assert e2e_job["needs"] == ["review", "unit", "integration"]
+    assert runtime_job["needs"] == ["plan", "review", "unit"]
+    assert integration_job["needs"] == ["plan", "review", "unit"]
+    assert spec_job["needs"] == ["plan", "review", "unit", "runtime-state-tests"]
+    assert e2e_job["needs"] == ["plan", "review", "unit", "integration"]
 
     # Predecessors order lanes but do not suppress independent regression data.
     for follower, predecessor in (
@@ -709,29 +700,71 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     ):
         condition = follower["if"]
         assert "!cancelled()" in condition
+        assert "needs.plan.outputs.required_" in condition
         assert "needs.review.result == 'success'" in condition
         assert "needs.unit.result == 'success'" in condition
         assert f"needs.{predecessor}.result == 'success'" not in condition
 
     unit_commands = _run_commands(unit_job)
+    runtime_commands = _run_commands(runtime_job)
     integration_commands = _run_commands(integration_job)
     spec_commands = _run_commands(spec_job)
     e2e_commands = _run_commands(e2e_job)
-    for commands in (unit_commands, integration_commands, spec_commands, e2e_commands):
+    for commands in (integration_commands, spec_commands, e2e_commands):
         assert "uv run pytest tests/" in commands
         assert "--ignore=tests/simulation" in commands
         assert "--ignore=tests/test_auto_resume.py" in commands
         assert "--ignore=tests/test_connectivity.py" in commands
         assert "--ignore=tests/test_operator_cli.py" in commands
         assert "--ignore=tests/test_pause_ownership.py" in commands
-        assert "--dist loadfile" in commands
+    assert unit_job["strategy"] == {
+        "fail-fast": "false",
+        "matrix": {"shard": ["0", "1", "2", "3"]},
+    }
+    assert "find tests -type f -name 'test_*.py'" in unit_commands
+    for excluded in (
+        "tests/simulation/*",
+        "tests/test_auto_resume.py",
+        "tests/test_connectivity.py",
+        "tests/test_operator_cli.py",
+        "tests/test_pause_ownership.py",
+    ):
+        assert f"! -path '{excluded}'" in unit_commands
+    assert "NR % 4 == shard" in unit_commands
+    assert 'uv run pytest "${test_files[@]}"' in unit_commands
     assert '-m "tier_unit"' in unit_commands
-    assert "-n 6" in unit_commands
+    assert "-n " not in unit_commands
+    assert "--dist " not in unit_commands
+    assert "uv run pytest tests/simulation" in runtime_commands
     assert '-m "tier_integration"' in integration_commands
     assert '-m "tier_spec"' in spec_commands
     assert '-m "tier_e2e"' in e2e_commands
-    for commands in (integration_commands, spec_commands, e2e_commands):
-        assert "-n 4" in commands
+    assert "-n " not in integration_commands
+    assert "--dist " not in integration_commands
+    for commands in (spec_commands, e2e_commands):
+        assert "-n 2" in commands
+        assert "--dist loadfile" in commands
+
+    verdict = jobs["trusted-ci-verdict"]
+    full_verdict = jobs["full-ci-verdict"]
+    assert verdict["needs"] == [
+        "plan",
+        "review",
+        "unit",
+        "runtime-state-tests",
+        "integration",
+        "specifications",
+        "end-to-end",
+        "review-coverage",
+        "review-node",
+        "review-native",
+    ]
+    verdict_commands = _run_commands(verdict)
+    assert "required lane" in verdict_commands
+    assert "PLAN_BASE_SHA" in verdict_commands
+    assert "PLAN_FINGERPRINT" in verdict_commands
+    assert full_verdict["if"] == "${{ always() && needs.plan.outputs.required_full_ci == 'true' }}"
+    assert "Full CI verdict" == full_verdict["name"]
 
     unit_env = unit_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
     assert "${{ runner.temp }}" in unit_env
@@ -827,7 +860,9 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "do-not-auto-merge" in schedule_script
     assert "github.rest.pulls.listFiles" in schedule_script
     assert "previous_filename" in schedule_script
-    assert "[filename, previous_filename].includes('.github/workflows/auto-merge.yml')" in schedule_script
+    assert "path.startsWith('.github/workflows/')" in schedule_script
+    assert "'scripts/ci_plan.py'" in schedule_script
+    assert "expected_base_sha: pullRequest.base.sha" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
     assert release_candidate["timeout-minutes"] == "10"
@@ -835,7 +870,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "contents": "write",
         "issues": "write",
         "pull-requests": "write",
-        "statuses": "write",
     }
     release_guard = release_candidate["if"]
     assert "event.action == 'release_candidate_verified'" in release_guard
@@ -849,17 +883,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "merge-authority workflow changes require an explicit manual merge" in candidate_script
     assert "compareCommitsWithBasehead" in candidate_script
     assert "pullRequest.base.sha !== expectedBaseSha" in candidate_script
-    assert "createCommitStatus" in candidate_script
-    assert "sha: run.head_sha" in candidate_script
-    for required_check in (
-        "Review checks",
-        "Python specifications",
-        "Python unit",
-        "Python integration",
-        "Python end-to-end",
-        "Python runtime state",
-    ):
-        assert required_check in candidate_script
+    assert "run.expected_base_sha" in candidate_script
+    assert "createCommitStatus" not in candidate_script
     assert "issues.removeLabel" in candidate_script
     assert "event_type: 'auto_merge_update'" in candidate_script
     assert "expected_head_sha: run.head_sha" in candidate_script
@@ -889,13 +914,16 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "EXPECTED_HEAD_SHA",
         "EXPECTED_BASE_SHA",
         "RELEASE_AFTER_MERGE",
+        "MINIMUM_CHECK_STARTED_AT",
+        "ACCEPTED_WORKFLOW_RUN_ID",
     }
-    assert len(update["steps"]) == 1
-    update_step = update["steps"][0]
+    assert len(update["steps"]) == 3
+    update_step = update["steps"][-1]
     assert update_step["name"] == "Apply pull request auto-merge state"
     assert update_step["uses"] == GITHUB_SCRIPT_ACTION
     assert update_step["with"]["retries"] == "3"
     update_script = update_step["with"]["script"]
+    schedule_script = _script_step(schedule)
     assert "repository(owner:" in update_script
     assert "pullRequest(number:" in update_script
     assert "mergeStateStatus" in update_script
@@ -910,15 +938,33 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "pullRequest.baseRefOid !== expectedBaseSha" in update_script
     assert "issues.addLabels" in update_script
     assert "expected_base_sha: expectedBaseSha" in update_script
+    assert "minimum_check_started_at: minimumCheckStartedAt" in schedule_script
+    assert "accepted_workflow_run_id: acceptedWorkflowRunId" in schedule_script
     assert "event_type: 'release_candidate_merged'" in update_script
     assert "github.rest.checks.listForRef" in update_script
     assert "changeContractCheckName = 'Verify Change Contract'" in update_script
+    assert "trustedCiCheckName = 'Trusted CI verdict'" in update_script
+    assert "planForPullRequest" in update_script
+    assert "scripts/ci_plan.py" in update_script
+    assert "ciPlan.github_ci !== 'none'" in update_script
+    assert "classified this head as docs_only" in update_script
+    assert "const labelArgs = (pullRequest.labels?.nodes || [])" in update_script
+    assert "--trusted-label" in update_script
     assert "candidate.app?.slug === 'github-actions'" in update_script
+    assert "minimumCheckStartedAt" in update_script
+    assert "requireAcceptedWorkflowRun" in update_script
+    assert "acceptedWorkflowRunId" in update_script
+    assert ".includes(`/actions/runs/${acceptedWorkflowRunId}`)" in update_script
     assert "check.conclusion === 'success'" in update_script
-    assert "exactHeadChangeContractPassed" in update_script
+    assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
+    assert "exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun:" in update_script
 
     assert "reviews(last: 100)" not in update_script
-    assert "chatgpt-codex-connector" not in update_script
+    assert "github.rest.repos.getCommit" in update_script
+    assert "[0-9a-f]{7,40}" in update_script
+    assert "hasCleanExactHeadCodexReview" in update_script
+    assert "trusted CI planner requires a clean exact-head Codex review" in update_script
+    assert "ciPlan?.review?.codex_required === true" in update_script
     assert "codex-triage" not in update_script
     assert "github.rest.pulls.listFiles" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script
@@ -933,11 +979,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "setTimeout" not in ordinary_path
     assert "event_type: 'release_please'" not in update_script
 
-    assert not any(
-        str(step.get("uses", "")).startswith("actions/checkout@") or bool(step.get("run"))
-        for workflow_job in workflow["jobs"].values()
-        for step in workflow_job["steps"]
-    )
+    assert update["steps"][0]["uses"].startswith("actions/checkout@")
+    assert update["steps"][0]["with"] == {"ref": "master"}
 
 
 def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
@@ -956,13 +999,16 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
         "EXPECTED_HEAD_SHA",
         "EXPECTED_BASE_SHA",
         "RELEASE_AFTER_MERGE",
+        "MINIMUM_CHECK_STARTED_AT",
+        "ACCEPTED_WORKFLOW_RUN_ID",
     }
-    update_script = update["steps"][0]["with"]["script"]
+    update_script = _script_step(update)
     assert "headRefOid" in update_script
     assert "baseRefOid" in update_script
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
-    assert "exactHeadChangeContractPassed" in update_script
+    assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
+    assert "exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun:" in update_script
     assert "pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge" in update_script
     assert "releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE'" in update_script
     assert "github.rest.pulls.merge" in update_script
@@ -1008,35 +1054,26 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
 
 
 def test_pr_runner_isolation_contract() -> None:
-    """#1356: Pull-request jobs must not share a runner pool with privileged release jobs.
-
-    Current status: KNOWN GAP — CASI/Fedora labels split queue contention, but
-    both remain persistent self-hosted workers. Disposable/JIT isolation is still
-    required by #1356 and is not claimed by this topology change.
-    This test documents the required security property so any attempt to close the
-    gap (or inadvertently widen it) is immediately visible.
-
-    Resolution path: configure a dedicated ephemeral/JIT runner group for PR jobs
-    (e.g. label 'pr-ephemeral') and update SELF_HOSTED_PR in this test; the
-    privileged handoff job must keep a separate label that PR jobs cannot target.
-    """
+    """#1356: PR code and privileged release control never share a runner class."""
     workflow = _workflow()
     jobs = workflow["jobs"]
+    assert all(job["runs-on"] == SELF_HOSTED_PR for job in jobs.values())
+    assert "contents: write" not in WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    handoff_job = jobs["release-candidate"]
-    deep_jobs = (
-        "review-core", "review-coverage", "review-node", "review-native",
-        "unit", "runtime-state-tests", "integration", "specifications", "end-to-end",
-    )
-    for job_name in deep_jobs:
-        assert jobs[job_name]["runs-on"] == SELF_HOSTED_FEDORA
-    assert handoff_job["runs-on"] == SELF_HOSTED_CASI
-
-    # When the gap is closed, replace the known-gap marker with:
-    #   assert all("pr-ephemeral" in str(jobs[j]["runs-on"]) for j in deep_jobs)
-    #   assert "pr-ephemeral" not in str(handoff_job["runs-on"])
-    _KNOWN_GAP_1356 = (
-        "PR jobs run on persistent self-hosted workers without ephemeral isolation. "
-        "Resolution: configure dedicated pr-ephemeral runner group."
-    )
-    assert _KNOWN_GAP_1356  # always true — presence is the documentation
+    handoff = _release_ci_handoff_workflow()
+    assert handoff["on"] == {
+        "workflow_run": {"workflows": ["Aletheia CI"], "types": ["completed"]},
+    }
+    assert handoff["concurrency"] == {
+        "group": "release-ci-handoff-${{ github.event.workflow_run.id }}",
+        "cancel-in-progress": "false",
+    }
+    job = handoff["jobs"]["handoff"]
+    assert "startsWith(github.event.workflow_run.head_branch" in job["if"]
+    assert job["runs-on"] == SELF_HOSTED_CASI
+    assert not any("checkout" in str(step.get("uses", "")) for step in job["steps"])
+    script = job["steps"][0]["with"]["script"]
+    assert "run.path !== '.github/workflows/ci.yml'" in script
+    assert "job.head_sha !== run.head_sha" in script
+    assert "pullRequest.head.sha !== run.head_sha" in script
+    assert "autorelease: pending" in script
