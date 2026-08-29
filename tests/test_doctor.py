@@ -1287,7 +1287,7 @@ def _llm_creds_config(monkeypatch, *, endpoint="http://127.0.0.1:4000/v1"):
     cfg.models.providers["openai_compatible"] = ProviderConfig(
         type="openai_compatible", enabled=True, api_key_secret_ref=None, base_url=endpoint
     )
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader, "load_config", lambda **_kwargs: cfg)
     monkeypatch.setattr(secrets, "get_secret", lambda key: None)
     return cfg
 
@@ -1450,6 +1450,15 @@ def test_active_probe_blocks_when_a_real_inference_call_fails(tmp_path, monkeypa
     assert _inference_check(r).severity == "info"
 
 
+def test_active_probe_request_suppresses_repeat_probe_hint(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r, probe_requested=True)
+
+    assert _inference_check(r).fix_hint == ""
+
+
 def test_active_probe_confirms_a_working_endpoint(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _llm_creds_config(monkeypatch)
@@ -1467,6 +1476,28 @@ def test_active_probe_confirms_a_working_endpoint(tmp_path, monkeypatch):
     probe = next(c for c in r.checks if c.name == "llm.inference.probe")
     assert probe.severity == "ok"
     assert "openai_compatible" in probe.detail
+
+
+def test_active_probe_runs_outside_the_read_only_report_fence(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    seen = {}
+
+    @dx._read_only_diagnostics()
+    def fake_passive_report(**_kwargs):
+        seen["passive_read_only"] = getattr(sq._readonly_local, "connection", None) is not None
+        return dx.Report(generated_at="t")
+
+    def fake_active_probe(report):
+        seen["active_read_only"] = getattr(sq._readonly_local, "connection", None) is not None
+
+    monkeypatch.setattr(dx, "_build_report", fake_passive_report)
+    monkeypatch.setattr(dx, "_probe_llm_inference_active", fake_active_probe)
+
+    dx.build_report(probe_llm=True)
+
+    assert seen == {"passive_read_only": True, "active_read_only": False}
 
 
 def test_active_probe_is_off_by_default_so_doctor_stays_cheap(tmp_path, monkeypatch):
