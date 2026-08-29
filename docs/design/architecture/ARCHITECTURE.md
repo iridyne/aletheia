@@ -93,8 +93,11 @@ Coordinator；OKX demo 的 entry/full-close/protection 也使用同一资格门�
 送到相同链路，且每个请求显式绑定 v2/v3 端点族。Coordinator 执行
 pending/claim、外部调用后的短 CAS 与审计，UTA 只做外部账户 I/O，
 Aletheia storage 写入本地事实。凭据 qualification 未通过前该 profile 仍保持 legacy 默认，其他
-live-limited profile mutation 仍为 `NOT_SENT` 或 legacy。当前 Bitget 结论仅由静态 conformance
-支持，不代表账号可达、交易所接受或运行时资格通过。
+live-limited profile 也只在现有 Live Trust、account-equivalence 与 exact qualification 全部通过后
+复用同一 Gateway → Coordinator → UTA 路径；否则保持 legacy。canonical entry command 会把
+Gateway 已批准的 post-only/TIF 以及 profile 明确支持的 attached TP/SL 交给 UTA profile 翻译。
+当前三家交易所的结论仅由静态 conformance 支持，不代表账号可达、交易所接受或运行时资格通过；
+没有 live selector 被本次工作激活。
 
 ---
 

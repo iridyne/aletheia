@@ -160,7 +160,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
         )):
             command_importers.append(str(path.relative_to(ROOT)))
     assert command_importers == []
-    assert not any((
+    assert all((
         BinanceLiveProfile.mutation_market_order,
         BinanceLiveProfile.mutation_limit_order,
         BinanceLiveProfile.mutation_modify_order,
@@ -180,7 +180,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
         OKXDemoProfile.mutation_post_only,
         OKXDemoProfile.mutation_client_order_id,
     ))
-    assert not any((
+    assert all((
         OKXLiveProfile.mutation_market_order,
         OKXLiveProfile.mutation_limit_order,
         OKXLiveProfile.mutation_modify_order,
@@ -206,7 +206,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
             profile.protection_cancel,
         ))
     for profile in (BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile):
-        assert not any((
+        assert all((
             profile.mutation_market_order,
             profile.mutation_limit_order,
             profile.mutation_modify_order,
@@ -259,6 +259,66 @@ def test_phase_three_evidence_consumers_have_no_concrete_private_client_import()
                 }:
                     violations.append(f"{relative}:{node.lineno}: {name}")
     assert violations == []
+
+
+@spec_claim(
+    SpecClaim(
+        "UTA-S07",
+        "uta_boundary",
+        "§7 static legacy containment",
+        "L2b",
+        "Unqualified rollback paths are explicit and no new concrete private-client or venue-broker side channel may appear.",
+    )
+)
+def test_unqualified_legacy_private_io_is_explicitly_contained():
+    allowed = {
+        "aletheia/agent_runtime/scheduler.py",
+        "aletheia/agent_runtime/startup_behavior_gate.py",
+        "aletheia/cli/bitget_cmd.py",
+        "aletheia/cli/secrets_cmd.py",
+        "aletheia/execution/binance_broker.py",
+        "aletheia/execution/bitget_broker.py",
+        "aletheia/execution/gateway.py",
+        "aletheia/execution/okx_broker.py",
+        "aletheia/execution/venue_capabilities.py",
+        "aletheia/maintenance/repair_administrative_close.py",
+        "aletheia/portfolio/exchange_sync.py",
+        "aletheia/portfolio/uta/binance_adapter.py",
+        "aletheia/portfolio/uta/bitget_adapter.py",
+        "aletheia/portfolio/uta/okx_adapter.py",
+        "aletheia/server/routes/bitget.py",
+    }
+    actual = set()
+    for path in (ROOT / "aletheia").rglob("*.py"):
+        if path.is_relative_to(UTA_ROOT) or path.is_relative_to(
+            ROOT / "aletheia" / "exchanges"
+        ):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            if any(
+                name.startswith(
+                    (
+                        "aletheia.exchanges.binance",
+                        "aletheia.exchanges.bitget",
+                        "aletheia.exchanges.okx",
+                    )
+                )
+                or name in {
+                    "aletheia.execution.binance_broker",
+                    "aletheia.execution.bitget_broker",
+                    "aletheia.execution.okx_broker",
+                }
+                for name in names
+            ):
+                actual.add(str(path.relative_to(ROOT)))
+    assert actual == allowed
 
 
 @spec_claim(

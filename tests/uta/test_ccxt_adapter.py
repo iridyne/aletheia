@@ -1052,43 +1052,6 @@ async def test_expired_private_history_window_fails_closed_without_network(monke
     assert calls == []
 
 
-@pytest.mark.asyncio
-async def test_unqualified_live_profile_refuses_mutation_before_send(monkeypatch):
-    profile = BitgetClassicV2LiveProfile(
-        api_key="key", secret="secret", passphrase="passphrase"
-    )
-    exchange = FakeExchange()
-    _session, calls = _install(monkeypatch, exchange)
-    identity = _identity(profile).model_copy(
-        update={"execution_mode": profile.expected_execution_mode}
-    )
-    adapter = CCXTUTAAdapter(identity, profile)
-    assert adapter.capabilities.order_read.value == "supported"
-    instrument = InstrumentIdentity(
-        canonical_symbol="BTC/USDT",
-        venue_symbol="BTC/USDT:USDT",
-        market_type="usdt_futures",
-        base_currency="BTC",
-        quote_currency="USDT",
-        settlement_currency="USDT",
-    )
-    command = SubmitOrderCommand(
-        command_id="command-1",
-        expected_account=identity,
-        instrument=instrument,
-        purpose="entry",
-        side="buy",
-        quantity="0.001",
-        order_type="market",
-    )
-
-    report = await adapter.submit_order(command)
-
-    assert report.evidence is CommandEvidence.NOT_SENT
-    assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
-    assert calls == []
-
-
 def _bitget_command(identity, **updates):
     values = dict(
         command_id="bitget-command-1",
@@ -1185,7 +1148,14 @@ async def test_bitget_entry_sets_profile_bound_leverage_before_send(
     identity = _identity(profile)
     adapter = CCXTUTAAdapter(identity, profile)
 
-    report = await adapter.submit_order(_bitget_command(identity, leverage="3"))
+    report = await adapter.submit_order(
+        _bitget_command(
+            identity,
+            leverage="3",
+            stop_loss_price="49000",
+            take_profit_price="62000",
+        )
+    )
 
     assert report.evidence is CommandEvidence.ACKNOWLEDGED
     assert [event[0] for event in exchange.events] == [
@@ -1200,6 +1170,14 @@ async def test_bitget_entry_sets_profile_bound_leverage_before_send(
         "BTC/USDT:USDT",
         {"uta": expected_uta},
     )
+    assert exchange.events[3][1][5] == {
+        "clientOrderId": "bitget-client-1",
+        "hedged": True,
+        "marginMode": "cross",
+        "stopLoss": {"triggerPrice": Decimal("49000")},
+        "takeProfit": {"triggerPrice": Decimal("62000")},
+        "uta": expected_uta,
+    }
     await adapter.close()
 
 
@@ -1310,12 +1288,24 @@ async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(
     await adapter.close()
 
 
-@pytest.mark.parametrize("profile_type", [BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile])
+@pytest.mark.parametrize(
+    "profile_type", [BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile]
+)
 @pytest.mark.asyncio
-async def test_bitget_live_profiles_remain_mutation_disabled(profile_type, monkeypatch):
+async def test_bitget_live_profiles_expose_phase_seven_mutations(profile_type, monkeypatch):
     profile = profile_type(api_key="key", secret="secret", passphrase="passphrase")
     exchange = FakeExchange()
-    _session, calls = _install(monkeypatch, exchange)
+    exchange.create_response = {
+        "id": "bitget-live-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "market",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
     identity = _identity(profile).model_copy(
         update={"execution_mode": profile.expected_execution_mode}
     )
@@ -1323,9 +1313,9 @@ async def test_bitget_live_profiles_remain_mutation_disabled(profile_type, monke
 
     report = await adapter.submit_order(_bitget_command(identity))
 
-    assert report.evidence is CommandEvidence.NOT_SENT
-    assert adapter.capabilities.market_order.value == "unsupported"
-    assert calls == []
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    assert adapter.capabilities.market_order.value == "supported"
+    await adapter.close()
 
 
 def _okx_command(identity, *, market_type="usdt_futures", **updates):
@@ -1401,6 +1391,38 @@ async def test_okx_spot_market_buy_keeps_base_quantity(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_okx_entry_preserves_native_attached_protection(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "okx-protected-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "market",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(
+        _okx_command(
+            identity,
+            stop_loss_price="49000",
+            take_profit_price="62000",
+        )
+    )
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    assert create[1][5]["stopLoss"] == {"triggerPrice": Decimal("49000")}
+    assert create[1][5]["takeProfit"] == {"triggerPrice": Decimal("62000")}
+
+
+@pytest.mark.asyncio
 async def test_okx_trigger_and_live_profile_boundaries(monkeypatch):
     profile = _profile("okx")
     exchange = FakeExchange()
@@ -1429,11 +1451,8 @@ async def test_okx_trigger_and_live_profile_boundaries(monkeypatch):
         update={"execution_mode": live.expected_execution_mode}
     )
     live_adapter = CCXTUTAAdapter(live_identity, live)
-    denied = await live_adapter.submit_order(
-        command.model_copy(update={"expected_account": live_identity})
-    )
-    assert denied.evidence is CommandEvidence.NOT_SENT
-    assert live_adapter.capabilities.market_order.value == "unsupported"
+    assert live_adapter.capabilities.market_order.value == "supported"
+    assert live_adapter.capabilities.native_tpsl.value == "supported"
 
 
 def _binance_command(identity, **updates):
@@ -1460,27 +1479,26 @@ def _binance_command(identity, **updates):
 
 
 @pytest.mark.asyncio
-async def test_binance_live_profile_refuses_all_mutations_before_phase_seven(
-    monkeypatch,
-):
+async def test_binance_live_profile_exposes_phase_seven_mutations(monkeypatch):
     profile = BinanceLiveProfile(api_key="key", secret="secret")
     exchange = FakeExchange()
-    _session, calls = _install(monkeypatch, exchange)
+    exchange.create_response = {
+        "id": "venue-live-1",
+        "clientOrderId": "client-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "market",
+        "amount": "0.01",
+        "filled": "0",
+        "remaining": "0.01",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
     identity = _identity(profile).model_copy(
         update={"execution_mode": profile.expected_execution_mode}
     )
     adapter = CCXTUTAAdapter(identity, profile)
-    instrument = _binance_command(identity).instrument
-
     submitted = await adapter.submit_order(_binance_command(identity))
-    modified = await adapter.modify_order(ModifyOrderCommand(
-        command_id="modify-1", expected_account=identity, instrument=instrument,
-        purpose="entry", target_venue_order_id="venue-1", limit_price="101",
-    ))
-    cancelled = await adapter.cancel_order(CancelOrderCommand(
-        command_id="cancel-1", expected_account=identity, instrument=instrument,
-        purpose="entry", target_venue_order_id="venue-1", reason="operator_cancel",
-    ))
 
     mutation_capabilities = (
         adapter.capabilities.market_order,
@@ -1492,13 +1510,11 @@ async def test_binance_live_profile_refuses_all_mutations_before_phase_seven(
         adapter.capabilities.post_only,
         adapter.capabilities.client_order_id,
     )
-    assert all(value.value == "unsupported" for value in mutation_capabilities)
-    for report in (submitted, modified, cancelled):
-        assert report.evidence is CommandEvidence.NOT_SENT
-        assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
+    assert all(value.value == "supported" for value in mutation_capabilities)
+    assert submitted.evidence is CommandEvidence.ACKNOWLEDGED
     assert adapter.capabilities.account_read.value == "supported"
     assert adapter.capabilities.position_read.value == "supported"
-    assert calls == []
+    await adapter.close()
 
 
 @pytest.mark.asyncio

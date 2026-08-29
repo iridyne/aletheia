@@ -31,6 +31,7 @@ from aletheia.uta.manager import create_uta_adapter
 from aletheia.uta.models import (
     CancelOrderCommand,
     CommandEvidence,
+    CapabilitySupport,
     ModifyOrderCommand,
     OrderLifecycle,
     SubmitOrderCommand,
@@ -163,6 +164,10 @@ def execute_order(
     price: float,
     execution_mode: str,
     leverage: int | None = None,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
+    time_in_force: str | None = None,
+    post_only: bool = False,
     **_unused,
 ) -> dict:
     """Commit pending intent, send one UTA command, then CAS the report."""
@@ -206,6 +211,20 @@ def execute_order(
         quantity=Decimal(str(quantity)),
         order_type=order_type,
         limit_price=Decimal(str(price)) if order_type == "limit" else None,
+        stop_loss_price=(
+            Decimal(str(stop_price))
+            if stop_price is not None
+            and adapter.capabilities.native_tpsl is CapabilitySupport.SUPPORTED
+            else None
+        ),
+        take_profit_price=(
+            Decimal(str(take_profit_price))
+            if take_profit_price is not None
+            and adapter.capabilities.native_tpsl is CapabilitySupport.SUPPORTED
+            else None
+        ),
+        time_in_force=time_in_force,
+        post_only=post_only,
         leverage=Decimal(leverage) if leverage is not None else None,
     )
     try:
