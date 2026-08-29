@@ -711,6 +711,37 @@ def _adoption_error(
     )
 
 
+def _validated_adoption_float(
+    raw: object,
+    *,
+    field: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    default: float = 0.0,
+    zero_as_none: bool = False,
+) -> float | None:
+    try:
+        value = float(raw or default)
+    except (TypeError, ValueError, OverflowError):
+        raise _adoption_error(
+            field=field,
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        ) from None
+    if not math.isfinite(value):
+        raise _adoption_error(
+            field=field,
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+        )
+    if zero_as_none and value == 0:
+        return None
+    return value
+
+
 def _validated_adoption_leverage(
     exchange_pos: dict,
     *,
@@ -1073,17 +1104,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
 
     symbol = to_canonical(exchange_pos.get("symbol", ""))
     direction = _norm_direction(exchange_pos.get("side", ""))
-    quantity = float(exchange_pos.get("quantity") or 0)
-    entry_price = float(exchange_pos.get("entry_price") or 0)
     if not symbol or direction not in ("long", "short"):
         raise ValueError(f"adopt_position: bad symbol/direction ({symbol!r}, {direction!r})")
-    if quantity <= 0 or entry_price <= 0:
-        # Never synthesize a chain off a missing size/entry — that would fabricate
-        # the very causal facts this design exists to keep honest.
-        raise ValueError(
-            f"adopt_position: refusing to adopt {symbol} {direction} with "
-            f"quantity={quantity} entry_price={entry_price} (need both > 0)"
-        )
 
     market_type = _normalize_market_type(exchange_pos.get("market_type"))
     if market_type is None:
@@ -1093,6 +1115,45 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             market_type=str(exchange_pos.get("market_type") or "unknown"),
             direction=direction,
         )
+
+    quantity = _validated_adoption_float(
+        exchange_pos.get("quantity"),
+        field="quantity",
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+    )
+    entry_price = _validated_adoption_float(
+        exchange_pos.get("entry_price"),
+        field="entry_price",
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+    )
+    if quantity <= 0 or entry_price <= 0:
+        # Never synthesize a chain off a missing size/entry — that would fabricate
+        # the very causal facts this design exists to keep honest.
+        raise ValueError(
+            f"adopt_position: refusing to adopt {symbol} {direction} with "
+            f"quantity={quantity} entry_price={entry_price} (need both > 0)"
+        )
+
+    mark_price = _validated_adoption_float(
+        exchange_pos.get("mark_price"),
+        field="mark_price",
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        zero_as_none=True,
+    )
+    unrealized_pnl = _validated_adoption_float(
+        exchange_pos.get("unrealized_pnl"),
+        field="unrealized_pnl",
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+    )
+
     leverage, leverage_source = _validated_adoption_leverage(
         exchange_pos,
         symbol=symbol,
@@ -1191,8 +1252,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         direction=direction,
         quantity=quantity,
         entry_price=entry_price,
-        current_price=float(exchange_pos.get("mark_price") or 0) or None,
-        unrealized_pnl=float(exchange_pos.get("unrealized_pnl") or 0),
+        current_price=mark_price,
+        unrealized_pnl=unrealized_pnl,
         unrealized_pnl_source="exchange_exact",
         execution_mode=execution_mode,
         leverage=leverage,
