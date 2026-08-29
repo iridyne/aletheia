@@ -117,7 +117,15 @@ def test_selected_reads_use_canonical_manager_and_unmigrated_mutations_stay_disa
     )
 )
 def test_migrated_mutations_have_one_gateway_coordinator_path():
-    from aletheia.uta.profiles import BinanceLiveProfile, OKXDemoProfile, OKXLiveProfile
+    from aletheia.uta.profiles import (
+        BinanceLiveProfile,
+        BitgetClassicV2LiveProfile,
+        BitgetClassicV2Profile,
+        BitgetUTAV3LiveProfile,
+        BitgetUTAV3Profile,
+        OKXDemoProfile,
+        OKXLiveProfile,
+    )
 
     coordinator_path = ROOT / "aletheia" / "execution" / "coordinator.py"
     coordinator = coordinator_path.read_text(encoding="utf-8")
@@ -134,6 +142,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
     assert "aletheia.execution.gateway import close_exchange_position" in manager
     assert "aletheia.execution.gateway import place_exchange_protection" in stops
     assert "aletheia.execution.okx_broker" not in stops
+    assert "aletheia.execution.bitget_broker" not in stops
     assert "def place_protection(" in coordinator
     assert "def replace_protective_stop(" in coordinator
     assert "finalize_exchange_acknowledgement" in coordinator
@@ -181,6 +190,36 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
         OKXLiveProfile.mutation_post_only,
         OKXLiveProfile.mutation_client_order_id,
     ))
+    for profile in (BitgetClassicV2Profile, BitgetUTAV3Profile):
+        assert all((
+            profile.mutation_market_order,
+            profile.mutation_limit_order,
+            profile.mutation_modify_order,
+            profile.mutation_cancel_order,
+            profile.mutation_reduce_only,
+            profile.mutation_leverage,
+            profile.mutation_post_only,
+            profile.mutation_client_order_id,
+            profile.mutation_trigger_order,
+            profile.native_tpsl,
+            profile.protection_replace,
+            profile.protection_cancel,
+        ))
+    for profile in (BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile):
+        assert not any((
+            profile.mutation_market_order,
+            profile.mutation_limit_order,
+            profile.mutation_modify_order,
+            profile.mutation_cancel_order,
+            profile.mutation_reduce_only,
+            profile.mutation_leverage,
+            profile.mutation_post_only,
+            profile.mutation_client_order_id,
+            profile.mutation_trigger_order,
+            profile.native_tpsl,
+            profile.protection_replace,
+            profile.protection_cancel,
+        ))
 
 
 @spec_claim(

@@ -117,23 +117,32 @@ def test_uta_mutation_qualification_fails_closed_with_bounded_reason(monkeypatch
     assert str(caught.value) == "UTA mutation requires current qualification"
 
 
-def test_okx_qualification_requires_protection_evidence(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "execution_mode,venue,profile_name",
+    [
+        ("okx_demo", "okx", "okx_demo"),
+        ("bitget_demo", "bitget", "classic_v2"),
+    ],
+)
+def test_demo_qualification_requires_protection_evidence(
+    tmp_path, monkeypatch, execution_mode, venue, profile_name
+):
     from aletheia.trust.uta_qualification import uta_profile_qualified
     from aletheia.uta.models import UTAAccountIdentity
 
     identity = UTAAccountIdentity(
-        account_id="okx_demo",
-        execution_mode="okx_demo",
-        venue="okx",
+        account_id=execution_mode,
+        execution_mode=execution_mode,
+        venue=venue,
         environment="demo",
-        profile="okx_demo",
-        account_fingerprint="sha256:okx",
+        profile=profile_name,
+        account_fingerprint=f"sha256:{venue}",
         credential_generation=1,
         adapter_implementation="CCXTUTAAdapter",
         adapter_version="1",
         ccxt_version="4.5",
     )
-    path = tmp_path / "qualifications" / "uta-okx_demo.json"
+    path = tmp_path / "qualifications" / f"uta-{execution_mode}.json"
     path.parent.mkdir()
     path.write_text(json.dumps(_artifact(identity, "head-1")), encoding="utf-8")
     monkeypatch.setattr("aletheia.trust.uta_qualification.get_data_dir", lambda: tmp_path)
@@ -142,7 +151,7 @@ def test_okx_qualification_requires_protection_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "aletheia.trust.uta_qualification.create_uta_adapter", lambda *_: SimpleNamespace(identity=identity)
     )
-    assert uta_profile_qualified("okx_demo", object())[1] == "qualification_execution_evidence_incomplete"
+    assert uta_profile_qualified(execution_mode, object())[1] == "qualification_execution_evidence_incomplete"
 
 
 @pytest.mark.asyncio
@@ -170,5 +179,19 @@ async def test_okx_execution_probe_requires_demo_specific_confirmation(monkeypat
             execution_mode="okx_demo",
             execution_probe=True,
             confirm_testnet_order=True,
+            confirm_demo_order=False,
+        ))
+
+
+@pytest.mark.asyncio
+async def test_bitget_qualification_is_supported_and_requires_demo_confirmation(monkeypatch):
+    from scripts import qualify_uta
+
+    monkeypatch.setattr(qualify_uta, "is_worktree_dirty", lambda: False)
+    with pytest.raises(ValueError, match="explicit order confirmation"):
+        await qualify_uta._qualify(SimpleNamespace(
+            execution_mode="bitget_demo",
+            execution_probe=True,
+            confirm_testnet_order=False,
             confirm_demo_order=False,
         ))

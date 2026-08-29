@@ -513,6 +513,48 @@ def test_gateway_okx_close_selector_uses_same_qualified_coordinator(
     assert selected == [("uta", position.id), ("legacy", position.id)]
 
 
+def test_gateway_bitget_close_selector_uses_same_qualified_coordinator(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="bitget_demo",
+        status="open",
+    )
+    repo.insert_position(position)
+    selected = []
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.close_position",
+        lambda position_id, **_kwargs: selected.append(("uta", position_id))
+        or {"status": "submitted"},
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.bitget_broker.close_demo_position",
+        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
+        or {"status": "submitted"},
+    )
+    from aletheia.execution import gateway
+
+    monkeypatch.setattr(
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: True
+    )
+    gateway.close_exchange_position(position.id, "operator_close")
+    monkeypatch.setattr(
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False
+    )
+    gateway.close_exchange_position(position.id, "operator_close")
+
+    assert selected == [("uta", position.id), ("legacy", position.id)]
+
+
 def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.coordinator import _submit_protection_leg

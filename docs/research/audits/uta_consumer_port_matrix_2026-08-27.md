@@ -98,6 +98,21 @@ Fixing baseline: `master@de924e04aaae7f83fabbaab52797c9082e346a41`.
 | Protection | `execution/stops.py` returns OKX demo protection authority to Gateway. Coordinator persists each protection child before UTA submission and cancels the proven old stop before a replacement. | No direct Position Manager/protection UTA call and no dual submission; successful venue TP/SL identities remain on the Position. |
 | Qualification | The secret-safe script accepts `okx_demo`, uses venue-valid client ids, and requires submit/modify/cancel, private entry/close fills, verified exit plus protection submit/cancel evidence. | No credential probe has been authorized or run on this baseline, so OKX demo remains unqualified and legacy-selected. |
 
+## Phase 6 Bitget Classic v2 and UTA v3 static execution slice
+
+Fixing baseline: `master@c431122cccf4b515c3db16dd144eb2dd66728dbe`.
+
+| Boundary | Phase 6 implementation state | Authority result |
+|---|---|---|
+| Profile isolation | `BitgetClassicV2Profile` and `BitgetUTAV3Profile` independently own submit/modify/cancel, leverage, hedge close, contract conversion and trigger protection parameters. Every mutation carries its explicit `uta=false/true` family selector. | Static conformance proves the two profiles never share a v2/v3 request family. The native Bitget implementation remains the legacy parity oracle and rollback path. |
+| Quantity and close | Canonical coin quantity is converted to an exact integer contract count from loaded instrument metadata. Both profiles submit canonical opposite-side reduce-only hedge closes; the pinned CCXT driver maps that intent to each profile's distinct close convention. | Missing multiplier and non-integral quantities are `NOT_SENT`; close preparation never changes leverage or guesses a contract size. |
+| Gateway/Coordinator | Qualified Bitget demo entry, full close, protection and replacement use the same Gateway → Coordinator → UTA path as the earlier profiles. Position Manager and the shared stop dispatcher return authority to Gateway. | Pending local state still precedes I/O and acknowledgement still uses the shared CAS. An unqualified selector continues to call the native legacy broker; there is no dual submission. |
+| Qualification | The repeatable qualification script accepts `bitget_demo` and requires modify/cancel, private entry/close fills, verified exit and protection submit/cancel evidence for the exact configured Classic-v2 or UTA-v3 identity. | The owner cannot provide exchange credentials and waived real demo probes. Neither profile is claimed qualified; both remain legacy-selected. Live variants remain mutation-disabled. |
+
+Static Phase 6 evidence does not assert Bitget account reachability, exchange
+acceptance, or runtime qualification. A future switch still requires the exact-code,
+account/profile/generation artifact enforced by `uta_qualification.py`.
+
 ## Adjacent execution findings
 
 | Issue | Exact-head evidence | Composition decision |

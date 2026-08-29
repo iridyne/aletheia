@@ -396,7 +396,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
 
 
 def place_protection(position_id: str) -> dict[str, str]:
-    """Place the configured OKX protection children through UTA."""
+    """Place configured protection children through the selected UTA."""
     from aletheia.storage import repositories as repo
 
     position = repo.get_position(position_id)

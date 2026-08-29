@@ -49,7 +49,7 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
     if any(artifact.get(key) != value for key, value in expected.items()):
         return False, "qualification_identity_mismatch"
     probe = artifact.get("execution_probe") or {}
-    protection_incomplete = execution_mode == "okx_demo" and (
+    protection_incomplete = execution_mode in {"okx_demo", "bitget_demo"} and (
         probe.get("protection_submit") != "acknowledged" or probe.get("protection_cancel") != "acknowledged"
     )
     if (

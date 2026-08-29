@@ -88,10 +88,13 @@ Position Manager（保护性止损/止盈/追踪与平仓）
 read parity、account projection，以及 recovery、reconciliation、funding、verified-exit 与 Live Trust
 的 UTA 私有读取。Binance testnet 的 `uta_v1` 选择器现可把 Gateway entry/full-close 送到通用
 Coordinator；OKX demo 的 entry/full-close/protection 也使用同一资格门控路径，并由 profile
-负责 spot/perp、contract-size、demo client-id 与 trigger 参数。Coordinator 执行
+负责 spot/perp、contract-size、demo client-id 与 trigger 参数。Bitget Classic v2 与 UTA v3
+现在也有独立的静态 mutation profile；qualified demo selector 可把 entry/full-close/protection
+送到相同链路，且每个请求显式绑定 v2/v3 端点族。Coordinator 执行
 pending/claim、外部调用后的短 CAS 与审计，UTA 只做外部账户 I/O，
 Aletheia storage 写入本地事实。凭据 qualification 未通过前该 profile 仍保持 legacy 默认，其他
-Bitget 与 live-limited profile mutation 仍为 `NOT_SENT` 或 legacy。
+live-limited profile mutation 仍为 `NOT_SENT` 或 legacy。当前 Bitget 结论仅由静态 conformance
+支持，不代表账号可达、交易所接受或运行时资格通过。
 
 ---
 

@@ -114,8 +114,10 @@ def _command(
 
 
 async def _qualify(args) -> dict:
-    if args.execution_mode not in {"binance_testnet", "okx_demo"}:
-        raise ValueError("qualification supports binance_testnet and okx_demo only")
+    if args.execution_mode not in {"binance_testnet", "okx_demo", "bitget_demo"}:
+        raise ValueError(
+            "qualification supports binance_testnet, okx_demo, and bitget_demo only"
+        )
     confirmed = (
         getattr(args, "confirm_testnet_order", False)
         if args.execution_mode == "binance_testnet"
@@ -256,7 +258,7 @@ async def _qualify(args) -> dict:
         filled_quantity = sum((fill.quantity for fill in entry_fills.fills), Decimal(0))
 
         protection_submit = protection_cancel = None
-        if args.execution_mode == "okx_demo":
+        if args.execution_mode in {"okx_demo", "bitget_demo"}:
             protection = SubmitOrderCommand(
                 command_id=str(uuid4()),
                 expected_account=identity,
