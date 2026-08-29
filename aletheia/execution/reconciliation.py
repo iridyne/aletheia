@@ -36,6 +36,7 @@ from aletheia.uta.manager import query_uta
 from aletheia.uta.models import (
     FillQuery,
     FundingLedgerQuery,
+    OrderLifecycle,
     OrderQuery,
     ReadCompleteness,
 )
@@ -911,6 +912,28 @@ class _UTAReconciliationProjection:
             raise RuntimeError(report.reason_code or "uta_exact_fills_incomplete")
         return [self._fill_row(fill) for fill in report.fills]
 
+    async def get_order_status(
+        self,
+        *,
+        order_id: str | None,
+        client_order_id: str | None,
+        symbol: str,
+        market_type: str,
+        start_at=None,
+    ):
+        report = await query_uta(
+            self.execution_mode,
+            "get_order",
+            OrderQuery(
+                scope=scope_from_local(symbol, market_type, start_at=start_at),
+                venue_order_id=order_id,
+                client_order_id=client_order_id,
+            ),
+        )
+        if report.completeness is not ReadCompleteness.COMPLETE:
+            raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
+        return report.found
+
     async def get_order_detail_by_client_oid(
         self, client_order_id: str, symbol: str
     ) -> dict | None:
@@ -1520,6 +1543,38 @@ def reconcile() -> dict:
                 errors.append(
                     f"{execution_mode}/{market_type}: default private fill history unavailable"
                 )
+            ioc_terminal = False
+            if (
+                order.get("source") == "native"
+                and order.get("order_tactic") == "OPPOSING_BBO_IOC"
+                and use_exact_order_history
+            ):
+                try:
+                    exact_order = _run_coro(client.get_order_status(
+                        order_id=str(order["exchange_order_id"]),
+                        client_order_id=(
+                            str(order["client_order_id"])
+                            if order.get("client_order_id")
+                            else None
+                        ),
+                        symbol=str(order["symbol"]),
+                        market_type=market_type,
+                        start_at=order.get("created_at"),
+                    ))
+                    ioc_terminal = bool(
+                        exact_order
+                        and exact_order.state in {
+                            OrderLifecycle.CANCELED,
+                            OrderLifecycle.EXPIRED,
+                            OrderLifecycle.REJECTED,
+                        }
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "reconcile: exact IOC status failed for order %s (%s)",
+                        order["id"],
+                        type(exc).__name__,
+                    )
             if order.get("source") == "native":
                 funding_ledger = None
                 if is_close_order:
@@ -1602,11 +1657,35 @@ def reconcile() -> dict:
                     )
                     continue
                 if result.state == "partially_filled":
+                    if ioc_terminal:
+                        update_order(
+                            order["id"],
+                            status="cancelled",
+                            error_reason="ioc_remainder_terminal",
+                        )
+                        _write_reconcile_event(
+                            order,
+                            state="cancelled",
+                            reason="ioc_partial_fill_remainder_terminal",
+                        )
+                        continue
                     partially_filled += 1
                     _write_reconcile_event(
                         order,
                         state="partially_filled",
                         reason="partial_private_fill_materialized",
+                    )
+                    continue
+                if result.state == "evidence_missing" and ioc_terminal:
+                    update_order(
+                        order["id"],
+                        status="cancelled",
+                        error_reason="ioc_zero_fill_terminal",
+                    )
+                    _write_reconcile_event(
+                        order,
+                        state="cancelled",
+                        reason="ioc_zero_fill_terminal",
                     )
                     continue
                 if result.state == "overfilled":

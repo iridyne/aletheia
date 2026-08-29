@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -251,6 +252,7 @@ def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     ).model_copy(update={field: value})
     resolved = SimpleNamespace(
         policy=SimpleNamespace(policy_id="demo-v1", revision=1),
@@ -292,6 +294,7 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
 
     assert engine._entry_plan_authority_violations(
@@ -335,6 +338,7 @@ def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkey
         bid=100,
         ask=100.05,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
     resolved = SimpleNamespace(
         policy=SimpleNamespace(policy_id="demo-v1", revision=1),
@@ -368,6 +372,7 @@ def test_canonical_risk_requires_exact_resting_maker_limit(monkeypatch):
         bid=99.9,
         ask=100.1,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
     ).model_copy(update={"price": 100.5})
     resolved = SimpleNamespace(
         policy=SimpleNamespace(policy_id="demo-v1", revision=1),
@@ -527,6 +532,9 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
 
 def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
     from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import reconciliation
+    from aletheia.uta import manager
+    from aletheia.uta.models import OrderLifecycle, ReadCompleteness
 
     plan, order = _persist_ordered_plan()
     repo.insert_fill(Fill(order_id=order.id, fill_price=100, fill_quantity=0.5, fee_source="reconciled"))
@@ -537,8 +545,104 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
         "cancel_entry_order",
         lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
     )
+    async def exact_order(*_args, **_kwargs):
+        return SimpleNamespace(
+            completeness=ReadCompleteness.COMPLETE,
+            found=SimpleNamespace(state=OrderLifecycle.CANCELED),
+        )
+
+    async def exact_fills(self, **_kwargs):
+        return []
+
+    monkeypatch.setattr(manager, "query_uta", exact_order)
+    monkeypatch.setattr(
+        reconciliation._UTAReconciliationProjection,
+        "get_order_fills",
+        exact_fills,
+    )
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "cancelled"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
     assert repo.get_order(order.id)["status"] == "cancelled"
     assert sum(fill["fill_quantity"] for fill in repo.list_fills(order_id=order.id)) == 0.5
+
+
+def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monkeypatch):
+    from aletheia.execution import bitget_broker, gateway
+    from aletheia.uta import manager
+    from aletheia.uta.models import ReadCompleteness
+
+    plan, order = _persist_ordered_plan()
+    monkeypatch.setattr(
+        bitget_broker,
+        "cancel_entry_order",
+        lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
+    )
+
+    async def incomplete_order(*_args, **_kwargs):
+        return SimpleNamespace(
+            completeness=ReadCompleteness.UNAVAILABLE,
+            found=None,
+        )
+
+    monkeypatch.setattr(manager, "query_uta", incomplete_order)
+    result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
+    assert result["status"] == "cancel_pending"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+    assert repo.get_order(order.id)["status"] == "submitted"
+
+
+@pytest.mark.parametrize(
+    "materialized_state,starting_status,expected_reason",
+    [
+        ("evidence_missing", "submitted", "ioc_zero_fill_terminal"),
+        ("partially_filled", "partially_filled", "ioc_remainder_terminal"),
+    ],
+)
+def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
+    monkeypatch,
+    materialized_state,
+    starting_status,
+    expected_reason,
+):
+    from aletheia.execution import reconciliation
+    from aletheia.uta.models import OrderLifecycle
+
+    plan, order = _persist_ordered_plan()
+    repo.update_order(
+        order.id,
+        source="native",
+        order_tactic="OPPOSING_BBO_IOC",
+        time_in_force="ioc",
+        status=starting_status,
+    )
+
+    async def no_rows(self, **_kwargs):
+        return []
+
+    async def terminal_order(self, **_kwargs):
+        return SimpleNamespace(state=OrderLifecycle.CANCELED)
+
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_open_orders", no_rows)
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_fills", no_rows)
+    monkeypatch.setattr(reconciliation._UTAReconciliationProjection, "get_order_fills", no_rows)
+    monkeypatch.setattr(
+        reconciliation._UTAReconciliationProjection,
+        "get_order_status",
+        terminal_order,
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "materialize_bitget_entry",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            state=materialized_state,
+            new_fill_count=0,
+        ),
+    )
+
+    reconciliation.reconcile()
+
+    stored = repo.get_order(order.id)
+    assert stored["status"] == "cancelled"
+    assert stored["error_reason"] == expected_reason
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"

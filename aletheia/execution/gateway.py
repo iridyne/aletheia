@@ -498,6 +498,73 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     if not result.get("cancelled"):
         return {"status": "cancel_pending", "entry_plan_id": plan_id}
 
+    fresh_after_ack = repo.get_order(order["id"])
+    if fresh_after_ack and (
+        fresh_after_ack.get("status") == "filled" or fully_filled(fresh_after_ack)
+    ):
+        fresh_plan = repo.get_entry_plan(plan_id)
+        if fresh_plan and fresh_plan["status"] != "filled":
+            repo.transition_entry_plan(
+                plan_id,
+                expected_status=fresh_plan["status"],
+                status="filled",
+                reason="fill_won_cancel_race",
+            )
+        return {"status": "filled", "entry_plan_id": plan_id}
+
+    try:
+        from aletheia.execution.exchange_materialization import materialize_bitget_entry
+        from aletheia.execution.reconciliation import _UTAReconciliationProjection, _run_coro
+        from aletheia.uta.compat import scope_from_local
+        from aletheia.uta.manager import query_uta
+        from aletheia.uta.models import OrderLifecycle, OrderQuery, ReadCompleteness
+
+        async def exact_cancel_evidence():
+            report = await query_uta(
+                str(order["execution_mode"]),
+                "get_order",
+                OrderQuery(
+                    scope=scope_from_local(
+                        str(order["symbol"]),
+                        str(order.get("market_type") or "usdt_futures"),
+                        start_at=order.get("created_at"),
+                    ),
+                    client_order_id=str(order.get("client_order_id") or "") or None,
+                    venue_order_id=str(order.get("exchange_order_id") or "") or None,
+                ),
+            )
+            rows = await _UTAReconciliationProjection(str(order["execution_mode"])).get_order_fills(
+                order_id=str(order.get("exchange_order_id") or "") or None,
+                client_order_id=str(order.get("client_order_id") or "") or None,
+                symbol=str(order["symbol"]),
+                market_type=str(order.get("market_type") or "usdt_futures"),
+                start_at=order.get("created_at"),
+            )
+            return report, rows
+
+        report, rows = _run_coro(exact_cancel_evidence())
+        if report.completeness is not ReadCompleteness.COMPLETE or report.found is None:
+            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+        if rows:
+            materialize_bitget_entry(order["id"], rows)
+        exact_state = report.found.state
+        if exact_state not in {
+            OrderLifecycle.CANCELED,
+            OrderLifecycle.EXPIRED,
+            OrderLifecycle.REJECTED,
+            OrderLifecycle.FILLED,
+        }:
+            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+        if exact_state is OrderLifecycle.FILLED and not fully_filled(repo.get_order(order["id"])):
+            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+    except Exception:
+        logger.warning(
+            "Exact post-cancel evidence unavailable for Entry Plan %s",
+            plan_id,
+            exc_info=True,
+        )
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+
     with repo.transaction(immediate=True):
         fresh_order = repo.get_order(order["id"])
         fresh_plan = repo.get_entry_plan(plan_id)
