@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 try:
     import fcntl as _fcntl
@@ -407,7 +408,40 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         operator_section_present = isinstance(raw.get("operator"), dict)
-        cfg = AletheiaConfig.model_validate(raw)
+        # Reject unknown persisted keys recursively before any authority can
+        # start or a later save can erase the malformed source key.  Pydantic's
+        # runtime override propagates through nested models while leaving typed
+        # dynamic mappings (providers, quotas, etc.) intact.
+        try:
+            cfg = AletheiaConfig.model_validate(raw, extra="forbid")
+        except ValidationError as exc:
+            if any(error.get("type") == "extra_forbidden" for error in exc.errors()):
+                safe_errors = []
+                for error in exc.errors():
+                    safe_error = {
+                        key: value
+                        for key, value in error.items()
+                        if key not in {"input", "ctx"}
+                    }
+                    context = error.get("ctx")
+                    if isinstance(context, dict):
+                        safe_error["ctx"] = {
+                            key: (
+                                ValueError("invalid configuration value")
+                                if key == "error"
+                                else value
+                                if isinstance(value, (int, float, bool, type(None)))
+                                else "[redacted]"
+                            )
+                            for key, value in context.items()
+                        }
+                    safe_errors.append(safe_error)
+                # Keep the normal Pydantic type/paths while hiding rejected
+                # values from startup, Doctor, and audit projections.
+                raise ValidationError.from_exception_data(
+                    "AletheiaConfig", safe_errors, hide_input=True
+                ) from None
+            raise
         changed = False
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.

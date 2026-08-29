@@ -1188,6 +1188,39 @@ def test_kill_switch_active_is_a_blocker(monkeypatch):
     assert ks and ks[0].severity == "blocker"
 
 
+def test_invalid_persisted_config_reports_safe_validation_path(monkeypatch):
+    import aletheia.config.loader as loader
+    from pydantic import ValidationError
+    from aletheia.config.schema import AletheiaConfig
+
+    try:
+        AletheiaConfig.model_validate(
+            {"remote_control": {"require_tokn": "secret-token"}},
+            extra="forbid",
+        )
+    except ValidationError as exc:
+        safe_error = ValidationError.from_exception_data(
+            "AletheiaConfig",
+            [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()],
+            hide_input=True,
+        )
+    else:  # pragma: no cover - the fixture must remain invalid
+        raise AssertionError("expected an unknown config key")
+
+    def invalid_config():
+        raise safe_error
+
+    monkeypatch.setattr(loader, "load_config", invalid_config)
+    report = dx.Report(generated_at="t")
+    dx._probe_config_gates(report)
+
+    check = next(c for c in report.checks if c.name == "config.validation")
+    assert check.severity == "blocker"
+    assert "remote_control.require_tokn" in check.detail
+    assert "secret-token" not in check.detail
+    assert "explicit migration" in check.fix_hint
+
+
 def test_paused_config_reports_each_active_owner(monkeypatch):
     """Doctor explains why recovery remains blocked instead of a bare boolean."""
     import aletheia.config.loader as loader
