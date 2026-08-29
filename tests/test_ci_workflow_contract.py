@@ -106,6 +106,21 @@ def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs()
     assert triggers["pull_request"]["branches"] == ["master"]
 
 
+def test_closed_pr_retires_queued_validation_without_allocating_another_runner() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    change_contract = _change_contract_workflow()
+
+    assert workflow["concurrency"]["cancel-in-progress"] == "true"
+    assert "github.event.action != 'closed'" in jobs["change-contract-preflight"]["if"]
+    for name in ("trusted-ci-verdict", "full-ci-verdict"):
+        assert "!cancelled()" in jobs[name]["if"]
+        assert "github.event.action != 'closed'" in jobs[name]["if"]
+
+    gate_job = change_contract["jobs"]["verify-change-contract"]
+    assert "github.event.action != 'closed'" in gate_job["if"]
+
+
 def test_ci_has_independent_review_and_regression_jobs() -> None:
     jobs = _workflow()["jobs"]
 
@@ -266,14 +281,14 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert triggers == {
         "pull_request": {
             "branches": ["master"],
-            "types": ["opened", "synchronize", "reopened", "edited", "labeled", "unlabeled"],
+            "types": ["opened", "synchronize", "reopened", "edited", "labeled", "unlabeled", "closed"],
         },
     }
     # Deep CI intentionally keeps the GitHub default code-changing PR events;
     # it must not re-run/skipped-pass on a PR-body-only metadata edit.
     assert ci_triggers["pull_request"] == {
         "branches": ["master"],
-        "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"],
+        "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled", "closed"],
     }
     assert "paths-ignore" not in triggers["pull_request"]
     assert "paths-ignore" not in ci_triggers["pull_request"]
@@ -769,7 +784,11 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     assert "required lane" in verdict_commands
     assert "PLAN_BASE_SHA" in verdict_commands
     assert "PLAN_FINGERPRINT" in verdict_commands
-    assert full_verdict["if"] == "${{ always() && needs.plan.outputs.required_full_ci == 'true' }}"
+    assert full_verdict["if"] == (
+        "${{ !cancelled() && (github.event_name != 'pull_request' || "
+        "github.event.action != 'closed') && "
+        "needs.plan.outputs.required_full_ci == 'true' }}"
+    )
     assert "Full CI verdict" == full_verdict["name"]
 
     unit_env = unit_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]

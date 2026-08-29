@@ -8,7 +8,7 @@ name: Aletheia CI
 on:
   pull_request:
     branches: [master]
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled, closed]
   merge_group:
   workflow_dispatch:
 
@@ -33,6 +33,7 @@ jobs:
   # invalid first submission from allocating Review/Unit/Stage 2 runners.
   change-contract-preflight:
     name: Change Contract preflight for deep CI
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     permissions:
       contents: read
       pull-requests: read
@@ -609,7 +610,7 @@ jobs:
       - review-coverage
       - review-node
       - review-native
-    if: ${{ always() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
@@ -692,7 +693,7 @@ jobs:
       - review-coverage
       - review-node
       - review-native
-    if: ${{ always() && needs.plan.outputs.required_full_ci == 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.plan.outputs.required_full_ci == 'true' }}
     runs-on: [pr-ephemeral]
     timeout-minutes: 5
     steps:
