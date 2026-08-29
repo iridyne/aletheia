@@ -171,11 +171,16 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
 @pytest.mark.parametrize(
     ("field", "value", "violation"),
     [
+        ("order_type", "market", "entry_plan_order_type_mismatch"),
         ("stop_price", 99, "entry_plan_stop_price_mismatch"),
         ("take_profit", 106, "entry_plan_take_profit_mismatch"),
+        ("expected_horizon_hours", 5, "entry_plan_expected_horizon_hours_mismatch"),
         ("order_tactic", "POST_ONLY_LIMIT", "entry_plan_order_tactic_mismatch"),
         ("time_in_force", "GTC", "entry_plan_time_in_force_mismatch"),
         ("post_only", True, "entry_plan_post_only_mismatch"),
+        ("bbo_reference", "bid", "entry_plan_bbo_reference_mismatch"),
+        ("max_slippage_bps", 9, "entry_plan_max_slippage_bps_mismatch"),
+        ("worst_price", 100.5, "entry_plan_worst_price_mismatch"),
         ("price", 102, "entry_plan_entry_envelope_exceeded"),
     ],
 )
@@ -216,6 +221,119 @@ def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(
     )
 
     assert violation in violations
+
+
+def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.risk import engine
+
+    plan = _plan()
+    payload, digest = entry_plan_payload(plan)
+    monkeypatch.setattr(
+        engine,
+        "get_entry_plan",
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+    )
+    monkeypatch.setattr(
+        engine,
+        "get_candidate_planning_generation",
+        lambda _generation_id: {"is_current": 1},
+    )
+    resolved = SimpleNamespace(
+        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
+        policy_hash="risk-hash",
+    )
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=100,
+        ask=100.05,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    assert engine._entry_plan_authority_violations(
+        proposal, capital_base=1_000, resolved_policy=resolved
+    ) == []
+    reduced = proposal.model_copy(
+        update={"quantity": proposal.quantity / 2, "leverage": 1}
+    )
+    assert engine._entry_plan_authority_violations(
+        reduced, capital_base=1_000, resolved_policy=resolved
+    ) == []
+
+
+def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.risk import engine
+
+    original = _plan()
+    changed = EntryPlan.model_validate(
+        {
+            **original.model_dump(),
+            "plan_id": "new-plan-version",
+            "target_price": 106,
+            "expected_horizon_hours": 6,
+        }
+    )
+    payload, digest = entry_plan_payload(changed)
+    monkeypatch.setattr(
+        engine,
+        "get_entry_plan",
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+    )
+    monkeypatch.setattr(
+        engine,
+        "get_candidate_planning_generation",
+        lambda _generation_id: {"is_current": 1},
+    )
+    proposal = build_entry_plan_order_intent(
+        changed,
+        bid=100,
+        ask=100.05,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    resolved = SimpleNamespace(
+        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
+        policy_hash="risk-hash",
+    )
+
+    assert engine._entry_plan_authority_violations(
+        proposal, capital_base=1_000, resolved_policy=resolved
+    ) == []
+
+
+def test_canonical_risk_requires_exact_resting_maker_limit(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.risk import engine
+
+    plan = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    payload, digest = entry_plan_payload(plan)
+    monkeypatch.setattr(
+        engine,
+        "get_entry_plan",
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "waiting"},
+    )
+    monkeypatch.setattr(
+        engine,
+        "get_candidate_planning_generation",
+        lambda _generation_id: {"is_current": 1},
+    )
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=99.9,
+        ask=100.1,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+    ).model_copy(update={"price": 100.5})
+    resolved = SimpleNamespace(
+        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
+        policy_hash="risk-hash",
+    )
+
+    assert "entry_plan_limit_price_mismatch" in engine._entry_plan_authority_violations(
+        proposal, capital_base=1_000, resolved_policy=resolved
+    )
 
 
 def test_canonical_risk_rejects_superseded_or_expired_entry_plan(monkeypatch):

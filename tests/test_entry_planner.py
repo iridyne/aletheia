@@ -435,6 +435,24 @@ def test_stale_llm_result_cannot_activate_entry_plan():
     assert repo.get_entry_plan(plan.plan_id) is None
 
 
+def test_ineligible_candidate_cannot_complete_claimed_entry_plan():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert repo.claim_next_candidate_planning("slow-owner") is not None
+    repo.execute_write(
+        "UPDATE universe_members SET execution_eligible=0 WHERE id=?", (candidate.id,)
+    )
+
+    plan = _plan(generation)
+    status, record = repo.complete_candidate_planning_with_plan(
+        generation["id"], "slow-owner", plan
+    )
+
+    assert status == "stale"
+    assert record is None
+    assert repo.get_entry_plan(plan.plan_id) is None
+
+
 def test_expired_planning_claim_is_recovered_after_restart():
     candidate = _candidate()
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)

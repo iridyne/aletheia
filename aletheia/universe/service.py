@@ -91,6 +91,44 @@ def _execution_eligible(member: object) -> bool:
     return bool(getattr(member, "execution_eligible", True))
 
 
+def _ensure_planning_generations(
+    members,
+    *,
+    soft_lease_sec: int,
+    max_attention_age_sec: int,
+    now: datetime,
+) -> tuple[set[str], set[str], int]:
+    """Publish planning authority only for execution-eligible Candidates."""
+
+    selected: set[str] = set()
+    created_ids: set[str] = set()
+    created_count = 0
+    for member in members:
+        if not _execution_eligible(member):
+            continue
+        candidate_id = str(member["id"] if isinstance(member, dict) else member.id)
+        try:
+            generation, created = repo.ensure_candidate_planning_generation(
+                candidate_id,
+                soft_lease_sec=soft_lease_sec,
+                max_attention_age_sec=max_attention_age_sec,
+                now=now,
+            )
+        except ValueError as exc:
+            logger.info(
+                "Candidate unavailable to Entry Planner: candidate=%s reason=%s",
+                candidate_id,
+                exc,
+            )
+            continue
+        generation_id = str(generation["id"])
+        selected.add(generation_id)
+        if created:
+            created_ids.add(generation_id)
+            created_count += 1
+    return selected, created_ids, created_count
+
+
 async def _compute_twin_shadow_nonfatal(
     builder,
     inputs: tuple,
@@ -1005,26 +1043,15 @@ class UniverseService:
                         "Registered %d experiment candidate outcome row(s) across full arms",
                         inserted_experiment_outcomes,
                     )
-                planning_generations_created = 0
-                selected_generation_ids: set[str] = set()
-                new_generation_ids: set[str] = set()
                 with _atomic_universe_publication():
-                    for member in repo.list_universe_members(prev_snapshot_id, limit=500):
-                        if not _execution_eligible(member):
-                            continue
-                        try:
-                            generation, created = repo.ensure_candidate_planning_generation(
-                                member["id"],
-                                soft_lease_sec=cfg.universe.entry_ttl_sec,
-                                max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
-                                now=now,
-                            )
-                        except ValueError:
-                            continue
-                        selected_generation_ids.add(str(generation["id"]))
-                        if created:
-                            new_generation_ids.add(str(generation["id"]))
-                        planning_generations_created += int(created)
+                    selected_generation_ids, new_generation_ids, planning_generations_created = (
+                        _ensure_planning_generations(
+                            repo.list_universe_members(prev_snapshot_id, limit=500),
+                            soft_lease_sec=cfg.universe.entry_ttl_sec,
+                            max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
+                            now=now,
+                        )
+                    )
                     repo.reconcile_candidate_attention(
                         selected_generation_ids,
                         eligible_identity_keys=eligible_attention_identities,
@@ -1137,30 +1164,14 @@ class UniverseService:
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)
 
-                planning_generations_created = 0
-                selected_generation_ids: set[str] = set()
-                new_generation_ids: set[str] = set()
-                for member in member_models:
-                    if not _execution_eligible(member):
-                        continue
-                    try:
-                        generation, created = repo.ensure_candidate_planning_generation(
-                            member.id,
-                            soft_lease_sec=cfg.universe.entry_ttl_sec,
-                            max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
-                            now=now,
-                        )
-                    except ValueError as exc:
-                        logger.info(
-                            "Candidate unavailable to Entry Planner: candidate=%s reason=%s",
-                            member.id,
-                            exc,
-                        )
-                    else:
-                        selected_generation_ids.add(str(generation["id"]))
-                        if created:
-                            new_generation_ids.add(str(generation["id"]))
-                        planning_generations_created += int(created)
+                selected_generation_ids, new_generation_ids, planning_generations_created = (
+                    _ensure_planning_generations(
+                        member_models,
+                        soft_lease_sec=cfg.universe.entry_ttl_sec,
+                        max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
+                        now=now,
+                    )
+                )
 
                 repo.reconcile_candidate_attention(
                     selected_generation_ids,

@@ -225,15 +225,82 @@ def test_filters_non_execution_eligible(svc, enabled_cfg):
     assert members[0]["symbol"] == "GOOD/USDT"
 
 
-def test_execution_ineligible_members_cannot_enter_planning_queue():
-    from types import SimpleNamespace
+def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
 
-    from aletheia.universe.service import _execution_eligible
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.service import _ensure_planning_generations
 
-    assert _execution_eligible({"execution_eligible": True}) is True
-    assert _execution_eligible({"execution_eligible": False}) is False
-    assert _execution_eligible(SimpleNamespace(execution_eligible=False)) is False
-    assert _execution_eligible(SimpleNamespace()) is True
+    now = datetime.now(timezone.utc)
+    first_snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
+    repo.insert_universe_snapshot(first_snapshot)
+    ineligible = UniverseMember(
+        snapshot_id=first_snapshot.id,
+        asset_id="asset-btc",
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        rank=1,
+        total_score=90,
+        scanner_family="momentum",
+        scanner_direction="long",
+        execution_eligible=False,
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    repo.insert_candidate(ineligible)
+
+    assert _ensure_planning_generations(
+        [ineligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now
+    ) == (set(), set(), 0)
+    assert repo.get_candidate(ineligible.id)["execution_eligible"] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 0
+
+    # Simulate a generation written by the pre-fix runtime, then restore the
+    # Candidate's durable ineligible evidence. It must be invisible to claims.
+    repo.execute_write(
+        "UPDATE universe_members SET execution_eligible=1 WHERE id=?", (ineligible.id,)
+    )
+    legacy, _ = repo.ensure_candidate_planning_generation(ineligible.id, now=now)
+    repo.execute_write(
+        "UPDATE universe_members SET execution_eligible=0 WHERE id=?", (ineligible.id,)
+    )
+    assert repo.count_pending_candidate_planning(now=now) == 0
+    assert repo.claim_next_candidate_planning("legacy-owner", now=now) is None
+    assert repo.candidate_attention_is_active(legacy["id"], now=now) is False
+
+    recovery_snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
+    repo.insert_universe_snapshot(recovery_snapshot)
+    eligible = ineligible.model_copy(
+        update={
+            "id": "eligible-recovery",
+            "snapshot_id": recovery_snapshot.id,
+            "execution_eligible": True,
+        }
+    )
+    repo.insert_candidate(eligible)
+
+    selected, created_ids, created_count = _ensure_planning_generations(
+        [eligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now
+    )
+    assert created_count == 1
+    assert selected == created_ids
+    generation_id = next(iter(selected))
+    assert generation_id != legacy["id"]
+    assert repo.get_candidate_planning_generation(legacy["id"])["is_current"] == 0
+    assert repo.get_candidate_planning_generation(generation_id)["last_candidate_id"] == eligible.id
+
+    selected_again, created_again, count_again = _ensure_planning_generations(
+        [eligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now
+    )
+    assert selected_again == {generation_id}
+    assert created_again == set()
+    assert count_again == 0
+    assert get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 2
 
 
 def test_fallback_all_expired(svc, enabled_cfg):

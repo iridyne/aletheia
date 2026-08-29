@@ -8489,7 +8489,9 @@ def candidate_attention_is_active(
     timestamp = current.isoformat()
     expire_candidate_attention(now=current)
     row = get_db().execute(
-        "SELECT * FROM candidate_planning_generations WHERE id=? AND is_current=1",
+        "SELECT pg.* FROM candidate_planning_generations pg "
+        "JOIN universe_members um ON um.id=pg.last_candidate_id "
+        "WHERE pg.id=? AND pg.is_current=1 AND um.execution_eligible=1",
         (generation_id,),
     ).fetchone()
     return bool(row and _candidate_attention_valid(dict(row), timestamp))
@@ -8593,6 +8595,8 @@ def ensure_candidate_planning_generation(
         candidate = get_candidate(candidate_id)
         if candidate is None:
             raise ValueError("candidate_not_found")
+        if not bool(candidate.get("execution_eligible")):
+            raise ValueError("candidate_execution_ineligible")
         planning_key, planning_identity = candidate_planning_identity(candidate)
         existing_row = (
             get_db()
@@ -8603,7 +8607,25 @@ def ensure_candidate_planning_generation(
             .fetchone()
         )
         existing = dict(existing_row) if existing_row else None
-        if existing is not None and not manual_replan and existing["planning_identity"] == planning_identity:
+        existing_candidate = (
+            get_candidate(str(existing["last_candidate_id"])) if existing is not None else None
+        )
+        eligibility_recovered = bool(
+            existing is not None
+            and (
+                existing.get("attention_terminal_reason") == "admission_lost"
+                or (
+                    existing_candidate is not None
+                    and not bool(existing_candidate.get("execution_eligible"))
+                )
+            )
+        )
+        if (
+            existing is not None
+            and not manual_replan
+            and not eligibility_recovered
+            and existing["planning_identity"] == planning_identity
+        ):
             execute_write(
                 "UPDATE candidate_planning_generations SET last_candidate_id=?, updated_at=? WHERE id=?",
                 (candidate_id, timestamp, existing["id"]),
@@ -8611,7 +8633,13 @@ def ensure_candidate_planning_generation(
             existing.update(last_candidate_id=candidate_id, updated_at=timestamp)
             return existing, False
 
-        reason = "manual_replan" if manual_replan else "incompatible_planning_generation"
+        reason = (
+            "manual_replan"
+            if manual_replan
+            else "execution_eligibility_recovered"
+            if eligibility_recovered
+            else "incompatible_planning_generation"
+        )
         if existing is not None:
             execute_write(
                 "UPDATE candidate_planning_generations SET is_current=0, "
@@ -8669,6 +8697,7 @@ def claim_next_candidate_planning(
                 "SELECT pg.* FROM candidate_planning_generations pg "
                 "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
                 "WHERE pg.is_current=1 AND pg.attention_status='active' "
+                "AND (um.id IS NULL OR um.execution_eligible=1) "
                 "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
                 "AND pg.attempt_count<? AND (pg.status='pending' "
                 "OR (pg.status='unavailable' "
@@ -8688,7 +8717,9 @@ def claim_next_candidate_planning(
             "owner_token=?, claim_expires_at=?, retry_not_before=NULL, "
             "attempt_count=attempt_count+1, updated_at=? WHERE id=? AND is_current=1 "
             "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
-            "AND attempt_count<? AND (status='pending' "
+            "AND attempt_count<? AND NOT EXISTS (SELECT 1 FROM universe_members um "
+            "WHERE um.id=candidate_planning_generations.last_candidate_id "
+            "AND um.execution_eligible=0) AND (status='pending' "
             "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
             "OR (status='planning' AND claim_expires_at<=?))",
             (
@@ -8727,11 +8758,14 @@ def count_pending_candidate_planning(
     row = (
         get_db()
         .execute(
-            "SELECT COUNT(*) FROM candidate_planning_generations WHERE is_current=1 "
-            "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
-            "AND attempt_count<? AND (status='pending' "
-            "OR (status='unavailable' AND (retry_not_before IS NULL OR retry_not_before<=?)) "
-            "OR (status='planning' AND claim_expires_at<=?))",
+            "SELECT COUNT(*) FROM candidate_planning_generations pg "
+            "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "WHERE pg.is_current=1 AND pg.attention_status='active' "
+            "AND (um.id IS NULL OR um.execution_eligible=1) "
+            "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
+            "AND pg.attempt_count<? AND (pg.status='pending' "
+            "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
+            "OR (pg.status='planning' AND pg.claim_expires_at<=?))",
             (timestamp, timestamp, max_attempts, timestamp, timestamp),
         )
         .fetchone()
@@ -8758,7 +8792,9 @@ def complete_candidate_planning_no_plan(
         "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
         "attention_terminal_reason='no_plan', updated_at=? WHERE id=? AND is_current=1 "
         "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
-        "AND status='planning' AND owner_token=?",
+        "AND EXISTS (SELECT 1 FROM universe_members um "
+        "WHERE um.id=candidate_planning_generations.last_candidate_id "
+        "AND um.execution_eligible=1) AND status='planning' AND owner_token=?",
         (payload, timestamp, timestamp, timestamp, generation_id, timestamp, timestamp, owner_token),
     )
     if updated.rowcount != 1:
@@ -8845,14 +8881,21 @@ def complete_candidate_planning_with_plan(
         row = (
             get_db()
             .execute(
-                "SELECT * FROM candidate_planning_generations WHERE id=?",
+                "SELECT pg.*, um.execution_eligible AS candidate_execution_eligible "
+                "FROM candidate_planning_generations pg "
+                "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+                "WHERE pg.id=?",
                 (generation_id,),
             )
             .fetchone()
         )
         if row is None or row["owner_token"] != owner_token:
             return "claim_lost", None
-        if not bool(row["is_current"]) or not _candidate_attention_valid(dict(row), timestamp):
+        if (
+            not bool(row["is_current"])
+            or not bool(row["candidate_execution_eligible"])
+            or not _candidate_attention_valid(dict(row), timestamp)
+        ):
             execute_write(
                 "UPDATE candidate_planning_generations SET result_kind='stale_result', "
                 "result_json=?, owner_token=NULL, claim_expires_at=NULL, "
@@ -8896,7 +8939,9 @@ def complete_candidate_planning_with_plan(
             "attention_terminal_reason='entry_plan_created', updated_at=? "
             "WHERE id=? AND is_current=1 AND attention_status='active' "
             "AND soft_expires_at>? AND hard_expires_at>? "
-            "AND status='planning' AND owner_token=?",
+            "AND EXISTS (SELECT 1 FROM universe_members um "
+            "WHERE um.id=candidate_planning_generations.last_candidate_id "
+            "AND um.execution_eligible=1) AND status='planning' AND owner_token=?",
             (
                 payload,
                 plan.plan_id,
