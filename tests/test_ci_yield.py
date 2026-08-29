@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 import scripts.ci_yield as ci_yield
 
 
@@ -55,7 +57,18 @@ def test_failed_test_lane_stays_unknown_without_bounded_log_evidence() -> None:
     assert failure["confidence"] == "unknown"
 
 
-def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("metadata_started_at", "expected_next_event"),
+    [
+        ("2026-08-24T00:00:30Z", "pr_body_only_repair"),
+        ("2026-08-24T00:01:30Z", "same_head_rerun"),
+    ],
+)
+def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(
+    monkeypatch,
+    metadata_started_at: str,
+    expected_next_event: str,
+) -> None:
     head = "a" * 40
     earlier = "b" * 40
     pr = _pr()
@@ -90,7 +103,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             "name": ci_yield.METADATA_WORKFLOW,
             "head_sha": head,
             "run_attempt": 1,
-            "created_at": "2026-08-24T00:00:30Z",
+            "created_at": metadata_started_at,
             "pull_requests": [{"number": 2171}],
         },
         {
@@ -130,9 +143,9 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             },
             "actions/runs/21/attempts/1": {
                 "head_sha": head,
-                "created_at": "2026-08-24T00:00:30Z",
-                "run_started_at": "2026-08-24T00:00:30Z",
-                "updated_at": "2026-08-24T00:00:40Z",
+                "created_at": metadata_started_at,
+                "run_started_at": metadata_started_at,
+                "updated_at": metadata_started_at,
                 "conclusion": "success",
             },
         }
@@ -203,7 +216,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
         if item["workflow_run_id"] == 10 and item["run_attempt"] == 2
     )
     assert body_repair["phase1_failure_category"] == "preflight_metadata"
-    assert body_repair["next_event"] == "pr_body_only_repair"
+    assert body_repair["next_event"] == expected_next_event
     assert body_repair["next_event_confidence"] == "high"
     assert repaired["next_event"] == "merge"
     assert repaired["queued_at"] is None

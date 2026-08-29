@@ -100,6 +100,10 @@ def _seconds(start: str | None, end: str | None) -> float | None:
     return max(0.0, (right - left).total_seconds()) if left and right else None
 
 
+def _attempt_sequence_at(attempt: dict[str, Any]) -> datetime | None:
+    return _dt(attempt.get("queued_at")) or _dt(attempt.get("started_at"))
+
+
 def _logical_lane(name: str | None) -> str:
     return re.sub(r" \(\d+\)$", "", str(name or "unknown"))
 
@@ -412,8 +416,7 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
     primary = sorted(
         (item for item in attempts if item["workflow_name"] == PRIMARY_WORKFLOW),
         key=lambda item: (
-            _dt(item["queued_at"])
-            or _dt(item["started_at"])
+            _attempt_sequence_at(item)
             or datetime.min.replace(tzinfo=UTC),
             item["run_attempt"],
         ),
@@ -422,13 +425,14 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
     for index, attempt in enumerate(primary):
         if index + 1 < len(primary):
             following = primary[index + 1]
-            between = [
+            following_start = _attempt_sequence_at(following)
+            between = [] if following_start is None else [
                 item for item in metadata
                 if item["head_sha"] == attempt["head_sha"]
                 and item["result"] == "success"
                 and (_dt(attempt["completed_at"]) or opened)
                 <= (_dt(item["queued_at"]) or opened)
-                <= (_dt(following["queued_at"]) or merged)
+                <= following_start
             ]
             if (
                 attempt["phase1_failure_category"] == "preflight_metadata"
