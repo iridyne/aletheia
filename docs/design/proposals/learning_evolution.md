@@ -10,11 +10,15 @@ supersedes: []
 
 > Proposal status: accepted design, not a product implementation claim.
 > Current fact: the shared measured lifecycle is implemented for
-> `universe_family_calibration`; all other declared
-> treatment hooks remain static and measurement-unsupported. The bounded
-> owner-facing `lco-v1` summary and current Contribution surface are implemented;
-> the full workbench remains a target in the separate observability Proposal. Production positive contribution is
-> still an empirical result, not a support claim.
+> `universe_family_calibration`; all other declared treatment hooks remain static
+> or measurement-unsupported. The bounded owner-facing `lco-v1` summary is
+> implemented. T0 evidence, append-only nomination, deterministic compiler and
+> preflight, existing-ledger Shadow handoff, read-only Economic Knowledge,
+> evidence-driven death, Knowledge Yield, and advisory #1093 Meta-Evolution are
+> implemented under the current Contract. The full workbench remains a target in
+> the separate observability Proposal. No natural current positive Economic
+> Knowledge or production contribution is claimed; deterministic Paper fixtures
+> prove code semantics only.
 > Scope: every Learning-adjacent producer, store, consumer, outcome source, scheduler,
 > report, learned ranker/filter, prompt channel, guard, advisory skill, sizing policy,
 > causal-attribution path, and automatic rollback.

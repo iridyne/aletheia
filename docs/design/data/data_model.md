@@ -118,11 +118,12 @@ automatic close or stop change.
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity. Explicit offline compact may cluster the composite PK as `WITHOUT ROWID`; the logical schema is unchanged. | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
-### C-bis. Measured Learning Ledger (8 tables)
+### C-bis. Measured Learning Ledger (9 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
+| `learning_hypothesis_nominations` | Append-only generation/research lineage; many attempts may resolve to one canonical behavior hypothesis | nomination id, behavior fingerprint, source bundle hash, optional hypothesis id, research/publication status, immutable envelope |
 | `learning_experiments` | One isolated shadow or paper stage; a `registered` experiment's first exposure atomically/idempotently activates it and anchors `started_at` to earliest durable `exposed_at` | experiment_id, hypothesis_id, parent experiment, activation verdict, stage generation, assignment salt, allocation, status, started_at |
 | `learning_exposures` | Immutable record of one actual/control influence; `assignment_unit_key` persists the randomized cluster independently from member candidate identity | dedup_key, assignment, assignment_unit_key, entity ids, before/after/manifest, outcome_candidate_key, experiment stage, policy epoch, behavior_contract_hash, provenance code_commit |
 | `learning_contribution_verdicts` | Append-only measured verdict window; recurring monitoring is descriptive and only a consumed confirmatory row may be authority-eligible | stage, unique cluster-arm counts, delta/interval, harm metrics, metric_version, behavior_contract_hash, inference role/plan/cutoff identity, measurement verdict, created_at |
@@ -537,9 +538,10 @@ trust-bearing chain and are absent from `_PRUNABLE`.
 
 `ps_positions`.
 
-Measured Learning Ledger (8): `learning_experiments` · `learning_exposures` ·
-`learning_hypotheses` · `learning_policy_epochs` · `learning_contribution_verdicts` ·
-`learning_inference_decisions` · `learning_lifecycle_events` · `learning_job_health`.
+Measured Learning Ledger (9): `learning_experiments` · `learning_exposures` ·
+`learning_hypotheses` · `learning_hypothesis_nominations` · `learning_policy_epochs` ·
+`learning_contribution_verdicts` · `learning_inference_decisions` ·
+`learning_lifecycle_events` · `learning_job_health`.
 
 > **Invariant**: the causal record chain (§2) + the learning ledger (§C-bis) are permanent.
 > Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a

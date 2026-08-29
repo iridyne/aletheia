@@ -57,15 +57,18 @@ Enforced by:
 - Pre/post baseline row-count invariant captured by the backfill script;
   any mismatch aborts and restores from backup.
 
-### 2.2 Measured Learning Ledger (8 tables, permanent)
+### 2.2 Measured Learning Ledger (9 tables, permanent)
 
 `learning_experiments`, `learning_exposures`, `learning_hypotheses`,
-`learning_policy_epochs`, `learning_contribution_verdicts`,
-`learning_inference_decisions`, `learning_lifecycle_events`, `learning_job_health`.
+`learning_hypothesis_nominations`, `learning_policy_epochs`,
+`learning_contribution_verdicts`, `learning_inference_decisions`,
+`learning_lifecycle_events`, `learning_job_health`.
 
 Deleting any supporting exposure silently mutates verdict replay identity.
 Deleting a fixed-look plan or cutoff would also erase the proof that an
 authority-eligible verdict was prospective and consumed once.
+Deleting a nomination would erase rejected/advisory generation cost and many-to-one
+behavior lineage used by Knowledge Yield.
 `learning_lifecycle_events` are mirror-written to `audit_events`, so deletion
 breaks the audit invariant.
 

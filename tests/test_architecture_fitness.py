@@ -159,13 +159,12 @@ def test_audit_chain_12_tables_not_in_prunable_whitelist():
     )
 
 
-def test_learning_8_tables_not_in_prunable_whitelist():
-    """AGENTS.md hard rule: the 8 learning tables must NEVER be prunable.
+def test_learning_9_tables_not_in_prunable_whitelist():
+    """AGENTS.md hard rule: the 9 learning tables must NEVER be prunable.
 
-    They are the persistent record of every hypothesis, experiment, exposure,
-    contribution verdict and policy epoch. Losing rows breaks paired-cohort
-    read reproducibility and epoch replay, so retention/prune paths must
-    never touch them.
+    They retain every nomination, hypothesis, experiment, exposure, contribution
+    verdict, fixed-look decision, lifecycle event, job-health record, and policy
+    epoch. Losing rows breaks causal replay and generation-cost accounting.
     """
     from aletheia.storage.repositories import _PRUNABLE
 
@@ -173,6 +172,7 @@ def test_learning_8_tables_not_in_prunable_whitelist():
         "learning_experiments",
         "learning_exposures",
         "learning_hypotheses",
+        "learning_hypothesis_nominations",
         "learning_policy_epochs",
         "learning_contribution_verdicts",
         "learning_inference_decisions",

@@ -21,6 +21,11 @@ from aletheia.learning.hypotheses import (
     ResearchStatus,
     ResearchText,
 )
+from aletheia.learning.t0_context import (
+    T0ContextEnvelopeV1,
+    assess_t0_foundation,
+)
+from aletheia.learning.t0_coverage import get_t0_coverage_contract
 from aletheia.model_provider.router import get_provider_for_tier
 
 _MISSING_CONTEXT_DIMENSIONS = {
@@ -70,6 +75,9 @@ async def research_learning_hypothesis(
     evidence: dict[str, Any],
     proposed_scope: dict[str, Any],
     target_horizon: str,
+    path_id: str | None = None,
+    consumer: str | None = None,
+    t0_envelopes: Iterable[T0ContextEnvelopeV1] | None = None,
     max_counterfactual_checks: int = 3,
     deadline: float | None = None,
 ) -> HypothesisResearchEvidenceV1:
@@ -83,9 +91,20 @@ async def research_learning_hypothesis(
         raise ValueError("hypothesis research requires a source artifact identity")
 
     _target_horizon_hours(target_horizon)
-    recorded, missing, outcome_ids, cases = _assemble_exact_context(
-        artifact_ids, target_horizon,
-    )
+    if path_id is not None or consumer is not None or t0_envelopes is not None:
+        if not path_id or not consumer:
+            raise ValueError("path-aware research requires path_id and consumer")
+        recorded, missing, outcome_ids, cases = _assemble_t0_envelope_context(
+            path_id=path_id,
+            consumer=consumer,
+            envelopes=list(t0_envelopes or []),
+        )
+    else:
+        # Historical direct callers remain readable, but production nomination
+        # callers use the canonical path-aware branch above.
+        recorded, missing, outcome_ids, cases = _assemble_exact_context(
+            artifact_ids, target_horizon,
+        )
     try:
         declared_case_count = int(evidence["case_count"])
     except (KeyError, TypeError, ValueError):
@@ -230,6 +249,72 @@ async def research_learning_hypothesis(
             reasoning=review.reasoning,
         ),
         research_status=status,
+    )
+
+
+def _assemble_t0_envelope_context(
+    *,
+    path_id: str,
+    consumer: str,
+    envelopes: list[T0ContextEnvelopeV1],
+) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
+    contract = get_t0_coverage_contract(path_id)
+    if not envelopes:
+        return {}, ["canonical_t0_envelope_unavailable"], [], []
+    recorded: dict[str, list[dict[str, Any]]] = {}
+    missing: list[str] = []
+    outcome_ids: list[str] = []
+    cases: list[dict[str, Any]] = []
+    roots: set[str] = set()
+    for envelope in envelopes:
+        if envelope.path_id != path_id:
+            missing.append(f"t0_path_mismatch:{envelope.anchor_entity_id}")
+            continue
+        if envelope.consumer != consumer or envelope.consumer_stage != contract.consumer_stage:
+            missing.append(f"t0_consumer_stage_mismatch:{envelope.anchor_entity_id}")
+            continue
+        if set(envelope.required_domains) != set(contract.required_domains):
+            missing.append(f"t0_coverage_contract_mismatch:{envelope.anchor_entity_id}")
+            continue
+        duplicate_root = envelope.root_causal_identity in roots
+        roots.add(envelope.root_causal_identity)
+        assessment = assess_t0_foundation(
+            envelope,
+            root_outcome_dedup_ok=not duplicate_root,
+        )
+        if assessment.status != "eligible_for_hypothesis_research":
+            missing.extend(assessment.reasons or ["t0_foundation_not_eligible"])
+            continue
+        for domain in envelope.domains:
+            if domain.state not in {"available", "not_applicable"}:
+                continue
+            recorded.setdefault(domain.domain, []).append({
+                "anchor_entity_id": envelope.anchor_entity_id,
+                "source_class": domain.source_class,
+                "state": domain.state,
+                "value": _bounded(domain.values),
+                "source_refs": domain.source_refs,
+            })
+        outcome_ids.append(envelope.root_causal_identity)
+        cases.append({
+            "source_artifact_id": envelope.anchor_entity_id,
+            "position_id": (
+                envelope.root_causal_identity.removeprefix("position:")
+                if envelope.root_causal_identity.startswith("position:")
+                else ""
+            ),
+            "opportunity_id": (
+                envelope.anchor_entity_id
+                if envelope.t0_anchor_kind == "opportunity_generation"
+                else ""
+            ),
+            "opened_at": envelope.anchor_at,
+        })
+    return (
+        {key: recorded[key] for key in sorted(recorded)},
+        list(dict.fromkeys(missing)),
+        list(dict.fromkeys(outcome_ids)),
+        cases,
     )
 
 
