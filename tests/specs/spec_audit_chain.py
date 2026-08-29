@@ -540,7 +540,9 @@ def test_funding_audit_reconciler_bounds_jsonl_file_lock(tmp_path, monkeypatch):
     assert result["pending"] == 1
 
 
-def test_deduplicated_audit_write_bounds_in_process_mutex(monkeypatch):
+def test_deduplicated_audit_write_bounds_in_process_mutex(
+    audit_tmp, monkeypatch,
+):
     import aletheia.files.jsonl as jsonl_mod
 
     class BusyLock:
