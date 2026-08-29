@@ -194,7 +194,7 @@ jobs:
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" gitleaks
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            pr_base="${{ steps.changes.outputs.base }}"
+            pr_base="${{ needs.plan.outputs.base_sha }}"
             if [ -z "$pr_base" ]; then
               echo "missing resolved pull-request base" >&2
               exit 1

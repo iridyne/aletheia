@@ -65,14 +65,11 @@ def test_frontend_review_typechecks_once_via_production_build() -> None:
 
 
 def test_settings_schema_changes_run_the_generated_contract_check() -> None:
-    workflow = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    core = workflow["jobs"]["review-core"]
-    detector = next(step for step in core["steps"] if step["name"] == "Detect affected review surfaces")
-    script = str(detector["run"])
+    planner = (ROOT / "scripts" / "ci_plan.py").read_text(encoding="utf-8")
 
     for path in (
         "aletheia/server/routes/settings.py",
-        "aletheia/config/schema.py",
+        "aletheia/config/",
         "scripts/export_openapi_schema.py",
     ):
-        assert path in script
+        assert path in planner
