@@ -38,8 +38,6 @@ def test_manual_full_validation_keeps_repository_test_surfaces_available() -> No
     steps = {step["name"]: step for step in job["steps"]}
     assert "uv run ruff check aletheia/ tests/" in steps["Lint Python"]["run"]
     assert "uv run pytest tests/" in steps["Run Python regression suite serially"]["run"]
-    assert "--maxfail=1" in steps["Run Python regression suite serially"]["run"]
-    assert "--ignore=tests/simulation" in steps["Run Python regression suite serially"]["run"]
 
     dashboard = steps["Test and build dashboard"]["run"]
     assert "npm ci" in dashboard

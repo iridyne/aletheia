@@ -47,7 +47,7 @@ jobs:
       - name: Run Python regression suite serially
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-manual-full-${{ github.run_id }}-${{ github.run_attempt }}
-        run: uv run pytest tests/ -q --tb=short --timeout=120 --maxfail=1 --ignore=tests/simulation
+        run: uv run pytest tests/ -q --tb=short --timeout=120
 
       - name: Test and build dashboard
         working-directory: frontend
