@@ -8,14 +8,14 @@ export const chartTheme = {
   downColor: '#ff5d6c',
   lineColor: '#22d3ee',
   accountEquityRaw: '#22d3ee',
-  accountEquityAdjusted: '#a3e635',
-  capitalDeposit: '#a3e635',
-  capitalWithdrawal: '#fb7185',
+  accountEquityAdjusted: '#a3e635',  /* --chart-line-alt */
+  capitalDeposit: '#a3e635',         /* --chart-line-alt */
+  capitalWithdrawal: '#fb7185',      /* --chart-withdrawal */
   areaTopColor: 'rgba(34, 211, 238, 0.30)',   // --accent fade (top)
   areaBottomColor: 'rgba(34, 211, 238, 0.02)', // --accent fade (bottom)
   markerBuy: '#2ee6a8',
   markerSell: '#ff5d6c',
-  markerStopLong: '#f59e0b',
+  markerStopLong: '#f59e0b',         /* --chart-stop-long */
   markerStopShort: '#22d3ee',
   indicatorBlue: '#4aa3ff',
 } as const
