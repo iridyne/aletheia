@@ -404,7 +404,7 @@ def _evaluate_one(
             ),
             "invalidated",
         )
-    control, treatment = adapter.rebuild(experiment)
+    control, treatment = adapter.rebuild(experiment, as_of_at=timestamp)
     if control is None or treatment is None:
         return (
             _empty_evaluation(
@@ -537,7 +537,7 @@ class _FilterAdapter:
             tuple[dict[str, Any], dict[str, Any]] | None,
         ],
         rebuild: Callable[
-            [dict[str, Any]],
+            [dict[str, Any], str],
             tuple[dict[str, Any] | None, dict[str, Any] | None],
         ],
     ) -> None:
@@ -570,6 +570,8 @@ def _family_ttl_check(
 
 def _family_ttl_rebuild(
     experiment: dict[str, Any],
+    *,
+    as_of_at: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     control_param = _json_dict(experiment["control_parameter"])
     treatment_param = _json_dict(experiment["treatment_parameter"])
@@ -588,6 +590,7 @@ def _family_ttl_rebuild(
         current_ttl_sec=control_ttl,
         alternative_ttls=[treatment_ttl],
         evaluated_after=experiment["started_at"],
+        as_of_at=as_of_at,
         min_samples=int(experiment["min_samples"]),
     )
     if not replay.get("alternatives"):
@@ -635,6 +638,8 @@ def _observer_check(
 
 def _observer_rebuild(
     experiment: dict[str, Any],
+    *,
+    as_of_at: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     treatment_param = _json_dict(experiment["treatment_parameter"])
     try:
@@ -648,6 +653,7 @@ def _observer_rebuild(
         direction=experiment["direction"],
         market_type=experiment["market_type"],
         evaluated_since=experiment["started_at"],
+        as_of_at=as_of_at,
         min_samples=int(experiment["min_samples"]),
     )
     match: dict[str, Any] | None = None
@@ -703,6 +709,8 @@ def _ranker_check(
 
 def _ranker_rebuild(
     experiment: dict[str, Any],
+    *,
+    as_of_at: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     control = str(
         _json_dict(experiment["control_parameter"]).get("minimum_confidence") or ""
@@ -721,6 +729,7 @@ def _ranker_rebuild(
             current_minimum_confidence=control,
             treatment_minimum=treatment,
             min_samples=int(experiment["min_samples"]),
+            as_of_at=as_of_at,
         )
         if frozen is not None:
             match = next((
@@ -736,6 +745,7 @@ def _ranker_rebuild(
         market_type=experiment["market_type"],
         horizon=experiment["horizon"],
         evaluated_after=experiment["started_at"],
+        as_of_at=as_of_at,
         current_minimum_confidence=control,
         min_samples=int(experiment["min_samples"]),
     )

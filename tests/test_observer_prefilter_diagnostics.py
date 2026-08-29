@@ -82,7 +82,7 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
     db = get_db()
     db.execute(
         "UPDATE filter_candidate_outcomes "
-        "SET status='settled', directional_return_pct = "
+        "SET status='settled', settled_at=due_at, directional_return_pct = "
         "CASE WHEN outcome_candidate_key='observer:first:rsi' THEN -0.8 ELSE 2.2 END, "
         "exit_price_usd = "
         "CASE WHEN outcome_candidate_key='observer:first:rsi' THEN 100.8 ELSE 97.8 END, "
@@ -97,11 +97,13 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
     db.commit()
     before = db.total_changes
 
-    report = observer_pre_filter_diagnostics()
+    observed_end = (now + timedelta(days=2)).isoformat()
+    report = observer_pre_filter_diagnostics(as_of_at=observed_end)
 
     assert db.total_changes == before
     assert report["read_only"] is True
     assert report["assignment_policy"] == "first_exposure"
+    assert report["observed_end"] == observed_end
     assert report["row_count"] == 8  # two candidates × four horizons
     assert {
         (row["decision"], row["rule_cohort"])
@@ -252,7 +254,7 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
     ).fetchone()[0]
     db.execute(
         "UPDATE filter_candidate_outcomes "
-        "SET status='settled', directional_return_pct = "
+        "SET status='settled', settled_at=due_at, directional_return_pct = "
         "CASE WHEN outcome_candidate_key='observer:replay:control' THEN -0.8 ELSE 2.2 END, "
         "exit_price_usd = "
         "CASE WHEN outcome_candidate_key='observer:replay:control' THEN 100.8 ELSE 97.8 END, "
@@ -273,6 +275,7 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
         scanner_family="short_bias",
         direction="short",
         market_type="perp",
+        as_of_at=(now + timedelta(days=2)).isoformat(),
         min_samples=1,
     )
 

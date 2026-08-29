@@ -15,6 +15,7 @@ from aletheia.analytics.filter_evidence import (
     current_cost_model_complete_outcome_sql,
     current_cost_model_sql,
 )
+from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 from aletheia.storage.sqlite import get_db
 
 _MAX_REPLAYS = 8
@@ -35,6 +36,15 @@ _OBSERVER_BOOTSTRAP_ROUNDS = 500
 _CONFIDENCE_LADDER = ("speculative", "medium", "high")
 
 
+def _observed_end_iso(value: str | datetime | None) -> str:
+    current = value or datetime.now(timezone.utc)
+    if isinstance(current, str):
+        return current
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc).isoformat()
+
+
 def build_family_ttl_replay(
     *,
     filter_version: str,
@@ -47,6 +57,7 @@ def build_family_ttl_replay(
     alternative_ttls: Iterable[int] | None = None,
     evaluated_since: str | None = None,
     evaluated_after: str | None = None,
+    as_of_at: str | datetime | None = None,
     min_samples: int = 20,
     max_candidates: int = _MAX_CANDIDATES,
 ) -> dict[str, Any]:
@@ -70,6 +81,7 @@ def build_family_ttl_replay(
         raise ValueError("evaluated_since and evaluated_after are mutually exclusive")
 
     current_ttl = max(1, int(current_ttl_sec))
+    observed_end = _observed_end_iso(as_of_at)
     candidate_cap = max(1, min(int(max_candidates), _MAX_CANDIDATES))
     sample_gate = max(1, int(min_samples))
     alternatives = _bounded_alternatives(current_ttl, alternative_ttls)
@@ -84,6 +96,7 @@ def build_family_ttl_replay(
         horizon=horizon_s,
         evaluated_since=evaluated_since,
         evaluated_after=evaluated_after,
+        as_of_at=observed_end,
         cap=candidate_cap,
     )
     rejected_rows, rejected_capped = _load_first_exposure_rows(
@@ -97,6 +110,7 @@ def build_family_ttl_replay(
         horizon=horizon_s,
         evaluated_since=evaluated_since,
         evaluated_after=evaluated_after,
+        as_of_at=observed_end,
         cap=candidate_cap,
     )
 
@@ -157,6 +171,7 @@ def build_family_ttl_replay(
         "horizon": horizon_s,
         "evaluated_since": evaluated_since,
         "evaluated_after": evaluated_after,
+        "observed_end": observed_end,
         "assignment_policy": "first_exposure",
         "current_ttl_sec": current_ttl,
         "candidate_cap": candidate_cap,
@@ -184,6 +199,7 @@ def build_ranker_confidence_replay(
     horizon: str,
     evaluated_since: str | None = None,
     evaluated_after: str | None = None,
+    as_of_at: str | datetime | None = None,
     current_minimum_confidence: str | None = None,
     min_samples: int = 20,
     max_candidates: int = _MAX_CANDIDATES,
@@ -203,6 +219,7 @@ def build_ranker_confidence_replay(
         raise ValueError("evaluated_since and evaluated_after are mutually exclusive")
 
     candidate_cap = max(1, min(int(max_candidates), _MAX_CANDIDATES))
+    observed_end = _observed_end_iso(as_of_at)
     sample_gate = max(1, int(min_samples))
     common = {
         "filter_name": "ranker_confidence_gate",
@@ -214,6 +231,7 @@ def build_ranker_confidence_replay(
         "horizon": horizon_s,
         "evaluated_since": evaluated_since,
         "evaluated_after": evaluated_after,
+        "as_of_at": observed_end,
         "cap": candidate_cap,
     }
     passed_rows, passed_capped = _load_first_exposure_rows(
@@ -270,6 +288,7 @@ def build_ranker_confidence_replay(
         "horizon": horizon_s,
         "evaluated_since": evaluated_since,
         "evaluated_after": evaluated_after,
+        "observed_end": observed_end,
         "assignment_policy": "first_exposure",
         "current_minimum_confidence": current_minimum,
         "identity_status": "exact" if current_minimum is not None else "invalid",
@@ -352,6 +371,7 @@ def build_ranker_confidence_replay_from_frozen(
     current_minimum_confidence: str,
     treatment_minimum: str,
     min_samples: int = 20,
+    as_of_at: str | datetime | None = None,
 ) -> dict[str, Any] | None:
     """Rebuild ranker-confidence evaluation from Observation Lab frozen units.
 
@@ -378,6 +398,7 @@ def build_ranker_confidence_replay_from_frozen(
     if not frozen:
         return None
 
+    observed_end = _observed_end_iso(as_of_at)
     outcomes = _fetch_outcomes_for(
         [row["outcome_candidate_key"] for row in frozen],
         horizon=horizon,
@@ -392,8 +413,15 @@ def build_ranker_confidence_replay_from_frozen(
             "parameter_snapshot": unit["parameter_snapshot"],
             "first_evaluated_at": unit["first_evaluated_at"],
             "status": outcome.get("status"),
+            "entry_ts": outcome.get("entry_ts"),
+            "due_at": outcome.get("due_at"),
+            "settled_at": outcome.get("settled_at"),
             "net_return_pct": outcome.get("net_return_pct"),
         })
+    for row in hydrated:
+        row["temporal_exclusion_reason"] = candidate_outcome_temporal_reason(
+            row, as_of_at=observed_end
+        )
 
     passed_rows = [row for row in hydrated if row["decision"] == "passed"]
     rejected_rows = [row for row in hydrated if row["decision"] == "rejected"]
@@ -416,6 +444,7 @@ def build_ranker_confidence_replay_from_frozen(
         "source": "observation_lab_frozen_units",
         "current_minimum_confidence": control,
         "current_pass": current_metrics,
+        "observed_end": observed_end,
         "alternatives": [alternative],
     }
 
@@ -438,7 +467,7 @@ def _fetch_outcomes_for(
         batch = keys[start:start + chunk]
         placeholders = ", ".join(["?"] * len(batch))
         rows = get_db().execute(
-            "SELECT outcome_candidate_key, status, "
+            "SELECT outcome_candidate_key, status, entry_ts, due_at, settled_at, "
             f"CASE WHEN {current_cost_model_complete_outcome_sql()} "
             "THEN net_return_pct END AS net_return_pct "
             f"FROM filter_candidate_outcomes "
@@ -458,6 +487,7 @@ def build_observer_pre_filter_replay(
     direction: str,
     market_type: str,
     evaluated_since: str | None = None,
+    as_of_at: str | datetime | None = None,
     min_samples: int = _OBSERVER_MIN_SAMPLES,
     max_candidates: int = _MAX_CANDIDATES,
 ) -> dict[str, Any]:
@@ -472,6 +502,7 @@ def build_observer_pre_filter_replay(
         raise ValueError("scanner_family, direction and market_type are required")
 
     candidate_cap = max(1, min(int(max_candidates), _MAX_CANDIDATES))
+    observed_end = _observed_end_iso(as_of_at)
     sample_gate = max(_OBSERVER_MIN_SAMPLES, int(min_samples))
     rows_by_horizon: dict[str, dict[str, list[dict[str, Any]]]] = {}
     capped = False
@@ -486,6 +517,7 @@ def build_observer_pre_filter_replay(
                 market_type=market,
                 horizon=horizon,
                 evaluated_since=evaluated_since,
+                as_of_at=observed_end,
                 cap=candidate_cap,
             )
             rows_by_horizon[horizon][decision] = rows
@@ -618,6 +650,7 @@ def build_observer_pre_filter_replay(
         "market_type": market,
         "horizon": "24h",
         "evaluated_since": evaluated_since,
+        "observed_end": observed_end,
         "assignment_policy": "first_exposure",
         "control_parameter": {
             "rsi_deviation": _OBSERVER_RSI_GRID[0],
@@ -643,6 +676,7 @@ def build_bounded_filter_replays(
     recommendations: Iterable[Any],
     *,
     evaluated_since: str | None = None,
+    as_of_at: str | datetime | None = None,
     min_samples: int = 20,
     max_replays: int = _MAX_REPLAYS,
 ) -> list[dict[str, Any]]:
@@ -651,6 +685,7 @@ def build_bounded_filter_replays(
     replay_cap = max(0, min(int(max_replays), _MAX_REPLAYS))
     if replay_cap == 0:
         return reports
+    observed_end = _observed_end_iso(as_of_at)
     rows = [_as_mapping(recommendation) for recommendation in recommendations]
     # The first mature non-TTL signal must not be starved merely because registry
     # order produced many TTL cells before it. Keep the ordering deterministic
@@ -682,6 +717,7 @@ def build_bounded_filter_replays(
                 direction=str(row.get("direction") or ""),
                 market_type=str(row.get("market_type") or ""),
                 evaluated_since=evaluated_since,
+                as_of_at=observed_end,
                 min_samples=max(_OBSERVER_MIN_SAMPLES, int(min_samples)),
             ))
             observer_replay_count += 1
@@ -699,6 +735,7 @@ def build_bounded_filter_replays(
                 market_type=str(row.get("market_type") or ""),
                 horizon=str(row.get("horizon") or ""),
                 evaluated_since=evaluated_since,
+                as_of_at=observed_end,
                 min_samples=min_samples,
             ))
             if len(reports) >= replay_cap:
@@ -718,6 +755,7 @@ def build_bounded_filter_replays(
             horizon=str(row.get("horizon") or ""),
             current_ttl_sec=current_ttl,
             evaluated_since=evaluated_since,
+            as_of_at=observed_end,
             min_samples=min_samples,
         ))
         if len(reports) >= replay_cap:
@@ -734,6 +772,7 @@ def _load_observer_first_exposure_rows(
     market_type: str,
     horizon: str,
     evaluated_since: str | None,
+    as_of_at: str | datetime,
     cap: int,
 ) -> tuple[list[dict[str, Any]], bool]:
     time_clause = (
@@ -750,7 +789,7 @@ def _load_observer_first_exposure_rows(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.outcome_candidate_key, fd.run_id, fd.symbol, "
         "fd.input_snapshot, fd.parameter_snapshot, fd.first_evaluated_at, "
-        "fo.status, "
+        "fo.status, fo.entry_ts, fo.due_at, fo.settled_at, "
         f"CASE WHEN {current_cost_model_complete_outcome_sql('fo')} "
         "THEN fo.net_return_pct END AS net_return_pct "
         "FROM ranked_filter_decisions fd "
@@ -768,7 +807,12 @@ def _load_observer_first_exposure_rows(
         tuple(params),
     ).fetchall()
     capped = len(rows) > cap
-    return [dict(row) for row in rows[:cap]], capped
+    hydrated = [dict(row) for row in rows[:cap]]
+    for row in hydrated:
+        row["temporal_exclusion_reason"] = candidate_outcome_temporal_reason(
+            row, as_of_at=as_of_at
+        )
+    return hydrated, capped
 
 
 def _load_first_exposure_rows(
@@ -783,6 +827,7 @@ def _load_first_exposure_rows(
     horizon: str,
     evaluated_since: str | None,
     evaluated_after: str | None,
+    as_of_at: str | datetime,
     cap: int,
 ) -> tuple[list[dict[str, Any]], bool]:
     if evaluated_after:
@@ -807,7 +852,7 @@ def _load_first_exposure_rows(
     rows = get_db().execute(
         FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.outcome_candidate_key, fd.input_snapshot, fd.parameter_snapshot, "
-        "fd.first_evaluated_at, fo.status, "
+        "fd.first_evaluated_at, fo.status, fo.entry_ts, fo.due_at, fo.settled_at, "
         f"CASE WHEN {current_cost_model_complete_outcome_sql('fo')} "
         "THEN fo.net_return_pct END AS net_return_pct "
         "FROM ranked_filter_decisions fd "
@@ -823,7 +868,12 @@ def _load_first_exposure_rows(
         tuple(params),
     ).fetchall()
     capped = len(rows) > cap
-    return [dict(row) for row in rows[:cap]], capped
+    hydrated = [dict(row) for row in rows[:cap]]
+    for row in hydrated:
+        row["temporal_exclusion_reason"] = candidate_outcome_temporal_reason(
+            row, as_of_at=as_of_at
+        )
+    return hydrated, capped
 
 
 def _observer_would_pass(
@@ -866,6 +916,7 @@ def _settled_values(rows: list[dict[str, Any]]) -> list[float]:
         float(row["net_return_pct"])
         for row in rows
         if row.get("status") == "settled"
+        and row.get("temporal_exclusion_reason") is None
         and row.get("net_return_pct") is not None
     ]
 
@@ -898,7 +949,11 @@ def _improvement_concentration(
     symbol: dict[str, float] = {}
     utc_day: dict[str, float] = {}
     for row in rows:
-        if row.get("status") != "settled" or row.get("net_return_pct") is None:
+        if (
+            row.get("status") != "settled"
+            or row.get("temporal_exclusion_reason") is not None
+            or row.get("net_return_pct") is None
+        ):
             continue
         improvement = max(0.0, float(row["net_return_pct"]) - control_mean)
         if improvement <= 0:
@@ -958,7 +1013,11 @@ def _outcome_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     settled = [
         float(row["net_return_pct"])
         for row in rows
-        if row.get("status") == "settled" and row.get("net_return_pct") is not None
+        if (
+            row.get("status") == "settled"
+            and row.get("temporal_exclusion_reason") is None
+            and row.get("net_return_pct") is not None
+        )
     ]
     return {
         "candidate_count": len(rows),

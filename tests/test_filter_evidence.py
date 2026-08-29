@@ -781,7 +781,7 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         key = f"opportunity:confidence-{suffix}"
         record_filter_decision(candidate_key=key, decision=decision, **common)
         get_db().execute(
-            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
             "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=?, min_tradable_edge_pct=0.05, "
@@ -797,7 +797,7 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         key = f"opportunity:confidence-{suffix}"
         record_filter_decision(candidate_key=key, decision="rejected", **common)
         get_db().execute(
-            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
             "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=0.8, min_tradable_edge_pct=?, "
@@ -809,7 +809,7 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     max_edge_key = "opportunity:confidence-max-finite"
     record_filter_decision(candidate_key=max_edge_key, decision="rejected", **common)
     get_db().execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
         "directional_return_pct=0.2, exit_price_usd=100.2, estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=0, min_tradable_edge_pct=?, "
@@ -827,7 +827,7 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         key = f"opportunity:confidence-{suffix}"
         record_filter_decision(candidate_key=key, decision="rejected", **common)
         get_db().execute(
-            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
             "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=0.8, min_tradable_edge_pct=0.05, "
@@ -840,7 +840,7 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         key = f"opportunity:confidence-{suffix}"
         record_filter_decision(candidate_key=key, decision="rejected", **common)
         get_db().execute(
-            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
             "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=?, min_tradable_edge_pct=0.05, "
@@ -852,7 +852,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     get_db().commit()
 
     rejected = next(
-        row for row in filter_feedback_stats()
+        row for row in filter_feedback_stats(
+            as_of_at=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        )
         if row["filter_name"] == "ranker_confidence_gate"
         and row["decision"] == "rejected"
         and row["horizon"] == "4h"
@@ -1133,6 +1135,7 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
             exit_price_usd=100.45,
             entry_ts=now.isoformat(),
             due_at=(now + timedelta(hours=1)).isoformat(),
+            settled_at=(now + timedelta(hours=1)).isoformat(),
             status="settled",
             directional_return_pct=0.45,
             estimated_fee_pct=0.1,
@@ -1150,7 +1153,9 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
     db = get_db()
     db.set_trace_callback(statements.append)
     try:
-        rows = _batch_scanner_weights_quota_stats()
+        rows = _batch_scanner_weights_quota_stats(
+            as_of_at=(now + timedelta(days=2)).isoformat()
+        )
     finally:
         db.set_trace_callback(None)
 
@@ -1195,7 +1200,7 @@ def test_filter_feedback_stats_ignores_legacy_cost_model_outcomes():
         key = f"opportunity:cost-model:{suffix}"
         record_filter_decision(candidate_key=key, decision=decision, **common)
         get_db().execute(
-            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
             "directional_return_pct=0.4, exit_price_usd=100.4, "
             "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
             "estimated_funding_pct=0, net_return_pct=0.2, "
@@ -1207,7 +1212,9 @@ def test_filter_feedback_stats_ignores_legacy_cost_model_outcomes():
         )
 
     rows = [
-        row for row in filter_feedback_stats()
+        row for row in filter_feedback_stats(
+            as_of_at=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        )
         if row["filter_name"] == "ranker_confidence_gate" and row["horizon"] == "4h"
     ]
 
@@ -1319,7 +1326,7 @@ def test_filter_feedback_stats_respects_decision_time_window():
             )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.1, "
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, net_return_pct=0.1, "
         "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
         "WHERE horizon='1h'"
     )
@@ -1334,6 +1341,70 @@ def test_filter_feedback_stats_respects_decision_time_window():
 
     assert {row["decision"] for row in scoped} == {"passed", "rejected"}
     assert all(row["n_total"] == 1 for row in scoped)
+
+
+def test_filter_feedback_excludes_settlements_after_one_observed_cutoff():
+    from aletheia.analytics.filter_controller import compute_filter_feedback
+    from aletheia.analytics.filter_evidence import (
+        filter_feedback_stats,
+        record_filter_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    as_of = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    common = dict(
+        candidate_kind="opportunity",
+        filter_name="ranker_confidence_gate",
+        stage="paper_ranker",
+        reason_code="test",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+        parameters={"minimum": "medium"},
+    )
+    for suffix, decision in (("passed", "passed"), ("rejected", "rejected")):
+        key = f"opportunity:temporal-cutoff:{suffix}"
+        record_filter_decision(candidate_key=key, decision=decision, **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "entry_ts=?, due_at=?, settled_at=?, directional_return_pct=1.2, "
+            "exit_price_usd=101.2, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+            "net_return_pct=0.8, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version=? WHERE outcome_candidate_key=? AND horizon='4h'",
+            (
+                (as_of - timedelta(hours=4)).isoformat(),
+                (as_of - timedelta(hours=1)).isoformat(),
+                (as_of + timedelta(minutes=1)).isoformat(),
+                COST_MODEL_VERSION,
+                key,
+            ),
+        )
+    get_db().commit()
+
+    rows = [
+        row for row in filter_feedback_stats(as_of_at=as_of)
+        if row["filter_name"] == "ranker_confidence_gate"
+        and row["horizon"] == "4h"
+    ]
+    assert {row["decision"] for row in rows} == {"passed", "rejected"}
+    assert all(row["n_total"] == 1 for row in rows)
+    assert all(row["n_net"] == 0 for row in rows)
+    assert all(row["avg_net"] is None for row in rows)
+    assert all(row["shrunk_avg_net"] is None for row in rows)
+    assert all(row["outcome_coverage"] == 0.0 for row in rows)
+
+    recommendation = next(
+        row for row in compute_filter_feedback(min_samples=1, as_of_at=as_of)
+        if row.filter_name == "ranker_confidence_gate"
+        and row.horizon == "4h"
+    )
+    assert recommendation.verdict == "insufficient_data"
 
 
 def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
@@ -1378,7 +1449,7 @@ def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
     )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, net_return_pct=0.2, "
         "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
         "WHERE horizon='1h'"
     )
@@ -1457,7 +1528,7 @@ def test_controller_persists_new_observational_verdict_through_legacy_schema(mon
     monkeypatch.setattr(
         filter_controller,
         "compute_filter_feedback",
-        lambda min_samples=20: [recommendation],
+        lambda min_samples=20, **_kwargs: [recommendation],
     )
 
     result = filter_controller.run_controller_observe()

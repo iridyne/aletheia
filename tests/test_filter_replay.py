@@ -39,7 +39,7 @@ def _record_ttl_decision(
     )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
         "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=?, min_tradable_edge_pct=0.05, "
@@ -75,7 +75,7 @@ def _record_confidence_decision(
         evaluated_at=now.isoformat(),
     )
     get_db().execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, "
         "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=?, min_tradable_edge_pct=0.05, "
@@ -117,6 +117,7 @@ def test_family_ttl_replay_is_fixed_version_incremental_and_bounded():
         current_ttl_sec=1800,
         alternative_ttls=[2700, 3600, 7200, 14400, 28800],
         evaluated_since=(now - timedelta(days=1)).isoformat(),
+        as_of_at=(now + timedelta(days=2)).isoformat(),
         min_samples=2,
         max_candidates=2,
     )
@@ -228,10 +229,12 @@ def test_ranker_confidence_replay_uses_existing_controller_path():
         "horizon": "4h",
     }
 
-    report = build_ranker_confidence_replay(**scope, min_samples=2)
+    report = build_ranker_confidence_replay(
+        **scope, as_of_at=(now + timedelta(days=2)).isoformat(), min_samples=2
+    )
     bounded = build_bounded_filter_replays([
         {"filter_name": "ranker_confidence_gate", "verdict": "overrestrictive_suspect", **scope}
-    ], min_samples=2)
+    ], as_of_at=(now + timedelta(days=2)).isoformat(), min_samples=2)
 
     assert report["current_minimum_confidence"] == "medium"
     assert report["alternatives"] == [
@@ -258,3 +261,36 @@ def test_ranker_confidence_replay_uses_existing_controller_path():
     )
     assert empty["current_pass"]["candidate_count"] == 0
     assert empty["alternatives"][0]["readiness"] == "insufficient_data"
+
+
+def test_ranker_replay_does_not_make_future_settlements_ready():
+    from aletheia.counterfactual.filter_replay import build_ranker_confidence_replay
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    _record_confidence_decision(
+        key="opportunity:future-settlement-pass", decision="passed",
+        confidence="medium", net_4h=0.0, now=now,
+    )
+    _record_confidence_decision(
+        key="opportunity:future-settlement-reject", decision="rejected",
+        confidence="speculative", net_4h=2.0, now=now,
+    )
+    version = get_db().execute(
+        "SELECT filter_version FROM filter_decisions LIMIT 1"
+    ).fetchone()[0]
+
+    report = build_ranker_confidence_replay(
+        filter_version=version,
+        stage="paper_ranker",
+        scanner_family="mean_reversion",
+        direction="long",
+        market_type="perp",
+        horizon="4h",
+        as_of_at=now,
+        min_samples=1,
+    )
+
+    assert report["alternatives"][0]["settled_n"] == 0
+    assert report["alternatives"][0]["outcome_coverage"] == 0.0
+    assert report["alternatives"][0]["readiness"] == "insufficient_data"

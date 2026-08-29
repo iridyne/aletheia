@@ -479,9 +479,18 @@ def filter_feedback_stats(
     shrinkage_k: float = 20.0,
     *,
     evaluated_since: str | None = None,
+    as_of_at: str | datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
     from aletheia.storage.sqlite import get_db
+
+    from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+
+    observed_end = (
+        as_of_at.isoformat()
+        if isinstance(as_of_at, datetime)
+        else as_of_at or _utcnow()
+    )
 
     # A candidate can be evaluated on multiple scheduler ticks (fresh first,
     # expired later). Assign it once by its first persisted exposure so pass and
@@ -496,36 +505,110 @@ def filter_feedback_stats(
         "SELECT fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
         "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
-        "fd.direction, fd.market_type, fo.horizon, fo.cost_model_version, "
-        "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
-        f"COUNT(DISTINCT CASE WHEN {complete_net} "
-        "  THEN fd.outcome_candidate_key END) AS n_net, "
-        f"AVG(CASE WHEN {complete_net} THEN fo.net_return_pct END) AS avg_net, "
-        f"SUM(CASE WHEN {complete_net} AND fo.net_return_pct > 0 "
-        "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
-        f"SUM(CASE WHEN {complete_net} AND fo.net_return_pct < 0 "
-        "  THEN -fo.net_return_pct ELSE 0 END) AS losses, "
-        f"SUM(CASE WHEN fd.decision='rejected' AND {complete_net} "
-        "  AND fo.net_return_pct < 0 THEN 1 ELSE 0 END) AS blocked_avoided_loss_count, "
-        f"SUM(CASE WHEN fd.decision='rejected' AND {complete_net} "
-        "  AND fo.net_return_pct > fo.min_tradable_edge_pct "
-        "  THEN 1 ELSE 0 END) AS blocked_missed_alpha_count, "
-        f"SUM(CASE WHEN fd.decision='rejected' AND {complete_net} "
-        "  THEN fo.net_return_pct ELSE 0 END) AS blocked_net_sum "
+        "fd.direction, fd.market_type, fd.outcome_candidate_key, "
+        "fo.horizon, fo.cost_model_version, fo.status, fo.entry_ts, "
+        "fo.due_at, fo.settled_at, fo.net_return_pct, fo.min_tradable_edge_pct, "
+        f"CASE WHEN {complete_net} THEN 1 ELSE 0 END AS economics_complete "
         "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "
         "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
         "WHERE fd.exposure_rank = 1 "
         f"{time_clause} "
-        "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
-        "fd.parameter_snapshot, fd.decision, "
-        "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, "
-        "fo.horizon, fo.cost_model_version "
         "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
-        "fd.direction, fd.market_type, fo.horizon, fo.cost_model_version, fd.decision",
+        "fd.parameter_snapshot, fd.direction, fd.market_type, fo.horizon, "
+        "fo.cost_model_version, "
+        "fd.decision, fd.outcome_candidate_key",
         params,
-    ).fetchall()
-    raw = [dict(row) for row in rows]
+    )
+    raw: list[dict[str, Any]] = []
+    current_key: tuple[Any, ...] | None = None
+    current_group: dict[str, Any] | None = None
+
+    def _new_group(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "filter_name": row.get("filter_name"),
+            "stage": row.get("stage"),
+            "filter_version": row.get("filter_version"),
+            "parameter_snapshot": row.get("parameter_snapshot"),
+            "decision": row.get("decision"),
+            "scanner_family": row.get("scanner_family") or "unknown",
+            "direction": row.get("direction"),
+            "market_type": row.get("market_type"),
+            "horizon": row.get("horizon"),
+            "cost_model_version": row.get("cost_model_version"),
+            "_n_total": 0,
+            "_n_net": 0,
+            "_net_sum": 0.0,
+            "_last_candidate_key": None,
+            "_candidate_net_recorded": False,
+            "gains": 0.0,
+            "losses": 0.0,
+            "blocked_avoided_loss_count": 0,
+            "blocked_missed_alpha_count": 0,
+            "blocked_net_sum": 0.0,
+        }
+
+    def _finish_group(group: dict[str, Any]) -> dict[str, Any]:
+        n = int(group.pop("_n_net"))
+        group["n_total"] = int(group.pop("_n_total"))
+        net_sum = float(group.pop("_net_sum"))
+        group.pop("_last_candidate_key")
+        group.pop("_candidate_net_recorded")
+        group["n_net"] = n
+        group["avg_net"] = net_sum / n if n else None
+        return group
+
+    for source in rows:
+        row = dict(source)
+        group_key = (
+            row.get("filter_name"),
+            row.get("stage"),
+            row.get("filter_version"),
+            row.get("scanner_family") or "unknown",
+            row.get("parameter_snapshot"),
+            row.get("direction"),
+            row.get("market_type"),
+            row.get("horizon"),
+            row.get("cost_model_version"),
+            row.get("decision"),
+        )
+        if group_key != current_key:
+            if current_group is not None:
+                raw.append(_finish_group(current_group))
+            current_key = group_key
+            current_group = _new_group(row)
+        group = current_group
+        assert group is not None
+        candidate_key = str(row.get("outcome_candidate_key") or "")
+        if not candidate_key:
+            continue
+        if candidate_key != group["_last_candidate_key"]:
+            group["_last_candidate_key"] = candidate_key
+            group["_candidate_net_recorded"] = False
+            group["_n_total"] += 1
+        if (
+            row.get("economics_complete") != 1
+            or candidate_outcome_temporal_reason(row, as_of_at=observed_end)
+            is not None
+            or group["_candidate_net_recorded"]
+        ):
+            continue
+        group["_candidate_net_recorded"] = True
+        net = float(row["net_return_pct"])
+        group["_n_net"] += 1
+        group["_net_sum"] += net
+        if net > 0:
+            group["gains"] += net
+        elif net < 0:
+            group["losses"] += -net
+        if row.get("decision") == "rejected":
+            if net < 0:
+                group["blocked_avoided_loss_count"] += 1
+            if net > float(row.get("min_tradable_edge_pct") or 0.0):
+                group["blocked_missed_alpha_count"] += 1
+            group["blocked_net_sum"] += net
+    if current_group is not None:
+        raw.append(_finish_group(current_group))
     priors: dict[tuple, tuple[int, float]] = {}
     for row in raw:
         key = _cohort_key(row)
@@ -539,7 +622,8 @@ def filter_feedback_stats(
         n = int(row.get("n_net") or 0)
         prior_n, prior_sum = priors[_cohort_key(row)]
         prior = prior_sum / prior_n if prior_n else 0.0
-        sample = float(row.get("avg_net") or 0.0)
+        sample_value = row.get("avg_net")
+        sample = float(sample_value) if sample_value is not None else None
         gains = float(row.pop("gains") or 0.0)
         losses = float(row.pop("losses") or 0.0)
         row["blocked_avoided_loss_count"] = int(
@@ -553,10 +637,14 @@ def filter_feedback_stats(
         row["n_total"] = n_total
         row["n_net"] = n
         row["outcome_coverage"] = round(n / n_total, 4) if n_total else 0.0
-        row["avg_net"] = round(sample, 6)
-        row["shrunk_avg_net"] = round(
-            (n * sample + float(shrinkage_k) * prior) / (n + float(shrinkage_k)),
-            6,
+        row["avg_net"] = round(sample, 6) if sample is not None else None
+        row["shrunk_avg_net"] = (
+            round(
+                (n * sample + float(shrinkage_k) * prior)
+                / (n + float(shrinkage_k)),
+                6,
+            )
+            if n and sample is not None else None
         )
         row["profit_factor"] = round(gains / losses, 4) if losses > 0 else None
         row["assignment_policy"] = "first_exposure"
@@ -632,6 +720,7 @@ def observer_pre_filter_diagnostics(
     *,
     evaluated_since: str | None = None,
     shrinkage_k: float = 20.0,
+    as_of_at: str | datetime | None = None,
 ) -> dict[str, Any]:
     """Split Observer pass/reject economics by the exact persisted rule facts.
 
@@ -640,6 +729,13 @@ def observer_pre_filter_diagnostics(
     filter and never writes configuration or experiment state.
     """
     from aletheia.storage.sqlite import get_db
+    from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+
+    observed_end = (
+        as_of_at.isoformat()
+        if isinstance(as_of_at, datetime)
+        else as_of_at or _utcnow()
+    )
 
     time_clause = (
         " AND datetime(fd.first_evaluated_at) >= datetime(?)"
@@ -650,7 +746,8 @@ def observer_pre_filter_diagnostics(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
         "fd.direction, fd.market_type, fd.input_snapshot, "
-        "fo.horizon, fo.status, fo.net_return_pct, fo.cost_model_version, "
+        "fo.outcome_candidate_key, fo.horizon, fo.status, fo.entry_ts, "
+        "fo.due_at, fo.settled_at, fo.net_return_pct, fo.cost_model_version, "
         f"CASE WHEN {current_cost_model_complete_outcome_sql('fo')} "
         "THEN 1 ELSE 0 END AS economics_complete "
         "FROM ranked_filter_decisions fd "
@@ -729,6 +826,7 @@ def observer_pre_filter_diagnostics(
             float(row["net_return_pct"])
             if row.get("status") == "settled"
             and row.get("economics_complete") == 1
+            and candidate_outcome_temporal_reason(row, as_of_at=observed_end) is None
             else None
         )
         if net is not None:
@@ -776,6 +874,7 @@ def observer_pre_filter_diagnostics(
         "assignment_policy": "first_exposure",
         "read_only": True,
         "evaluated_since": evaluated_since,
+        "observed_end": observed_end,
         "rsi_deviation_boundaries": [6.0, 9.0, 12.0, 16.0],
         "atr_pct_boundaries": [0.4, 0.6, 0.8, 1.2],
         "row_count": len(rows),

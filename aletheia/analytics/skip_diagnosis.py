@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from aletheia.storage.repositories import complete_outcome_economics_sql
+from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 from aletheia.storage.sqlite import get_db
 
 Finding = Literal[
@@ -32,6 +33,7 @@ _OUTCOME_HORIZONS = frozenset({"15m", "1h", "4h", "24h"})
 _PRIMARY_HORIZON = "24h"
 _PRIMARY_HORIZON_HOURS = 24
 _MIN_SETTLED_PER_COHORT = 5
+_PENDING_TEMPORAL_REASONS = frozenset({"unsettled", "settlement_after_as_of"})
 
 
 @dataclass(frozen=True)
@@ -237,7 +239,8 @@ def _diagnose(
     traced_keys = {str(row["outcome_candidate_key"] or "") for row in trace_rows}
     reason_codes = Counter(str(row["reason_code"] or "unknown") for row in trace_rows)
     outcome_rows = db.execute(
-        f"""SELECT outcome_candidate_key, horizon, status, net_return_pct,
+        f"""SELECT outcome_candidate_key, horizon, status, entry_ts, due_at,
+            settled_at, net_return_pct,
             CASE WHEN {complete_outcome_economics_sql()}
                  THEN 1 ELSE 0 END AS economics_complete
             FROM filter_candidate_outcomes
@@ -274,18 +277,30 @@ def _diagnose(
 
     settled_skip_nets: list[float] = []
     unsettled = 0
+    invalid_temporal_reasons: Counter[str] = Counter()
     for key in mature_keys:
         primary = next((row for row in outcomes[key] if row["horizon"] == _PRIMARY_HORIZON), None)
-        if (
-            primary is None
-            or primary["status"] != "settled"
-            or primary["economics_complete"] != 1
-        ):
+        if primary is None:
+            unsettled += 1
+            continue
+        temporal_reason = _skip_temporal_reason(
+            dict(primary), observed_end=observed_end
+        )
+        if temporal_reason is not None and temporal_reason not in _PENDING_TEMPORAL_REASONS:
+            invalid_temporal_reasons[temporal_reason] += 1
+        elif primary["economics_complete"] != 1 or temporal_reason in _PENDING_TEMPORAL_REASONS:
             unsettled += 1
         else:
             settled_skip_nets.append(float(primary["net_return_pct"]))
     counts["settled_candidate_skips"] = len(settled_skip_nets)
     counts["unsettled_candidate_skips"] = unsettled
+    if invalid_temporal_reasons:
+        counts["invalid_temporal_outcomes"] = sum(invalid_temporal_reasons.values())
+        reason_codes.update(invalid_temporal_reasons)
+        return _report(
+            "recording_incident", "create_recording_repair_task", start, end,
+            counts=counts, metrics={}, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,
+        )
     if unsettled:
         return _report(
             "awaiting_outcomes", "await_fixed_horizon_settlement", start, end,
@@ -293,7 +308,10 @@ def _diagnose(
         )
 
     pass_rows = db.execute(
-        f"""SELECT DISTINCT fo.outcome_candidate_key, fo.net_return_pct
+        f"""SELECT DISTINCT fo.outcome_candidate_key, fo.status, fo.entry_ts,
+            fo.due_at, fo.settled_at, fo.net_return_pct,
+            CASE WHEN {complete_outcome_economics_sql('fo')}
+                 THEN 1 ELSE 0 END AS economics_complete
            FROM filter_decisions fd
            JOIN filter_candidate_outcomes fo
              ON fo.outcome_candidate_key=fd.outcome_candidate_key
@@ -301,11 +319,17 @@ def _diagnose(
              AND fd.decision='passed'
              AND julianday(fd.evaluated_at) >= julianday(?)
              AND julianday(fd.evaluated_at) < julianday(?)
-             AND fo.horizon=? AND fo.status='settled'
-             AND {complete_outcome_economics_sql('fo')}""",
+             AND fo.horizon=?""",
         (start_iso, end_iso, _PRIMARY_HORIZON),
     ).fetchall()
-    pass_nets = [float(row["net_return_pct"]) for row in pass_rows]
+    pass_nets = [
+        float(row["net_return_pct"])
+        for row in pass_rows
+        if row["economics_complete"] == 1
+        and candidate_outcome_temporal_reason(
+            dict(row), as_of_at=observed_end
+        ) is None
+    ]
     counts["comparable_passes"] = len(pass_nets)
     skip_avg = _average(settled_skip_nets)
     pass_avg = _average(pass_nets)
@@ -329,6 +353,30 @@ def _diagnose(
         "operator_liveness_incident", "create_non_executable_replay_draft", start, end,
         counts=counts, metrics=metrics, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,
     )
+
+
+def _skip_temporal_reason(row: dict, *, observed_end: datetime) -> str | None:
+    """Keep pending rows pending while surfacing impossible timeline facts."""
+    status = str(row.get("status") or "").strip().lower()
+    reason = candidate_outcome_temporal_reason(row, as_of_at=observed_end)
+    if status != "pending":
+        return (
+            f"terminal_status_{status or 'unknown'}"
+            if reason == "unsettled" else reason
+        )
+    if reason != "unsettled":
+        return reason
+    timeline = dict(row)
+    timeline["status"] = "settled"
+    timeline_reason = candidate_outcome_temporal_reason(
+        timeline, as_of_at=observed_end
+    )
+    if timeline_reason in {None, "missing_settled_at", "settlement_after_as_of"}:
+        return (
+            "settlement_after_as_of"
+            if timeline_reason == "settlement_after_as_of" else "unsettled"
+        )
+    return timeline_reason
 
 
 def _report(
