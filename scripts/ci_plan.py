@@ -194,11 +194,27 @@ SURFACE_DEPENDENCIES = {
 }
 
 
+def _canonical_status(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized.startswith("r") and normalized[1:].isdigit():
+        return "renamed"
+    return {
+        "a": "added",
+        "m": "modified",
+        "d": "removed",
+        "deleted": "removed",
+        "r": "renamed",
+    }.get(normalized, normalized)
+
+
 @dataclass(frozen=True)
 class PathChange:
     path: str
     status: str = "modified"
     previous_path: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", _canonical_status(self.status))
 
     def all_paths(self) -> tuple[str, ...]:
         paths = [self.path]
@@ -436,10 +452,10 @@ def plan(
         reason_codes.add("NO_SOURCE_DIFF")
 
     for change in changes:
-        if change.status.lower().startswith(("r", "renamed")) and not change.previous_path:
+        if change.status == "renamed" and not change.previous_path:
             mode = "full"
             reason_codes.add("RENAME_PREVIOUS_PATH_MISSING")
-        if change.status.lower().startswith(("d", "deleted")):
+        if change.status == "removed":
             reason_codes.add("DELETION_REVIEWED")
         for path in change.all_paths():
             surfaces.update(_path_surfaces(path))

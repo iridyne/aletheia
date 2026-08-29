@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from scripts import ci_plan
 from scripts.ci_plan import PathChange, plan
 
 
@@ -132,6 +138,81 @@ def test_policy_changes_themselves_are_full_and_fingerprint_is_stable() -> None:
     right = _plan(["scripts/ci_plan.py"])
     assert left["mode"] == "full"
     assert left["plan_fingerprint"] == right["plan_fingerprint"]
+
+
+@pytest.mark.parametrize(
+    ("git_status", "github_status", "previous_path"),
+    [
+        ("M", "modified", None),
+        ("A", "added", None),
+        ("D", "removed", None),
+        ("R100", "renamed", "aletheia/risk/old_engine.py"),
+    ],
+)
+def test_git_and_github_statuses_produce_identical_plans(
+    git_status: str,
+    github_status: str,
+    previous_path: str | None,
+) -> None:
+    path = "aletheia/risk/engine.py"
+    git_report = _plan([PathChange(path, git_status, previous_path)])
+    github_report = _plan([PathChange(path, github_status, previous_path)])
+
+    for field in (
+        "mode",
+        "surfaces",
+        "required",
+        "reason_codes",
+        "changed_files",
+        "plan_fingerprint",
+    ):
+        assert git_report[field] == github_report[field]
+    assert git_report["changed_files"][0]["status"] == github_status
+
+
+def test_ci_git_diff_and_auto_merge_file_list_share_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    git_outputs = iter([
+        BASE,
+        HEAD,
+        "\n".join([
+            "M\tscripts/ci_plan.py",
+            "A\ttests/new_ci_contract.py",
+            "D\tdocs/references/old-ci.md",
+            "R100\tdocs/references/before.md\tdocs/references/after.md",
+        ]),
+    ])
+    monkeypatch.setattr(ci_plan, "_git", lambda _args: next(git_outputs))
+    _, _, git_changes = ci_plan._git_changes("base", "head")
+
+    github_files = tmp_path / "github-files.json"
+    github_files.write_text(json.dumps([
+        {"filename": "scripts/ci_plan.py", "status": "modified"},
+        {"filename": "tests/new_ci_contract.py", "status": "added"},
+        {"filename": "docs/references/old-ci.md", "status": "removed"},
+        {
+            "filename": "docs/references/after.md",
+            "previous_filename": "docs/references/before.md",
+            "status": "renamed",
+        },
+    ]), encoding="utf-8")
+    _, _, github_changes = ci_plan._load_changes(SimpleNamespace(
+        base_sha=BASE,
+        head_sha=HEAD,
+        changed_files_json=str(github_files),
+        changed_file=[],
+    ))
+
+    ci_report = plan(event="pull_request", base_sha=BASE, head_sha=HEAD, changes=git_changes)
+    auto_merge_report = plan(
+        event="pull_request",
+        base_sha=BASE,
+        head_sha=HEAD,
+        changes=github_changes,
+    )
+    assert ci_report["plan_fingerprint"] == auto_merge_report["plan_fingerprint"]
 
 
 def test_operational_scripts_are_full_ci() -> None:
