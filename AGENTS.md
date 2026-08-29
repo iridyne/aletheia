@@ -34,6 +34,10 @@ then read only the `@` guide whose scope matches the task.
   verification cannot wait, use only an isolated CI/Test process on remote
   Fedora with a temporary data root and no secrets or execution authority.
   Windows is not a validation dependency or fallback.
+- Before publishing a CI-triggering PR head, use the repository-native local CI
+  entrypoint when available. Do not hand-select CI depth from prose:
+  `scripts/ci_plan.py` owns lane selection and `scripts/ci_local.py` executes
+  the required local checks.
 - Let ordinary Ready PRs accumulate. Run `Prepare and tag releases` only when
   the accumulated batch creates an operational need to update a Runtime; do
   not cut one product version per fix.

@@ -58,6 +58,17 @@ and run the repository-native deterministic preflight:
 uv run --no-sync python scripts/ci_preflight.py --pr-body-file /path/to/pr-body.md
 ```
 
+When `scripts/ci_local.py` is available, run it before publishing a
+CI-triggering PR head:
+
+```sh
+uv run python scripts/ci_local.py --pr-body-file /path/to/pr-body.md
+```
+
+Do not choose CI depth manually. `scripts/ci_plan.py` is the repository
+authority for Quick/Affected/Deep/Full selection, and GitHub recomputes the
+plan from exact repository facts before accepting merge authority.
+
 It validates the same Change Contract parser and changed-file exemption logic
 as GitHub CI, needs no fabricated GitHub event payload, performs no network I/O
 or Runtime startup, and prints bounded structured reason codes on failure.

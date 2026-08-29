@@ -45,6 +45,7 @@ AUTHORITY_SURFACES = {
     "runtime",
 }
 JOB_NEEDS = {
+    "Plan CI lanes": ("Change Contract preflight for deep CI",),
     "Change Contract preflight for deep CI": (),
     "Review core": ("Change Contract preflight for deep CI",),
     "Review trust-boundary coverage": ("Review core",),
@@ -59,6 +60,12 @@ JOB_NEEDS = {
     "Python integration": ("Review checks", "Python unit"),
     "Python specifications": ("Review checks", "Python unit", "Python runtime state"),
     "Python end-to-end": ("Review checks", "Python unit", "Python integration"),
+    "Trusted CI verdict": (
+        "Plan CI lanes", "Review checks", "Python unit", "Python runtime state",
+        "Python integration", "Python specifications", "Python end-to-end",
+        "Review trust-boundary coverage", "Review Node surfaces", "Review native host",
+    ),
+    "Full CI verdict": ("Trusted CI verdict",),
 }
 
 
@@ -91,6 +98,17 @@ def _dt(value: str | None) -> datetime | None:
 def _seconds(start: str | None, end: str | None) -> float | None:
     left, right = _dt(start), _dt(end)
     return max(0.0, (right - left).total_seconds()) if left and right else None
+
+
+def _logical_lane(name: str | None) -> str:
+    return re.sub(r" \(\d+\)$", "", str(name or "unknown"))
+
+
+def _attempt_created_at(run: dict[str, Any], attempt: dict[str, Any], attempt_number: int) -> str | None:
+    created = attempt.get("created_at")
+    if attempt_number > 1 and created == run.get("created_at"):
+        return None
+    return created
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
@@ -263,6 +281,7 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
     for run in runs:
         for attempt_number in range(1, int(run.get("run_attempt") or 1) + 1):
             attempt = _api(repo, f"actions/runs/{run['id']}/attempts/{attempt_number}")
+            attempt_created_at = _attempt_created_at(run, attempt, attempt_number)
             jobs = _api(
                 repo,
                 f"actions/runs/{run['id']}/attempts/{attempt_number}/jobs?per_page=100",
@@ -275,9 +294,16 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "",
             ))
-            completed_by_name = {
-                job.get("name"): job.get("completed_at") for job in jobs
-            }
+            completed_by_name: dict[str, str] = {}
+            for job in jobs:
+                logical = _logical_lane(job.get("name"))
+                completed = job.get("completed_at")
+                if completed and (
+                    logical not in completed_by_name
+                    or (_dt(completed) or datetime.min.replace(tzinfo=UTC))
+                    > (_dt(completed_by_name[logical]) or datetime.min.replace(tzinfo=UTC))
+                ):
+                    completed_by_name[logical] = completed
             attempt_key = f"{run['id']}:{attempt_number}"
             attempts.append({
                 "pr_number": pr["number"],
@@ -288,11 +314,11 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 "head_sha": attempt.get("head_sha") or run.get("head_sha"),
                 "base_sha": pr.get("baseRefOid"),
                 "synthetic_merge_sha": None,
-                "queued_at": attempt.get("created_at"),
+                "queued_at": attempt_created_at,
                 "started_at": attempt.get("run_started_at"),
                 "completed_at": attempt.get("updated_at"),
                 "queue_seconds": _seconds(
-                    attempt.get("created_at"), attempt.get("run_started_at")
+                    attempt_created_at, attempt.get("run_started_at")
                 ),
                 "execution_seconds": _seconds(
                     attempt.get("run_started_at"), attempt.get("updated_at")
@@ -304,10 +330,11 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 "next_event_confidence": None,
             })
             for job in jobs:
+                logical_lane = _logical_lane(job.get("name"))
                 failure = _failure(job)
                 result = job.get("conclusion") or job.get("status")
                 if result in {"failure", "timed_out"}:
-                    if job.get("name") == "Review checks":
+                    if logical_lane == "Review checks":
                         independent, independent_reason = "no", "aggregate_duplicate"
                     elif failure and failure["category"] in NON_ACTIONABLE_CATEGORIES:
                         independent, independent_reason = "no", "non_actionable_category"
@@ -316,14 +343,14 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                 else:
                     independent, independent_reason = "no", "no_failure"
                 execution = _seconds(job.get("started_at"), job.get("completed_at"))
-                dependencies = JOB_NEEDS.get(str(job.get("name")))
+                dependencies = JOB_NEEDS.get(logical_lane)
                 dependency_ends = [
                     _dt(completed_by_name.get(name))
                     for name in dependencies or ()
                     if completed_by_name.get(name)
                 ]
                 eligible = (
-                    attempt.get("run_started_at")
+                    attempt_created_at
                     if dependencies == ()
                     else max(dependency_ends).isoformat()
                     if dependencies is not None and len(dependency_ends) == len(dependencies)
@@ -336,7 +363,8 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
                     "run_attempt": attempt_number,
                     "workflow_name": run.get("name"),
                     "head_sha": attempt.get("head_sha") or run.get("head_sha"),
-                    "lane": job.get("name"),
+                    "lane": logical_lane,
+                    "job_name": job.get("name"),
                     "job_id": job.get("id"),
                     "runner_name": job.get("runner_name"),
                     "runner_group_name": job.get("runner_group_name"),
@@ -535,6 +563,26 @@ def _summary(prs: list[dict[str, Any]], attempts: list[dict[str, Any]], lanes: l
             "note": "dependency orchestration and runner queue cannot be separated by the Jobs API",
         },
         "local_preflight_seconds": {"p95": None, "source": "not recorded by GitHub Actions"},
+        "planner_decisions": {
+            "policy_version": None,
+            "plan_mode_counts": {},
+            "plan_fingerprints": [],
+            "source": "historical merged PR metadata predates stable planner artifacts",
+        },
+        "trusted_ci_verdict_seconds": {
+            "p95": _percentile([
+                item["execution_seconds"] for item in lanes
+                if item["lane"] == "Trusted CI verdict"
+                and item["execution_seconds"] is not None
+            ], 0.95),
+        },
+        "full_ci_verdict_seconds": {
+            "p95": _percentile([
+                item["execution_seconds"] for item in lanes
+                if item["lane"] == "Full CI verdict"
+                and item["execution_seconds"] is not None
+            ], 0.95),
+        },
         "github_change_contract_preflight_seconds": {"p95": _percentile(preflight_seconds, 0.95)},
         "ci_attempts_per_merged_pr": {
             "median": statistics.median([item["ci_attempts_before_merge"] for item in prs]) if prs else None,

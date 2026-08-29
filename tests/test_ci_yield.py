@@ -158,9 +158,82 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
     assert primary[1]["next_event"] == "merge"
     assert collected["pr"]["ci_attempts_before_merge"] == 2
     assert collected["lanes"][0]["independent_defect"] == "no"
-    assert collected["lanes"][0]["eligible_at_estimate"] == "2026-08-24T00:00:02Z"
-    assert collected["lanes"][0]["runner_queue_wait_seconds_estimate"] == 0
+    assert collected["lanes"][0]["eligible_at_estimate"] == "2026-08-24T00:00:01Z"
+    assert collected["lanes"][0]["runner_queue_wait_seconds_estimate"] == 1
     assert collected["lanes"][0]["runner_class"] == "pr-ephemeral"
+
+
+def test_matrix_lanes_are_normalized_before_dependency_estimates(monkeypatch) -> None:
+    head = "a" * 40
+
+    def fake_api(repo: str, path: str) -> Any:  # noqa: ARG001
+        if path.startswith("actions/runs?branch="):
+            return {"workflow_runs": [{
+                "id": 30,
+                "name": ci_yield.PRIMARY_WORKFLOW,
+                "head_sha": head,
+                "run_attempt": 1,
+                "created_at": "2026-08-24T00:00:00Z",
+            }]}
+        if path == "actions/runs/30/attempts/1":
+            return {
+                "head_sha": head,
+                "created_at": "2026-08-24T00:00:00Z",
+                "run_started_at": "2026-08-24T00:00:01Z",
+                "updated_at": "2026-08-24T00:02:00Z",
+                "conclusion": "success",
+            }
+        if path == "actions/runs/30/attempts/1/jobs?per_page=100":
+            return {"jobs": [
+                {
+                    "id": 1,
+                    "name": "Change Contract preflight for deep CI",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:03Z",
+                    "completed_at": "2026-08-24T00:00:05Z",
+                    "steps": [],
+                },
+                {
+                    "id": 2,
+                    "name": "Review checks",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:05Z",
+                    "completed_at": "2026-08-24T00:00:06Z",
+                    "steps": [],
+                },
+                {
+                    "id": 3,
+                    "name": "Python unit (0)",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:06Z",
+                    "completed_at": "2026-08-24T00:00:20Z",
+                    "steps": [],
+                },
+                {
+                    "id": 4,
+                    "name": "Python unit (1)",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:07Z",
+                    "completed_at": "2026-08-24T00:00:30Z",
+                    "steps": [],
+                },
+                {
+                    "id": 5,
+                    "name": "Python integration",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:40Z",
+                    "completed_at": "2026-08-24T00:01:00Z",
+                    "steps": [],
+                },
+            ]}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(ci_yield, "_api", fake_api)
+    collected = ci_yield._collect_pr("iridyne/aletheia", _pr())
+    integration = next(item for item in collected["lanes"] if item["lane"] == "Python integration")
+
+    assert [item["lane"] for item in collected["lanes"]].count("Python unit") == 2
+    assert integration["eligible_at_estimate"] == "2026-08-24T00:00:30+00:00"
 
 
 def test_limit_50_pages_numbers_before_bounded_pr_details(monkeypatch) -> None:

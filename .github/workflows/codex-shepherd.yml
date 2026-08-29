@@ -3,7 +3,7 @@ name: Codex PR shepherd
 on:
   pull_request_target:
     branches: [master]
-    types: [opened, reopened, ready_for_review, synchronize, unlabeled]
+    types: [unlabeled]
   pull_request_review:
     branches: [master]
     types: [submitted]
@@ -149,6 +149,16 @@ jobs:
       group: codex-shepherd-reconcile-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
       cancel-in-progress: true
     steps:
+      - name: Check out trusted planner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: master
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
       - name: Drive exact-head Codex review state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
@@ -157,15 +167,11 @@ jobs:
             const connectorLogin = 'chatgpt-codex-connector';
             const shepherdLogin = 'github-actions[bot]';
             const shepherdPath = '.github/workflows/codex-shepherd.yml';
+            const {execFileSync} = require('child_process');
+            const fs = require('fs');
+            const path = require('path');
             const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
-            const reviewTriggerActions = new Set([
-              'opened',
-              'reopened',
-              'ready_for_review',
-              'synchronize',
-              'unlabeled',
-            ]);
             const reviewMarkerPattern =
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
             const haltMarkerPattern =
@@ -284,6 +290,30 @@ jobs:
                 return {
                   category: 'unknown', failingJob: 'unknown', failingStep: 'unknown', confidence: 'unknown',
                 };
+              }
+            };
+            const exactHeadGithubActionsCheckPassed = async (checkName) => {
+              try {
+                const {data} = await github.rest.checks.listForRef({
+                  ...context.repo,
+                  ref: expectedHeadSha,
+                  check_name: checkName,
+                  filter: 'latest',
+                  per_page: 100,
+                });
+                const check = data.check_runs
+                  .filter((candidate) =>
+                    candidate.name === checkName &&
+                    candidate.app?.slug === 'github-actions'
+                  )
+                  .sort((left, right) =>
+                    Date.parse(right.completed_at || right.started_at || 0) -
+                    Date.parse(left.completed_at || left.started_at || 0)
+                  )[0];
+                return check?.status === 'completed' && check.conclusion === 'success';
+              } catch (error) {
+                core.info(`could not resolve exact-head ${checkName}: ${error}`);
+                return false;
               }
             };
 
@@ -501,6 +531,38 @@ jobs:
               );
               return;
             }
+            const changedFilePayload = changedFiles.map((file) => ({
+              filename: file.filename,
+              previous_filename: file.previous_filename || null,
+              status: file.status || 'modified',
+            }));
+            const plannerInput = path.join(process.env.RUNNER_TEMP, 'ci-plan-files.json');
+            fs.writeFileSync(plannerInput, JSON.stringify(changedFilePayload), 'utf8');
+            let ciPlan;
+            try {
+              ciPlan = JSON.parse(execFileSync('uv', [
+                'run',
+                '--no-sync',
+                'python',
+                'scripts/ci_plan.py',
+                '--event',
+                'pull_request',
+                '--base-sha',
+                pullRequest.base.sha,
+                '--head-sha',
+                expectedHeadSha,
+                '--changed-files-json',
+                plannerInput,
+              ], {encoding: 'utf8'}));
+            } catch (error) {
+              await holdForOwner(
+                'planner-unavailable',
+                `The trusted CI planner could not classify exact head \`${expectedHeadSha}\`; ` +
+                `Shepherd fails closed instead of requesting or suppressing Codex review from stale rules.`
+              );
+              return;
+            }
+            const codexRequired = ciPlan?.review?.codex_required === true;
 
             // This workflow is itself a PR control authority. pull_request_target executes
             // the trusted base/master copy, so a PR cannot remove this self-change guard by
@@ -530,6 +592,10 @@ jobs:
 
             if (pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')) {
               core.info('do-not-auto-merge holds this pull request');
+              return;
+            }
+            if (!codexRequired) {
+              core.info('trusted CI planner says Codex review is not required for this head');
               return;
             }
 
@@ -562,13 +628,11 @@ jobs:
             // GitHub concurrency can replace a pending pull_request_target run. Any
             // surviving trusted callback therefore repairs a missing exact-head review
             // request before doing event-specific work.
+            const trustedCiPassed = await exactHeadGithubActionsCheckPassed('Trusted CI verdict');
             if (
               !exactHeadReviewRequest &&
               !connectorCleanExactHead &&
-              (
-                context.eventName !== 'pull_request_target' ||
-                reviewTriggerActions.has(context.payload.action)
-              )
+              trustedCiPassed
             ) {
               await postComment(
                 `@codex review\n\n` +
@@ -577,6 +641,10 @@ jobs:
                 `deterministic checks.\n\n` +
                 `<!-- aletheia-codex-shepherd head=${expectedHeadSha} kind=review -->`
               );
+              return;
+            }
+            if (!trustedCiPassed && !connectorCleanExactHead) {
+              core.info('waiting for exact-head Trusted CI verdict before requesting Codex review');
               return;
             }
 

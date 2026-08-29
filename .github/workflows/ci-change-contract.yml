@@ -26,6 +26,13 @@ on:
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, edited]
+    paths-ignore:
+      - README.md
+      - docs/archive/**
+      - docs/diagrams/**
+      - docs/references/**
+      - docs/research/**
+      - docs/superpowers/**
 
 permissions:
   contents: read
