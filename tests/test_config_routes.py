@@ -2177,3 +2177,94 @@ async def test_databricks_origin_change_save_failure_keeps_old_token_binding(cli
     assert after.workspace_url == "https://adb-old.azuredatabricks.net"
     assert after.api_key_secret_ref == old_ref
     assert get_secret(old_ref) == old_token
+
+
+@pytest.mark.anyio
+async def test_pi_daemon_apply_failure_is_typed_and_keeps_desired_actual_distinct(
+    client, monkeypatch
+):
+    from aletheia.config.loader import load_config
+
+    async def fail_reconfigure(**_kwargs):
+        raise RuntimeError("private runtime detail")
+
+    actual = {
+        "running": False,
+        "event_set": False,
+        "lock_held": False,
+        "task_generation": 7,
+        "started_at": None,
+        "active_params": None,
+        "last_error_summary": "task_start_failed",
+    }
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.reconfigure_pi_daemon",
+        fail_reconfigure,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.daemon_status",
+        lambda: actual,
+    )
+
+    with patch("aletheia.files.jsonl.write_audit") as write_audit:
+        response = await client.post(
+            "/api/settings/pi_daemon",
+            json={"heartbeat_sec": 120},
+        )
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "runtime_apply_failed"
+    assert detail["persisted"] is True
+    assert detail["applied"] is False
+    assert detail["runtime_status"]["configured"] is True
+    assert detail["runtime_status"]["running"] is False
+    assert detail["runtime_status"]["blocker"] == "reconfigure_error"
+    assert "private runtime detail" not in response.text
+    assert load_config().pi_daemon.heartbeat_sec == 120
+    audit = write_audit.call_args.args[0]
+    assert audit["event_type"] == "pi_daemon_config_apply_failed"
+    assert audit["persisted"] is True
+    assert audit["applied"] is False
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["pi_daemon"]["heartbeat_sec"] == 120
+    assert settings["pi_daemon_runtime"]["running"] is False
+
+
+@pytest.mark.anyio
+async def test_pi_daemon_success_reports_verified_effective_state(client, monkeypatch):
+    async def apply_config(**_kwargs):
+        return {"configured": False, "running": False, "blocker": None}
+
+    actual = {
+        "running": False,
+        "event_set": False,
+        "lock_held": False,
+        "task_generation": 8,
+        "started_at": None,
+        "active_params": None,
+        "last_error_summary": None,
+    }
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.reconfigure_pi_daemon",
+        apply_config,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.daemon_status",
+        lambda: actual,
+    )
+
+    with patch("aletheia.files.jsonl.write_audit") as write_audit:
+        response = await client.post(
+            "/api/settings/pi_daemon",
+            json={"enabled": False},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["persisted"] is True
+    assert payload["applied"] is True
+    assert payload["runtime_status"]["configured"] is False
+    assert payload["runtime_status"]["running"] is False
+    assert write_audit.call_args.args[0]["event_type"] == "pi_daemon_config_changed"

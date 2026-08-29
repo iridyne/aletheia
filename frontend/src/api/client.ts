@@ -2121,7 +2121,15 @@ export const api = {
 			cooldown_sec: number;
 			heartbeat_sec: number;
 		}>,
-	) => post<{ updated: Record<string, any> }>("/settings/pi_daemon", body),
+	) => post<{
+		updated: Record<string, any>;
+		persisted: true;
+		applied: true;
+		runtime_status: SettingsResponse["pi_daemon_runtime"] & {
+			configured: boolean;
+			blocker: string | null;
+		};
+	}>("/settings/pi_daemon", body),
 	updateSerenityConfig: (
 		body: Partial<{
 			enabled: boolean;

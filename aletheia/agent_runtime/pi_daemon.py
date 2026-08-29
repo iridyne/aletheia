@@ -237,8 +237,8 @@ async def reconfigure_pi_daemon(
         from aletheia.config.loader import load_config
 
         cfg = load_config()
-    except Exception as exc:
-        return {"configured": True, "running": currently_running, "blocker": f"config_load_error:{exc}"}
+    except Exception:
+        return {"configured": True, "running": currently_running, "blocker": "config_load_error"}
 
     try:
         from aletheia.agent_runtime.startup_behavior_gate import gate_allows_startup

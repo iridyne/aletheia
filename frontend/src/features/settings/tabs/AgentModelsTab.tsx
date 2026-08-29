@@ -106,8 +106,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   })
   const piDaemonMut = useMutation({
     mutationFn: (body: any) => api.updatePiDaemonConfig(body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onSuccess: () => setSaveErr(null),
     onError: onSaveError('System Operator daemon'),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const serenityMut = useMutation({
     mutationFn: (body: any) => api.updateSerenityConfig(body),
@@ -132,6 +133,17 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
   const piDaemon = (settings?.pi_daemon ?? {}) as any
   const piDaemonEnabled = piDaemon.enabled !== false
+  const piDaemonRuntime = (settings?.pi_daemon_runtime ?? {}) as any
+  const piDaemonRuntimeAvailable = typeof piDaemonRuntime.running === 'boolean'
+  const piDaemonRunning = piDaemonRuntime.running === true
+  const piDaemonActiveParams = piDaemonRuntime.active_params as Record<string, number> | null | undefined
+  const piDaemonRuntimeMismatch = piDaemonRuntimeAvailable && (piDaemonRunning !== piDaemonEnabled || (
+    piDaemonRunning && (
+      Number(piDaemonActiveParams?.debounce_sec) !== Number(piDaemon.debounce_sec ?? 2) ||
+      Number(piDaemonActiveParams?.cooldown_sec) !== Number(piDaemon.cooldown_sec ?? 45) ||
+      Number(piDaemonActiveParams?.heartbeat_sec) !== Number(piDaemon.heartbeat_sec ?? 60)
+    )
+  ))
   const serenity = (settings?.serenity ?? {}) as any
   const serenityEnabled = !!serenity.enabled
   const serenityAutoPromote = !!serenity.auto_promote
@@ -529,6 +541,18 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             disabled={piDaemonMut.isPending}
           />
         </Row>
+        <div
+          role="status"
+          className={piDaemonRuntimeMismatch ? 'settings-save-msg err' : 'settings-save-msg'}
+          data-runtime-state={piDaemonRuntimeAvailable ? (piDaemonRunning ? 'running' : 'stopped') : 'not_available'}
+        >
+          Configured {piDaemonEnabled ? 'ON' : 'OFF'}; runtime {piDaemonRuntimeAvailable ? (piDaemonRunning ? 'running' : 'stopped') : 'not available'}
+          {Number.isInteger(piDaemonRuntime.task_generation) ? ` (generation ${piDaemonRuntime.task_generation})` : ''}.
+          {piDaemonActiveParams && (
+            <> Active: debounce {piDaemonActiveParams.debounce_sec}s, cooldown {piDaemonActiveParams.cooldown_sec}s, heartbeat {piDaemonActiveParams.heartbeat_sec}s.</>
+          )}
+          {piDaemonRuntimeMismatch && ' Configured values are not active.'}
+        </div>
         {piDaemonEnabled && (
           <>
             <Row label="Debounce (s)" hint="How long to wait after a signal before evaluating (collects burst signals). Range 0–60.">
