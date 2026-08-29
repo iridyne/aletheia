@@ -10,6 +10,7 @@ def _domain(
     name: str,
     *,
     received_at: str = "2026-01-01T00:00:00+00:00",
+    observed_at: str = "2025-12-31T23:59:00+00:00",
     state: str = "available",
     source_class: str = "observed_fact",
 ):
@@ -22,7 +23,7 @@ def _domain(
         values={"value": 1} if state == "available" else {},
         source_refs=[f"source:{name}"],
         source_hashes=[name],
-        source_observed_at="2025-12-31T23:59:00+00:00",
+        source_observed_at=observed_at,
         received_at=received_at,
         calculation_version=None,
         unavailable_reason=(
@@ -273,3 +274,22 @@ def test_reconstructed_partial_cannot_auto_nominate():
     assessment = assess_t0_foundation(envelope)
     assert assessment.status == "advisory_only"
     assert "reconstructed_partial" in assessment.reasons
+
+
+@spec_claim(SpecClaim(
+    "LT0-S13", _CONTRACT, "Observation-time integrity", "L2a",
+    "A fact observed after the treatment boundary is future information.",
+    status="implemented",
+))
+def test_observed_after_boundary_is_future_information():
+    from aletheia.learning.t0_context import assess_t0_foundation
+
+    domains = [_domain(name) for name in _ranker_envelope().required_domains]
+    domains[0] = _domain(
+        "candidate",
+        observed_at="2026-01-01T00:00:01+00:00",
+    )
+    assessment = assess_t0_foundation(_ranker_envelope(domains=domains))
+    assert assessment.temporal_integrity is False
+    assert assessment.status == "advisory_only"
+    assert "future_observation:candidate" in assessment.reasons

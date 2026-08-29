@@ -131,6 +131,10 @@ def assess_t0_foundation(
         provenance_integrity = False
         reasons.append("reconstructed_partial")
     for domain in envelope.domains:
+        observed = _instant(domain.source_observed_at)
+        if observed is not None and anchor is not None and observed > anchor:
+            temporal_integrity = False
+            reasons.append(f"future_observation:{domain.domain}")
         received = _instant(domain.received_at)
         if received is not None and anchor is not None and received > anchor:
             temporal_integrity = False
