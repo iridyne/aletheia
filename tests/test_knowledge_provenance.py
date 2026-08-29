@@ -246,3 +246,45 @@ def test_result_limit_applies_after_recency_scoring(tmp_path, monkeypatch):
     top_two = retrieve_lessons("needle", k=2)
     assert top_one and top_two
     assert top_one[0].item_id == top_two[0].item_id == recent.id
+
+def test_unknown_content_format_fails_closed(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.knowledge.manager import create_research_note
+    from aletheia.storage.repositories import get_knowledge_item
+
+    item = create_research_note(
+        "Unsupported format",
+        "A sufficiently detailed canonical note with independently checkable evidence "
+        "and explicit source context that remains stable across runtime verification.",
+        confidence="high_confidence",
+    )
+    assert item is not None
+    row = get_knowledge_item(item.id)
+    assert row is not None
+    row["content_format"] = "knowledge-markdown/v2"
+    assert read_knowledge_document(row).state == "integrity_conflict"
+
+
+def test_retrieval_snippet_comes_from_verified_document(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_research_note
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    from aletheia.storage.sqlite import get_db
+
+    item = create_research_note(
+        "Verified snippet",
+        "needle verified canonical evidence remains independently checkable and detailed.",
+        confidence="high_confidence",
+    )
+    assert item is not None
+    db = get_db()
+    db.execute(
+        "UPDATE knowledge_fts SET body='needle unverified injected text' WHERE item_id=?",
+        (item.id,),
+    )
+    db.commit()
+    hits = retrieve_lessons("needle", k=1)
+    assert hits
+    assert "verified canonical evidence" in hits[0].snippet
+    assert "unverified injected" not in hits[0].snippet

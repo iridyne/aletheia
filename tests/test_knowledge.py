@@ -281,8 +281,20 @@ async def test_post_trade_reviewer_scans_prefix_while_forward_page_stays_nonempt
 def test_strategy_memory_creation(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     # strategy_id must be a safe hex id (path-traversal guard in markdown writer).
-    item = create_strategy_memory("a1b2c3d4e5f6", "Trend Following V1", "# Strategy\nDetails here")
-    assert item.item_type == "strategy_memory"
+    first = create_strategy_memory(
+        "a1b2c3d4e5f6", "Trend Following V1", "# Strategy\nDetails here"
+    )
+    second = create_strategy_memory(
+        "a1b2c3d4e5f6", "Trend Following V2", "# Strategy\nUpdated details"
+    )
+    assert first.item_type == "strategy_memory"
+    assert first.file_path != second.file_path
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.storage.repositories import get_knowledge_item
+
+    first_row = get_knowledge_item(first.id)
+    assert first_row is not None
+    assert read_knowledge_document(first_row).state == "available"
     reset_db()
 
 
@@ -343,6 +355,33 @@ def test_contradiction_detection_ignores_inactive_items():
     ])
 
     assert result == []
+
+def test_contradiction_detection_rejects_integrity_conflicts():
+    from aletheia.knowledge.document import canonicalize_inline_document
+
+    tampered = {
+        "id": "memo-tampered",
+        "item_type": "trading_memo",
+        "title": "BTC/USDT long support",
+        "status": "active",
+        **canonicalize_inline_document(
+            "Original canonical evidence with enough detail to remain independently checkable."
+        ),
+    }
+    tampered["content"] = "Research supports a BTC/USDT long opportunity."
+    guard = {
+        "id": "guard-1",
+        "item_type": "trading_guard",
+        "title": "Avoid BTC/USDT long",
+        "content": "Avoid BTC/USDT long entries.",
+        "metadata": {
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "block_candidate": True,
+        },
+        "status": "active",
+    }
+    assert detect_contradictions([tampered, guard]) == []
 
 
 def test_quality_gate_rejects_short_content(tmp_path, monkeypatch):

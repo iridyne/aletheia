@@ -1,5 +1,6 @@
 """Markdown file writer for knowledge base documents."""
 
+import hashlib
 import os
 import re
 import yaml
@@ -22,7 +23,7 @@ def write_strategy_doc(strategy_id: str, title: str, content: str) -> Path:
         raise ValueError(f"Invalid strategy_id format: {strategy_id!r}")
     base = get_data_dir() / "knowledge" / "strategies" / strategy_id
     base.mkdir(parents=True, exist_ok=True)
-    path = base / "strategy.md"
+    path = base / f"strategy-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:12]}.md"
     tmp = path.with_suffix(".tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(str(tmp), str(path))

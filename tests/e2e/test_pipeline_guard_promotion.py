@@ -91,10 +91,21 @@ class TestGuardPromotionChain:
     def test_manual_candidate_can_still_be_promoted_by_owner(self, e2e_db):
         """The promotion MECHANISM is intact: an owner-authored (non-shadow, non-learned)
         candidate is promotable via the explicit owner route."""
-        from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
-        from aletheia.knowledge.document import read_knowledge_document
+        from datetime import datetime, timedelta, timezone
+
+        from aletheia.analytics.guard_promotion import (
+            _deprecate_expired_learned_guards,
+            promote_guard_candidate_to_active,
+        )
+        from aletheia.knowledge.document import (
+            canonicalize_written_document,
+            read_knowledge_document,
+            resolve_knowledge_path,
+        )
+        from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
         from aletheia.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.knowledge.manager import create_guard_candidate
+        from aletheia.storage import repositories as repo
         from aletheia.storage.repositories import get_knowledge_item
 
         guard_id = "manual-sol-momentum-block"
@@ -120,6 +131,32 @@ class TestGuardPromotionChain:
         assert candidate_row is not None
         assert candidate_row["status"] == "deprecated"
         assert read_knowledge_document(candidate_row).state == "available"
+        active_rows = repo._select_all(
+            "knowledge_items",
+            where="item_type = ? AND status = ?",
+            params=("trading_guard", "active"),
+            limit=10,
+        )
+        assert len(active_rows) == 1
+        active_row = active_rows[0]
+        active_path = resolve_knowledge_path(active_row["file_path"])
+        assert active_path is not None
+        metadata, body = parse_frontmatter(active_path)
+        metadata["auto_generated"] = True
+        metadata["tags"] = ["auto-generated", "shadow-only"]
+        metadata["expires_at"] = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat()
+        active_path.write_text(render_frontmatter(metadata, body), encoding="utf-8")
+        repo.update_knowledge_item(
+            active_row["id"], **canonicalize_written_document(active_path)
+        )
+
+        assert _deprecate_expired_learned_guards() == 1
+        expired_row = get_knowledge_item(active_row["id"])
+        assert expired_row is not None
+        assert expired_row["status"] == "deprecated"
+        assert read_knowledge_document(expired_row).state == "available"
 
     def test_event_failure_does_not_publish_guard_state(self, e2e_db, monkeypatch):
         """A failed durable provenance write leaves the candidate untouched."""

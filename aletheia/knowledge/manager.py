@@ -407,7 +407,10 @@ def _extract_contradiction_signal(item: dict) -> dict | None:
     if status not in ("active", ""):
         return None
 
-    meta, body = _item_meta_and_body(item)
+    document_parts = _item_meta_and_body(item)
+    if document_parts is None:
+        return None
+    meta, body = document_parts
     text = " ".join(
         str(part or "")
         for part in (
@@ -439,13 +442,13 @@ def _extract_contradiction_signal(item: dict) -> dict | None:
     }
 
 
-def _item_meta_and_body(item: dict) -> tuple[dict, str]:
+def _item_meta_and_body(item: dict) -> tuple[dict, str] | None:
     from aletheia.knowledge.document import read_knowledge_document
     from aletheia.knowledge.frontmatter import parse_frontmatter_text
 
     document = read_knowledge_document(item)
     if document.state == "integrity_conflict":
-        return {}, ""
+        return None
     if not document.text and isinstance(item.get("metadata"), dict):
         return dict(item["metadata"]), ""
     meta = dict(document.metadata)

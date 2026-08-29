@@ -83,7 +83,14 @@ def _deprecate_expired_learned_guards() -> int:
                 new_meta["status"] = "deprecated"
                 new_meta.setdefault("deprecated_reason", "ttl_expired")
                 path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
-                _update_candidate_row_status(path)
+                _update_candidate_row_status(
+                    path,
+                    item_type=(
+                        "trading_guard"
+                        if guards_dir.name == "guards"
+                        else "guard_candidate"
+                    ),
+                )
                 _record_guard_candidate_deprecated_event(gid, str(path))
                 deprecated += 1
                 logger.info(
@@ -371,8 +378,8 @@ def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
     return promote_guard_candidate_to_active(guard_id, loss_rate=loss_rate)
 
 
-def _update_candidate_row_status(path) -> None:
-    """Best-effort DB downgrade for the source candidate row."""
+def _update_candidate_row_status(path, *, item_type: str = "guard_candidate") -> None:
+    """Synchronize a rewritten guard document with its retained database row."""
     try:
         from aletheia.storage import repositories as repo
 
@@ -380,7 +387,7 @@ def _update_candidate_row_status(path) -> None:
         rows = repo._select_all(
             "knowledge_items",
             where="file_path = ? AND item_type = ?",
-            params=(file_path, "guard_candidate"),
+            params=(file_path, item_type),
             limit=1,
         )
         canonical = canonicalize_written_document(Path(path))

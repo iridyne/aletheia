@@ -343,7 +343,7 @@ def retrieve_lessons(
                     item_id=row["item_id"],
                     item_type=row["item_type"],
                     title=row["title"] or "",
-                    snippet=(row["snip"] or "").strip(),
+                    snippet=_clean_body(document.text, title=row["title"] or "")[:240],
                     confidence=row["confidence"],
                     created_at=row["created_at"] or "",
                     score=round(score, 6),

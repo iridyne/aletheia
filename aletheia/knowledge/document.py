@@ -117,6 +117,8 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
     inline_format = str(row.get("content_format") or "")
     inline_hash = str(row.get("content_sha256") or "")
     inline_canonical = inline_format == CONTENT_FORMAT
+    if inline_format and not inline_canonical:
+        return KnowledgeDocument("", {}, "integrity_conflict")
     if inline_canonical and (
         not inline_hash or content_sha256(inline) != inline_hash
     ):
