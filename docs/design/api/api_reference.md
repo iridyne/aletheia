@@ -139,6 +139,11 @@ Closed rows returned by `GET /positions` add `realized_pnl_complete` and
 operator read model re-computes the close from entry/exit price, quantity, fees, direction, and trusted funding.
 If it cannot reproduce the stored number, `realized_pnl=null`. `/trades/export` applies the same rule and includes
 the same two completeness columns; it writes an empty realized-PnL cell rather than exporting a legacy false value.
+Both the Position read model and CSV export expose signed `funding_cost`, its validated `funding_source`, and
+`funding_status` (`complete`, `not_applicable`, or `unavailable`). Complete futures rows reconcile as
+`gross - entry_fee - exit_fee - funding_cost = realized_pnl`; incomplete futures rows keep funding blank and
+unavailable. Spot rows explicitly use `funding_cost=0` and `funding_source=not_applicable`. CSV `slippage_cost`
+remains a diagnostic execution-drag field and is not subtracted a second time from fill-based realized PnL.
 
 ---
 

@@ -100,6 +100,10 @@ export interface Position {
   liquidation_price?: number | null
   entry_fee?: number | null
   exit_fee?: number | null
+  /** Signed quote-currency funding: positive is a debit, negative a credit. */
+  funding_cost?: number | null
+  funding_source?: string | null
+  funding_status?: 'complete' | 'not_applicable' | 'unavailable' | string
   slippage_cost?: number | null
 }
 

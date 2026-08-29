@@ -112,11 +112,12 @@ def test_cost_summary_keeps_signed_funding_and_marks_incomplete_raw_costs(monkey
     payload = get_cost_summary(execution_mode="paper_internal")
 
     assert payload["total_funding_cost"] == 7.0
-    assert payload["total_costs"] == 11.0
+    assert payload["total_costs"] == 4.75
     assert payload["total_economic_costs"] == 11.0
     assert payload["total_execution_drag"] == 4.75
     assert payload["raw_recorded_costs"]["total_funding_cost"] is None
-    assert payload["raw_recorded_costs"]["total_costs"] is None
+    assert payload["raw_recorded_costs"]["total_costs"] == 6.85
+    assert payload["raw_recorded_costs"]["total_economic_costs"] is None
     assert payload["raw_recorded_costs"]["missing_cost_counts"]["funding_cost"] == 1
 
 

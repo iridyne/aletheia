@@ -1309,6 +1309,34 @@ def _complete_realized_total(rows: list[dict]) -> tuple[float, int]:
     return (round(total, 8), unavailable)
 
 
+def _funding_economics_view(row: dict) -> dict:
+    """Project signed funding with an explicit, fail-closed status.
+
+    ``funding_cost`` and ``funding_source`` are durable audit fields, but a
+    read/export surface must not expose an untrusted numeric value as usable
+    economics.  Keep the projection aligned with the same provenance validator
+    used by realized-PnL reconciliation; the stored row remains untouched.
+    """
+    market_type = str(row.get("market_type") or "").lower()
+    funding_cost, funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if funding_cost is not None and market_type == "spot":
+        status = "not_applicable"
+    elif funding_cost is not None:
+        status = "complete"
+    else:
+        status = "unavailable"
+    return {
+        "funding_cost": funding_cost,
+        "funding_source": funding_source,
+        "funding_status": status,
+    }
+
+
 def position_realized_pnl_view(row: dict) -> dict:
     """Return one display/export row without trusting legacy numeric PnL.
 
@@ -1323,6 +1351,7 @@ def position_realized_pnl_view(row: dict) -> dict:
     from aletheia.execution.close_convergence import close_convergence_view
 
     view.update(close_convergence_view(row))
+    view.update(_funding_economics_view(row))
     if str(row.get("status") or "") != "closed":
         return view
 
