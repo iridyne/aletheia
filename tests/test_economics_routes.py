@@ -337,6 +337,41 @@ async def test_costs_by_provider_aggregates_tokens(client):
 
 
 @pytest.mark.anyio
+async def test_costs_by_provider_legacy_limit_does_not_truncate_totals(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="limit-provider-1",
+        cost=0.10,
+        provider="openai",
+        usage_json=_usage_json(input_t=100, output_t=10),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="limit-provider-2",
+        cost=None,
+        provider="openai",
+        usage_json=_usage_json(input_t=200, output_t=20),
+        status="error",
+    )
+
+    resp = await client.get("/api/economics/costs/by-provider?days=1&event_limit=1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    provider = data["providers"]["openai"]
+    assert data["event_count"] == provider["event_count"] == 2
+    assert provider["known_cost_usd"] == pytest.approx(0.10)
+    assert provider["input_tokens"] == 300
+    assert provider["output_tokens"] == 30
+    assert provider["success_count"] == 1
+    assert provider["error_count"] == 1
+    assert provider["unknown_count"] == 1
+
+
+@pytest.mark.anyio
 async def test_costs_by_provider_daily_series(client):
     from datetime import datetime, timedelta, timezone
 
@@ -542,6 +577,25 @@ async def test_costs_by_tool_rolls_up_recorded_denied_and_cost(client):
     assert create["denied_count"] == 0
     assert create["known_cost_usd"] == 0
     assert create["unknown_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_costs_by_tool_legacy_limit_does_not_truncate_totals(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_tool_cost(db, event_id="limit-tool-1", tool="search", cost=None)
+    _seed_tool_cost(db, event_id="limit-tool-2", tool="search", cost=None, status="denied")
+
+    resp = await client.get("/api/economics/costs/by-tool?days=1&event_limit=1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    tool = data["tools"]["search"]
+    assert data["event_count"] == tool["event_count"] == 2
+    assert tool["recorded_count"] == 1
+    assert tool["denied_count"] == 1
+    assert tool["known_cost_usd"] == 0
 
 
 @pytest.mark.anyio

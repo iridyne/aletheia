@@ -762,7 +762,6 @@ def list_cost_breakdown_by_provider(
     window_start: str,
     window_end: str,
     run_id: str | None = None,
-    event_limit: int = 10_000,
 ) -> dict[str, Any]:
     """Per-provider/model token breakdown + daily time series for the Usage dashboard.
 
@@ -807,8 +806,8 @@ def list_cost_breakdown_by_provider(
         for row in db.execute(
             "SELECT provider, model_or_tool, started_at, latency_ms, status, "
             "estimated_cost_usd, cost_status, usage_json "
-            "FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at LIMIT ?",
-            (*params, int(event_limit)),
+            "FROM runtime_cost_events WHERE " + " AND ".join(where),
+            params,
         ).fetchall()
     ]
 
@@ -963,7 +962,6 @@ def list_cost_breakdown_by_tool(
     window_start: str,
     window_end: str,
     run_id: str | None = None,
-    event_limit: int = 10_000,
 ) -> dict[str, Any]:
     """Per-tool call rollup for the Usage dashboard.
 
@@ -999,8 +997,8 @@ def list_cost_breakdown_by_tool(
         dict(row)
         for row in db.execute(
             "SELECT model_or_tool, status, estimated_cost_usd, cost_status "
-            "FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at LIMIT ?",
-            (*params, int(event_limit)),
+            "FROM runtime_cost_events WHERE " + " AND ".join(where),
+            params,
         ).fetchall()
     ]
 

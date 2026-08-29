@@ -1133,13 +1133,10 @@ export const api = {
 	getEconomicsCostsByProvider: (params?: {
 		days?: number;
 		run_id?: string;
-		event_limit?: number;
 	}) => {
 		const qs = new URLSearchParams();
 		if (params?.days !== undefined) qs.set("days", String(params.days));
 		if (params?.run_id) qs.set("run_id", params.run_id);
-		if (params?.event_limit !== undefined)
-			qs.set("event_limit", String(params.event_limit));
 		const suffix = qs.toString() ? `?${qs.toString()}` : "";
 		return fetchJson<EconomicsCostsByProviderResponse>(
 			`/economics/costs/by-provider${suffix}`,
@@ -1148,13 +1145,10 @@ export const api = {
 	getEconomicsCostsByTool: (params?: {
 		days?: number;
 		run_id?: string;
-		event_limit?: number;
 	}) => {
 		const qs = new URLSearchParams();
 		if (params?.days !== undefined) qs.set("days", String(params.days));
 		if (params?.run_id) qs.set("run_id", params.run_id);
-		if (params?.event_limit !== undefined)
-			qs.set("event_limit", String(params.event_limit));
 		const suffix = qs.toString() ? `?${qs.toString()}` : "";
 		return fetchJson<EconomicsCostsByToolResponse>(
 			`/economics/costs/by-tool${suffix}`,
