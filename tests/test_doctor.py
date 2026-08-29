@@ -1147,6 +1147,33 @@ def test_build_report_severities_reflect_known_empty_state(tmp_path, monkeypatch
         assert c.severity in ("ok", "info", "warn", "blocker")
 
 
+def test_health_rollup_preserves_canonical_status(monkeypatch):
+    from aletheia.agent_runtime import health
+
+    for status, issues, expected_severity in (
+        ("healthy", [], "ok"),
+        ("initializing", ["market_data_initializing"], "warn"),
+        ("degraded", ["market_data_stale:60min"], "warn"),
+    ):
+        monkeypatch.setattr(
+            health,
+            "compute_health",
+            lambda status=status, issues=issues: {
+                "healthy": status == "healthy",
+                "status": status,
+                "issues": issues,
+            },
+        )
+        report = dx.Report()
+
+        dx._probe_health(report)
+
+        check = report.checks[0]
+        assert check.severity == expected_severity
+        assert check.detail.startswith(status)
+        assert report.to_dict()["healthy"] is (status == "healthy")
+
+
 def test_kill_switch_active_is_a_blocker(monkeypatch):
     """An active kill switch must surface as a blocker (it rejects every trade)."""
     import aletheia.config.loader as loader

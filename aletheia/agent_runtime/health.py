@@ -229,9 +229,18 @@ def _exchange_reachable(cfg=None) -> bool | None:
     """
     try:
         from aletheia.agent_runtime.connectivity import get_status
-        result = (get_status().get("last_probe") or {})
+        status = get_status()
+        result = status.get("last_probe") or {}
         if not result:
             return None  # no probe has run yet — unknown, not reachable
+        stale_after_sec = max(
+            30,
+            int(cfg.health.exchange_probe_interval_sec) * 3 if cfg is not None else 180,
+        )
+        observed_at = float(result.get("ts") or 0)
+        age_sec = time.time() - observed_at
+        if not math.isfinite(observed_at) or age_sec < 0 or age_sec > stale_after_sec:
+            return None
         return result.get("reachable", False)
     except Exception:
         return None  # module error → unknown, not False
@@ -287,8 +296,9 @@ def compute_health() -> dict:
         if gate_state and gate_state.get("paused_by_gate"):
             names = ",".join(gate_state.get("blockers") or []) or "unknown"
             issues.append(f"startup_gate_blocked:{names}")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("startup behavior gate health probe failed: %s", type(exc).__name__)
+        initializing.append("startup_gate_probe_error")
 
     # Market data freshness: distinguish paused/disabled (non-applicable),
     # never collected (initializing or degraded depending on uptime), and stale.
@@ -390,8 +400,9 @@ def compute_health() -> dict:
         sess = current_session()
         if sess is not None and not current_session_durable():
             issues.append("runtime_session_provenance_degraded")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("runtime session provenance health probe failed: %s", type(exc).__name__)
+        initializing.append("runtime_session_provenance_unknown")
 
     if not issues and not initializing:
         status = "healthy"

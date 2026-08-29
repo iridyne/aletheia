@@ -2587,11 +2587,12 @@ def _probe_health(report: Report) -> None:
     except Exception as e:
         report.add("health.rollup", "info", f"compute_health failed: {e}")
         return
-    if h.get("healthy"):
+    status = str(h.get("status") or ("healthy" if h.get("healthy") else "degraded"))
+    if status == "healthy":
         report.add("health.rollup", "ok", "healthy (no issues)")
     else:
-        issues = ", ".join(h.get("issues", []))
-        report.add("health.rollup", "warn", f"degraded: {issues}")
+        issues = ", ".join(h.get("issues", [])) or "health evidence is not established"
+        report.add("health.rollup", "warn", f"{status}: {issues}")
 
 
 def _probe_startup_behavior_gate(report: Report) -> None:

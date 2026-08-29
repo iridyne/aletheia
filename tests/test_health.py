@@ -448,6 +448,63 @@ def test_exchange_confirmed_unreachable_is_degraded(tmp_path, monkeypatch):
     assert any("exchange_unreachable" in i for i in h["issues"])
 
 
+def test_stale_exchange_success_becomes_unknown(tmp_path, monkeypatch):
+    import time
+
+    from aletheia.agent_runtime import connectivity, health
+    from aletheia.config.loader import load_config, save_config
+
+    real_exchange_reachable = health._exchange_reachable
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    cfg.health.exchange_probe_interval_sec = 60
+    save_config(cfg)
+    monkeypatch.setattr(health, "_exchange_reachable", real_exchange_reachable)
+    monkeypatch.setattr(
+        connectivity,
+        "get_status",
+        lambda: {"last_probe": {"reachable": True, "ts": time.time() - 181}},
+    )
+
+    result = health.compute_health()
+
+    assert result["status"] == "initializing"
+    assert "exchange_connectivity_unknown" in result["issues"]
+
+
+def test_startup_gate_probe_error_is_not_healthy(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health, startup_behavior_gate
+
+    monkeypatch.setattr(
+        startup_behavior_gate,
+        "read_gate_state",
+        lambda: (_ for _ in ()).throw(RuntimeError("gate unavailable")),
+    )
+
+    result = health.compute_health()
+
+    assert result["status"] == "initializing"
+    assert "startup_gate_probe_error" in result["issues"]
+
+
+def test_runtime_session_probe_error_is_not_healthy(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health, runtime_session
+
+    monkeypatch.setattr(
+        runtime_session,
+        "current_session",
+        lambda: (_ for _ in ()).throw(RuntimeError("session unavailable")),
+    )
+
+    result = health.compute_health()
+
+    assert result["status"] == "initializing"
+    assert "runtime_session_provenance_unknown" in result["issues"]
+
+
 def test_market_data_never_collected_is_initializing_within_warmup(tmp_path, monkeypatch):
     """Scheduler active + no snapshot + within warmup window → initializing, not degraded."""
     import time
