@@ -532,26 +532,25 @@ async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkey
 # Trading performance block (#201)
 # ---------------------------------------------------------------------------
 
-def _seed_closed_position(realized_pnl: float, outcome_eligible: bool = True) -> None:
-    from datetime import datetime, timezone, timedelta
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position, update_position
+def _seed_closed_position(realized_pnl: float) -> None:
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
 
-    p = Position(
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    _insert_closed_position_via_producer(
+        position_id=f"dreaming-{uuid4().hex}",
         symbol="BTC/USDT",
-        market_type="futures",
+        market_type="usdt_futures",
         direction="long",
         quantity=0.01,
         entry_price=60000.0,
-        execution_mode="paper_internal",
-        status="closed",
         realized_pnl=realized_pnl,
-        outcome_eligible=outcome_eligible,
-        outcome_exclusion_reason="none" if outcome_eligible else "unclassified",
-        closed_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        execution_mode="paper_internal",
+        closed_at=closed_at.isoformat(),
+        close_reason="take_profit",
     )
-    insert_position(p)
-    update_position(p.id, status="closed")
 
 
 async def test_dreaming_review_loss_day_verdict(tmp_path, monkeypatch):
@@ -645,3 +644,30 @@ async def test_dreaming_performance_block_precedes_llm_narrative(tmp_path, monke
     assert perf_pos < narrative_pos, (
         f"Trading Performance block (at {perf_pos}) must precede LLM narrative (at {narrative_pos})"
     )
+
+
+def test_dreaming_performance_ignores_excluded_positive_close(monkeypatch):
+    """A positive raw close excluded by outcome integrity cannot create PROFIT_DAY."""
+    from aletheia.analytics import outcome_integrity
+    from aletheia.agents import dreaming_agent
+
+    monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", lambda **_: [])
+    monkeypatch.setattr(
+        outcome_integrity,
+        "build_outcome_cohort_summary",
+        lambda **_: {
+            "raw_event_count": 1,
+            "eligible_outcome_count": 0,
+            "excluded_outcome_count": 1,
+            "outcome_exclusion_reasons": {"incomplete_realized_economics": 1},
+            "cohort_state": "insufficient",
+        },
+    )
+
+    result = dreaming_agent._build_daily_trading_performance(
+        "2026-01-01T00:00:00+00:00",
+    )
+
+    assert "NOT_AVAILABLE" in result
+    assert "PROFIT_DAY" not in result
+    assert "incomplete_realized_economics:1" in result

@@ -1533,6 +1533,9 @@ def test_dreaming_agent_has_trading_performance_block():
         "trading_block is not prepended to review_body — "
         "the daily review must begin with the deterministic P&L block"
     )
+    assert "eligible_strategy_outcomes" in src
+    assert "build_outcome_cohort_summary" in src
+    assert "list_closed_positions" not in src
 
 
 # ---------------------------------------------------------------------------
@@ -1549,18 +1552,28 @@ def test_dreaming_agent_has_trading_performance_block():
         status="implemented",
     ),
 )
-def test_dreaming_agent_loss_day_label():
-    """LP-S19: negative eligible close → LOSS_DAY; non-eligible close excluded."""
-    from unittest.mock import patch
-
-    import aletheia.storage.repositories as repos_mod
+def test_dreaming_agent_loss_day_label(monkeypatch):
+    """LP-S19: central eligible close → LOSS_DAY; raw exclusions are ignored."""
+    from aletheia.analytics import outcome_integrity
     from aletheia.agents import dreaming_agent as da
 
     eligible_loss = {"outcome_eligible": 1, "realized_pnl": -42.5, "closed_at": "2026-01-01T01:00:00+00:00"}
-    non_eligible = {"outcome_eligible": 0, "realized_pnl": 999.0, "closed_at": "2026-01-01T01:00:00+00:00"}
+    monkeypatch.setattr(
+        outcome_integrity, "eligible_strategy_outcomes",
+        lambda **_: [eligible_loss],
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "build_outcome_cohort_summary",
+        lambda **_: {
+            "raw_event_count": 2,
+            "eligible_outcome_count": 1,
+            "excluded_outcome_count": 1,
+            "outcome_exclusion_reasons": {"incomplete_realized_economics": 1},
+            "cohort_state": "available",
+        },
+    )
 
-    with patch.object(repos_mod, "list_closed_positions", return_value=[eligible_loss, non_eligible]):
-        result = da._build_daily_trading_performance("2026-01-01T00:00:00+00:00")
+    result = da._build_daily_trading_performance("2026-01-01T00:00:00+00:00")
 
     assert "LOSS_DAY" in result, (
         f"Expected LOSS_DAY for net pnl=-42.5, got: {result!r}"
@@ -1584,19 +1597,28 @@ def test_dreaming_agent_loss_day_label():
         status="implemented",
     ),
 )
-def test_dreaming_agent_null_pnl_is_not_available():
-    """LP-S20: one NULL realized_pnl among eligible closes → NOT_AVAILABLE."""
-    from unittest.mock import patch
-
-    import aletheia.storage.repositories as repos_mod
+def test_dreaming_agent_null_pnl_is_not_available(monkeypatch):
+    """LP-S20: an incomplete raw close is excluded by the central authority."""
+    from aletheia.analytics import outcome_integrity
     from aletheia.agents import dreaming_agent as da
 
-    eligible_with_pnl = {"outcome_eligible": 1, "realized_pnl": 10.0, "closed_at": "2026-01-01T01:00:00+00:00"}
-    eligible_null_pnl = {"outcome_eligible": 1, "realized_pnl": None, "closed_at": "2026-01-01T01:30:00+00:00"}
+    monkeypatch.setattr(
+        outcome_integrity, "eligible_strategy_outcomes", lambda **_: [],
+    )
+    monkeypatch.setattr(
+        outcome_integrity, "build_outcome_cohort_summary",
+        lambda **_: {
+            "raw_event_count": 2,
+            "eligible_outcome_count": 0,
+            "excluded_outcome_count": 2,
+            "outcome_exclusion_reasons": {
+                "incomplete_realized_economics": 2,
+            },
+            "cohort_state": "insufficient",
+        },
+    )
 
-    with patch.object(repos_mod, "list_closed_positions",
-                      return_value=[eligible_with_pnl, eligible_null_pnl]):
-        result = da._build_daily_trading_performance("2026-01-01T00:00:00+00:00")
+    result = da._build_daily_trading_performance("2026-01-01T00:00:00+00:00")
 
     assert "NOT_AVAILABLE" in result, (
         f"Expected NOT_AVAILABLE when realized_pnl is NULL on eligible close, got: {result!r}"
