@@ -122,8 +122,8 @@ def _build_plan(generation: dict, draft: EntryPlanDraft, cfg) -> EntryPlan:
     from aletheia.risk.policy import resolve_risk_policy
 
     execution_account_mode = str(cfg.exchange.paper_execution_mode)
-    if execution_account_mode != "bitget_demo":
-        raise ValueError("entry_plan_bitget_demo_required")
+    if execution_account_mode not in {"paper_internal", "bitget_demo"}:
+        raise ValueError("entry_plan_execution_mode_unsupported")
     resolved_policy = resolve_risk_policy(cfg, execution_account_mode)
     policy = resolved_policy.policy
     if float(draft.max_risk_pct) > float(policy.loss.max_single_trade_risk_pct):

@@ -124,7 +124,7 @@ def execute_entry_plan(
     if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
         raise ValueError("entry_plan_hash_mismatch")
     plan = EntryPlan.model_validate_json(payload)
-    if plan.execution_account_mode != "bitget_demo":
+    if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 
     existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)

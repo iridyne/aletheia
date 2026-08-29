@@ -1498,10 +1498,10 @@ def _execute_proposal(
         allowed_mode = risk_result.allowed_execution_mode
 
         if execution_proposal.entry_plan_id:
-            if allowed_mode != "bitget_demo":
+            if allowed_mode not in {"paper_internal", "bitget_demo"}:
                 return _reject_for_exchange_constraints(
                     proposal,
-                    "Entry Plan order tactics are qualified only for Bitget Demo.",
+                    "Entry Plan order tactics are unavailable for this execution mode.",
                 )
             if execution_proposal.order_type != "limit":
                 return _reject_for_exchange_constraints(
@@ -1621,9 +1621,30 @@ def _execute_proposal(
                     trade_school=execution_proposal.trade_school,
                     attribution_snapshot=attribution_snapshot,
                     source=execution_proposal.source,
+                    entry_plan_id=execution_proposal.entry_plan_id,
+                    order_tactic=execution_proposal.order_tactic,
+                    time_in_force=execution_proposal.time_in_force,
+                    post_only=execution_proposal.post_only,
                 )
                 _stamp_exit_intent(result, proposal)
                 update_trade_proposal(proposal.id, status="executed")
+                if execution_proposal.entry_plan_id:
+                    from aletheia.storage import repositories as entry_repo
+
+                    if not entry_repo.transition_entry_plan(
+                        execution_proposal.entry_plan_id,
+                        expected_status="risk_reserved",
+                        status="ordered",
+                        order_id=result["order_id"],
+                    ):
+                        raise RuntimeError("paper_entry_plan_order_transition_failed")
+                    if not entry_repo.transition_entry_plan(
+                        execution_proposal.entry_plan_id,
+                        expected_status="ordered",
+                        status="filled",
+                        order_id=result["order_id"],
+                    ):
+                        raise RuntimeError("paper_entry_plan_fill_transition_failed")
             _notify_committed_paper_fill(result)
             _write_post_commit_audit(
                 {

@@ -354,6 +354,53 @@ def test_no_plan_is_durable_until_new_generation():
     assert calls == 2
 
 
+def test_entry_planner_persists_plan_for_paper_internal():
+    from aletheia.config.loader import load_config
+
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    async def planner(_context):
+        return {
+            "result": "ENTRY_PLAN",
+            "reasoning": "bounded paper plan",
+            "direction": "long",
+            "thesis": "bounded momentum continuation",
+            "scenario": "retrace then reclaim",
+            "execution_mode": "TRIGGERED",
+            "trigger_spec_id": "momentum-retrace-reclaim",
+            "trigger_spec_version": "v1",
+            "trigger_params": {
+                "breakout_level": 100,
+                "pullback_low": 99,
+                "pullback_high": 100,
+                "entry_low": 100,
+                "entry_high": 101,
+                "invalidation_price": 98,
+            },
+            "entry_zone": [100, 101],
+            "invalidation_conditions": ["close_below_98"],
+            "invalidation_price": 98,
+            "plan_lifetime_minutes": 60,
+            "max_slippage_bps": 10,
+            "stop_price": 98,
+            "target_price": 105,
+            "expected_horizon_hours": 4,
+            "order_tactic": "OPPOSING_BBO_IOC",
+            "max_notional": 100,
+            "max_risk_pct": 0.25,
+            "max_leverage": 2,
+        }
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    assert result["status"] == "planned", result
+    plan = EntryPlan.model_validate_json(repo.get_entry_plan(result["entry_plan_id"])["plan_json"])
+    assert plan.planning_generation_id == generation["id"]
+    assert plan.execution_account_mode == "paper_internal"
+
+
 def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
     active = 0
     peak = 0

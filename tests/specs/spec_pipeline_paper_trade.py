@@ -1564,7 +1564,7 @@ def test_permanent_reject_workset_is_separate_from_execution_limit(monkeypatch):
         "pipeline_paper_trade",
         "§4 local market-only materialization",
         "L2b",
-        "paper_internal rejects a non-market entry before writing Order, Fill, or Position.",
+        "paper_internal rejects a non-market entry unless an exact durable Entry Plan authority owns it.",
         status="implemented",
     )
 )
