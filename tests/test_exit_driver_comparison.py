@@ -62,7 +62,7 @@ def test_avg_hold_hours():
 
 def test_empty():
     assert compare_exit_outcomes([]) == {}
-    assert "no closed positions" in format_comparison({})
+    assert "no eligible outcomes" in format_comparison({})
 
 
 def test_unavailable_or_non_finite_economics_are_not_zero_return_samples():
@@ -81,25 +81,29 @@ def test_format_smoke():
     stats = compare_exit_outcomes([_row("operator_close", 10.0), _row("stop_loss", -5.0)])
     out = format_comparison(stats)
     assert "operator" in out and "rule" in out and "win%" in out
+    assert "eligible" in out and "oi-v1" in out
 
 
-def test_db_shadow_report():
-    from aletheia.storage.sqlite import get_db
+def test_shadow_report_uses_central_eligible_cohort(monkeypatch):
+    import aletheia.analytics.outcome_integrity as outcome_integrity
 
-    db = get_db()
-    for pid, reason, pnl in [
-        ("s1", "operator_close", 10.0),
-        ("s2", "stop_loss", -8.0),
-        ("s3", "take_profit", 12.0),
-    ]:
-        db.execute(
-            "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-            "execution_mode,status,close_reason,realized_pnl,closed_at) VALUES "
-            "(?,?,?,?,?,?,?,?,?,?,?)",
-            (pid, "BTC/USDT", "usdt_futures", "long", 1.0, 100.0, "paper_internal",
-             "closed", reason, pnl, "2026-07-12T00:00:00+00:00"),
-        )
+    seen = {}
+    raw_rows = [
+        {"close_reason": "operator_close", "realized_pnl": 100.0, "outcome_eligible": False},
+        {"close_reason": "stop_loss", "realized_pnl": -1.0, "outcome_eligible": True},
+    ]
 
-    stats = shadow_report()
-    assert stats["operator"].count == 1 and stats["operator"].total_pnl == 10.0
-    assert stats["rule"].count == 2 and stats["rule"].wins == 1
+    def eligible_rows(**filters):
+        seen.update(filters)
+        return [row for row in raw_rows if row["outcome_eligible"]]
+
+    monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", eligible_rows)
+
+    stats = shadow_report(days=30, execution_mode="paper_internal", limit=50)
+
+    assert "operator" not in stats
+    assert stats["rule"].count == 1
+    assert stats["rule"].total_pnl == -1.0
+    assert seen["execution_mode"] == "paper_internal"
+    assert seen["limit"] == 50
+    assert seen["closed_after"] is not None
