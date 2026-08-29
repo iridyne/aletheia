@@ -112,9 +112,11 @@ def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
 
 
 def _json_object_is_unsupported(response: httpx.Response) -> bool:
-    return _optional_request_field_is_unsupported(
-        response, "response_format"
-    ) or _optional_request_field_is_unsupported(response, "json_object")
+    return (
+        _optional_request_field_is_unsupported(response, "response_format")
+        or _optional_request_field_is_unsupported(response, "json_object")
+        or _optional_request_field_is_unsupported(response, "json_schema")
+    )
 
 
 class OpenAICompatibleProvider(ModelProvider):

@@ -603,3 +603,61 @@ async def test_openai_compatible_retries_without_json_object_when_unsupported(mo
     assert resp.content == '{"ok": true}'
     assert payloads[0]["response_format"] == {"type": "json_object"}
     assert "response_format" not in payloads[1]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_retries_without_json_schema_when_unsupported(monkeypatch):
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    payloads = []
+    schema = {
+        "type": "object",
+        "properties": {"decision": {"type": "string"}},
+        "required": ["decision"],
+        "additionalProperties": False,
+    }
+
+    class FakeClient:
+        async def post(self, url, json=None, headers=None):  # noqa: ARG002
+            payloads.append(json)
+            if len(payloads) == 1:
+                return _FakeHttpResponse(
+                    400,
+                    {
+                        "error": {
+                            "param": "json_schema",
+                            "message": "json_schema is unsupported",
+                        }
+                    },
+                )
+            return _FakeHttpResponse(
+                200,
+                {
+                    "choices": [{"message": {"content": '{"decision": "NO_PLAN"}'}}],
+                    "model": "m1",
+                    "usage": {},
+                },
+            )
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        "aletheia.model_provider.openai_compatible.httpx_client",
+        lambda *, timeout: FakeClient(),
+    )
+    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
+    resp = await provider.complete(
+        ModelRequest(
+            messages=[{"role": "user", "content": "x"}],
+            response_format="json_schema",
+            structured_schema=schema,
+        )
+    )
+
+    assert resp.content == '{"decision": "NO_PLAN"}'
+    assert payloads[0]["response_format"]["type"] == "json_schema"
+    assert "response_format" not in payloads[1]
+    assert payloads[1]["messages"][-1]["content"].startswith(
+        "Respond with valid JSON matching this schema:"
+    )
