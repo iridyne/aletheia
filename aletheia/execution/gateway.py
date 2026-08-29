@@ -1322,6 +1322,7 @@ def _terminal_execution_error(
         )
     with transaction():
         update_trade_proposal(proposal.id, status="error")
+    _fail_entry_plan(proposal, reason_code)
     write_audit(
         {
             "actor": "system",
@@ -1980,6 +1981,7 @@ def _execute_proposal(
             return recovered
         with transaction():
             update_trade_proposal(proposal.id, status="error")
+        _fail_entry_plan(proposal, "execution_pipeline_failed")
         write_audit(
             {
                 "actor": "system",

@@ -35,13 +35,18 @@ def model_json_schema_payload(schema: Any) -> dict[str, Any]:
 
 _PORTABLE_SCHEMA_REMOVED_KEYS = frozenset(
     {
+        "$id",
+        "$schema",
         "title",
         "description",
+        "default",
         "format",
         "examples",
         "pattern",
         "minLength",
         "maxLength",
+        "minItems",
+        "maxItems",
         "minimum",
         "maximum",
         "exclusiveMinimum",
@@ -62,6 +67,39 @@ def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
 
     source = model_json_schema_payload(schema)
     resolving: set[str] = set()
+    has_conditional_branch = False
+
+    def contains_conditional(node: Any) -> bool:
+        if isinstance(node, dict):
+            if "allOf" in node or "oneOf" in node:
+                return True
+            return any(contains_conditional(value) for value in node.values())
+        if isinstance(node, list):
+            return any(contains_conditional(value) for value in node)
+        return False
+
+    has_conditional_branch = contains_conditional(source)
+
+    def nullable(node: Any) -> Any:
+        if not isinstance(node, dict):
+            return node
+        node_type = node.get("type")
+        if isinstance(node_type, list):
+            types = list(node_type)
+            if "null" in types:
+                return node
+        elif isinstance(node_type, str):
+            types = [node_type]
+        elif "properties" in node:
+            types = ["object"]
+        else:
+            return node
+        types.append("null")
+        result = {**node, "type": types}
+        enum = result.get("enum")
+        if isinstance(enum, list) and None not in enum:
+            result["enum"] = [*enum, None]
+        return result
 
     def normalize(node: Any) -> Any:
         if isinstance(node, list):
@@ -112,12 +150,22 @@ def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
                         node["type"] = [primary_type, "null"]
 
         normalized: dict[str, Any] = {}
+        required = set(node.get("required") or ())
         for key, value in node.items():
             if key in _PORTABLE_SCHEMA_REMOVED_KEYS or key in {"$defs", "definitions", "$ref"}:
                 continue
             if key == "anyOf":
                 raise ValueError("portable_schema_unsupported_anyOf")
-            normalized[key] = normalize(value)
+            if key == "properties" and isinstance(value, dict):
+                properties = {}
+                for name, child in value.items():
+                    child_schema = normalize(child)
+                    if has_conditional_branch and name not in required:
+                        child_schema = nullable(child_schema)
+                    properties[name] = child_schema
+                normalized[key] = properties
+            else:
+                normalized[key] = normalize(value)
         if normalized.get("type") == "object" or "properties" in normalized:
             properties = normalized.get("properties")
             normalized["additionalProperties"] = False
@@ -129,6 +177,7 @@ def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError("portable JSON schema must be an object")
     return payload
+
 
 
 def _configured_provider_name(provider: Any) -> str:

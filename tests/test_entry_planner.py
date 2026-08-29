@@ -411,6 +411,75 @@ def test_entry_planner_persists_plan_for_paper_internal():
     assert plan.max_leverage == 2
 
 
+def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.config.loader import load_config
+    from aletheia.trading.entry_plan_compiler import compile_entry_plan
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    policy = SimpleNamespace(
+        policy_id="test-policy",
+        revision=1,
+        capital=SimpleNamespace(
+            max_position_margin_usdt=1_000_000,
+            max_total_exposure_pct=100,
+        ),
+        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
+    )
+    resolved = SimpleNamespace(policy=policy, policy_hash="test-policy-hash")
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.resolve_risk_policy",
+        lambda *_args, **_kwargs: resolved,
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.get_max_leverage",
+        lambda *_args, **_kwargs: 20,
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.engine.account_equity_for_execution",
+        lambda *_args, **_kwargs: 100_000.0,
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.engine.per_symbol_notional_ceiling",
+        lambda *_args, **_kwargs: 1_000_000_000.0,
+    )
+
+    def compile_for(market_type):
+        return compile_entry_plan(
+            {
+                "id": f"generation-{market_type}",
+                "last_candidate_id": f"candidate-{market_type}",
+                "candidate_family": "momentum",
+                "venue": "bitget",
+                "symbol": "BTC/USDT",
+                "market_type": market_type,
+                "direction": "long",
+            },
+            {"entry_price_usd": 100.0},
+            {"atr_pct": 10.0},
+            PlanIntent(
+                decision="ENTRY_PLAN",
+                reason_code="OK",
+                thesis="x",
+                scenario="y",
+                execution_mode="RESTING_MAKER",
+                risk_tier="LOW",
+                horizon="INTRADAY",
+            ),
+            cfg,
+        )
+
+    perp = compile_for("perp")
+    spot = compile_for("spot")
+    worst_entry = perp.entry_zone[1]
+    risk_budget = 100_000.0 * perp.max_risk_pct / 100.0
+    stop_fraction = abs(worst_entry - perp.stop_price) / worst_entry
+    assert perp.max_notional <= risk_budget / stop_fraction
+    assert spot.max_leverage == 1
+
+
 def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch):
     candidate = _candidate()
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)

@@ -440,6 +440,7 @@ def _persist_waiting_plan(
     account_mode="bitget_demo",
     mode="TRIGGERED",
     tactic="OPPOSING_BBO_IOC",
+    plan_updates=None,
 ) -> EntryPlan:
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_snapshot(snapshot)
@@ -461,7 +462,7 @@ def _persist_waiting_plan(
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.claim_next_candidate_planning("owner")
     plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic).model_copy(
-        update={"planning_generation_id": generation["id"]}
+        update={"planning_generation_id": generation["id"], **(plan_updates or {})}
     )
     repo.complete_candidate_planning_with_plan(generation["id"], "owner", plan)
     return plan
@@ -578,6 +579,112 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
     assert order["requested_liquidity"] == requested_liquidity
     assert repo.list_fills(order_id=order["id"])[0]["realized_liquidity"] is None
     assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+
+
+def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.data import price_feed
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    cfg = load_config()
+    resolved = resolve_risk_policy(cfg, "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    monkeypatch.setattr(
+        price_feed,
+        "get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 100.05,
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+
+    now = datetime.now(timezone.utc)
+    result = execute_entry_plan(
+        plan.plan_id,
+        bid=100,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+    )
+
+    assert result["status"] == "executed", result
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+
+def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import (
+        build_entry_plan_order_intent,
+    )
+
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+    )
+    now = datetime.now(timezone.utc)
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=99.9,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=proposal.id,
+        proposal_commit_hash=proposal.commit_hash,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        execution_mode=proposal.execution_mode,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        leverage=proposal.leverage,
+    )
+
+    def approve(proposal, *, decision_role):
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode="paper_internal",
+            decision_role=decision_role,
+            evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash,
+            proposal_execution_mode=proposal.execution_mode,
+        )
+        repo.insert_risk_decision(decision)
+        return SimpleNamespace(
+            approved=True,
+            allowed_execution_mode="paper_internal",
+            decision_id=decision.id,
+            decision_role=decision_role,
+        )
+
+    monkeypatch.setattr(gateway, "evaluate_proposal", approve)
+
+    def fail_paper_order(**_kwargs):
+        raise RuntimeError("paper broker failed")
+
+    monkeypatch.setattr(gateway, "execute_paper_order", fail_paper_order)
+    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+
+    assert result["status"] == "error"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "failed"
+    assert repo.get_entry_risk_reservation(proposal.id) is None
+
 
 
 def test_stale_exact_state_cannot_advance_triggered_plan():

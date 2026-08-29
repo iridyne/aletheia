@@ -101,6 +101,10 @@ def compile_entry_plan(
 
         if intent.decision != "ENTRY_PLAN":
             raise PlanIntentError("COMPILER_ENTRY_INTENT_REQUIRED")
+        raw_market_type = generation.get("market_type")
+        if raw_market_type not in {"spot", "perp"}:
+            raise PlanIntentError("COMPILER_MARKET_TYPE_INVALID")
+        market_type = cast(Literal["spot", "perp"], raw_market_type)
         raw_direction = generation.get("direction")
         if raw_direction not in {"long", "short"}:
             raise PlanIntentError("COMPILER_DIRECTION_INVALID")
@@ -150,12 +154,48 @@ def compile_entry_plan(
             venue_leverage_cap = int(get_max_leverage(generation["symbol"], False, cfg))
         except Exception as exc:
             raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
-        max_leverage = min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[intent.risk_tier])
+        max_leverage = (
+            1
+            if market_type == "spot"
+            else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[intent.risk_tier])
+        )
         max_risk_pct = min(
             float(policy.loss.max_single_trade_risk_pct),
             _RISK_TIER_MAX_RISK_PCT[intent.risk_tier],
         )
-        max_notional = float(policy.capital.max_position_margin_usdt) * max_leverage
+        try:
+            from aletheia.risk.engine import (
+                account_equity_for_execution,
+                per_symbol_notional_ceiling,
+            )
+
+            capital_base = account_equity_for_execution(execution_account_mode, cfg)
+        except Exception as exc:
+            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE") from exc
+        if capital_base is None or not math.isfinite(float(capital_base)) or float(capital_base) <= 0:
+            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE")
+        risk_budget = float(capital_base) * max_risk_pct / 100.0
+        worst_entry_price = entry_zone[1] if direction == "long" else entry_zone[0]
+        stop_fraction = abs(worst_entry_price - stop_price) / worst_entry_price
+        if not math.isfinite(stop_fraction) or stop_fraction <= 0:
+            raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID")
+        risk_bounded_notional = risk_budget / stop_fraction
+        max_notional = min(
+            float(policy.capital.max_position_margin_usdt) * max_leverage,
+            risk_bounded_notional,
+        )
+        total_exposure_cap = (
+            float(policy.capital.max_total_exposure_pct) / 100.0 * float(capital_base)
+        )
+        if total_exposure_cap > 0:
+            max_notional = min(max_notional, total_exposure_cap)
+        per_symbol_cap = per_symbol_notional_ceiling(
+            execution_account_mode,
+            leverage=max_leverage,
+            cfg=cfg,
+        )
+        if per_symbol_cap > 0:
+            max_notional = min(max_notional, per_symbol_cap)
         if max_leverage < 1 or max_risk_pct <= 0 or max_notional <= 0:
             raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID")
 
@@ -186,7 +226,7 @@ def compile_entry_plan(
                 candidate_family=generation["candidate_family"],
                 venue=generation["venue"],
                 symbol=generation["symbol"],
-                market_type=generation["market_type"],
+                market_type=market_type,
                 direction=direction,
                 thesis=intent.thesis,
                 evidence_refs=tuple(intent.evidence_refs),

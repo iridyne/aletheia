@@ -5,8 +5,14 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import BaseModel
 
-from aletheia.model_provider.base import ModelRequest, ModelResponse
+from aletheia.model_provider.base import (
+    ModelRequest,
+    ModelResponse,
+    portable_json_schema_payload,
+)
+
 
 
 class FakeProvider:
@@ -411,6 +417,37 @@ async def test_llm_structured_repair_attempt_uses_a_nonce_and_new_messages(tmp_p
     assert captured[0].messages != captured[1].messages
     assert captured[1].messages[-1]["content"].startswith("[repair:")
 
+def test_portable_schema_keeps_conditional_skip_sparse_and_locally_valid():
+    from aletheia.agent_shell.trading_decision import _DECISION_SCHEMA
+    from aletheia.agents.helpers import _validate_structured_payload
+
+    class DecisionSchema:
+        @staticmethod
+        def model_json_schema():
+            return _DECISION_SCHEMA
+
+    portable = portable_json_schema_payload(DecisionSchema)
+    assert set(portable["required"]) == set(portable["properties"])
+    assert portable["properties"]["symbol"]["type"] == ["string", "null"]
+
+    data = {name: None for name in portable["properties"]}
+    data.update(
+        {
+            "action": "skip",
+            "conviction": 0,
+            "reasoning": "insufficient evidence",
+            "bear_case": "missing confirmation",
+        }
+    )
+    _validate_structured_payload(data, DecisionSchema, _DECISION_SCHEMA)
+    assert data == {
+        "action": "skip",
+        "conviction": 0,
+        "reasoning": "insufficient evidence",
+        "bear_case": "missing confirmation",
+    }
+
+
 class _FakeHttpResponse:
     def __init__(self, status_code, payload):
         self.status_code = status_code
@@ -510,6 +547,68 @@ async def test_openai_compatible_sends_strict_json_schema(monkeypatch):
             "strict": True,
             "schema": schema,
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_responses_preserves_strict_json_schema(monkeypatch):
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    payloads = []
+
+    class FakeClient:
+        async def post(self, url, json=None, headers=None):  # noqa: ARG002
+            assert url.endswith("/responses")
+            payloads.append(json)
+            return _FakeHttpResponse(
+                200,
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": '{"decision":"NO_PLAN"}'}],
+                        }
+                    ],
+                    "model": "m1",
+                    "usage": {},
+                },
+            )
+
+        async def aclose(self):
+            return None
+
+    schema = {
+        "type": "object",
+        "properties": {"decision": {"type": "string"}},
+        "required": ["decision"],
+        "additionalProperties": False,
+    }
+    monkeypatch.setattr(
+        "aletheia.model_provider.openai_compatible.httpx_client",
+        lambda *, timeout: FakeClient(),
+    )
+    provider = OpenAICompatibleProvider(
+        base_url="http://model.test/v1",
+        model="m1",
+        protocol="responses",
+    )
+    response = await provider.complete(
+        ModelRequest(
+            messages=[{"role": "user", "content": "x"}],
+            response_format="json_schema",
+            structured_schema=schema,
+            structured_schema_name="plan_intent",
+        )
+    )
+
+    assert response.content == '{"decision":"NO_PLAN"}'
+    assert payloads[0]["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "plan_intent",
+            "strict": True,
+            "schema": schema,
+        }
     }
 
 

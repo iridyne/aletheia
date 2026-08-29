@@ -14,7 +14,12 @@ import threading
 from contextvars import ContextVar
 from typing import Literal
 
-from aletheia.model_provider.base import ModelRequest, StreamChunk, portable_json_schema_payload
+from aletheia.model_provider.base import (
+    ModelRequest,
+    StreamChunk,
+    model_json_schema_payload,
+    portable_json_schema_payload,
+)
 from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
 from aletheia.model_provider.router import get_provider_async, get_provider
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
@@ -618,12 +623,36 @@ def _validate_json_schema_value(
             raise ValueError(f"{path}: value is above maximum")
 
 
+def _drop_null_fields(value):
+    if isinstance(value, dict):
+        return {
+            key: _drop_null_fields(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_drop_null_fields(item) for item in value]
+    return value
+
+
 def _validate_structured_payload(data: dict, schema: object, schema_dict: dict) -> None:
+    try:
+        _validate_json_schema_value(data, schema_dict, root=schema_dict)
+    except (TypeError, ValueError):
+        # Strict provider schemas encode conditional optional fields as nullable
+        # required properties.  Validate the sparse form locally so a skip branch
+        # does not need to invent trade fields.
+        if not ("allOf" in schema_dict or "oneOf" in schema_dict):
+            raise
+        sparse = _drop_null_fields(data)
+        if sparse == data:
+            raise
+        _validate_json_schema_value(sparse, schema_dict, root=schema_dict)
+        data.clear()
+        data.update(sparse)
     validator = getattr(schema, "model_validate", None)
     if callable(validator):
         validator(data)
-        return
-    _validate_json_schema_value(data, schema_dict, root=schema_dict)
 
 
 async def llm_structured(
@@ -672,6 +701,7 @@ async def llm_structured(
     # provider actually in use, not cfg.models.default_provider.
     provider_name = _resolve_provider_name(provider)
     schema_dict: dict = {}
+    portable_schema_dict: dict = {}
     inference_call: InferenceCall | None = None
     inference_finished = False
     last_response = None
@@ -722,7 +752,8 @@ async def llm_structured(
 
     try:
         provider_instance = await get_provider_async(provider_name)
-        schema_dict = portable_json_schema_payload(schema)
+        schema_dict = model_json_schema_payload(schema)
+        portable_schema_dict = portable_json_schema_payload(schema)
         base_messages = [{"role": "user", "content": user}]
         caller_system, adapter_id, context_manifest = _prepare_context_adapter(
             system,
@@ -799,7 +830,7 @@ async def llm_structured(
                             max_tokens=max_tokens,
                             reasoning_effort=reasoning_effort,
                             response_format="json_schema",
-                            structured_schema=schema_dict,
+                            structured_schema=portable_schema_dict,
                             prefer_json_reliable_models=prefer_json_reliable,
                             exclude_models=tuple(failed_models),
                             inference=inference_call,

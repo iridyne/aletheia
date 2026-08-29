@@ -938,9 +938,10 @@ def _evaluate_proposal_locked(
             # mark and applies slippage afterwards. A merely fresh but different
             # market row must never authorize a stale/invented requested price.
             violations.append("proposal_price_not_current_mark")
-        if proposal.order_type == "limit":
+        if proposal.order_type == "limit" and not proposal.entry_plan_id:
             violations.append("paper_internal_limit_not_supported")
-        violations.extend(_paper_opportunity_identity_violations(proposal))
+        if not proposal.entry_plan_id:
+            violations.extend(_paper_opportunity_identity_violations(proposal))
 
     # 2. Market allowed
     if proposal.market_type == "spot" and not cfg.exchange.enabled_markets.get("spot"):

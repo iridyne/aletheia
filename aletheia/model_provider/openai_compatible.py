@@ -211,6 +211,17 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_output_tokens": request.max_tokens,
         }
+        if request.response_format == "json_object":
+            payload["text"] = {"format": {"type": "json_object"}}
+        elif request.response_format == "json_schema" and request.structured_schema is not None:
+            payload["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": request.structured_schema_name,
+                    "strict": True,
+                    "schema": request.structured_schema,
+                }
+            }
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
         _raise_without_secrets(resp)
