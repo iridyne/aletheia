@@ -59,22 +59,20 @@ def _fts_table_exists(db) -> bool:
         return False
 
 
-def _clean_body(text: str) -> str:
-    """Strip the markdown header/metadata block writers prepend, keep prose."""
+def _clean_body(text: str, *, title: str | None = None) -> str:
+    """Strip only the canonical leading metadata/header prefix from Markdown."""
+    from aletheia.knowledge.frontmatter import parse_frontmatter_text
+
+    _metadata, body = parse_frontmatter_text(text)
+    if body != text:
+        return body.strip()
+
+    # Legacy files without frontmatter still have a generated title. Remove it
+    # only when it matches the item's title; body-level H1 headings are prose.
     lines = text.splitlines()
-    out = []
-    in_meta = False
-    for ln in lines:
-        s = ln.strip()
-        if s.startswith("# "):  # title line
-            continue
-        if s == "---":  # metadata fence
-            in_meta = not in_meta
-            continue
-        if in_meta:
-            continue
-        out.append(ln)
-    return "\n".join(out).strip()
+    if title and lines and lines[0].strip() == f"# {title}":
+        return "\n".join(lines[1:]).strip()
+    return text.strip()
 
 
 def index_knowledge_item(
@@ -100,7 +98,7 @@ def index_knowledge_item(
         connection.execute(
             "INSERT INTO knowledge_fts (title, body, item_type, item_id, confidence, created_at, outcome) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (item.title or "", _clean_body(body or ""), item.item_type, item.id,
+            (item.title or "", _clean_body(body or "", title=item.title), item.item_type, item.id,
              item.confidence, getattr(item, "created_at", "") or "", outcome or ""),
         )
         if not already_in_tx:
