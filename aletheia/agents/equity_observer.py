@@ -21,7 +21,8 @@ Design notes:
 - xStocks are tokenized US equities on Bitget — they are the ONLY execution channel
   for US equities since all trading goes through Bitget. deviation_pct is therefore
   NOT an arbitrage signal but a tracking-error / premium monitor.
-- Runs Mon–Fri 14:30–21:00 UTC (US market hours). Scheduler enforces this gate.
+- Runs Mon–Fri 09:30–16:00 America/New_York (US regular market hours). The
+  scheduler enforces this named-timezone gate, including daylight saving time.
 - Degrades gracefully: yfinance failures log and skip; xStock absence is fine.
 """
 

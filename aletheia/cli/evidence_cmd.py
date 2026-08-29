@@ -26,13 +26,26 @@ def register_epoch(
     deploys. Profit-loop identity always comes from the durable Runtime Session;
     ``--commit`` cannot override it. Idempotent on the same identity.
     """
-    from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
+    from aletheia.learning.evidence_epoch import (
+        EXPECTED_EVIDENCE_PATH_IDS,
+        ensure_evidence_epochs,
+        evidence_epoch_summary,
+    )
 
     result = ensure_evidence_epochs(commit_sha=commit_sha)
     summary = evidence_epoch_summary()
+    missing_paths = sorted(EXPECTED_EVIDENCE_PATH_IDS - set(result))
+    complete = not missing_paths
 
     if json_output:
-        typer.echo(json.dumps({"registered": result, "summary": summary}, indent=2, ensure_ascii=False))
+        typer.echo(json.dumps({
+            "registered": result,
+            "summary": summary,
+            "complete": complete,
+            "missing_paths": missing_paths,
+        }, indent=2, ensure_ascii=False))
+        if not complete:
+            raise typer.Exit(1)
         return
 
     sha = summary.get("current_commit") or "unknown"
@@ -42,6 +55,11 @@ def register_epoch(
         typer.echo(f"  [{path_id}] epoch_id={epoch_id[:12] if epoch_id else '?'}...")
     if not result:
         typer.echo("  (none registered — check logs for errors)")
+    if missing_paths:
+        typer.echo(
+            "Missing required evidence path(s): " + ", ".join(missing_paths),
+            err=True,
+        )
 
     for path in summary.get("paths", []):
         sha_ok = path.get("sha_consistent")
@@ -51,6 +69,8 @@ def register_epoch(
             f"  {flag} {path['path_id']}: {status_label} "
             f"(started_at={path.get('started_at', 'none')[:19] if path.get('started_at') else 'none'})"
         )
+    if not complete:
+        raise typer.Exit(1)
 
 
 @epoch_app.command("status")

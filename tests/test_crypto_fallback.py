@@ -133,6 +133,27 @@ class TestBinancePublicProvider:
         assert ticker.provider == "binance_public"
 
     @pytest.mark.anyio
+    async def test_get_ticker_rejects_nonpositive_optional_extremes(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "lastPrice": "100.0",
+            "quoteVolume": "1000.0",
+            "priceChangePercent": "0.0",
+            "highPrice": "0.0",
+            "lowPrice": "99.0",
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aletheia.net.httpx_client", return_value=mock_client):
+            with pytest.raises(ValueError, match="high_24h"):
+                await BinancePublicProvider().get_ticker("BTC/USDT")
+
+    @pytest.mark.anyio
     async def test_instrument_id_input_resolves_canonical(self):
         # D1 Bug 2 regression: when a fallback provider is handed an InstrumentId
         # (as the data_collectors okx path does), it must resolve to the canonical
@@ -297,6 +318,40 @@ class TestBinancePublicProvider:
 
 class TestFallbackChainProvider:
     @pytest.mark.anyio
+    async def test_noncanonical_ticker_payload_falls_back(self):
+        p1 = AsyncMock()
+        p1.get_ticker = AsyncMock(
+            return_value=SimpleNamespace(
+                symbol="BTC/USDT",
+                last_price=67000.0,
+                volume_24h=1e9,
+                change_pct_24h=1.0,
+                provider="primary",
+            )
+        )
+        p2 = AsyncMock()
+        p2.get_ticker = AsyncMock(
+            return_value=Ticker(
+                symbol="BTC/USDT",
+                last_price=67000.0,
+                volume_24h=1e9,
+                change_pct_24h=1.0,
+                provider="fallback",
+            )
+        )
+
+        chain = FallbackChainProvider([p1, p2])
+
+        with patch(
+            "aletheia.data.sources.chain._load_divergence_config",
+            return_value=(False, 2.0),
+        ):
+            result = await chain.get_ticker("BTC/USDT")
+
+        assert result.provider == "fallback"
+        p2.get_ticker.assert_awaited_once()
+
+    @pytest.mark.anyio
     async def test_first_provider_succeeds(self):
         p1 = AsyncMock()
         p1.get_ticker = AsyncMock(
@@ -412,6 +467,42 @@ class TestFallbackChainProvider:
     def test_empty_providers_raises(self):
         with pytest.raises(ValueError):
             FallbackChainProvider([])
+
+
+@pytest.mark.parametrize(
+    ("last_price", "volume_24h", "change_pct_24h"),
+    [
+        (0.0, 1.0, 0.0),
+        (-1.0, 1.0, 0.0),
+        (float("nan"), 1.0, 0.0),
+        (1.0, -1.0, 0.0),
+        (1.0, 1.0, float("inf")),
+        (True, 1.0, 0.0),
+        (1.0, False, 0.0),
+        (1.0, 1.0, True),
+    ],
+)
+def test_ticker_rejects_invalid_numeric_facts(
+    last_price, volume_24h, change_pct_24h,
+):
+    with pytest.raises(ValueError):
+        Ticker(
+            symbol="BTC/USDT",
+            last_price=last_price,
+            volume_24h=volume_24h,
+            change_pct_24h=change_pct_24h,
+        )
+
+
+def test_ticker_accepts_zero_volume_and_change():
+    ticker = Ticker(
+        symbol="BTC/USDT",
+        last_price=1.0,
+        volume_24h=0.0,
+        change_pct_24h=0.0,
+    )
+    assert ticker.volume_24h == 0.0
+    assert ticker.change_pct_24h == 0.0
 
 
 # ---------------------------------------------------------------------------

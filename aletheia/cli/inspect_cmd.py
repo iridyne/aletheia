@@ -662,10 +662,14 @@ def snapshots(
     from aletheia.storage.repositories import list_market_snapshots
 
     if symbol:
-        rows = list_market_snapshots(symbol=symbol, limit=limit)
+        # Fetch the retained symbol history before filtering so fresh rows do
+        # not consume the requested stale-only limit.
+        rows = list_market_snapshots(symbol=symbol, limit=None if stale_only else limit)
         result = []
         for r in rows:
             age, is_stale = _parse_age(r.get("snapshot_at") or "")
+            if stale_only and not is_stale:
+                continue
             result.append({
                 "symbol": r.get("symbol"),
                 "price": r.get("price"),
@@ -676,11 +680,11 @@ def snapshots(
                 "age_seconds": round(age, 0),
                 "is_stale": is_stale,
             })
-        _output(result, json_output)
+        _output(result[:limit], json_output)
         return
 
     # Coverage mode: latest snapshot per symbol
-    rows = list_market_snapshots(limit=500)
+    rows = list_market_snapshots(limit=None, latest_per_symbol=True)
     latest: dict = {}
     for r in rows:
         sym = r.get("symbol") or ""
@@ -1405,7 +1409,7 @@ def liquidations(
     if symbol:
         rows = recent_liquidations(symbol, hours=hours)[:limit]
     else:
-        members = get_active_universe_members()
+        members = get_active_universe_members(limit=None)
         rows = []
         for m in members:
             sym = m.get("symbol", "")
@@ -1512,7 +1516,7 @@ def factor_feedback(
 @inspect_app.command("microstructure")
 def microstructure(
     symbol: Optional[str] = typer.Option(None, "--symbol", "-s", help="Show single symbol details"),
-    limit: int = typer.Option(10, "--limit", "-n"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=500),
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show latest funding rate, OI, and orderbook data per symbol."""
@@ -1521,9 +1525,9 @@ def microstructure(
     if symbol:
         instruments = [(symbol, "", "")]
     else:
-        members = get_active_universe_members()
+        members = get_active_universe_members(limit=limit)
         instruments = []
-        for member in members[:limit]:
+        for member in members:
             asset = get_universe_asset(member.get("asset_id")) or {}
             if member.get("symbol"):
                 instruments.append((
@@ -1570,6 +1574,9 @@ def serenity(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show Serenity research data (themes, runs, or opportunities)."""
+    what = str(what).strip().lower()
+    if what not in {"themes", "runs", "opps"}:
+        raise typer.BadParameter("what must be one of: themes, runs, opps")
     from aletheia.storage import repositories as repo
     if what == "themes":
         rows = repo.list_serenity_themes(status=status_filter or "active", limit=limit)
@@ -1581,7 +1588,7 @@ def serenity(
             "created_at": r.get("created_at"),
         } for r in rows]
     elif what == "runs":
-        rows = repo.list_serenity_research_runs(limit=limit)
+        rows = repo.list_serenity_research_runs(status=status_filter, limit=limit)
         display = [{
             "id": r.get("id", "")[:8],
             "status": r.get("status"),
@@ -2120,6 +2127,9 @@ def predictions(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show prediction market data (events or runs)."""
+    what = str(what).strip().lower()
+    if what not in {"events", "runs"}:
+        raise typer.BadParameter("what must be one of: events, runs")
     from aletheia.storage import repositories as repo
     if what == "runs":
         rows = repo.list_prediction_runs(limit=limit)

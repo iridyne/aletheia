@@ -133,8 +133,8 @@ def data(
     if not total_outcomes:
         typer.echo("  No settled outcomes yet.")
     else:
-        status = "healthy" if win_rate and win_rate >= 50 else ("degraded" if win_rate and win_rate < 40 else "neutral")
-        typer.echo(f"  Settled: {total_outcomes}  |  Win rate: {win_rate}%  |  Avg return: {round(avg_ret, 4) if avg_ret else 'n/a'}%  |  Status: {status}")
+        status = "healthy" if win_rate is not None and win_rate >= 50 else ("degraded" if win_rate is not None and win_rate < 40 else "neutral")
+        typer.echo(f"  Settled: {total_outcomes}  |  Win rate: {win_rate}%  |  Avg return: {round(avg_ret, 4) if avg_ret is not None else 'n/a'}%  |  Status: {status}")
 
 
 @audit_app.command("pricing-list")

@@ -7,22 +7,30 @@ always an ISO-8601 UTC string.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OrderbookSnapshot(BaseModel):
     symbol: str
     exchange: str
     market_type: str
-    bid_price: float
-    ask_price: float
-    spread_bps: float
-    bid_depth_10bps_usd: float
-    ask_depth_10bps_usd: float
-    total_depth_10bps_usd: float
-    imbalance_ratio: float | None = None
+    bid_price: float = Field(gt=0, allow_inf_nan=False)
+    ask_price: float = Field(gt=0, allow_inf_nan=False)
+    spread_bps: float = Field(ge=0, allow_inf_nan=False)
+    bid_depth_10bps_usd: float = Field(ge=0, allow_inf_nan=False)
+    ask_depth_10bps_usd: float = Field(ge=0, allow_inf_nan=False)
+    total_depth_10bps_usd: float = Field(ge=0, allow_inf_nan=False)
+    imbalance_ratio: float | None = Field(
+        default=None, ge=-1, le=1, allow_inf_nan=False
+    )
     observed_at: str
-    fetch_latency_ms: int | None = None
+    fetch_latency_ms: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_book_geometry(self):
+        if self.ask_price < self.bid_price:
+            raise ValueError("crossed orderbook")
+        return self
 
 
 class TradabilityScore(BaseModel):
@@ -153,20 +161,22 @@ class OptionsMarketStructureSnapshot(BaseModel):
         negative net_gex → put OI heavy → commonly "negative gamma" (amplifying) regime
     """
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
     symbol: str  # BTC or ETH
     source: str = "deribit_public"
     gex_convention: str = "v1_retail_call_minus_put"
-    underlying_price: float | None = None
+    underlying_price: float | None = Field(default=None, gt=0)
     net_gex_estimate: float | None = None  # USD per 1% spot move
     gamma_regime: str | None = None  # "positive" | "negative" | "neutral"
-    gamma_flip_estimate: float | None = None  # spot level where net GEX crosses zero
-    call_gamma_wall: float | None = None  # strike with highest call gamma exposure
-    put_gamma_wall: float | None = None  # strike with highest put gamma exposure
-    nearest_gamma_wall_distance: float | None = None  # % from current spot
-    options_open_interest: float | None = None  # total OI in base currency contracts
-    call_oi: float | None = None
-    put_oi: float | None = None
-    valid_strike_count: int | None = None
+    gamma_flip_estimate: float | None = Field(default=None, gt=0)  # spot level where net GEX crosses zero
+    call_gamma_wall: float | None = Field(default=None, gt=0)  # strike with highest call gamma exposure
+    put_gamma_wall: float | None = Field(default=None, gt=0)  # strike with highest put gamma exposure
+    nearest_gamma_wall_distance: float | None = Field(default=None, ge=0)  # % from current spot
+    options_open_interest: float | None = Field(default=None, ge=0)  # total OI in base currency contracts
+    call_oi: float | None = Field(default=None, ge=0)
+    put_oi: float | None = Field(default=None, ge=0)
+    valid_strike_count: int | None = Field(default=None, ge=0)
     data_quality: str = "ok"
     observed_at: str
 

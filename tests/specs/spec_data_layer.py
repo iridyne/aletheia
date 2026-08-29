@@ -169,6 +169,27 @@ def test_fallback_chain_provider_exists_and_is_used():
 
 @spec_claim(
     SpecClaim(
+        "DL-B14",
+        "data_layer_contract",
+        "§2 ticker trust boundary",
+        "L2b",
+        "Ticker rejects non-finite or impossible required facts so an invalid "
+        "provider response cannot be treated as successful market data",
+    )
+)
+def test_ticker_rejects_invalid_facts():
+    import pytest
+
+    from aletheia.data.providers import Ticker
+
+    with pytest.raises(ValueError):
+        Ticker("BTC/USDT", float("nan"), 1.0, 0.0)
+    with pytest.raises(ValueError):
+        Ticker("BTC/USDT", 1.0, -1.0, 0.0)
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S07",
         "data_layer_contract",
         "§3 no BitgetClient for market data",

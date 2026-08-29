@@ -43,6 +43,7 @@ from aletheia.data.providers import (
     OHLCVAttempt,
     OHLCVResult,
     Ticker,
+    _required_ticker_field,
     classify_ohlcv_outcome,
     parse_ohlcv_candle,
 )
@@ -91,6 +92,18 @@ def _resolve_ccxt_symbol(symbol: InstrumentId | str) -> tuple[str, str, str]:
         return symbol.to_ccxt_symbol(), symbol.symbol, symbol.market_type
     canon = to_canonical(symbol)
     return canon, canon, "spot"
+
+
+def _cached_ohlcv_result(cached: object, requested: int) -> OHLCVResult:
+    if isinstance(cached, OHLCVResult):
+        return OHLCVResult(
+            cached,
+            requested=cached.requested,
+            rejected=cached.rejected,
+            attempts=cached.attempts,
+            source="memory_cache",
+        )
+    return OHLCVResult(cached, requested=requested, source="memory_cache")
 
 
 def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
@@ -192,16 +205,23 @@ class CCXTProvider:
                             exchange.options.pop("defaultType", None)
                         else:
                             exchange.options["defaultType"] = _prev_type
-                record_venue_success(name)
-                return Ticker(
+                ticker = Ticker(
                     symbol=canon,
-                    last_price=float(raw.get("last") or raw.get("close") or 0.0),
-                    volume_24h=float(raw.get("quoteVolume") or raw.get("baseVolume") or 0.0),
-                    change_pct_24h=float(raw.get("percentage") or 0.0),
-                    high_24h=_opt_float(raw.get("high")),
-                    low_24h=_opt_float(raw.get("low")),
+                    last_price=_required_ticker_field(
+                        raw, "last", "close", field="last_price",
+                    ),
+                    volume_24h=_required_ticker_field(
+                        raw, "quoteVolume", "baseVolume", field="volume_24h",
+                    ),
+                    change_pct_24h=_required_ticker_field(
+                        raw, "percentage", field="change_pct_24h",
+                    ),
+                    high_24h=raw.get("high"),
+                    low_24h=raw.get("low"),
                     provider=name,
                 )
+                record_venue_success(name)
+                return ticker
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e
                 if is_venue_refusal(e):
@@ -216,6 +236,7 @@ class CCXTProvider:
         limit: int = 100,
         since: int | None = None,
         *,
+        use_cache: bool = True,
         _record_venue_health: bool = True,
         _persist_result: bool = True,
     ) -> OHLCVResult:
@@ -223,15 +244,13 @@ class CCXTProvider:
 
         from aletheia.data.cache import get_cache
         cache = get_cache()
-        if since is None:
+        if use_cache and since is None:
             cached = cache.get(
                 canon, timeframe, limit,
                 market_type=mkt, exchange=self._primary_name,
             )
             if cached is not None:
-                return cached if isinstance(cached, OHLCVResult) else OHLCVResult(
-                    cached, requested=limit,
-                )
+                return _cached_ohlcv_result(cached, limit)
 
         last_err: Exception | None = None
         attempts: list[OHLCVAttempt] = []
@@ -239,15 +258,13 @@ class CCXTProvider:
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
         ):
-            if since is None and name != self._primary_name:
+            if use_cache and since is None and name != self._primary_name:
                 cached = cache.get(
                     canon, timeframe, limit,
                     market_type=mkt, exchange=name,
                 )
                 if cached is not None:
-                    return cached if isinstance(cached, OHLCVResult) else OHLCVResult(
-                        cached, requested=limit,
-                    )
+                    return _cached_ohlcv_result(cached, limit)
             if not is_venue_available(name):
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
@@ -308,8 +325,9 @@ class CCXTProvider:
                     requested=limit,
                     rejected=sum(attempt.rejected for attempt in attempts),
                     attempts=attempts,
+                    source="provider_fetch",
                 )
-                if since is None:
+                if use_cache and since is None:
                     cache.set(
                         canon, timeframe, limit, result,
                         market_type=mkt, exchange=name,
@@ -330,6 +348,7 @@ class CCXTProvider:
                 requested=limit,
                 rejected=sum(attempt.rejected for attempt in attempts),
                 attempts=attempts,
+                source="provider_fetch",
             )
         if last_err:
             last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
@@ -410,12 +429,14 @@ def _opt_float(value) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("ticker optional numeric field is invalid") from exc
 
 
 def require_exact_ticker_venue(ticker: Ticker, venue: str) -> Ticker:
     """Reject a ticker whose physical provider differs from the requested venue."""
+    if not isinstance(ticker, Ticker):
+        raise ValueError("ticker payload is not canonical")
     expected = str(venue or "").strip().lower()
     actual = str(ticker.provider or "").strip().lower()
     if not expected or actual != expected:

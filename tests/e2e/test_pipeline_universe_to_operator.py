@@ -88,6 +88,7 @@ class _FixtureExchange:
                 "bid": latest * 0.9999,
                 "ask": latest * 1.0001,
                 "quoteVolume": 100_000_000.0,
+                "percentage": 0.0,
             }
             for symbol in symbols
         }
@@ -164,6 +165,7 @@ class _StockLinkedExchange(_FixtureExchange):
                 "bid": latest * 0.9999,
                 "ask": latest * 1.0001,
                 "quoteVolume": 100_000_000.0,
+                "percentage": 0.0,
             }
             for symbol in symbols
         }

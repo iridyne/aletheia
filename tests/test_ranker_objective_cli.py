@@ -4,6 +4,7 @@ import json
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 
 def test_build_audit_view_dispatches_ranker_objective(monkeypatch):
@@ -43,6 +44,47 @@ def test_ranker_objective_rejects_incompatible_shared_filters():
     ):
         with pytest.raises(typer.BadParameter, match="not supported"):
             _build_audit_view(hours=24, limit=10, view="ranker-objective", **filters)
+
+
+def test_cli_rejects_explicit_default_unsupported_option(monkeypatch):
+    import aletheia.analytics.trade_funnel as funnel
+    from aletheia.cli.opportunity import opportunity_app
+
+    monkeypatch.setattr(
+        funnel,
+        "build_trade_funnel_audit",
+        lambda **_: pytest.fail("unsupported option reached the report builder"),
+    )
+
+    result = CliRunner().invoke(
+        opportunity_app,
+        ["audit", "--view", "funnel", "--limit", "200"],
+    )
+
+    assert result.exit_code == 2
+
+
+@pytest.mark.parametrize(
+    ("view", "override"),
+    [
+        ("funnel", {"limit": 1}),
+        ("sizing", {"symbol": "BTC/USDT"}),
+        ("sizing-counterfactual", {"stage": "risk"}),
+        ("alpha", {"verdict": "won"}),
+        ("thesis", {"limit": 1}),
+        ("controller", {"symbol": "BTC/USDT"}),
+        ("entry-exit", {"stage": "risk"}),
+        ("ranker-objective", {"symbol": "BTC/USDT"}),
+    ],
+)
+def test_specialized_views_reject_ignored_shared_options(view, override):
+    from aletheia.cli.opportunity import _build_audit_view
+
+    options = {"hours": 24, "limit": 200, "stage": None, "verdict": None, "symbol": None}
+    options.update(override)
+    option_name = next(name for name, value in override.items() if value is not None)
+    with pytest.raises(typer.BadParameter, match=rf"--{option_name}.*{view}"):
+        _build_audit_view(view=view, **options)
 
 
 def test_json_contract_and_text_labels_are_explicit():

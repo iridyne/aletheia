@@ -14,6 +14,7 @@ from aletheia.data.providers import (
     OHLCVAttempt,
     OHLCVResult,
     Ticker,
+    _required_ticker_field,
     classify_ohlcv_outcome,
     parse_ohlcv_candle,
 )
@@ -71,19 +72,25 @@ class BinancePublicProvider:
             if is_venue_refusal(exc):
                 record_venue_failure(self.venue_name, exc)
             raise
+        ticker = Ticker(
+            symbol=canon,
+            last_price=_required_ticker_field(
+                raw, "lastPrice", field="last_price",
+            ),
+            volume_24h=_required_ticker_field(
+                raw, "quoteVolume", field="volume_24h",
+            ),
+            change_pct_24h=_required_ticker_field(
+                raw, "priceChangePercent", field="change_pct_24h",
+            ),
+            high_24h=raw.get("highPrice"),
+            low_24h=raw.get("lowPrice"),
+            provider="binance_public",
+        )
         from aletheia.data.venue_health import record_venue_success
 
         record_venue_success(self.venue_name)
-
-        return Ticker(
-            symbol=canon,
-            last_price=float(raw.get("lastPrice") or 0.0),
-            volume_24h=float(raw.get("quoteVolume") or 0.0),
-            change_pct_24h=float(raw.get("priceChangePercent") or 0.0),
-            high_24h=float(raw.get("highPrice") or 0.0) or None,
-            low_24h=float(raw.get("lowPrice") or 0.0) or None,
-            provider="binance_public",
-        )
+        return ticker
 
     async def get_ohlcv(
         self,
@@ -91,6 +98,8 @@ class BinancePublicProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult:
         from aletheia.net import httpx_client
 
@@ -155,7 +164,11 @@ class BinancePublicProvider:
         if rejected:
             logger.warning("ohlcv quality rejected %d/%d Binance row(s)", rejected, len(parsed))
         return OHLCVResult(
-            candles, requested=limit, rejected=rejected, attempts=(attempt,),
+            candles,
+            requested=limit,
+            rejected=rejected,
+            attempts=(attempt,),
+            source="provider_fetch",
         )
 
     async def close(self) -> None:

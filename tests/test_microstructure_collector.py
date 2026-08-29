@@ -63,3 +63,47 @@ def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkey
     )
     assert result["errors"] == []
     assert result["snapshots"][0].market_type == "futures"
+
+
+@pytest.mark.parametrize(
+    "orderbook",
+    [
+        {"bids": [[101.0, 1.0]], "asks": [[100.0, 1.0]]},
+        {"bids": [[float("nan"), 1.0]], "asks": [[100.0, 1.0]]},
+        {"bids": [[99.0, float("inf")]], "asks": [[100.0, 1.0]]},
+        {"bids": [[99.0, -1.0]], "asks": [[100.0, 1.0]]},
+        {"bids": [[99.0, 1.0], [99.5, 1.0]], "asks": [[100.0, 1.0]]},
+        {"bids": [[99.0, 1.0]], "asks": [[100.0, 1.0], [99.5, 1.0]]},
+    ],
+)
+def test_parse_orderbook_rejects_impossible_geometry(orderbook):
+    from aletheia.data.collectors.microstructure import _parse_orderbook
+
+    assert _parse_orderbook("BTC/USDT", "binance", orderbook, latency_ms=0) is None
+
+
+def test_parse_orderbook_rejects_invalid_contract_size():
+    from aletheia.data.collectors.microstructure import _contract_size
+
+    with pytest.raises(ValueError, match="invalid contract size"):
+        _contract_size({"contract": True, "contractSize": float("nan")})
+
+
+def test_orderbook_model_rejects_crossed_prices():
+    from pydantic import ValidationError
+
+    from aletheia.data.models import OrderbookSnapshot
+
+    with pytest.raises(ValidationError, match="crossed orderbook"):
+        OrderbookSnapshot(
+            symbol="BTC/USDT",
+            exchange="binance",
+            market_type="spot",
+            bid_price=101.0,
+            ask_price=100.0,
+            spread_bps=0.0,
+            bid_depth_10bps_usd=1.0,
+            ask_depth_10bps_usd=1.0,
+            total_depth_10bps_usd=2.0,
+            observed_at="2026-08-29T00:00:00+00:00",
+        )

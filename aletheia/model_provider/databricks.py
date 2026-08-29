@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-from aletheia.model_provider.base import ModelHealth, ModelResponse
+from aletheia.model_provider.base import ModelHealth, ModelResponse, health_from_model_catalogue
 from aletheia.model_provider.registry import PROVIDER_TYPES, validate_provider_protocol
 
 
@@ -136,6 +136,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
                         models=slugs,
                         model_metadata=models,
                         error="configured serving endpoint not found",
+                        reason_code="provider_rejection",
                     )
                 if selected and selected.get("ready_state") not in (None, "READY"):
                     return ModelHealth(
@@ -146,12 +147,11 @@ class DatabricksProvider(OpenAICompatibleProvider):
                         model_metadata=models,
                         error=f"endpoint state: {selected['ready_state'].lower()}",
                     )
-                return ModelHealth(
-                    provider=self.name,
-                    available=True,
-                    model=self.model,
-                    models=slugs,
-                    model_metadata=models,
+                return health_from_model_catalogue(
+                    self.name,
+                    self.model,
+                    models,
+                    allow_default=self.databricks_protocol == "serving_endpoint",
                 )
             return ModelHealth(
                 provider=self.name,

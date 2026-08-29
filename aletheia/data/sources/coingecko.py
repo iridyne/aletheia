@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from aletheia.data.providers import OHLCVResult, Ticker
+from aletheia.data.providers import OHLCVResult, Ticker, _required_ticker_field
 
 _BASE_URL = "https://api.coingecko.com/api/v3"
 _MIN_INTERVAL_SEC = 6.0
@@ -87,9 +87,13 @@ class CoinGeckoProvider:
 
         return Ticker(
             symbol=canon,
-            last_price=float(data.get("usd") or 0.0),
-            volume_24h=float(data.get("usd_24h_vol") or 0.0),
-            change_pct_24h=float(data.get("usd_24h_change") or 0.0),
+            last_price=_required_ticker_field(data, "usd", field="last_price"),
+            volume_24h=_required_ticker_field(
+                data, "usd_24h_vol", field="volume_24h",
+            ),
+            change_pct_24h=_required_ticker_field(
+                data, "usd_24h_change", field="change_pct_24h",
+            ),
             provider="coingecko",
         )
 
@@ -99,6 +103,8 @@ class CoinGeckoProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult:
         raise NotImplementedError(
             "CoinGecko public OHLC has range-dependent intervals and no volume; "

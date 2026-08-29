@@ -330,7 +330,7 @@ def check():
         typer.echo(f"Update check unavailable: {result.get('reason')}")
         if result.get("message"):
             typer.echo(f"  {result['message']}")
-        raise typer.Exit(0)
+        raise typer.Exit(1)
 
     if result.get("mode") == "packaged":
         if result.get("has_update"):

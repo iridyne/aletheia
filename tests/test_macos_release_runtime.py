@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -33,6 +34,132 @@ requires-python = ">=3.12"
     for name in ("install-release.sh", "start-release.sh", "health-check.sh"):
         _write(root / runtime_source / name, (runtime_source / name).read_text(encoding="utf-8"))
     _write(root / runtime_source / "start-release.ps1", "Write-Output ok\n")
+
+
+def _run_health_check(tmp_path: Path, ready: object, health: object) -> subprocess.CompletedProcess[str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True)
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "url = sys.argv[-1]\n"
+        f"print({json.dumps(ready)!r} if url.endswith('/readyz') else {json.dumps(health)!r})\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    return subprocess.run(
+        [
+            "bash",
+            "scripts/runtime/health-check.sh",
+            "--base-url",
+            "http://example.test",
+            "--timeout-seconds",
+            "0",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_health_check_sequence(
+    tmp_path: Path, ready: object, health_rows: list[object]
+) -> subprocess.CompletedProcess[str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True)
+    state_file = tmp_path / "health-count"
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import pathlib\n"
+        "import sys\n"
+        "url = sys.argv[-1]\n"
+        f"ready = {json.dumps(ready)!r}\n"
+        f"health_rows = json.loads({json.dumps(health_rows)!r})\n"
+        f"state_file = pathlib.Path({str(state_file)!r})\n"
+        "if url.endswith('/readyz'):\n"
+        "    print(ready)\n"
+        "else:\n"
+        "    index = int(state_file.read_text() or '0') if state_file.exists() else 0\n"
+        "    print(json.dumps(health_rows[min(index, len(health_rows) - 1)]))\n"
+        "    state_file.write_text(str(index + 1))\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    return subprocess.run(
+        [
+            "bash",
+            "scripts/runtime/health-check.sh",
+            "--base-url",
+            "http://example.test",
+            "--timeout-seconds",
+            "2",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+@_UNIX_ONLY
+def test_health_check_requires_healthy_readiness_and_health_payloads(tmp_path: Path) -> None:
+    healthy = _run_health_check(
+        tmp_path / "healthy",
+        {"ok": True},
+        {"status": "healthy", "issues": []},
+    )
+    assert healthy.returncode == 0
+    assert json.loads(healthy.stdout)["ok"] is True
+
+    not_ready = _run_health_check(
+        tmp_path / "not-ready",
+        {"ok": False},
+        {"status": "healthy", "issues": []},
+    )
+    assert not_ready.returncode != 0
+    not_ready_payload = json.loads(not_ready.stdout)
+    assert not_ready_payload["ok"] is False
+    assert not_ready_payload["ready"]["ok"] is False
+
+    degraded = _run_health_check(
+        tmp_path / "degraded",
+        {"ok": True},
+        {"status": "degraded", "issues": ["market_data_stale:45m"]},
+    )
+    assert degraded.returncode != 0
+    degraded_payload = json.loads(degraded.stdout)
+    assert degraded_payload["ok"] is False
+    assert degraded_payload["health"]["status"] == "degraded"
+
+    invalid = _run_health_check(tmp_path / "invalid", {"ok": True}, "not-an-object")
+    assert invalid.returncode != 0
+    invalid_payload = json.loads(invalid.stdout)
+    assert invalid_payload["error"] == "readiness or health payload invalid"
+
+
+@_UNIX_ONLY
+def test_health_check_retries_initializing_until_healthy(tmp_path: Path) -> None:
+    result = _run_health_check_sequence(
+        tmp_path / "initializing",
+        {"ok": True},
+        [
+            {"status": "initializing", "issues": ["market_data_initializing"]},
+            {"status": "healthy", "issues": []},
+        ],
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["health"]["status"] == "healthy"
 
 
 @_UNIX_ONLY

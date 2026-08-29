@@ -54,7 +54,7 @@
 | `tpsl_fill_check` | 90s | pending TP/SL orders | fill records | ✅ |
 | `post_trade_reviewer` | 4h | closed positions | knowledge_items(post_trade_review) | dreaming_agent, retrieve_lessons() | ✅ |
 | `risk_critic` | 6h | risk_decisions history | knowledge_items(lesson) | retrieve_lessons() → LLM prompts | ✅ |
-| `equity_observer` | 工作日 14-21UTC /30min | yfinance + bitget xStocks | opportunities(equity) | paper_trader_ranker | ✅ |
+| `equity_observer` | 工作日 09:30-16:00 America/New_York /30min | yfinance + bitget xStocks | opportunities(equity) | paper_trader_ranker | ✅ |
 | `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | paper_trader_ranker, divergence_scanner | ✅ |
 | `guard_promotion` | cron 04:00 CST | guard_candidate knowledge_items + reviewer health/backlog | trading_guard(active) | ✅ Learning 总开关关闭或审核失败/过期/积压时仅冻结新自动晋级，不改变现有 guard |
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | ✅ Serenity 可经 promote→PiDecision 进入评估；每日批次键防重 |

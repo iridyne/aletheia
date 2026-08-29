@@ -11,7 +11,10 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from aletheia.risk.demo_entry_quality import (
+    DEMO_ENTRY_QUALITY_UNAVAILABLE,
     FAMILY_NOT_DEMO_ELIGIBLE,
     REGIME_CONFIDENCE_STANDDOWN,
     REGIME_SIDEWAYS_STANDDOWN,
@@ -65,6 +68,90 @@ def test_evaluate_fail_open_when_regime_unpublished():
         regime_confidence=None,
         family_edge=None,
     ) == []
+
+
+def test_collect_keeps_honest_empty_evidence_fail_open(monkeypatch):
+    import aletheia.learning.demo_entry_quality as policy
+    import aletheia.risk.demo_entry_quality as quality
+    import aletheia.risk.engine as engine
+
+    monkeypatch.setattr(policy, "ensure_demo_entry_quality_policy_epoch", lambda: "epoch")
+    monkeypatch.setattr(quality, "load_published_regime", lambda **_: (None, None))
+    monkeypatch.setattr(engine, "_family_live_edge", lambda *args, **kwargs: None)
+    monkeypatch.setattr(quality, "load_recent_stop_directions", lambda *args, **kwargs: set())
+
+    assert quality.collect_demo_entry_quality_violations(
+        execution_mode="bitget_demo",
+        eligibility=_eligibility(),
+        scanner_family="momentum",
+        direction="long",
+        symbol="BTC/USDT",
+    ) == []
+
+
+def test_collect_marks_each_unreadable_authority_source(monkeypatch):
+    import aletheia.learning.demo_entry_quality as policy
+    import aletheia.risk.demo_entry_quality as quality
+    import aletheia.risk.engine as engine
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("read failed")
+
+    monkeypatch.setattr(policy, "ensure_demo_entry_quality_policy_epoch", explode)
+    monkeypatch.setattr(quality, "load_published_regime", explode)
+    monkeypatch.setattr(engine, "_family_live_edge", explode)
+    monkeypatch.setattr(quality, "load_recent_stop_directions", explode)
+
+    violations = quality.collect_demo_entry_quality_violations(
+        execution_mode="bitget_demo",
+        eligibility=_eligibility(),
+        scanner_family="momentum",
+        direction="long",
+        symbol="BTC/USDT",
+    )
+
+    assert set(violations) == {
+        f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:policy_epoch",
+        f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:regime",
+        f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:family_edge",
+        f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:recent_stops",
+    }
+
+
+def test_strict_regime_read_uses_the_authoritative_row_once(monkeypatch):
+    import aletheia.regime.detector as detector
+    import aletheia.storage.repositories as repositories
+    import aletheia.risk.demo_entry_quality as quality
+
+    detector.reset_state()
+    monkeypatch.setattr(
+        repositories,
+        "get_latest_market_regime",
+        lambda: {"state": "bull", "confidence": 0.80},
+    )
+
+    def unexpected_second_read():
+        raise AssertionError("strict regime recovery must not read the repository twice")
+
+    monkeypatch.setattr(detector, "get_current_regime", unexpected_second_read)
+
+    assert quality.load_published_regime(fail_open=False) == ("bull", 0.80)
+
+
+def test_strict_regime_read_rejects_non_finite_confidence(monkeypatch):
+    import aletheia.regime.detector as detector
+    import aletheia.storage.repositories as repositories
+    import aletheia.risk.demo_entry_quality as quality
+
+    detector.reset_state()
+    monkeypatch.setattr(
+        repositories,
+        "get_latest_market_regime",
+        lambda: {"state": "bull", "confidence": "nan"},
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        quality.load_published_regime(fail_open=False)
 
 
 def test_evaluate_stands_down_published_sideways_and_low_confidence():
@@ -332,6 +419,35 @@ def test_risk_unpublished_regime_does_not_invent_standdown(tmp_path, monkeypatch
     setup_env(tmp_path, monkeypatch)
     result = evaluate_proposal(_proposal("bitget_demo"))
     assert not any(is_demo_entry_quality_skip(v) for v in result.violations), result.violations
+
+
+def test_risk_read_failure_blocks_new_demo_entry(tmp_path, monkeypatch):
+    import aletheia.learning.demo_entry_quality as policy
+    import aletheia.risk.demo_entry_quality as quality
+    import aletheia.risk.engine as engine
+    from aletheia.risk.engine import evaluate_proposal
+
+    setup_env(tmp_path, monkeypatch)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("read failed")
+
+    monkeypatch.setattr(policy, "ensure_demo_entry_quality_policy_epoch", lambda: "epoch")
+    monkeypatch.setattr(quality, "load_published_regime", lambda **_: ("bull", 0.80))
+    monkeypatch.setattr(engine, "_family_live_edge", lambda *args, **kwargs: None)
+    monkeypatch.setattr(quality, "load_recent_stop_directions", lambda *args, **kwargs: set())
+
+    for source, target, name in (
+        ("policy_epoch", policy, "ensure_demo_entry_quality_policy_epoch"),
+        ("regime", quality, "load_published_regime"),
+        ("family_edge", engine, "_family_live_edge"),
+        ("recent_stops", quality, "load_recent_stop_directions"),
+    ):
+        with monkeypatch.context() as isolated:
+            isolated.setattr(target, name, explode)
+            result = evaluate_proposal(_proposal("bitget_demo"))
+        assert not result.approved
+        assert f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:{source}" in result.violations
 
 
 def test_risk_bitget_demo_rejects_published_sideways(tmp_path, monkeypatch):

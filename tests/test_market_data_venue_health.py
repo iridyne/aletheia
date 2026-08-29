@@ -72,7 +72,7 @@ async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
     class HealthyExchange:
         async def fetch_ticker(self, _symbol):
             calls["bybit"] += 1
-            return {"last": 1}
+            return {"last": 1, "quoteVolume": 0.0, "percentage": 0.0}
 
     provider = CCXTProvider("binance", "bybit")
     monkeypatch.setattr(provider, "_ensure_primary", lambda: BannedExchange())
@@ -81,6 +81,49 @@ async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
     assert (await _GET_TICKER(provider, "BTC/USDT")).provider == "bybit"
     assert (await _GET_TICKER(provider, "ETH/USDT")).provider == "bybit"
     assert calls == {"binance": 1, "bybit": 2}
+
+
+@pytest.mark.asyncio
+async def test_ccxt_rejects_invalid_ticker_before_recording_success(monkeypatch):
+    import aletheia.data.ccxt_provider as ccxt_module
+
+    successes = []
+    monkeypatch.setattr(ccxt_module, "record_venue_success", successes.append)
+
+    class InvalidExchange:
+        async def fetch_ticker(self, _symbol):
+            return {
+                "last": float("nan"),
+                "quoteVolume": 100.0,
+                "percentage": 0.0,
+            }
+
+    class HealthyExchange:
+        async def fetch_ticker(self, _symbol):
+            return {"last": 2.0, "quoteVolume": 0.0, "percentage": 0.0}
+
+    provider = CCXTProvider("binance", "bybit")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda: InvalidExchange())
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda: HealthyExchange())
+
+    ticker = await _GET_TICKER(provider, "BTC/USDT")
+
+    assert ticker.provider == "bybit"
+    assert successes == ["bybit"]
+
+
+@pytest.mark.asyncio
+async def test_ccxt_all_invalid_tickers_are_unavailable(monkeypatch):
+    class InvalidExchange:
+        async def fetch_ticker(self, _symbol):
+            return {"last": float("inf"), "quoteVolume": 1.0, "percentage": 0.0}
+
+    provider = CCXTProvider("binance", "bybit")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda: InvalidExchange())
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda: InvalidExchange())
+
+    with pytest.raises(ValueError, match="ticker last_price"):
+        await _GET_TICKER(provider, "BTC/USDT")
 
 
 @pytest.mark.asyncio

@@ -116,6 +116,12 @@ def test():
         if h.available and h.models:
             detail += f" ({len(h.models)} models)"
         typer.echo(f"  {icon} {h.provider}: {detail}")
+    if not any(
+        h.enabled and h.state in {"reachable", "verified"}
+        for h in results
+    ):
+        typer.echo("No enabled model provider is reachable.", err=True)
+        raise typer.Exit(1)
 
 
 @model_app.command()

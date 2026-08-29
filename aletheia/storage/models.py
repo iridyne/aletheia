@@ -5,7 +5,7 @@ import math
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 from uuid import uuid4
 
 
@@ -978,13 +978,33 @@ class MarketSnapshot(BaseModel):
     symbol: str  # canonical: BTC/USDT
     market_type: str  # "spot" | "perp" | "futures"
     exchange: str = ""  # source exchange: "binance", "bybit", "bitget", …
-    price: float
-    volume_24h: float | None = None
-    change_pct_24h: float | None = None
-    high_24h: float | None = None
-    low_24h: float | None = None
+    price: FiniteFloat = Field(gt=0)
+    volume_24h: FiniteFloat | None = Field(default=None, ge=0)
+    change_pct_24h: FiniteFloat | None = None
+    high_24h: FiniteFloat | None = Field(default=None, gt=0)
+    low_24h: FiniteFloat | None = Field(default=None, gt=0)
     provider: str | None = None
     snapshot_at: str = Field(default_factory=_utcnow)
+
+    @field_validator(
+        "price", "volume_24h", "change_pct_24h", "high_24h", "low_24h",
+        mode="before",
+    )
+    @classmethod
+    def _reject_boolean_numeric_facts(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("market snapshot numeric facts must not be boolean")
+        return value
+
+    @model_validator(mode="after")
+    def _high_low_are_ordered(self):
+        if (
+            self.high_24h is not None
+            and self.low_24h is not None
+            and self.high_24h < self.low_24h
+        ):
+            raise ValueError("market snapshot high_24h must be >= low_24h")
+        return self
 
 
 class PortfolioSnapshot(BaseModel):

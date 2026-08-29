@@ -69,10 +69,9 @@ def risk_status():
             status = "warning"
             violations.append(f"permission_mode_not_live_eligible:{permission_mode}")
     # A decision is immutable history, not a live condition. It remains available
-    # to the UI as latest_risk_decision, but must not turn a resolved past rejection
-    # into a permanent current warning.
-    if not violations and latest_decision:
-        status = "healthy"
+    # to the UI as latest_risk_decision, but cannot prove that current admission
+    # inputs are available or that current limits were evaluated. Keep the
+    # default ``not_evaluated`` until a live brake/warning is present.
 
     return {
         "kill_switch_active": cfg.runtime.kill_switch_active,

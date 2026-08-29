@@ -949,6 +949,42 @@ def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch
     assert "[REDACTED]" in text
 
 
+def test_doctor_fetch_failure_is_machine_visible_and_nonzero(monkeypatch):
+    import json
+
+    from aletheia.main import app
+    from aletheia.update import git_ops
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(git_ops, "is_repo", lambda: True)
+    monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
+    monkeypatch.setattr(
+        git_ops,
+        "fetch",
+        lambda _branch: {
+            "ok": False,
+            "reason": "fetch failed / auth?",
+            "stderr": "secret-token",
+        },
+    )
+    monkeypatch.setattr(dx, "build_report", lambda **_kwargs: dx.Report(generated_at="t"))
+
+    json_result = CliRunner().invoke(app, ["doctor", "--json", "--fetch"])
+    text_result = CliRunner().invoke(app, ["doctor", "--fetch"])
+
+    assert json_result.exit_code == 1
+    payload = json.loads(json_result.stdout)
+    assert payload["fetch"] == {
+        "requested": True,
+        "attempted": True,
+        "ok": False,
+        "reason": "fetch_failed___auth_",
+    }
+    assert "secret-token" not in json_result.stdout
+    assert text_result.exit_code == 1
+    assert "fetch skipped: fetch failed / auth?" in text_result.stdout
+
+
 def test_apply_fixes_suppresses_lifecycle_stdout_and_structures_typer_exit(monkeypatch, capsys):
     import typer
 
@@ -1251,7 +1287,7 @@ def _llm_creds_config(monkeypatch, *, endpoint="http://127.0.0.1:4000/v1"):
     cfg.models.providers["openai_compatible"] = ProviderConfig(
         type="openai_compatible", enabled=True, api_key_secret_ref=None, base_url=endpoint
     )
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(loader, "load_config", lambda **_kwargs: cfg)
     monkeypatch.setattr(secrets, "get_secret", lambda key: None)
     return cfg
 
@@ -1414,6 +1450,15 @@ def test_active_probe_blocks_when_a_real_inference_call_fails(tmp_path, monkeypa
     assert _inference_check(r).severity == "info"
 
 
+def test_active_probe_request_suppresses_repeat_probe_hint(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_llm_inference(r, probe_requested=True)
+
+    assert _inference_check(r).fix_hint == ""
+
+
 def test_active_probe_confirms_a_working_endpoint(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _llm_creds_config(monkeypatch)
@@ -1431,6 +1476,28 @@ def test_active_probe_confirms_a_working_endpoint(tmp_path, monkeypatch):
     probe = next(c for c in r.checks if c.name == "llm.inference.probe")
     assert probe.severity == "ok"
     assert "openai_compatible" in probe.detail
+
+
+def test_active_probe_runs_outside_the_read_only_report_fence(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    seen = {}
+
+    @dx._read_only_diagnostics()
+    def fake_passive_report(**_kwargs):
+        seen["passive_read_only"] = getattr(sq._readonly_local, "connection", None) is not None
+        return dx.Report(generated_at="t")
+
+    def fake_active_probe(report):
+        seen["active_read_only"] = getattr(sq._readonly_local, "connection", None) is not None
+
+    monkeypatch.setattr(dx, "_build_report", fake_passive_report)
+    monkeypatch.setattr(dx, "_probe_llm_inference_active", fake_active_probe)
+
+    dx.build_report(probe_llm=True)
+
+    assert seen == {"passive_read_only": True, "active_read_only": False}
 
 
 def test_active_probe_is_off_by_default_so_doctor_stays_cheap(tmp_path, monkeypatch):

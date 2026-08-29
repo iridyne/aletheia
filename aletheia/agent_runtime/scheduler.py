@@ -16,6 +16,8 @@ from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPP
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.combining import OrTrigger
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from aletheia.config.loader import load_config
@@ -70,6 +72,23 @@ _ESSENTIAL_JOBS: set[str] = {
 # can reference the same source of truth and stay in sync when the interval
 # changes here.
 MARKET_DATA_INTERVAL_MINUTES = 5
+
+_EQUITY_MARKET_TZ = "America/New_York"
+
+
+def _equity_observer_trigger() -> OrTrigger:
+    """Return only the valid half-hour fires in the Eastern session."""
+    return OrTrigger([
+        CronTrigger(
+            day_of_week="mon-fri", hour="9", minute="30", timezone=_EQUITY_MARKET_TZ
+        ),
+        CronTrigger(
+            day_of_week="mon-fri", hour="10-15", minute="0,30", timezone=_EQUITY_MARKET_TZ
+        ),
+        CronTrigger(
+            day_of_week="mon-fri", hour="16", minute="0", timezone=_EQUITY_MARKET_TZ
+        ),
+    ])
 
 # A persisted overdue Learning measurement should recover after the gateway is
 # ready, but before the legacy two-minute startup catch-up.  The latter remains
@@ -1449,14 +1468,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=120, executor="agents",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
-    # US equity observer — runs every 30 min Mon–Fri during US market hours
-    # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
-    # + Bitget xStocks real-time price cross-validation. Replaces stock_observer.
-    # hour="14-21" so the last fire at 21:00 covers the closing auction (highest volume).
+    # US equity observer — wakes only at valid Eastern half-hours in the
+    # 09:30–16:00 America/New_York session.  The trigger owns the boundary so a
+    # delayed 16:00 fire can still run inside misfire_grace_time after the
+    # single agents worker becomes available.
     _scheduler.add_job(
-        _guarded("equity_observer", _run_equity_observer), "cron",
-        day_of_week="mon-fri", hour="14-21", minute="*/30",
-        id="equity_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
+        _guarded("equity_observer", _run_equity_observer), _equity_observer_trigger(),
+        id="equity_observer", misfire_grace_time=300, executor="agents",
     )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
@@ -2174,6 +2192,73 @@ def reschedule_telegram_summary(hour_cst: int) -> bool:
 
 def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
+
+
+def scheduled_job_status(job_id: str) -> dict[str, object]:
+    """Return the effective, read-only state of one scheduled job."""
+    with _SCHEDULER_JOB_LOCK:
+        if _scheduler is None:
+            return {
+                "scheduler_state": "stopped",
+                "registered": False,
+                "paused": False,
+                "next_run_time": None,
+                "blocker": "scheduler_stopped",
+            }
+
+        state = getattr(_scheduler, "state", STATE_STOPPED)
+        state_label = {
+            STATE_RUNNING: "running",
+            STATE_PAUSED: "paused",
+            STATE_STOPPED: "stopped",
+        }.get(state, f"unknown:{state}")
+        if state == STATE_STOPPED:
+            return {
+                "scheduler_state": state_label,
+                "registered": False,
+                "paused": False,
+                "next_run_time": None,
+                "blocker": "scheduler_stopped",
+            }
+
+        try:
+            job = _scheduler.get_job(job_id)
+        except Exception:  # noqa: BLE001 - status must fail closed
+            job = None
+        if job is None:
+            return {
+                "scheduler_state": state_label,
+                "registered": False,
+                "paused": False,
+                "next_run_time": None,
+                "blocker": "job_missing",
+            }
+
+        next_run_time = getattr(job, "next_run_time", None)
+        if isinstance(next_run_time, datetime) and next_run_time.tzinfo is None:
+            next_run_time = next_run_time.replace(tzinfo=timezone.utc)
+        paused = (
+            state == STATE_PAUSED
+            or job_id in _selectively_paused_jobs
+            or next_run_time is None
+        )
+        if not isinstance(next_run_time, datetime):
+            paused = True
+        return {
+            "scheduler_state": state_label,
+            "registered": True,
+            "paused": paused,
+            "next_run_time": (
+                next_run_time.isoformat() if isinstance(next_run_time, datetime) else None
+            ),
+            "blocker": (
+                "scheduler_paused"
+                if state == STATE_PAUSED
+                else "job_paused"
+                if paused
+                else None
+            ),
+        }
 
 
 def _record_scheduler_tick(_event) -> None:
@@ -3003,7 +3088,7 @@ def _tpsl_fill_check_body():
 
 
 def _run_equity_observer():
-    """Run equity_observer during US market hours (scheduler cron already filters)."""
+    """Run equity_observer; the scheduler trigger owns the session boundary."""
     cfg = load_config()
     if cfg.runtime.paused:
         return
@@ -3909,6 +3994,7 @@ async def _async_paper_funding_settler():
         result["settled"], result.get("revived", 0),
         result["still_pending"], len(result["errors"]),
     )
+    return result
 
 
 def _run_paper_funding_settler():
@@ -3920,8 +4006,15 @@ def _run_paper_funding_settler():
     paper account health must not depend on the runtime being unpaused.
     """
     try:
-        _run_async_with_timeout("paper_funding_settler", _async_paper_funding_settler())
-        _record_job_success("paper_funding_settler")
+        result = _run_async_with_timeout(
+            "paper_funding_settler", _async_paper_funding_settler()
+        )
+        if result.get("errors"):
+            _record_job_failure(
+                "paper_funding_settler", "paper_funding_settler_reported_errors"
+            )
+        else:
+            _record_job_success("paper_funding_settler")
     except TimeoutError:
         logger.warning(
             "paper_funding_settler timed out after %.0fs",
@@ -3944,15 +4037,21 @@ async def _async_broker_funding_settler():
         result["checked"], result["settled"], result["still_pending"],
         len(result["errors"]),
     )
+    return result
 
 
 def _run_broker_funding_settler():
     """Retry private broker funding bills for exchange-backed futures closes."""
     try:
-        _run_async_with_timeout(
+        result = _run_async_with_timeout(
             "broker_funding_settler", _async_broker_funding_settler()
         )
-        _record_job_success("broker_funding_settler")
+        if result.get("errors"):
+            _record_job_failure(
+                "broker_funding_settler", "broker_funding_settler_reported_errors"
+            )
+        else:
+            _record_job_success("broker_funding_settler")
     except TimeoutError:
         logger.warning(
             "broker_funding_settler timed out after %.0fs",

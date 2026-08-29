@@ -160,7 +160,7 @@ def test_opportunity_cli_routes_to_read_only_counterfactual(monkeypatch):
 
     report, rendered = _build_audit_view(
         hours=25,
-        limit=20,
+        limit=200,
         stage=None,
         verdict=None,
         symbol=None,

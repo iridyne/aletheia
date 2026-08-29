@@ -198,6 +198,26 @@ def _fix_actions_failed(fix_actions) -> bool:
     )
 
 
+def _fetch_outcome(*, attempted: bool, result: dict | None) -> dict:
+    """Return a bounded, non-secret outcome for an explicit ``--fetch`` request."""
+    if not attempted:
+        return {"requested": True, "attempted": False, "ok": False, "reason": "not_git_repo"}
+    ok = bool(result and result.get("ok"))
+    reason = "ok" if ok else str((result or {}).get("reason") or "fetch_failed")
+    reason = "".join(char if char.isalnum() or char in "._-" else "_" for char in reason)
+    return {"requested": True, "attempted": True, "ok": ok, "reason": reason[:80] or "fetch_failed"}
+
+
+def _doctor_exit_code(report, fix_actions=None, fetch_outcome=None) -> int:
+    """Return non-zero for any unhealthy report, failed repair, or fetch."""
+    return 1 if (
+        report.blockers
+        or report.warns
+        or _fix_actions_failed(fix_actions)
+        or (fetch_outcome is not None and not fetch_outcome["ok"])
+    ) else 0
+
+
 @doctor_app.callback(invoke_without_command=True)
 def doctor(
     fix: bool = typer.Option(False, "--fix", help="Apply conservative infra repairs (start gateway, clear orphans). Never clears kill switch."),
@@ -206,7 +226,15 @@ def doctor(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Include redacted log tails, recent failures, and next-log pointers."),
     deep: bool = typer.Option(False, "--deep", help="Alias for --verbose; intended for interactive troubleshooting."),
     bundle: Path | None = typer.Option(None, "--bundle", help="Write a redacted JSON diagnostic bundle to this file."),
-    probe_llm: bool = typer.Option(False, "--probe-llm", help="Verify the model endpoint with a REAL inference call instead of only reading past call outcomes. Costs a live completion and up to ~20s per provider."),
+    probe_llm: bool = typer.Option(
+        False,
+        "--probe-llm",
+        help=(
+            "Verify the model endpoint with a REAL inference call instead of "
+            "only reading past call outcomes. Records the diagnostic call and "
+            "costs a live completion, up to ~20s per provider."
+        ),
+    ),
 ):
     """Probe and print this machine's real state (the single source of truth).
 
@@ -219,15 +247,18 @@ def doctor(
     ping. `--probe-llm` adds a live inference call, which is what you want when
     the system has been idle and there is no traffic to judge.
     """
-    if fetch and not json_out:
+    fetch_outcome = None
+    if fetch:
         from aletheia.update import git_ops
         if git_ops.is_repo():
-            r = git_ops.fetch(git_ops.current_branch() or "master")
-            typer.echo("fetched origin." if r.get("ok") else f"fetch skipped: {r.get('reason')}")
-    elif fetch:
-        from aletheia.update import git_ops
-        if git_ops.is_repo():
-            git_ops.fetch(git_ops.current_branch() or "master")  # silent under --json
+            result = git_ops.fetch(git_ops.current_branch() or "master")
+            fetch_outcome = _fetch_outcome(attempted=True, result=result)
+            if not json_out:
+                typer.echo("fetched origin." if result.get("ok") else f"fetch skipped: {result.get('reason')}")
+        else:
+            fetch_outcome = _fetch_outcome(attempted=False, result=None)
+            if not json_out:
+                typer.echo("fetch skipped: not_git_repo")
 
     from aletheia.diagnostics import doctor as dx
     report = dx.build_report(probe_llm=probe_llm)
@@ -251,8 +282,10 @@ def doctor(
                 _write_bundle(bundle, report, diagnostics, fix_actions=fix_actions)
         if fix_actions is not None:
             out["fix_actions"] = fix_actions
+        if fetch_outcome is not None:
+            out["fetch"] = fetch_outcome
         typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
-        raise typer.Exit(1 if report.blockers or _fix_actions_failed(fix_actions) else 0)
+        raise typer.Exit(_doctor_exit_code(report, fix_actions, fetch_outcome))
 
     _print_report(report)
     diagnostics = None
@@ -278,4 +311,4 @@ def doctor(
         written = _write_bundle(bundle, report, diagnostics, fix_actions=fix_actions)
         typer.echo(f"\nDiagnostic bundle written: {written}")
 
-    raise typer.Exit(1 if report.blockers or _fix_actions_failed(fix_actions) else 0)
+    raise typer.Exit(_doctor_exit_code(report, fix_actions, fetch_outcome))

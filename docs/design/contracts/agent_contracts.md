@@ -13,7 +13,7 @@
 |---|--------|----------|----------|-------------|
 | 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
 | 2 | market_observer | 10min | observer | Add advisory structured facts to existing triggered opportunities |
-| 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
+| 3 | equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
 | 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
 | 5a | fast_trigger_authorizer | 1min | agents | When Fast Trigger is enabled, review at most one highest-ranked pending Momentum Setup; provider failure leaves it unarmed. |
@@ -163,7 +163,7 @@ durably queued and independently retried by `outcome_hook_replay`.
 
 #### equity_observer (replaces stock_observer)
 
-- **Trigger**: cron 工作日 14:00-21:00 UTC, every 30min
+- **Trigger**: cron 工作日 09:30-16:00 America/New_York, every 30min
 - **Inputs**: yfinance daily bars + Bitget xStocks real-time price cross-validation
 - **LLM**: Yes
 - **Outputs**: opportunities table (equity-linked symbols)

@@ -2063,7 +2063,45 @@ def insert_capital_event(event) -> None:
 
 
 def list_capital_events(limit: int = 200) -> list[dict]:
-    return _select_all("capital_events", order="detected_at DESC", limit=limit)
+    return _select_all("capital_events", order="detected_at DESC, id DESC", limit=limit)
+
+
+def list_capital_events_page(
+    *,
+    limit: int = 20,
+    before_detected_at: str | None = None,
+    before_id: str | None = None,
+) -> dict:
+    """Return one stable, keyset-paginated page of the retained cash-flow ledger."""
+    if (before_detected_at is None) != (before_id is None):
+        raise ValueError("before_detected_at and before_id must be provided together")
+    page_limit = min(max(int(limit), 1), 100)
+    where = ""
+    params: tuple[object, ...] = ()
+    if before_detected_at is not None and before_id is not None:
+        where = " WHERE detected_at < ? OR (detected_at = ? AND id < ?)"
+        params = (before_detected_at, before_detected_at, before_id)
+    total_row = get_db().execute("SELECT COUNT(*) FROM capital_events").fetchone()
+    total = int(total_row[0]) if total_row is not None else 0
+    rows = get_db().execute(
+        "SELECT page.* "
+        f"FROM capital_events AS page{where} "
+        "ORDER BY detected_at DESC, id DESC LIMIT ?",
+        (*params, page_limit + 1),
+    ).fetchall()
+    has_more = len(rows) > page_limit
+    events = [dict(row) for row in rows[:page_limit]]
+    last = events[-1] if has_more and events else None
+    return {
+        "events": events,
+        "total": total,
+        "has_more": has_more,
+        "next_cursor": (
+            {"detected_at": last["detected_at"], "id": last["id"]}
+            if last is not None
+            else None
+        ),
+    }
 
 
 def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
@@ -6253,9 +6291,10 @@ def insert_market_snapshot_batch(snaps) -> int:
 
 def list_market_snapshots(
     symbol: str | None = None,
-    limit: int = 100,
+    limit: int | None = 100,
     exchange: str = "",
     market_type: str | None = None,
+    latest_per_symbol: bool = False,
 ) -> list[dict]:
     """Return market snapshots, optionally filtered by symbol, exchange, and/or market_type.
 
@@ -6276,6 +6315,29 @@ def list_market_snapshots(
         conditions.append("market_type = ?")
         params.append(market_type)
     where = " AND ".join(conditions) if conditions else None
+    if latest_per_symbol:
+        where_sql = f"WHERE {where}" if where else ""
+        sql = f"""
+            WITH ranked AS (
+                SELECT rowid AS snapshot_rowid,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY symbol
+                           ORDER BY COALESCE(snapshot_at, '') DESC, rowid DESC
+                       ) AS snapshot_rank
+                FROM market_snapshots
+                {where_sql}
+            )
+            SELECT snapshots.*
+            FROM market_snapshots AS snapshots
+            JOIN ranked
+              ON ranked.snapshot_rowid = snapshots.rowid
+             AND ranked.snapshot_rank = 1
+            ORDER BY COALESCE(snapshots.snapshot_at, '') DESC, snapshots.rowid DESC
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(1, limit))
+        return [dict(row) for row in get_db().execute(sql, tuple(params)).fetchall()]
     return _select_all(
         "market_snapshots",
         where=where,
@@ -8229,7 +8291,13 @@ def insert_universe_members_batch(members: list[UniverseMember]) -> int:
     )
 
 
-def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
+def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict]:
+    if limit is None:
+        rows = get_db().execute(
+            "SELECT * FROM universe_members WHERE snapshot_id = ? ORDER BY rank ASC",
+            (snapshot_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
     return _select_all(
         "universe_members",
         where="snapshot_id = ?",
@@ -8990,7 +9058,7 @@ def transition_entry_plan(
     return updated.rowcount == 1
 
 
-def get_active_universe_members(limit: int = 20) -> list[dict]:
+def get_active_universe_members(limit: int | None = 20) -> list[dict]:
     """Return top-ranked members from the currently active universe snapshot."""
     snap = get_active_universe_snapshot()
     if not snap:

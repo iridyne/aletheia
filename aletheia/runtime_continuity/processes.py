@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
 import time
-from pathlib import Path
 import urllib.request
+from pathlib import Path
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.network import backend_bind_host
@@ -99,15 +100,61 @@ def wait_http_ready(base_url: str, *, timeout_sec: float = 10.0) -> bool:
     infra_url = f"{base_url.rstrip('/')}/_infra/readyz"
     smoke_url = f"{base_url.rstrip('/')}/api/health"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    health_headers = {}
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.config.secrets import get_secret
+
+        cfg = load_config(persist_migrations=False)
+        remote_control = getattr(cfg, "remote_control", None)
+        token_required = bool(
+            getattr(getattr(cfg, "tunnel", None), "enabled", False)
+            or (
+                getattr(remote_control, "enabled", False)
+                and getattr(remote_control, "require_token", False)
+            )
+        )
+        if token_required:
+            token = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
+            if token:
+                health_headers["X-Aletheia-Token"] = token
+    except Exception:
+        # A missing/broken config leaves the probe unauthenticated and lets the
+        # endpoint's own response decide readiness without exposing secrets.
+        pass
+    health_request = urllib.request.Request(smoke_url, headers=health_headers)
     while time.monotonic() < deadline:
         try:
             with opener.open(infra_url, timeout=0.75) as response:
                 if response.status != 200:
                     time.sleep(0.25)
                     continue
-            with opener.open(smoke_url, timeout=0.75) as response:
-                if 200 <= response.status < 500:
+                try:
+                    ready = json.loads(response.read())
+                except (TypeError, ValueError):
+                    time.sleep(0.25)
+                    continue
+                if not isinstance(ready, dict) or ready.get("ok") is not True:
+                    time.sleep(0.25)
+                    continue
+            with opener.open(health_request, timeout=0.75) as response:
+                if response.status != 200:
+                    time.sleep(0.25)
+                    continue
+                try:
+                    health = json.loads(response.read())
+                except (TypeError, ValueError):
+                    time.sleep(0.25)
+                    continue
+                if not isinstance(health, dict) or not isinstance(health.get("issues"), list):
+                    time.sleep(0.25)
+                    continue
+                if health.get("status") == "initializing":
+                    time.sleep(0.25)
+                    continue
+                if health.get("status") in {"healthy", "degraded"}:
                     return True
+                time.sleep(0.25)
         except Exception:
             time.sleep(0.25)
     return False

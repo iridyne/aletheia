@@ -2540,7 +2540,23 @@ export const api = {
 		fetchJson<{ net_deposits_usdt: number; first_event_at: string | null }>(
 			"/capital/net-deposits",
 		),
-	getCapitalEvents: () => fetchJson<any[]>("/capital/events"),
+	getCapitalEvents: (params?: {
+		limit?: number;
+		before_detected_at?: string;
+		before_id?: string;
+	}) => {
+		const qs = new URLSearchParams();
+		if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+		if (params?.before_detected_at) qs.set("before_detected_at", params.before_detected_at);
+		if (params?.before_id) qs.set("before_id", params.before_id);
+		const suffix = qs.toString() ? `?${qs.toString()}` : "";
+		return fetchJson<{
+			events: any[];
+			total: number;
+			has_more: boolean;
+			next_cursor: { detected_at: string; id: string } | null;
+		} | any[]>(`/capital/events${suffix}`);
+	},
 	createCapitalEvent: (body: {
 		broker_id: string;
 		event_type: string;

@@ -38,6 +38,23 @@ def _cfg(
     )
 
 
+def _policy_cfg(*, demo_cap: float, live_cap: float, **kwargs):
+    from aletheia.config.schema import ModeRiskPolicy, RiskCapitalPolicy
+
+    cfg = _cfg(**kwargs)
+    cfg.risk = SimpleNamespace(
+        demo=ModeRiskPolicy(
+            policy_id="demo-sizing-test",
+            capital=RiskCapitalPolicy(max_position_margin_usdt=demo_cap),
+        ),
+        live=ModeRiskPolicy(
+            policy_id="live-sizing-test",
+            capital=RiskCapitalPolicy(max_position_margin_usdt=live_cap),
+        ),
+    )
+    return cfg
+
+
 def _patch_cfg(monkeypatch, cfg):
     import aletheia.config.loader as loader
 
@@ -53,15 +70,26 @@ def _insert_proposal(
     status: str = "executed",
     leverage: int | None = 1,
     strategy_id: str | None = "strat-sizing",
+    execution_mode: str = "bitget_demo",
+    market_type: str = "usdt_futures",
 ) -> str:
     pid = f"prop-sizing-{idx}"
     db.execute(
         "INSERT INTO trade_proposals "
         "(id, strategy_id, opportunity_id, symbol, market_type, direction, order_type, "
         "quantity, price, leverage, execution_mode, status, created_at) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'usdt_futures', 'long', 'limit', ?, 100, ?, "
-        "'bitget_demo', ?, ?)",
-        (pid, strategy_id, f"opp-sizing-{idx}", notional / 100.0, leverage, status, _iso()),
+        "VALUES (?, ?, ?, 'BTC/USDT', ?, 'long', 'limit', ?, 100, ?, ?, ?, ?)",
+        (
+            pid,
+            strategy_id,
+            f"opp-sizing-{idx}",
+            market_type,
+            notional / 100.0,
+            leverage,
+            execution_mode,
+            status,
+            _iso(),
+        ),
     )
     db.execute(
         "INSERT INTO pi_decisions "
@@ -203,6 +231,67 @@ def test_sizing_trace_detects_risk_cap(monkeypatch):
 
     assert report["traces"][0]["risk_cap_hit"] is True
     assert report["traces"][0]["main_reason"] == "risk_cap"
+
+
+def test_sizing_trace_reconstructs_demo_futures_margin_cap(monkeypatch):
+    from aletheia.analytics.sizing_trace import build_sizing_trace_audit
+    from aletheia.storage.sqlite import get_db
+
+    _patch_cfg(monkeypatch, _policy_cfg(demo_cap=50.0, live_cap=500.0, vol_enabled=False))
+    db = get_db()
+    _insert_proposal(db, 1, notional=1_200.0, leverage=20, status="rejected")
+    db.commit()
+
+    trace = build_sizing_trace_audit(hours=24, min_sample_size=1)["traces"][0]
+
+    assert trace["risk_cap_hit"] is True
+    assert trace["main_reason"] == "risk_cap"
+
+
+def test_sizing_trace_reconstructs_live_policy_and_leveraged_non_breach(monkeypatch):
+    from aletheia.analytics.sizing_trace import build_sizing_trace_audit
+    from aletheia.storage.sqlite import get_db
+
+    _patch_cfg(monkeypatch, _policy_cfg(demo_cap=500.0, live_cap=40.0, vol_enabled=False))
+    db = get_db()
+    _insert_proposal(
+        db,
+        1,
+        notional=900.0,
+        leverage=20,
+        execution_mode="bitget_live_limited",
+        status="rejected",
+    )
+    _insert_proposal(
+        db,
+        2,
+        notional=1_200.0,
+        leverage=30,
+        status="rejected",
+    )
+    db.commit()
+
+    traces = {
+        trace["proposal_id"]: trace
+        for trace in build_sizing_trace_audit(hours=24, min_sample_size=1)["traces"]
+    }
+
+    assert traces["prop-sizing-1"]["risk_cap_hit"] is True
+    assert traces["prop-sizing-2"]["risk_cap_hit"] is False
+
+
+def test_sizing_trace_treats_spot_notional_as_margin(monkeypatch):
+    from aletheia.analytics.sizing_trace import build_sizing_trace_audit
+    from aletheia.storage.sqlite import get_db
+
+    _patch_cfg(monkeypatch, _policy_cfg(demo_cap=50.0, live_cap=500.0, vol_enabled=False))
+    db = get_db()
+    _insert_proposal(db, 1, notional=60.0, leverage=20, market_type="spot", status="rejected")
+    db.commit()
+
+    trace = build_sizing_trace_audit(hours=24, min_sample_size=1)["traces"][0]
+
+    assert trace["risk_cap_hit"] is True
 
 
 def test_sizing_trace_marks_current_config_reconstruction(monkeypatch):
