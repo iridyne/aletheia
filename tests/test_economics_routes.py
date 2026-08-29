@@ -272,6 +272,48 @@ def _usage_json(*, input_t: int = 0, output_t: int = 0, reasoning: int = 0, cach
     )
 
 
+def test_cost_breakdowns_iterate_query_rows_without_materializing(monkeypatch):
+    from aletheia.economics import tracing
+
+    class IterableOnlyDb:
+        def execute(self, sql, _params):
+            if "event_type='llm'" in sql:
+                return iter(
+                    [
+                        {
+                            "provider": "openai",
+                            "model_or_tool": "gpt-4",
+                            "started_at": "2026-08-29T00:00:00+00:00",
+                            "latency_ms": 10.0,
+                            "status": "success",
+                            "estimated_cost_usd": 0.1,
+                            "cost_status": "known",
+                            "usage_json": _usage_json(input_t=1, output_t=1),
+                        }
+                    ]
+                )
+            return iter(
+                [
+                    {
+                        "model_or_tool": "search",
+                        "status": "recorded",
+                        "estimated_cost_usd": None,
+                        "cost_status": "unknown",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(tracing, "ensure_economics_schema", lambda: IterableOnlyDb())
+    monkeypatch.setenv("ALETHEIA_COST_TRACING", "1")
+
+    window = {
+        "window_start": "2026-08-28T00:00:00+00:00",
+        "window_end": "2026-08-30T00:00:00+00:00",
+    }
+    assert tracing.list_cost_breakdown_by_provider(**window)["event_count"] == 1
+    assert tracing.list_cost_breakdown_by_tool(**window)["event_count"] == 1
+
+
 @pytest.mark.anyio
 async def test_costs_by_provider_empty_ledger(client):
     resp = await client.get("/api/economics/costs/by-provider?days=1")
