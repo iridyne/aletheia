@@ -411,7 +411,12 @@ def _collect_pr(repo: str, pr: dict[str, Any]) -> dict[str, Any]:
 
     primary = sorted(
         (item for item in attempts if item["workflow_name"] == PRIMARY_WORKFLOW),
-        key=lambda item: (_dt(item["queued_at"]) or datetime.min.replace(tzinfo=UTC), item["run_attempt"]),
+        key=lambda item: (
+            _dt(item["queued_at"])
+            or _dt(item["started_at"])
+            or datetime.min.replace(tzinfo=UTC),
+            item["run_attempt"],
+        ),
     )
     metadata = [item for item in attempts if item["workflow_name"] == METADATA_WORKFLOW]
     for index, attempt in enumerate(primary):

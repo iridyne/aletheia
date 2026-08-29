@@ -116,7 +116,7 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
             },
             "actions/runs/10/attempts/2": {
                 "head_sha": head,
-                "created_at": "2026-08-24T00:01:00Z",
+                "created_at": "2026-08-24T00:00:01Z",
                 "run_started_at": "2026-08-24T00:01:00Z",
                 "updated_at": "2026-08-24T00:02:00Z",
                 "conclusion": "success",
@@ -206,6 +206,8 @@ def test_collect_pr_distinguishes_same_head_body_repair_from_blanket_retry(monke
     assert body_repair["next_event"] == "pr_body_only_repair"
     assert body_repair["next_event_confidence"] == "high"
     assert repaired["next_event"] == "merge"
+    assert repaired["queued_at"] is None
+    assert repaired["queue_seconds"] is None
     assert collected["pr"]["ci_attempts_before_merge"] == 3
     body_repair_lane = next(
         item for item in collected["lanes"]

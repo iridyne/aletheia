@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "ci_plan.v1"
-POLICY_VERSION = "2026-08-29.1"
+POLICY_VERSION = "2026-08-29.2"
 MODES = ("docs_only", "quick", "affected", "deep", "full")
 MODE_RANK = {mode: index for index, mode in enumerate(MODES)}
 LANES = (
@@ -311,7 +311,9 @@ def _coverage_path(path: str) -> bool:
 
 
 def _operational_script_path(path: str) -> bool:
-    return path.startswith(("scripts/runtime/", "scripts/dev/")) or path in {
+    return (path.startswith("scripts/") and path.endswith(".py")) or path.startswith(
+        ("scripts/runtime/", "scripts/dev/")
+    ) or path in {
         "scripts/dev.ps1",
         "scripts/test_ai.ps1",
         "scripts/watch_backend.py",
@@ -441,7 +443,7 @@ def plan(
             reason_codes.add("DELETION_REVIEWED")
         for path in change.all_paths():
             surfaces.update(_path_surfaces(path))
-            if _safe_docs_path(path):
+            if _safe_docs_path(path) and not _agents_path(path):
                 reason_codes.add("ZERO_CI_DOCS")
                 continue
             mode = _mode_at_least(mode, "quick")
@@ -557,6 +559,10 @@ def _github_checks(required: dict[str, bool]) -> list[str]:
 
 def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
     checks = [
+        {
+            "name": "clean tracked worktree",
+            "command": ["git", "diff", "--quiet", "HEAD", "--"],
+        },
         {"name": "git diff whitespace", "command": ["git", "diff", "--check"]},
         {"name": "documentation governance", "command": ["uv", "run", "python", "scripts/check_docs.py"]},
     ]

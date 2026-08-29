@@ -863,6 +863,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "path.startsWith('.github/workflows/')" in schedule_script
     assert "'scripts/ci_plan.py'" in schedule_script
     assert "expected_base_sha: pullRequest.base.sha" in schedule_script
+    assert "payload.workflow_run.path === '.github/workflows/ci.yml'" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
     assert release_candidate["timeout-minutes"] == "10"
@@ -954,10 +955,14 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "minimumCheckStartedAt" in update_script
     assert "requireAcceptedWorkflowRun" in update_script
     assert "acceptedWorkflowRunId" in update_script
-    assert ".includes(`/actions/runs/${acceptedWorkflowRunId}`)" in update_script
+    assert "workflowRunIdForCheck(candidate) === acceptedWorkflowRunId" in update_script
+    assert "captureWorkflowRun: checkName === trustedCiCheckName" in update_script
+    assert "candidate.output?.summary" in update_script
+    assert ".includes(`fingerprint=${options.expectedPlanFingerprint}`)" in update_script
     assert "check.conclusion === 'success'" in update_script
     assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
-    assert "exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun:" in update_script
+    assert "ciPlan.github_checks.filter" in update_script
+    assert "expectedPlanFingerprint: ciPlan.plan_fingerprint" in update_script
 
     assert "reviews(last: 100)" not in update_script
     assert "github.rest.repos.getCommit" in update_script
@@ -1008,7 +1013,8 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
     assert "exactHeadCheckPassed(changeContractCheckName)" in update_script
-    assert "exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun:" in update_script
+    assert "ciPlan.github_checks.filter" in update_script
+    assert "expectedPlanFingerprint: ciPlan.plan_fingerprint" in update_script
     assert "pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge" in update_script
     assert "releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE'" in update_script
     assert "github.rest.pulls.merge" in update_script

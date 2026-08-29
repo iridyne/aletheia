@@ -113,7 +113,10 @@ jobs:
               const minimumCheckStartedAt = eventName === 'pull_request_target'
                 ? new Date().toISOString()
                 : '';
-              const acceptedWorkflowRunId = eventName === 'workflow_run'
+              const acceptedWorkflowRunId = (
+                eventName === 'workflow_run' &&
+                payload.workflow_run.path === '.github/workflows/ci.yml'
+              )
                 ? String(payload.workflow_run.id)
                 : '';
               await github.rest.repos.createDispatchEvent({
@@ -298,7 +301,7 @@ jobs:
             const expectedBaseSha = process.env.EXPECTED_BASE_SHA;
             const releaseAfterMerge = process.env.RELEASE_AFTER_MERGE === 'true';
             const minimumCheckStartedAt = process.env.MINIMUM_CHECK_STARTED_AT;
-            const acceptedWorkflowRunId = process.env.ACCEPTED_WORKFLOW_RUN_ID;
+            let acceptedWorkflowRunId = process.env.ACCEPTED_WORKFLOW_RUN_ID;
             const changeContractCheckName = 'Verify Change Contract';
             const trustedCiCheckName = 'Trusted CI verdict';
             const {execFileSync} = require('child_process');
@@ -399,6 +402,8 @@ jobs:
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
             };
+            const workflowRunIdForCheck = (check) =>
+              String(check?.details_url || '').match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1] || '';
             const exactHeadCheckPassed = async (checkName, options = {}) => {
               try {
                 const {data} = await github.rest.checks.listForRef({
@@ -414,7 +419,14 @@ jobs:
                     candidate.app?.slug === 'github-actions' &&
                     (
                       !options.requireAcceptedWorkflowRun ||
-                      String(candidate.details_url || '').includes(`/actions/runs/${acceptedWorkflowRunId}`)
+                      workflowRunIdForCheck(candidate) === acceptedWorkflowRunId
+                    ) &&
+                    (
+                      !options.expectedPlanFingerprint ||
+                      String(candidate.output?.summary || '')
+                        .split(/\r?\n/)
+                        .map((line) => line.trim())
+                        .includes(`fingerprint=${options.expectedPlanFingerprint}`)
                     ) &&
                     (
                       !minimumCheckStartedAt ||
@@ -427,6 +439,13 @@ jobs:
                     Date.parse(left.completed_at || left.started_at || 0)
                   )[0];
                 if (check?.status === 'completed' && check.conclusion === 'success') {
+                  if (options.captureWorkflowRun && !acceptedWorkflowRunId) {
+                    acceptedWorkflowRunId = workflowRunIdForCheck(check);
+                    if (!acceptedWorkflowRunId) {
+                      core.info(`exact-head ${checkName} has no workflow run identity`);
+                      return false;
+                    }
+                  }
                   return true;
                 }
                 core.info(
@@ -678,8 +697,16 @@ jobs:
                 if (!(await exactHeadCheckPassed(changeContractCheckName))) {
                   return;
                 }
-                if (!(await exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun: Boolean(acceptedWorkflowRunId)}))) {
-                  return;
+                for (const checkName of ciPlan.github_checks.filter(
+                  (name) => name !== changeContractCheckName,
+                )) {
+                  if (!(await exactHeadCheckPassed(checkName, {
+                    requireAcceptedWorkflowRun: Boolean(acceptedWorkflowRunId),
+                    captureWorkflowRun: checkName === trustedCiCheckName,
+                    expectedPlanFingerprint: ciPlan.plan_fingerprint,
+                  }))) {
+                    return;
+                  }
                 }
               } else {
                 core.info('trusted CI planner classified this head as docs_only; validation CI checks are not required');

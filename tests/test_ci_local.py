@@ -31,6 +31,7 @@ def test_local_ci_reports_failure_when_required_check_fails(monkeypatch, tmp_pat
     output = capsys.readouterr().out
     assert '"result": "fail"' in output
     assert calls[0][:5] == ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py"]
+    assert ["git", "diff", "--quiet", "HEAD", "--"] in calls
     assert ["git", "diff", "--check", f"{'b' * 40}...{'a' * 40}", "--"] in calls
     assert any(any("test_ci_plan.py" in part for part in command) for command in calls)
 
@@ -77,3 +78,28 @@ def test_local_ci_changed_file_override_still_binds_head_identity(monkeypatch, t
     output = capsys.readouterr().out
     assert f'"base_sha": "{base}"' in output
     assert f'"head_sha": "{head}"' in output
+
+
+def test_local_ci_rejects_dirty_tracked_worktree(monkeypatch, tmp_path, capsys) -> None:
+    body = tmp_path / "body.md"
+    body.write_text("References #1", encoding="utf-8")
+    monkeypatch.setattr(
+        ci_local.ci_plan,
+        "_load_changes",
+        lambda _args: ("b" * 40, "a" * 40, [PathChange(path="scripts/ci_plan.py")]),
+    )
+
+    def fake_run(command, cwd=None):
+        return {
+            "command": command,
+            "working_directory": cwd or ".",
+            "exit_code": 1 if command == ["git", "diff", "--quiet", "HEAD", "--"] else 0,
+            "duration_seconds": 0.01,
+        }
+
+    monkeypatch.setattr(ci_local, "_run", fake_run)
+
+    assert ci_local.main(["--pr-body-file", str(body)]) == 1
+    output = capsys.readouterr().out
+    assert '"result": "fail"' in output
+    assert '"failure_reason": "clean tracked worktree failed"' in output
