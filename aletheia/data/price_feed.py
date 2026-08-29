@@ -14,7 +14,7 @@ Design:
 - Display/PnL remains fail-open to SQLite. Protective close pricing is fail-closed:
   its typed SQLite fallback must be no older than 120 seconds.
 - Pending candidates refresh every tick; ordinary Universe members are tick-gated
-  every 3rd tick (90s) to stay
+  every 3rd tick (nominally 90s) to stay
   within the scheduler's 45s timeout budget at large symbol counts.
 """
 
@@ -54,9 +54,14 @@ def instrument_refresh_attempted(
     return (exchange, symbol, market_type) in _instrument_refresh_attempted
 
 _STALE_THRESHOLD_SEC = 90.0
+# Universe alerts compare adjacent sampling rounds within a declared four-cycle
+# event horizon.  This is a semantic boundary, not a scheduler liveness bound:
+# longer gaps deliberately begin a new segment even if the scheduler stayed up.
+_UNIVERSE_EVENT_CONTINUITY_MAX_GAP_SEC = 360.0
 _PROTECTIVE_DB_MAX_AGE_SEC = 120.0
 _UNIVERSE_TICK_EVERY = 3  # universe members refresh every N ticks
 _tick_counter = 0
+_universe_round = 0
 _tick_lock = threading.Lock()
 
 
@@ -258,7 +263,11 @@ def get_fresh_price_for_protective_close(
     return float(mark["price"]) if mark is not None else None
 
 
-def get_watched_instruments():
+def get_watched_instruments(
+    *,
+    _always_on_identities: set[tuple[str, str, str]] | None = None,
+    _universe_round_by_identity: dict[tuple[str, str, str], int] | None = None,
+):
     """Return exact instruments for positions, pending candidates, and Universe.
 
     Stock tokens (xStocks) are filtered against the venue listing cache before
@@ -272,6 +281,9 @@ def get_watched_instruments():
     from aletheia.data.venue_listing_cache import get_cached_listing
 
     seen: set[tuple[str, str, str]] = set()
+    always_on: set[tuple[str, str, str]] = set()
+    universe_rounds: dict[tuple[str, str, str], int] = {}
+    always_on_sources_complete = True
     result: list[InstrumentId] = []
     cfg = load_config()
     default_exchange = cfg.market_data.ccxt_exchange or "binance"
@@ -285,7 +297,14 @@ def get_watched_instruments():
             _listing_cache[key] = get_cached_listing(key)
         return _listing_cache[key]
 
-    def append_instrument(raw_symbol: str, market_type: str | None, venue: str | None) -> None:
+    def append_instrument(
+        raw_symbol: str,
+        market_type: str | None,
+        venue: str | None,
+        *,
+        is_always_on: bool = False,
+        universe_round: int | None = None,
+    ) -> None:
         if not raw_symbol:
             return
         exchange = stock_token_exchange(raw_symbol) if is_stock_token(raw_symbol) else venue
@@ -313,6 +332,10 @@ def get_watched_instruments():
         identity = (
             instrument.exchange, instrument.symbol, instrument.market_type,
         )
+        if is_always_on:
+            always_on.add(identity)
+        if universe_round is not None:
+            universe_rounds[identity] = universe_round
         if identity not in seen:
             seen.add(identity)
             result.append(instrument)
@@ -336,8 +359,10 @@ def get_watched_instruments():
                 p.get("symbol", ""),
                 p.get("market_type"),
                 position_venue,
+                is_always_on=True,
             )
     except Exception as e:
+        always_on_sources_complete = False
         logger.warning("price_feed: failed to get position symbols: %s", e)
 
     # Pending candidates are an always-on high-priority set. Their exact mark is
@@ -348,17 +373,23 @@ def get_watched_instruments():
         for instrument in pending_candidate_instruments():
             append_instrument(
                 instrument.symbol, instrument.market_type, instrument.exchange,
+                is_always_on=True,
             )
     except Exception as e:
+        always_on_sources_complete = False
         logger.warning("price_feed: pending candidate expansion failed: %s", type(e).__name__)
 
     # Universe members — tick-gated
     try:
         if cfg.event_triggers.enabled and cfg.event_triggers.watch_universe_members:
             with _tick_lock:
-                global _tick_counter
+                global _tick_counter, _universe_round
                 _tick_counter += 1
                 do_universe = (_tick_counter % _UNIVERSE_TICK_EVERY == 0)
+                current_universe_round = None
+                if do_universe and _universe_round_by_identity is not None:
+                    _universe_round += 1
+                    current_universe_round = _universe_round
 
             if do_universe:
                 from aletheia.storage.repositories import get_active_universe_members
@@ -372,10 +403,15 @@ def get_watched_instruments():
                         m.get("symbol", ""),
                         m.get("market_type") or asset.get("market_type"),
                         asset.get("venue"),
+                        universe_round=current_universe_round,
                     )
     except Exception as e:
         logger.debug("price_feed: universe expansion failed: %s", e)
 
+    if _always_on_identities is not None:
+        _always_on_identities.update(always_on if always_on_sources_complete else seen)
+    if _universe_round_by_identity is not None:
+        _universe_round_by_identity.update(universe_rounds)
     return result
 
 
@@ -403,7 +439,12 @@ async def refresh_watched_prices() -> dict:
     global _price_cache_owner_process
     _price_cache_owner_process = True
 
-    instruments = get_watched_instruments()
+    always_on_identities: set[tuple[str, str, str]] = set()
+    universe_round_by_identity: dict[tuple[str, str, str], int] = {}
+    instruments = get_watched_instruments(
+        _always_on_identities=always_on_identities,
+        _universe_round_by_identity=universe_round_by_identity,
+    )
     if not instruments:
         return {"refreshed": 0, "symbols": [], "errors": []}
 
@@ -463,8 +504,49 @@ async def refresh_watched_prices() -> dict:
                                     instrument.market_type,
                                 )
                                 prev_entry = _instrument_price_cache.get(instrument_key, {})
-                                prev_price = prev_entry.get("price")
-                                volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
+                                try:
+                                    previous_age_sec = (
+                                        observed_at - prev_entry["ts"]
+                                    ).total_seconds()
+                                except (KeyError, TypeError, ValueError):
+                                    previous_age_sec = None
+                                current_universe_round = universe_round_by_identity.get(
+                                    instrument_key
+                                )
+                                timestamp_comparable = (
+                                    previous_age_sec is not None and previous_age_sec >= 0
+                                )
+                                if instrument_key in always_on_identities:
+                                    previous_comparable = (
+                                        timestamp_comparable
+                                        and previous_age_sec <= _STALE_THRESHOLD_SEC
+                                    )
+                                elif current_universe_round is not None:
+                                    previous_comparable = (
+                                        timestamp_comparable
+                                        and previous_age_sec
+                                        <= _UNIVERSE_EVENT_CONTINUITY_MAX_GAP_SEC
+                                        and prev_entry.get("event_universe_round")
+                                        == current_universe_round - 1
+                                    )
+                                else:
+                                    # Unknown source authority must not inherit the
+                                    # wider Universe-only event horizon.
+                                    previous_comparable = (
+                                        timestamp_comparable
+                                        and previous_age_sec <= _STALE_THRESHOLD_SEC
+                                    )
+                                prev_price = (
+                                    prev_entry.get("price")
+                                    if previous_comparable
+                                    else None
+                                )
+                                prev_volume_24h = (
+                                    prev_entry.get("volume_24h")
+                                    if previous_comparable
+                                    else None
+                                )
+                                volume_24h = getattr(ticker, "volume_24h", None) or prev_volume_24h
                                 entry = {
                                     "price": ticker.last_price,
                                     "ts": observed_at,
@@ -474,13 +556,18 @@ async def refresh_watched_prices() -> dict:
                                     "symbol": sym,
                                     "market_type": instrument.market_type,
                                     "exchange": instrument.exchange,
+                                    "event_universe_round": (
+                                        current_universe_round
+                                        if instrument_key not in always_on_identities
+                                        else None
+                                    ),
                                 }
                                 _instrument_price_cache[instrument_key] = dict(entry)
                                 _price_cache[sym] = entry
 
                             if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
                                 pct = (ticker.last_price - prev_price) / prev_price * 100
-                                _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
+                                _check_event_triggers(sym, pct, volume_24h, prev_volume_24h, cfg)
 
                             refreshed.append(sym)
                             refreshed_instruments.append(instrument)
@@ -541,7 +628,7 @@ def _check_event_triggers(
 
         # Price move notification
         if abs_pct >= et.price_move_pct_threshold:
-            _notify(f"Price alert {symbol}: {direction}{abs_pct:.1f}% (30s)")
+            _notify(f"Price alert {symbol}: {direction}{abs_pct:.1f}%")
 
         # Volume surge notification
         if (volume_24h and prev_volume_24h and prev_volume_24h > 0

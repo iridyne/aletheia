@@ -16,6 +16,7 @@ def _reset_cache():
         price_feed._price_cache.clear()
     with price_feed._tick_lock:
         price_feed._tick_counter = 0
+        price_feed._universe_round = 0
     yield
 
 
@@ -44,6 +45,7 @@ def test_above_price_threshold_fires_notify():
     mock_notify.assert_called_once()
     assert "BTC/USDT" in mock_notify.call_args[0][0]
     assert "4.5" in mock_notify.call_args[0][0]
+    assert "30s" not in mock_notify.call_args[0][0]
 
 
 def test_negative_price_move_fires():
