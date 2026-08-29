@@ -20,6 +20,7 @@ Governance (trust §6/§8):
 
 import logging
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -63,9 +64,18 @@ def _clean_body(text: str, *, title: str | None = None) -> str:
     """Strip only the canonical leading metadata/header prefix from Markdown."""
     from aletheia.knowledge.frontmatter import parse_frontmatter_text
 
+    has_leading_frontmatter_candidate = text.startswith("---\n") or re.match(
+        r"#[^\n]*\n+(?=---\n)", text
+    ) is not None
     _metadata, body = parse_frontmatter_text(text)
     if body != text:
         return body.strip()
+
+    if has_leading_frontmatter_candidate:
+        logger.warning(
+            "knowledge FTS frontmatter parse failed; preserving Markdown body"
+        )
+        return text.strip()
 
     # Legacy files without frontmatter still have a generated title. Remove it
     # only when it matches the item's title; body-level H1 headings are prose.

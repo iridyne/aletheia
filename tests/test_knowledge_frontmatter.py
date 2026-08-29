@@ -68,3 +68,13 @@ def test_clean_body_preserves_plain_markdown_thematic_break():
     text = "Evidence before the break.\n\n---\n\nEvidence after the break."
 
     assert _clean_body(text) == text
+
+
+def test_clean_body_warns_and_preserves_malformed_frontmatter(caplog):
+    text = "---\nkind: trade_case_study\nEvidence after an unclosed fence."
+
+    with caplog.at_level("WARNING", logger="aletheia.retrieval"):
+        assert _clean_body(text) == text
+
+    assert "frontmatter parse failed" in caplog.text
+    assert text not in caplog.text
