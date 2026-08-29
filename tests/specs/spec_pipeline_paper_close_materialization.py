@@ -1736,6 +1736,71 @@ def test_delayed_funding_materialization_converges_every_projection_once(
     assert len(repairs) == 1
 
 
+def test_repeated_repairs_with_same_funding_evidence_keep_distinct_audits(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import materialize_position_economics
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "repeated-funding-repair"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    evidence = _complete_recovered_funding(position_id, cost=0.02)
+
+    materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=False,
+        outcome_exclusion_reason="attribution_pending",
+    )
+    conn.execute(
+        "UPDATE position_close_events SET realized_pnl=NULL WHERE position_id=?",
+        (position_id,),
+    )
+    conn.commit()
+    first_repair = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=False,
+        outcome_exclusion_reason="attribution_pending",
+    )
+    conn.execute(
+        "UPDATE position_close_events SET realized_pnl=NULL WHERE position_id=?",
+        (position_id,),
+    )
+    conn.commit()
+    second_repair = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+
+    repairs = conn.execute(
+        "SELECT id FROM audit_events WHERE entity_id=? "
+        "AND event_type='paper_position_economics_repaired' ORDER BY timestamp, id",
+        (position_id,),
+    ).fetchall()
+    assert first_repair["status"] == "repaired"
+    assert second_repair["status"] == "repaired"
+    assert len(repairs) == 2
+    assert repairs[0]["id"] != repairs[1]["id"]
+
+
 def test_delayed_loss_materialization_allows_negative_paper_cash(
     tmp_path, monkeypatch,
 ):

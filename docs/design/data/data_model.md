@@ -223,7 +223,7 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 在同一业务 transaction 内写入 `pending`；普通与历史 audit 保持 `NULL`，migration
 不猜测旧 JSONL 是否已经存在。partial index 按
 `(jsonl_mirror_status, timestamp, id)` 支持对 `pending/failed` 行进行有界、oldest-first
-reconcile。成功后写 `mirrored_at` 并清除 error class；`mirrored` 不得被迟到失败降级。
+reconcile。成功后写 `jsonl_mirrored_at` 并清除 error class；`mirrored` 不得被迟到失败降级。
 JSONL payload 由同一 audit 行重建，不复制 raw broker ledger、provider error 或 credential。
 
 **Runtime Session provenance (expand-only, nullable).** The seven core trading-fact

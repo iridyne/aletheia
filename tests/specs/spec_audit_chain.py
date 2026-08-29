@@ -391,6 +391,7 @@ def test_funding_audit_reconciler_acks_append_before_crash_without_duplicate(
         event_type="exchange_position_funding_settled",
         accounting_version="broker-funding-v1",
         fingerprint=fingerprint,
+        transition_fingerprint="sha256:" + "b" * 64,
     )
     event = AuditEvent(
         id=audit_id,

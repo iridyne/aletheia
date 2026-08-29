@@ -412,10 +412,11 @@ def compute_health() -> dict:
             issues.append(
                 f"funding_audit_mirror_backlog:{audit_backlog['count']}"
             )
-    except Exception:
-        # Migration/startup ownership reports schema failures separately. Health
-        # must not invent a clean or dirty backlog when the probe is unavailable.
-        pass
+    except Exception as exc:
+        logger.warning(
+            "funding audit mirror health probe failed: %s", type(exc).__name__,
+        )
+        initializing.append("funding_audit_mirror_unknown")
 
     if not issues and not initializing:
         status = "healthy"

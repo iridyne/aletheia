@@ -24,10 +24,17 @@ def funding_audit_id(
     event_type: str,
     accounting_version: str,
     fingerprint: str,
+    transition_fingerprint: str,
 ) -> str:
     """Return the stable identity shared by SQLite and the JSONL mirror."""
     canonical = json.dumps(
-        [position_id, event_type, accounting_version, fingerprint],
+        [
+            position_id,
+            event_type,
+            accounting_version,
+            fingerprint,
+            transition_fingerprint,
+        ],
         separators=(",", ":"),
     )
     return "funding-audit-v1:" + hashlib.sha256(canonical.encode()).hexdigest()

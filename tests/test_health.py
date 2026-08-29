@@ -132,6 +132,24 @@ def test_funding_audit_backlog_degrades_health_and_warns_doctor(
     assert "2026-08-23T00:00:00+00:00" in check.detail
 
 
+def test_funding_audit_probe_unavailable_is_not_reported_healthy(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.portfolio import funding_audit
+
+    def unavailable():
+        raise RuntimeError("audit schema unavailable")
+
+    monkeypatch.setattr(funding_audit, "funding_audit_backlog", unavailable)
+    result = health.compute_health()
+
+    assert result["healthy"] is False
+    assert result["status"] == "initializing"
+    assert "funding_audit_mirror_unknown" in result["issues"]
+
+
 def test_compute_health_flags_high_failure_ratio(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health

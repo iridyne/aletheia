@@ -682,6 +682,10 @@ def materialize_position_economics(
             event_type=event_type,
             accounting_version=accounting_version,
             fingerprint=fingerprint,
+            transition_fingerprint=_economics_fingerprint({
+                "before": before,
+                "after": after,
+            }),
         )
         insert_pending_funding_audit(AuditEvent(
             id=audit_event_id,

@@ -280,6 +280,10 @@ def materialize_broker_funding_economics(
             event_type="exchange_position_funding_settled",
             accounting_version="broker-funding-v1",
             fingerprint=fingerprint,
+            transition_fingerprint=_fingerprint({
+                "before": before,
+                "after": after,
+            }),
         )
         insert_pending_funding_audit(AuditEvent(
             id=audit_event_id,
