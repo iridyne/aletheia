@@ -123,7 +123,7 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         metadata, _ = parse_frontmatter_text(inline)
         expected_metadata = _metadata_from_json(row.get("metadata_json"))
-        if expected_metadata is not None and _json_metadata(metadata) != expected_metadata:
+        if expected_metadata is None or _json_metadata(metadata) != expected_metadata:
             return KnowledgeDocument("", {}, "integrity_conflict", path)
         return KnowledgeDocument(
             inline,

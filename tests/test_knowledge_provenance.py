@@ -95,6 +95,21 @@ def test_tampered_file_is_not_retrieved(tmp_path, monkeypatch):
     assert read_knowledge_document(row).state == "integrity_conflict"
     assert retrieve_lessons("Tamper sentinel evidence", k=3) == []
 
+def test_invalid_metadata_snapshot_is_an_integrity_conflict(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.document import (
+        canonicalize_written_document,
+        read_knowledge_document,
+    )
+
+    path = tmp_path / "knowledge" / "research_notes" / "metadata.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("---\nsymbol: BTC/USDT\n---\nMetadata evidence.", encoding="utf-8")
+    canonical = canonicalize_written_document(path)
+    canonical["metadata_json"] = "not-json"
+
+    assert read_knowledge_document(canonical).state == "integrity_conflict"
+
 
 def test_structured_filters_apply_before_candidate_limit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
