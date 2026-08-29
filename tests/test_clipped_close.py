@@ -10,6 +10,7 @@ double-counting a replayed clip.
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import datetime, timezone
 
 
@@ -37,7 +38,7 @@ def _setup_db(tmp_path, monkeypatch):
 
 
 def _seed_position_with_claim(db, *, position_id: str, order_id: str,
-                              quantity: float) -> None:
+                              quantity: float, market_type: str = "usdt_futures") -> None:
     from tests.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
@@ -46,7 +47,7 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
         proposal_id="prop-clip",
         risk_decision_id="risk-clip",
         symbol="XRP/USDT",
-        market_type="usdt_futures",
+        market_type=market_type,
         direction="short",
         order_type="market",
         quantity=quantity,
@@ -55,7 +56,7 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
     )
     repo.insert_position(Position(
         id=position_id, proposal_id=proposal.id, symbol="XRP/USDT",
-        market_type="usdt_futures", direction="short", quantity=quantity,
+        market_type=market_type, direction="short", quantity=quantity,
         entry_price=0.992, execution_mode="bitget_demo", status="open",
         source="native", opened_at="2026-08-22T12:00:00+00:00",
         pending_close_order_id=order_id, pending_close_status="submitted",
@@ -63,7 +64,7 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
     repo.insert_order(Order(
         id=order_id, proposal_id=proposal.id, client_order_id=f"close-{position_id}",
         position_id=position_id, close_reason="stop_loss", symbol="XRP/USDT",
-        market_type="usdt_futures", direction="short", order_type="market",
+        market_type=market_type, direction="short", order_type="market",
         quantity=quantity, price=1.48, execution_mode="bitget_demo",
         status="submitted", source="native", exchange_order_id="EX-CLIP-1",
         created_at="2026-08-22T14:30:00+00:00",
@@ -485,7 +486,9 @@ def test_clipped_close_materializes_realized_pnl_and_entry_fee(tmp_path, monkeyp
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
-    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip", quantity=424)
+    _seed_position_with_claim(
+        db, position_id="pos-clip", order_id="order-clip", quantity=424, market_type="spot"
+    )
     db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
     db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
 
@@ -503,6 +506,73 @@ def test_clipped_close_materializes_realized_pnl_and_entry_fee(tmp_path, monkeyp
     assert event["entry_fee"] == 2.12
     assert event["exit_fee"] == 0.2
     assert event["realized_pnl"] == -105.776
+    audit = db.execute(
+        "SELECT before_state, after_state FROM audit_events "
+        "WHERE event_type='position_partial_close_materialized' AND entity_id='pos-clip'"
+    ).fetchone()
+    assert audit is not None
+    assert json.loads(audit["before_state"])["quantity"] == 424.0
+    assert json.loads(audit["after_state"])["quantity"] == 212.0
+
+
+def test_futures_partial_close_keeps_pnl_unavailable_without_funding(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip", quantity=424)
+    db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
+    db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
+
+    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+
+    assert result.state == "filled_clip_partial_position"
+    event = db.execute(
+        "SELECT realized_pnl, entry_fee, exit_fee FROM position_close_events "
+        "WHERE position_id='pos-clip'"
+    ).fetchone()
+    assert event["realized_pnl"] is None
+    assert event["entry_fee"] == 2.12
+    assert event["exit_fee"] == 0.2
+
+
+def test_legacy_partial_fee_gap_stays_unavailable_and_is_not_reallocated(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip", quantity=424,
+                              market_type="spot")
+    db.execute("UPDATE positions SET quantity=318, entry_fee=4.24 WHERE id='pos-clip'")
+    db.execute("UPDATE orders SET quantity=106 WHERE id='order-clip'")
+    repo.insert_position_close_event({
+        "id": "legacy-partial",
+        "position_id": "pos-clip",
+        "symbol": "XRP/USDT",
+        "direction": "short",
+        "execution_mode": "bitget_demo",
+        "closed_qty": 106.0,
+        "realized_pnl": None,
+        "entry_fee": None,
+        "exit_fee": 0.1,
+        "is_partial": 1,
+        "closed_at": "2026-08-22T14:30:00+00:00",
+    })
+
+    result = materialize_bitget_close("order-clip", _fill_rows(106.0))
+
+    assert result.state == "filled_clip_partial_position"
+    position = repo._select_one("positions", "pos-clip")
+    assert position["quantity"] == 212.0
+    assert position["entry_fee"] is None
+    event = db.execute(
+        "SELECT realized_pnl, entry_fee FROM position_close_events "
+        "WHERE position_id='pos-clip' ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    assert event["realized_pnl"] is None
+    assert event["entry_fee"] is None
 
 
 def test_partial_close_without_entry_fee_blocks_daily_loss_economics(tmp_path, monkeypatch):

@@ -19,7 +19,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.execution.position_enrichment import liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Fill, Position, new_id
+from aletheia.storage.models import AuditEvent, Fill, Position, new_id
 
 
 def _ms_to_iso(ms: int) -> str:
@@ -502,9 +502,34 @@ def _materialize_partial_close_accounting(
         raise MaterializationIntegrityError("partial close quantity is not a strict reduction")
     exit_price = notional / quantity
     entry_fee_value = position.get("entry_fee")
+    legacy_fee_gap = False
+    if entry_fee_value is not None:
+        legacy_fee_gap = (
+            repo.get_db()
+            .execute(
+                "SELECT 1 FROM position_close_events "
+                "WHERE position_id=? AND is_partial=1 AND entry_fee IS NULL LIMIT 1",
+                (position["id"],),
+            )
+            .fetchone()
+            is not None
+        )
+        if legacy_fee_gap:
+            # Older materialization reduced quantity but left the original fee
+            # attached to the remaining Position. Do not allocate it again.
+            entry_fee_value = None
     entry_fee_portion: float | None = None
     realized_pnl: float | None = None
     remaining_entry_fee: float | None = None
+    unavailable_reasons: list[str] = []
+    if legacy_fee_gap:
+        unavailable_reasons.append("legacy_partial_entry_fee_unallocated")
+    if entry_fee_value is None:
+        unavailable_reasons.append("entry_fee_unavailable")
+    if exit_fee is None:
+        unavailable_reasons.append("exit_fee_conversion_unavailable")
+    if str(position.get("market_type") or "") == "usdt_futures":
+        unavailable_reasons.append("partial_funding_unavailable")
     if entry_fee_value is not None:
         try:
             entry_fee_total = float(entry_fee_value)
@@ -516,7 +541,7 @@ def _materialize_partial_close_accounting(
 
         entry_fee_portion = round(entry_fee_total * quantity / old_quantity, 8)
         remaining_entry_fee = round(entry_fee_total - entry_fee_portion, 8)
-        if exit_fee is not None:
+        if not unavailable_reasons:
             realized_pnl = round(
                 _realized_pnl(
                     position["direction"],
@@ -529,9 +554,10 @@ def _materialize_partial_close_accounting(
                 8,
             )
 
+    new_quantity = round(old_quantity - quantity, 12)
     repo.update_position(
         position["id"],
-        quantity=round(old_quantity - quantity, 12),
+        quantity=new_quantity,
         entry_fee=remaining_entry_fee,
     )
     repo.insert_position_close_event(
@@ -550,6 +576,42 @@ def _materialize_partial_close_accounting(
             "is_partial": 1,
             "closed_at": closed_at,
         }
+    )
+    repo.insert_audit_event(
+        AuditEvent(
+            actor="system",
+            source="exchange_materialization",
+            event_type="position_partial_close_materialized",
+            entity_type="position",
+            entity_id=position["id"],
+            before_state=json.dumps(
+                {
+                    "quantity": old_quantity,
+                    "entry_fee": position.get("entry_fee"),
+                    "pending_close_order_id": position.get("pending_close_order_id"),
+                },
+                sort_keys=True,
+            ),
+            after_state=json.dumps(
+                {
+                    "quantity": new_quantity,
+                    "entry_fee": remaining_entry_fee,
+                    "closed_qty": quantity,
+                    "exit_price": exit_price,
+                    "entry_fee_allocated": entry_fee_portion,
+                    "exit_fee": exit_fee,
+                    "realized_pnl": realized_pnl,
+                    "economics_status": "complete" if realized_pnl is not None else "unavailable",
+                    "unavailable_reasons": unavailable_reasons,
+                },
+                sort_keys=True,
+            ),
+            message=(
+                f"Materialized partial close for Position {position['id']} "
+                f"qty={quantity}; economics="
+                f"{'complete' if realized_pnl is not None else 'unavailable'}"
+            ),
+        )
     )
 
 
