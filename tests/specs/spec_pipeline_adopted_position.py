@@ -1512,6 +1512,73 @@ def test_invalid_futures_leverage_cannot_create_adopted_position(
     assert conn.execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("field", ("quantity", "entry_price", "mark_price", "unrealized_pnl"))
+@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
+def test_nonfinite_adoption_economics_cannot_create_synthetic_chain(
+    tmp_path,
+    monkeypatch,
+    field,
+    value,
+):
+    """Exchange economics must be finite before adoption can write any row."""
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
+
+    from aletheia.portfolio.position_reconciler import (
+        PositionAdoptionIntegrityError,
+        adopt_position,
+    )
+
+    exchange_pos = _make_exchange_pos(**{field: value})
+    with pytest.raises(PositionAdoptionIntegrityError) as exc_info:
+        adopt_position(exchange_pos, account_mode="demo")
+
+    assert exc_info.value.code == "invalid_position_economics"
+    assert exc_info.value.field == field
+    for table in ("positions", "orders", "trade_proposals"):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+
+
+def test_reconcile_reports_nonfinite_adoption_as_degraded(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
+
+    from aletheia.portfolio import position_reconciler as pr
+
+    exchange_position = _make_exchange_pos(
+        mark_price=float("nan"),
+        broker_id="bitget_demo",
+    )
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "bitget_demo"}],
+        "positions": [exchange_position],
+        "age_seconds": 1.0,
+        "fetched_at": "2026-08-07T00:00:00+00:00",
+    })
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
+
+    summary = pr.run_reconcile("demo")
+
+    assert summary["adopted"] == []
+    assert summary["errors"] == []
+    assert summary["degraded_positions"] == [{
+        "code": "invalid_position_economics",
+        "field_category": "mark_price",
+        "position_id": "not_created",
+        "symbol": "BNB/USDT",
+        "market_type": "usdt_futures",
+        "direction": "short",
+    }]
+    for table in ("positions", "orders", "trade_proposals"):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+
+
 def test_account_mismatched_leverage_cannot_create_adopted_position(
     tmp_path,
     monkeypatch,
