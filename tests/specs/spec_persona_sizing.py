@@ -307,6 +307,39 @@ def test_build_sizing_context_risk_appetite(tmp_path, monkeypatch):
     assert 0.0 <= long_ctx["risk_appetite"] <= 1.0
 
 
+def test_build_sizing_context_uses_only_fresh_macro(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk import engine
+    from aletheia.storage import repositories
+    from aletheia.trading.persona import build_sizing_context
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(repositories, "get_latest_market_regime", lambda: None)
+    monkeypatch.setattr(repositories, "latest_macro_snapshot", lambda: None)
+    monkeypatch.setattr(engine, "_portfolio_drawdown_scale", lambda _mode: 1.0)
+    baseline = build_sizing_context(cfg=cfg, apply_learning=False)
+    now = datetime.now(timezone.utc)
+    macro = {"fng_value": 5.0}
+    monkeypatch.setattr(repositories, "latest_macro_snapshot", lambda: macro)
+
+    for observed_at in (
+        (now - timedelta(minutes=31)).isoformat(),
+        "not-a-timestamp",
+        (now + timedelta(minutes=6)).isoformat(),
+    ):
+        macro["observed_at"] = observed_at
+        ctx = build_sizing_context(cfg=cfg, apply_learning=False)
+        assert ctx["fng"] is None
+        assert ctx["risk_appetite"] == baseline["risk_appetite"]
+
+    macro["observed_at"] = now.isoformat()
+    fresh = build_sizing_context(cfg=cfg, apply_learning=False)
+    assert fresh["fng"] == 5.0
+    assert fresh["risk_appetite"] == 0.35
+
+
 @spec_claim(
     SpecClaim("PS-S05", "persona_sizing", "§1 decide_param_value interpolation", "L2b",
               "decide_param_value maps risk_appetite linearly into [min,max]: "

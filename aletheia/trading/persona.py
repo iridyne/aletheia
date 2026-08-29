@@ -74,6 +74,7 @@ def build_sizing_context(
     appetite = 0.5
     ctx: dict = {"risk_appetite": 0.5, "regime": None, "fng": None, "atr_pct": None}
     try:
+        from aletheia.data.freshness import fresh_row
         from aletheia.storage.repositories import get_latest_market_regime, latest_macro_snapshot
         reg = get_latest_market_regime()
         if reg:
@@ -90,7 +91,7 @@ def build_sizing_context(
                     appetite -= 0.15
                 # sideways → neutral
 
-        macro = latest_macro_snapshot()
+        macro = fresh_row(latest_macro_snapshot(), "macro")
         if macro and macro.get("fng_value") is not None:
             fng = float(macro["fng_value"])
             ctx["fng"] = fng
