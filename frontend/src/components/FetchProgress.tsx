@@ -11,6 +11,12 @@ export default function FetchProgress() {
   const isFetching = useIsFetching({
     predicate: (query) => {
       if (query.meta?.background === true) return false
+      // Always count first-time loads (status === 'pending'), even if the query
+      // has refetchInterval. Without this, pages like Overview that only use
+      // polling queries never show the progress bar on navigation.
+      if (query.state.status === 'pending') return true
+      // For background refetches, exclude polling queries to avoid bar flickering
+      // on every scheduled refresh interval.
       return !(query.options as { refetchInterval?: unknown }).refetchInterval
     },
   })
