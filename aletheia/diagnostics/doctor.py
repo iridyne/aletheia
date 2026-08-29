@@ -19,8 +19,10 @@ than reinventing them:
   6. trading loop  — orders / fills / open+closed positions / newest opportunity age
   7. health         — compute_health() roll-up (the same signal the self-heal layer uses)
 
-`build_report()` is a pure read — it changes nothing and is safe to run anywhere,
-anytime, by you or an agent. `apply_fixes()` is the opt-in conservative repair
+`build_report()` is a pure read when called without `probe_llm`; the explicit
+`probe_llm` option performs and records a real diagnostic inference. It is safe
+to run the passive report anywhere, anytime, by you or an agent.
+`apply_fixes()` is the opt-in conservative repair
 (clear orphan processes, start the gateway); it never clears the kill switch and
 never touches trading state — those stay human decisions per the safety rules.
 """
@@ -64,7 +66,7 @@ _RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
 
 @contextmanager
 def _read_only_diagnostics():
-    """Fence every Doctor report against config and SQLite writes."""
+    """Fence passive Doctor reports against config and SQLite writes."""
     from aletheia.config.loader import read_only_config
     from aletheia.storage.sqlite import readonly_db
 
@@ -4261,14 +4263,14 @@ def build_content_report() -> Report:
 
 
 @_read_only_diagnostics()
-def build_report(*, probe_llm: bool = False) -> Report:
-    """Probe every dimension of ground truth. Pure read — changes nothing.
+def _build_report() -> Report:
+    """Probe every dimension of ground truth without mutating runtime state.
 
-    `probe_llm` adds a REAL inference call to verify the model endpoint instead of
-    reading past call outcomes. Off by default: it costs a live completion and up
-    to ~20s per provider, and this function is also on the UI and operator-loop
-    paths. Only `aletheia doctor --probe-llm` turns it on.
+    The explicit active LLM probe is intentionally kept outside this fence by
+    :func:`build_report`, because its provider attempt and logical call are
+    durable diagnostic evidence.
     """
+
     import functools
 
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -4282,7 +4284,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_config_gates,
         _probe_config_consistency,
         _probe_credentials,
-        functools.partial(_probe_llm_inference, active_probe=probe_llm),
+        functools.partial(_probe_llm_inference, active_probe=False),
         _probe_market_data,
         _probe_market_data_venue_health,
         _probe_collector_health,
@@ -4335,6 +4337,21 @@ def build_report(*, probe_llm: bool = False) -> Report:
             name = getattr(probe, "__name__", None) or getattr(
                 getattr(probe, "func", None), "__name__", "probe")
             report.add(name, "info", f"probe error: {e}")
+    return report
+
+
+def build_report(*, probe_llm: bool = False) -> Report:
+    """Probe every dimension of ground truth.
+
+    `probe_llm` adds a REAL inference call to verify the model endpoint instead of
+    reading past call outcomes. Off by default: it costs a live completion,
+    records the diagnostic logical/physical call, and can take up to ~20s per
+    provider. Passive report reads remain fenced; only `aletheia doctor
+    --probe-llm` turns on this deliberate persisted diagnostic action.
+    """
+    report = _build_report()
+    if probe_llm:
+        _probe_llm_inference_active(report)
     return report
 
 

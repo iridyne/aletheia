@@ -1469,6 +1469,28 @@ def test_active_probe_confirms_a_working_endpoint(tmp_path, monkeypatch):
     assert "openai_compatible" in probe.detail
 
 
+def test_active_probe_runs_outside_the_read_only_report_fence(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sq
+
+    seen = {}
+
+    @dx._read_only_diagnostics()
+    def fake_passive_report():
+        seen["passive_read_only"] = getattr(sq._readonly_local, "connection", None) is not None
+        return dx.Report(generated_at="t")
+
+    def fake_active_probe(report):
+        seen["active_read_only"] = getattr(sq._readonly_local, "connection", None) is not None
+
+    monkeypatch.setattr(dx, "_build_report", fake_passive_report)
+    monkeypatch.setattr(dx, "_probe_llm_inference_active", fake_active_probe)
+
+    dx.build_report(probe_llm=True)
+
+    assert seen == {"passive_read_only": True, "active_read_only": False}
+
+
 def test_active_probe_is_off_by_default_so_doctor_stays_cheap(tmp_path, monkeypatch):
     """build_report() must never make a live inference call unless asked.
 

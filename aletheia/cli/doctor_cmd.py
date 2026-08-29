@@ -226,7 +226,15 @@ def doctor(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Include redacted log tails, recent failures, and next-log pointers."),
     deep: bool = typer.Option(False, "--deep", help="Alias for --verbose; intended for interactive troubleshooting."),
     bundle: Path | None = typer.Option(None, "--bundle", help="Write a redacted JSON diagnostic bundle to this file."),
-    probe_llm: bool = typer.Option(False, "--probe-llm", help="Verify the model endpoint with a REAL inference call instead of only reading past call outcomes. Costs a live completion and up to ~20s per provider."),
+    probe_llm: bool = typer.Option(
+        False,
+        "--probe-llm",
+        help=(
+            "Verify the model endpoint with a REAL inference call instead of "
+            "only reading past call outcomes. Records the diagnostic call and "
+            "costs a live completion, up to ~20s per provider."
+        ),
+    ),
 ):
     """Probe and print this machine's real state (the single source of truth).
 
