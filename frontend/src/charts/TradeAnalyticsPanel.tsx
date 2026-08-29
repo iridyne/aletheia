@@ -17,7 +17,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { TradeStatsSource, TradeStatsFamily, HoldBucket } from '../api/client'
-import { Card } from '../components/ui'
+import { Card, RateBar } from '../components/ui'
 
 function fmtHours(h: number | null): string {
   if (h === null) return '—'
@@ -69,7 +69,7 @@ function BarRow({ label, barPct, color, stats }: {
   label: string
   barPct: number
   color: string
-  stats: { label: string; value: string; tone?: 'pos' | 'neg' }[]
+  stats: { label: string; value: React.ReactNode; tone?: 'pos' | 'neg' }[]
 }) {
   return (
     <div className="analytics-bar-row">
@@ -117,7 +117,7 @@ function SourceSection({ rows }: { rows: TradeStatsSource[] }) {
           color={colors[r.source_type] ?? 'var(--muted)'}
           stats={[
             { label: 'n', value: `${r.trade_count}` },
-            { label: 'wr', value: r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}%`, tone: r.win_rate === null ? undefined : r.win_rate >= 50 ? 'pos' : 'neg' },
+            { label: 'wr', value: <RateBar rate={r.win_rate} label={r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}% wr`} /> },
             { label: 'hold', value: fmtHoldWithCoverage(r.avg_hold_hours, r) },
             { label: 'exp', value: r.expectancy_pct === null ? '—' : `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct === null ? undefined : r.expectancy_pct >= 0 ? 'pos' : 'neg' },
           ]}
@@ -151,7 +151,7 @@ function FamilySection({ rows }: { rows: TradeStatsFamily[] }) {
           color={FAMILY_COLORS[r.family] ?? 'var(--muted)'}
           stats={[
             { label: 'n', value: `${r.trade_count}` },
-            { label: 'wr', value: r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}%`, tone: r.win_rate === null ? undefined : r.win_rate >= 50 ? 'pos' : 'neg' },
+            { label: 'wr', value: <RateBar rate={r.win_rate} label={r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}% wr`} /> },
             { label: 'hold', value: fmtHoldWithCoverage(r.avg_hold_hours, r) },
             { label: 'exp', value: r.expectancy_pct === null ? '—' : `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct === null ? undefined : r.expectancy_pct >= 0 ? 'pos' : 'neg' },
           ]}

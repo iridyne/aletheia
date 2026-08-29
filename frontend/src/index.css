@@ -3,7 +3,7 @@
    for all data. All existing class names preserved so pages inherit the new system
    with zero page-file changes. */
 
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+/* Google Fonts removed — fonts served locally via @fontsource (see main.tsx) */
 
 /* Tailwind without Preflight. `@import 'tailwindcss'` would also inject
    preflight.css into @layer base, and three of its rules regress this app:
@@ -84,6 +84,25 @@
   --accent-35: rgba(34,211,238,0.35);
   --accent-45: rgba(34,211,238,0.45);
   --accent-035: rgba(34,211,238,0.035);
+  /* Semantic subtle backgrounds (solid, not rgba — stable across layer changes) */
+  --green-subtle:   #0f2e1f;
+  --red-subtle:     #331018;
+  --yellow-subtle:  #2e2008;
+  --blue-subtle:    #0d2040;
+  --accent-subtle:  #082530;
+  /* 5-level success-rate semantic colors */
+  --rate-ok:    var(--green);
+  --rate-warn:  #e8c94b;
+  --rate-bad:   #f99242;
+  --rate-crit:  var(--red);
+  --rate-empty: #2d3540;
+  /* Surface hover (5th layer between surface-2 and border) */
+  --surface-hover: #1f262f;
+  /* Micro radius for bars, tracks, mini indicators */
+  --r-xs: 3px;
+  /* Semantic row-height tokens */
+  --row-height:         44px;
+  --row-height-compact: 36px;
   --green:     #2ee6a8;
   --red:       #ff5d6c;
   --yellow:    #f5b942;
@@ -641,8 +660,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .card-flush { margin-bottom: 0; }
 .card h3 {
-  margin-bottom: var(--space-2); font-size: 0.78rem; font-weight: 600; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: var(--space-2); font-size: var(--fs-base); font-weight: 600; color: var(--text);
+  text-transform: none; letter-spacing: 0;
 }
 .ui-card-header {
   display: flex; align-items: flex-start; justify-content: space-between;
@@ -690,13 +709,37 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   font-size: 0.7rem; font-weight: 600; font-family: var(--mono); letter-spacing: 0.01em;
   border: 1px solid var(--border); background: transparent; color: var(--muted);
 }
-.badge-green { background: rgba(46,230,168,0.06); color: var(--green); border-color: rgba(46,230,168,0.24); }
-.badge-red { background: rgba(255,93,108,0.06); color: var(--red); border-color: rgba(255,93,108,0.26); }
-.badge-yellow, .badge-warning { background: rgba(245,185,66,0.18); color: var(--yellow); border-color: rgba(245,185,66,0.28); }
-.badge-blue { background: rgba(74,163,255,0.06); color: var(--blue); border-color: rgba(74,163,255,0.24); }
-/* muted/neutral badge — for "no", "n/a", off, orphaned states (replaces the undefined
-   badge-muted/badge-amber class names that were rendering colorless). */
-.badge-muted { background: rgba(125,137,151,0.05); color: var(--muted); border-color: rgba(125,137,151,0.20); }
+.badge-green  { background: var(--green-subtle);  color: var(--green);  border-color: color-mix(in srgb, var(--green) 25%, transparent); }
+.badge-red    { background: var(--red-subtle);    color: var(--red);    border-color: color-mix(in srgb, var(--red) 25%, transparent); }
+.badge-yellow, .badge-warning { background: var(--yellow-subtle); color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 25%, transparent); }
+.badge-blue   { background: var(--blue-subtle);   color: var(--blue);   border-color: color-mix(in srgb, var(--blue) 25%, transparent); }
+.badge-muted  { background: var(--surface-2);     color: var(--muted);  border-color: rgba(125,137,151,0.20); }
+
+/* ---------- Pills (rounded-full, no border, solid subtle bg — AKRouter style) ---------- */
+.pill {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 8px;
+  border-radius: 9999px;
+  font-size: 0.75rem; font-weight: 500; font-family: var(--mono);
+  white-space: nowrap; border: none; line-height: 1;
+}
+.pill-green  { background: var(--green-subtle);  color: var(--green); }
+.pill-red    { background: var(--red-subtle);    color: var(--red); }
+.pill-yellow { background: var(--yellow-subtle); color: var(--yellow); }
+.pill-blue   { background: var(--blue-subtle);   color: var(--blue); }
+.pill-accent { background: var(--accent-subtle); color: var(--accent); }
+.pill-muted  { background: var(--surface-2);     color: var(--muted); }
+
+/* ---------- Rate-bar: 10-stick success-rate visualisation (AKRouter style) ---------- */
+.rate-bar { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
+.rate-bar-unit {
+  width: 3px; height: 16px; border-radius: var(--r-xs);
+  background: var(--rate-empty); flex-shrink: 0;
+}
+.rate-bar-unit.ok   { background: var(--rate-ok); }
+.rate-bar-unit.warn { background: var(--rate-warn); }
+.rate-bar-unit.bad  { background: var(--rate-bad); }
+.rate-bar-unit.crit { background: var(--rate-crit); }
 
 /* ---------- Settings page primitives ---------- */
 /* Settings uses a vertical IA: left section nav + right detail panel. */
@@ -1239,15 +1282,12 @@ button.news-card:active:not(:disabled) { transform: none; }
 }
 .universe-why-count { color: var(--text); font-weight: 500; text-align: right; }
 .universe-why-top { min-width: 0; color: var(--muted); font-size: var(--fs-xs); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.universe-why-missing { margin: var(--space-2) 0 0; color: var(--faint); font-size: var(--fs-xs); }
-.universe-list-section { padding-top: var(--space-2); }
-.universe-list-head { display: flex; align-items: end; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-2); }
-.universe-list-head h2 { margin: 0; font-size: var(--fs-lg); }
 .universe-list-head p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--fs-sm); }
 .universe-filters { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
 .universe-filter { min-height: 28px; color: var(--muted); }
 .universe-filter.active { background: var(--accent-dim); color: var(--text); }
 .universe-filters select, .universe-filters input { height: 28px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: var(--fs-sm) var(--sans); }
+
 .universe-filters input { width: 132px; }
 .universe-candidate, .universe-selection, .universe-market-quality, .universe-decision-state { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .universe-candidate { flex-direction: row; align-items: center; }
@@ -1264,14 +1304,17 @@ button.news-card:active:not(:disabled) { transform: none; }
 table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 th, td { padding: 5px var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {
-  color: var(--muted); font-weight: 600; font-size: 0.66rem; text-transform: uppercase;
-  letter-spacing: 0.07em;
+  color: var(--muted); font-weight: 500; font-size: 0.75rem;
+  text-transform: none; letter-spacing: 0;
 }
 thead th { border-bottom: 2px solid var(--border-2); }
 tbody tr { transition: background 0.08s; }
 tbody tr:nth-child(even) { background: rgba(20,26,33,0.35); }
 tbody tr:hover { background: var(--surface-2); }
 td { color: var(--text); }
+
+/* Standard data row — min-height via padding; compact variant for dense tables */
+.dt-row-standard td { padding: 10px 12px; }
 
 /* ---------- Buttons ---------- */
 button {
@@ -4049,7 +4092,7 @@ button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
   text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: var(--space-1);
 }
 .metric-value {
-  font-family: var(--mono); font-size: 1.3rem; font-weight: 600; color: var(--text);
+  font-family: var(--mono); font-size: var(--fs-2xl); font-weight: 600; color: var(--text);
   font-feature-settings: 'tnum' 1; line-height: 1.1;
 }
 .metric-value.pnl-positive { color: var(--green); }
@@ -4731,7 +4774,7 @@ button.pred-market-card:active:not(:disabled) { transform: none; }
   margin-bottom: 4px;
 }
 .analytics-metric-value {
-  font-size: 1.1rem;
+  font-size: var(--fs-2xl);
   font-weight: 600;
 }
 .analytics-metric-sub {

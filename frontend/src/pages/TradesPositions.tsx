@@ -27,6 +27,7 @@ import {
 	Badge,
 	Button,
 	Card,
+	Pill,
 	TableWrap,
 	useConfirm,
 	useToast,
@@ -127,7 +128,10 @@ const openColumns = [
 	}),
 	posCol.accessor("direction", {
 		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
+		cell: (info) => {
+			const d = String(info.getValue() || '').toLowerCase()
+			return <Pill tone={d === 'long' ? 'green' : d === 'short' ? 'red' : 'muted'}>{d === 'long' ? 'L' : d === 'short' ? 'S' : humanize(info.getValue())}</Pill>
+		},
 	}),
 	posCol.accessor("quantity", {
 		header: "Qty",
@@ -183,7 +187,10 @@ const closedColumns = [
 	}),
 	posCol.accessor("direction", {
 		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
+		cell: (info) => {
+			const d = String(info.getValue() || '').toLowerCase()
+			return <Pill tone={d === 'long' ? 'green' : d === 'short' ? 'red' : 'muted'}>{d === 'long' ? 'L' : d === 'short' ? 'S' : humanize(info.getValue())}</Pill>
+		},
 	}),
 	posCol.accessor("quantity", {
 		header: "Qty",
@@ -260,7 +267,10 @@ const orderColumns = [
 	}),
 	ordCol.accessor("direction", {
 		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
+		cell: (info) => {
+			const d = String(info.getValue() || '').toLowerCase()
+			return <Pill tone={d === 'long' ? 'green' : d === 'short' ? 'red' : 'muted'}>{d === 'long' ? 'L' : d === 'short' ? 'S' : humanize(info.getValue())}</Pill>
+		},
 	}),
 	ordCol.accessor("quantity", {
 		header: "Qty",
