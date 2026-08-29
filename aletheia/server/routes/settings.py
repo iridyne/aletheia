@@ -267,6 +267,18 @@ class LearningPathOption(BaseModel):
     ]
 
 
+class PiDaemonRuntimeStatus(BaseModel):
+    """Effective in-process state for the configured System Operator daemon."""
+
+    running: bool
+    event_set: bool
+    lock_held: bool
+    task_generation: int
+    started_at: float | None
+    active_params: dict[str, float] | None
+    last_error_summary: str | None
+
+
 class SettingsResponse(BaseModel):
     """Authoritative, redacted response contract for ``GET /settings``.
 
@@ -303,6 +315,7 @@ class SettingsResponse(BaseModel):
     historical_data: HistoricalDataConfig
     event_triggers: EventTriggerConfig
     pi_daemon: PiDaemonConfig
+    pi_daemon_runtime: PiDaemonRuntimeStatus
     news: NewsConfig
     serenity: SerenityConfig
     controller: ControllerConfig
@@ -355,6 +368,7 @@ def _trading_mandate_view(cfg) -> dict[str, Any] | None:
 @router.get("", response_model=SettingsResponse)
 def get_settings() -> SettingsResponse:
     cfg = load_config()
+    from aletheia.agent_runtime.pi_daemon import daemon_status
     from aletheia.learning.registry import paper_influence_path_options
     from aletheia.trading.persona_rollout import persona_rollout_status
     providers_safe = {}
@@ -422,6 +436,7 @@ def get_settings() -> SettingsResponse:
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
         "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
+        "pi_daemon_runtime": daemon_status(),
         "news": cfg.news.model_dump(mode="json"),
         "serenity": cfg.serenity.model_dump(mode="json"),
         "controller": cfg.controller.model_dump(mode="json"),
@@ -1073,38 +1088,80 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     updates = req.model_dump(exclude_none=True)
     cfg.pi_daemon = _validated_settings_section(PiDaemonConfig, old, updates, name="PiDaemonConfig")
     save_config(cfg)
-    from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
-                 "entity_type": "pi_daemon_config", "before": old,
-                 "after": cfg.pi_daemon.model_dump(mode="json"),
-                 "message": f"System Operator daemon config updated: {list(updates.keys())}"})
+    from aletheia.agent_runtime.pi_daemon import daemon_status
 
-    # Apply the runtime transition immediately so the running daemon reflects
-    # the saved config without requiring a gateway restart.
-    runtime_status: dict | None = None
-    affects_runtime = bool(updates)  # any field change can affect daemon state
-    if affects_runtime:
+    blocker: str | None = None
+    if updates:  # every field can affect the active task
         try:
             from aletheia.agent_runtime.pi_daemon import reconfigure_pi_daemon
             loop = asyncio.get_event_loop()
-            runtime_status = await reconfigure_pi_daemon(
+            transition = await reconfigure_pi_daemon(
                 enabled=cfg.pi_daemon.enabled,
                 debounce_sec=cfg.pi_daemon.debounce_sec,
                 cooldown_sec=cfg.pi_daemon.cooldown_sec,
                 heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
                 loop=loop,
             )
-        except Exception as exc:
-            runtime_status = {
-                "configured": cfg.pi_daemon.enabled,
-                "running": False,
-                "blocker": f"reconfigure_error:{exc}",
-            }
+            blocker = transition.get("blocker")
+        except Exception:
+            blocker = "reconfigure_error"
 
-    response: dict = {"updated": updates}
-    if runtime_status is not None:
-        response["runtime_status"] = runtime_status
-    return response
+    runtime_status = {
+        "configured": cfg.pi_daemon.enabled,
+        **daemon_status(),
+        "blocker": blocker,
+    }
+    expected_params = {
+        "debounce_sec": cfg.pi_daemon.debounce_sec,
+        "cooldown_sec": cfg.pi_daemon.cooldown_sec,
+        "heartbeat_sec": cfg.pi_daemon.heartbeat_sec,
+    }
+    applied = (
+        blocker is None
+        and runtime_status["running"] is cfg.pi_daemon.enabled
+        and (not cfg.pi_daemon.enabled or runtime_status["active_params"] == expected_params)
+    )
+
+    from aletheia.files.jsonl import write_audit
+
+    audit = {
+        "actor": "human",
+        "source": "dashboard",
+        "entity_type": "pi_daemon_config",
+        "before": old,
+        "after": cfg.pi_daemon.model_dump(mode="json"),
+        "persisted": True,
+        "applied": applied,
+        "runtime_status": runtime_status,
+    }
+    if not applied:
+        write_audit({
+            **audit,
+            "event_type": "pi_daemon_config_apply_failed",
+            "message": "System Operator daemon config persisted but runtime apply failed",
+        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "runtime_apply_failed",
+                "message": "System Operator daemon configuration was saved, but the runtime state was not applied.",
+                "persisted": True,
+                "applied": False,
+                "runtime_status": runtime_status,
+            },
+        )
+
+    write_audit({
+        **audit,
+        "event_type": "pi_daemon_config_changed",
+        "message": f"System Operator daemon config applied: {list(updates.keys())}",
+    })
+    return {
+        "updated": updates,
+        "persisted": True,
+        "applied": True,
+        "runtime_status": runtime_status,
+    }
 
 
 # ---------------------------------------------------------------------------

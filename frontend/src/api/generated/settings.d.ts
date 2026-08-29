@@ -1041,6 +1041,28 @@ export interface components {
              */
             heartbeat_sec: number;
         };
+        /**
+         * PiDaemonRuntimeStatus
+         * @description Effective in-process state for the configured System Operator daemon.
+         */
+        PiDaemonRuntimeStatus: {
+            /** Active Params */
+            active_params: {
+                [key: string]: number;
+            } | null;
+            /** Event Set */
+            event_set: boolean;
+            /** Last Error Summary */
+            last_error_summary: string | null;
+            /** Lock Held */
+            lock_held: boolean;
+            /** Running */
+            running: boolean;
+            /** Started At */
+            started_at: number | null;
+            /** Task Generation */
+            task_generation: number;
+        };
         /** RegimeConfig */
         RegimeConfig: {
             /**
@@ -1984,6 +2006,7 @@ export interface components {
             operator: components["schemas"]["OperatorConfig"];
             persona_rollout: components["schemas"]["SettingsPersonaRolloutResponse"];
             pi_daemon: components["schemas"]["PiDaemonConfig"];
+            pi_daemon_runtime: components["schemas"]["PiDaemonRuntimeStatus"];
             regime: components["schemas"]["RegimeConfig"];
             remote_control: components["schemas"]["RemoteControlConfig"];
             retention: components["schemas"]["RetentionConfig"];
