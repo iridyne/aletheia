@@ -95,6 +95,54 @@ async def test_preview_mode_blocks_approval_before_proposal_mutation(client, mon
 
 
 @pytest.mark.anyio
+async def test_approve_paper_rechecks_status_inside_writer_transaction(client, monkeypatch):
+    """A stale unlocked approval snapshot cannot overwrite a terminal rejection."""
+    import aletheia.execution.gateway as gateway
+    from aletheia.storage.sqlite import get_db
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.update_trade_proposal(proposal.id, status="rejected")
+
+    real_get = repo.get_trade_proposal
+    observed_transactions = []
+    gateway_calls = []
+
+    def stale_unlocked_read(proposal_id):
+        row = real_get(proposal_id)
+        observed_transactions.append(get_db().in_transaction)
+        if not observed_transactions[-1]:
+            stale = dict(row)
+            stale["status"] = "pending"
+            return stale
+        return row
+
+    monkeypatch.setattr(repo, "get_trade_proposal", stale_unlocked_read)
+    monkeypatch.setattr(
+        gateway,
+        "execute_existing_proposal",
+        lambda *args, **kwargs: gateway_calls.append((args, kwargs)),
+    )
+
+    response = await client.post(f"/api/proposals/{proposal.id}/approve-paper")
+
+    assert response.status_code == 200
+    assert response.json()["execution"]["status"] == "rejected"
+    assert observed_transactions == [True]
+    assert gateway_calls == []
+    assert real_get(proposal.id)["status"] == "rejected"
+    assert repo.list_orders() == []
+    assert repo.list_positions(status="open") == []
+
+
+@pytest.mark.anyio
 async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()

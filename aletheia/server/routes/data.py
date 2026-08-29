@@ -976,32 +976,40 @@ def approve_proposal(proposal_id: str, request: Request):
     _ensure_db()
     from aletheia.files.jsonl import write_audit
 
-    p = repo.get_trade_proposal(proposal_id)
-    if p is None:
-        raise HTTPException(404, "Proposal not found")
+    # The Proposal status and the pending -> approved transition must share the
+    # same writer claim. Otherwise a stale unlocked read can overwrite a
+    # concurrent terminal rejection and hand it to Gateway for execution.
+    approval_transitioned = False
+    with repo.transaction(immediate=True):
+        p = repo.get_trade_proposal(proposal_id)
+        if p is None:
+            raise HTTPException(404, "Proposal not found")
 
-    execution_mode = str(p.get("execution_mode") or "")
-    if execution_mode != "paper_internal":
-        raise HTTPException(
-            409,
-            "Only a proposal stored for local paper execution can be approved here; "
-            "the stored execution mode was not changed.",
-        )
+        execution_mode = str(p.get("execution_mode") or "")
+        if execution_mode != "paper_internal":
+            raise HTTPException(
+                409,
+                "Only a proposal stored for local paper execution can be approved here; "
+                "the stored execution mode was not changed.",
+            )
 
-    status = str(p.get("status") or "").lower()
-    if status == "executed":
-        return {"proposal_id": proposal_id, "execution": {"status": "already_executed", "proposal_id": proposal_id}}
-    if status in {"error", "rejected"}:
-        return {"proposal_id": proposal_id, "execution": {"status": status, "proposal_id": proposal_id}}
-    if status not in {"pending", "approved", "executing"}:
-        raise HTTPException(
-            409,
-            "This proposal is no longer awaiting paper approval; no order was sent.",
-        )
+        status = str(p.get("status") or "").lower()
+        if status == "executed":
+            return {"proposal_id": proposal_id, "execution": {"status": "already_executed", "proposal_id": proposal_id}}
+        if status in {"error", "rejected"}:
+            return {"proposal_id": proposal_id, "execution": {"status": status, "proposal_id": proposal_id}}
+        if status not in {"pending", "approved", "executing"}:
+            raise HTTPException(
+                409,
+                "This proposal is no longer awaiting paper approval; no order was sent.",
+            )
+
+        if status == "pending":
+            repo.update_trade_proposal(proposal_id, status="approved")
+            approval_transitioned = True
 
     _source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
-    if status == "pending":
-        repo.update_trade_proposal(proposal_id, status="approved")
+    if approval_transitioned:
         try:
             write_audit(
                 {
