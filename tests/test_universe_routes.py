@@ -132,6 +132,45 @@ def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
     assert candidate["setup_state"] is None
 
 
+def test_entry_plan_detail_lineage_uses_exact_linked_order_fill_and_position(monkeypatch):
+    from aletheia.server.routes.universe import _entry_plan_lineage
+
+    monkeypatch.setattr(
+        "aletheia.server.routes.universe.repo.get_order",
+        lambda order_id: {
+            "id": order_id,
+            "exchange_order_id": "exchange-1",
+            "status": "partially_filled",
+            "quantity": 1,
+            "position_id": "position-1",
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.server.routes.universe.repo.get_position",
+        lambda position_id: {
+            "id": position_id,
+            "status": "open",
+            "quantity": 0.4,
+            "entry_price": 100,
+        },
+    )
+    fill_row = {"count": 1, "quantity": 0.4, "latest_at": "2026-08-29T00:00:00Z"}
+    db = MagicMock()
+    db.execute.return_value.fetchone.return_value = fill_row
+    monkeypatch.setattr("aletheia.server.routes.universe.repo.get_db", lambda: db)
+
+    lineage = _entry_plan_lineage({"order_id": "order-1"})
+
+    assert lineage["order"]["id"] == "order-1"
+    assert lineage["fills"] == fill_row
+    assert lineage["position"]["id"] == "position-1"
+    db.execute.assert_called_once_with(
+        "SELECT COUNT(*) AS count, COALESCE(SUM(fill_quantity), 0) AS quantity, "
+        "MAX(filled_at) AS latest_at FROM fills WHERE order_id=?",
+        ("order-1",),
+    )
+
+
 def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabled_cfg):
     with patch("aletheia.server.routes.universe.load_config", return_value=enabled_cfg), \
          patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=None), \

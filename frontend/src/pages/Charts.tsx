@@ -522,6 +522,7 @@ export default function Charts() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dataMeta, setDataMeta] = useState<OhlcvResult['meta'] | null>(null)
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false)
+  const clearEntryPlanOnNextSync = useRef(false)
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<ReadonlySet<string>>(() => new Set<string>())
   const toggleGroupCollapse = useCallback((id: string) => {
     setCollapsedGroupIds(prev => {
@@ -547,15 +548,16 @@ export default function Charts() {
   })
 
   useEffect(() => {
-    if (!entryPlan) return
+    if (!entryPlanId || !entryPlan) return
     setActive({ symbol: entryPlan.symbol, exchange: entryPlan.venue, marketType: entryPlan.market_type })
-  }, [entryPlan])
+  }, [entryPlan, entryPlanId])
 
   useEffect(() => {
     const params: Record<string, string> = { symbol: active.symbol }
     if (active.exchange) params.exchange = active.exchange
     if (active.marketType !== 'spot') params.market_type = active.marketType
-    if (entryPlanId) params.entry_plan_id = entryPlanId
+    if (entryPlanId && !clearEntryPlanOnNextSync.current) params.entry_plan_id = entryPlanId
+    clearEntryPlanOnNextSync.current = false
     setSearchParams(params, { replace: true })
   }, [active, entryPlanId, setSearchParams])
   const { data: universe } = useQuery({ queryKey: ['universe-current'], queryFn: api.getUniverseCurrent, refetchInterval: 120_000 })
@@ -607,8 +609,12 @@ export default function Charts() {
 
   const matchingPositions = useMemo(() => positions.filter(position => position.status === 'open'
     && position.symbol === active.symbol && (position.market_type || 'spot') === active.marketType), [active, positions])
+  const entryPlanMatchesActive = Boolean(entryPlanId && entryPlan
+    && entryPlan.venue === active.exchange
+    && entryPlan.symbol === active.symbol
+    && entryPlan.market_type === active.marketType)
   const positionLevels = useMemo<PositionLevel[]>(() => {
-    const planLevels: PositionLevel[] = entryPlan?.plan ? [
+    const planLevels: PositionLevel[] = entryPlanMatchesActive && entryPlan?.plan ? [
       ...entryPlan.plan.entry_zone.map((price, index) => ({ id: `${entryPlan.id}-entry-${index}`, kind: 'entry' as const, price, title: `Entry Plan zone ${index + 1}` })),
       { id: `${entryPlan.id}-invalidation`, kind: 'stop' as const, price: entryPlan.plan.invalidation_price, title: 'Entry Plan invalidation' },
       { id: `${entryPlan.id}-stop`, kind: 'stop' as const, price: entryPlan.plan.stop_price, title: 'Entry Plan stop' },
@@ -628,7 +634,7 @@ export default function Charts() {
     ]
     })
     return [...planLevels, ...openPositionLevels].filter(level => Number.isFinite(level.price) && level.price > 0)
-  }, [entryPlan, matchingPositions])
+  }, [entryPlan, entryPlanMatchesActive, matchingPositions])
 
   const markers = useMemo<ChartMarker[]>(() => {
     const tradeMarkers: ChartMarker[] = trades.flatMap(trade => {
@@ -652,10 +658,16 @@ export default function Charts() {
 
   const currentSnapshot = snapshotFor(active)
   const selectInstrument = useCallback((instrument: MarketInstrument) => {
+    if (entryPlanId && (!entryPlan
+      || entryPlan.venue !== instrument.exchange
+      || entryPlan.symbol !== instrument.symbol
+      || entryPlan.market_type !== instrument.marketType)) {
+      clearEntryPlanOnNextSync.current = true
+    }
     setSelectedEvents([])
     setActive(instrument)
     setPickerOpen(false)
-  }, [])
+  }, [entryPlan, entryPlanId])
   const selectFromSignals = useCallback((instrument: MarketInstrument) => {
     selectInstrument(instrument)
     document.getElementById('market-chart-toolbar')?.scrollIntoView({ behavior: 'smooth', block: 'start' })

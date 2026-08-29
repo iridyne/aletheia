@@ -1567,6 +1567,34 @@ async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
 
 
 @pytest.mark.anyio
+async def test_universe_candidate_attention_pair_updates_atomically(client):
+    from aletheia.config.loader import load_config
+
+    increased = await client.post(
+        "/api/settings/universe",
+        json={"entry_ttl_sec": 2000, "candidate_max_continuous_age_sec": 3000},
+    )
+    assert increased.status_code == 200
+    assert increased.json()["universe"]["entry_ttl_sec"] == 2000
+    assert increased.json()["universe"]["candidate_max_continuous_age_sec"] == 3000
+
+    decreased = await client.post(
+        "/api/settings/universe",
+        json={"entry_ttl_sec": 600, "candidate_max_continuous_age_sec": 900},
+    )
+    assert decreased.status_code == 200
+
+    rejected = await client.post(
+        "/api/settings/universe",
+        json={"entry_ttl_sec": 1200, "candidate_max_continuous_age_sec": 600},
+    )
+    assert rejected.status_code == 400
+    stored = load_config().universe
+    assert stored.entry_ttl_sec == 600
+    assert stored.candidate_max_continuous_age_sec == 900
+
+
+@pytest.mark.anyio
 async def test_market_data_validation_is_atomic_before_save(client):
     from aletheia.config.loader import load_config
 

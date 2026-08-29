@@ -45,16 +45,27 @@ const workbench: EntryWorkbenchResponse = {
     created_at: '2026-08-28T00:00:00Z', updated_at: '2026-08-28T00:00:00Z', terminal_at: null,
     terminal_reason: null, contract_valid: true, plan: {
       thesis: 'bounded continuation', scenario: 'retrace', entry_zone: [100, 101], invalidation_price: 98,
-      stop_price: 98, target_price: 105, expires_at: '2026-08-28T01:00:00Z',
+      stop_price: 98, target_price: 105, expires_at: '2026-08-28T01:00:00Z', limit_price: 100,
+      trigger_spec_id: null, trigger_spec_version: null, order_tactic: 'POST_ONLY_LIMIT',
+      time_in_force: 'POST_ONLY', price_rule: 'EXACT_LIMIT', max_wait_sec: 60,
+      partial_fill_policy: 'KEEP_PARTIAL_CANCEL_REMAINDER', evidence_refs: ['feature:snapshot-1'],
+      expected_horizon_hours: 4, max_notional: 100, max_risk_pct: 0.25, max_leverage: 2,
+      required_permission: 'Paper', execution_account_mode: 'bitget_demo', risk_policy_id: 'demo-v1', risk_policy_revision: 1,
+    },
+    lineage: {
+      order: { id: 'order-1', exchange_order_id: 'exchange-1', status: 'submitted', quantity: 1, position_id: 'position-1' },
+      fills: { count: 1, quantity: 0.5, latest_at: '2026-08-28T00:30:00Z' },
+      position: { id: 'position-1', status: 'open', quantity: 0.5, entry_price: 100 },
     },
   }],
   candidate_attention: [],
 }
 
-function renderWorkbench(data: EntryWorkbenchResponse = workbench) {
+function renderWorkbench(data: EntryWorkbenchResponse = workbench, initialEntry = '/universe') {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
   client.setQueryData(['entry-workbench'], data)
-  return renderToStaticMarkup(<MemoryRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>)
+  if (data.entry_plans?.[0]) client.setQueryData(['entry-plan', data.entry_plans[0].id], data.entry_plans[0])
+  return renderToStaticMarkup(<MemoryRouter initialEntries={[initialEntry]}><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>)
 }
 
 async function renderWorkbenchError(cached?: EntryWorkbenchResponse) {
@@ -82,7 +93,23 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Entry Plans')
     expect(html).toContain('Candidates')
     expect(html).toContain('Planning History')
+    expect(html).toContain('Exact instrument')
+    expect(html).toContain('Limit 100.00')
+    expect(html).toContain('Not required')
+    expect(html).toContain('Stop / Target / R:R')
+    expect(html).toContain('Post-Only limit')
     expect(html).not.toContain('Manual Review')
+  })
+
+  it('exposes all six progressive Plan sections and exact downstream lineage', () => {
+    const html = renderWorkbench(workbench, '/universe?tab=plans&plan_id=plan-1')
+    for (const section of ['Plan Summary', 'Entry Geometry', 'Trigger &amp; Execution', 'Thesis &amp; Evidence', 'Risk Envelope', 'Lineage / exact execution']) {
+      expect(html).toContain(section)
+    }
+    expect(html).toContain('order-1')
+    expect(html).toContain('exchange-1')
+    expect(html).toContain('position-1')
+    expect(html).toContain('Open exact execution')
   })
 
   it('distinguishes fallback instruments from Candidate attention', () => {

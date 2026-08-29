@@ -2560,6 +2560,7 @@ def update_universe_config(req: UniverseConfigUpdate):
         )
 
     _VALID_MARKET_TYPES = {"crypto", "stocks", "mixed"}
+    normalized_updates: dict[str, Any] = {}
     for field, value in updates.items():
         if field in _UNIVERSE_BOUNDS:
             lo, hi = _UNIVERSE_BOUNDS[field]
@@ -2596,7 +2597,13 @@ def update_universe_config(req: UniverseConfigUpdate):
                     raise HTTPException(400, f"family_quota_by_regime['{regime_state}'] must sum to 1.0 (got {total:.3f})")
                 cleaned[regime_state] = {k: round(float(v), 2) for k, v in quota.items()}
             value = cleaned
-        setattr(cfg.universe, field, value)
+        normalized_updates[field] = value
+
+    try:
+        replacement = UniverseConfig.model_validate({**old, **normalized_updates})
+    except ValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    cfg.universe = replacement
 
     save_config(cfg)
 
@@ -2612,9 +2619,9 @@ def update_universe_config(req: UniverseConfigUpdate):
                  "entity_type": "universe_config", "before": old,
                  "after": cfg.universe.model_dump(mode="json"),
                  "message": f"Universe config updated: {list(updates.keys())}"})
-    if updates:
+    if normalized_updates:
         _notify_ranker_config_change()
-    return {"updated": updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
+    return {"updated": normalized_updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------------------

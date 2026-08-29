@@ -858,8 +858,14 @@ export interface EntryPlan {
   terminal_at: string | null
   terminal_reason: string | null
   contract_valid: boolean
+  lineage?: {
+    order: { id: string; exchange_order_id: string | null; status: string; quantity: number; position_id: string | null } | null
+    fills: { count: number; quantity: number; latest_at: string | null } | null
+    position: { id: string; status: string; quantity: number; entry_price: number } | null
+  }
   plan: {
     thesis: string
+    evidence_refs?: string[]
     scenario: string
     entry_zone: [number, number]
     invalidation_price: number
@@ -868,7 +874,28 @@ export interface EntryPlan {
     expires_at: string
     limit_price?: number | null
     trigger_spec_id?: string | null
+    trigger_spec_version?: string | null
     trigger_params?: Record<string, unknown>
+    trigger_data_requirements?: string[]
+    trigger_freshness_ms?: number | null
+    expected_horizon_hours?: number
+    order_tactic?: 'POST_ONLY_LIMIT' | 'OPPOSING_BBO_IOC'
+    maker_required?: boolean
+    time_in_force?: string
+    price_rule?: string
+    bbo_reference?: string | null
+    max_wait_sec?: number
+    partial_fill_policy?: string
+    taker_fallback_allowed?: boolean
+    max_slippage_bps?: number | null
+    worst_price?: number | null
+    max_notional?: number
+    max_risk_pct?: number
+    max_leverage?: number
+    required_permission?: string
+    execution_account_mode?: string
+    risk_policy_id?: string
+    risk_policy_revision?: number
   } | null
 }
 
@@ -892,6 +919,12 @@ export interface CandidateAttention {
   rank: number | null
   total_score: number | null
   entry_price_usd: number | null
+  liquidity_score: number | null
+  spread_bps: number | null
+  inclusion_reason: string | null
+  risk_flags: string | null
+  execution_eligible: number | null
+  candidate_expires_at: string | null
 }
 
 export interface EntryWorkbenchResponse {

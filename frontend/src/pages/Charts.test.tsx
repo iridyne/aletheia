@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Position, UniverseCurrentResponse } from '../types'
+import type { EntryPlan, Position, UniverseCurrentResponse } from '../types'
 import type * as PriceChartModel from '../charts/priceChartModel'
 import type { ChartSettings } from '../charts/priceChartModel'
 
@@ -16,7 +16,7 @@ vi.mock('../charts/PriceChart', async () => {
     MAIN_INDICATOR_IDS: model.MAIN_INDICATOR_IDS,
     SUBCHART_INDICATOR_IDS: model.SUBCHART_INDICATOR_IDS,
     MAX_INDICATORS_PER_ZONE: model.MAX_INDICATORS_PER_ZONE,
-    default: ({ symbol, marketType, settings, timeframe }: { symbol: string; marketType: string; timeframe?: string; settings: ChartSettings }) => (
+    default: ({ symbol, marketType, settings, timeframe, positionLevels = [] }: { symbol: string; marketType: string; timeframe?: string; settings: ChartSettings; positionLevels?: Array<{ title: string }> }) => (
       <div
         data-testid="price-chart"
         data-symbol={symbol}
@@ -26,6 +26,7 @@ vi.mock('../charts/PriceChart', async () => {
         data-subchart-indicators={settings.indicators.subcharts.join(',')}
         data-scale-mode={settings.scale.mode}
         data-timezone={settings.view.timezone}
+        data-levels={positionLevels.map(level => level.title).join(',')}
       >Chart canvas</div>
     ),
   }
@@ -96,11 +97,13 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
 })
-function renderCharts() {
+function renderCharts(initialEntry = '/charts', prepare?: (client: QueryClient) => void) {
   const node = document.createElement('div')
   document.body.appendChild(node)
   root = createRoot(node)
-  act(() => root!.render(<MemoryRouter initialEntries={['/charts']}><QueryClientProvider client={makeClient()}><Charts /></QueryClientProvider></MemoryRouter>))
+  const client = makeClient()
+  prepare?.(client)
+  act(() => root!.render(<MemoryRouter initialEntries={[initialEntry]}><QueryClientProvider client={client}><Charts /></QueryClientProvider></MemoryRouter>))
   return node
 }
 
@@ -122,6 +125,30 @@ function click(element: HTMLElement) {
   act(() => element.click())
 }
 describe('Markets workbench', () => {
+  it('clears an incompatible Entry Plan identity and overlay after manual instrument switch', async () => {
+    const plan: EntryPlan = {
+      id: 'plan-sol', planning_generation_id: 'generation-sol', candidate_id: 'candidate-sol',
+      planning_key: 'sol', version: 'entry-plan/v1', venue: 'bitget', symbol: 'SOL/USDT',
+      market_type: 'perp', direction: 'long', execution_mode: 'TRIGGERED', status: 'waiting',
+      order_id: null, plan_hash: 'hash', created_at: '2026-08-13T00:00:00Z',
+      updated_at: '2026-08-13T00:00:00Z', terminal_at: null, terminal_reason: null,
+      contract_valid: true,
+      plan: { thesis: 'SOL plan', scenario: 'breakout', entry_zone: [100, 101], invalidation_price: 98, stop_price: 98, target_price: 105, expires_at: '2026-08-13T01:00:00Z' },
+    }
+    const node = renderCharts(
+      '/charts?symbol=SOL%2FUSDT&exchange=bitget&market_type=perp&entry_plan_id=plan-sol',
+      client => client.setQueryData(['entry-plan', 'plan-sol'], plan),
+    )
+    await vi.waitFor(() => expect(node.textContent).toContain('immutable geometry overlay'))
+    expect(node.querySelector('[data-testid="price-chart"]')?.getAttribute('data-levels')).toContain('Entry Plan')
+
+    click(buttonContaining(node.querySelector('.market-instrument-rail')!, 'ETH'))
+
+    await vi.waitFor(() => expect(node.textContent).not.toContain('immutable geometry overlay'))
+    expect(node.querySelector('[data-testid="price-chart"]')?.getAttribute('data-symbol')).toBe('ETH/USDT')
+    expect(node.querySelector('[data-testid="price-chart"]')?.getAttribute('data-levels')).not.toContain('Entry Plan')
+  })
+
   it('renders decision context, grouped vertical navigation, chart controls, and secondary intelligence in order', () => {
     const node = renderCharts()
     const text = node.textContent || ''

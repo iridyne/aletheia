@@ -9015,7 +9015,9 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
         dict(row)
         for row in get_db().execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
-            "um.expires_at AS candidate_expires_at FROM candidate_planning_generations pg "
+            "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
+            "um.execution_eligible, um.expires_at AS candidate_expires_at "
+            "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "

@@ -33,6 +33,37 @@ def _active_entry_plan_projections(limit: int) -> list[dict]:
     return items
 
 
+def _entry_plan_lineage(row: dict) -> dict:
+    order = repo.get_order(row.get("order_id")) if row.get("order_id") else None
+    if order is None:
+        return {"order": None, "fills": None, "position": None}
+    fill_row = repo.get_db().execute(
+        "SELECT COUNT(*) AS count, COALESCE(SUM(fill_quantity), 0) AS quantity, "
+        "MAX(filled_at) AS latest_at FROM fills WHERE order_id=?",
+        (order["id"],),
+    ).fetchone()
+    position = repo.get_position(order.get("position_id")) if order.get("position_id") else None
+    return {
+        "order": {
+            key: order.get(key)
+            for key in ("id", "exchange_order_id", "status", "quantity", "position_id")
+        },
+        "fills": {
+            "count": int(fill_row["count"] or 0),
+            "quantity": float(fill_row["quantity"] or 0),
+            "latest_at": fill_row["latest_at"],
+        },
+        "position": (
+            {
+                key: position.get(key)
+                for key in ("id", "status", "quantity", "entry_price")
+            }
+            if position
+            else None
+        ),
+    }
+
+
 @router.get("/workbench")
 def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
     """Bounded direct-ledger projection; section failures remain explicit."""
@@ -106,6 +137,7 @@ def get_entry_plan_detail(plan_id: str):
     projection = _entry_plan_projection(row)
     if not projection["contract_valid"]:
         raise HTTPException(409, "Entry Plan contract validation failed")
+    projection["lineage"] = _entry_plan_lineage(projection)
     return projection
 
 

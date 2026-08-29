@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -15,28 +15,75 @@ import PageHeader from '../components/PageHeader'
 import MetricTile from '../components/MetricTile'
 import Tabs from '../components/Tabs'
 import { Badge, Button, Card } from '../components/ui'
-import { fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
+import { fmtNum, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 
 const planCol = createColumnHelper<EntryPlan>()
 const candidateCol = createColumnHelper<CandidateAttention>()
 const historyCol = createColumnHelper<PlanningHistoryResponse['items'][number]>()
 
+function entryLabel(plan: EntryPlan) {
+  if (!plan.plan) return 'Not available'
+  if (plan.execution_mode === 'RESTING_MAKER') return `Limit ${fmtNum(plan.plan.limit_price)}`
+  return `Zone ${plan.plan.entry_zone.map(value => fmtNum(value)).join(' – ')}`
+}
+
+function triggerLabel(plan: EntryPlan) {
+  if (plan.execution_mode === 'RESTING_MAKER') return 'Not required'
+  return plan.plan?.trigger_spec_id
+    ? `${humanize(plan.plan.trigger_spec_id)} · ${plan.plan.trigger_spec_version ?? 'version unavailable'}`
+    : 'Unavailable'
+}
+
+function riskReward(plan: EntryPlan) {
+  if (!plan.plan) return '—'
+  const entry = plan.plan.limit_price ?? (plan.plan.entry_zone[0] + plan.plan.entry_zone[1]) / 2
+  const risk = Math.abs(entry - plan.plan.stop_price)
+  return risk > 0 ? (Math.abs(plan.plan.target_price - entry) / risk).toFixed(2) : '—'
+}
+
+function tacticLabel(plan: EntryPlan) {
+  return plan.plan?.order_tactic === 'POST_ONLY_LIMIT'
+    ? 'Post-Only limit'
+    : plan.plan?.order_tactic === 'OPPOSING_BBO_IOC'
+      ? 'Opposing-BBO IOC'
+      : 'Unavailable'
+}
+
+function expiryLabel(value?: string) {
+  if (!value) return 'Not recorded'
+  const remaining = new Date(value).getTime() - Date.now()
+  if (!Number.isFinite(remaining)) return 'Unavailable'
+  if (remaining <= 0) return `${fmtTimestamp(value)} · expired`
+  const minutes = Math.ceil(remaining / 60_000)
+  return `${fmtTimestamp(value)} · ${minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`} left`
+}
+
+function evidenceLabel(value?: string | null) {
+  if (!value) return 'Not recorded'
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) && parsed.length ? parsed.join(', ') : 'Not recorded'
+  } catch {
+    return value
+  }
+}
+
 // Calibration compatibility: by_cohort_horizon rows remain isolated by
 // row.direction and row.market_type across the owner-facing projection.
 const planColumns = [
   planCol.accessor('symbol', {
-    header: 'Entry Plan',
-    cell: info => <strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong>,
+    header: 'Exact instrument',
+    cell: info => <><strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
   }),
   planCol.accessor('direction', { header: 'Side', cell: info => humanize(info.getValue()) }),
-  planCol.accessor('execution_mode', { header: 'Execution', cell: info => humanize(info.getValue()) }),
-  planCol.accessor('status', { header: 'Status', cell: info => <Badge tone="green">{humanize(info.getValue())}</Badge> }),
-  planCol.accessor(row => row.plan?.entry_zone, {
-    id: 'entry_zone',
-    header: 'Entry zone',
-    cell: info => info.getValue()?.map(value => value.toLocaleString()).join(' – ') ?? '—',
+  planCol.accessor(row => entryLabel(row), { id: 'entry', header: 'Entry', cell: info => <span className="mono">{info.getValue()}</span> }),
+  planCol.accessor(row => triggerLabel(row), { id: 'trigger', header: 'TriggerSpec' }),
+  planCol.accessor(row => `${fmtNum(row.plan?.stop_price)} / ${fmtNum(row.plan?.target_price)} / ${riskReward(row)}`, {
+    id: 'risk_geometry', header: 'Stop / Target / R:R', cell: info => <span className="mono">{info.getValue()}</span>,
   }),
-  planCol.accessor(row => row.plan?.expires_at, { id: 'expires_at', header: 'Plan expiry', cell: info => fmtTimestamp(info.getValue()) }),
+  planCol.accessor(row => `${humanize(row.execution_mode)} · ${tacticLabel(row)}`, { id: 'execution', header: 'Execution / tactic' }),
+  planCol.accessor('status', { header: 'Status', cell: info => <Badge tone="green">{humanize(info.getValue())}</Badge> }),
+  planCol.accessor(row => expiryLabel(row.plan?.expires_at), { id: 'expires_at', header: 'Expiry / countdown' }),
 ]
 
 const candidateColumns = [
@@ -44,12 +91,12 @@ const candidateColumns = [
     header: 'Candidate',
     cell: info => <strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong>,
   }),
-  candidateCol.accessor('candidate_family', { header: 'Family', cell: info => humanize(info.getValue()) }),
-  candidateCol.accessor('status', { header: 'Planning', cell: info => humanize(info.getValue()) }),
-  candidateCol.accessor('attention_started_at', { header: 'Attention started', cell: info => fmtTimestamp(info.getValue()) }),
+  candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why selected' }),
+  candidateCol.accessor(row => `Rank ${row.rank ?? '—'} · Score ${row.total_score ?? '—'} · Liquidity ${row.liquidity_score ?? '—'} · Spread ${row.spread_bps ?? '—'} bps`, { id: 'quality', header: 'Score / market quality' }),
+  candidateCol.accessor(row => `${humanize(row.status)} · ${humanize(row.attention_status)}`, { id: 'state', header: 'Planning / attention' }),
   candidateCol.accessor('last_requalified_at', { header: 'Last requalified', cell: info => fmtTimestamp(info.getValue()) }),
-  candidateCol.accessor('soft_expires_at', { header: 'Soft deadline', cell: info => fmtTimestamp(info.getValue()) }),
-  candidateCol.accessor('hard_expires_at', { header: 'Hard deadline', cell: info => fmtTimestamp(info.getValue()) }),
+  candidateCol.accessor(row => `${fmtTimestamp(row.soft_expires_at)} / ${fmtTimestamp(row.hard_expires_at)}`, { id: 'deadlines', header: 'Soft / hard deadline' }),
+  candidateCol.accessor('attention_terminal_reason', { header: 'Terminal reason', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
 ]
 
 const historyColumns = [
@@ -64,6 +111,7 @@ export default function Universe() {
   const navigate = useNavigate()
   const [search, setSearch] = useSearchParams()
   const [historyBefore, setHistoryBefore] = useState<string | null>(null)
+  const [candidateFilter, setCandidateFilter] = useState('needs_planning')
   const tab = search.get('tab') || 'plans'
   const selectedPlanId = search.get('plan_id')
   const selectedCandidateId = search.get('candidate_id')
@@ -88,6 +136,18 @@ export default function Universe() {
   const summary = data?.summary
   const plans = data?.entry_plans
   const candidates = data?.candidate_attention
+  const filteredCandidates = useMemo(() => {
+    const rows = candidates ?? []
+    const now = Date.now()
+    if (candidateFilter === 'all_active') return rows
+    if (candidateFilter === 'expiring') return rows.filter(row => Math.min(
+      new Date(row.soft_expires_at).getTime(),
+      new Date(row.hard_expires_at).getTime(),
+    ) - now <= 5 * 60_000)
+    if (candidateFilter === 'flagged') return rows.filter(row => row.execution_eligible === 0 || evidenceLabel(row.risk_flags) !== 'Not recorded')
+    if (candidateFilter === 'stale') return rows.filter(row => row.candidate_expires_at && new Date(row.candidate_expires_at).getTime() <= now)
+    return rows.filter(row => ['pending', 'planning', 'unavailable'].includes(row.status))
+  }, [candidateFilter, candidates])
   const setTab = (next: string) => {
     const params = new URLSearchParams(search)
     params.set('tab', next)
@@ -139,7 +199,16 @@ export default function Universe() {
       label: 'Candidates',
       badge: candidates?.length,
       render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.candidate_attention?.available} loading={workbench.isPending} label="Candidate attention">
-        <DataTable columns={candidateColumns} data={candidates ?? []} onRowClick={openCandidate} emptyMessage="No active Candidate attention." tableId="entry-workbench-candidates" />
+        <label className="entry-workbench-filter">Candidate view
+          <select value={candidateFilter} onChange={event => setCandidateFilter(event.target.value)}>
+            <option value="needs_planning">Needs Planning</option>
+            <option value="all_active">All Active</option>
+            <option value="expiring">Expiring</option>
+            <option value="flagged">Flagged</option>
+            <option value="stale">Stale</option>
+          </select>
+        </label>
+        <DataTable columns={candidateColumns} data={filteredCandidates} onRowClick={openCandidate} emptyMessage={`No Candidates in ${humanize(candidateFilter)}.`} tableId="entry-workbench-candidates" />
       </ReadSection>,
     },
     {
@@ -189,20 +258,50 @@ function ReadSection({ available, loading, label, children }: { available?: bool
 function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onCharts }: { plan?: EntryPlan; unavailable: boolean; onClose: () => void; onCandidate: () => void; onTrades: () => void; onCharts: () => void }) {
   return <DetailDrawer open title={plan ? `${plan.symbol} Entry Plan` : 'Entry Plan'} onClose={onClose}>
     {unavailable ? <p>Entry Plan detail is unavailable.</p> : !plan ? <p>Loading exact plan…</p> : <>
-      <DrawerSection label="Identity">
+      <DrawerSection label="Plan Summary">
         <DrawerField label="Plan ID" value={plan.id} mono />
         <DrawerField label="Candidate ID" value={plan.candidate_id} mono />
+        <DrawerField label="Exact instrument" value={`${plan.venue} · ${fmtSymbol(plan.symbol, plan.market_type)} · ${plan.market_type}`} mono />
+        <DrawerField label="Side" value={humanize(plan.direction)} />
         <DrawerField label="Contract" value={plan.contract_valid ? 'Validated' : 'Invalid'} />
         <DrawerField label="Status" value={humanize(plan.status)} />
+        <DrawerField label="Expiry / countdown" value={expiryLabel(plan.plan?.expires_at)} />
       </DrawerSection>
-      <DrawerSection label="Immutable plan geometry">
-        <DrawerField label="Thesis" value={plan.plan?.thesis} />
-        <DrawerField label="Scenario" value={plan.plan?.scenario} />
-        <DrawerField label="Entry zone" value={plan.plan?.entry_zone?.join(' – ')} mono />
+      <DrawerSection label="Entry Geometry">
+        <DrawerField label="Entry" value={entryLabel(plan)} mono />
+        <DrawerField label="Entry zone" value={plan.plan?.entry_zone?.map(value => fmtNum(value)).join(' – ')} mono />
         <DrawerField label="Invalidation" value={plan.plan?.invalidation_price} mono />
         <DrawerField label="Stop" value={plan.plan?.stop_price} mono />
         <DrawerField label="Target" value={plan.plan?.target_price} mono />
-        <DrawerField label="Expiry" value={fmtTimestamp(plan.plan?.expires_at)} />
+        <DrawerField label="R:R" value={riskReward(plan)} mono />
+      </DrawerSection>
+      <DrawerSection label="Trigger & Execution">
+        <DrawerField label="TriggerSpec" value={triggerLabel(plan)} />
+        <DrawerField label="Execution mode" value={humanize(plan.execution_mode)} />
+        <DrawerField label="Order tactic" value={tacticLabel(plan)} />
+        <DrawerField label="TIF / price rule" value={`${plan.plan?.time_in_force ?? 'Unavailable'} · ${humanize(plan.plan?.price_rule)}`} />
+        <DrawerField label="BBO reference" value={plan.plan?.bbo_reference ?? 'Not required'} />
+        <DrawerField label="Max wait" value={plan.plan?.max_wait_sec == null ? 'Not recorded' : `${plan.plan.max_wait_sec}s`} />
+        <DrawerField label="Partial fill" value={humanize(plan.plan?.partial_fill_policy)} />
+      </DrawerSection>
+      <DrawerSection label="Thesis & Evidence">
+        <DrawerField label="Thesis" value={plan.plan?.thesis} />
+        <DrawerField label="Scenario" value={plan.plan?.scenario} />
+        <DrawerField label="Evidence" value={plan.plan?.evidence_refs?.length ? plan.plan.evidence_refs.join(', ') : 'Not recorded'} mono />
+      </DrawerSection>
+      <DrawerSection label="Risk Envelope">
+        <DrawerField label="Max notional" value={fmtNum(plan.plan?.max_notional)} mono />
+        <DrawerField label="Max risk" value={plan.plan?.max_risk_pct == null ? 'Not recorded' : `${plan.plan.max_risk_pct}%`} mono />
+        <DrawerField label="Max leverage" value={plan.plan?.max_leverage == null ? 'Not recorded' : `${plan.plan.max_leverage}×`} mono />
+        <DrawerField label="Expected horizon" value={plan.plan?.expected_horizon_hours == null ? 'Not recorded' : `${plan.plan.expected_horizon_hours}h`} />
+        <DrawerField label="Permission / account" value={`${plan.plan?.required_permission ?? 'Unavailable'} · ${plan.plan?.execution_account_mode ?? 'Unavailable'}`} />
+        <DrawerField label="Risk policy" value={plan.plan?.risk_policy_id ? `${plan.plan.risk_policy_id} · rev ${plan.plan.risk_policy_revision ?? 'unavailable'}` : 'Unavailable'} mono />
+      </DrawerSection>
+      <DrawerSection label="Lineage / exact execution">
+        <DrawerField label="Order" value={plan.lineage?.order ? `${plan.lineage.order.id} · ${humanize(plan.lineage.order.status)}` : 'Not submitted'} mono />
+        <DrawerField label="Exchange order" value={plan.lineage?.order?.exchange_order_id ?? 'Not recorded'} mono />
+        <DrawerField label="Fills" value={plan.lineage?.fills ? `${plan.lineage.fills.count} · quantity ${fmtNum(plan.lineage.fills.quantity)} · latest ${fmtTimestamp(plan.lineage.fills.latest_at)}` : 'Not submitted'} />
+        <DrawerField label="Position" value={plan.lineage?.position ? `${plan.lineage.position.id} · ${humanize(plan.lineage.position.status)} · quantity ${fmtNum(plan.lineage.position.quantity)} @ ${fmtNum(plan.lineage.position.entry_price)}` : 'Not opened'} mono />
       </DrawerSection>
       <div className="flex gap-2 flex-wrap"><Button variant="secondary" onClick={onCandidate}>Open source Candidate</Button><Button onClick={onTrades}>Open exact execution</Button><Button variant="secondary" onClick={onCharts}>Open chart overlay</Button></div>
     </>}
@@ -227,8 +326,12 @@ function CandidateDrawer({ candidateId, candidate, onClose }: { candidateId: str
         <DrawerField label="Terminal reason" value={attention?.attention_terminal_reason ? humanize(attention.attention_terminal_reason) : attention?.attention_status === 'active' ? 'Active' : '—'} />
       </DrawerSection>
       <DrawerSection label="Candidate evidence">
+        <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />
         <DrawerField label="Score" value={detail.data?.member.total_score} />
+        <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />
+        <DrawerField label="Execution eligible" value={detail.data?.member.execution_eligible == null ? 'Unavailable' : detail.data.member.execution_eligible ? 'Yes' : 'No'} />
+        <DrawerField label="Risk flags" value={evidenceLabel(detail.data?.member.risk_flags)} />
         <DrawerField label="Candidate expiry" value={fmtTimestamp(detail.data?.member.expires_at)} />
       </DrawerSection>
     </>}
