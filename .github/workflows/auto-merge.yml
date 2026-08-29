@@ -113,7 +113,10 @@ jobs:
               const minimumCheckStartedAt = eventName === 'pull_request_target'
                 ? new Date().toISOString()
                 : '';
-              const acceptedWorkflowRunId = eventName === 'workflow_run'
+              const acceptedWorkflowRunId = (
+                eventName === 'workflow_run' &&
+                payload.workflow_run.path === '.github/workflows/ci.yml'
+              )
                 ? String(payload.workflow_run.id)
                 : '';
               await github.rest.repos.createDispatchEvent({
@@ -258,6 +261,7 @@ jobs:
       github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'auto_merge_update'
     permissions:
+      actions: read
       checks: read
       contents: write
       issues: write
@@ -298,7 +302,7 @@ jobs:
             const expectedBaseSha = process.env.EXPECTED_BASE_SHA;
             const releaseAfterMerge = process.env.RELEASE_AFTER_MERGE === 'true';
             const minimumCheckStartedAt = process.env.MINIMUM_CHECK_STARTED_AT;
-            const acceptedWorkflowRunId = process.env.ACCEPTED_WORKFLOW_RUN_ID;
+            let acceptedWorkflowRunId = process.env.ACCEPTED_WORKFLOW_RUN_ID;
             const changeContractCheckName = 'Verify Change Contract';
             const trustedCiCheckName = 'Trusted CI verdict';
             const {execFileSync} = require('child_process');
@@ -399,6 +403,37 @@ jobs:
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
             };
+            const workflowRunIdForCheck = (check) =>
+              String(check?.details_url || '').match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1] || '';
+            const exactPlanEvidencePassed = async (checkName, check, planFingerprint) => {
+              const workflowRunId = workflowRunIdForCheck(check);
+              if (!workflowRunId) return false;
+              const {data: run} = await github.rest.actions.getWorkflowRun({
+                ...context.repo,
+                run_id: Number(workflowRunId),
+              });
+              if (
+                run.path !== '.github/workflows/ci.yml' ||
+                run.event !== 'pull_request' ||
+                run.head_sha !== expectedHeadSha ||
+                run.repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                run.conclusion !== 'success'
+              ) {
+                core.info(`workflow run ${workflowRunId} does not match exact-head Aletheia CI`);
+                return false;
+              }
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                ...context.repo,
+                run_id: Number(workflowRunId),
+                filter: 'latest',
+                per_page: 100,
+              });
+              const marker = `[fingerprint=${planFingerprint}]`;
+              const job = jobs.find((candidate) => candidate.name === checkName);
+              return job?.conclusion === 'success' && (job.steps || []).some(
+                (step) => step.name.endsWith(marker) && step.conclusion === 'success',
+              );
+            };
             const exactHeadCheckPassed = async (checkName, options = {}) => {
               try {
                 const {data} = await github.rest.checks.listForRef({
@@ -414,7 +449,7 @@ jobs:
                     candidate.app?.slug === 'github-actions' &&
                     (
                       !options.requireAcceptedWorkflowRun ||
-                      String(candidate.details_url || '').includes(`/actions/runs/${acceptedWorkflowRunId}`)
+                      workflowRunIdForCheck(candidate) === acceptedWorkflowRunId
                     ) &&
                     (
                       !minimumCheckStartedAt ||
@@ -427,6 +462,24 @@ jobs:
                     Date.parse(left.completed_at || left.started_at || 0)
                   )[0];
                 if (check?.status === 'completed' && check.conclusion === 'success') {
+                  if (options.captureWorkflowRun && !acceptedWorkflowRunId) {
+                    acceptedWorkflowRunId = workflowRunIdForCheck(check);
+                    if (!acceptedWorkflowRunId) {
+                      core.info(`exact-head ${checkName} has no workflow run identity`);
+                      return false;
+                    }
+                  }
+                  if (
+                    options.expectedPlanFingerprint &&
+                    !(await exactPlanEvidencePassed(
+                      checkName,
+                      check,
+                      options.expectedPlanFingerprint,
+                    ))
+                  ) {
+                    core.info(`exact-head ${checkName} does not match the recomputed CI plan`);
+                    return false;
+                  }
                   return true;
                 }
                 core.info(
@@ -678,8 +731,16 @@ jobs:
                 if (!(await exactHeadCheckPassed(changeContractCheckName))) {
                   return;
                 }
-                if (!(await exactHeadCheckPassed(trustedCiCheckName, {requireAcceptedWorkflowRun: Boolean(acceptedWorkflowRunId)}))) {
-                  return;
+                for (const checkName of ciPlan.github_checks.filter(
+                  (name) => name !== changeContractCheckName,
+                )) {
+                  if (!(await exactHeadCheckPassed(checkName, {
+                    requireAcceptedWorkflowRun: Boolean(acceptedWorkflowRunId),
+                    captureWorkflowRun: checkName === trustedCiCheckName,
+                    expectedPlanFingerprint: ciPlan.plan_fingerprint,
+                  }))) {
+                    return;
+                  }
                 }
               } else {
                 core.info('trusted CI planner classified this head as docs_only; validation CI checks are not required');

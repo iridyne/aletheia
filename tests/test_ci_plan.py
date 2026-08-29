@@ -39,6 +39,10 @@ def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     assert nested_agents["mode"] == "full"
     assert nested_agents["review"]["codex_required"] is True
 
+    safe_prefix_agents = _plan(["docs/references/AGENTS.md"])
+    assert safe_prefix_agents["mode"] == "full"
+    assert safe_prefix_agents["review"]["codex_required"] is True
+
 
 def test_non_safe_docs_file_invalidates_zero_ci() -> None:
     report = _plan(["README.md", "aletheia/cli/doctor_cmd.py"])
@@ -57,6 +61,11 @@ def test_critical_and_ci_authority_escalate() -> None:
     assert full["required"]["full_ci"] is True
     assert full["required"]["shadow_backstop"] is False
     assert full["review"]["codex_required"] is True
+    assert full["github_checks"] == [
+        "Verify Change Contract",
+        "Trusted CI verdict",
+        "Full CI verdict",
+    ]
 
 
 def test_frontend_operator_native_do_not_pull_unrelated_stacks() -> None:
@@ -131,6 +140,7 @@ def test_operational_scripts_are_full_ci() -> None:
         "scripts/runtime/start-release.ps1",
         "scripts/dev/dev-init.sh",
         "scripts/watch_backend.py",
+        "scripts/qualify_uta.py",
     ):
         report = _plan([path])
         assert report["mode"] == "full"
@@ -148,12 +158,15 @@ def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:
         "aletheia/execution/reconciliation.py",
         "aletheia/learning/evidence_epoch.py",
         "aletheia/learning/policy_epochs.py",
-        "scripts/coverage_floors.py",
         "tests/test_reconciliation.py",
     ):
         report = _plan([path])
         assert report["mode"] == "deep"
         assert report["required"]["coverage"] is True
+
+    coverage_script = _plan(["scripts/coverage_floors.py"])
+    assert coverage_script["mode"] == "full"
+    assert coverage_script["required"]["coverage"] is True
 
 
 def test_labels_only_escalate() -> None:
