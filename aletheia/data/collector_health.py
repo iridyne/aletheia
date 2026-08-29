@@ -13,6 +13,7 @@ from aletheia.storage import repositories as repo
 COLLECTOR_CADENCE_SEC: dict[str, int] = {
     "microstructure": 120,
     "derivatives": 120,
+    "derivatives_history": 600,
     "volume_scanner": 600,
     "coingecko_top": 600,
     "macro": 600,

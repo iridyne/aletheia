@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -154,6 +155,8 @@ class DerivativesCollector:
                     snap = _parse_funding(sym, primary_name, fr)
                     if snap:
                         funding.append(snap)
+                    else:
+                        errors.append(f"funding_invalid {sym}")
                 # LSR is folded into the same OI dataclass — no follow-up UPDATE.
                 if raw_oi:
                     snap = _parse_oi(
@@ -164,6 +167,8 @@ class DerivativesCollector:
                     )
                     if snap:
                         oi.append(snap)
+                    else:
+                        errors.append(f"open_interest_invalid {sym}")
 
         finally:
             await provider.close()
@@ -186,6 +191,8 @@ class DerivativesCollector:
 
         provider = get_market_data_provider()
         errors: list[str] = []
+        funding_count = 0
+        oi_count = 0
         primary_name = provider._primary_name
         try:
             exchange = provider._ensure_primary()
@@ -195,14 +202,14 @@ class DerivativesCollector:
                 if not perp_sym:
                     continue
                 try:
-                    await _maybe_backfill_funding_history(
+                    funding_count += await _maybe_backfill_funding_history(
                         exchange, sym, perp_sym, primary_name, history_hours,
                         errors=errors,
                     )
                 except Exception as exc:
                     errors.append(f"funding_history {sym}: {exc}")
                 try:
-                    await _maybe_backfill_oi_history(
+                    oi_count += await _maybe_backfill_oi_history(
                         exchange, sym, perp_sym, primary_name, history_hours,
                         errors=errors,
                     )
@@ -210,7 +217,11 @@ class DerivativesCollector:
                     errors.append(f"oi_history {sym}: {exc}")
         finally:
             await provider.close()
-        return {"errors": errors}
+        return {
+            "funding": funding_count,
+            "open_interest": oi_count,
+            "errors": errors,
+        }
 
 
 def _perp_target_set(venue: str, extra_symbols: list[str] | None) -> list[str]:
@@ -248,23 +259,30 @@ def _to_perp_symbol(spot_symbol: str, exchange) -> str | None:
 def _parse_funding(
     symbol: str, exchange: str, raw: dict
 ) -> FundingRateSnapshot | None:
-    rate = raw.get("fundingRate")
+    rate = _finite_float(raw.get("fundingRate"))
     if rate is None:
         return None
-    rate = float(rate)
     annualized = rate * 3 * 365  # 8h intervals → annual
+    if not math.isfinite(annualized):
+        return None
     next_time = raw.get("fundingDatetime") or raw.get("nextFundingDatetime")
-    mark = raw.get("markPrice")
+    raw_mark = raw.get("markPrice")
+    mark = _finite_float(raw_mark) if raw_mark is not None else None
+    if raw_mark is not None and (mark is None or mark <= 0):
+        return None
 
-    return FundingRateSnapshot(
-        symbol=symbol,
-        exchange=exchange,
-        funding_rate=rate,
-        funding_rate_annualized=round(annualized, 4),
-        next_funding_time=str(next_time) if next_time else None,
-        mark_price=float(mark) if mark else None,
-        observed_at=datetime.now(timezone.utc).isoformat(),
-    )
+    try:
+        return FundingRateSnapshot(
+            symbol=symbol,
+            exchange=exchange,
+            funding_rate=rate,
+            funding_rate_annualized=round(annualized, 4),
+            next_funding_time=str(next_time) if next_time else None,
+            mark_price=mark,
+            observed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except ValueError:
+        return None
 
 
 # OI-delta sanity ceiling. A legitimate 1h open-interest move is at most a few
@@ -273,6 +291,14 @@ def _parse_funding(
 # thin/relisted market. Drop it to None rather than feed a fake surge to the
 # derivatives/event scanners.
 _OI_DELTA_SANITY_PCT = 300.0
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def extract_oi_usd(
@@ -286,19 +312,30 @@ def extract_oi_usd(
     wrong-unit value. Single source of truth for the OI→USD rule shared by the
     collector and the universe feature path.
     """
-    oi_amount = raw.get("openInterestAmount")
-    oi_value_usd = raw.get("openInterestValue")
-    if oi_value_usd is not None:
-        oi_usd = float(oi_value_usd)
-    elif oi_amount is not None and mark_price:
-        oi_usd = float(oi_amount) * float(mark_price)
-    else:
+    raw_oi_amount = raw.get("openInterestAmount")
+    raw_oi_value_usd = raw.get("openInterestValue")
+    oi_amount = _finite_float(raw_oi_amount)
+    if raw_oi_amount is not None and (oi_amount is None or oi_amount < 0):
         return None
 
-    oi_coin = float(oi_amount) if oi_amount is not None else None
+    if raw_oi_value_usd is not None:
+        oi_usd = _finite_float(raw_oi_value_usd)
+    elif oi_amount is not None:
+        mark = _finite_float(mark_price)
+        if mark is None or mark <= 0:
+            return None
+        oi_usd = _finite_float(oi_amount * mark)
+    else:
+        return None
+    if oi_usd is None or oi_usd < 0:
+        return None
+
+    oi_coin = oi_amount
     info = raw.get("info", {})
     if oi_coin is None and "sumOpenInterest" in info:
-        oi_coin = float(info["sumOpenInterest"])
+        oi_coin = _finite_float(info["sumOpenInterest"])
+        if oi_coin is None or oi_coin < 0:
+            return None
     return oi_usd, oi_coin
 
 
@@ -319,6 +356,16 @@ def _parse_oi(
         return None  # cannot express in USD — honest None beats a wrong-unit value
     oi_usd, oi_coin = extracted
 
+    # Binance positioning ratios are optional enrichment.  Invalid enrichment
+    # must degrade to unavailable, never discard an otherwise valid venue OI
+    # snapshot (MS-C01).
+    lsr = _finite_float(lsr)
+    if lsr is not None and lsr < 0:
+        lsr = None
+    top_position_ratio = _finite_float(top_position_ratio)
+    if top_position_ratio is not None and top_position_ratio < 0:
+        top_position_ratio = None
+
     # TRUE ~1h change vs a snapshot ~1h ago on THIS venue — not the ~2-min
     # previous tick (data_collectors runs every 2 min, so the old delta almost
     # never cleared the scanner's 1h-calibrated thresholds), and not a
@@ -338,16 +385,19 @@ def _parse_oi(
     except Exception:
         pass
 
-    return OpenInterestSnapshot(
-        symbol=symbol,
-        exchange=exchange,
-        open_interest_usd=oi_usd,
-        open_interest_coin=oi_coin,
-        oi_change_1h_pct=oi_change_1h_pct,
-        long_short_ratio=lsr,
-        top_trader_position_ratio=top_position_ratio,
-        observed_at=datetime.now(timezone.utc).isoformat(),
-    )
+    try:
+        return OpenInterestSnapshot(
+            symbol=symbol,
+            exchange=exchange,
+            open_interest_usd=oi_usd,
+            open_interest_coin=oi_coin,
+            oi_change_1h_pct=oi_change_1h_pct,
+            long_short_ratio=lsr,
+            top_trader_position_ratio=top_position_ratio,
+            observed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except ValueError:
+        return None
 
 
 def _insert_historical_funding_snapshot_pair(
@@ -437,12 +487,26 @@ async def _maybe_backfill_funding_history(
         if errors is not None:
             errors.append(f"funding_history {sym}: {e}")
         return 0
-    valid_items = sorted(
-        [(item["timestamp"], float(item["fundingRate"]))
-         for item in history
-         if item.get("timestamp") is not None and item.get("fundingRate") is not None],
-        key=lambda x: x[0],
-    )
+    valid_items: list[tuple[int, float]] = []
+    invalid_found = False
+    for item in history:
+        raw_ts = item.get("timestamp")
+        raw_rate = item.get("fundingRate")
+        ts = _finite_float(raw_ts)
+        rate = _finite_float(raw_rate)
+        annualized = _finite_float(rate * 3 * 365) if rate is not None else None
+        if ts is None or ts <= 0 or rate is None or annualized is None:
+            invalid_found = True
+            continue
+        valid_items.append((int(ts), rate))
+    if invalid_found:
+        code = f"funding_history_invalid {sym}"
+        if errors is not None and code not in errors:
+            errors.append(code)
+        # Funding rows form a settlement transition chain.  Removing an invalid
+        # middle row and joining its neighbours would falsely prove completeness.
+        return 0
+    valid_items.sort(key=lambda item: item[0])
     n = 0
     for i, (ts_ms, rate) in enumerate(valid_items):
         next_ts_ms = valid_items[i + 1][0] if i + 1 < len(valid_items) else None
@@ -478,16 +542,24 @@ async def _maybe_backfill_oi_history(
         return 0
     n = 0
     for item in history:
-        ts = item.get("timestamp")
-        oi_value_usd = item.get("openInterestValue")
-        oi_amount = item.get("openInterestAmount")
-        if ts is None:
+        raw_ts = item.get("timestamp")
+        ts = _finite_float(raw_ts)
+        if ts is None or ts <= 0:
+            if raw_ts is not None:
+                code = f"oi_history_invalid {sym}"
+                if errors is not None and code not in errors:
+                    errors.append(code)
             continue
         # Store USD, consistent with the live path. History rows on OKX/Binance
         # carry openInterestValue (USD); if a venue omits it we skip rather than
         # persist a coin/contract amount as USD and mix units within the table.
-        if oi_value_usd is None:
+        extracted = extract_oi_usd(item)
+        if extracted is None:
+            code = f"oi_history_invalid {sym}"
+            if errors is not None and code not in errors:
+                errors.append(code)
             continue
+        oi_usd, oi_coin = extracted
         observed = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
         prior = _select_all(
             "open_interest_snapshots",
@@ -498,8 +570,8 @@ async def _maybe_backfill_oi_history(
         snap = OpenInterestSnapshot(
             symbol=sym,
             exchange=exchange_name,
-            open_interest_usd=float(oi_value_usd),
-            open_interest_coin=float(oi_amount) if oi_amount is not None else None,
+            open_interest_usd=oi_usd,
+            open_interest_coin=oi_coin,
             oi_change_1h_pct=None,
             long_short_ratio=None,
             top_trader_position_ratio=None,

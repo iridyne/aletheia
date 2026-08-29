@@ -4774,6 +4774,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
         )
         if history_result and history_result.get("errors"):
             logger.debug("derivatives history backfill errors: %s", history_result["errors"])
+            context_error_codes.append("derivatives_history_invalid")
 
     unique_errors = list(dict.fromkeys(context_error_codes))
     return {

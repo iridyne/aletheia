@@ -5,6 +5,7 @@ their separate broker-ledger requirement and are deliberately out of scope.
 """
 
 from __future__ import annotations
+import asyncio
 
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -387,6 +388,55 @@ def test_local_funding_accepts_complete_historical_settlement_bracket(
         _iso(4),
         _iso(8),
     ]
+
+
+def test_invalid_historical_funding_sequence_cannot_complete_ledger(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    position = _position()
+    _insert_entry_lineage(position)
+
+    class InvalidHistoryExchange:
+        async def fetch_funding_rate_history(self, _symbol, limit=24):
+            return [
+                {"timestamp": int(datetime.fromisoformat(_iso(0)).timestamp() * 1000),
+                 "fundingRate": 0.0002},
+                {"timestamp": int(datetime.fromisoformat(_iso(4)).timestamp() * 1000),
+                 "fundingRate": 0.0009},
+                {"timestamp": int(datetime.fromisoformat(_iso(8)).timestamp() * 1000),
+                 "fundingRate": "Infinity"},
+                {"timestamp": int(datetime.fromisoformat(_iso(12)).timestamp() * 1000),
+                 "fundingRate": 0.0003},
+            ]
+
+    from aletheia.data.collectors.derivatives import _maybe_backfill_funding_history
+    from aletheia.portfolio.local_funding import compute_local_funding
+    from aletheia.storage import repositories as repo
+
+    errors: list[str] = []
+    inserted = asyncio.run(_maybe_backfill_funding_history(
+        InvalidHistoryExchange(),
+        "BTC/USDT",
+        "BTC/USDT:USDT",
+        "okx",
+        since_hours=24,
+        errors=errors,
+    ))
+
+    assert inserted == 0
+    assert errors == ["funding_history_invalid BTC/USDT"]
+    assert repo._select_all("funding_rate_snapshots") == []
+
+    result = compute_local_funding(
+        position,
+        closed_at=_iso(9),
+        allow_historical_ledger=True,
+        as_of=_iso(13),
+    )
+    assert result.complete is False
+    assert result.funding_cost is None
+    assert result.evidence["reason"] == "incomplete_historical_funding_ledger"
 
 
 @spec_claim(

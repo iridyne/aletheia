@@ -46,20 +46,24 @@ class TradabilityScore(BaseModel):
 
 
 class FundingRateSnapshot(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     symbol: str
     exchange: str
     funding_rate: float
     funding_rate_annualized: float
     next_funding_time: str | None = None
-    mark_price: float | None = None
+    mark_price: float | None = Field(default=None, gt=0)
     observed_at: str
 
 
 class OpenInterestSnapshot(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     symbol: str
     exchange: str
-    open_interest_usd: float
-    open_interest_coin: float | None = None
+    open_interest_usd: float = Field(ge=0)
+    open_interest_coin: float | None = Field(default=None, ge=0)
     oi_change_1h_pct: float | None = None
     long_short_ratio: float | None = None
     top_trader_position_ratio: float | None = None
