@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from aletheia.analytics import outcome_integrity
+
 OPERATOR_DRIVEN = frozenset({"operator_close", "operator_limit_exit"})
 # Owner-initiated manual exits from the dashboard. Kept separate from OPERATOR_DRIVEN
 # so "do AI-discretionary exits beat rules?" is never answered with human decisions.
@@ -100,7 +102,7 @@ class ExitOutcomeStats:
 
 
 def compare_exit_outcomes(rows: list[dict[str, Any]]) -> dict[str, ExitOutcomeStats]:
-    """Group closed positions by exit driver and compute realized-outcome stats. Pure."""
+    """Group admitted strategy outcomes by exit driver. Pure."""
     buckets: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         try:
@@ -131,8 +133,15 @@ def compare_exit_outcomes(rows: list[dict[str, Any]]) -> dict[str, ExitOutcomeSt
 
 def format_comparison(stats: dict[str, ExitOutcomeStats]) -> str:
     if not stats:
-        return "exit shadow: no closed positions in window"
-    lines = ["exit-outcome comparison by driver", ""]
+        return (
+            "exit shadow: no eligible outcomes in window "
+            f"({outcome_integrity.OUTCOME_SEMANTICS_VERSION})"
+        )
+    lines = [
+        "eligible exit-outcome comparison by driver "
+        f"({outcome_integrity.OUTCOME_SEMANTICS_VERSION})",
+        "",
+    ]
     header = f"  {'driver':<10}{'n':>5}{'win%':>7}{'avg_pnl':>11}{'total_pnl':>12}{'avg_hold_h':>12}"
     lines.append(header)
     for driver in ("operator", "human", "rule", "safety", "other"):
@@ -147,15 +156,17 @@ def format_comparison(stats: dict[str, ExitOutcomeStats]) -> str:
 
 
 def shadow_report(days: int | None = None, execution_mode: str | None = None, limit: int = 10000):
-    """Load closed positions and compare exit outcomes by driver."""
+    """Load centrally admitted strategy outcomes and compare exit drivers."""
     from datetime import timedelta
-
-    from aletheia.storage.repositories import list_closed_positions
 
     since_iso = None
     if days is not None:
         since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    rows = list_closed_positions(since_iso=since_iso, execution_mode=execution_mode, limit=limit)
+    rows = outcome_integrity.eligible_strategy_outcomes(
+        closed_after=since_iso,
+        execution_mode=execution_mode,
+        limit=limit,
+    )
     return compare_exit_outcomes(rows)
 
 
