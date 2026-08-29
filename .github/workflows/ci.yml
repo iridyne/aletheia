@@ -363,7 +363,9 @@ jobs:
         run: |
           npm ci
           npm run check:settings-types
-          npm run lint
+          while IFS= read -r -d '' target; do
+            npx eslint "$target"
+          done < <(find src -mindepth 1 -maxdepth 1 -print0 | sort -z)
           npm test
           # Do not add a direct "npx tsc -b" here; npm run build owns the type-check.
           build_dir="${RUNNER_TEMP}/aletheia-dashboard-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -464,7 +466,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2, 3]
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -491,7 +493,7 @@ jobs:
               ! -path 'tests/test_connectivity.py' \
               ! -path 'tests/test_operator_cli.py' \
               ! -path 'tests/test_pause_ownership.py' \
-              | sort | awk -v shard="${{ matrix.shard }}" 'NR % 2 == shard'
+              | sort | awk -v shard="${{ matrix.shard }}" 'NR % 4 == shard'
           )
           uv run pytest "${test_files[@]}" \
             -m "tier_unit" -q --tb=short --timeout=120

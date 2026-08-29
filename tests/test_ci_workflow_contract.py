@@ -593,7 +593,8 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
     assert "ruff check" in commands
     assert "test_architecture_fitness.py" in commands
     assert "python scripts/check_docs.py" in commands
-    assert "npm run lint" in commands
+    assert 'npx eslint "$target"' in commands
+    assert "find src -mindepth 1 -maxdepth 1 -print0 | sort -z" in commands
     assert "npm test" in commands
     assert "npm run build" in commands
     assert "test_frontend_ci_build_contract.py" in commands
@@ -681,7 +682,10 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         assert "--ignore=tests/test_connectivity.py" in commands
         assert "--ignore=tests/test_operator_cli.py" in commands
         assert "--ignore=tests/test_pause_ownership.py" in commands
-    assert unit_job["strategy"] == {"fail-fast": "false", "matrix": {"shard": ["0", "1"]}}
+    assert unit_job["strategy"] == {
+        "fail-fast": "false",
+        "matrix": {"shard": ["0", "1", "2", "3"]},
+    }
     assert "find tests -type f -name 'test_*.py'" in unit_commands
     for excluded in (
         "tests/simulation/*",
@@ -691,7 +695,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "tests/test_pause_ownership.py",
     ):
         assert f"! -path '{excluded}'" in unit_commands
-    assert "NR % 2 == shard" in unit_commands
+    assert "NR % 4 == shard" in unit_commands
     assert 'uv run pytest "${test_files[@]}"' in unit_commands
     assert '-m "tier_unit"' in unit_commands
     assert "-n " not in unit_commands
