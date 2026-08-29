@@ -149,6 +149,90 @@ def test_policy_epoch_concurrent_rotation_leaves_only_one_open_row(
     assert sum(row["ended_at"] is not None for row in rows) == len(rows) - 1
 
 
+@pytest.mark.real_db
+def test_policy_epoch_rotation_uses_one_monotonic_boundary(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.learning.policy_epochs as policy_epochs
+    from aletheia.learning.ledger import insert_record
+    from aletheia.learning.models import LearningPolicyEpoch
+    from aletheia.storage import sqlite
+    from aletheia.storage.migrations import run_migrations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sqlite.reset_db()
+    run_migrations()
+
+    from datetime import datetime, timezone
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 22, 11, tzinfo=tz or timezone.utc)
+
+    monkeypatch.setattr(policy_epochs, "datetime", FixedDateTime)
+
+    def add_epoch(epoch_id, epoch_kind, effective_values_hash, started_at):
+        insert_record(
+            "learning_policy_epochs",
+            LearningPolicyEpoch(
+                epoch_id=epoch_id,
+                epoch_kind=epoch_kind,
+                effective_values_hash=effective_values_hash,
+                effective_values_json="{}",
+                affected_path_ids_json="[]",
+                started_at=started_at,
+            ),
+        )
+
+    future = "2026-08-22T12:00:00+00:00"
+    add_epoch("future-open", "clock-rollback", "old-hash", future)
+
+    epoch = policy_epochs.build_policy_epoch(
+        "clock-rollback", {"version": "new"}, affected_path_ids=("test",)
+    )
+    policy_epochs.persist_policy_epoch(epoch)
+    rows = sqlite.get_db().execute(
+        "SELECT started_at, ended_at FROM learning_policy_epochs "
+        "WHERE epoch_kind='clock-rollback' ORDER BY rowid"
+    ).fetchall()
+    assert rows[0]["ended_at"] == rows[1]["started_at"]
+    assert rows[0]["ended_at"] == "2026-08-22T12:00:00.000001+00:00"
+
+    add_epoch("matching-open", "matching-cleanup", "matching-hash", future)
+    add_epoch(
+        "older-open", "matching-cleanup", "older-hash", "2026-08-22T11:59:00+00:00"
+    )
+    matching = policy_epochs.PolicyEpoch(
+        epoch_kind="matching-cleanup",
+        epoch_hash="matching-hash",
+        effective_values={},
+        affected_path_ids=(),
+        safety_required=False,
+    )
+    policy_epochs.persist_policy_epoch(matching)
+    rows = sqlite.get_db().execute(
+        "SELECT epoch_id, started_at, ended_at FROM learning_policy_epochs "
+        "WHERE epoch_kind='matching-cleanup' ORDER BY rowid"
+    ).fetchall()
+    assert rows[0]["ended_at"] is None
+    assert rows[1]["ended_at"] == "2026-08-22T12:00:00.000001+00:00"
+    add_epoch("malformed-start", "malformed-start", "old-hash", "not-a-timestamp")
+    malformed = policy_epochs.PolicyEpoch(
+        epoch_kind="malformed-start",
+        epoch_hash="new-hash",
+        effective_values={},
+        affected_path_ids=(),
+        safety_required=False,
+    )
+    with pytest.raises(ValueError, match="Invalid started_at"):
+        policy_epochs.persist_policy_epoch(malformed)
+    row = sqlite.get_db().execute(
+        "SELECT ended_at FROM learning_policy_epochs WHERE epoch_id='malformed-start'"
+    ).fetchone()
+    assert row["ended_at"] is None
+
+
 def test_market_observer_entry_persists_information_epoch_before_early_return():
     from aletheia.agents.market_observer import run_market_observer
     from aletheia.storage.sqlite import get_db
