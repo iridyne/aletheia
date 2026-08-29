@@ -66,8 +66,16 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
     reload_mode = _is_reload_mode()
 
     if not reload_mode and not has_supervisor:
-        return {"mode": "cold", "ok": False,
-                "message": "No supervisor active — restart would kill the gateway permanently."}
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "gateway_restart_supervisor_unavailable",
+                "reason_code": "supervisor_unavailable",
+                "message": "No supervisor active — restart would kill the gateway permanently.",
+            },
+        )
 
     reason = body.reason if body else "manual"
     changed = body.changed_files[:10] if body and body.changed_files else []
