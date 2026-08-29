@@ -87,7 +87,12 @@ def build_entry_plan_order_intent(
         execution_mode=plan.execution_account_mode,
         agent_rationale=plan.thesis,
         attribution_snapshot=json.dumps(
-            {"entry_plan_id": plan.plan_id, "planning_generation_id": plan.planning_generation_id},
+            {
+                "entry_plan_id": plan.plan_id,
+                "planning_generation_id": plan.planning_generation_id,
+                "market_received_at": observed_at,
+                "market_source_at": source_observed_at,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ),

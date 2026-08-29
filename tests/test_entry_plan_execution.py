@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -83,17 +84,22 @@ def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
 
 def test_urgent_entry_uses_exact_opposing_bbo_ioc():
     plan = _plan()
+    received_at = datetime.now(timezone.utc).isoformat()
+    source_at = datetime.now(timezone.utc).isoformat()
     proposal = build_entry_plan_order_intent(
         plan,
         bid=100,
         ask=100.05,
-        observed_at=datetime.now(timezone.utc).isoformat(),
-        source_observed_at=datetime.now(timezone.utc).isoformat(),
+        observed_at=received_at,
+        source_observed_at=source_at,
     )
     assert proposal.order_type == "limit"
     assert proposal.price == 100.05
     assert proposal.time_in_force == "ioc"
     assert proposal.post_only is False
+    evidence = json.loads(proposal.attribution_snapshot)
+    assert evidence["market_received_at"] == received_at
+    assert evidence["market_source_at"] == source_at
 
 
 def test_urgent_entry_never_chases_beyond_worst_price():
@@ -532,13 +538,11 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
 
 def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
     from aletheia.execution import bitget_broker, gateway
-    from aletheia.execution import reconciliation
+    from aletheia.execution import exchange_materialization, reconciliation
     from aletheia.uta import manager
     from aletheia.uta.models import OrderLifecycle, ReadCompleteness
 
     plan, order = _persist_ordered_plan()
-    repo.insert_fill(Fill(order_id=order.id, fill_price=100, fill_quantity=0.5, fee_source="reconciled"))
-    repo.update_order(order.id, status="partially_filled")
 
     monkeypatch.setattr(
         bitget_broker,
@@ -552,7 +556,15 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
         )
 
     async def exact_fills(self, **_kwargs):
-        return []
+        return [{"orderId": "exchange-1", "fillQuantity": "0.5"}]
+
+    materialized = []
+
+    def materialize_before_cancel(order_id, rows):
+        assert repo.get_order(order_id)["status"] == "submitted"
+        materialized.extend(rows)
+        repo.insert_fill(Fill(order_id=order_id, fill_price=100, fill_quantity=0.5, fee_source="reconciled"))
+        repo.update_order(order_id, status="partially_filled")
 
     monkeypatch.setattr(manager, "query_uta", exact_order)
     monkeypatch.setattr(
@@ -560,10 +572,16 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
         "get_order_fills",
         exact_fills,
     )
+    monkeypatch.setattr(
+        exchange_materialization,
+        "materialize_bitget_entry",
+        materialize_before_cancel,
+    )
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "cancelled"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
     assert repo.get_order(order.id)["status"] == "cancelled"
+    assert materialized == [{"orderId": "exchange-1", "fillQuantity": "0.5"}]
     assert sum(fill["fill_quantity"] for fill in repo.list_fills(order_id=order.id)) == 0.5
 
 
@@ -640,6 +658,7 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
         ),
     )
 
+    reconciliation.reconcile()
     reconciliation.reconcile()
 
     stored = repo.get_order(order.id)
