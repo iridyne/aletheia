@@ -1,6 +1,7 @@
 """Tests for knowledge frontmatter parser."""
 
 from aletheia.knowledge.frontmatter import parse_frontmatter_text, render_frontmatter
+from aletheia.knowledge.retrieval import _clean_body
 
 
 def test_parse_valid_frontmatter():
@@ -39,3 +40,41 @@ def test_render_preserves_unicode():
     rendered = render_frontmatter(meta, body)
     assert "追涨 Guard" in rendered
     assert "中文内容" in rendered
+
+
+def test_clean_body_preserves_markdown_after_generated_prefix():
+    text = """# Generated title
+
+---
+kind: trade_case_study
+---
+
+Evidence before the break.
+
+---
+
+# Critical counterexample
+
+Evidence after the break.
+"""
+
+    assert _clean_body(text) == (
+        "Evidence before the break.\n\n---\n\n"
+        "# Critical counterexample\n\nEvidence after the break."
+    )
+
+
+def test_clean_body_preserves_plain_markdown_thematic_break():
+    text = "Evidence before the break.\n\n---\n\nEvidence after the break."
+
+    assert _clean_body(text) == text
+
+
+def test_clean_body_warns_and_preserves_malformed_frontmatter(caplog):
+    text = "---\nkind: trade_case_study\nEvidence after an unclosed fence."
+
+    with caplog.at_level("WARNING", logger="aletheia.retrieval"):
+        assert _clean_body(text) == text
+
+    assert "frontmatter parse failed" in caplog.text
+    assert text not in caplog.text
