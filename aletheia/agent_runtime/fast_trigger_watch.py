@@ -236,28 +236,54 @@ async def _load_watchers(
     return setups, engines
 
 
+async def _handle_entry_plan_integrity_failure(
+    row: dict,
+    *,
+    reason: str,
+    cancel_entry_plan_order,
+) -> None:
+    """Keep an owned external order under Gateway supervision after plan corruption."""
+
+    if row["status"] in {"ordered", "partially_filled"}:
+        # Gateway preserves cancel-pending/ambiguous state for the next reload.
+        await asyncio.to_thread(cancel_entry_plan_order, row["id"], reason=reason)
+        return
+    await asyncio.to_thread(
+        repo.transition_entry_plan,
+        row["id"],
+        expected_status=row["status"],
+        status="failed",
+        reason=reason,
+    )
+
+
 async def _load_entry_plan_watchers(
     cfg,
     existing: dict[str, TriggerEngine] | None = None,
 ) -> tuple[dict[str, EntryPlan], dict[str, TriggerEngine]]:
+    from aletheia.execution.gateway import cancel_entry_plan_order
+
     plans: dict[str, EntryPlan] = {}
     engines: dict[str, TriggerEngine] = {}
     now = datetime.now(timezone.utc)
     for row in await asyncio.to_thread(repo.list_watchable_entry_plans, int(cfg.fast_trigger.max_setups)):
         payload = str(row["plan_json"])
         if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
-            await asyncio.to_thread(
-                repo.transition_entry_plan,
-                row["id"],
-                expected_status=row["status"],
-                status="failed",
+            await _handle_entry_plan_integrity_failure(
+                row,
                 reason="entry_plan_hash_mismatch",
+                cancel_entry_plan_order=cancel_entry_plan_order,
             )
             continue
         try:
             plan = EntryPlan.model_validate_json(payload)
         except Exception:
             logger.error("Entry Plan %s failed stored-contract validation", row["id"])
+            await _handle_entry_plan_integrity_failure(
+                row,
+                reason="entry_plan_contract_invalid",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+            )
             continue
         generation = await asyncio.to_thread(
             repo.get_candidate_planning_generation,
