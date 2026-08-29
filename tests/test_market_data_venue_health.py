@@ -11,6 +11,7 @@ from aletheia.data.venue_health import (
 )
 
 _GET_TICKER = CCXTProvider.get_ticker
+_GET_OHLCV = CCXTProvider.get_ohlcv
 
 
 @pytest.fixture(autouse=True)
@@ -124,6 +125,56 @@ async def test_ccxt_all_invalid_tickers_are_unavailable(monkeypatch):
 
     with pytest.raises(ValueError, match="ticker last_price"):
         await _GET_TICKER(provider, "BTC/USDT")
+
+
+@pytest.mark.asyncio
+async def test_ccxt_all_invalid_ohlcv_keeps_venue_cooling_until_valid_data(monkeypatch):
+    import aletheia.data.ccxt_provider as ccxt_module
+    import aletheia.data.venue_health as health
+
+    monkeypatch.setattr(health, "emit_infra_event", lambda **_kwargs: None)
+    record_venue_failure("binance", RuntimeError("429 rate limit"))
+    monkeypatch.setattr(ccxt_module, "is_venue_available", lambda _name: True)
+
+    calls: list[str] = []
+
+    class PrimaryExchange:
+        rows = [[1, "invalid", 11, 9, 10.5, 100]]
+
+        async def fetch_ohlcv(self, _symbol, **_kwargs):
+            calls.append("binance")
+            return self.rows
+
+    class FallbackExchange:
+        async def fetch_ohlcv(self, _symbol, **_kwargs):
+            calls.append("bybit")
+            return [[1, 10, 11, 9, 10.5, 100]]
+
+    primary = PrimaryExchange()
+    provider = CCXTProvider("binance", "bybit")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda: primary)
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda: FallbackExchange())
+    monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
+
+    result = await _GET_OHLCV(provider, "BTC/USDT", limit=1, since=0)
+
+    assert result[0].exchange == "bybit"
+    assert calls == ["binance", "bybit"]
+    binance = next(
+        row for row in get_venue_health_snapshot() if row["venue"] == "binance"
+    )
+    assert binance["cooling_down"] is True
+    assert binance["last_success_at"] is None
+
+    primary.rows = [[1, 10, 11, 9, 10.5, 100]]
+    result = await _GET_OHLCV(provider, "BTC/USDT", limit=1, since=0)
+
+    assert result[0].exchange == "binance"
+    binance = next(
+        row for row in get_venue_health_snapshot() if row["venue"] == "binance"
+    )
+    assert binance["cooling_down"] is False
+    assert binance["last_success_at"] is not None
 
 
 @pytest.mark.asyncio
