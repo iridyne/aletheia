@@ -191,6 +191,8 @@ class DerivativesCollector:
 
         provider = get_market_data_provider()
         errors: list[str] = []
+        funding_count = 0
+        oi_count = 0
         primary_name = provider._primary_name
         try:
             exchange = provider._ensure_primary()
@@ -200,14 +202,14 @@ class DerivativesCollector:
                 if not perp_sym:
                     continue
                 try:
-                    await _maybe_backfill_funding_history(
+                    funding_count += await _maybe_backfill_funding_history(
                         exchange, sym, perp_sym, primary_name, history_hours,
                         errors=errors,
                     )
                 except Exception as exc:
                     errors.append(f"funding_history {sym}: {exc}")
                 try:
-                    await _maybe_backfill_oi_history(
+                    oi_count += await _maybe_backfill_oi_history(
                         exchange, sym, perp_sym, primary_name, history_hours,
                         errors=errors,
                     )
@@ -215,7 +217,11 @@ class DerivativesCollector:
                     errors.append(f"oi_history {sym}: {exc}")
         finally:
             await provider.close()
-        return {"errors": errors}
+        return {
+            "funding": funding_count,
+            "open_interest": oi_count,
+            "errors": errors,
+        }
 
 
 def _perp_target_set(venue: str, extra_symbols: list[str] | None) -> list[str]:
@@ -350,6 +356,16 @@ def _parse_oi(
         return None  # cannot express in USD — honest None beats a wrong-unit value
     oi_usd, oi_coin = extracted
 
+    # Binance positioning ratios are optional enrichment.  Invalid enrichment
+    # must degrade to unavailable, never discard an otherwise valid venue OI
+    # snapshot (MS-C01).
+    lsr = _finite_float(lsr)
+    if lsr is not None and lsr < 0:
+        lsr = None
+    top_position_ratio = _finite_float(top_position_ratio)
+    if top_position_ratio is not None and top_position_ratio < 0:
+        top_position_ratio = None
+
     # TRUE ~1h change vs a snapshot ~1h ago on THIS venue — not the ~2-min
     # previous tick (data_collectors runs every 2 min, so the old delta almost
     # never cleared the scanner's 1h-calibrated thresholds), and not a
@@ -472,6 +488,7 @@ async def _maybe_backfill_funding_history(
             errors.append(f"funding_history {sym}: {e}")
         return 0
     valid_items: list[tuple[int, float]] = []
+    invalid_found = False
     for item in history:
         raw_ts = item.get("timestamp")
         raw_rate = item.get("fundingRate")
@@ -479,12 +496,16 @@ async def _maybe_backfill_funding_history(
         rate = _finite_float(raw_rate)
         annualized = _finite_float(rate * 3 * 365) if rate is not None else None
         if ts is None or ts <= 0 or rate is None or annualized is None:
-            if raw_ts is not None or raw_rate is not None:
-                code = f"funding_history_invalid {sym}"
-                if errors is not None and code not in errors:
-                    errors.append(code)
+            invalid_found = True
             continue
         valid_items.append((int(ts), rate))
+    if invalid_found:
+        code = f"funding_history_invalid {sym}"
+        if errors is not None and code not in errors:
+            errors.append(code)
+        # Funding rows form a settlement transition chain.  Removing an invalid
+        # middle row and joining its neighbours would falsely prove completeness.
+        return 0
     valid_items.sort(key=lambda item: item[0])
     n = 0
     for i, (ts_ms, rate) in enumerate(valid_items):

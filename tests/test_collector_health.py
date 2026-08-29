@@ -155,6 +155,26 @@ def test_result_classifier_distinguishes_empty_partial_and_not_configured():
         "errors": ["chain_tvl: empty_or_invalid"],
         "metric_outcomes": {"chain_tvl": "empty_or_invalid"},
     }) == "failed"
+    assert classify_collector_result({
+        "funding": 2,
+        "open_interest": 0,
+        "errors": ["oi_history_invalid BTC/USDT"],
+    }) == "partial"
+
+
+def test_derivatives_history_is_a_recordable_health_domain(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    record_collector_status("derivatives_history", "failed", tick=1)
+
+    row = next(
+        item for item in get_collector_health_report()["domains"]
+        if item["domain"] == "derivatives_history"
+    )
+    assert row["last_status"] == "failed"
 
 
 def test_report_attributes_cross_source_failures_to_external_connectivity(collector_db):

@@ -1158,6 +1158,12 @@ def test_derivatives_history_uses_bounded(monkeypatch):
     async def fake_bounded(coro, label, cap, deadline):
         bounded_labels.append(label)
         coro.close()
+        if label == "derivatives_history":
+            return {
+                "funding": 0,
+                "open_interest": 0,
+                "errors": ["funding_history_invalid BTC/USDT"],
+            }
         return None
 
     monkeypatch.setattr(scheduler, "_bounded", fake_bounded)
@@ -1178,9 +1184,13 @@ def test_derivatives_history_uses_bounded(monkeypatch):
         )
     )
 
-    asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
+    result = asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
 
     assert "derivatives_history" in bounded_labels
+    assert result == {
+        "status": "partial",
+        "error_codes": ["derivatives_history_invalid"],
+    }
 
 
 def test_bounded_slow_cancel_does_not_stall_caller(monkeypatch):

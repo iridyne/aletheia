@@ -66,6 +66,26 @@ def test_parse_oi_lsr_none_when_absent():
     assert snap.open_interest_usd == 999.0
 
 
+@pytest.mark.parametrize("invalid_ratio", ["NaN", "Infinity", "-Infinity", -1])
+def test_parse_oi_drops_invalid_optional_positioning_without_dropping_oi(
+    invalid_ratio,
+):
+    from aletheia.data.collectors.derivatives import _parse_oi
+
+    snap = _parse_oi(
+        "BTC/USDT",
+        "binance",
+        {"openInterestValue": 1_000.0, "openInterestAmount": 10.0},
+        lsr=invalid_ratio,
+        top_position_ratio=invalid_ratio,
+    )
+
+    assert snap is not None
+    assert snap.open_interest_usd == 1_000.0
+    assert snap.long_short_ratio is None
+    assert snap.top_trader_position_ratio is None
+
+
 # ---------------------------------------------------------------------------
 # _fetch_lsr_binance_batch — graceful HTTP failure
 # ---------------------------------------------------------------------------
@@ -330,6 +350,30 @@ def test_parse_funding_rejects_nonfinite_or_nonpositive_mark(raw):
     assert _parse_funding("BTC/USDT", "okx", raw) is None
 
 
+@pytest.mark.parametrize("rate", [-0.0001, 0.0, 0.0001])
+def test_parse_funding_preserves_finite_signed_rates_without_optional_mark(rate):
+    from aletheia.data.collectors.derivatives import _parse_funding
+
+    snap = _parse_funding("BTC/USDT", "okx", {"fundingRate": rate})
+
+    assert snap is not None
+    assert snap.funding_rate == rate
+    assert snap.mark_price is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "mark_price", "expected"),
+    [
+        ({"openInterestValue": 0.0}, None, (0.0, None)),
+        ({"openInterestAmount": 0.0}, 65_000.0, (0.0, 0.0)),
+    ],
+)
+def test_extract_oi_usd_preserves_finite_zero_values(raw, mark_price, expected):
+    from aletheia.data.collectors.derivatives import extract_oi_usd
+
+    assert extract_oi_usd(raw, mark_price=mark_price) == expected
+
+
 @pytest.mark.parametrize(
     ("raw", "mark_price"),
     [
@@ -574,6 +618,14 @@ def test_live_collect_rejects_invalid_rows_before_persistence(tmp_path, monkeypa
     )
     assert repo._select_all("funding_rate_snapshots") == []
     assert repo._select_all("open_interest_snapshots") == []
+    from aletheia.data.freshness import fresh_row
+
+    assert fresh_row(
+        repo.latest_funding_rate("BTC/USDT", "bitget"), "funding"
+    ) is None
+    assert fresh_row(
+        repo.latest_open_interest("BTC/USDT", "bitget"), "open_interest"
+    ) is None
     sq.close_db()
 
 
@@ -594,7 +646,11 @@ def test_history_backfill_rejects_invalid_rows_before_persistence(
 
     class _InvalidHistoryExchange:
         async def fetch_funding_rate_history(self, _symbol, limit=24):
-            return [{"timestamp": now_ms, "fundingRate": "-Infinity"}]
+            return [
+                {"timestamp": now_ms - 16 * 3_600_000, "fundingRate": 0.0001},
+                {"timestamp": now_ms - 8 * 3_600_000, "fundingRate": "-Infinity"},
+                {"timestamp": now_ms, "fundingRate": 0.0002},
+            ]
 
         async def fetch_open_interest_history(self, _symbol, _timeframe, limit=24):
             return [
