@@ -195,7 +195,7 @@ def test_matrix_lanes_are_normalized_before_dependency_estimates(monkeypatch) ->
                 },
                 {
                     "id": 2,
-                    "name": "Review checks",
+                    "name": "Plan CI lanes",
                     "conclusion": "success",
                     "started_at": "2026-08-24T00:00:05Z",
                     "completed_at": "2026-08-24T00:00:06Z",
@@ -203,22 +203,38 @@ def test_matrix_lanes_are_normalized_before_dependency_estimates(monkeypatch) ->
                 },
                 {
                     "id": 3,
-                    "name": "Python unit (0)",
+                    "name": "Review core",
                     "conclusion": "success",
                     "started_at": "2026-08-24T00:00:06Z",
-                    "completed_at": "2026-08-24T00:00:20Z",
+                    "completed_at": "2026-08-24T00:00:07Z",
                     "steps": [],
                 },
                 {
                     "id": 4,
-                    "name": "Python unit (1)",
+                    "name": "Review checks",
                     "conclusion": "success",
                     "started_at": "2026-08-24T00:00:07Z",
-                    "completed_at": "2026-08-24T00:00:30Z",
+                    "completed_at": "2026-08-24T00:00:08Z",
                     "steps": [],
                 },
                 {
                     "id": 5,
+                    "name": "Python unit (0)",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:10Z",
+                    "completed_at": "2026-08-24T00:00:20Z",
+                    "steps": [],
+                },
+                {
+                    "id": 6,
+                    "name": "Python unit (1)",
+                    "conclusion": "success",
+                    "started_at": "2026-08-24T00:00:11Z",
+                    "completed_at": "2026-08-24T00:00:30Z",
+                    "steps": [],
+                },
+                {
+                    "id": 7,
                     "name": "Python integration",
                     "conclusion": "success",
                     "started_at": "2026-08-24T00:00:40Z",
@@ -231,8 +247,12 @@ def test_matrix_lanes_are_normalized_before_dependency_estimates(monkeypatch) ->
     monkeypatch.setattr(ci_yield, "_api", fake_api)
     collected = ci_yield._collect_pr("iridyne/aletheia", _pr())
     integration = next(item for item in collected["lanes"] if item["lane"] == "Python integration")
+    review_core = next(item for item in collected["lanes"] if item["lane"] == "Review core")
+    unit = next(item for item in collected["lanes"] if item["job_name"] == "Python unit (0)")
 
     assert [item["lane"] for item in collected["lanes"]].count("Python unit") == 2
+    assert review_core["eligible_at_estimate"] == "2026-08-24T00:00:06+00:00"
+    assert unit["eligible_at_estimate"] == "2026-08-24T00:00:06+00:00"
     assert integration["eligible_at_estimate"] == "2026-08-24T00:00:30+00:00"
 
 

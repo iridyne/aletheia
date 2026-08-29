@@ -289,6 +289,19 @@ def _path_surfaces(path: str) -> set[str]:
     return surfaces
 
 
+def _test_tier(path: str) -> str | None:
+    name = path.rsplit("/", 1)[-1]
+    if not path.startswith("tests/"):
+        return None
+    if path.startswith("tests/e2e/") or name.endswith("_e2e.py") or "_e2e" in name:
+        return "e2e"
+    if path.startswith("tests/specs/") or name.startswith("spec_") or name == "test_spec_conformance.py":
+        return "specifications"
+    if "integration" in name or path.startswith("tests/integration/"):
+        return "integration"
+    return "python_unit"
+
+
 def _required_for_mode(mode: str, surfaces: set[str]) -> dict[str, bool]:
     required = {lane: False for lane in LANES}
     if mode == "docs_only":
@@ -312,7 +325,7 @@ def _required_for_mode(mode: str, surfaces: set[str]) -> dict[str, bool]:
         for lane in ("python_unit", "runtime", "integration", "specifications", "e2e"):
             required[lane] = True
     if mode == "full":
-        for lane in ("python_unit", "runtime", "integration", "specifications", "e2e", "frontend", "operator", "native", "coverage", "full_ci", "shadow_backstop"):
+        for lane in ("python_unit", "runtime", "integration", "specifications", "e2e", "frontend", "operator", "native", "coverage", "full_ci"):
             required[lane] = True
     return required
 
@@ -357,15 +370,20 @@ def plan(
                 continue
             mode = _mode_at_least(mode, "quick")
             if _docs_path(path):
-                reason_codes.add(
-                    "AUTHORITATIVE_DOCS"
-                    if path == "AGENTS.md" or path.startswith(AUTHORITY_DOC_PREFIXES)
-                    else "DOCS_QUICK"
-                )
+                if path == "AGENTS.md" or path.startswith(AUTHORITY_DOC_PREFIXES):
+                    mode = "full"
+                    reason_codes.update({"AUTHORITATIVE_DOCS", "FULL_AUTHORITY_OR_INFRA"})
+                else:
+                    reason_codes.add("DOCS_QUICK")
                 continue
             if _full_path(path):
                 mode = "full"
                 reason_codes.add("FULL_AUTHORITY_OR_INFRA")
+                continue
+            tier = _test_tier(path)
+            if tier in {"integration", "specifications", "e2e"}:
+                mode = _mode_at_least(mode, "deep")
+                reason_codes.add("TEST_TIER_DEEP")
                 continue
             if _critical_path(path):
                 mode = _mode_at_least(mode, "deep")

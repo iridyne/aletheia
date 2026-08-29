@@ -950,7 +950,9 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "exactHeadCheckPassed(trustedCiCheckName)" in update_script
 
     assert "reviews(last: 100)" not in update_script
-    assert "chatgpt-codex-connector" not in update_script
+    assert "hasCleanExactHeadCodexReview" in update_script
+    assert "trusted CI planner requires a clean exact-head Codex review" in update_script
+    assert "ciPlan?.review?.codex_required === true" in update_script
     assert "codex-triage" not in update_script
     assert "github.rest.pulls.listFiles" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script

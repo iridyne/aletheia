@@ -47,7 +47,7 @@ AUTHORITY_SURFACES = {
 JOB_NEEDS = {
     "Plan CI lanes": ("Change Contract preflight for deep CI",),
     "Change Contract preflight for deep CI": (),
-    "Review core": ("Change Contract preflight for deep CI",),
+    "Review core": ("Plan CI lanes",),
     "Review trust-boundary coverage": ("Review core",),
     "Review Node surfaces": ("Review core",),
     "Review native host": ("Review core",),
@@ -55,7 +55,7 @@ JOB_NEEDS = {
         "Review core", "Review trust-boundary coverage",
         "Review Node surfaces", "Review native host",
     ),
-    "Python unit": ("Change Contract preflight for deep CI",),
+    "Python unit": ("Plan CI lanes",),
     "Python runtime state": ("Review checks", "Python unit"),
     "Python integration": ("Review checks", "Python unit"),
     "Python specifications": ("Review checks", "Python unit", "Python runtime state"),

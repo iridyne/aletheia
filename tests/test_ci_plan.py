@@ -20,16 +20,20 @@ def _plan(paths, **kwargs):
     )
 
 
-def test_safe_docs_are_zero_ci_but_authoritative_docs_are_quick() -> None:
+def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     safe = _plan(["README.md", "docs/references/example.md"])
     assert safe["mode"] == "docs_only"
     assert safe["github_ci"] == "none"
     assert safe["required"]["trusted_ci"] is False
 
     authoritative = _plan(["docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md"])
-    assert authoritative["mode"] == "quick"
-    assert authoritative["required"]["quick"] is True
-    assert authoritative["github_checks"] == ["Verify Change Contract", "Trusted CI verdict"]
+    assert authoritative["mode"] == "full"
+    assert authoritative["required"]["full_ci"] is True
+    assert authoritative["review"]["codex_required"] is True
+
+    agents = _plan(["AGENTS.md"])
+    assert agents["mode"] == "full"
+    assert agents["review"]["codex_required"] is True
 
 
 def test_non_safe_docs_file_invalidates_zero_ci() -> None:
@@ -47,6 +51,7 @@ def test_critical_and_ci_authority_escalate() -> None:
     full = _plan([".github/workflows/ci.yml"])
     assert full["mode"] == "full"
     assert full["required"]["full_ci"] is True
+    assert full["required"]["shadow_backstop"] is False
     assert full["review"]["codex_required"] is True
 
 
@@ -85,6 +90,20 @@ def test_unknown_incomplete_and_rename_fail_closed() -> None:
     renamed = _plan([PathChange(path="docs/references/risk.md", status="renamed", previous_path="aletheia/risk/engine.py")])
     assert renamed["mode"] == "deep"
     assert renamed["required"]["integration"] is True
+
+
+def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
+    integration = _plan(["tests/test_data_collectors_integration.py"])
+    assert integration["mode"] == "deep"
+    assert integration["required"]["integration"] is True
+
+    spec = _plan(["tests/specs/spec_risk_engine.py"])
+    assert spec["mode"] == "deep"
+    assert spec["required"]["specifications"] is True
+
+    e2e = _plan(["tests/e2e/test_pipeline_feedback_loop.py"])
+    assert e2e["mode"] == "deep"
+    assert e2e["required"]["e2e"] is True
 
 
 def test_policy_changes_themselves_are_full_and_fingerprint_is_stable() -> None:

@@ -401,6 +401,30 @@ jobs:
                 return false;
               }
             };
+            const isConnectorLogin = (login) =>
+              ['chatgpt-codex-connector[bot]', 'chatgpt-codex-connector'].includes(login || '');
+            const resolveReviewedCommitSha = (body) => {
+              const text = String(body || '');
+              const exact = text.match(/Reviewed commit:\*\*\s*`([0-9a-f]{40})`/i);
+              if (exact) return exact[1];
+              const short = text.match(/Reviewed commit:\*\*\s*`([0-9a-f]{10})`/i);
+              return short ? short[1] : null;
+            };
+            const hasCleanExactHeadCodexReview = (pullRequest) => {
+              for (const comment of pullRequest.comments.nodes || []) {
+                if (
+                  !isConnectorLogin(comment.author?.login) ||
+                  !/Didn't find any major issues\./i.test(String(comment.body || ''))
+                ) {
+                  continue;
+                }
+                const reviewed = resolveReviewedCommitSha(comment.body);
+                if (reviewed && (reviewed === expectedHeadSha || expectedHeadSha.startsWith(reviewed))) {
+                  return true;
+                }
+              }
+              return false;
+            };
             const closeLinkedIssues = async (pullRequest) => {
               const repositoryName = `${context.repo.owner}/${context.repo.repo}`;
               const failures = [];
@@ -604,6 +628,10 @@ jobs:
                 }
               } else {
                 core.info('trusted CI planner classified this head as docs_only; validation CI checks are not required');
+              }
+              if (ciPlan?.review?.codex_required === true && !hasCleanExactHeadCodexReview(pullRequest)) {
+                core.info('trusted CI planner requires a clean exact-head Codex review; exact-head merge remains disabled');
+                return;
               }
 
               if (pullRequest.mergeStateStatus !== 'CLEAN') {
