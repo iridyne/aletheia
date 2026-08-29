@@ -571,6 +571,12 @@ def authorize_setup(
         authorized_at=current.isoformat(),
         valid_until=valid_until.isoformat(),
     )
+    try:
+        current_permission = load_config(persist_migrations=False).agent.permission_mode
+    except Exception as exc:
+        raise ValueError("entry_plan_permission_unavailable") from exc
+    if current_permission not in {"Paper", "Full"}:
+        raise ValueError("entry_plan_permission_revoked")
     with repo.transaction(immediate=True):
         repo.insert_pi_decision(decision)
         repo.insert_conditional_entry_authorization(authorization)
@@ -729,6 +735,8 @@ async def authorize_next_setup(cfg=None) -> dict:
 def validate_fast_trigger_stream(cfg) -> str | None:
     if cfg.fast_trigger.mode == "off":
         return "fast_trigger_disabled"
+    if cfg.agent.permission_mode not in {"Paper", "Full"}:
+        return "entry_plan_permission_revoked"
     mode = str(cfg.exchange.paper_execution_mode or "")
     if "live" in mode:
         return "fast_trigger_live_forbidden"
@@ -1242,15 +1250,40 @@ def materialize_trigger(
         if preflight["status"] != "valid":
             result["status"] = "invalidated"
             return result
-        from aletheia.execution.gateway import execute_existing_proposal
+        try:
+            current_permission = load_config(
+                persist_migrations=False
+            ).agent.permission_mode
+            permission_reason = (
+                None
+                if current_permission in {"Paper", "Full"}
+                else "entry_plan_permission_revoked"
+            )
+        except Exception:
+            permission_reason = "entry_plan_permission_unavailable"
+        if permission_reason:
+            with repo.transaction(immediate=True):
+                repo.update_trade_proposal(proposal.id, status="rejected")
+                repo.transition_universe_setup(
+                    setup.id, expected_states=("triggering",), state="refused"
+                )
+            result["status"] = "refused"
+            result["reason_code"] = permission_reason
+            terminal = "refused"
+        else:
+            from aletheia.execution.gateway import execute_existing_proposal
 
-        gateway_started_at = datetime.now(timezone.utc)
-        result["frame_to_gateway_ms"] = max(
-            0.0, (gateway_started_at - observed_at).total_seconds() * 1_000
-        )
-        execution = execute_existing_proposal(proposal.id, execution_mode)
-        result["execution"] = execution
-        terminal = "executed" if execution.get("status") in {"executed", "already_executed"} else "refused"
+            gateway_started_at = datetime.now(timezone.utc)
+            result["frame_to_gateway_ms"] = max(
+                0.0, (gateway_started_at - observed_at).total_seconds() * 1_000
+            )
+            execution = execute_existing_proposal(proposal.id, execution_mode)
+            result["execution"] = execution
+            terminal = (
+                "executed"
+                if execution.get("status") in {"executed", "already_executed"}
+                else "refused"
+            )
     else:
         terminal = "refused"
     repo.transition_universe_setup(
@@ -1265,6 +1298,7 @@ def materialize_trigger(
         "before": {"status": "triggering"},
         "after": {
             "status": terminal,
+            "reason_code": result.get("reason_code"),
             "frame_to_gateway_ms": result.get("frame_to_gateway_ms"),
         },
         "message": f"Fast Trigger reached terminal state {terminal}.",

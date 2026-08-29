@@ -787,6 +787,109 @@ def test_default_local_paper_uses_bitget_public_fast_stream():
     assert validate_fast_trigger_execution(cfg) is None
 
 
+def test_fast_trigger_refuses_observe_permission():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.agent_runtime.fast_trigger_watch import _watch_config_identity
+    from aletheia.universe.fast_trigger import validate_fast_trigger_execution
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.agent.permission_mode = "Observe"
+
+    assert validate_fast_trigger_execution(cfg) == "entry_plan_permission_revoked"
+    observe_identity = _watch_config_identity(cfg)
+    cfg.agent.permission_mode = "Paper"
+    assert _watch_config_identity(cfg) != observe_identity
+
+
+@pytest.mark.asyncio
+async def test_blocked_start_cancels_open_entry_plans(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.agent.permission_mode = "Observe"
+    cancellations = []
+
+    async def cancel(reason):
+        cancellations.append(reason)
+
+    monkeypatch.setattr(watch, "_lifecycle_ready", True)
+    monkeypatch.setattr(watch, "_watch_task", None)
+    monkeypatch.setattr(watch, "_stop_event", None)
+    monkeypatch.setattr(watch, "_cancel_open_entry_plans", cancel)
+
+    status = await watch.reconfigure_fast_trigger_watch(
+        cfg, asyncio.get_running_loop()
+    )
+
+    assert status["task_started"] is False
+    assert status["reason"] == "entry_plan_permission_revoked"
+    assert cancellations == ["entry_plan_permission_revoked"]
+
+
+def test_authorization_rechecks_permission_before_persist(tmp_path, monkeypatch):
+    _prepare(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    revoked = cfg.model_copy(deep=True)
+    revoked.agent.permission_mode = "Observe"
+    monkeypatch.setattr(loader, "load_config", lambda **_kwargs: revoked)
+
+    with pytest.raises(ValueError, match="entry_plan_permission_revoked"):
+        _authorized_setup(cfg, datetime.now(timezone.utc))
+
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM conditional_entry_authorizations"
+    ).fetchone()[0] == 0
+    assert repo.get_db().execute(
+        "SELECT state FROM universe_setups"
+    ).fetchone()[0] == "pending_authorization"
+
+
+def test_materialization_rechecks_permission_before_gateway(tmp_path, monkeypatch):
+    _prepare(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import save_config
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.fast_trigger import materialize_trigger
+
+    now = datetime.now(timezone.utc)
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "execute"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+    setup, _ = _authorized_setup(cfg, now)
+    revoked = cfg.model_copy(deep=True)
+    revoked.agent.permission_mode = "Observe"
+    monkeypatch.setattr(loader, "load_config", lambda **_kwargs: revoked)
+    monkeypatch.setattr(
+        "aletheia.risk.engine.account_available_for_execution",
+        lambda _execution_mode, _cfg: 1_000.0,
+    )
+    gateway_calls = []
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.execute_existing_proposal",
+        lambda *_args, **_kwargs: gateway_calls.append(True),
+    )
+
+    result = materialize_trigger(setup.id, _trigger_snapshot(now), cfg=cfg, now=now)
+
+    assert result["status"] == "refused"
+    assert result["reason_code"] == "entry_plan_permission_revoked"
+    assert gateway_calls == []
+    assert repo.get_trade_proposal(result["proposal_id"])["status"] == "rejected"
+    assert repo.get_universe_setup(setup.id)["state"] == "refused"
+
+
 def test_local_paper_selects_bitget_public_data_adapter():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_stream import (

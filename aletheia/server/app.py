@@ -657,9 +657,13 @@ async def lifespan(app: FastAPI):
         register_fast_trigger_lifecycle()
     if background_services_enabled and gate_permits_pi_daemon:
         try:
-            from aletheia.agent_runtime.fast_trigger_watch import start_fast_trigger_watch
+            from aletheia.agent_runtime.fast_trigger_watch import (
+                current_fast_trigger_task,
+                reconfigure_fast_trigger_watch,
+            )
 
-            fast_trigger_task = start_fast_trigger_watch(asyncio.get_running_loop(), cfg)
+            await reconfigure_fast_trigger_watch(cfg, asyncio.get_running_loop())
+            fast_trigger_task = current_fast_trigger_task()
         except Exception as e:
             logger.warning("Fast Trigger watcher failed to start: %s", e, exc_info=True)
 
