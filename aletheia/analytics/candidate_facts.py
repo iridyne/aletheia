@@ -280,6 +280,11 @@ def candidate_coverage_counts(
     if lower_us is None or upper_us is None:
         raise ValueError("invalid_coverage_window")
 
+    prior_identity_sql = (
+        "COALESCE(NULLIF(prior.outcome_candidate_key, ''), "
+        "NULLIF(prior.candidate_key, ''), CAST(prior.id AS TEXT))"
+    )
+
     cursor = db.execute(
         "WITH current_outcome AS ("
         "  SELECT fd.outcome_candidate_key AS identity "
@@ -302,13 +307,7 @@ def candidate_coverage_counts(
         "  WHERE NOT EXISTS ("
         "    SELECT 1 FROM filter_decisions prior "
         "    WHERE aletheia_instant_us(prior.evaluated_at) < ? "
-        "      AND ("
-        "        prior.outcome_candidate_key = current_outcome.identity "
-        "        OR ("
-        "          (prior.outcome_candidate_key IS NULL OR prior.outcome_candidate_key = '') "
-        "          AND prior.candidate_key = current_outcome.identity"
-        "        )"
-        "      )"
+        f"      AND {prior_identity_sql} = current_outcome.identity "
         "  )"
         "), eligible_candidate AS ("
         "  SELECT current_candidate.identity "
@@ -316,13 +315,7 @@ def candidate_coverage_counts(
         "  WHERE NOT EXISTS ("
         "    SELECT 1 FROM filter_decisions prior "
         "    WHERE aletheia_instant_us(prior.evaluated_at) < ? "
-        "      AND ("
-        "        prior.outcome_candidate_key = current_candidate.identity "
-        "        OR ("
-        "          (prior.outcome_candidate_key IS NULL OR prior.outcome_candidate_key = '') "
-        "          AND prior.candidate_key = current_candidate.identity"
-        "        )"
-        "      )"
+        f"      AND {prior_identity_sql} = current_candidate.identity "
         "  )"
         ") SELECT identity FROM eligible_outcome "
         "UNION ALL SELECT identity FROM eligible_candidate "
@@ -349,17 +342,20 @@ def candidate_coverage_counts(
     batch_cursor = db.execute(
         "SELECT id, candidate_count, candidate_facts, evaluated_at "
         "FROM filter_decision_batches "
-        "WHERE aletheia_instant_us(evaluated_at) >= ? "
-        "AND aletheia_instant_us(evaluated_at) <= ? "
+        "WHERE aletheia_instant_us(evaluated_at) <= ? "
         "ORDER BY aletheia_instant_us(evaluated_at), rowid",
-        (lower_us, upper_us),
+        (upper_us,),
     )
     for batch in batch_cursor:
         batch_id = str(batch["id"])
+        batch_in_window = _in_window(
+            batch["evaluated_at"], lower_us=lower_us, upper_us=upper_us
+        )
         try:
             raw_facts = decode_filter_decision_batch(str(batch["candidate_facts"] or "[]"))
         except (TypeError, ValueError, json.JSONDecodeError):
-            unavailable_units += 1
+            if batch_in_window:
+                unavailable_units += 1
             continue
         declared_count = batch["candidate_count"]
         if declared_count is not None:
@@ -368,7 +364,8 @@ def candidate_coverage_counts(
             except (TypeError, ValueError, OverflowError):
                 declared_count = None
             if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
-                unavailable_units += 1
+                if batch_in_window:
+                    unavailable_units += 1
                 continue
         for sequence, raw in enumerate(raw_facts):
             if not isinstance(raw, dict):
@@ -376,6 +373,11 @@ def candidate_coverage_counts(
             fact_at = _utc(raw.get("evaluated_at")) or _utc(batch["evaluated_at"])
             fact_us = _instant_us(fact_at)
             if fact_us is None or fact_us > upper_us:
+                continue
+            # For a pre-window container, only retain facts whose own
+            # timestamp is in the requested window. Older facts are streamed
+            # again below solely to disprove a bounded set of identities.
+            if fact_us < lower_us and not batch_in_window:
                 continue
             identity = str(
                 raw.get("outcome_candidate_key")
@@ -418,13 +420,13 @@ def candidate_coverage_counts(
         for row in older_explicit:
             identities.discard(str(row["identity"] if hasattr(row, "keys") else row[0]))
 
-    # ponytail: Batch payloads are legacy JSON blobs, so their identities are not
-    # SQL-queryable without a schema change. Stream only as long as there are
-    # current candidates left to disprove; retain no historical payloads or
-    # identity map. A future normalized projection can remove this scan.
+    # Batch payloads are legacy JSON blobs, so their identities are not
+    # SQL-queryable without a schema change. Validate every historical payload
+    # before using it to disprove a current identity; an invalid declaration is
+    # unavailable evidence, not proof of prior exposure.
     if identities:
         historical_cursor = db.execute(
-            "SELECT id, candidate_facts, evaluated_at "
+            "SELECT id, candidate_count, candidate_facts, evaluated_at "
             "FROM filter_decision_batches "
             "WHERE aletheia_instant_us(evaluated_at) < ? "
             "ORDER BY aletheia_instant_us(evaluated_at) DESC, rowid DESC",
@@ -437,6 +439,14 @@ def candidate_coverage_counts(
                 )
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
+            declared_count = batch["candidate_count"]
+            if declared_count is not None:
+                try:
+                    declared_count = int(declared_count)
+                except (TypeError, ValueError, OverflowError):
+                    declared_count = None
+                if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
+                    continue
             batch_id = str(batch["id"])
             for sequence, raw in enumerate(raw_facts):
                 if not isinstance(raw, dict):

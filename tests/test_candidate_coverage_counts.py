@@ -215,6 +215,65 @@ def test_window_counts_do_not_return_historical_identity_rows():
     assert len(explicit_candidate_rows) == 1
 
 
+def test_historical_batch_count_mismatch_does_not_hide_current_identity():
+    db = sq.get_db()
+    _batch(
+        db,
+        "historical-mismatch",
+        "2026-07-20T00:00:00+00:00",
+        [{"candidate_key": "reused", "evaluated_at": "2026-07-20T00:00:00+00:00"}],
+        candidate_count=5,
+    )
+    _decision(
+        db,
+        "current-reused",
+        "2026-08-05T00:00:00+00:00",
+        outcome_key="reused",
+    )
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db, horizon="24h", lower=LOWER, upper=UPPER
+    )
+
+    assert counts["candidate_units"] == 1
+
+
+def test_pre_window_batch_uses_embedded_fact_timestamp():
+    db = sq.get_db()
+    _batch(
+        db,
+        "historical-container",
+        "2026-07-20T00:00:00+00:00",
+        [{"candidate_key": "embedded-window", "evaluated_at": "2026-08-05T00:00:00+00:00"}],
+    )
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db, horizon="24h", lower=LOWER, upper=UPPER
+    )
+
+    assert counts["candidate_units"] == 1
+
+
+def test_prior_decision_fallback_id_matches_canonical_identity():
+    db = sq.get_db()
+    _decision(db, "legacy-id", "2026-07-20T00:00:00+00:00")
+    db.execute(
+        "UPDATE filter_decisions SET candidate_key='' WHERE id=?", ("legacy-id",)
+    )
+    _decision(
+        db,
+        "current-row",
+        "2026-08-05T00:00:00+00:00",
+        outcome_key="legacy-id",
+    )
+
+    counts = candidate_facts.candidate_coverage_counts(
+        db, horizon="24h", lower=LOWER, upper=UPPER
+    )
+
+    assert counts["candidate_units"] == 0
+
+
 def test_candidate_facts_epoch_start_excludes_pre_epoch_malformed_batches():
     db = sq.get_db()
     _batch(db, "old-bad", "2026-07-20T00:00:00+00:00", "{not-json")
