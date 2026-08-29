@@ -670,6 +670,28 @@ def test_snapshot_freshness_is_exchange_scoped(monkeypatch):
     ) is True
 
 
+def test_snapshot_freshness_rejects_far_future_timestamp(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    snapshot = {"snapshot_at": (now + timedelta(hours=1)).isoformat()}
+    monkeypatch.setattr(
+        "aletheia.universe.snapshot_freshness.list_market_snapshots",
+        lambda **_kwargs: [snapshot],
+    )
+
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="bitget", now=now,
+    ) is False
+
+    snapshot["snapshot_at"] = now.isoformat()
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", exchange="bitget", now=now,
+    ) is True
+
+
 @spec_claim(
     SpecClaim(
         "UP-21", "universe_pipeline", "§signal emission terminal evidence", "L2a",

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.storage.repositories import list_market_snapshots
 
 
@@ -45,7 +46,13 @@ def has_fresh_market_snapshot(
     if observed_at.tzinfo is None:
         observed_at = observed_at.replace(tzinfo=timezone.utc)
     reference = now or datetime.now(timezone.utc)
-    return observed_at >= reference - timedelta(hours=max_age_hours)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    reference = reference.astimezone(timezone.utc)
+    return (
+        observed_at >= reference - timedelta(hours=max_age_hours)
+        and observed_at <= reference + MAX_FUTURE_SKEW
+    )
 
 
 def _snapshot_market_type(market_type: str | None) -> str | None:
