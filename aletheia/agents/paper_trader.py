@@ -476,6 +476,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         active_signal_setups = _active_signal_setups()
     except SignalQueueOwnershipUnavailable as e:
         logger.warning("Signal queue ownership unavailable, deferring pass: %s", e)
+        errors.append("signal_queue_ownership_unavailable")
         return _result()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
@@ -595,6 +596,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         _op_eval_ids = _operator_evaluated_opportunity_ids()
     except SignalQueueOwnershipUnavailable as e:
         logger.warning("operator_evaluated_opportunity_ids unavailable, deferring pass: %s", e)
+        errors.append("operator_evaluated_ownership_unavailable")
         return _result()
 
     plan = _plan_signal_batch(

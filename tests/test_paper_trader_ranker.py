@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -109,6 +110,50 @@ def test_operator_evaluated_ownership_read_fails_closed(monkeypatch):
         match="operator_evaluated_ownership_unavailable",
     ):
         _operator_evaluated_opportunity_ids()
+
+
+@pytest.mark.asyncio
+async def test_operator_ownership_outage_is_reported_by_paper_trader(monkeypatch):
+    from aletheia.agents import paper_trader
+
+    candidate = {
+        "opportunity_id": "opp-ownership-outage",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "analysis_context": {"kind": "stock_linked_perp"},
+    }
+    monkeypatch.setattr(paper_trader, "load_config", lambda: _mock_config())
+    monkeypatch.setattr(paper_trader, "is_tool_permitted", lambda *_args: True)
+    monkeypatch.setattr(paper_trader, "expire_stale_queued_opportunities", lambda: 0)
+    monkeypatch.setattr(paper_trader, "prune_signal_pending_stale", lambda *_args: 0)
+    monkeypatch.setattr(paper_trader, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(paper_trader, "_recent_signal_pairs", lambda: set())
+    monkeypatch.setattr(paper_trader, "_active_signal_setups", lambda: set())
+    monkeypatch.setattr(
+        paper_trader,
+        "build_paper_candidate_workset",
+        lambda **_kwargs: SimpleNamespace(scanned_candidates=[candidate]),
+    )
+    monkeypatch.setattr(paper_trader, "count_unresolved_signal_pending", lambda *_args: 0)
+    monkeypatch.setattr(paper_trader, "list_pending_signal_queue", lambda *_args: [])
+    monkeypatch.setattr(paper_trader, "_filter_evidence_artifact_refs", lambda *_args: [])
+    monkeypatch.setattr(
+        paper_trader,
+        "_operator_evaluated_opportunity_ids",
+        lambda: (_ for _ in ()).throw(
+            paper_trader.SignalQueueOwnershipUnavailable(
+                "operator_evaluated_ownership_unavailable"
+            )
+        ),
+    )
+
+    result = await paper_trader.run_paper_trader(
+        permission_mode="Paper", run_id="operator-ownership-outage"
+    )
+
+    assert result["errors"] == ["operator_evaluated_ownership_unavailable"]
+    assert result["outputs"] == []
 
 
 # ---------------------------------------------------------------------------
