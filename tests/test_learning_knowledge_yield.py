@@ -53,6 +53,20 @@ def test_fifty_hypotheses_to_two_facts_yields_four_percent():
     assert "generation_cost_incomplete" in result.unavailable_reasons
 
 
+def test_fact_after_report_window_is_not_counted_retroactively():
+    from aletheia.learning.knowledge_yield import build_knowledge_yield_report
+
+    _verdict(window_end="2026-09-02T00:00:00+00:00")
+    report = build_knowledge_yield_report(
+        window_start="2026-08-01T00:00:00+00:00",
+        window_end="2026-09-01T00:00:00+00:00",
+    )
+    result = report.slices[0]
+    assert result.hypotheses_entering_prospective_test_n == 1
+    assert result.qualified_economic_knowledge_n == 0
+    assert result.knowledge_yield == 0.0
+
+
 def test_incompatible_metric_versions_are_separate_slices():
     from aletheia.learning.knowledge_yield import build_knowledge_yield_report
     from aletheia.learning.ledger import insert_experiment, insert_hypothesis

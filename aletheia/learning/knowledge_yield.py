@@ -145,6 +145,8 @@ def build_knowledge_yield_report(
         qualified = [
             fact for experiment_id, fact in facts_by_experiment.items()
             if experiment_id in experiment_ids
+            and (evidenced := _instant(fact.window_end)) is not None
+            and start <= evidenced < end
         ]
         invalid_rows = get_db().execute(
             f"SELECT COUNT(*) FROM learning_contribution_verdicts "

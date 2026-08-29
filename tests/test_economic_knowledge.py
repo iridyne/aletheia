@@ -11,6 +11,7 @@ def _verdict(
     actual_n: int = 50,
     suffix: str = "",
     stage: str = "paper_10",
+    window_end: str = "2026-08-08T00:00:00+00:00",
 ):
     from aletheia.learning.ledger import (
         insert_experiment,
@@ -59,7 +60,7 @@ def _verdict(
         hypothesis_id=hypothesis.hypothesis_id,
         stage=stage,
         window_start="2026-08-01T00:00:00+00:00",
-        window_end="2026-08-08T00:00:00+00:00",
+        window_end=window_end,
         unique_treatment_n=50,
         unique_control_n=50,
         baseline=0.1,
