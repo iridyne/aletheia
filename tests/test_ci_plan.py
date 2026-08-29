@@ -35,19 +35,19 @@ def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
     authoritative = _plan(["docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md"])
     assert authoritative["mode"] == "full"
     assert authoritative["required"]["full_ci"] is True
-    assert authoritative["review"]["codex_required"] is True
+    assert authoritative["review"]["codex_required"] is False
 
     agents = _plan(["AGENTS.md"])
     assert agents["mode"] == "full"
-    assert agents["review"]["codex_required"] is True
+    assert agents["review"]["codex_required"] is False
 
     nested_agents = _plan(["scripts/AGENTS.md"])
     assert nested_agents["mode"] == "full"
-    assert nested_agents["review"]["codex_required"] is True
+    assert nested_agents["review"]["codex_required"] is False
 
     safe_prefix_agents = _plan(["docs/references/AGENTS.md"])
     assert safe_prefix_agents["mode"] == "full"
-    assert safe_prefix_agents["review"]["codex_required"] is True
+    assert safe_prefix_agents["review"]["codex_required"] is False
 
 
 def test_non_safe_docs_file_invalidates_zero_ci() -> None:
@@ -60,13 +60,13 @@ def test_critical_and_ci_authority_escalate() -> None:
     deep = _plan(["aletheia/risk/engine.py"])
     assert deep["mode"] == "deep"
     assert deep["required"]["runtime"] is True
-    assert deep["review"]["codex_required"] is True
+    assert deep["review"]["codex_required"] is False
 
     full = _plan([".github/workflows/ci.yml"])
     assert full["mode"] == "full"
     assert full["required"]["full_ci"] is True
     assert full["required"]["shadow_backstop"] is False
-    assert full["review"]["codex_required"] is True
+    assert full["review"]["codex_required"] is False
     assert full["github_checks"] == [
         "Verify Change Contract",
         "Trusted CI verdict",
@@ -225,7 +225,7 @@ def test_operational_scripts_are_full_ci() -> None:
     ):
         report = _plan([path])
         assert report["mode"] == "full"
-        assert report["review"]["codex_required"] is True
+        assert report["review"]["codex_required"] is False
 
 
 def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:

@@ -249,17 +249,15 @@ def test_codex_shepherd_retriggers_auto_merge_after_clean_review_comment() -> No
     assert "expected_base_sha: pullRequest.base.sha" in issue_comment_handler
 
 
-def test_auto_merge_paginates_clean_codex_review_comments() -> None:
+def test_auto_merge_does_not_parse_codex_comments_as_merge_authority() -> None:
     source = _auto_merge_source()
 
-    assert "$commentsAfter: String" in source
-    assert "comments(first: 100, after: $commentsAfter)" in source
-    assert "const comments = []" in source
-    assert "comments.push(...page.comments.nodes)" in source
-    assert "page.comments.pageInfo" in source
-    assert "pullRequest.comments.nodes = comments" in source
-    assert "github.rest.repos.getCommit" in source
-    assert "[0-9a-f]{7,40}" in source
+    assert "$commentsAfter: String" not in source
+    assert "comments(first: 100" not in source
+    assert "pullRequest.comments.nodes" not in source
+    assert "hasCleanExactHeadCodexReview" not in source
+    assert "Didn't find any major issues." not in source
+    assert "requires a clean exact-head Codex review" not in source
 
 
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:

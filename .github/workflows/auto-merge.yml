@@ -325,7 +325,6 @@ jobs:
               $owner: String!,
               $repo: String!,
               $number: Int!,
-              $commentsAfter: String,
               $closingIssuesAfter: String,
             ) {
               repository(owner: $owner, name: $repo) {
@@ -339,15 +338,6 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
-                  comments(first: 100, after: $commentsAfter) {
-                    nodes {
-                      author { login }
-                      authorAssociation
-                      body
-                      createdAt
-                    }
-                    pageInfo { hasNextPage endCursor }
-                  }
                   closingIssuesReferences(first: 100, after: $closingIssuesAfter) {
                     nodes {
                       number
@@ -365,30 +355,12 @@ jobs:
             }`;
             const fetchPullRequest = async () => {
               let pullRequest = null;
-              const comments = [];
-              let commentsAfter = null;
-              while (true) {
-                const result = await github.graphql(pullRequestQuery, {
-                  ...context.repo,
-                  number: pullRequestNumber,
-                  commentsAfter,
-                  closingIssuesAfter: null,
-                });
-                const page = result.repository.pullRequest;
-                if (!page) return null;
-                if (!pullRequest) pullRequest = page;
-                comments.push(...page.comments.nodes);
-                const {hasNextPage, endCursor} = page.comments.pageInfo;
-                if (!hasNextPage) break;
-                commentsAfter = endCursor;
-              }
               const closingIssues = [];
               let closingIssuesAfter = null;
               while (true) {
                 const result = await github.graphql(pullRequestQuery, {
                   ...context.repo,
                   number: pullRequestNumber,
-                  commentsAfter: null,
                   closingIssuesAfter,
                 });
                 const page = result.repository.pullRequest;
@@ -399,7 +371,6 @@ jobs:
                 if (!hasNextPage) break;
                 closingIssuesAfter = endCursor;
               }
-              pullRequest.comments.nodes = comments;
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
             };
@@ -495,40 +466,6 @@ jobs:
                 );
                 return false;
               }
-            };
-            const isConnectorLogin = (login) =>
-              ['chatgpt-codex-connector[bot]', 'chatgpt-codex-connector'].includes(login || '');
-            const resolveReviewedCommitSha = async (body) => {
-              const text = String(body || '');
-              const match = text.match(/Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i);
-              if (!match) return null;
-              const reviewed = match[1].toLowerCase();
-              if (reviewed.length === 40) return reviewed;
-              try {
-                const {data: commit} = await github.rest.repos.getCommit({
-                  ...context.repo,
-                  ref: reviewed,
-                });
-                return commit.sha;
-              } catch (error) {
-                core.warning(`could not resolve Codex reviewed commit ${reviewed}: ${error}`);
-                return null;
-              }
-            };
-            const hasCleanExactHeadCodexReview = async (pullRequest) => {
-              for (const comment of pullRequest.comments.nodes || []) {
-                if (
-                  !isConnectorLogin(comment.author?.login) ||
-                  !/Didn't find any major issues\./i.test(String(comment.body || ''))
-                ) {
-                  continue;
-                }
-                const reviewed = await resolveReviewedCommitSha(comment.body);
-                if (reviewed === expectedHeadSha) {
-                  return true;
-                }
-              }
-              return false;
             };
             const closeLinkedIssues = async (pullRequest) => {
               const repositoryName = `${context.repo.owner}/${context.repo.repo}`;
@@ -744,10 +681,6 @@ jobs:
                 }
               } else {
                 core.info('trusted CI planner classified this head as docs_only; validation CI checks are not required');
-              }
-              if (ciPlan?.review?.codex_required === true && !(await hasCleanExactHeadCodexReview(pullRequest))) {
-                core.info('trusted CI planner requires a clean exact-head Codex review; exact-head merge remains disabled');
-                return;
               }
 
               if (pullRequest.mergeStateStatus !== 'CLEAN') {
