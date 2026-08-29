@@ -72,6 +72,15 @@ class CCXTProfile:
     mutation_leverage = False
     mutation_post_only = False
     mutation_client_order_id = False
+
+    @staticmethod
+    def external_client_order_id(value: str | None) -> str | None:
+        return value
+
+    mutation_trigger_order = False
+    native_tpsl = False
+    protection_replace = False
+    protection_cancel = False
     integer_leverage = False
 
     def __init__(self, **client_options: object) -> None:
@@ -80,17 +89,11 @@ class CCXTProfile:
             client_options.get("secret"),
             client_options.get("password"),
         )
-        if any(
-            value is not None
-            and (not isinstance(value, str) or not value.strip())
-            for value in credential_fields
-        ):
+        if any(value is not None and (not isinstance(value, str) or not value.strip()) for value in credential_fields):
             raise ValueError("UTA profile credentials are incomplete")
         self._client_options = dict(client_options)
 
-    def funding_ledger_requests(
-        self, *, start_at: datetime, received_at: datetime
-    ) -> tuple[dict[str, object], ...]:
+    def funding_ledger_requests(self, *, start_at: datetime, received_at: datetime) -> tuple[dict[str, object], ...]:
         return self.ledger_requests
 
     def validate_identity(self, identity: UTAAccountIdentity) -> None:
@@ -116,16 +119,14 @@ class CCXTProfile:
         if self.sandbox:
             exchange.set_sandbox_mode(True)
 
-    async def prepare_submit(self, exchange: Any, command: Any) -> None:
-        """Apply profile-owned pre-send settings; the base profile is read-only."""
+    async def prepare_submit(self, exchange: Any, command: Any) -> Any:
+        """Apply profile-owned pre-send settings and return the exact command."""
         raise NotImplementedError
 
     def submit_request(self, command: Any) -> tuple[str, str, str, object, object, dict]:
         raise NotImplementedError
 
-    def modify_request(
-        self, command: Any, current: Any
-    ) -> tuple[object, str, str, str, object, object, dict]:
+    def modify_request(self, command: Any, current: Any) -> tuple[object, str, str, str, object, object, dict]:
         raise NotImplementedError
 
     def cancel_request(self, command: Any) -> tuple[object, str, dict]:
@@ -157,16 +158,11 @@ class CCXTProfile:
         )
         settlement = next((item for item in normalized if item.currency == "USDT"), None)
         reason = None
-        if any(
-            item.currency != "USDT" and item.total not in {None, Decimal(0)}
-            for item in normalized
-        ):
+        if any(item.currency != "USDT" and item.total not in {None, Decimal(0)} for item in normalized):
             reason = "unpriced_asset_balance"
         if settlement is not None and settlement.total is None:
             reason = "settlement_total_missing"
-        has_nonzero_total = any(
-            item.total not in {None, Decimal(0)} for item in normalized
-        )
+        has_nonzero_total = any(item.total not in {None, Decimal(0)} for item in normalized)
         empty = None if has_nonzero_total else Decimal(0)
         values = {
             "equity": settlement.total if settlement else empty,
@@ -189,16 +185,10 @@ class CCXTProfile:
         if not separator or not base or not quote:
             raise ValueError("invalid venue symbol")
         market_type = str(market.get("type") or raw.get("type") or "")
-        canonical_type = (
-            "usdt_futures"
-            if market_type in {"swap", "future"} or ":" in venue_symbol
-            else "spot"
-        )
+        canonical_type = "usdt_futures" if market_type in {"swap", "future"} or ":" in venue_symbol else "spot"
         raw_contract_size = raw.get("contractSize")
         contract_size = decimal_value(
-            raw_contract_size
-            if raw_contract_size not in {None, ""}
-            else market.get("contractSize")
+            raw_contract_size if raw_contract_size not in {None, ""} else market.get("contractSize")
         )
         if contract_size is not None and contract_size <= 0:
             raise ValueError("invalid contract size")
@@ -258,11 +248,7 @@ class CCXTProfile:
             unrealized_pnl=decimal_value(raw.get("unrealizedPnl")),
             leverage=leverage,
             margin_mode=str(raw.get("marginMode")) if raw.get("marginMode") else None,
-            liquidation_price=(
-                liquidation_price
-                if liquidation_price and liquidation_price > 0
-                else None
-            ),
+            liquidation_price=(liquidation_price if liquidation_price and liquidation_price > 0 else None),
             opened_at=opened_at,
             opened_at_provenance="exchange_reported" if opened_at else None,
             source_at=source_at,
@@ -329,10 +315,7 @@ class CCXTProfile:
         """Preserve only stable, consumer-owned venue reason codes."""
         info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
         value = (
-            raw.get("cancelReason")
-            or raw.get("cancel_reason")
-            or info.get("cancelReason")
-            or info.get("cancel_reason")
+            raw.get("cancelReason") or raw.get("cancel_reason") or info.get("cancelReason") or info.get("cancel_reason")
         )
         reason = str(value or "").strip().lower()
         if reason == "trade_too_many_times_cancel":
@@ -368,22 +351,13 @@ class CCXTProfile:
             or info.get("posSide")
             or info.get("holdSide")
         )
-        trade_intent = (
-            raw.get("tradeSide")
-            or raw.get("trade_side")
-            or info.get("tradeSide")
-            or info.get("trade_side")
-        )
-        if trade_intent is None and (
-            raw.get("reduceOnly") is True or info.get("reduceOnly") is True
-        ):
+        trade_intent = raw.get("tradeSide") or raw.get("trade_side") or info.get("tradeSide") or info.get("trade_side")
+        if trade_intent is None and (raw.get("reduceOnly") is True or info.get("reduceOnly") is True):
             trade_intent = "close"
         return FillReport(
             identity=identity,
             instrument=instrument,
-            client_order_id=(
-                str(raw.get("clientOrderId")) if raw.get("clientOrderId") else None
-            ),
+            client_order_id=(str(raw.get("clientOrderId")) if raw.get("clientOrderId") else None),
             venue_order_id=str(raw.get("order")) if raw.get("order") else None,
             venue_fill_id=str(fill_id),
             side=str(raw.get("side") or "unknown"),
@@ -412,12 +386,24 @@ class CCXTProfile:
             if isinstance(value, dict):
                 for key, item in value.items():
                     normalized = str(key).lower().replace("-", "_")
-                    if account_id is None and normalized in {
-                        "uid", "user_id", "userid", "account_id", "accountid",
-                    } and item not in {None, "", 0, False}:
+                    if (
+                        account_id is None
+                        and normalized
+                        in {
+                            "uid",
+                            "user_id",
+                            "userid",
+                            "account_id",
+                            "accountid",
+                        }
+                        and item not in {None, "", 0, False}
+                    ):
                         account_id = str(item)
                     if normalized in {
-                        "cantrade", "can_trade", "tradepermission", "order_permission",
+                        "cantrade",
+                        "can_trade",
+                        "tradepermission",
+                        "order_permission",
                     }:
                         if isinstance(item, bool):
                             permission = "granted" if item else "denied"

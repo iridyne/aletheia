@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from aletheia.uta.models import (
+    CommandReport,
     CommandEvidence,
     SubmissionReport,
     UTAAccountIdentity,
@@ -468,6 +469,133 @@ def test_gateway_close_selector_requires_current_qualification(tmp_path, monkeyp
 
     assert selected == [("uta", position.id), ("legacy", position.id)]
     assert qualification_checks == ["binance_testnet"]
+
+
+def test_gateway_okx_close_selector_uses_same_qualified_coordinator(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+        status="open",
+    )
+    repo.insert_position(position)
+    selected = []
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.close_position",
+        lambda position_id, **_kwargs: selected.append(("uta", position_id))
+        or {"status": "submitted"},
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.okx_broker.close_okx_position",
+        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
+        or {"status": "submitted"},
+    )
+    from aletheia.execution import gateway
+
+    monkeypatch.setattr(
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: True
+    )
+    gateway.close_exchange_position(position.id, "operator_close")
+    monkeypatch.setattr(
+        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False
+    )
+    gateway.close_exchange_position(position.id, "operator_close")
+
+    assert selected == [("uta", position.id), ("legacy", position.id)]
+
+
+def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import _submit_protection_leg
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        stop_price=90.0,
+        take_profit_price=120.0,
+        execution_mode="okx_demo",
+        status="open",
+    )
+    repo.insert_position(position)
+    calls = []
+
+    async def submit(command):
+        stored = repo.list_orders(limit=10)
+        assert any(row["status"] == "pending" for row in stored)
+        assert repo.get_position(position.id)["status"] == "open"
+        calls.append(command.purpose)
+        return _ack(command, f"venue-{command.purpose}")
+
+    adapter = _Adapter(submit)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+    )
+
+    stored_position = repo.get_position(position.id)
+    result = {
+        "sl": _submit_protection_leg(stored_position, "protective_stop", 90.0),
+        "tp": _submit_protection_leg(stored_position, "take_profit", 120.0),
+    }
+
+    assert calls == ["protective_stop", "take_profit"]
+    assert result == {
+        "sl": "venue-protective_stop",
+        "tp": "venue-take_profit",
+    }
+    assert {row["status"] for row in repo.list_orders(limit=10)} == {"submitted"}
+
+
+def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import replace_protective_stop
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=100.0, stop_price=90.0,
+        execution_mode="okx_demo", status="open",
+        exchange_tpsl_order_id='{"sl":"old-sl","tp":"old-tp"}',
+    )
+    repo.insert_position(position)
+    events = []
+
+    class Adapter(_Adapter):
+        async def cancel_order(self, command):
+            events.append(("cancel", command.target_venue_order_id))
+            return CommandReport(
+                identity=command.expected_account, command_id=command.command_id,
+                evidence=CommandEvidence.ACKNOWLEDGED,
+                received_at=datetime.now(timezone.utc),
+                venue_order_id=command.target_venue_order_id, profile_version="1",
+            )
+
+    async def submit(command):
+        events.append(("submit", str(command.trigger_price)))
+        return _ack(command, "new-sl")
+
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter",
+        lambda _mode: Adapter(submit),
+    )
+
+    assert replace_protective_stop(position.id, 95.0) is True
+    assert events == [("cancel", "old-sl"), ("submit", "95.0")]
+    assert repo.get_position(position.id)["exchange_tpsl_order_id"] == '{"sl": "new-sl", "tp": "old-tp"}'
 
 
 def test_gateway_stale_close_qualification_calls_no_backend(tmp_path, monkeypatch):

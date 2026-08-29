@@ -24,7 +24,11 @@ UTA owns normalized private reads for all configured profiles and the evidence,
 recovery, funding, verified-exit and Trust consumers. Binance testnet also has a
 configuration-gated execution slice through Gateway and the generic Coordinator;
 it remains legacy-selected until credential-backed qualification succeeds. Other
-venue mutations and all live-limited execution remain on their migration paths.
+OKX demo now has the same configuration-gated entry, full-close and native
+protection slice, including exact contract conversion and demo client identity.
+Both profiles remain legacy-selected until their own credential-backed
+qualification succeeds. Bitget mutations and all live-limited execution remain
+on their migration paths.
 Existing `submission_unknown`, `materialization_missing`, Risk-before-Gateway
 authority and `paper_internal` behavior remain authoritative.
 
@@ -71,10 +75,11 @@ reconciliation, funding, verified-exit, Trust, profile and structural tests.
 Every switched demo/testnet profile additionally requires secret-safe
 credential-backed qualification bound to exact code, account generation and
 authoritative private Fill evidence. No real-money order is an acceptance gate.
-The Phase 4 Binance gate is `scripts/qualify_uta.py`; its execution probe requires
-an explicit testnet-order confirmation and derives minimum legal size from venue
-constraints. A missing credential or any unresolved command produces a
-non-qualified artifact and cannot authorize selector activation.
+The Binance and OKX demo gate is `scripts/qualify_uta.py`; its execution probe
+requires an explicit testnet/demo-order confirmation and derives minimum legal
+size from venue constraints. OKX qualification additionally proves native
+protection submit/cancel. A missing credential or any unresolved command
+produces a non-qualified artifact and cannot authorize selector activation.
 
 ## Rollout and rollback
 

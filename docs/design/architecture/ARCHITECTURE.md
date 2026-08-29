@@ -87,9 +87,11 @@ Position Manager（保护性止损/止盈/追踪与平仓）
 完整 UTA 设计，取代“UTA 仅只读”这一旧决策。Phase 0～3 已提供冻结合同、factory registry、
 read parity、account projection，以及 recovery、reconciliation、funding、verified-exit 与 Live Trust
 的 UTA 私有读取。Binance testnet 的 `uta_v1` 选择器现可把 Gateway entry/full-close 送到通用
-Coordinator；Coordinator 执行 pending/claim、外部调用后的短 CAS 与审计，UTA 只做外部账户 I/O，
+Coordinator；OKX demo 的 entry/full-close/protection 也使用同一资格门控路径，并由 profile
+负责 spot/perp、contract-size、demo client-id 与 trigger 参数。Coordinator 执行
+pending/claim、外部调用后的短 CAS 与审计，UTA 只做外部账户 I/O，
 Aletheia storage 写入本地事实。凭据 qualification 未通过前该 profile 仍保持 legacy 默认，其他
-profile mutation 仍为 `NOT_SENT`。
+Bitget 与 live-limited profile mutation 仍为 `NOT_SENT` 或 legacy。
 
 ---
 

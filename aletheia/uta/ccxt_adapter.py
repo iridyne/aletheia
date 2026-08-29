@@ -97,10 +97,15 @@ class CCXTUTAAdapter:
             limit_order=self._support(profile.mutation_limit_order),
             modify_order=self._support(profile.mutation_modify_order),
             cancel_order=self._support(profile.mutation_cancel_order),
+            stop_order=self._support(profile.mutation_trigger_order),
+            trigger_order=self._support(profile.mutation_trigger_order),
             reduce_only=self._support(profile.mutation_reduce_only),
             leverage=self._support(profile.mutation_leverage),
             post_only=self._support(profile.mutation_post_only),
             client_order_id=self._support(profile.mutation_client_order_id),
+            native_tpsl=self._support(profile.native_tpsl),
+            protection_replace=self._support(profile.protection_replace),
+            protection_cancel=self._support(profile.protection_cancel),
             trading_permission=CapabilitySupport.UNKNOWN,
             supported_market_types=self._profile.supported_market_types,
             private_order_history_bounds="90_days",
@@ -305,9 +310,7 @@ class CCXTUTAAdapter:
             )
         try:
             exchange = await self._connected_exchange()
-            raw_positions = await self._request(
-                exchange.fetch_positions(params=dict(self._profile.position_params))
-            )
+            raw_positions = await self._request(exchange.fetch_positions(params=dict(self._profile.position_params)))
             if not isinstance(raw_positions, list):
                 raise ValueError("invalid CCXT positions")
         except UTAError as exc:
@@ -337,9 +340,7 @@ class CCXTUTAAdapter:
                 failed = True
                 continue
             try:
-                mapped = self._profile.position(
-                    raw, exchange.markets or {}, self.identity, received_at
-                )
+                mapped = self._profile.position(raw, exchange.markets or {}, self.identity, received_at)
                 if mapped is not None:
                     positions.append(mapped)
             except (TypeError, ValueError):
@@ -357,9 +358,7 @@ class CCXTUTAAdapter:
                 )
                 == (expected.canonical_symbol, expected.market_type)
             ]
-        source_at = max(
-            (item.source_at for item in positions if item.source_at), default=None
-        )
+        source_at = max((item.source_at for item in positions if item.source_at), default=None)
         return PositionListReport(
             identity=self.identity,
             completeness=(ReadCompleteness.PARTIAL if failed else ReadCompleteness.COMPLETE),
@@ -389,9 +388,7 @@ class CCXTUTAAdapter:
             exchange = await self._connected_exchange()
             for params in self._profile.open_order_requests:
                 try:
-                    rows = await self._request(
-                        exchange.fetch_open_orders(params=dict(params))
-                    )
+                    rows = await self._request(exchange.fetch_open_orders(params=dict(params)))
                     if not isinstance(rows, list):
                         raise ValueError("invalid CCXT orders")
                     raw_orders.extend(rows)
@@ -422,9 +419,7 @@ class CCXTUTAAdapter:
                 failed_records = True
                 continue
             try:
-                item = self._profile.order(
-                    raw, exchange.markets or {}, self.identity, received_at
-                )
+                item = self._profile.order(raw, exchange.markets or {}, self.identity, received_at)
                 if not item.venue_order_id and not item.client_order_id:
                     raise ValueError("open order has no stable identity")
                 key = (
@@ -438,7 +433,8 @@ class CCXTUTAAdapter:
             except (TypeError, ValueError):
                 failed_records = True
         if query.client_order_id:
-            orders = [item for item in orders if item.client_order_id == query.client_order_id]
+            external_id = self._profile.external_client_order_id(query.client_order_id)
+            orders = [item for item in orders if item.client_order_id == external_id]
         if query.venue_order_id:
             orders = [item for item in orders if item.venue_order_id == query.venue_order_id]
         if query.scope.instrument:
@@ -458,9 +454,7 @@ class CCXTUTAAdapter:
             completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),
             scope=query.scope,
             received_at=received_at,
-            source_at=max(
-                (item.source_at for item in orders if item.source_at), default=None
-            ),
+            source_at=max((item.source_at for item in orders if item.source_at), default=None),
             reason_code="open_order_surface_partial" if partial else None,
             profile_version=self._profile_version,
             orders=tuple(orders),
@@ -487,11 +481,8 @@ class CCXTUTAAdapter:
                 reason_code="private_order_history_start_required",
                 profile_version=self._profile_version,
             )
-        if (
-            not query.venue_order_id
-            and query.scope.start_at < received_at - timedelta(
-                days=self._profile.private_history_retention_days
-            )
+        if not query.venue_order_id and query.scope.start_at < received_at - timedelta(
+            days=self._profile.private_history_retention_days
         ):
             return OrderQueryReport(
                 identity=self.identity,
@@ -509,9 +500,7 @@ class CCXTUTAAdapter:
             history_bound_reached = False
             if query.venue_order_id:
                 try:
-                    raw = await self._request(
-                        exchange.fetch_order(query.venue_order_id, symbol)
-                    )
+                    raw = await self._request(exchange.fetch_order(query.venue_order_id, symbol))
                     if not isinstance(raw, dict):
                         raise ValueError("invalid CCXT order")
                     rows.append(raw)
@@ -536,9 +525,7 @@ class CCXTUTAAdapter:
                             )
                             if not isinstance(result, list):
                                 raise ValueError("invalid CCXT order history")
-                            history_bound_reached = (
-                                history_bound_reached or len(result) >= 1000
-                            )
+                            history_bound_reached = history_bound_reached or len(result) >= 1000
                             rows.extend(item for item in result if isinstance(item, dict))
                         except (Exception, TimeoutError):
                             failed = True
@@ -547,13 +534,13 @@ class CCXTUTAAdapter:
             parse_failed = False
             for raw in rows:
                 try:
-                    item = self._profile.order(
-                        raw, exchange.markets or {}, self.identity, received_at
-                    )
+                    item = self._profile.order(raw, exchange.markets or {}, self.identity, received_at)
                 except (TypeError, ValueError):
                     parse_failed = True
                     continue
-                if query.client_order_id and item.client_order_id != query.client_order_id:
+                if query.client_order_id and item.client_order_id != self._profile.external_client_order_id(
+                    query.client_order_id
+                ):
                     continue
                 if query.venue_order_id and item.venue_order_id != query.venue_order_id:
                     continue
@@ -561,9 +548,7 @@ class CCXTUTAAdapter:
                 reason = self._profile.order_reason(raw)
                 if reason:
                     reasons[(item.venue_order_id, item.client_order_id)] = reason
-            unique = {
-                (item.venue_order_id, item.client_order_id): item for item in matches
-            }
+            unique = {(item.venue_order_id, item.client_order_id): item for item in matches}
             if len(unique) > 1:
                 return OrderQueryReport(
                     identity=self.identity,
@@ -577,9 +562,7 @@ class CCXTUTAAdapter:
             found = next(iter(unique.values()), None)
             return OrderQueryReport(
                 identity=self.identity,
-                completeness=(
-                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
-                ),
+                completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),
                 scope=query.scope,
                 received_at=received_at,
                 reason_code=(
@@ -628,9 +611,7 @@ class CCXTUTAAdapter:
                 reason_code="private_fill_history_start_required",
                 profile_version=self._profile_version,
             )
-        if query.scope.start_at < received_at - timedelta(
-            days=self._profile.private_history_retention_days
-        ):
+        if query.scope.start_at < received_at - timedelta(days=self._profile.private_history_retention_days):
             return FillListReport(
                 identity=self.identity,
                 completeness=ReadCompleteness.PARTIAL,
@@ -642,11 +623,7 @@ class CCXTUTAAdapter:
         try:
             exchange = await self._connected_exchange()
             symbol = query.scope.instrument.venue_symbol if query.scope.instrument else None
-            since = (
-                int(query.scope.start_at.timestamp() * 1000)
-                if query.scope.start_at
-                else None
-            )
+            since = int(query.scope.start_at.timestamp() * 1000) if query.scope.start_at else None
             rows: list[dict[str, object]] = []
             failed_calls = 0
             history_bound_reached = False
@@ -673,15 +650,15 @@ class CCXTUTAAdapter:
             failed_records = False
             for raw in rows:
                 try:
-                    item = self._profile.fill(
-                        raw, exchange.markets or {}, self.identity, received_at
-                    )
+                    item = self._profile.fill(raw, exchange.markets or {}, self.identity, received_at)
                 except (TypeError, ValueError):
                     failed_records = True
                     continue
                 if query.scope.end_at and item.executed_at > query.scope.end_at:
                     continue
-                if query.client_order_id and item.client_order_id != query.client_order_id:
+                if query.client_order_id and item.client_order_id != self._profile.external_client_order_id(
+                    query.client_order_id
+                ):
                     continue
                 if query.venue_order_id and item.venue_order_id != query.venue_order_id:
                     continue
@@ -693,9 +670,7 @@ class CCXTUTAAdapter:
             partial = bool(failed_calls or failed_records or history_bound_reached)
             return FillListReport(
                 identity=self.identity,
-                completeness=(
-                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
-                ),
+                completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),
                 scope=query.scope,
                 received_at=received_at,
                 reason_code=(
@@ -726,16 +701,12 @@ class CCXTUTAAdapter:
         orders = []
         order_partial = False
         for client_order_id in query.client_order_ids:
-            report = await self.get_order(
-                OrderQuery(scope=query.scope, client_order_id=client_order_id)
-            )
+            report = await self.get_order(OrderQuery(scope=query.scope, client_order_id=client_order_id))
             order_partial = order_partial or report.completeness is not ReadCompleteness.COMPLETE
             if report.found:
                 orders.append(report.found)
         for venue_order_id in query.venue_order_ids:
-            report = await self.get_order(
-                OrderQuery(scope=query.scope, venue_order_id=venue_order_id)
-            )
+            report = await self.get_order(OrderQuery(scope=query.scope, venue_order_id=venue_order_id))
             order_partial = order_partial or report.completeness is not ReadCompleteness.COMPLETE
             if report.found:
                 orders.append(report.found)
@@ -752,11 +723,7 @@ class CCXTUTAAdapter:
             unresolved.append("positions")
         return ExecutionMassStatus(
             identity=self.identity,
-            completeness=(
-                ReadCompleteness.COMPLETE
-                if not unresolved
-                else ReadCompleteness.PARTIAL
-            ),
+            completeness=(ReadCompleteness.COMPLETE if not unresolved else ReadCompleteness.PARTIAL),
             scope=query.scope,
             received_at=self._now(),
             reason_code="mass_status_partial" if unresolved else None,
@@ -787,9 +754,7 @@ class CCXTUTAAdapter:
                 reason_code="funding_history_start_required",
                 profile_version=self._profile_version,
             )
-        if query.scope.start_at < received_at - timedelta(
-            days=self._profile.private_history_retention_days
-        ):
+        if query.scope.start_at < received_at - timedelta(days=self._profile.private_history_retention_days):
             return FundingLedgerReport(
                 identity=self.identity,
                 completeness=ReadCompleteness.PARTIAL,
@@ -800,11 +765,7 @@ class CCXTUTAAdapter:
             )
         try:
             exchange = await self._connected_exchange()
-            since = (
-                int(query.scope.start_at.timestamp() * 1000)
-                if query.scope.start_at
-                else None
-            )
+            since = int(query.scope.start_at.timestamp() * 1000) if query.scope.start_at else None
             rows = []
             failed_calls = 0
             history_bound_reached = False
@@ -836,9 +797,7 @@ class CCXTUTAAdapter:
             for event in events:
                 if event["symbol"] != query.scope.instrument.canonical_symbol:
                     continue
-                settled = datetime.fromtimestamp(
-                    int(event["occurred_at_ms"]) / 1000, tz=timezone.utc
-                )
+                settled = datetime.fromtimestamp(int(event["occurred_at_ms"]) / 1000, tz=timezone.utc)
                 if query.scope.end_at and settled > query.scope.end_at:
                     continue
                 entries.append(
@@ -856,9 +815,7 @@ class CCXTUTAAdapter:
             partial = bool(failed_calls or history_bound_reached)
             return FundingLedgerReport(
                 identity=self.identity,
-                completeness=(
-                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
-                ),
+                completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),
                 scope=query.scope,
                 received_at=received_at,
                 reason_code=(
@@ -900,23 +857,16 @@ class CCXTUTAAdapter:
             self.get_positions(PositionQuery(scope=scope)),
             self.get_fills(FillQuery(scope=scope)),
         )
-        direction = (
-            "long" if query.direction.lower() in {"long", "buy"} else "short"
-        )
+        direction = "long" if query.direction.lower() in {"long", "buy"} else "short"
         current_position = next(
             (
                 position
                 for position in positions.positions
-                if position.side.lower() in (
-                    {"long", "buy"} if direction == "long" else {"short", "sell"}
-                )
+                if position.side.lower() in ({"long", "buy"} if direction == "long" else {"short", "sell"})
             ),
             None,
         )
-        if (
-            positions.completeness is ReadCompleteness.COMPLETE
-            and current_position is not None
-        ):
+        if positions.completeness is ReadCompleteness.COMPLETE and current_position is not None:
             return VerifiedExitReport(
                 identity=self.identity,
                 completeness=ReadCompleteness.COMPLETE,
@@ -928,8 +878,7 @@ class CCXTUTAAdapter:
                 current_position=current_position,
             )
         if positions.completeness is ReadCompleteness.COMPLETE and any(
-            position.side.lower() not in {"long", "buy", "short", "sell"}
-            for position in positions.positions
+            position.side.lower() not in {"long", "buy", "short", "sell"} for position in positions.positions
         ):
             return VerifiedExitReport(
                 identity=self.identity,
@@ -941,10 +890,14 @@ class CCXTUTAAdapter:
                 state=VerifiedExitState.INCONCLUSIVE,
                 local_position_id=query.local_position_id,
             )
+        external_entry_ids = {
+            self._profile.external_client_order_id(value)
+            for value in query.local_order_ids
+        }
         non_entry_fills = tuple(
             fill
             for fill in fills.fills
-            if fill.client_order_id not in query.local_order_ids
+            if fill.client_order_id not in external_entry_ids
             and fill.venue_order_id not in query.local_order_ids
         )
         close_side = "sell" if direction == "long" else "buy"
@@ -955,29 +908,26 @@ class CCXTUTAAdapter:
             if trade_intent in {"open", "entry", "increase"}:
                 return False
             if trade_intent and trade_intent not in {
-                "close", "exit", "reduce", "decrease",
+                "close",
+                "exit",
+                "reduce",
+                "decrease",
             }:
                 return False
             if position_side in {"long", "short"}:
-                return position_side == direction and (
-                    bool(trade_intent) or fill.side.lower() == close_side
-                )
+                return position_side == direction and (bool(trade_intent) or fill.side.lower() == close_side)
             if fill.side.lower() != close_side:
                 return False
             return position_side in {"both", "net", "one_way", "oneway"}
 
         close_fills = tuple(fill for fill in non_entry_fills if compatible_close(fill))
         ambiguous = any(not compatible_close(fill) for fill in non_entry_fills)
-        if (
-            positions.completeness is ReadCompleteness.COMPLETE
-            and fills.completeness is ReadCompleteness.COMPLETE
-        ):
+        if positions.completeness is ReadCompleteness.COMPLETE and fills.completeness is ReadCompleteness.COMPLETE:
             state = (
                 VerifiedExitState.VERIFIED_FILL_EXIT
                 if not ambiguous
                 and close_fills
-                and sum((fill.quantity for fill in close_fills), Decimal(0))
-                >= query.expected_quantity
+                and sum((fill.quantity for fill in close_fills), Decimal(0)) >= query.expected_quantity
                 else (
                     VerifiedExitState.CONFIRMED_ABSENT_WITHOUT_FILL
                     if not non_entry_fills
@@ -1035,9 +985,12 @@ class CCXTUTAAdapter:
             account_id, permission = self._profile.account_authority(balances)
             fingerprint = self.identity.account_fingerprint
             if account_id:
-                fingerprint = "sha256:" + hashlib.sha256(
-                    f"{self.identity.venue}:{self.identity.environment}:{account_id}".encode()
-                ).hexdigest()
+                fingerprint = (
+                    "sha256:"
+                    + hashlib.sha256(
+                        f"{self.identity.venue}:{self.identity.environment}:{account_id}".encode()
+                    ).hexdigest()
+                )
             support = {
                 "granted": CapabilitySupport.SUPPORTED,
                 "denied": CapabilitySupport.UNSUPPORTED,
@@ -1045,9 +998,7 @@ class CCXTUTAAdapter:
             partial = bool(failed)
             return AccountAuthorityProbeReport(
                 identity=self.identity,
-                completeness=(
-                    ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE
-                ),
+                completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),
                 scope=QueryScope(),
                 received_at=received_at,
                 reason_code="account_authority_partial" if partial else None,
@@ -1093,8 +1044,7 @@ class CCXTUTAAdapter:
             received_at=self._now(),
             client_order_id=getattr(command, "client_order_id", None)
             or getattr(command, "target_client_order_id", None),
-            venue_order_id=venue_order_id
-            or getattr(command, "target_venue_order_id", None),
+            venue_order_id=venue_order_id or getattr(command, "target_venue_order_id", None),
             error_code=error_code,
             reason_code=reason_code,
             profile_version=self._profile_version,
@@ -1116,16 +1066,8 @@ class CCXTUTAAdapter:
             command,
             report_type,
             CommandEvidence.NOT_SENT,
-            error_code=(
-                error_code.value
-                if identity_match
-                else UTAErrorCode.ACCOUNT_IDENTITY_MISMATCH.value
-            ),
-            reason_code=(
-                reason
-                if identity_match
-                else "account_identity_mismatch"
-            ),
+            error_code=(error_code.value if identity_match else UTAErrorCode.ACCOUNT_IDENTITY_MISMATCH.value),
+            reason_code=(reason if identity_match else "account_identity_mismatch"),
         )
 
     @staticmethod
@@ -1150,24 +1092,21 @@ class CCXTUTAAdapter:
         while current is not None:
             names = {item.__name__ for item in type(current).__mro__}
             lowered = {name.lower() for name in names}
-            if (
-                names & {
-                    "BadResponse",
-                    "NetworkError",
-                    "RateLimitExceeded",
-                    "_AmbiguousAcknowledgementError",
-                }
-                or any(
-                    marker in name
-                    for name in lowered
-                    for marker in (
-                        "timeout",
-                        "connection",
-                        "transport",
-                        "network",
-                        "brokenpipe",
-                        "protocolerror",
-                    )
+            if names & {
+                "BadResponse",
+                "NetworkError",
+                "RateLimitExceeded",
+                "_AmbiguousAcknowledgementError",
+            } or any(
+                marker in name
+                for name in lowered
+                for marker in (
+                    "timeout",
+                    "connection",
+                    "transport",
+                    "network",
+                    "brokenpipe",
+                    "protocolerror",
                 )
             ):
                 return "ambiguous"
@@ -1214,9 +1153,7 @@ class CCXTUTAAdapter:
         if command.expected_account != self.identity:
             return self._not_sent(command, report_type)
         if command.instrument.market_type not in self._profile.supported_market_types:
-            return self._not_sent(
-                command, report_type, reason="instrument_market_type_unsupported"
-            )
+            return self._not_sent(command, report_type, reason="instrument_market_type_unsupported")
         if not capability:
             return self._not_sent(command, report_type)
         return None
@@ -1232,6 +1169,8 @@ class CCXTUTAAdapter:
         denied = self._validate_mutation(command, SubmissionReport, capability)
         if denied:
             return denied
+        if command.trigger_price is not None and not self._profile.mutation_trigger_order:
+            return self._not_sent(command, SubmissionReport, reason="trigger_order_unsupported")
         if command.order_type == "limit" and command.limit_price is None:
             return self._not_sent(
                 command,
@@ -1253,11 +1192,20 @@ class CCXTUTAAdapter:
         exchange = None
         try:
             exchange = await self._connected_exchange()
-            await self._request(self._profile.prepare_submit(exchange, command))
+            prepared = await self._request(self._profile.prepare_submit(exchange, command))
+            if prepared is not None:
+                command = prepared
+        except UTAError as exc:
+            if exc.command_evidence is CommandEvidence.NOT_SENT:
+                return self._not_sent(
+                    command,
+                    SubmissionReport,
+                    reason=exc.reason,
+                    error_code=exc.code,
+                )
+            raise
         except (Exception, TimeoutError) as exc:
-            return self._mutation_failure(
-                command, SubmissionReport, exc, request_started=False
-            )
+            return self._mutation_failure(command, SubmissionReport, exc, request_started=False)
         request_started = False
         try:
             args = self._profile.submit_request(command)
@@ -1272,8 +1220,7 @@ class CCXTUTAAdapter:
                 order = self._profile.order(
                     {
                         **raw,
-                        "symbol": raw.get("symbol")
-                        or command.instrument.venue_symbol,
+                        "symbol": raw.get("symbol") or command.instrument.venue_symbol,
                     },
                     exchange.markets or {},
                     self.identity,
@@ -1291,31 +1238,25 @@ class CCXTUTAAdapter:
                 order=order,
             )
         except (Exception, TimeoutError) as exc:
-            return self._mutation_failure(
-                command, SubmissionReport, exc, request_started=request_started
-            )
+            return self._mutation_failure(command, SubmissionReport, exc, request_started=request_started)
 
     async def modify_order(self, command: ModifyOrderCommand) -> CommandReport:
-        denied = self._validate_mutation(
-            command, CommandReport, self._profile.mutation_modify_order
-        )
+        denied = self._validate_mutation(command, CommandReport, self._profile.mutation_modify_order)
         if denied:
             return denied
         try:
             exchange = await self._connected_exchange()
-            exact = await self.get_order(OrderQuery(
-                scope=QueryScope(instrument=command.instrument),
-                client_order_id=command.target_client_order_id,
-                venue_order_id=command.target_venue_order_id,
-            ))
-            if exact.completeness is not ReadCompleteness.COMPLETE or exact.found is None:
-                return self._not_sent(
-                    command, CommandReport, reason="modify_target_unavailable"
+            exact = await self.get_order(
+                OrderQuery(
+                    scope=QueryScope(instrument=command.instrument),
+                    client_order_id=command.target_client_order_id,
+                    venue_order_id=command.target_venue_order_id,
                 )
-        except (Exception, TimeoutError) as exc:
-            return self._mutation_failure(
-                command, CommandReport, exc, request_started=False
             )
+            if exact.completeness is not ReadCompleteness.COMPLETE or exact.found is None:
+                return self._not_sent(command, CommandReport, reason="modify_target_unavailable")
+        except (Exception, TimeoutError) as exc:
+            return self._mutation_failure(command, CommandReport, exc, request_started=False)
         request_started = False
         try:
             try:
@@ -1340,22 +1281,16 @@ class CCXTUTAAdapter:
                 venue_order_id=str(raw["id"]),
             )
         except (Exception, TimeoutError) as exc:
-            return self._mutation_failure(
-                command, CommandReport, exc, request_started=request_started
-            )
+            return self._mutation_failure(command, CommandReport, exc, request_started=request_started)
 
     async def cancel_order(self, command: CancelOrderCommand) -> CommandReport:
-        denied = self._validate_mutation(
-            command, CommandReport, self._profile.mutation_cancel_order
-        )
+        denied = self._validate_mutation(command, CommandReport, self._profile.mutation_cancel_order)
         if denied:
             return denied
         try:
             exchange = await self._connected_exchange()
         except (Exception, TimeoutError) as exc:
-            return self._mutation_failure(
-                command, CommandReport, exc, request_started=False
-            )
+            return self._mutation_failure(command, CommandReport, exc, request_started=False)
         request_started = False
         try:
             args = self._profile.cancel_request(command)
@@ -1370,6 +1305,4 @@ class CCXTUTAAdapter:
                 venue_order_id=str(raw["id"]),
             )
         except (Exception, TimeoutError) as exc:
-            return self._mutation_failure(
-                command, CommandReport, exc, request_started=request_started
-            )
+            return self._mutation_failure(command, CommandReport, exc, request_started=request_started)

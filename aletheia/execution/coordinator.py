@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -20,6 +21,7 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     insert_order,
     transaction,
+    update_order,
     update_position,
 )
 from aletheia.storage.sqlite import get_db
@@ -68,23 +70,23 @@ async def _command(execution_mode: str, method: str, command):
 
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
     placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
-    row = get_db().execute(
-        f"""
+    row = (
+        get_db()
+        .execute(
+            f"""
         SELECT exchange_order_id, status FROM orders
         WHERE proposal_id=? AND execution_mode=? AND status IN ({placeholders})
         ORDER BY rowid LIMIT 1
         """,
-        (proposal_id, execution_mode, *_RETRY_SUPPRESSING_ORDER_STATES),
-    ).fetchone()
+            (proposal_id, execution_mode, *_RETRY_SUPPRESSING_ORDER_STATES),
+        )
+        .fetchone()
+    )
     if row is None:
         return
     if row["status"] == "materialization_missing":
-        raise PostSubmitDBError(
-            "exchange fill awaits local materialization", row["exchange_order_id"]
-        )
-    raise SubmissionUnknownError(
-        exchange_order_id=row["exchange_order_id"], client_oid=proposal_id
-    )
+        raise PostSubmitDBError("exchange fill awaits local materialization", row["exchange_order_id"])
+    raise SubmissionUnknownError(exchange_order_id=row["exchange_order_id"], client_oid=proposal_id)
 
 
 def _status(report, *, close_position_id: str | None = None) -> tuple[str, str | None]:
@@ -111,9 +113,7 @@ def _status(report, *, close_position_id: str | None = None) -> tuple[str, str |
 def _apply_report(order: Order, report, *, close_position_id: str | None = None) -> dict:
     status, reason = _status(report, close_position_id=close_position_id)
     pending_close_status = (
-        "submission_rejected"
-        if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED
-        else status
+        "submission_rejected" if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED else status
     )
     try:
         acknowledgement = finalize_exchange_acknowledgement(
@@ -125,9 +125,7 @@ def _apply_report(order: Order, report, *, close_position_id: str | None = None)
             pending_close_status=pending_close_status if close_position_id else None,
         )
     except Exception as exc:
-        raise PostSubmitDBError(
-            "UTA acknowledgement could not be persisted", report.venue_order_id
-        ) from exc
+        raise PostSubmitDBError("UTA acknowledgement could not be persisted", report.venue_order_id) from exc
     if acknowledgement["applied"]:
         write_post_commit_audit(
             {
@@ -239,11 +237,7 @@ def _fallback_report(adapter, command, evidence):
         evidence=evidence,
         received_at=datetime.now(timezone.utc),
         client_order_id=command.client_order_id,
-        error_code=(
-            UTAErrorCode.AMBIGUOUS_COMMAND.value
-            if ambiguous
-            else UTAErrorCode.NETWORK.value
-        ),
+        error_code=(UTAErrorCode.AMBIGUOUS_COMMAND.value if ambiguous else UTAErrorCode.NETWORK.value),
         reason_code=("command_acknowledgement_unknown" if ambiguous else "command_not_sent"),
         profile_version="1",
     )
@@ -350,3 +344,123 @@ def modify_order(command: ModifyOrderCommand):
 
 def cancel_order(command: CancelOrderCommand):
     return _run(_command(command.expected_account.execution_mode, "cancel_order", command))
+
+
+def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -> str:
+    """Persist one protection child before submitting it through the selected UTA."""
+    suffix = "sl" if purpose == "protective_stop" else "tp"
+    order = Order(
+        proposal_id=position.get("proposal_id"),
+        client_order_id=f"protect-{position['id']}-{suffix}",
+        position_id=position["id"],
+        close_reason=purpose,
+        symbol=position["symbol"],
+        market_type=position["market_type"],
+        direction=position["direction"],
+        order_type="market",
+        quantity=float(position["quantity"]),
+        price=trigger_price,
+        execution_mode=position["execution_mode"],
+        status="pending",
+    )
+    insert_order(order)
+    adapter = None
+    command = None
+    try:
+        adapter = create_uta_adapter(position["execution_mode"])
+        command = SubmitOrderCommand(
+            command_id=str(uuid4()),
+            expected_account=adapter.identity,
+            instrument=instrument_from_local(position["symbol"], position["market_type"]),
+            purpose=purpose,
+            position_id=position["id"],
+            parent_order_id=None,
+            client_order_id=order.client_order_id,
+            side="sell" if position["direction"] in {"long", "buy"} else "buy",
+            quantity=Decimal(str(position["quantity"])),
+            order_type="market",
+            trigger_price=Decimal(str(trigger_price)),
+            reduce_only=True,
+        )
+        report = _run(_call_and_close(adapter, "submit_order", command))
+    except Exception:
+        if adapter is None or command is None:
+            update_order(order.id, status="error", error_reason="protection_not_sent")
+            raise
+        report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
+    acknowledgement = _apply_report(order, report)
+    venue_order_id = acknowledgement.get("exchange_order_id")
+    if not venue_order_id:
+        raise SubmissionUnknownError(client_oid=order.client_order_id)
+    return str(venue_order_id)
+
+
+def place_protection(position_id: str) -> dict[str, str]:
+    """Place the configured OKX protection children through UTA."""
+    from aletheia.storage import repositories as repo
+
+    position = repo.get_position(position_id)
+    if position is None or position.get("status") != "open":
+        raise ValueError(f"open position not found: {position_id}")
+    require_uta_mutation_qualification(position["execution_mode"])
+    requested = (
+        ("sl", "protective_stop", position.get("stop_price")),
+        ("tp", "take_profit", position.get("take_profit_price")),
+    )
+    placed: dict[str, str] = {}
+    for key, purpose, price in requested:
+        if price is None:
+            continue
+        try:
+            placed[key] = _submit_protection_leg(position, purpose, float(price))
+        except Exception:
+            continue
+    if placed:
+        repo.update_position(
+            position_id,
+            exchange_tpsl_order_id=json.dumps(placed, sort_keys=True),
+        )
+    return placed
+
+
+def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
+    """Cancel the proven old stop before creating its tighter replacement."""
+    from aletheia.storage import repositories as repo
+
+    position = repo.get_position(position_id)
+    if position is None or position.get("status") != "open":
+        return False
+    require_uta_mutation_qualification(position["execution_mode"])
+    try:
+        identifiers = json.loads(position.get("exchange_tpsl_order_id") or "{}")
+    except (TypeError, ValueError):
+        return False
+    old_stop = identifiers.get("sl") if isinstance(identifiers, dict) else None
+    if not old_stop:
+        return False
+    adapter = create_uta_adapter(position["execution_mode"])
+    command = CancelOrderCommand(
+        command_id=str(uuid4()),
+        expected_account=adapter.identity,
+        instrument=instrument_from_local(position["symbol"], position["market_type"]),
+        purpose="protective_stop",
+        position_id=position_id,
+        target_venue_order_id=str(old_stop),
+        reason="replace_protective_stop",
+    )
+    try:
+        cancelled = _run(_call_and_close(adapter, "cancel_order", command))
+    except Exception:
+        return False
+    if cancelled.evidence is not CommandEvidence.ACKNOWLEDGED:
+        return False
+    try:
+        new_stop = _submit_protection_leg(position, "protective_stop", float(new_stop_price))
+    except Exception:
+        return False
+    identifiers["sl"] = new_stop
+    repo.update_position(
+        position_id,
+        exchange_tpsl_order_id=json.dumps(identifiers, sort_keys=True),
+    )
+    return True

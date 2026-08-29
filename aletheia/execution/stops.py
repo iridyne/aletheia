@@ -61,17 +61,8 @@ def place_exchange_protective_orders(position: dict) -> dict:
         return {}
 
     if mode == "okx_demo":
-        from aletheia.execution.okx_broker import place_okx_protective_orders
-        return place_okx_protective_orders(
-            position_id=position["id"],
-            symbol=position["symbol"],
-            market_type=position.get("market_type") or "usdt_futures",
-            direction=position["direction"],
-            quantity=float(position.get("quantity") or 0),
-            stop_price=stop,
-            take_profit_price=tp,
-            execution_mode=mode,
-        )
+        from aletheia.execution.gateway import place_exchange_protection
+        return place_exchange_protection(position["id"])
     return {}
 
 
@@ -107,9 +98,8 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
         replace_exchange_stop(position_id, new_stop_price)
         return True
     elif mode == "okx_demo":
-        from aletheia.execution.okx_broker import replace_okx_exchange_stop
-        replace_okx_exchange_stop(position_id, new_stop_price)
-        return True
+        from aletheia.execution.gateway import replace_exchange_protective_stop
+        return replace_exchange_protective_stop(position_id, new_stop_price)
     elif mode == "binance_testnet":
         # Binance USDT-M client currently exposes only place_order (no
         # place_stop / cancel_algo yet). The DB stop_price is still tightened by

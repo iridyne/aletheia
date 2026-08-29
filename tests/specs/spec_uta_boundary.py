@@ -111,13 +111,13 @@ def test_selected_reads_use_canonical_manager_and_unmigrated_mutations_stay_disa
     SpecClaim(
         "UTA-S06",
         "uta_boundary",
-        "§6 Binance testnet execution slice",
+        "§6 Binance testnet and OKX demo execution slices",
         "L2b",
-        "Gateway selects the coordinator only for binance_testnet uta_v1; the coordinator is the sole production caller of UTA mutation commands and owns no concrete venue client.",
+        "Gateway selects the coordinator only for qualified per-mode uta_v1 profiles; the coordinator is the sole production caller of UTA mutation commands and owns no concrete venue client.",
     )
 )
-def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
-    from aletheia.uta.profiles import BinanceLiveProfile
+def test_migrated_mutations_have_one_gateway_coordinator_path():
+    from aletheia.uta.profiles import BinanceLiveProfile, OKXDemoProfile, OKXLiveProfile
 
     coordinator_path = ROOT / "aletheia" / "execution" / "coordinator.py"
     coordinator = coordinator_path.read_text(encoding="utf-8")
@@ -127,10 +127,15 @@ def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
     manager = (ROOT / "aletheia" / "portfolio" / "position_manager.py").read_text(
         encoding="utf-8"
     )
+    stops = (ROOT / "aletheia" / "execution" / "stops.py").read_text(encoding="utf-8")
 
     assert gateway.count("_qualified_uta_mutation_selected(") >= 3
     assert "aletheia.execution.coordinator import execute_order" in gateway
     assert "aletheia.execution.gateway import close_exchange_position" in manager
+    assert "aletheia.execution.gateway import place_exchange_protection" in stops
+    assert "aletheia.execution.okx_broker" not in stops
+    assert "def place_protection(" in coordinator
+    assert "def replace_protective_stop(" in coordinator
     assert "finalize_exchange_acknowledgement" in coordinator
     assert "create_uta_adapter" in coordinator
     assert "aletheia.exchanges" not in coordinator
@@ -155,6 +160,26 @@ def test_phase_four_binance_mutations_have_one_gateway_coordinator_path():
         BinanceLiveProfile.mutation_leverage,
         BinanceLiveProfile.mutation_post_only,
         BinanceLiveProfile.mutation_client_order_id,
+    ))
+    assert all((
+        OKXDemoProfile.mutation_market_order,
+        OKXDemoProfile.mutation_limit_order,
+        OKXDemoProfile.mutation_modify_order,
+        OKXDemoProfile.mutation_cancel_order,
+        OKXDemoProfile.mutation_reduce_only,
+        OKXDemoProfile.mutation_leverage,
+        OKXDemoProfile.mutation_post_only,
+        OKXDemoProfile.mutation_client_order_id,
+    ))
+    assert not any((
+        OKXLiveProfile.mutation_market_order,
+        OKXLiveProfile.mutation_limit_order,
+        OKXLiveProfile.mutation_modify_order,
+        OKXLiveProfile.mutation_cancel_order,
+        OKXLiveProfile.mutation_reduce_only,
+        OKXLiveProfile.mutation_leverage,
+        OKXLiveProfile.mutation_post_only,
+        OKXLiveProfile.mutation_client_order_id,
     ))
 
 

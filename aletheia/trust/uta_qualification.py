@@ -49,6 +49,9 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
     if any(artifact.get(key) != value for key, value in expected.items()):
         return False, "qualification_identity_mismatch"
     probe = artifact.get("execution_probe") or {}
+    protection_incomplete = execution_mode == "okx_demo" and (
+        probe.get("protection_submit") != "acknowledged" or probe.get("protection_cancel") != "acknowledged"
+    )
     if (
         probe.get("modify") != "acknowledged"
         or probe.get("cancel") != "acknowledged"
@@ -56,6 +59,7 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
         or probe.get("reconciliation") != "exact_order_and_private_fills_complete"
         or not (probe.get("entry") or {}).get("fill_ids")
         or not (probe.get("close") or {}).get("fill_ids")
+        or protection_incomplete
         or artifact.get("unresolved_items")
     ):
         return False, "qualification_execution_evidence_incomplete"

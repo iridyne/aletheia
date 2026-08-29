@@ -35,6 +35,7 @@ from aletheia.uta.profiles import (
     BitgetClassicV2Profile,
     BitgetUTAV3Profile,
     OKXDemoProfile,
+    OKXLiveProfile,
 )
 
 
@@ -149,8 +150,8 @@ class FakeExchange:
             return response
         return list(self.ledger)
 
-    async def set_leverage(self, leverage, symbol):
-        self.events.append(("set_leverage", leverage, symbol))
+    async def set_leverage(self, leverage, symbol, params=None):
+        self.events.append(("set_leverage", leverage, symbol, params))
         if isinstance(self.leverage_response, Exception):
             raise self.leverage_response
         return self.leverage_response
@@ -656,6 +657,46 @@ async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
     await adapter.close()
 
 
+@pytest.mark.asyncio
+async def test_okx_verified_exit_normalizes_local_entry_client_id(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    timestamp = int((now - timedelta(seconds=1)).timestamp() * 1000)
+    exchange.positions = []
+    exchange.trades = [
+        {
+            "id": "entry-fill", "order": "entry-order-id",
+            "clientOrderId": "entryorder", "symbol": "BTC/USDT:USDT",
+            "side": "buy", "amount": "1", "price": "60000",
+            "timestamp": timestamp, "info": {"posSide": "long", "tradeSide": "open"},
+        },
+        {
+            "id": "close-fill", "order": "close-order-id",
+            "clientOrderId": "closeposition", "symbol": "BTC/USDT:USDT",
+            "side": "sell", "amount": "1", "price": "60100",
+            "timestamp": timestamp, "info": {"posSide": "long", "tradeSide": "close"},
+        },
+    ]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    instrument = InstrumentIdentity(
+        canonical_symbol="BTC/USDT", venue_symbol="BTC/USDT:USDT",
+        market_type="usdt_futures", base_currency="BTC",
+        quote_currency="USDT", settlement_currency="USDT",
+    )
+
+    report = await adapter.verify_position_exit(VerifiedExitQuery(
+        identity=adapter.identity, local_position_id="position-1",
+        instrument=instrument, direction="long", expected_quantity="0.01",
+        history_start_at=now - timedelta(hours=1), history_end_at=now,
+        local_order_ids=("entry-order",),
+    ))
+
+    assert report.state is VerifiedExitState.VERIFIED_FILL_EXIT
+    assert [fill.venue_fill_id for fill in report.exit_fills] == ["close-fill"]
+
+
 def _okx_funding_row(event_id: str, amount: str, timestamp: int) -> dict:
     return {"info": {
         "billId": event_id,
@@ -1011,7 +1052,7 @@ async def test_expired_private_history_window_fails_closed_without_network(monke
 
 @pytest.mark.asyncio
 async def test_unmigrated_profile_refuses_mutation_before_send(monkeypatch):
-    profile = _profile("okx")
+    profile = _profile("classic_v2")
     exchange = FakeExchange()
     _session, calls = _install(monkeypatch, exchange)
     identity = _identity(profile)
@@ -1040,6 +1081,114 @@ async def test_unmigrated_profile_refuses_mutation_before_send(monkeypatch):
     assert report.evidence is CommandEvidence.NOT_SENT
     assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
     assert calls == []
+
+
+def _okx_command(identity, *, market_type="usdt_futures", **updates):
+    venue_symbol = "BTC/USDT" if market_type == "spot" else "BTC/USDT:USDT"
+    values = dict(
+        command_id="okx-command-1",
+        expected_account=identity,
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol=venue_symbol,
+            market_type=market_type,
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        purpose="entry",
+        client_order_id="close-position-1",
+        side="buy",
+        quantity="0.02",
+        order_type="market",
+        leverage="2" if market_type != "spot" else None,
+    )
+    values.update(updates)
+    return SubmitOrderCommand(**values)
+
+
+@pytest.mark.asyncio
+async def test_okx_perp_submit_converts_coins_to_contracts(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "okx-order-1", "clientOrderId": "closeposition1",
+        "symbol": "BTC/USDT:USDT", "side": "buy", "type": "market",
+        "amount": "2", "filled": "0", "remaining": "2", "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_okx_command(identity, reduce_only=True))
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    symbol, order_type, side, amount, price, params = create[1]
+    assert (symbol, order_type, side, amount, price) == (
+        "BTC/USDT:USDT", "market", "buy", Decimal("2"), None,
+    )
+    assert params == {
+        "clOrdId": "closeposition1", "tdMode": "cross", "reduceOnly": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_okx_spot_market_buy_keeps_base_quantity(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "okx-spot-1", "symbol": "BTC/USDT", "side": "buy",
+        "type": "market", "amount": "0.02", "filled": "0",
+        "remaining": "0.02", "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_okx_command(identity, market_type="spot"))
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    assert create[1][3] == Decimal("0.02")
+    assert create[1][5]["tgtCcy"] == "base_ccy"
+    assert not any(event[0] == "set_leverage" for event in exchange.events)
+
+
+@pytest.mark.asyncio
+async def test_okx_trigger_and_live_profile_boundaries(monkeypatch):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "okx-stop-1", "symbol": "BTC/USDT:USDT", "side": "sell",
+        "type": "market", "amount": "2", "filled": "0",
+        "remaining": "2", "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    command = _okx_command(
+        identity, purpose="protective_stop", side="sell", trigger_price="50000",
+        reduce_only=True, leverage=None,
+    )
+
+    report = await adapter.submit_order(command)
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    assert create[1][5]["stopLossPrice"] == Decimal("50000")
+    assert adapter.capabilities.native_tpsl.value == "supported"
+
+    live = OKXLiveProfile(api_key="key", secret="secret", passphrase="passphrase")
+    live_identity = _identity(live).model_copy(
+        update={"execution_mode": live.expected_execution_mode}
+    )
+    live_adapter = CCXTUTAAdapter(live_identity, live)
+    denied = await live_adapter.submit_order(
+        command.model_copy(update={"expected_account": live_identity})
+    )
+    assert denied.evidence is CommandEvidence.NOT_SENT
+    assert live_adapter.capabilities.market_order.value == "unsupported"
 
 
 def _binance_command(identity, **updates):

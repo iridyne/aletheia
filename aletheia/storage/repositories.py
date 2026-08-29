@@ -2992,6 +2992,17 @@ def validate_native_order_authority(order: Order | Mapping[str, object]) -> None
         tolerance = max(1e-12, position_quantity * 1e-9)
         if requested <= 0:
             raise ValueError("native close Order quantity must be positive")
+        protection_suffix = {
+            "protective_stop": "sl",
+            "take_profit": "tp",
+        }.get(data.get("close_reason"))
+        if protection_suffix and str(data.get("client_order_id") or "").startswith("protect-"):
+            if requested > position_quantity + tolerance:
+                raise ValueError("native protection Order exceeds Position quantity")
+            expected_client_id = f"protect-{position_id}-{protection_suffix}"
+            if data.get("client_order_id") != expected_client_id:
+                raise ValueError("native protection Order client identity is not durable")
+            return
         is_partial_reduce = requested < position_quantity - tolerance
         if is_partial_reduce:
             # Partial reduce: quantity must be strictly less than position quantity

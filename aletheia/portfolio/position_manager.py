@@ -312,8 +312,8 @@ def close_position_routed(
             close_reasoning=close_reasoning,
         )
     elif mode in ("okx_demo", "okx_live_limited"):
-        from aletheia.execution.okx_broker import close_okx_position
-        result = close_okx_position(
+        from aletheia.execution.gateway import close_exchange_position
+        result = close_exchange_position(
             position_id,
             reason=reason,
             close_reasoning=close_reasoning,
