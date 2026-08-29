@@ -297,21 +297,14 @@ def close_position_routed(
             separators=(",", ":"),
             allow_nan=False,
         )
-    if mode in ("bitget_demo", "bitget_live_limited"):
-        from aletheia.execution.bitget_broker import close_demo_position
-        result = close_demo_position(
-            position_id,
-            reason=reason,
-            close_reasoning=close_reasoning,
-        )
-    elif mode in ("binance_testnet", "binance_live_limited"):
-        from aletheia.execution.gateway import close_exchange_position
-        result = close_exchange_position(
-            position_id,
-            reason=reason,
-            close_reasoning=close_reasoning,
-        )
-    elif mode in ("okx_demo", "okx_live_limited"):
+    if mode in (
+        "bitget_demo",
+        "bitget_live_limited",
+        "binance_testnet",
+        "binance_live_limited",
+        "okx_demo",
+        "okx_live_limited",
+    ):
         from aletheia.execution.gateway import close_exchange_position
         result = close_exchange_position(
             position_id,

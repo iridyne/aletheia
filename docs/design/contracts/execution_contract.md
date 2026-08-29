@@ -687,8 +687,13 @@ verified exit、funding settlement 与 Live Trust 的私有读取切到 UTA 规�
 Binance testnet 的配置门控 entry/full-close 垂直切片与 submit/modify/cancel command evidence；凭据
 qualification 未通过时选择器仍必须保持 legacy。Phase 5 已实现 OKX demo 的
 spot/perp contract-size 换算、demo client-id、entry/full-close、原生保护单与替换路径；它同样只在
-当前代码/账户资格 artifact 通过后由 Gateway 选择，否则继续使用 OKX legacy broker。Bitget 与
-live-limited profile mutation 尚未切换。
+当前代码/账户资格 artifact 通过后由 Gateway 选择，否则继续使用 OKX legacy broker。Phase 6
+已为 Bitget Classic v2 与 UTA v3 分别实现 contract-size、leverage、hedge close、submit/modify/cancel
+和原生保护参数，并由每个请求的显式 `uta=false/true` 保证端点族隔离。Bitget demo 的 entry、close、
+protection 与 replacement 只有在 exact-code/account/profile/generation qualification 通过时才走
+Gateway → Coordinator → UTA；否则继续使用 native legacy broker。因 owner 无法提供交易所凭据，
+本阶段只完成静态 conformance，未声称任一 Bitget profile 已获运行时资格。live-limited profile
+mutation 仍未切换。
 
 后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
 UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction

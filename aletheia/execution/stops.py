@@ -60,7 +60,7 @@ def place_exchange_protective_orders(position: dict) -> dict:
     if not stop and not tp:
         return {}
 
-    if mode == "okx_demo":
+    if mode in {"okx_demo", "bitget_demo"}:
         from aletheia.execution.gateway import place_exchange_protection
         return place_exchange_protection(position["id"])
     return {}
@@ -93,11 +93,7 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
         return False
 
     mode = row.get("execution_mode") or ""
-    if mode in ("bitget_demo", "bitget_live_limited"):
-        from aletheia.execution.bitget_broker import replace_exchange_stop
-        replace_exchange_stop(position_id, new_stop_price)
-        return True
-    elif mode == "okx_demo":
+    if mode in {"bitget_demo", "okx_demo"}:
         from aletheia.execution.gateway import replace_exchange_protective_stop
         return replace_exchange_protective_stop(position_id, new_stop_price)
     elif mode == "binance_testnet":

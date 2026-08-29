@@ -32,7 +32,9 @@ from aletheia.uta.models import (
 from aletheia.uta.profiles import (
     BinanceLiveProfile,
     BinanceTestnetProfile,
+    BitgetClassicV2LiveProfile,
     BitgetClassicV2Profile,
+    BitgetUTAV3LiveProfile,
     BitgetUTAV3Profile,
     OKXDemoProfile,
     OKXLiveProfile,
@@ -1051,11 +1053,15 @@ async def test_expired_private_history_window_fails_closed_without_network(monke
 
 
 @pytest.mark.asyncio
-async def test_unmigrated_profile_refuses_mutation_before_send(monkeypatch):
-    profile = _profile("classic_v2")
+async def test_unqualified_live_profile_refuses_mutation_before_send(monkeypatch):
+    profile = BitgetClassicV2LiveProfile(
+        api_key="key", secret="secret", passphrase="passphrase"
+    )
     exchange = FakeExchange()
     _session, calls = _install(monkeypatch, exchange)
-    identity = _identity(profile)
+    identity = _identity(profile).model_copy(
+        update={"execution_mode": profile.expected_execution_mode}
+    )
     adapter = CCXTUTAAdapter(identity, profile)
     assert adapter.capabilities.order_read.value == "supported"
     instrument = InstrumentIdentity(
@@ -1080,6 +1086,245 @@ async def test_unmigrated_profile_refuses_mutation_before_send(monkeypatch):
 
     assert report.evidence is CommandEvidence.NOT_SENT
     assert report.error_code == UTAErrorCode.NOT_SUPPORTED.value
+    assert calls == []
+
+
+def _bitget_command(identity, **updates):
+    values = dict(
+        command_id="bitget-command-1",
+        expected_account=identity,
+        instrument=InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTC/USDT:USDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+        ),
+        purpose="entry",
+        client_order_id="bitget-client-1",
+        side="buy",
+        quantity="0.02",
+        order_type="market",
+        leverage="2",
+    )
+    values.update(updates)
+    return SubmitOrderCommand(**values)
+
+
+@pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
+@pytest.mark.asyncio
+async def test_bitget_mutations_keep_contract_units_and_endpoint_family(
+    monkeypatch, kind, expected_uta
+):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "bitget-order-1",
+        "clientOrderId": "bitget-client-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "sell",
+        "type": "market",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(
+        _bitget_command(
+            identity,
+            purpose="exit",
+            side="sell",
+            reduce_only=True,
+            leverage=None,
+        )
+    )
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    assert create[1][:5] == (
+        "BTC/USDT:USDT",
+        "market",
+        "sell",
+        Decimal("2"),
+        None,
+    )
+    assert create[1][5] == {
+        "clientOrderId": "bitget-client-1",
+        "hedged": True,
+        "marginMode": "cross",
+        "reduceOnly": True,
+        "uta": expected_uta,
+    }
+    assert not any(event[0] == "set_leverage" for event in exchange.events)
+    await adapter.close()
+
+
+@pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
+@pytest.mark.asyncio
+async def test_bitget_entry_sets_profile_bound_leverage_before_send(
+    monkeypatch, kind, expected_uta
+):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "bitget-entry-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "market",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "status": "open",
+    }
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_bitget_command(identity, leverage="3"))
+
+    assert report.evidence is CommandEvidence.ACKNOWLEDGED
+    assert [event[0] for event in exchange.events] == [
+        "sandbox",
+        "load_markets",
+        "set_leverage",
+        "create_order",
+    ]
+    assert exchange.events[2] == (
+        "set_leverage",
+        3,
+        "BTC/USDT:USDT",
+        {"uta": expected_uta},
+    )
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_bitget_rejects_non_integral_contract_quantity_before_send(monkeypatch):
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_bitget_command(identity, quantity="0.025"))
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert report.error_code == UTAErrorCode.INVALID_ORDER.value
+    assert report.reason_code == "quantity_not_exact_contract_multiple"
+    assert not any(event[0] in {"set_leverage", "create_order"} for event in exchange.events)
+    await adapter.close()
+
+
+@pytest.mark.parametrize("kind, expected_uta", [("classic_v2", False), ("uta_v3", True)])
+@pytest.mark.asyncio
+async def test_bitget_modify_cancel_and_protection_keep_endpoint_family(
+    monkeypatch, kind, expected_uta
+):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    exchange.create_response = {
+        "id": "bitget-stop-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "sell",
+        "type": "market",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "status": "open",
+    }
+    exchange.exact_order = {
+        "id": "bitget-order-1",
+        "clientOrderId": "bitget-client-1",
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "type": "limit",
+        "amount": "2",
+        "filled": "0",
+        "remaining": "2",
+        "price": "50000",
+        "status": "open",
+    }
+    exchange.edit_response = {"id": "bitget-order-1"}
+    exchange.cancel_response = {"id": "bitget-order-1"}
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    protection = await adapter.submit_order(
+        _bitget_command(
+            identity,
+            purpose="protective_stop",
+            side="sell",
+            trigger_price="49000",
+            reduce_only=True,
+            leverage=None,
+        )
+    )
+    modified = await adapter.modify_order(
+        ModifyOrderCommand(
+            command_id="bitget-modify-1",
+            expected_account=identity,
+            instrument=_bitget_command(identity).instrument,
+            purpose="entry",
+            target_venue_order_id="bitget-order-1",
+            quantity="0.03",
+            limit_price="51000",
+        )
+    )
+    cancelled = await adapter.cancel_order(
+        CancelOrderCommand(
+            command_id="bitget-cancel-1",
+            expected_account=identity,
+            instrument=_bitget_command(identity).instrument,
+            purpose="protective_stop",
+            target_venue_order_id="bitget-order-1",
+            reason="replace_protection",
+        )
+    )
+
+    assert protection.evidence is CommandEvidence.ACKNOWLEDGED
+    assert modified.evidence is CommandEvidence.ACKNOWLEDGED
+    assert cancelled.evidence is CommandEvidence.ACKNOWLEDGED
+    create = next(event for event in exchange.events if event[0] == "create_order")
+    assert create[1][5] == {
+        "clientOrderId": "bitget-client-1",
+        "hedged": True,
+        "marginMode": "cross",
+        "reduceOnly": True,
+        "stopLossPrice": Decimal("49000"),
+        "uta": expected_uta,
+    }
+    edit = next(event for event in exchange.events if event[0] == "edit_order")
+    assert edit[1][4:7] == (Decimal("3"), Decimal("51000"), {"uta": expected_uta})
+    cancel = next(event for event in exchange.events if event[0] == "cancel_order")
+    assert cancel[1] == (
+        "bitget-order-1",
+        "BTC/USDT:USDT",
+        {"trigger": True, "uta": expected_uta},
+    )
+    await adapter.close()
+
+
+@pytest.mark.parametrize("profile_type", [BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile])
+@pytest.mark.asyncio
+async def test_bitget_live_profiles_remain_mutation_disabled(profile_type, monkeypatch):
+    profile = profile_type(api_key="key", secret="secret", passphrase="passphrase")
+    exchange = FakeExchange()
+    _session, calls = _install(monkeypatch, exchange)
+    identity = _identity(profile).model_copy(
+        update={"execution_mode": profile.expected_execution_mode}
+    )
+    adapter = CCXTUTAAdapter(identity, profile)
+
+    report = await adapter.submit_order(_bitget_command(identity))
+
+    assert report.evidence is CommandEvidence.NOT_SENT
+    assert adapter.capabilities.market_order.value == "unsupported"
     assert calls == []
 
 
