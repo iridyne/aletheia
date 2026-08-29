@@ -53,6 +53,15 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+def _registration_cap(registration: dict[str, Any], key: str, default: float) -> float:
+    if key not in registration:
+        return default
+    value = _to_float(registration[key])
+    if value is None or not 0.0 <= value <= 1.0:
+        raise ValueError(f"{key} must be a finite number between 0 and 1")
+    return value
+
+
 def _concentration_values(pnls: list[float]) -> tuple[float | None, float | None]:
     """Top-1 and Top-5 absolute-contribution share of the total absolute PnL."""
     contributions = sorted((abs(p) for p in pnls), reverse=True)
@@ -154,8 +163,12 @@ def compile_qualification_verdict(
         starting_equity = _to_float(registration.get("starting_equity"))
     if starting_equity is None or not math.isfinite(starting_equity):
         starting_equity = 0.0
-    top1_cap = _to_float(registration.get("concentration_top1_cap")) or _DEFAULT_CONCENTRATION_TOP1_CAP
-    top5_cap = _to_float(registration.get("concentration_top5_cap")) or _DEFAULT_CONCENTRATION_TOP5_CAP
+    top1_cap = _registration_cap(
+        registration, "concentration_top1_cap", _DEFAULT_CONCENTRATION_TOP1_CAP
+    )
+    top5_cap = _registration_cap(
+        registration, "concentration_top5_cap", _DEFAULT_CONCENTRATION_TOP5_CAP
+    )
     max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
 
     # ------------------------------------------------------------------

@@ -139,6 +139,45 @@ def test_rejected_verdict_concentration_breach(monkeypatch):
     assert "concentration_top1" in result["gates"]["failed_gates"]
 
 
+@pytest.mark.parametrize("cap_key", ["concentration_top1_cap", "concentration_top5_cap"])
+def test_explicit_zero_concentration_cap_is_preserved(monkeypatch, cap_key):
+    _patch_outcomes(monkeypatch, [1.0] * 15 + [-0.5] * 5)
+
+    result = compile_qualification_verdict(
+        registration={**_REGISTRATION, cap_key: 0.0}
+    )
+
+    gate_key = cap_key.removesuffix("_cap")
+    assert result["gates"][gate_key]["pass"] is False
+    assert result["gates"][gate_key]["threshold"] == "<= 0.0"
+
+
+@pytest.mark.parametrize("cap_key", ["concentration_top1_cap", "concentration_top5_cap"])
+@pytest.mark.parametrize("invalid", [None, "bad", math.nan, math.inf, -0.01, 1.01])
+def test_present_invalid_concentration_cap_fails_before_outcome_read(
+    monkeypatch, cap_key, invalid
+):
+    def unexpected_read(**_kwargs):
+        pytest.fail("invalid registration must fail before reading outcomes")
+
+    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", unexpected_read)
+    monkeypatch.setattr(qual_module, "build_outcome_cohort_summary", unexpected_read)
+
+    with pytest.raises(ValueError, match=cap_key):
+        compile_qualification_verdict(
+            registration={**_REGISTRATION, cap_key: invalid}
+        )
+
+
+def test_omitted_concentration_caps_keep_documented_defaults(monkeypatch):
+    _patch_outcomes(monkeypatch, [1.0] * 15 + [-0.5] * 5)
+
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+
+    assert result["gates"]["concentration_top1"]["threshold"] == "<= 0.25"
+    assert result["gates"]["concentration_top5"]["threshold"] == "<= 0.5"
+
+
 def test_insufficient_data_no_outcomes(monkeypatch):
     _patch_outcomes(monkeypatch, [])
     result = compile_qualification_verdict(registration=_REGISTRATION)
