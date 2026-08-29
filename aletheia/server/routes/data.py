@@ -15,6 +15,7 @@ from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.portfolio.pnl import compute_portfolio
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
+    AuditEvent,
     SerenityEvidence,
     SerenityFeedbackEvent,
     SerenityOpportunity,
@@ -979,7 +980,8 @@ def approve_proposal(proposal_id: str, request: Request):
     # The Proposal status and the pending -> approved transition must share the
     # same writer claim. Otherwise a stale unlocked read can overwrite a
     # concurrent terminal rejection and hand it to Gateway for execution.
-    approval_transitioned = False
+    source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
+    approval_event = None
     with repo.transaction(immediate=True):
         p = repo.get_trade_proposal(proposal_id)
         if p is None:
@@ -1005,33 +1007,38 @@ def approve_proposal(proposal_id: str, request: Request):
             )
 
         if status == "pending":
+            approval_event = AuditEvent(
+                actor="human",
+                source=source,
+                event_type="proposal_approved",
+                entity_type="trade_proposal",
+                entity_id=proposal_id,
+                before_state=json.dumps({"status": status}, sort_keys=True),
+                after_state=json.dumps({"status": "approved"}, sort_keys=True),
+                message="Proposal approved for paper execution",
+            )
             repo.update_trade_proposal(proposal_id, status="approved")
-            approval_transitioned = True
+            repo.insert_audit_event(approval_event)
 
-    _source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
-    if approval_transitioned:
+    if approval_event is not None:
         try:
-            write_audit(
-                {
-                    "actor": "human",
-                    "source": _source,
-                    "event_type": "proposal_approved",
-                    "entity_type": "trade_proposal",
-                    "entity_id": proposal_id,
-                    "before": {"status": status},
-                    "after": {"status": "approved"},
-                    "message": "Proposal approved for paper execution",
-                }
+            mirrored = write_audit(
+                approval_event.model_dump(),
+                mirror_db=False,
+                dedup_id=approval_event.id,
             )
         except Exception as exc:
-            # The SQLite approval is authoritative. A process can also die in
-            # this gap, so approved/executing states above deliberately re-enter
-            # Gateway on the next idempotent request.
             logger.warning(
-                "Proposal %s approval audit unavailable; execution continues (%s)",
+                "Proposal %s approval JSONL mirror unavailable; execution continues (%s)",
                 proposal_id,
                 type(exc).__name__,
             )
+        else:
+            if not mirrored:
+                logger.warning(
+                    "Proposal %s approval JSONL mirror unavailable; execution continues",
+                    proposal_id,
+                )
     from aletheia.execution.gateway import execute_existing_proposal
 
     try:
@@ -1050,7 +1057,7 @@ def approve_proposal(proposal_id: str, request: Request):
             write_audit(
                 {
                     "actor": "system",
-                    "source": _source,
+                    "source": source,
                     "event_type": "execution_error",
                     "entity_type": "trade_proposal",
                     "entity_id": proposal_id,
@@ -1081,6 +1088,8 @@ def reject_proposal(proposal_id: str, request: Request):
     _ensure_db()
     from aletheia.files.jsonl import write_audit
 
+    source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
+    rejection_event = None
     # Re-read under the writer claim so an execution worker cannot acquire its
     # lease or insert an Order between this check and the status transition. This
     # route declines only intent that has not crossed the execution boundary; it
@@ -1108,26 +1117,35 @@ def reject_proposal(proposal_id: str, request: Request):
         # transaction; otherwise one declined Proposal can consume a slot
         # forever even though no Order exists.
         repo.release_entry_risk_reservation(proposal_id)
-    _source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
+        rejection_event = AuditEvent(
+            actor="human",
+            source=source,
+            event_type="proposal_rejected",
+            entity_type="trade_proposal",
+            entity_id=proposal_id,
+            before_state=json.dumps({"status": current}, sort_keys=True),
+            after_state=json.dumps({"status": "rejected"}, sort_keys=True),
+            message="Proposal rejected by human before execution began",
+        )
+        repo.insert_audit_event(rejection_event)
     try:
-        write_audit(
-            {
-                "actor": "human",
-                "source": _source,
-                "event_type": "proposal_rejected",
-                "entity_type": "trade_proposal",
-                "entity_id": proposal_id,
-                "message": "Proposal rejected by human before execution began",
-            }
+        mirrored = write_audit(
+            rejection_event.model_dump(),
+            mirror_db=False,
+            dedup_id=rejection_event.id,
         )
     except Exception as exc:
-        # SQLite is authoritative after commit. A secondary JSONL failure must not
-        # turn a completed rejection into a retryable-looking API error.
         logger.warning(
-            "Proposal %s kept rejected after audit sink failure (%s)",
+            "Proposal %s kept rejected after JSONL mirror failure (%s)",
             proposal_id,
             type(exc).__name__,
         )
+    else:
+        if not mirrored:
+            logger.warning(
+                "Proposal %s kept rejected after JSONL mirror failure",
+                proposal_id,
+            )
     return {"proposal_id": proposal_id, "status": "rejected"}
 
 
