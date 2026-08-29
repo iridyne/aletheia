@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
@@ -86,6 +86,31 @@ def compare_policy_epochs(
     return EpochComparison("new_epoch", "apply_normally", "effective_policy_changed")
 
 
+def _rotation_boundary(db, epoch_kind: str) -> str:
+    boundary = datetime.now(timezone.utc)
+    latest_started = None
+    rows = db.execute(
+        "SELECT started_at FROM learning_policy_epochs WHERE epoch_kind=?",
+        (epoch_kind,),
+    ).fetchall()
+    for row in rows:
+        started_at = row["started_at"]
+        try:
+            started = datetime.fromisoformat(started_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid started_at for learning policy epoch {epoch_kind!r}"
+            ) from exc
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        started = started.astimezone(timezone.utc)
+        if latest_started is None or started > latest_started:
+            latest_started = started
+    if latest_started is not None:
+        boundary = max(boundary, latest_started + timedelta(microseconds=1))
+    return boundary.isoformat()
+
+
 def persist_policy_epoch(epoch: PolicyEpoch) -> str:
     """Return one durable open epoch id, rotating atomically on policy changes."""
     from aletheia.learning.ledger import insert_record
@@ -108,41 +133,20 @@ def persist_policy_epoch(epoch: PolicyEpoch) -> str:
             ),
             None,
         )
-        now = datetime.now(timezone.utc).isoformat()
+        boundary = _rotation_boundary(db, epoch.epoch_kind)
         if matching is not None:
             db.execute(
                 "UPDATE learning_policy_epochs SET ended_at=? "
                 "WHERE epoch_kind=? AND ended_at IS NULL AND epoch_id!=?",
-                (now, epoch.epoch_kind, matching["epoch_id"]),
+                (boundary, epoch.epoch_kind, matching["epoch_id"]),
             )
             return str(matching["epoch_id"])
 
         db.execute(
             "UPDATE learning_policy_epochs SET ended_at=? "
             "WHERE epoch_kind=? AND ended_at IS NULL",
-            (now, epoch.epoch_kind),
+            (boundary, epoch.epoch_kind),
         )
-        # Guarantee strict monotonicity: if wall-clock is not ahead of the
-        # latest persisted started_at for this kind (possible on fast hosts or
-        # when the OS clock resolution is coarser than the rotation cadence),
-        # bump by one microsecond so the UNIQUE(epoch_kind, effective_values_hash,
-        # started_at) constraint never fires on a legitimate rapid A→B→A rotation.
-        from datetime import timedelta
-        latest_row = db.execute(
-            "SELECT MAX(started_at) AS latest FROM learning_policy_epochs WHERE epoch_kind=?",
-            (epoch.epoch_kind,),
-        ).fetchone()
-        latest_ts = latest_row["latest"] if latest_row else None
-        if latest_ts is not None:
-            try:
-                latest_dt = datetime.fromisoformat(latest_ts)
-                if latest_dt.tzinfo is None:
-                    latest_dt = latest_dt.replace(tzinfo=timezone.utc)
-                bumped = (latest_dt + timedelta(microseconds=1)).isoformat()
-                if bumped > now:
-                    now = bumped
-            except (ValueError, TypeError):
-                pass
         record = LearningPolicyEpoch(
             epoch_kind=epoch.epoch_kind,
             effective_values_hash=epoch.epoch_hash,
@@ -151,7 +155,7 @@ def persist_policy_epoch(epoch: PolicyEpoch) -> str:
             ),
             affected_path_ids_json=json.dumps(epoch.affected_path_ids, sort_keys=True),
             safety_required=epoch.safety_required,
-            started_at=now,
+            started_at=boundary,
         )
         insert_record("learning_policy_epochs", record)
         return record.epoch_id
