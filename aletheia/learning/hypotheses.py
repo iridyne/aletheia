@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from aletheia.learning.t0_context import T0FoundationAssessmentV1
 
 if TYPE_CHECKING:
     from aletheia.learning.models import LearningHypothesis
@@ -93,8 +95,8 @@ class HypothesisResearchEvidenceV1(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal[HYPOTHESIS_RESEARCH_EVIDENCE_VERSION] = (
-        HYPOTHESIS_RESEARCH_EVIDENCE_VERSION
+    contract_version: Literal["hypothesis-research-evidence/v1"] = (
+        "hypothesis-research-evidence/v1"
     )
     observation: HypothesisResearchObservationV1
     original_candidate_explanation: ResearchText | None = None
@@ -138,6 +140,84 @@ class HypothesisResearchEvidenceV1(BaseModel):
 
     def canonical_payload(self) -> dict[str, Any]:
         return self.model_dump(mode="json", exclude_none=True)
+
+class HypothesisGenerationManifestV1(BaseModel):
+    """Immutable lineage for one generation attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal[
+        "reflection", "manual", "retrospective_calibration",
+        "single_parameter_mutation", "crossover",
+    ]
+    producer: ResearchText
+    producer_version: ResearchText
+    prompt_template_version: str | None = None
+    model_provider: str | None = None
+    model_id: str | None = None
+    source_bundle_hash: ResearchIdentity
+    parent_hypothesis_ids: list[ResearchIdentity] = Field(default_factory=list)
+    agent_run_ids: list[ResearchIdentity] = Field(default_factory=list)
+    tool_run_ids: list[ResearchIdentity] = Field(default_factory=list)
+    estimated_input_tokens: int | None = Field(default=None, ge=0)
+    estimated_output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _v1_runtime_disables_crossover(self) -> "HypothesisGenerationManifestV1":
+        if self.method == "crossover":
+            raise ValueError("crossover is lineage-only and disabled in V1 runtime")
+        return self
+
+
+class HypothesisDraftV1(BaseModel):
+    """One declared Consumer and one bounded Baseline→Treatment policy delta."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path_id: ResearchIdentity
+    consumer: ResearchText
+    source_type: ResearchText
+    source_artifact_ids: list[ResearchIdentity] = Field(min_length=1, max_length=20)
+    source_cohort: ResearchIdentity
+    scope: dict[str, Any] = Field(min_length=1)
+    baseline_action: dict[str, Any] = Field(min_length=1)
+    treatment_action: dict[str, Any] = Field(min_length=1)
+    primary_metric: ResearchIdentity
+    outcome_contract_version: ResearchIdentity
+    target_horizon: ResearchIdentity
+    effect_threshold: float
+    harm_budget: dict[str, Any] = Field(min_length=1)
+    falsifier: ResearchText
+    overlap_group: ResearchIdentity
+    behavior_fingerprint: ResearchIdentity
+    status: Literal["compilable", "advisory_only"]
+    reasons: list[ResearchText] = Field(default_factory=list)
+
+
+class HypothesisNominationEnvelopeV1(BaseModel):
+    """One attributable generation attempt around the preserved V1 research evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["hypothesis-nomination/v1"] = "hypothesis-nomination/v1"
+    research_evidence: HypothesisResearchEvidenceV1
+    t0_foundation: "T0FoundationAssessmentV1"
+    draft: HypothesisDraftV1
+    generation_manifest: HypothesisGenerationManifestV1
+
+
+class LearningHypothesisNomination(BaseModel):
+    nomination_id: str
+    behavior_fingerprint: str
+    source_bundle_hash: str
+    hypothesis_id: str | None = None
+    research_status: str
+    publication_status: str
+    envelope_json: str
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def hypothesis_fingerprint(
@@ -260,6 +340,132 @@ def nominate_learning_hypothesis(
     if persisted is None:
         raise RuntimeError("learning hypothesis nomination was not persisted")
     return LearningHypothesis.model_validate(persisted)
+
+
+def nomination_identity(*, behavior_fingerprint: str, source_bundle_hash: str) -> str:
+    """Stable exact-attempt identity; changed evidence is a new nomination."""
+    raw = json.dumps(
+        {
+            "behavior_fingerprint": behavior_fingerprint,
+            "source_bundle_hash": source_bundle_hash,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def publish_hypothesis_nomination(
+    envelope: HypothesisNominationEnvelopeV1,
+) -> LearningHypothesisNomination:
+    """Atomically publish one generation attempt and its optional behavior identity."""
+    from aletheia.learning.ledger import (
+        get_hypothesis_by_fingerprint,
+        get_nomination,
+        insert_hypothesis,
+        insert_nomination,
+    )
+    from aletheia.learning.models import LearningHypothesis
+    from aletheia.learning.registry import get_learning_path
+    from aletheia.storage.repositories import transaction
+
+    draft = envelope.draft
+    path = get_learning_path(draft.path_id)
+    computed_fingerprint = hypothesis_fingerprint(
+        path_id=draft.path_id,
+        scope=draft.scope,
+        action=draft.treatment_action,
+        target_horizon=draft.target_horizon,
+        source_cohort=draft.source_cohort,
+        behavior_contract_version=path.behavior_contract_version,
+    )
+    if computed_fingerprint != draft.behavior_fingerprint:
+        raise ValueError("nomination behavior fingerprint does not match the draft")
+
+    nomination_id = nomination_identity(
+        behavior_fingerprint=draft.behavior_fingerprint,
+        source_bundle_hash=envelope.generation_manifest.source_bundle_hash,
+    )
+    existing_nomination = get_nomination(nomination_id)
+    if existing_nomination is not None:
+        return LearningHypothesisNomination.model_validate(existing_nomination)
+
+    can_publish_hypothesis = (
+        envelope.research_evidence.research_status in {"ready", "narrowed"}
+        and envelope.t0_foundation.status == "eligible_for_hypothesis_research"
+        and draft.status == "compilable"
+    )
+    if envelope.research_evidence.research_status == "rejected":
+        publication_status = "rejected"
+    elif not can_publish_hypothesis:
+        publication_status = "advisory"
+    else:
+        publication_status = "published"
+
+    with transaction(immediate=True):
+        hypothesis_id: str | None = None
+        if can_publish_hypothesis:
+            row = get_hypothesis_by_fingerprint(draft.behavior_fingerprint)
+            if row is None:
+                hypothesis = LearningHypothesis(
+                    fingerprint=draft.behavior_fingerprint,
+                    behavior_contract_version=path.behavior_contract_version,
+                    fingerprint_schema_version=HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
+                    cohort_id=hashlib.sha256(
+                        draft.source_cohort.encode("utf-8"),
+                    ).hexdigest()[:16],
+                    path_id=draft.path_id,
+                    overlap_group=draft.overlap_group,
+                    source_type=draft.source_type,
+                    source_artifact_ids_json=json.dumps(draft.source_artifact_ids),
+                    scope_json=json.dumps(
+                        _normalize(draft.scope), sort_keys=True, separators=(",", ":"),
+                    ),
+                    action_json=json.dumps(
+                        _normalize(draft.treatment_action),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    consumer=draft.consumer,
+                    target_horizon=draft.target_horizon,
+                    status="proposed",
+                    effect_threshold=draft.effect_threshold,
+                    harm_budget_json=json.dumps(
+                        _normalize(draft.harm_budget),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    evidence_summary_json=json.dumps(
+                        envelope.research_evidence.canonical_payload(),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+                insert_hypothesis(hypothesis)
+                row = get_hypothesis_by_fingerprint(draft.behavior_fingerprint)
+            if row is None:
+                raise RuntimeError("learning hypothesis publication failed")
+            hypothesis_id = str(row["hypothesis_id"])
+
+        nomination = LearningHypothesisNomination(
+            nomination_id=nomination_id,
+            behavior_fingerprint=draft.behavior_fingerprint,
+            source_bundle_hash=envelope.generation_manifest.source_bundle_hash,
+            hypothesis_id=hypothesis_id,
+            research_status=envelope.research_evidence.research_status,
+            publication_status=publication_status,
+            envelope_json=json.dumps(
+                envelope.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        insert_nomination(nomination)
+
+    persisted = get_nomination(nomination_id)
+    if persisted is None:
+        raise RuntimeError("learning hypothesis nomination was not persisted")
+    return LearningHypothesisNomination.model_validate(persisted)
 
 
 def _normalize(value: Any) -> Any:

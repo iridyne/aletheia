@@ -61,6 +61,8 @@ async def route_automatic_block_recommendation(
                 evidence=evidence,
                 proposed_scope=scope,
                 target_horizon="4h",
+                path_id="ranker_learned_guard",
+                consumer="paper ranker",
                 deadline=deadline,
             )
         )
@@ -86,6 +88,63 @@ async def route_automatic_block_recommendation(
             "reason": "research_material_scope_not_expressible_by_guard",
             "research_status": research.research_status,
             "research_evidence": research_payload,
+        }
+
+    hypothesis_action = {
+        "type": "candidate_guard",
+        "guard_id": guard_id,
+        "block_candidate": True,
+        "score_penalty": 0,
+    }
+    hypothesis_scope: dict[str, Any] = {
+        "guard_id": guard_id,
+        "applies_to": scope,
+    }
+    source_cohort = f"learned_guard:{guard_id}:research-v1"
+    from aletheia.learning.hypotheses import (
+        hypothesis_fingerprint,
+        nominate_learning_hypothesis,
+    )
+    from aletheia.learning.ledger import get_hypothesis_by_fingerprint
+    from aletheia.learning.registry import get_learning_path
+
+    path = get_learning_path("ranker_learned_guard")
+    fingerprint = hypothesis_fingerprint(
+        path_id=path.path_id,
+        scope=hypothesis_scope,
+        action=hypothesis_action,
+        target_horizon="4h",
+        source_cohort=source_cohort,
+        behavior_contract_version=path.behavior_contract_version,
+    )
+    existing = get_hypothesis_by_fingerprint(fingerprint)
+    if existing is not None:
+        try:
+            existing_sources = json.loads(existing["source_artifact_ids_json"])
+            existing_research = json.loads(existing["evidence_summary_json"])
+        except (KeyError, TypeError, ValueError):
+            return {
+                "action": "guard_shadow_unavailable",
+                "reason": "existing_nomination_provenance_invalid",
+            }
+        linked = [
+            value for value in existing_sources
+            if str(value) not in set(source_ids)
+        ]
+        if set(source_ids).issubset(existing_sources) and existing_research == research_payload:
+            return {
+                "action": "guard_shadow_candidate",
+                "guard_id": guard_id,
+                "guard_candidate_id": str(linked[-1]) if linked else "",
+                "hypothesis_id": str(existing["hypothesis_id"]),
+                "hypothesis_status": "proposed",
+                "research_status": research.research_status,
+                "original_action": action,
+            }
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": "changed_evidence_requires_new_nomination",
+            "hypothesis_id": str(existing["hypothesis_id"]),
         }
 
     metadata = {
@@ -122,33 +181,28 @@ async def route_automatic_block_recommendation(
             "hypothesis_status": "source_identity_unavailable",
             "original_action": action,
         }
-    hypothesis_action = {
-        "type": "candidate_guard",
-        "guard_id": guard_id,
-        "block_candidate": True,
-        "score_penalty": 0,
-    }
-    from aletheia.learning.hypotheses import nominate_learning_hypothesis
+    try:
+        hypothesis = nominate_learning_hypothesis(
+            path_id="ranker_learned_guard",
+            scope=hypothesis_scope,
+            action=hypothesis_action,
+            source_type="guard_candidate",
+            source_artifact_ids=[*source_ids, guard_candidate_id],
+            source_cohort=source_cohort,
+            consumer="paper_trader_ranker",
+            target_horizon="4h",
+            evidence_summary=research,
+            require_research_evidence=True,
+        )
+    except Exception:
+        from aletheia.knowledge.manager import archive_item
 
-    hypothesis_scope: dict[str, Any] = {
-        "guard_id": guard_id,
-        "applies_to": scope,
-    }
-    hypothesis = nominate_learning_hypothesis(
-        path_id="ranker_learned_guard",
-        scope=hypothesis_scope,
-        action=hypothesis_action,
-        source_type="guard_candidate",
-        source_artifact_ids=[*source_ids, guard_candidate_id],
-        source_cohort=f"learned_guard:{guard_id}:research-v1",
-        consumer="paper_trader_ranker",
-        target_horizon="4h",
-        evidence_summary=research,
-        require_research_evidence=True,
-    )
-    # A repeated nomination may return the original fingerprinted hypothesis
-    # while this call created a fresh candidate row. Report the candidate that
-    # the durable hypothesis actually names, not the unlinked fresh row.
+        archive_item(guard_candidate_id)
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": "hypothesis_nomination_failed",
+        }
+    # Exact retries returned before candidate creation; this is the first publication.
     linked_candidate_id = guard_candidate_id
     try:
         artifact_ids = json.loads(hypothesis.source_artifact_ids_json or "[]")

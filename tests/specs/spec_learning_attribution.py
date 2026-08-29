@@ -344,13 +344,13 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
 
 
 @spec_claim(SpecClaim(
-    "LE-B19c", "learning_evolution", "§9.7 nomination retry", "L2b",
-    "A failed hypothesis nomination propagates instead of returning a lesson-ready "
-    "recommendation, so the enclosing Dreaming batch leaves its source case pending "
-    "for a later retry.",
+    "LE-B19c", "learning_evolution", "§9.7 nomination publication", "L2b",
+    "A failed first hypothesis publication archives its newly-created candidate "
+    "and returns a fail-closed result, so no active orphan enters review.",
     status="implemented",
 ))
-async def test_automatic_block_recommendation_propagates_nomination_failure(monkeypatch):
+async def test_automatic_block_recommendation_compensates_nomination_failure(monkeypatch):
+    from aletheia.knowledge import manager
     from aletheia.learning import guard_routing, hypotheses
 
     monkeypatch.setattr(
@@ -358,22 +358,28 @@ async def test_automatic_block_recommendation_propagates_nomination_failure(monk
         "create_guard_candidate",
         lambda **_: SimpleNamespace(id="candidate-item"),
     )
+    archived = []
+    monkeypatch.setattr(manager, "archive_item", archived.append)
 
     def fail_nomination(**_):
         raise RuntimeError("temporary nomination failure")
 
     monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
 
-    with pytest.raises(RuntimeError, match="temporary nomination failure"):
-        await guard_routing.route_automatic_block_recommendation(
-            {"action": "block_scanner", "scanner": "momentum"},
-            evidence={
-                "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
-                "scanner_families": ["momentum"],
-            },
-            source_id="case-retry",
-            research_evidence=_ready_research("case-retry"),
-        )
+    result = await guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={
+            "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
+            "scanner_families": ["momentum"],
+        },
+        source_id="case-retry",
+        research_evidence=_ready_research("case-retry"),
+    )
+    assert result == {
+        "action": "guard_shadow_unavailable",
+        "reason": "hypothesis_nomination_failed",
+    }
+    assert archived == ["candidate-item"]
 
 
 @spec_claim(SpecClaim(

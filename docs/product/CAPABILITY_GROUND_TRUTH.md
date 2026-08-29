@@ -172,6 +172,7 @@ Outside these canonical tables, use the full capability name.
 | LN-17 | Persona pyramid decision | E1+E2 | Experimental | Reference-only helper; Settings/API block new enablement and no order capability is promised (#410) | No |
 | LN-18 | Persona rollout automation | E1+E2 | Experimental | Scheduler only rechecks the durable rollout state machine; one-step transitions remain evidence-gated and never mutate unrelated config | No |
 | LN-19 | Policy/version history and diff | E1+E2 | Supported | Static diff route precedes the dynamic detail route; endpoint acceptance covers immutable diff, detail, and history | No |
+| LN-20 | Memory/Reflection to Economic Knowledge qualification | E1+E2 | Experimental | T0, nomination, compiler, Shadow handoff, read-only qualification, inheritance/death, yield, and advisory Meta-Evolution are executable; no natural current positive Economic Knowledge is claimed | No |
 
 ### Security, configuration, and owner visibility
 

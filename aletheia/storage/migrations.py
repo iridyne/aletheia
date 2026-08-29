@@ -3867,6 +3867,30 @@ _CANDIDATE_ATTENTION_CHECKSUM = hashlib.sha256(
     (repr(_CANDIDATE_ATTENTION_COLUMNS) + _CANDIDATE_ATTENTION_SQL + "\ncandidate_attention_v1").encode("utf-8")
 ).hexdigest()
 
+_LEARNING_HYPOTHESIS_NOMINATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS learning_hypothesis_nominations (
+    nomination_id TEXT PRIMARY KEY,
+    behavior_fingerprint TEXT NOT NULL,
+    source_bundle_hash TEXT NOT NULL,
+    hypothesis_id TEXT REFERENCES learning_hypotheses(hypothesis_id),
+    research_status TEXT NOT NULL,
+    publication_status TEXT NOT NULL,
+    envelope_json TEXT NOT NULL CHECK(json_valid(envelope_json)),
+    created_at TEXT NOT NULL,
+    UNIQUE(behavior_fingerprint, source_bundle_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_nominations_hypothesis
+ON learning_hypothesis_nominations(hypothesis_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learning_nominations_status
+ON learning_hypothesis_nominations(publication_status, created_at DESC);
+"""
+_LEARNING_HYPOTHESIS_NOMINATIONS_CHECKSUM = hashlib.sha256(
+    (
+        _LEARNING_HYPOTHESIS_NOMINATIONS_SQL
+        + "\nlearning_hypothesis_nominations_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 _LESSON_REVIEWER_ATTEMPTS_SQL = """
 CREATE TABLE IF NOT EXISTS learning_lesson_reviewer_attempts (
     attempt_id TEXT PRIMARY KEY,
@@ -5681,6 +5705,12 @@ def _apply_candidate_attention_v49(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_learning_hypothesis_nominations_v50(db: sqlite3.Connection) -> None:
+    """Add append-only generation attempts without duplicating hypothesis truth."""
+    db.executescript(_LEARNING_HYPOTHESIS_NOMINATIONS_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_controller_recommendation_cost_model_v45(db: sqlite3.Connection) -> None:
     """Persist the cost-model identity behind each controller evidence row."""
 
@@ -6458,6 +6488,12 @@ _MIGRATIONS = (
         checksum=_CANDIDATE_ATTENTION_CHECKSUM,
         schema_version="aletheia-sqlite-v49",
         apply=_apply_candidate_attention_v49,
+    ),
+    MigrationStep(
+        migration_id="20260829_0049_learning_hypothesis_nominations_v50",
+        checksum=_LEARNING_HYPOTHESIS_NOMINATIONS_CHECKSUM,
+        schema_version="aletheia-sqlite-v50",
+        apply=_apply_learning_hypothesis_nominations_v50,
     ),
 )
 

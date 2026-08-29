@@ -12,6 +12,7 @@ from aletheia.storage.sqlite import get_db, register_instant_us
 
 _TABLE_ID = {
     "learning_hypotheses": "hypothesis_id",
+    "learning_hypothesis_nominations": "nomination_id",
     "learning_experiments": "experiment_id",
     "learning_exposures": "exposure_id",
     "learning_contribution_verdicts": "verdict_id",
@@ -56,6 +57,12 @@ def list_records(table: str, *, limit: int = 100) -> list[dict]:
 
 def insert_hypothesis(record) -> bool:
     return insert_record("learning_hypotheses", record, ignore_duplicates=True)
+
+
+def insert_nomination(record) -> bool:
+    return insert_record(
+        "learning_hypothesis_nominations", record, ignore_duplicates=True,
+    )
 
 
 def insert_experiment(record) -> bool:
@@ -207,6 +214,14 @@ def get_hypothesis_by_fingerprint(fingerprint: str) -> dict | None:
         "SELECT * FROM learning_hypotheses WHERE fingerprint=?", (fingerprint,)
     ).fetchone()
     return dict(row) if row else None
+
+
+def get_nomination(nomination_id: str) -> dict | None:
+    return get_record("learning_hypothesis_nominations", nomination_id)
+
+
+def list_nominations(*, limit: int = 100) -> list[dict]:
+    return list_records("learning_hypothesis_nominations", limit=limit)
 
 
 def get_open_experiment(hypothesis_id: str) -> dict | None:

@@ -224,13 +224,13 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
 
 
 @spec_claim(SpecClaim(
-    "LE-B34", "learning_evolution", "§9.8 causal red-team replay", "L2c",
-    "A deterministic exact closed-trade replay sources 4h net from exact canonical outcomes, "
-    "bounds counterfactuals to three, and narrows a broad repeated-loss learned-guard claim "
-    "to recorded risk-off and OI context without emitting an inexpressible treatment.",
+    "LE-B34", "learning_evolution", "§9.8 path-aware causal research", "L2c",
+    "A deterministic closed-trade replay rooted in Knowledge Markdown remains "
+    "insufficient until a path-specific canonical T0 envelope exists; it creates "
+    "no guard candidate, hypothesis, experiment, exposure, verdict, or authority.",
     status="implemented",
 ))
-async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypatch):
+async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypatch):
     from aletheia.knowledge.manager import create_trade_case_study
     from aletheia.learning import guard_routing, hypothesis_research
     from aletheia.learning.ledger import list_records
@@ -427,15 +427,14 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         source_id=case_ids[0],
     )
     assert routed["action"] == "guard_shadow_unavailable"
-    assert routed["reason"] == "research_material_scope_not_expressible_by_guard"
-    assert routed["research_status"] == "narrowed"
-    assert len(review_calls) == 1
+    assert routed["reason"] == "research_insufficient_context"
+    assert routed["research_status"] == "insufficient_context"
+    assert review_calls == []
 
     stored = routed["research_evidence"]
     assert stored["contract_version"] == "hypothesis-research-evidence/v1"
-    assert stored["candidate_explanation"] != stored["original_candidate_explanation"]
-    assert set(stored["relevant_context"]["material_scope"]) == {"regime", "funding_oi"}
-    assert len(stored["counterfactual_checks"]) == 3
+    assert stored["relevant_context"]["recorded_at_t0"] == {}
+    assert "canonical_t0_envelope_unavailable" in stored["relevant_context"]["missing"]
 
     repeated = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
@@ -443,7 +442,7 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         source_id=case_ids[0],
         research_evidence=stored,
     )
-    assert repeated["reason"] == "research_material_scope_not_expressible_by_guard"
+    assert repeated["reason"] == "research_insufficient_context"
     assert list_records("learning_hypotheses") == []
     assert list_records("learning_experiments") == []
     assert list_records("learning_exposures") == []

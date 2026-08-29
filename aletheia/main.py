@@ -41,6 +41,7 @@ from aletheia.cli.dev import dev_app
 from aletheia.cli.evidence_cmd import evidence_app
 from aletheia.cli.control_cmd import control_app
 from aletheia.cli.observe_cmd import observe_app
+from aletheia.cli.learning_cmd import learning_app
 
 app = typer.Typer(
     name="aletheia",
@@ -71,6 +72,11 @@ app.add_typer(dev_app, name="dev", help="Isolated worktree development preview c
 app.add_typer(evidence_app, name="evidence", help="Evidence epoch management and observation window anchoring.")
 app.add_typer(control_app, name="control", help="Machine governance control plane: SHA, epochs, authority, window continuity.")
 app.add_typer(observe_app, name="observe", help="Observation Lab: register/list/status/sync/evaluate/close.")
+app.add_typer(
+    learning_app,
+    name="learning",
+    help="Read-only hypothesis lineage, Economic Knowledge, yield, and research advice.",
+)
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")

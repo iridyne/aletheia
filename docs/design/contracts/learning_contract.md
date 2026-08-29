@@ -592,6 +592,107 @@ Ranker enforcement keeps two authority classes separate:
   admission before an exact treatment could restore the preserved proposed block/penalty. Such a
   treatment could never grant Risk, Execution, exchange, or live authority.
 
+### 7.2 T0, nomination, compiler, and experimentability boundary
+
+Knowledge Markdown, lessons, memories, skills, reviews, and reflections are source
+evidence only. A path-specific `t0-context/v1` envelope must preserve decision-time
+timestamps, durable source identities and hashes, explicit unavailable domains,
+root-outcome deduplication, challenge-set separation, and—where the Consumer ranks a
+candidate population—the contemporaneous population identity. Knowledge artifacts
+cannot serve as a canonical T0 anchor. Missing, late, reconstructed-partial, pruned,
+or overly broad context remains `advisory_only`.
+
+Each generation attempt is appended to
+`learning_hypothesis_nominations`. Its source-bundle identity is distinct from the
+behavior fingerprint: exact retries are idempotent, new evidence may point to the
+same hypothesis, and one behavior fingerprint cannot acquire a second policy
+meaning. Only a `compilable` draft backed by eligible T0 and `ready`/`narrowed`
+research may publish the existing `proposed` `LearningHypothesis`; every other
+attempt remains lineage evidence and opens no experiment or authority.
+
+The deterministic compiler accepts only a code-declared action template and exactly
+one finite bounded Baseline→Treatment parameter for the registry-declared Consumer.
+Free-form Consumers, metrics, action types, multi-parameter mutations, and research
+scope beyond the bounded context remain advisory. `ExperimentabilityPreflightV1`
+then records historical eligible volume, market days, eligible-event and settlement
+rates, expected assignment and actual-intervention rates, adapter availability,
+sample/window requirements, overlap, and data quality. Its statuses are `ready`,
+`slow_but_viable`, `not_experimentable_now`, and `unsupported`.
+
+Only `ready` or `slow_but_viable` may idempotently register one existing-ledger
+Shadow experiment. Unsupported/non-viable hypotheses remain visible without
+experiment, exposure, verdict, epoch, Consumer influence, Paper authority, Risk,
+Execution, or Live authority. Shadow always returns the static Baseline; Paper
+authority still requires the existing explicit admission path.
+
+### 7.3 Economic Knowledge, inheritance, and evidence-driven death
+
+`EconomicKnowledgeFactV1` is a reproducible read-only projection, not a table and
+not a second verdict or lifecycle. One fact maps one-to-one to an existing consumed
+positive confirmatory fixed-look verdict from a Paper experiment. Qualification
+requires positive actual intervention, treatment and control samples, complete
+policy/stage/behavior/horizon/outcome/metric/fixed-look identity, the current
+cost-model version, and a cost-aware effect above the declared practical threshold.
+Shadow differences, monitoring positives, incomplete identity, incompatible metrics,
+and Paper fixtures without those facts do not qualify. A fixture may prove the code
+path only; it never proves production economic contribution.
+
+Behavioral inheritance delegates the exact projected scope/action/fingerprint and
+experiment identity to the existing path adapter and `resolve_learning_authority`;
+Economic Knowledge grants no authority itself. Cognitive retrieval is explicitly
+labeled `economic_knowledge_evidence`, requires exact path and Consumer scope, and
+cannot broadcast to another Consumer or activate a Skill.
+
+A later negative or invalid verdict, determinate harm, or canonical lifecycle
+refreeze removes the fact from the *current* projection. The original verdict and
+historical projection remain auditable. Requalification requires a new prospective
+experiment and consumed confirmatory positive verdict; history is never rewritten.
+
+### 7.4 Knowledge Yield and cost accounting
+
+`knowledge-yield/v1` reports
+`qualified current Economic Knowledge / hypotheses entering prospective test`
+for an explicit time window. A denominator with experiments and no qualification
+reports `0`; an absent denominator remains unavailable. Each slice is separated by
+path, behavior-contract version, metric version, outcome-contract version, and
+horizon. There is deliberately no cross-slice aggregate, so incompatible metrics
+cannot be presented as one performance number.
+
+Each slice also exposes invalid verdicts, refrozen hypotheses, median time to
+evidence, generation cost from immutable nomination manifests, and an operational
+drag ratio. Missing cost or timing provenance is explicit and never replaced by an
+estimate. These are system-learning economics and must not be confused with any
+single strategy-family return metric.
+
+### 7.5 Advisory Meta-Evolution
+
+`meta-evolution-recommendation/v1` deterministically maps each compatible Knowledge
+Yield slice to #1093's `EXTEND`, `REPLICATE`, `DIFFERENT_TEST`, or `RETIRE`
+research-action vocabulary. `HOLD_INSUFFICIENT_EVIDENCE` is a local status when
+minimum real-intervention or confirmatory sample requirements are not met. A
+Beta-binomial shrinkage estimate and conservative lower bound prevent small samples
+from presenting noisy conversion as research success; harm/refreeze takes
+precedence over positive yield.
+
+Single-parameter mutation remains a derivation method under those actions, not a new
+top-level taxonomy. Recommendations are read-only and advisory: they cannot launch
+Agents, schedule work, open experiments, mutate prompts/model weights, activate
+Skills, change Risk/Execution, or influence trading.
+
+The supported read-only operator surface is:
+
+```text
+aletheia learning nominations list|inspect
+aletheia learning knowledge list|inspect
+aletheia learning yield report
+aletheia learning meta-recommendations
+```
+
+It emits machine-readable facts and explicit unavailable/partial coverage. With no
+current positive qualification, `knowledge list` returns `current_qualified_n: 0`
+and `production_economic_contribution_state: none`; it never manufactures success.
+See the [Learning Qualification CLI runbook](../../operations/runbooks/LEARNING_QUALIFICATION_CLI.md).
+
 ---
 
 ## 8. UI And API Surface
