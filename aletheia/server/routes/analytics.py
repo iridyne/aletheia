@@ -1976,7 +1976,7 @@ def get_learning_funnel():
         # detector read hundreds of Markdown files on every Learning refresh.
         contradiction_items = [
             dict(r) for r in db.execute(
-                "SELECT id, item_type, title, confidence, status, tags "
+                "SELECT * "
                 "FROM knowledge_items "
                 "WHERE status='active' "
                 "AND item_type IN ("

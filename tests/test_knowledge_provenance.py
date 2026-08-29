@@ -288,3 +288,31 @@ def test_retrieval_snippet_comes_from_verified_document(tmp_path, monkeypatch):
     assert hits
     assert "verified canonical evidence" in hits[0].snippet
     assert "unverified injected" not in hits[0].snippet
+
+def test_legacy_dual_write_mismatch_is_an_integrity_conflict(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.knowledge.manager import create_research_note
+    from aletheia.storage.repositories import get_knowledge_item
+
+    item = create_research_note(
+        "Legacy mismatch",
+        "Original evidence remains sufficiently detailed and independently checkable "
+        "with explicit source context and a stable recorded outcome.",
+        confidence="high_confidence",
+    )
+    assert item is not None and item.file_path is not None
+    row = get_knowledge_item(item.id)
+    assert row is not None
+    row.update(
+        content_format=None,
+        content_sha256=None,
+        metadata_json=None,
+        symbol=None,
+        direction=None,
+        scanner_family=None,
+        outcome=None,
+    )
+    path = tmp_path / item.file_path
+    path.write_text("Changed evidence from a different source.", encoding="utf-8")
+    assert read_knowledge_document(row).state == "integrity_conflict"

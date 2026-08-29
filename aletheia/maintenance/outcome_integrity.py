@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any
+from aletheia.knowledge.document import canonicalize_inline_document
 
 from aletheia.analytics.learning_window import (
     CLEAN_WINDOW_ANCHOR_ID,
@@ -113,6 +114,8 @@ def remediate_outcome_history(*, dry_run: bool = True) -> dict[str, Any]:
                 "reason": item["reason"],
                 "archive": True,
             }
+            content = json.dumps(marker, sort_keys=True)
+            canonical = canonicalize_inline_document(content)
             db.execute(
                 "UPDATE knowledge_items SET status='archived', updated_at=? "
                 "WHERE id=? AND status='active'",
@@ -120,13 +123,28 @@ def remediate_outcome_history(*, dry_run: bool = True) -> dict[str, Any]:
             )
             db.execute(
                 "INSERT OR IGNORE INTO knowledge_items "
-                "(id,item_type,title,confidence,status,tags,content,content_hash,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "(id,item_type,title,confidence,status,tags,content,content_hash,"
+                "content_format,content_sha256,metadata_json,symbol,direction,"
+                "scanner_family,outcome,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    marker_id, "outcome_remediation_supersession",
-                    f"Supersession: {item['id']}", "medium_confidence", "active",
+                    marker_id,
+                    "outcome_remediation_supersession",
+                    f"Supersession: {item['id']}",
+                    "medium_confidence",
+                    "active",
                     json.dumps(["outcome_integrity", "supersession"]),
-                    json.dumps(marker, sort_keys=True), marker_id, now, now,
+                    canonical["content"],
+                    marker_id,
+                    canonical["content_format"],
+                    canonical["content_sha256"],
+                    canonical["metadata_json"],
+                    canonical["symbol"],
+                    canonical["direction"],
+                    canonical["scanner_family"],
+                    canonical["outcome"],
+                    now,
+                    now,
                 ),
             )
         if uses_savepoint:

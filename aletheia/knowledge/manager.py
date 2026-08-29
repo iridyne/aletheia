@@ -447,10 +447,10 @@ def _item_meta_and_body(item: dict) -> tuple[dict, str] | None:
     from aletheia.knowledge.frontmatter import parse_frontmatter_text
 
     document = read_knowledge_document(item)
-    if document.state == "integrity_conflict":
+    if not document.text:
+        if isinstance(item.get("metadata"), dict):
+            return dict(item["metadata"]), ""
         return None
-    if not document.text and isinstance(item.get("metadata"), dict):
-        return dict(item["metadata"]), ""
     meta = dict(document.metadata)
     _ignored, body = parse_frontmatter_text(document.text)
     return meta, body

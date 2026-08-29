@@ -378,7 +378,13 @@ def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
     return promote_guard_candidate_to_active(guard_id, loss_rate=loss_rate)
 
 
-def _update_candidate_row_status(path, *, item_type: str = "guard_candidate") -> None:
+def _update_candidate_row_status(
+    path,
+    *,
+    item_type: str = "guard_candidate",
+    status: str | None = "deprecated",
+    confidence: str | None = "deprecated",
+) -> None:
     """Synchronize a rewritten guard document with its retained database row."""
     try:
         from aletheia.storage import repositories as repo
@@ -392,12 +398,12 @@ def _update_candidate_row_status(path, *, item_type: str = "guard_candidate") ->
         )
         canonical = canonicalize_written_document(Path(path))
         for row in rows:
-            repo.update_knowledge_item(
-                row["id"],
-                status="deprecated",
-                confidence="deprecated",
-                **canonical,
-            )
+            updates = dict(canonical)
+            if status is not None:
+                updates["status"] = status
+            if confidence is not None:
+                updates["confidence"] = confidence
+            repo.update_knowledge_item(row["id"], **updates)
     except Exception:
         logger.debug("Failed to update promoted guard candidate DB row", exc_info=True)
 
@@ -453,6 +459,15 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
                 meta["status"] = new_status
                 content = render_frontmatter(meta, body)
                 path.write_text(content, encoding="utf-8")
+                if new_status == "deprecated":
+                    _update_candidate_row_status(
+                        path,
+                        item_type=(
+                            "trading_guard"
+                            if search_dir == guards_dir
+                            else "guard_candidate"
+                        ),
+                    )
 
                 if new_status == "active" and search_dir == candidates_dir:
                     target = guards_dir / path.name
@@ -572,6 +587,12 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
                     tags.append("shadow-only")
                 new_meta["tags"] = tags
                 path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(
+                    path,
+                    item_type="trading_guard",
+                    status=None,
+                    confidence=None,
+                )
                 _record_guard_downgrade_event(str(meta.get("guard_id")), before)
             except Exception as e:
                 logger.warning("Failed to downgrade guard at %s: %s", path, e)

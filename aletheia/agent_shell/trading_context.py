@@ -2366,10 +2366,10 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 
     def _document_parts(item: dict) -> tuple[dict, str] | None:
         document = read_knowledge_document(item)
-        if document.state == "integrity_conflict":
+        if not document.text:
             return None
         _metadata, body = parse_frontmatter_text(document.text)
-        return document.metadata, body.strip() or item.get("title") or ""
+        return document.metadata, body.strip()
 
     # Active lessons (full text, not truncated)
     try:

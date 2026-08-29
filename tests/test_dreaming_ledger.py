@@ -225,7 +225,8 @@ async def test_reopened_prefix_does_not_starve_forward_cases(tmp_path, monkeypat
 
     def seed_case(case_id: str, created_at: str) -> None:
         factor = factor_by_case[case_id]
-        path = Path(tmp_path) / f"{case_id}.md"
+        path = Path(tmp_path) / "knowledge" / "trade_case_studies" / f"{case_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "---\n"
             "outcome: loss\n"
@@ -304,7 +305,8 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     from tests.specs.spec_learning_attribution import _ready_research
 
     factor = "momentum:BTC/USDT:long:medium_confidence:not_late"
-    path = Path(tmp_path) / "case-retry.md"
+    path = Path(tmp_path) / "knowledge" / "trade_case_studies" / "case-retry.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "---\n"
         "outcome: loss\n"
@@ -327,6 +329,12 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     )
     db.commit()
     observed_deadlines = []
+    from aletheia.knowledge.document import read_knowledge_document
+
+    stored_case = dict(
+        db.execute("SELECT * FROM knowledge_items WHERE id='case-retry'").fetchone()
+    )
+    assert read_knowledge_document(stored_case).metadata["factor_key"] == factor
 
     async def _structured_recommendation(*_args, **_kwargs):
         observed_deadlines.append(_kwargs.get("deadline"))
@@ -347,7 +355,7 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(guard_routing, "research_learning_hypothesis", ready_research)
     monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
 
-    with pytest.raises(RuntimeError, match="temporary nomination failure"):
+    with pytest.raises(RuntimeError, match="hypothesis nomination failed"):
         await dreaming_agent._extract_lessons(None, [], [], deadline=123.0)
 
     assert observed_deadlines == [123.0, 123.0]
@@ -388,7 +396,8 @@ async def test_lesson_extraction_links_each_lesson_to_its_supporting_case(
     db = get_db()
     for case_id, factor in (("case-1", "momentum:BTC/USDT:long"),
                             ("case-2", "volatility:ETH/USDT:short")):
-        path = Path(tmp_path) / f"{case_id}.md"
+        path = Path(tmp_path) / "knowledge" / "trade_case_studies" / f"{case_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"---\nfactor_key: {factor}\n---\n", encoding="utf-8")
         db.execute(
             "INSERT INTO knowledge_items "

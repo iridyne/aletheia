@@ -98,11 +98,15 @@ def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
         "SELECT COUNT(*) FROM knowledge_items WHERE status='archived'"
     ).fetchone()[0] == 2
     markers = db.execute(
-        "SELECT content FROM knowledge_items "
+        "SELECT content, content_format, content_sha256, metadata_json "
+        "FROM knowledge_items "
         "WHERE item_type='outcome_remediation_supersession' ORDER BY id"
     ).fetchall()
     assert len(markers) == 2
     for marker in markers:
+        assert marker["content_format"] == "knowledge-markdown/v1"
+        assert marker["content_sha256"]
+        assert marker["metadata_json"] == "{}"
         content = json.loads(marker["content"])
         assert content["batch_id"] == applied["batch_id"]
         assert content["semantics_version"] == "oi-v1"

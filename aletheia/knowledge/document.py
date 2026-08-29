@@ -160,6 +160,11 @@ def read_knowledge_document(row: dict[str, Any]) -> KnowledgeDocument:
     # Body-only inline copies remain readable prose but cannot invent metadata.
     if file_text:
         metadata, _ = parse_frontmatter_text(file_text)
+        if inline:
+            _inline_metadata, inline_body = parse_frontmatter_text(inline)
+            _file_metadata, file_body = parse_frontmatter_text(file_text)
+            if inline_body.strip() != file_body.strip():
+                return KnowledgeDocument("", {}, "integrity_conflict", path)
         return KnowledgeDocument(
             file_text,
             metadata if isinstance(metadata, dict) else {},
