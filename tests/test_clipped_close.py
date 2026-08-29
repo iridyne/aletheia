@@ -71,14 +71,14 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
 
 
 def _fill_rows(quantity: float, exchange_order_id: str = "EX-CLIP-1",
-               trade_id: str | None = None) -> list[dict]:
+               trade_id: str | None = None, fee_coin: str = "USDT") -> list[dict]:
     return [{
         "orderId": exchange_order_id,
         "tradeId": trade_id or f"FILL-{exchange_order_id}",
         "fillPrice": "1.4800",
         "fillQuantity": f"{quantity}",
         "fee": "0.2",
-        "feeCoin": "USDT",
+        "feeCoin": fee_coin,
         "cTime": "1787409000000",
     }]
 
@@ -524,3 +524,23 @@ def test_partial_close_without_entry_fee_blocks_daily_loss_economics(tmp_path, m
     })
 
     assert _partial_close_realized_today("bitget_demo", now[:10] + "T00:00:00+00:00") is None
+
+
+def test_partial_close_with_unpriced_fee_keeps_economics_unavailable(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip", quantity=424)
+    db.execute("UPDATE positions SET entry_fee=4.24 WHERE id='pos-clip'")
+    db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
+
+    result = materialize_bitget_close("order-clip", _fill_rows(212.0, fee_coin="BGB"))
+
+    assert result.state == "filled_clip_partial_position"
+    event = db.execute(
+        "SELECT realized_pnl, exit_fee FROM position_close_events WHERE position_id='pos-clip'"
+    ).fetchone()
+    assert event["realized_pnl"] is None
+    assert event["exit_fee"] is None
