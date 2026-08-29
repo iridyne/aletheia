@@ -116,7 +116,11 @@ def _command(
 async def _qualify(args) -> dict:
     if args.execution_mode not in {"binance_testnet", "okx_demo"}:
         raise ValueError("qualification supports binance_testnet and okx_demo only")
-    confirmed = getattr(args, "confirm_testnet_order", False) or getattr(args, "confirm_demo_order", False)
+    confirmed = (
+        getattr(args, "confirm_testnet_order", False)
+        if args.execution_mode == "binance_testnet"
+        else getattr(args, "confirm_demo_order", False)
+    )
     if args.execution_probe and not confirmed:
         raise ValueError("--execution-probe requires explicit order confirmation")
     if is_worktree_dirty():

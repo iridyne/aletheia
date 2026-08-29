@@ -158,3 +158,17 @@ async def test_uta_qualification_refuses_dirty_source_before_connect(monkeypatch
 
     with pytest.raises(RuntimeError, match="qualification_worktree_dirty"):
         await qualify_uta._qualify(SimpleNamespace(execution_mode="binance_testnet", execution_probe=False))
+
+
+@pytest.mark.asyncio
+async def test_okx_execution_probe_requires_demo_specific_confirmation(monkeypatch):
+    from scripts import qualify_uta
+
+    monkeypatch.setattr(qualify_uta, "is_worktree_dirty", lambda: False)
+    with pytest.raises(ValueError, match="explicit order confirmation"):
+        await qualify_uta._qualify(SimpleNamespace(
+            execution_mode="okx_demo",
+            execution_probe=True,
+            confirm_testnet_order=True,
+            confirm_demo_order=False,
+        ))
