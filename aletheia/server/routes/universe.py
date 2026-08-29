@@ -114,7 +114,7 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
     readers = {
         "summary": lambda: repo.get_entry_workbench_summary(),
         "entry_plans": lambda: _active_entry_plan_projections(limit),
-        "candidate_attention": lambda: repo.list_active_candidate_attention(limit),
+        "candidate_attention": lambda: repo.list_entry_workbench_candidates(limit),
     }
     for section, read in readers.items():
         try:

@@ -179,7 +179,7 @@ def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabl
              side_effect=RuntimeError("db unavailable"),
          ), \
          patch("aletheia.server.routes.universe.repo.list_active_entry_plans", return_value=[]), \
-         patch("aletheia.server.routes.universe.repo.list_active_candidate_attention", return_value=[]):
+         patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
         response = client.get("/api/universe/workbench")
 
     assert response.status_code == 200
@@ -207,7 +207,7 @@ def test_workbench_disabled_overrides_old_snapshot_without_fabricating_candidate
          patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=old_snapshot), \
          patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
          patch("aletheia.server.routes.universe._active_entry_plan_projections", return_value=plans), \
-         patch("aletheia.server.routes.universe.repo.list_active_candidate_attention", return_value=[]):
+         patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
         response = client.get("/api/universe/workbench")
 
     body = response.json()

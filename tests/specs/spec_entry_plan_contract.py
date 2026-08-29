@@ -16,10 +16,12 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     )
 )
 def test_universe_publication_has_one_entry_planning_owner():
-    from aletheia.universe.service import UniverseService
+    from aletheia.universe.service import UniverseService, _ensure_planning_generations
 
     source = inspect.getsource(UniverseService.refresh)
-    assert "ensure_candidate_planning_generation" in source
+    helper_source = inspect.getsource(_ensure_planning_generations)
+    assert "_ensure_planning_generations" in source
+    assert "ensure_candidate_planning_generation" in helper_source
     assert "emit_deterministic_opportunities" not in source
 
 
@@ -94,4 +96,5 @@ def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback():
     assert "pg.created_at ASC, pg.id ASC" in claim_source
     assert ENTRY_PLANNER_MIN_CONCURRENCY == 3
     assert ENTRY_PLANNER_MAX_CONCURRENCY == 15
-    assert "asyncio.gather" in batch_source
+    assert "asyncio.TaskGroup" in batch_source
+    assert "group.create_task" in batch_source

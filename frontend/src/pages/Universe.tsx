@@ -139,7 +139,8 @@ export default function Universe() {
   const filteredCandidates = useMemo(() => {
     const rows = candidates ?? []
     const now = Date.now()
-    if (candidateFilter === 'all_active') return rows
+    if (candidateFilter === 'all_active') return rows.filter(row => row.attention_status === 'active')
+    if (candidateFilter === 'plan_active') return rows.filter(row => Boolean(row.active_entry_plan_id))
     if (candidateFilter === 'expiring') return rows.filter(row => Math.min(
       new Date(row.soft_expires_at).getTime(),
       new Date(row.hard_expires_at).getTime(),
@@ -203,6 +204,7 @@ export default function Universe() {
           <select value={candidateFilter} onChange={event => setCandidateFilter(event.target.value)}>
             <option value="needs_planning">Needs Planning</option>
             <option value="all_active">All Active</option>
+            <option value="plan_active">Plan Active</option>
             <option value="expiring">Expiring</option>
             <option value="flagged">Flagged</option>
             <option value="stale">Stale</option>

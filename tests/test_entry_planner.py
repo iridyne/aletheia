@@ -645,6 +645,23 @@ def test_terminal_entry_plan_detail_validates_by_exact_id():
     assert detail["plan"]["thesis"] == plan.thesis
 
 
+def test_workbench_plan_active_filter_has_exact_candidate_handoff():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.claim_next_candidate_planning("owner")
+    plan = _plan(generation)
+    assert repo.complete_candidate_planning_with_plan(
+        generation["id"], "owner", plan
+    )[0] == "planned"
+
+    [row] = repo.list_entry_workbench_candidates()
+
+    assert row["attention_status"] == "terminal"
+    assert row["attention_terminal_reason"] == "entry_plan_created"
+    assert row["active_entry_plan_id"] == plan.plan_id
+    assert row["active_entry_plan_status"] == "waiting"
+
+
 def test_planning_history_uses_stable_bounded_cursor():
     start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
     generations = []

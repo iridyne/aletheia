@@ -9027,6 +9027,32 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
     ]
 
 
+def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
+    """Candidate attention plus exact active-Plan handoffs for Workbench filters."""
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    active_plan_states = _ACTIVE_ENTRY_PLAN_STATUSES
+    placeholders = ",".join("?" for _ in active_plan_states)
+    return [
+        dict(row)
+        for row in get_db().execute(
+            "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
+            "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
+            "um.execution_eligible, um.expires_at AS candidate_expires_at, "
+            "ep.id AS active_entry_plan_id, ep.status AS active_entry_plan_status "
+            "FROM candidate_planning_generations pg "
+            "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+            f"AND ep.status IN ({placeholders}) "
+            "WHERE pg.is_current=1 AND ((pg.attention_status='active' "
+            "AND pg.soft_expires_at>? AND pg.hard_expires_at>?) OR ep.id IS NOT NULL) "
+            "ORDER BY CASE WHEN pg.attention_status='active' THEN 0 ELSE 1 END, "
+            "MIN(pg.soft_expires_at, pg.hard_expires_at), pg.id LIMIT ?",
+            (*active_plan_states, timestamp, timestamp, max(1, min(int(limit), 200))),
+        ).fetchall()
+    ]
+
+
 def get_entry_workbench_summary(*, now: datetime | None = None) -> dict[str, int]:
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     now_iso = timestamp.isoformat()

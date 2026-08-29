@@ -925,6 +925,8 @@ export interface CandidateAttention {
   risk_flags: string | null
   execution_eligible: number | null
   candidate_expires_at: string | null
+  active_entry_plan_id: string | null
+  active_entry_plan_status: string | null
 }
 
 export interface EntryWorkbenchResponse {
