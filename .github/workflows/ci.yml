@@ -461,6 +461,10 @@ jobs:
     if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
     runs-on: [pr-ephemeral]
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -478,17 +482,19 @@ jobs:
         run: uv sync --locked --all-groups
       - name: Run unit regression tier
         env:
-          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "tier_unit"
-          -q --tb=short
-          --timeout=120
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit-${{ matrix.shard }}
+        run: |
+          mapfile -t test_files < <(
+            find tests -type f -name 'test_*.py' \
+              ! -path 'tests/simulation/*' \
+              ! -path 'tests/test_auto_resume.py' \
+              ! -path 'tests/test_connectivity.py' \
+              ! -path 'tests/test_operator_cli.py' \
+              ! -path 'tests/test_pause_ownership.py' \
+              | sort | awk -v shard="${{ matrix.shard }}" 'NR % 2 == shard'
+          )
+          uv run pytest "${test_files[@]}" \
+            -m "tier_unit" -q --tb=short --timeout=120
 
   # Lane A head: Runtime State is the short, high-value prerequisite. Specs are
   # intentionally ineligible until this job finishes, so they can never steal a

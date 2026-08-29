@@ -674,13 +674,25 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     integration_commands = _run_commands(integration_job)
     spec_commands = _run_commands(spec_job)
     e2e_commands = _run_commands(e2e_job)
-    for commands in (unit_commands, integration_commands, spec_commands, e2e_commands):
+    for commands in (integration_commands, spec_commands, e2e_commands):
         assert "uv run pytest tests/" in commands
         assert "--ignore=tests/simulation" in commands
         assert "--ignore=tests/test_auto_resume.py" in commands
         assert "--ignore=tests/test_connectivity.py" in commands
         assert "--ignore=tests/test_operator_cli.py" in commands
         assert "--ignore=tests/test_pause_ownership.py" in commands
+    assert unit_job["strategy"] == {"fail-fast": "false", "matrix": {"shard": ["0", "1"]}}
+    assert "find tests -type f -name 'test_*.py'" in unit_commands
+    for excluded in (
+        "tests/simulation/*",
+        "tests/test_auto_resume.py",
+        "tests/test_connectivity.py",
+        "tests/test_operator_cli.py",
+        "tests/test_pause_ownership.py",
+    ):
+        assert f"! -path '{excluded}'" in unit_commands
+    assert "NR % 2 == shard" in unit_commands
+    assert 'uv run pytest "${test_files[@]}"' in unit_commands
     assert '-m "tier_unit"' in unit_commands
     assert "-n " not in unit_commands
     assert "--dist " not in unit_commands
