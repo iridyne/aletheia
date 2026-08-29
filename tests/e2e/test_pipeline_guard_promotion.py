@@ -113,3 +113,45 @@ class TestGuardPromotionChain:
         active = [g for g in load_trading_guards(status="active") if g.guard_id == guard_id]
         assert active, "owner-authored guard should promote to active"
         assert active[0].block_candidate is True
+
+    def test_event_failure_does_not_publish_guard_state(self, e2e_db, monkeypatch):
+        """A failed durable provenance write leaves the candidate untouched."""
+        from aletheia.knowledge.manager import create_guard_candidate
+        from aletheia.knowledge.guards import load_trading_guards
+        from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.event_store import get_event_store
+
+        guard_id = "manual-event-failure-guard"
+        candidate = create_guard_candidate(
+            title="Owner guard with failed audit",
+            content="Owner-authored guard used to prove failed promotion is invisible.",
+            metadata={
+                "guard_id": guard_id,
+                "status": "candidate",
+                "scope": "paper_entry",
+                "symbol": "SOL/USDT",
+            },
+        )
+
+        def fail_append(_event):
+            raise OSError("event store unavailable")
+
+        monkeypatch.setattr(get_event_store(), "append", fail_append)
+
+        assert promote_guard_candidate_to_active(guard_id, actor_type="human") is False
+        assert not any(g.guard_id == guard_id for g in load_trading_guards(status="active"))
+        source = [g for g in load_trading_guards(status="candidate") if g.guard_id == guard_id]
+        assert source and source[0].status == "candidate"
+
+        row = repo._select_one("knowledge_items", candidate.id)
+        assert row["item_type"] == "guard_candidate"
+        assert row["status"] == "active"
+        assert row["confidence"] == "medium_confidence"
+        assert not repo._select_all(
+            "knowledge_items",
+            where="item_type = ?",
+            params=("trading_guard",),
+            limit=10,
+        )
+        assert not get_event_store().list_by_aggregate("trading_guard", guard_id)

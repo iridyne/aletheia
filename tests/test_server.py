@@ -228,6 +228,13 @@ async def test_guard_candidate_can_be_listed_and_manually_promoted(client):
     events = get_event_store().list_by_aggregate("trading_guard", "manual-btc-long-guard")
     assert [e.event_type for e in events] == ["TRADING_GUARD_PROMOTED"]
     assert events[0].actor_type == "operator"
+    from aletheia.storage.sqlite import get_db
+    event_row = get_db().execute(
+        "SELECT idempotency_key, jsonl_mirror_status FROM ps_event_log WHERE event_id = ?",
+        (events[0].event_id,),
+    ).fetchone()
+    assert event_row["idempotency_key"] == "guard-promotion:manual-btc-long-guard"
+    assert event_row["jsonl_mirror_status"] == "mirrored"
 
     second_promote = await client.post("/api/knowledge/guard-candidates/manual-btc-long-guard/promote")
     assert second_promote.status_code == 404
