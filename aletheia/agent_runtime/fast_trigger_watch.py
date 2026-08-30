@@ -399,6 +399,21 @@ async def _load_entry_plan_watchers(
                     )
                     continue
         if len(plans) >= monitoring_limit:
+            reason = "entry_plan_monitoring_capacity_unavailable"
+            if row["status"] in {"ordered", "partially_filled"}:
+                await asyncio.to_thread(
+                    cancel_entry_plan_order,
+                    plan.plan_id,
+                    reason=reason,
+                )
+            else:
+                await asyncio.to_thread(
+                    repo.transition_entry_plan,
+                    plan.plan_id,
+                    expected_status=row["status"],
+                    status="invalidated",
+                    reason=reason,
+                )
             continue
         plans[plan.plan_id] = plan
         if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":

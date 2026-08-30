@@ -1829,17 +1829,17 @@ async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
 
     rows = []
     plans = {}
-    for index in range(11):
+    for index in range(12):
         payload = f"plan-{index}"
         plan_id = payload
-        ordered = index == 10
+        ordered = index >= 10
         rows.append(
             {
                 "id": plan_id,
                 "status": "ordered" if ordered else "waiting",
                 "plan_json": payload,
                 "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
-                "order_id": "order-beyond-cap" if ordered else None,
+                "order_id": f"order-{index}" if ordered else None,
             }
         )
         plans[payload] = SimpleNamespace(
@@ -1872,7 +1872,12 @@ async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
     monkeypatch.setattr(
         watch.repo,
         "get_order",
-        lambda _id: {"created_at": (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()},
+        lambda order_id: {
+            "created_at": (
+                datetime.now(timezone.utc)
+                - timedelta(seconds=120 if order_id == "order-10" else 5)
+            ).isoformat()
+        },
     )
     monkeypatch.setattr(
         "aletheia.risk.policy.resolve_risk_policy",
@@ -1894,7 +1899,10 @@ async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
 
     assert requested_limits == [None]
     assert len(watched) == 10
-    assert cancellations == [("plan-10", "entry_plan_maker_timeout")]
+    assert cancellations == [
+        ("plan-10", "entry_plan_maker_timeout"),
+        ("plan-11", "entry_plan_monitoring_capacity_unavailable"),
+    ]
 
 
 @pytest.mark.asyncio
