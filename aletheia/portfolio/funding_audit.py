@@ -12,6 +12,7 @@ from aletheia.storage.sqlite import get_db
 
 _OUTBOX_EVENT_TYPES = (
     "exchange_position_funding_settled",
+    "exchange_position_funding_history_expired",
     "paper_position_economics_corrected",
     "paper_position_economics_repaired",
     "paper_position_funding_settled",

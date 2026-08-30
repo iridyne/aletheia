@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v52"
+SCHEMA_VERSION = "aletheia-sqlite-v53"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -5323,6 +5323,21 @@ _FUNDING_AUDIT_OUTBOX_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_BROKER_FUNDING_SETTLEMENT_CURSOR_SQL = """
+CREATE TABLE IF NOT EXISTS broker_funding_settlement_cursor (
+    queue_id TEXT PRIMARY KEY CHECK (queue_id = 'exchange_funding'),
+    last_closed_at TEXT NOT NULL,
+    last_position_rowid INTEGER NOT NULL CHECK (last_position_rowid > 0),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL)
+);
+"""
+_BROKER_FUNDING_SETTLEMENT_CURSOR_CHECKSUM = hashlib.sha256(
+    (
+        _BROKER_FUNDING_SETTLEMENT_CURSOR_SQL
+        + "\nbroker_funding_settlement_cursor_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -5977,6 +5992,12 @@ def _apply_funding_audit_outbox_v52(db: sqlite3.Connection) -> None:
     db.executescript(_FUNDING_AUDIT_OUTBOX_INDEX_SQL)
 
 
+def _apply_broker_funding_settlement_cursor_v53(db: sqlite3.Connection) -> None:
+    """Persist only the scheduling keyset for exchange funding recovery."""
+    db.executescript(_BROKER_FUNDING_SETTLEMENT_CURSOR_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
     """Persist future fingerprint inputs without rewriting historical identity."""
 
@@ -6581,6 +6602,12 @@ _MIGRATIONS = (
         checksum=_FUNDING_AUDIT_OUTBOX_CHECKSUM,
         schema_version="aletheia-sqlite-v52",
         apply=_apply_funding_audit_outbox_v52,
+    ),
+    MigrationStep(
+        migration_id="20260830_0052_broker_funding_settlement_cursor_v53",
+        checksum=_BROKER_FUNDING_SETTLEMENT_CURSOR_CHECKSUM,
+        schema_version="aletheia-sqlite-v53",
+        apply=_apply_broker_funding_settlement_cursor_v53,
     ),
 )
 

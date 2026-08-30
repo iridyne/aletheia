@@ -4069,8 +4069,13 @@ async def _async_broker_funding_settler():
 
     result = await settle_unsettled_exchange_closes()
     logger.debug(
-        "broker_funding_settler: checked=%d settled=%d still_pending=%d errors=%d",
-        result["checked"], result["settled"], result["still_pending"],
+        "broker_funding_settler: checked=%d settled=%d still_pending=%d "
+        "retry_pending_total=%d terminal_total=%d errors=%d",
+        result["checked"],
+        result["settled"],
+        result["still_pending"],
+        result.get("retry_pending_total", 0),
+        result.get("terminal_total", 0),
         len(result["errors"]),
     )
     return result
@@ -4085,6 +4090,16 @@ def _run_broker_funding_settler():
         if result.get("errors"):
             _record_job_failure(
                 "broker_funding_settler", "broker_funding_settler_reported_errors"
+            )
+        elif result.get("terminal_total"):
+            _record_job_failure(
+                "broker_funding_settler",
+                "broker_funding_history_expired",
+            )
+        elif result.get("retry_pending_total"):
+            _record_job_failure(
+                "broker_funding_settler",
+                "broker_funding_recovery_pending",
             )
         elif result.get("audit_pending"):
             _record_job_failure(

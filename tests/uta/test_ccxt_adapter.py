@@ -746,6 +746,26 @@ async def test_okx_recent_funding_window_uses_only_recent_surface(monkeypatch):
             if event[0] == "fetch_ledger"] == [None]
 
 
+
+@pytest.mark.asyncio
+async def test_funding_window_before_profile_retention_is_typed_partial(
+    monkeypatch,
+):
+    profile = _profile("okx")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+
+    report = await adapter.get_funding_ledger(FundingLedgerQuery(
+        scope=_funding_scope(now, age_days=91)
+    ))
+
+    assert report.completeness is ReadCompleteness.PARTIAL
+    assert report.reason_code == "funding_history_retention_expired"
+    assert report.entries == ()
+    assert exchange.events == []
+
 @pytest.mark.asyncio
 async def test_okx_older_funding_window_merges_archive_without_duplicates(monkeypatch):
     profile = _profile("okx")

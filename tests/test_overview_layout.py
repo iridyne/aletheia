@@ -56,6 +56,6 @@ def test_entry_workbench_keeps_unavailable_distinct_from_empty() -> None:
     workbench = (ROOT / "frontend/src/pages/Universe.tsx").read_text(encoding="utf-8")
     assert "is unavailable. Counts and rows are not inferred." in workbench
     assert "No active Entry Plans." in workbench
-    assert "No active Candidate attention." in workbench
+    assert "No Candidates in" in workbench
     assert "fallback_instruments" in workbench
     assert "They are not durable Candidates" in workbench

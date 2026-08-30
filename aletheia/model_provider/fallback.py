@@ -663,6 +663,33 @@ metadata={
                 candidate,
                 request,
             )
+            if not (response.content or "").strip():
+                failure = ProviderResponseError("model_response_empty_content")
+                _record_model_failure(pn, md, failure)
+                if idx == len(to_try) - 1:
+                    _emit_terminal_failure(
+                        failure,
+                        provider_name=resolved_provider_name,
+                        requested_model=requested_model,
+                        attempted_models=attempted,
+                        skipped_cooldown_models=[
+                            f"{p}/{m}" for p, m in skipped_cooldown
+                        ],
+                    )
+                    return _with_fallback_meta(
+                        response,
+                        provider_name=resolved_provider_name,
+                        requested_model=requested_model,
+                        attempted_models=attempted,
+                        fallback_used=(pn, md) != requested,
+                    )
+                logger.warning(
+                    "LLM model %s/%s returned empty content; trying fallback %s",
+                    pn,
+                    md,
+                    "/".join(to_try[idx + 1]),
+                )
+                continue
             _record_model_success(pn, md)
             if skipped_cooldown and isinstance(response.raw, dict):
                 response.raw = dict(response.raw)

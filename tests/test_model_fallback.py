@@ -56,9 +56,17 @@ def _setup_config(tmp_path, monkeypatch, *, fallback_models=None):
 class FakeProvider:
     name = "anthropic_compatible"
 
-    def __init__(self, *, model="claude-primary", fail_models=None, detected=None):
+    def __init__(
+        self,
+        *,
+        model="claude-primary",
+        fail_models=None,
+        empty_models=None,
+        detected=None,
+    ):
         self.model = model
         self.fail_models = fail_models or {}
+        self.empty_models = set(empty_models or ())
         self.detected = detected or []
         self.calls: list[str] = []
 
@@ -69,6 +77,13 @@ class FakeProvider:
             if isinstance(err, BaseException):
                 raise err
             raise RuntimeError(err)
+        if self.model in self.empty_models:
+            return ModelResponse(
+                content="",
+                model=self.model,
+                usage={"completion_tokens": 600},
+                raw={"usage": {"completion_tokens": 600}},
+            )
         return ModelResponse(content=f"ok:{self.model}", model=self.model, raw={"ok": True})
 
     async def list_models(self):
@@ -135,6 +150,29 @@ async def test_complete_with_fallback_tries_configured_model_on_429(tmp_path, mo
     meta = resp.raw["aletheia_model_fallback"]
     assert meta["fallback_used"] is True
     assert meta["attempted_models"] == ["claude-primary", "claude-fallback"]
+
+
+@pytest.mark.anyio
+async def test_complete_with_fallback_tries_next_model_on_empty_content(
+    tmp_path, monkeypatch,
+):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.model_provider import fallback
+
+    provider = FakeProvider(empty_models={"claude-primary"})
+    resp = await fallback.complete_with_fallback(
+        ModelRequest(messages=[{"role": "user", "content": "x"}]),
+        provider=provider,
+    )
+
+    assert resp.content == "ok:claude-fallback"
+    assert provider.calls == ["claude-primary", "claude-fallback"]
+    assert resp.raw["aletheia_model_fallback"]["fallback_used"] is True
+    primary = next(
+        item for item in fallback.get_model_health_snapshot()
+        if item["model"] == "claude-primary"
+    )
+    assert primary["consecutive_failures"] == 1
 
 
 @pytest.mark.anyio
