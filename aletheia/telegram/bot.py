@@ -114,12 +114,13 @@ class TelegramBot:
             if cfg.exchange.paper_execution_mode == "paper_internal"
             else f"{cfg.exchange.name} ({cfg.exchange.mode})"
         )
+        # Issue #1745: plain text; _handle_update sends with parse_mode=None.
         return (
-            f"<b>Gateway:</b> running\n"
-            f"<b>Paused:</b> {cfg.runtime.paused}\n"
-            f"<b>Exchange:</b> {exchange_label}\n"
-            f"<b>Live:</b> {cfg.live.state}\n"
-            f"<b>Permission:</b> {cfg.agent.permission_mode}"
+            f"Gateway: running\n"
+            f"Paused: {cfg.runtime.paused}\n"
+            f"Exchange: {exchange_label}\n"
+            f"Live: {cfg.live.state}\n"
+            f"Permission: {cfg.agent.permission_mode}"
         )
 
     def _cmd_pause(self) -> str:
@@ -177,11 +178,11 @@ class TelegramBot:
             for p in positions[:10]:
                 direction = "L" if p["direction"] in ("long", "buy") else "S"
                 lines.append(
-                    f"<code>{direction} {p['symbol']} x{p['quantity']:.4f} "
-                    f"@ {p['entry_price']:.4f}</code> ({p.get('execution_mode', '?')[:6]})"
+                    f"{direction} {p['symbol']} x{p['quantity']:.4f} "
+                    f"@ {p['entry_price']:.4f} ({p.get('execution_mode', '?')[:6]})"
                 )
             suffix = f"\n...+{len(positions)-10} more" if len(positions) > 10 else ""
-            return f"<b>Open positions ({len(positions)}):</b>\n" + "\n".join(lines) + suffix
+            return f"Open positions ({len(positions)}):\n" + "\n".join(lines) + suffix
         except Exception as e:
             return f"Error fetching positions: {e}"
 
@@ -193,18 +194,18 @@ class TelegramBot:
             unrealized = float(portfolio.get("unrealized_pnl") or 0.0)
             if realized is None:
                 return (
-                    "<b>Today PnL</b>\n"
-                    "Realized: <code>unavailable</code>\n"
-                    f"Unrealized: <code>{unrealized:+.2f} USDT</code>\n"
-                    "Total: <code>unavailable</code>\n"
+                    "Today PnL\n"
+                    "Realized: unavailable\n"
+                    f"Unrealized: {unrealized:+.2f} USDT\n"
+                    "Total: unavailable\n"
                     "Funding or other close economics are incomplete."
                 )
             sign = "+" if realized >= 0 else ""
             return (
-                f"<b>Today PnL</b>\n"
-                f"Realized: <code>{sign}{realized:.2f} USDT</code>\n"
-                f"Unrealized: <code>{unrealized:+.2f} USDT</code>\n"
-                f"Total: <code>{realized + unrealized:+.2f} USDT</code>"
+                f"Today PnL\n"
+                f"Realized: {sign}{realized:.2f} USDT\n"
+                f"Unrealized: {unrealized:+.2f} USDT\n"
+                f"Total: {realized + unrealized:+.2f} USDT"
             )
         except Exception as e:
             return f"Error fetching PnL: {e}"
@@ -237,8 +238,9 @@ class TelegramBot:
             return f"Failed to activate kill switch: {e}"
 
     def _cmd_help(self) -> str:
+        # Issue #1745: plain text; no HTML markup needed.
         return (
-            "<b>Aletheia Trading OS</b>\n\n"
+            "Aletheia Trading OS\n\n"
             "/status — System status\n"
             "/pause — Pause all agents\n"
             "/resume — Resume agents\n"
@@ -324,4 +326,6 @@ class TelegramBot:
             return
         response = await self.handle_message(int(chat_id), str(text))
         if response:
-            await client.post(self._api_url("sendMessage"), json={"chat_id": chat_id, "text": response})
+            # Issue #1745: responses are plain text; omit parse_mode so Telegram
+            # renders them as-is with no markup interpretation.
+            await self.send_message(int(chat_id), response, parse_mode=None)

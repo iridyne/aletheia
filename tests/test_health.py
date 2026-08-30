@@ -68,7 +68,7 @@ async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
         allowed_chat_ids = [111, 222]
         def configure(self):
             return True
-        async def send_message(self, chat_id, text):
+        async def send_message(self, chat_id, text, *, parse_mode="HTML"):
             sent.append((chat_id, text))
 
     import aletheia.telegram.bot as bot_mod

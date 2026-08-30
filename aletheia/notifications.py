@@ -126,7 +126,11 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
         async def _send_all():
             for chat_id in bot.allowed_chat_ids:
                 try:
-                    await bot.send_message(chat_id, f"⚠️ <b>Aletheia:</b> {safe_msg}")
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>Aletheia:</b> {safe_msg}",
+                        parse_mode="HTML",
+                    )
                 except Exception:
                     pass
 
@@ -283,15 +287,16 @@ def notify_trade_fill(
 
     dir_label = "LONG" if direction in ("long", "buy") else "SHORT"
     mode_label = execution_mode.replace("_", " ").title()
-    safe_symbol = escape(symbol, quote=False)
-    lines = [f"<b>Trade Fill [{mode_label}]</b>",
-             f"{dir_label} {safe_symbol}",
-             f"<code>Qty: {quantity}  @ {fill_price:.4f}</code>"]
+    # Issue #1745: build plain text; the shared sink applies a single escape before
+    # sending with parse_mode="HTML", so no per-field escaping is needed here.
+    lines = [f"Trade Fill [{mode_label}]",
+             f"{dir_label} {symbol}",
+             f"Qty: {quantity}  @ {fill_price:.4f}"]
     if stop_price:
-        lines.append(f"<code>SL: {stop_price:.4f}</code>")
+        lines.append(f"SL: {stop_price:.4f}")
     if take_profit_price:
-        lines.append(f"<code>TP: {take_profit_price:.4f}</code>")
-    lines.append(f"<code>pos/{position_id[:8]}</code>")
+        lines.append(f"TP: {take_profit_price:.4f}")
+    lines.append(f"pos/{position_id[:8]}")
     msg = "\n".join(lines)
     if send_telegram:
         # Issue #407: trade fills are not "alerts" — bypass the health-alert toggle.
@@ -336,12 +341,13 @@ def notify_daily_summary() -> None:
             if realized is None
             else f"{'+' if realized >= 0 else ''}{realized:.2f} USDT"
         )
+        # Issue #1745: build plain text; the shared sink escapes before sending.
         lines = [
-            "<b>Daily Summary</b>",
-            f"Realized: <code>{realized_text}</code>",
-            f"Unrealized: <code>{unrealized:+.2f} USDT</code>",
+            "Daily Summary",
+            f"Realized: {realized_text}",
+            f"Unrealized: {unrealized:+.2f} USDT",
             f"Open positions: {open_count}",
-            f"Portfolio value: <code>{total:.2f} USDT</code>",
+            f"Portfolio value: {total:.2f} USDT",
         ]
         if send_telegram:
             # Issue #407: daily summary is not an "alert" — bypass the health-alert toggle.
