@@ -87,8 +87,6 @@ class PlanIntent(BaseModel):
             return self
         if self.order_tactic not in {"POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"}:
             raise PlanIntentError("TRIGGERED_TACTIC_INVALID")
-        if not self.trigger_spec_id or not self.trigger_spec_version:
-            raise PlanIntentError("TRIGGER_SPEC_NOT_REGISTERED")
         return self
 
 
@@ -142,6 +140,8 @@ def _validate_intent_against_candidate(
     if intent.decision != "ENTRY_PLAN":
         raise PlanIntentError("COMPILER_ENTRY_INTENT_REQUIRED")
     if intent.execution_mode == "TRIGGERED":
+        if not intent.trigger_spec_id or not intent.trigger_spec_version:
+            raise PlanIntentError("TRIGGER_SPEC_NOT_REGISTERED")
         try:
             require_compatible_trigger_spec(
                 str(candidate.get("scanner_family") or ""),
@@ -288,18 +288,6 @@ async def plan_next_candidate(
             "model_invoked": False,
         }
     except PlanIntentError as exc:
-        if exc.code == "TRIGGER_SPEC_NOT_REGISTERED":
-            stored = _complete_semantic_no_plan(
-                generation["id"],
-                owner,
-                exc.code,
-                detail=str(exc),
-            )
-            return {
-                "status": "no_plan" if stored else "stale",
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
         repo.defer_candidate_planning_with_code(generation["id"], owner, exc.code, str(exc))
         return {
             "status": "unavailable",
@@ -324,18 +312,6 @@ async def plan_next_candidate(
         intent = PlanIntent.model_validate(raw)
     except ValidationError as exc:
         code = _intent_validation_code(exc)
-        if code == "TRIGGER_SPEC_NOT_REGISTERED":
-            stored = _complete_semantic_no_plan(
-                generation["id"],
-                owner,
-                code,
-                detail=str(exc),
-            )
-            return {
-                "status": "no_plan" if stored else "stale",
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
         repo.defer_candidate_planning_with_code(
             generation["id"],
             owner,
@@ -369,7 +345,11 @@ async def plan_next_candidate(
 
         plan = compile_entry_plan(generation, candidate, feature, intent, cfg)
     except PlanIntentError as exc:
-        if exc.code in {"NO_COMPATIBLE_TRIGGER_SPEC", "UNSUPPORTED_TRIGGER_SPEC"}:
+        if exc.code in {
+            "NO_COMPATIBLE_TRIGGER_SPEC",
+            "TRIGGER_SPEC_NOT_REGISTERED",
+            "UNSUPPORTED_TRIGGER_SPEC",
+        }:
             stored = _complete_semantic_no_plan(
                 generation["id"],
                 owner,
@@ -468,10 +448,7 @@ STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
     try:
         return PlanIntent.model_validate(result)
     except ValidationError as exc:
-        code = _intent_validation_code(exc)
-        if code == "TRIGGER_SPEC_NOT_REGISTERED":
-            raise PlanIntentError(code) from exc
-        raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{code}") from exc
+        raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{_intent_validation_code(exc)}") from exc
 
 
 async def run_entry_planner_once(
