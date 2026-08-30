@@ -399,9 +399,8 @@ def test_authorization_and_materialization_are_single_use(tmp_path, monkeypatch)
     assert proposal["risk_reward"] == pytest.approx(2.0)
     assert repo.get_universe_setup(setup.id)["state"] == "refused"
     structure = next(
-        row for row in repo.list_opportunity_validity_assessments(
-            first["opportunity_id"]
-        )
+        row
+        for row in repo.list_opportunity_validity_assessments(first["opportunity_id"])
         if row["check_type"] == "market_structure"
     )
     assert structure["authority"] == "shadow"
@@ -552,21 +551,30 @@ def test_market_structure_v2_projects_only_final_bar_canonical_events():
         high = {3: 110.0, 8: 112.0, 13: 114.0, 23: 118.0}.get(index, 105.0)
         low = {5: 90.0, 10: 92.0, 15: 94.0}.get(index, 95.0)
         close = 120.0 if index == 29 else 100.0
-        candles.append({
-            "ts": index * 60_000,
-            "open": 100.0,
-            "high": max(high, close),
-            "low": min(low, close, 100.0),
-            "close": close,
-            "volume": 10.0,
-        })
-    canonical = derive_market_structure([
-        Candle(
-            timestamp=row["ts"], open=row["open"], high=row["high"],
-            low=row["low"], close=row["close"], volume=row["volume"],
+        candles.append(
+            {
+                "ts": index * 60_000,
+                "open": 100.0,
+                "high": max(high, close),
+                "low": min(low, close, 100.0),
+                "close": close,
+                "volume": 10.0,
+            }
         )
-        for row in candles
-    ], tf_ms=60_000)
+    canonical = derive_market_structure(
+        [
+            Candle(
+                timestamp=row["ts"],
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+            )
+            for row in candles
+        ],
+        tf_ms=60_000,
+    )
     result = evaluate_market_structure(candles, direction="long")
 
     assert result["event"] == "bullish_bos"
@@ -576,8 +584,7 @@ def test_market_structure_v2_projects_only_final_bar_canonical_events():
     assert result["last_confirmed_swing_high"]["confirmed_at"] == 26 * 60_000
 
     # The consumed level cannot repeat on a later final bar.
-    candles.append({**candles[-1], "ts": 30 * 60_000, "close": 121.0,
-                    "high": 122.0})
+    candles.append({**candles[-1], "ts": 30 * 60_000, "close": 121.0, "high": 122.0})
     repeated = evaluate_market_structure(candles, direction="long")
     assert repeated["event"] is None
 
@@ -588,26 +595,29 @@ def test_market_structure_v2_state_projection_choch_and_exact_staleness():
         evaluate_market_structure,
     )
 
-    def fixture(*, count=30, highs=(110.0, 112.0),
-                lows=(90.0, 92.0), latest_high_index=15,
-                final_close=100.0):
-        rows = [{
-            "ts": index * 60_000,
-            "open": 100.0,
-            "high": 105.0,
-            "low": 95.0,
-            "close": 100.0,
-            "volume": 10.0,
-        } for index in range(count)]
+    def fixture(*, count=30, highs=(110.0, 112.0), lows=(90.0, 92.0), latest_high_index=15, final_close=100.0):
+        rows = [
+            {
+                "ts": index * 60_000,
+                "open": 100.0,
+                "high": 105.0,
+                "low": 95.0,
+                "close": 100.0,
+                "volume": 10.0,
+            }
+            for index in range(count)
+        ]
         rows[5]["high"] = highs[0]
         rows[latest_high_index]["high"] = highs[1]
         rows[10]["low"] = lows[0]
         rows[20]["low"] = lows[1]
-        rows[-1].update({
-            "close": final_close,
-            "high": max(rows[-1]["high"], final_close),
-            "low": min(rows[-1]["low"], final_close),
-        })
+        rows[-1].update(
+            {
+                "close": final_close,
+                "high": max(rows[-1]["high"], final_close),
+                "low": min(rows[-1]["low"], final_close),
+            }
+        )
         return rows
 
     bullish = evaluate_market_structure(fixture(), direction="long")
@@ -619,9 +629,7 @@ def test_market_structure_v2_state_projection_choch_and_exact_staleness():
         fixture(highs=(110.0, 112.0), lows=(92.0, 90.0)),
         direction="long",
     )
-    choch = evaluate_market_structure(
-        fixture(final_close=90.0), direction="long"
-    )
+    choch = evaluate_market_structure(fixture(final_close=90.0), direction="long")
     threshold = evaluate_market_structure(
         fixture(count=120, highs=(110.0, 114.0), latest_high_index=59),
         direction="long",
@@ -632,23 +640,15 @@ def test_market_structure_v2_state_projection_choch_and_exact_staleness():
     )
 
     assert HARD_GATE_ALLOWLIST == frozenset()
-    assert (bullish["structure_state"], bullish["verdict"]) == (
-        "higher_high_higher_low", "allow"
-    )
-    assert (bearish["structure_state"], bearish["verdict"]) == (
-        "lower_high_lower_low", "allow"
-    )
-    assert (ranged["structure_state"], ranged["verdict"]) == (
-        "range", "unavailable"
-    )
+    assert (bullish["structure_state"], bullish["verdict"]) == ("higher_high_higher_low", "allow")
+    assert (bearish["structure_state"], bearish["verdict"]) == ("lower_high_lower_low", "allow")
+    assert (ranged["structure_state"], ranged["verdict"]) == ("range", "unavailable")
     assert (choch["event"], choch["verdict"]) == ("bearish_choch", "block")
     assert threshold["reason"] != "swing_stale"
     assert stale["reason"] == "swing_stale"
 
 
-def test_market_structure_v2_opposed_choch_blocks_only_as_shadow_evidence(
-    tmp_path, monkeypatch
-):
+def test_market_structure_v2_opposed_choch_blocks_only_as_shadow_evidence(tmp_path, monkeypatch):
     _prepare(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
@@ -663,14 +663,16 @@ def test_market_structure_v2_opposed_choch_blocks_only_as_shadow_evidence(
         "aletheia.risk.engine.account_available_for_execution",
         lambda execution_mode, cfg: 1_000.0,
     )
-    snapshot = _trigger_snapshot(now).model_copy(update={
-        "market_structure": {
-            "algorithm_version": "market-structure/v2",
-            "core_algorithm_version": "causal-market-structure/v1",
-            "verdict": "block",
-            "reason": "bearish_choch",
+    snapshot = _trigger_snapshot(now).model_copy(
+        update={
+            "market_structure": {
+                "algorithm_version": "market-structure/v2",
+                "core_algorithm_version": "causal-market-structure/v1",
+                "verdict": "block",
+                "reason": "bearish_choch",
+            }
         }
-    })
+    )
 
     result = materialize_trigger(setup.id, snapshot, cfg=cfg, now=now)
     assessments = repo.list_opportunity_validity_assessments(result["opportunity_id"])
@@ -776,7 +778,10 @@ def test_frame_to_gateway_p95_is_within_local_budget(tmp_path, monkeypatch):
 def test_default_local_paper_uses_bitget_public_fast_stream():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_execution
-    from aletheia.universe.fast_stream import fast_market_data_venue_for_config
+    from aletheia.universe.fast_stream import (
+        fast_market_data_unavailability_reason,
+        fast_market_data_venue_for_config,
+    )
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
@@ -785,6 +790,8 @@ def test_default_local_paper_uses_bitget_public_fast_stream():
 
     assert fast_market_data_venue_for_config(cfg) == "bitget"
     assert validate_fast_trigger_execution(cfg) is None
+    cfg.fast_trigger.mode = "off"
+    assert fast_market_data_unavailability_reason(cfg, "bitget") == "FAST_TRIGGER_DISABLED"
 
 
 def test_fast_trigger_refuses_observe_permission():
@@ -821,9 +828,7 @@ async def test_blocked_start_cancels_open_entry_plans(monkeypatch):
     monkeypatch.setattr(watch, "_stop_event", None)
     monkeypatch.setattr(watch, "_cancel_open_entry_plans", cancel)
 
-    status = await watch.reconfigure_fast_trigger_watch(
-        cfg, asyncio.get_running_loop()
-    )
+    status = await watch.reconfigure_fast_trigger_watch(cfg, asyncio.get_running_loop())
 
     assert status["task_started"] is False
     assert status["reason"] == "entry_plan_permission_revoked"
@@ -846,12 +851,8 @@ def test_authorization_rechecks_permission_before_persist(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="entry_plan_permission_revoked"):
         _authorized_setup(cfg, datetime.now(timezone.utc))
 
-    assert repo.get_db().execute(
-        "SELECT COUNT(*) FROM conditional_entry_authorizations"
-    ).fetchone()[0] == 0
-    assert repo.get_db().execute(
-        "SELECT state FROM universe_setups"
-    ).fetchone()[0] == "pending_authorization"
+    assert repo.get_db().execute("SELECT COUNT(*) FROM conditional_entry_authorizations").fetchone()[0] == 0
+    assert repo.get_db().execute("SELECT state FROM universe_setups").fetchone()[0] == "pending_authorization"
 
 
 def test_materialization_rechecks_permission_before_gateway(tmp_path, monkeypatch):
@@ -986,9 +987,7 @@ async def test_superseded_resting_plan_cancels_only_through_gateway(monkeypatch)
         lambda plan_id, *, reason: calls.append((plan_id, reason)) or {"status": "cancelled"},
     )
 
-    plans, engines = await watch._load_entry_plan_watchers(
-        SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10))
-    )
+    plans, engines = await watch._load_entry_plan_watchers(SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10)))
 
     assert plans == {}
     assert engines == {}
@@ -1006,9 +1005,7 @@ async def test_superseded_resting_plan_cancels_only_through_gateway(monkeypatch)
         ("waiting", "hash", "fail"),
     ],
 )
-async def test_integrity_failure_preserves_order_lifecycle(
-    monkeypatch, status, integrity, expected_action
-):
+async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, integrity, expected_action):
     from types import SimpleNamespace
 
     from aletheia.agent_runtime import fast_trigger_watch as watch
@@ -1018,16 +1015,14 @@ async def test_integrity_failure_preserves_order_lifecycle(
         "id": f"{status}-{integrity}-plan",
         "status": status,
         "plan_json": payload,
-        "plan_hash": (
-            hashlib.sha256(payload.encode()).hexdigest()
-            if integrity == "contract"
-            else "0" * 64
-        ),
+        "plan_hash": (hashlib.sha256(payload.encode()).hexdigest() if integrity == "contract" else "0" * 64),
         "order_id": "order-1" if status in {"ordered", "partially_filled"} else None,
     }
     transitions = []
     cancellations = []
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _plan_id: row)
+    monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     if integrity == "contract":
         monkeypatch.setattr(
             watch.EntryPlan,
@@ -1041,29 +1036,24 @@ async def test_integrity_failure_preserves_order_lifecycle(
     )
     monkeypatch.setattr(
         "aletheia.execution.gateway.cancel_entry_plan_order",
-        lambda plan_id, *, reason: cancellations.append((plan_id, reason))
-        or {"status": "cancelled"},
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
     )
 
-    await watch._load_entry_plan_watchers(
-        SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10))
-    )
+    await watch._load_entry_plan_watchers(SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10)))
 
     if expected_action == "cancel":
         assert transitions == []
-        assert cancellations == [(row["id"], f"entry_plan_{integrity}_mismatch" if integrity == "hash" else "entry_plan_contract_invalid")]
+        assert cancellations == [
+            (row["id"], f"entry_plan_{integrity}_mismatch" if integrity == "hash" else "entry_plan_contract_invalid")
+        ]
     else:
         assert cancellations == []
-        assert transitions == [
-            (
-                row["id"],
-                {
-                    "expected_status": status,
-                    "status": "failed",
-                    "reason": "entry_plan_hash_mismatch",
-                },
-            )
-        ]
+        assert len(transitions) == 1
+        plan_id, kwargs = transitions[0]
+        assert plan_id == row["id"]
+        assert kwargs["expected_status"] == status
+        assert kwargs["status"] == "failed"
+        assert kwargs["reason"] == "entry_plan_hash_mismatch"
 
 
 @pytest.mark.asyncio
@@ -1091,6 +1081,7 @@ async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
         order_tactic="POST_ONLY_LIMIT",
         max_wait_sec=30,
         expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        venue="bitget",
     )
     cancellations = []
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
@@ -1098,9 +1089,7 @@ async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
     monkeypatch.setattr(
         watch.repo,
         "get_order",
-        lambda _id: {
-            "created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        },
+        lambda _id: {"created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()},
     )
     monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
     monkeypatch.setattr(
@@ -1112,8 +1101,7 @@ async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.execution.gateway.cancel_entry_plan_order",
-        lambda plan_id, *, reason: cancellations.append((plan_id, reason))
-        or {"status": "cancelled"},
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
     )
     cfg = SimpleNamespace(
         fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
@@ -1132,14 +1120,21 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
 
     transitions = []
     cancellations = []
+    rows = [
+        {"id": "waiting-plan", "status": "waiting"},
+        {"id": "ordered-plan", "status": "ordered"},
+    ]
     monkeypatch.setattr(
         watch.repo,
         "list_watchable_entry_plans",
-        lambda _limit: [
-            {"id": "waiting-plan", "status": "waiting"},
-            {"id": "ordered-plan", "status": "ordered"},
-        ],
+        lambda _limit: rows,
     )
+    monkeypatch.setattr(
+        watch.repo,
+        "get_entry_plan",
+        lambda plan_id: next(row for row in rows if row["id"] == plan_id),
+    )
+    monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     monkeypatch.setattr(
         watch.repo,
         "transition_entry_plan",
@@ -1152,16 +1147,12 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
 
     await watch._cancel_open_entry_plans("fast_trigger_paused")
 
-    assert transitions == [
-        (
-            "waiting-plan",
-            {
-                "expected_status": "waiting",
-                "status": "invalidated",
-                "reason": "fast_trigger_paused",
-            },
-        )
-    ]
+    assert len(transitions) == 1
+    plan_id, kwargs = transitions[0]
+    assert plan_id == "waiting-plan"
+    assert kwargs["expected_status"] == "waiting"
+    assert kwargs["status"] == "invalidated"
+    assert kwargs["reason"] == "fast_trigger_paused"
     assert cancellations == [("ordered-plan", "fast_trigger_paused")]
 
 
@@ -1634,3 +1625,392 @@ def test_execute_mode_refuses_unavailable_or_live_stream(mode):
         "fast_trigger_live_forbidden" if "live" in mode else f"fast_trigger_stream_unavailable:{mode.split('_')[0]}"
     )
     assert reason == expected
+
+
+@pytest.mark.asyncio
+async def test_venue_mismatch_waiting_plan_invalidates_explicitly(monkeypatch):
+    """A waiting plan whose venue differs from the configured monitoring venue must be
+    transitioned to 'invalidated', not silently skipped."""
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": "mismatch-waiting",
+        "status": "waiting",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+        "order_id": None,
+    }
+    plan = SimpleNamespace(
+        plan_id="mismatch-waiting",
+        planning_generation_id="gen-1",
+        risk_policy_id="p1",
+        risk_policy_revision=1,
+        risk_policy_hash="ph",
+        execution_account_mode="bitget_demo",
+        execution_mode="TRIGGERED",
+        order_tactic="POST_ONLY_LIMIT",
+        max_wait_sec=60,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        venue="okx",
+        symbol="ETH/USDT",
+        market_type="perp",
+        direction="long",
+        trigger_params={},
+    )
+    transitions = []
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _plan_id: row)
+    monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="p1", revision=1),
+            policy_hash="ph",
+        ),
+    )
+    monkeypatch.setattr(
+        watch.repo,
+        "transition_entry_plan",
+        lambda plan_id, **kwargs: transitions.append((plan_id, kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+    )
+    plans, engines = await watch._load_entry_plan_watchers(cfg)
+
+    assert plans == {}
+    assert cancellations == []
+    assert any(
+        plan_id == "mismatch-waiting" and kwargs.get("status") == "invalidated" for plan_id, kwargs in transitions
+    ), f"Expected invalidated transition; got {transitions}"
+
+
+@pytest.mark.asyncio
+async def test_venue_mismatch_ordered_plan_routes_through_gateway(monkeypatch):
+    """An ordered plan whose venue differs from the configured monitoring venue must
+    go through Gateway cancel, never be silently dropped."""
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": "mismatch-ordered",
+        "status": "ordered",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+        "order_id": "ord-1",
+    }
+    plan = SimpleNamespace(
+        plan_id="mismatch-ordered",
+        planning_generation_id="gen-2",
+        risk_policy_id="p1",
+        risk_policy_revision=1,
+        risk_policy_hash="ph",
+        execution_account_mode="bitget_demo",
+        execution_mode="RESTING_MAKER",
+        order_tactic="POST_ONLY_LIMIT",
+        max_wait_sec=0,  # no timeout so maker branch doesn't fire
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        venue="okx",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        trigger_params={},
+    )
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="p1", revision=1),
+            policy_hash="ph",
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+    )
+    plans, engines = await watch._load_entry_plan_watchers(cfg)
+
+    assert plans == {}
+    assert any(
+        plan_id == "mismatch-ordered" and reason == "entry_plan_execution_venue_unavailable"
+        for plan_id, reason in cancellations
+    ), f"Expected Gateway cancellation; got {cancellations}"
+
+
+def test_fast_trigger_status_exposes_watched_plan_ids():
+    """fast_trigger_watch_status() must include watched_entry_plan_ids."""
+    from aletheia.agent_runtime.fast_trigger_watch import fast_trigger_watch_status
+
+    status = fast_trigger_watch_status()
+    assert "watched_entry_plan_ids" in status
+    assert isinstance(status["watched_entry_plan_ids"], list)
+
+
+@pytest.mark.asyncio
+async def test_resting_maker_timeout_uses_orders_created_at_not_plan_age(monkeypatch):
+    """Maker timeout fires from orders.created_at, not plan creation time.
+    A newly submitted order (created just now) must NOT be cancelled even if the plan
+    was created long ago."""
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": "fresh-order-plan",
+        "status": "ordered",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+        "order_id": "order-fresh",
+    }
+    plan = SimpleNamespace(
+        plan_id="fresh-order-plan",
+        planning_generation_id="gen-3",
+        risk_policy_id="p1",
+        risk_policy_revision=1,
+        risk_policy_hash="ph",
+        execution_account_mode="bitget_demo",
+        execution_mode="RESTING_MAKER",
+        order_tactic="POST_ONLY_LIMIT",
+        max_wait_sec=60,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        trigger_params={},
+    )
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
+    # Order created 5 seconds ago — well within 60-second window
+    monkeypatch.setattr(
+        watch.repo,
+        "get_order",
+        lambda _id: {"created_at": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()},
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="p1", revision=1),
+            policy_hash="ph",
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+    )
+    plans, engines = await watch._load_entry_plan_watchers(cfg)
+
+    # Fresh order: no timeout cancellation; plan is loaded
+    assert cancellations == []
+    assert "fresh-order-plan" in plans
+
+
+@pytest.mark.asyncio
+async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    rows = []
+    plans = {}
+    for index in range(12):
+        payload = f"plan-{index}"
+        plan_id = payload
+        ordered = index >= 10
+        rows.append(
+            {
+                "id": plan_id,
+                "status": "ordered" if ordered else "waiting",
+                "plan_json": payload,
+                "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+                "order_id": f"order-{index}" if ordered else None,
+            }
+        )
+        plans[payload] = SimpleNamespace(
+            plan_id=plan_id,
+            planning_generation_id=f"generation-{index}",
+            risk_policy_id="p1",
+            risk_policy_revision=1,
+            risk_policy_hash="ph",
+            execution_account_mode="bitget_demo",
+            execution_mode="RESTING_MAKER",
+            order_tactic="POST_ONLY_LIMIT",
+            max_wait_sec=60,
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            venue="bitget",
+            symbol=f"ASSET{index}/USDT",
+            market_type="perp",
+            direction="long",
+        )
+
+    requested_limits = []
+
+    def list_plans(limit=100):
+        requested_limits.append(limit)
+        return rows if limit is None else rows[:limit]
+
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", list_plans)
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda payload: plans[payload])
+    monkeypatch.setattr(
+        watch.repo,
+        "get_order",
+        lambda order_id: {
+            "created_at": (
+                datetime.now(timezone.utc)
+                - timedelta(seconds=120 if order_id == "order-10" else 5)
+            ).isoformat()
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="p1", revision=1),
+            policy_hash="ph",
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+    )
+
+    watched, _ = await watch._load_entry_plan_watchers(cfg)
+
+    assert requested_limits == [None]
+    assert len(watched) == 10
+    assert cancellations == [
+        ("plan-10", "entry_plan_maker_timeout"),
+        ("plan-11", "entry_plan_monitoring_capacity_unavailable"),
+    ]
+
+
+
+
+@pytest.mark.asyncio
+async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch):
+    """A TRIGGERED+POST_ONLY_LIMIT plan still in 'waiting' state must NOT be
+    subject to maker timeout — the order hasn't been placed yet."""
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    payload = "{}"
+    row = {
+        "id": "triggered-waiting",
+        "status": "waiting",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+        "order_id": None,
+    }
+    plan = SimpleNamespace(
+        plan_id="triggered-waiting",
+        planning_generation_id="gen-4",
+        risk_policy_id="p1",
+        risk_policy_revision=1,
+        risk_policy_hash="ph",
+        execution_account_mode="bitget_demo",
+        execution_mode="TRIGGERED",
+        order_tactic="POST_ONLY_LIMIT",
+        max_wait_sec=60,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        venue="bitget",
+        symbol="ETH/USDT",
+        market_type="perp",
+        direction="long",
+        trigger_params={
+            "breakout_level": "3000.0",
+            "pullback_low": "2900.0",
+            "pullback_high": "2950.0",
+            "entry_low": "2920.0",
+            "entry_high": "2940.0",
+        },
+    )
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="p1", revision=1),
+            policy_hash="ph",
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+
+    async def no_prewarm(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(watch, "_prewarm_market_structure", no_prewarm)
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+        universe=SimpleNamespace(max_spread_bps=50, min_depth_10bps_usd=10000),
+    )
+    plans, engines = await watch._load_entry_plan_watchers(cfg)
+
+    assert cancellations == []
+    assert "triggered-waiting" in plans
+    assert "triggered-waiting" in engines
+
+
+def test_triggered_maker_stays_subscribed_after_trigger():
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.data.symbols import InstrumentId
+
+    plan = SimpleNamespace(
+        order_tactic="POST_ONLY_LIMIT",
+        venue="bitget",
+        symbol="ETH/USDT",
+        market_type="perp",
+    )
+    instruments = watch._watched_instruments({}, {}, {"triggered-maker": plan})
+    assert instruments == {InstrumentId.from_parts("bitget", "ETH/USDT", "perp")}
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_unavailable_status_has_watched_plan_ids(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    monkeypatch.setattr(watch, "_lifecycle_ready", False)
+    cfg = SimpleNamespace(fast_trigger=SimpleNamespace(mode="shadow"))
+    status = await watch.reconfigure_fast_trigger_watch(
+        cfg,
+        asyncio.get_running_loop(),
+    )
+    assert status["watched_entry_plan_ids"] == []

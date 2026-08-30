@@ -19,6 +19,27 @@ This proposal records the accepted direction for #2288. The normative behavior
 now lives in `docs/design/contracts/decision_lifecycle_contract.md` and
 `docs/design/contracts/execution_contract.md`.
 
+## Accepted 2026-08-30 conformance amendment
+
+Issue #2546 completes the accepted design without widening model, Risk, or
+Gateway authority:
+
+- execution eligibility requires a Fast Monitoring path for the Candidate's
+  exact physical venue, symbol, and market type;
+- `PlanIntent` selects one of Resting Maker, Triggered Maker, or Triggered
+  Taker, while deterministic code retains every numeric execution and Risk
+  value;
+- every new Post-Only Order has a fixed 60-second cancel-only lifetime measured
+  from its durable Order creation time;
+- TriggerSpec compatibility is registry-owned and deterministic incompatibility
+  is terminal after one physical model attempt; and
+- Entry Planner admission and inference resolve the same configured deep-tier
+  provider identity.
+
+The owner accepted this D2 amendment before its normative content entered the
+current Contract. The amendment adds no venue, exchange adapter, persistence
+surface, live authority, Risk policy, or wire-version migration.
+
 ## Implemented boundaries
 
 - A durable Candidate Planning Generation owns one reasoning request across

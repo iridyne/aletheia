@@ -88,10 +88,7 @@ def _optional_request_field_is_unsupported(response: httpx.Response, field_name:
     parameter = str(error.get("param") or "").strip().lower()
     if parameter == needle:
         return True
-    detail = " ".join(
-        str(error.get(key) or "")
-        for key in ("code", "type", "message", "detail")
-    ).lower()
+    detail = " ".join(str(error.get(key) or "") for key in ("code", "type", "message", "detail")).lower()
     if needle not in detail:
         return False
     return any(
@@ -111,6 +108,19 @@ def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
     return _optional_request_field_is_unsupported(response, "reasoning_effort")
 
 
+def _responses_reasoning_is_unsupported(response: httpx.Response) -> bool:
+    """Recognize explicit rejection of the Responses API ``reasoning`` field.
+
+    Some OpenAI-compatible endpoints accept the Responses protocol but do not
+    implement the optional ``reasoning`` object. Retry once without it rather
+    than hard-failing the whole call; ``text.format`` is never touched.
+    """
+    return (
+        _optional_request_field_is_unsupported(response, "reasoning")
+        or _optional_request_field_is_unsupported(response, "reasoning.effort")
+    )
+
+
 def _json_object_is_unsupported(response: httpx.Response) -> bool:
     return (
         _optional_request_field_is_unsupported(response, "response_format")
@@ -122,12 +132,12 @@ def _json_object_is_unsupported(response: httpx.Response) -> bool:
 class OpenAICompatibleProvider(ModelProvider):
     name = "openai_compatible"
 
-    def __init__(self, base_url: str, model: str = "default", protocol: str = "chat_completions", api_key: str | None = None):
+    def __init__(
+        self, base_url: str, model: str = "default", protocol: str = "chat_completions", api_key: str | None = None
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.protocol = validate_provider_protocol(
-            "openai_compatible", protocol, explicit=True
-        )
+        self.protocol = validate_provider_protocol("openai_compatible", protocol, explicit=True)
         self.api_key = api_key
 
     def _headers(self) -> dict:
@@ -179,8 +189,7 @@ class OpenAICompatibleProvider(ModelProvider):
                         {
                             "role": "user",
                             "content": (
-                                "Respond with valid JSON matching this schema: "
-                                f"{json.dumps(request.structured_schema)}"
+                                f"Respond with valid JSON matching this schema: {json.dumps(request.structured_schema)}"
                             ),
                         },
                     ]
@@ -211,6 +220,8 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_output_tokens": request.max_tokens,
         }
+        if request.reasoning_effort is not None:
+            payload["reasoning"] = {"effort": request.reasoning_effort}
         if request.response_format == "json_object":
             payload["text"] = {"format": {"type": "json_object"}}
         elif request.response_format == "json_schema" and request.structured_schema is not None:
@@ -224,6 +235,9 @@ class OpenAICompatibleProvider(ModelProvider):
             }
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
+        if "reasoning" in payload and _responses_reasoning_is_unsupported(resp):
+            payload = {k: v for k, v in payload.items() if k != "reasoning"}
+            resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
         _raise_without_secrets(resp)
         data = resp.json()
         content = ""
@@ -279,9 +293,7 @@ class OpenAICompatibleProvider(ModelProvider):
         try:
             models = await self.list_models()
             if models:
-                return health_from_model_catalogue(
-                    self.name, self.model, models, allow_default=True
-                )
+                return health_from_model_catalogue(self.name, self.model, models, allow_default=True)
             return ModelHealth(
                 provider=self.name,
                 available=False,

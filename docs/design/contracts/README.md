@@ -59,3 +59,7 @@ Settings switch inventory.
 The [Configuration Loading Contract](configuration_contract.md) owns the
 strict persisted-config boundary, safe validation errors, and Doctor blocker
 projection.
+
+The [Entry Plan Contract](entry-plan-contract.md) owns exact-venue Candidate
+eligibility, qualitative planner tactic authority, deterministic three-branch
+compilation, maker Order lifetime, and deep-tier provider admission.

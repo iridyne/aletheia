@@ -185,6 +185,14 @@ def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeyp
 
 def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "validate_native_order_authority", lambda _order: None)
+    transitions = []
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.transition_entry_plan",
+        lambda plan_id, **kwargs: transitions.append((plan_id, kwargs)) or True,
+    )
     proposal_id, risk_id = "proposal-protected", "risk-protected"
     _authority(proposal_id, risk_id, order_type="limit")
     captured = []
@@ -216,6 +224,8 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
         take_profit_price=110.0,
         time_in_force="GTC",
         post_only=True,
+        entry_plan_id="entry-plan-1",
+        order_tactic="POST_ONLY_LIMIT",
     )
 
     [command] = captured
@@ -223,6 +233,54 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
     assert command.take_profit_price == 110
     assert command.time_in_force == "GTC"
     assert command.post_only is True
+    [stored] = repo.list_orders(limit=10)
+    assert stored["entry_plan_id"] == "entry-plan-1"
+    assert stored["order_tactic"] == "POST_ONLY_LIMIT"
+    assert stored["time_in_force"] == "GTC"
+    assert stored["post_only"] == 1
+    assert stored["requested_liquidity"] == "maker"
+    assert transitions == [
+        (
+            "entry-plan-1",
+            {
+                "expected_status": "risk_reserved",
+                "status": "ordered",
+                "order_id": stored["id"],
+            },
+        )
+    ]
+
+
+def test_coordinator_rolls_back_order_when_plan_link_conflicts(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import execute_order
+    from aletheia.storage import repositories as repo
+
+    _authority("proposal-conflict", "risk-conflict", order_type="limit")
+    monkeypatch.setattr(repo, "validate_native_order_authority", lambda _order: None)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.transition_entry_plan",
+        lambda *_args, **_kwargs: False,
+    )
+
+    with pytest.raises(RuntimeError, match="entry_plan_order_transition_conflict"):
+        execute_order(
+            proposal_id="proposal-conflict",
+            risk_decision_id="risk-conflict",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="limit",
+            quantity=0.01,
+            price=100.0,
+            execution_mode="binance_testnet",
+            entry_plan_id="entry-plan-conflict",
+            order_tactic="POST_ONLY_LIMIT",
+            time_in_force="GTC",
+            post_only=True,
+        )
+
+    assert repo.list_orders(limit=10) == []
 
 
 def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeypatch):

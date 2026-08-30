@@ -21,6 +21,7 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     insert_order,
     transaction,
+    transition_entry_plan,
     update_order,
     update_position,
 )
@@ -168,6 +169,8 @@ def execute_order(
     take_profit_price: float | None = None,
     time_in_force: str | None = None,
     post_only: bool = False,
+    entry_plan_id: str | None = None,
+    order_tactic: str | None = None,
     **_unused,
 ) -> dict:
     """Commit pending intent, send one UTA command, then CAS the report."""
@@ -179,6 +182,17 @@ def execute_order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
         client_order_id=proposal_id,
+        entry_plan_id=entry_plan_id,
+        order_tactic=order_tactic,
+        time_in_force=time_in_force,
+        post_only=post_only,
+        requested_liquidity=(
+            "maker"
+            if post_only
+            else "taker"
+            if str(time_in_force or "").lower() == "ioc"
+            else None
+        ),
         symbol=symbol,
         market_type=market_type,
         direction=direction,
@@ -188,7 +202,15 @@ def execute_order(
         execution_mode=execution_mode,
         status="pending",
     )
-    insert_order(order)
+    with transaction(immediate=True):
+        insert_order(order)
+        if entry_plan_id and not transition_entry_plan(
+            entry_plan_id,
+            expected_status="risk_reserved",
+            status="ordered",
+            order_id=order.id,
+        ):
+            raise RuntimeError("entry_plan_order_transition_conflict")
     instrument = instrument_from_local(symbol, market_type)
     try:
         adapter = create_uta_adapter(execution_mode)

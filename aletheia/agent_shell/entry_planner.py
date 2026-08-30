@@ -13,9 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from aletheia.storage import repositories as repo
 from aletheia.trading.trigger_specs import (
-    registered_trigger_specs,
-    require_registered_trigger_spec,
+    compatible_trigger_specs,
+    require_compatible_trigger_spec,
 )
+from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
 
 
 class PlanIntentError(ValueError):
@@ -38,23 +39,25 @@ class PlanIntent(BaseModel):
         "NO_VALID_TRIGGER",
         "OK",
     ]
-    thesis: str = Field(default="", max_length=400)
-    scenario: str = Field(default="", max_length=200)
-    evidence_refs: list[str] = Field(default_factory=list, max_length=8)
-    execution_mode: Literal["RESTING_MAKER", "TRIGGERED", "NONE"] = "NONE"
-    trigger_spec_id: str = ""
-    trigger_spec_version: str = ""
-    risk_tier: Literal["LOW", "MEDIUM", "NONE"] = "NONE"
-    horizon: Literal["INTRADAY", "SWING", "NONE"] = "NONE"
+    thesis: str = Field(max_length=400)
+    scenario: str = Field(max_length=200)
+    evidence_refs: list[str] = Field(max_length=8)
+    execution_mode: Literal["RESTING_MAKER", "TRIGGERED"] | None
+    order_tactic: Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"] | None
+    trigger_spec_id: str | None
+    trigger_spec_version: str | None
+    risk_tier: Literal["LOW", "MEDIUM", "NONE"]
+    horizon: Literal["INTRADAY", "SWING", "NONE"]
 
     @model_validator(mode="after")
     def _validate_semantics(self) -> "PlanIntent":
-        trigger_fields_empty = not self.trigger_spec_id and not self.trigger_spec_version
+        trigger_fields_empty = self.trigger_spec_id is None and self.trigger_spec_version is None
         if self.decision == "NO_PLAN":
             if self.reason_code == "OK":
                 raise PlanIntentError("NO_PLAN_REASON_REQUIRED")
             if (
-                self.execution_mode != "NONE"
+                self.execution_mode is not None
+                or self.order_tactic is not None
                 or self.risk_tier != "NONE"
                 or self.horizon != "NONE"
                 or not trigger_fields_empty
@@ -64,8 +67,10 @@ class PlanIntent(BaseModel):
 
         if self.reason_code != "OK":
             raise PlanIntentError("ENTRY_PLAN_REASON_MUST_BE_OK")
-        if self.execution_mode == "NONE":
+        if self.execution_mode is None:
             raise PlanIntentError("ENTRY_PLAN_EXECUTION_MODE_REQUIRED")
+        if self.order_tactic is None:
+            raise PlanIntentError("ENTRY_PLAN_ORDER_TACTIC_REQUIRED")
         if self.risk_tier == "NONE":
             raise PlanIntentError("ENTRY_PLAN_RISK_TIER_REQUIRED")
         if self.horizon == "NONE":
@@ -74,20 +79,14 @@ class PlanIntent(BaseModel):
             raise PlanIntentError("ENTRY_PLAN_THESIS_REQUIRED")
         if not self.scenario.strip():
             raise PlanIntentError("ENTRY_PLAN_SCENARIO_REQUIRED")
-        if self.execution_mode == "TRIGGERED":
-            if not self.trigger_spec_id or not self.trigger_spec_version:
-                raise PlanIntentError("TRIGGER_SPEC_NOT_REGISTERED")
-            try:
-                require_registered_trigger_spec(
-                    self.trigger_spec_id,
-                    self.trigger_spec_version,
-                    {},
-                )
-            except ValueError as exc:
-                if str(exc) != "momentum_trigger_params_incomplete":
-                    raise PlanIntentError("TRIGGER_SPEC_NOT_REGISTERED") from exc
-        elif not trigger_fields_empty:
-            raise PlanIntentError("RESTING_MAKER_TRIGGER_FIELDS_FORBIDDEN")
+        if self.execution_mode == "RESTING_MAKER":
+            if self.order_tactic != "POST_ONLY_LIMIT":
+                raise PlanIntentError("RESTING_MAKER_TACTIC_INVALID")
+            if not trigger_fields_empty:
+                raise PlanIntentError("RESTING_MAKER_TRIGGER_FIELDS_FORBIDDEN")
+            return self
+        if self.order_tactic not in {"POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"}:
+            raise PlanIntentError("TRIGGERED_TACTIC_INVALID")
         return self
 
 
@@ -119,14 +118,14 @@ def _candidate_context(
         },
         "candidate": candidate,
         "latest_feature_snapshot": feature,
-        "registered_trigger_specs": [
+        "compatible_trigger_specs": [
             {
                 "id": spec.spec_id,
                 "version": spec.version,
                 "data_requirements": spec.data_requirements,
                 "freshness_ms": spec.freshness_ms,
             }
-            for spec in registered_trigger_specs()
+            for spec in compatible_trigger_specs(str(candidate.get("scanner_family") or ""))
         ],
     }
 
@@ -140,12 +139,23 @@ def _validate_intent_against_candidate(
 ) -> None:
     if intent.decision != "ENTRY_PLAN":
         raise PlanIntentError("COMPILER_ENTRY_INTENT_REQUIRED")
-    if intent.execution_mode == "TRIGGERED" and candidate.get("scanner_family") != "momentum":
-        raise PlanIntentError("NO_VALID_TRIGGER")
-    if (
-        candidate.get("id") is not None
-        and candidate.get("id") != generation.get("last_candidate_id")
-    ):
+    if intent.execution_mode == "TRIGGERED":
+        if not intent.trigger_spec_id or not intent.trigger_spec_version:
+            raise PlanIntentError("TRIGGER_SPEC_NOT_REGISTERED")
+        try:
+            require_compatible_trigger_spec(
+                str(candidate.get("scanner_family") or ""),
+                str(intent.trigger_spec_id),
+                str(intent.trigger_spec_version),
+            )
+        except ValueError as exc:
+            code = (
+                "NO_COMPATIBLE_TRIGGER_SPEC"
+                if str(exc) == "trigger_spec_candidate_family_unsupported"
+                else "UNSUPPORTED_TRIGGER_SPEC"
+            )
+            raise PlanIntentError(code) from exc
+    if candidate.get("id") is not None and candidate.get("id") != generation.get("last_candidate_id"):
         raise PlanIntentError("STALE_CANDIDATE_PRICE")
     price_value: Any = candidate.get("entry_price_usd")
     try:
@@ -162,10 +172,7 @@ def _validate_intent_against_candidate(
         vol_target_pct = float(getattr(cfg.trading, "vol_target_pct", 0.0) or 0.0)
     except (TypeError, ValueError):
         vol_target_pct = 0.0
-    if (
-        (not math.isfinite(atr_pct) or atr_pct <= 0)
-        and (not math.isfinite(vol_target_pct) or vol_target_pct <= 0)
-    ):
+    if (not math.isfinite(atr_pct) or atr_pct <= 0) and (not math.isfinite(vol_target_pct) or vol_target_pct <= 0):
         raise PlanIntentError("NO_STOP_REFERENCE")
 
 
@@ -188,6 +195,20 @@ def _intent_validation_code(exc: BaseException) -> str:
     return "VALIDATION_FAILED"
 
 
+def _complete_semantic_no_plan(
+    generation_id: str,
+    owner: str,
+    code: str,
+    *,
+    detail: str = "",
+) -> bool:
+    result = {
+        "decision": "NO_PLAN",
+        "reason_code": str(code),
+        "detail": str(detail)[:160],
+        "source": "deterministic_validation",
+    }
+    return repo.complete_candidate_planning_no_plan(generation_id, owner, result)
 
 
 async def plan_next_candidate(
@@ -215,6 +236,21 @@ async def plan_next_candidate(
         candidate = repo.get_candidate(generation["last_candidate_id"])
         if candidate is None:
             raise ValueError("candidate_not_found")
+        venue_reason = fast_market_data_unavailability_reason(
+            cfg,
+            str(candidate["venue"]),
+        )
+        if venue_reason is not None:
+            stored = _complete_semantic_no_plan(
+                generation["id"],
+                owner,
+                f"EXECUTION_VENUE_UNAVAILABLE:{venue_reason}",
+            )
+            return {
+                "status": "no_plan" if stored else "stale",
+                "planning_generation_id": generation["id"],
+                "model_invoked": False,
+            }
         feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
         context = _candidate_context(
             generation,
@@ -242,41 +278,31 @@ async def plan_next_candidate(
     try:
         raw = await planner(context)
     except asyncio.CancelledError:
-        repo.release_candidate_planning_claim(
-            generation["id"], owner, "planner_preempted"
-        )
+        repo.release_candidate_planning_claim(generation["id"], owner, "planner_preempted")
         raise
     except PlannerBackpressure as exc:
-        repo.release_candidate_planning_claim(
-            generation["id"], owner, str(exc), retry_seconds=1
-        )
+        repo.release_candidate_planning_claim(generation["id"], owner, str(exc), retry_seconds=1)
         return {
             "status": "backpressure",
             "planning_generation_id": generation["id"],
             "model_invoked": False,
         }
     except PlanIntentError as exc:
-        repo.defer_candidate_planning_with_code(
-            generation["id"], owner, exc.code, str(exc)
-        )
+        repo.defer_candidate_planning_with_code(generation["id"], owner, exc.code, str(exc))
         return {
             "status": "unavailable",
             "planning_generation_id": generation["id"],
             "model_invoked": True,
         }
     except Exception as exc:
-        repo.defer_candidate_planning_with_code(
-            generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__
-        )
+        repo.defer_candidate_planning_with_code(generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__)
         return {
             "status": "unavailable",
             "planning_generation_id": generation["id"],
             "model_invoked": True,
         }
     if raw is None:
-        repo.defer_candidate_planning_with_code(
-            generation["id"], owner, "PLANNER_UNAVAILABLE"
-        )
+        repo.defer_candidate_planning_with_code(generation["id"], owner, "PLANNER_UNAVAILABLE")
         return {
             "status": "unavailable",
             "planning_generation_id": generation["id"],
@@ -285,10 +311,11 @@ async def plan_next_candidate(
     try:
         intent = PlanIntent.model_validate(raw)
     except ValidationError as exc:
+        code = _intent_validation_code(exc)
         repo.defer_candidate_planning_with_code(
             generation["id"],
             owner,
-            f"INTENT_SEMANTIC:{_intent_validation_code(exc)}",
+            f"INTENT_SEMANTIC:{code}",
         )
         return {
             "status": "unavailable",
@@ -318,18 +345,30 @@ async def plan_next_candidate(
 
         plan = compile_entry_plan(generation, candidate, feature, intent, cfg)
     except PlanIntentError as exc:
-        repo.defer_candidate_planning_with_code(
-            generation["id"], owner, exc.code, str(exc)
-        )
+        if exc.code in {
+            "NO_COMPATIBLE_TRIGGER_SPEC",
+            "TRIGGER_SPEC_NOT_REGISTERED",
+            "UNSUPPORTED_TRIGGER_SPEC",
+        }:
+            stored = _complete_semantic_no_plan(
+                generation["id"],
+                owner,
+                exc.code,
+                detail=str(exc),
+            )
+            return {
+                "status": "no_plan" if stored else "stale",
+                "planning_generation_id": generation["id"],
+                "model_invoked": True,
+            }
+        repo.defer_candidate_planning_with_code(generation["id"], owner, exc.code, str(exc))
         return {
             "status": "unavailable",
             "planning_generation_id": generation["id"],
             "model_invoked": True,
         }
     except Exception as exc:
-        repo.defer_candidate_planning_with_code(
-            generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__
-        )
+        repo.defer_candidate_planning_with_code(generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__)
         return {
             "status": "unavailable",
             "planning_generation_id": generation["id"],
@@ -348,39 +387,45 @@ async def plan_next_candidate(
     }
 
 
-async def system_operator_entry_planner(context: dict) -> PlanIntent | None:
+async def system_operator_entry_planner(
+    context: dict,
+    provider_name: str | None = None,
+) -> PlanIntent | None:
     """Canonical slow AI producer; all output is validated before persistence."""
 
     from aletheia.agents.helpers import llm_structured
     from aletheia.model_provider.broker import InferencePriority, inference_priority
     from aletheia.model_provider.router import get_provider_for_tier
 
-    system_prompt = """You are Aletheia System Operator. Return a PlanIntent describing whether to
-enter the given Candidate. You choose only:
-  - decision: ENTRY_PLAN or NO_PLAN.
-  - execution_mode: RESTING_MAKER for a passive maker limit; TRIGGERED for an
-    urgent opposing-BBO IOC gated on a registered TriggerSpec.
-  - trigger_spec_id / trigger_spec_version: MUST match a registered spec from
-    the context; leave empty for RESTING_MAKER.
-  - risk_tier: LOW or MEDIUM. LOW is required unless every listed evidence_ref
-    is directly attributable to the Candidate and internally consistent.
-  - horizon: INTRADAY or SWING.
-  - thesis, scenario, evidence_refs: short human-readable rationale.
-Prices, sizes, stop, target, leverage, expiry, and slippage are computed
-deterministically from the Candidate and policy; do NOT emit them.
+    provider_name = provider_name or get_provider_for_tier("deep")
+    system_prompt = """You are Aletheia System Operator. Return one strict PlanIntent.
+You may choose only these lifecycle branches:
+  1. RESTING_MAKER + POST_ONLY_LIMIT: passive maker Order without a trigger.
+  2. TRIGGERED + POST_ONLY_LIMIT: wait for a compatible trigger, then maker Order.
+  3. TRIGGERED + OPPOSING_BBO_IOC: wait for a compatible trigger, then bounded taker IOC.
+TRIGGERED may select only an id/version listed in compatible_trigger_specs.
+When that list is empty, choose RESTING_MAKER only if passive entry is justified;
+otherwise return NO_PLAN. Never invent a trigger.
+For NO_PLAN, execution_mode, order_tactic, trigger_spec_id and
+trigger_spec_version are null; risk_tier and horizon are NONE.
+For an Entry Plan, choose LOW or MEDIUM risk_tier and INTRADAY or SWING horizon.
+LOW is required unless every evidence_ref is directly attributable to the
+Candidate and internally consistent. Keep thesis, scenario, and evidence_refs short.
+Prices, sizes, stop, target, leverage, expiry, slippage, timeout, and trigger
+parameters are deterministic code output; do not emit them.
 Return NO_PLAN with reason_code=INSUFFICIENT_EVIDENCE, CONFLICTING_SIGNALS,
-STALE_FACTS, or NO_VALID_TRIGGER when the bounded facts do not support entry."""
+STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
     with inference_priority(InferencePriority.DEFAULT):
         result, error = await llm_structured(
             system_prompt,
             json.dumps(context, sort_keys=True, default=str),
             schema=PlanIntent,
             max_tokens=768,
-            provider=get_provider_for_tier("deep"),
+            provider=provider_name,
             fallback_to_defaults=False,
             caller="agent_shell.entry_planner",
             context_symbol=str((context.get("candidate") or {}).get("symbol") or ""),
-            reasoning_effort=None,
+            reasoning_effort="none",
         )
     if error:
         error_text = str(error)
@@ -403,13 +448,23 @@ STALE_FACTS, or NO_VALID_TRIGGER when the bounded facts do not support entry."""
     try:
         return PlanIntent.model_validate(result)
     except ValidationError as exc:
-        raise PlanIntentError(
-            f"PLANNER_SCHEMA_INVALID:{_intent_validation_code(exc)}"
-        ) from exc
+        raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{_intent_validation_code(exc)}") from exc
 
 
-async def run_entry_planner_once(cfg=None) -> dict[str, Any]:
-    return await plan_next_candidate(system_operator_entry_planner, cfg=cfg)
+async def run_entry_planner_once(
+    cfg=None,
+    *,
+    provider_name: str | None = None,
+) -> dict[str, Any]:
+    if provider_name is None:
+        from aletheia.model_provider.router import get_provider_for_tier
+
+        provider_name = get_provider_for_tier("deep")
+
+    async def planner(context: dict) -> PlanIntent | None:
+        return await system_operator_entry_planner(context, provider_name)
+
+    return await plan_next_candidate(planner, cfg=cfg)
 
 
 async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
@@ -420,10 +475,11 @@ async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
         InferencePriority,
         inference_broker,
     )
+    from aletheia.model_provider.router import get_provider_for_tier
 
     cfg = cfg or load_config(persist_migrations=False)
     pending = repo.count_pending_candidate_planning()
-    provider_name = str(cfg.models.default_provider)
+    provider_name = get_provider_for_tier("deep")
     available = await inference_broker.available_capacity(
         provider_name,
         priority=InferencePriority.DEFAULT,
@@ -444,8 +500,7 @@ async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     async with asyncio.TaskGroup() as group:
         tasks = [
-            group.create_task(run_entry_planner_once(cfg=cfg))
-            for _ in range(worker_count)
+            group.create_task(run_entry_planner_once(cfg=cfg, provider_name=provider_name)) for _ in range(worker_count)
         ]
     results = [task.result() for task in tasks]
     claimed = [result for result in results if result.get("status") != "idle"]

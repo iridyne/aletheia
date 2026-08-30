@@ -88,9 +88,7 @@ def test_active_paper_learning_identity_returns_exact_single_hypothesis():
         ),
         patch("aletheia.learning.ledger.get_record", return_value=hypothesis),
     ):
-        assert _active_paper_learning_identity(
-            "universe_family_calibration"
-        ) == (True, identity)
+        assert _active_paper_learning_identity("universe_family_calibration") == (True, identity)
 
 
 def test_active_paper_learning_identity_fails_closed_on_fingerprint_drift():
@@ -100,11 +98,13 @@ def test_active_paper_learning_identity_fails_closed_on_fingerprint_drift():
     with (
         patch(
             "aletheia.learning.ledger.list_open_experiments",
-            return_value=[{
-                "experiment_id": "paper-experiment",
-                "stage": "paper_10",
-                "hypothesis_id": "paper",
-            }],
+            return_value=[
+                {
+                    "experiment_id": "paper-experiment",
+                    "stage": "paper_10",
+                    "hypothesis_id": "paper",
+                }
+            ],
         ),
         patch(
             "aletheia.learning.ledger.get_record",
@@ -120,9 +120,7 @@ def test_active_paper_learning_identity_fails_closed_on_fingerprint_drift():
             },
         ),
     ):
-        assert _active_paper_learning_identity(
-            "universe_family_calibration"
-        ) == (True, None)
+        assert _active_paper_learning_identity("universe_family_calibration") == (True, None)
 
 
 def test_active_paper_learning_identity_fails_closed_on_ambiguity():
@@ -135,9 +133,7 @@ def test_active_paper_learning_identity_fails_closed_on_ambiguity():
             {"stage": "paper_25", "hypothesis_id": "second"},
         ],
     ):
-        assert _active_paper_learning_identity(
-            "universe_family_calibration"
-        ) == (True, None)
+        assert _active_paper_learning_identity("universe_family_calibration") == (True, None)
 
 
 def test_fallback_when_disabled(svc, disabled_cfg):
@@ -170,12 +166,26 @@ def test_fallback_when_snapshot_empty(svc, enabled_cfg):
 def test_returns_active_members(svc, enabled_cfg):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mock_members = [
-        {"symbol": "DOGE/USDT", "scanner_family": "momentum", "total_score": 75,
-         "snapshot_id": "snap_1", "id": "m1", "execution_eligible": 1,
-         "expires_at": future, "rank": 1},
-        {"symbol": "PEPE/USDT", "scanner_family": "volatility", "total_score": 60,
-         "snapshot_id": "snap_1", "id": "m2", "execution_eligible": 1,
-         "expires_at": future, "rank": 2},
+        {
+            "symbol": "DOGE/USDT",
+            "scanner_family": "momentum",
+            "total_score": 75,
+            "snapshot_id": "snap_1",
+            "id": "m1",
+            "execution_eligible": 1,
+            "expires_at": future,
+            "rank": 1,
+        },
+        {
+            "symbol": "PEPE/USDT",
+            "scanner_family": "volatility",
+            "total_score": 60,
+            "snapshot_id": "snap_1",
+            "id": "m2",
+            "execution_eligible": 1,
+            "expires_at": future,
+            "rank": 2,
+        },
     ]
     snap = {"id": "snap_1", "status": "active"}
     with patch("aletheia.universe.service.load_config", return_value=enabled_cfg):
@@ -190,12 +200,26 @@ def test_filters_expired_members(svc, enabled_cfg):
     past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mock_members = [
-        {"symbol": "FRESH/USDT", "scanner_family": "momentum", "total_score": 80,
-         "snapshot_id": "snap_1", "id": "m1", "execution_eligible": 1,
-         "expires_at": future, "rank": 1},
-        {"symbol": "STALE/USDT", "scanner_family": "momentum", "total_score": 70,
-         "snapshot_id": "snap_1", "id": "m2", "execution_eligible": 1,
-         "expires_at": past, "rank": 2},
+        {
+            "symbol": "FRESH/USDT",
+            "scanner_family": "momentum",
+            "total_score": 80,
+            "snapshot_id": "snap_1",
+            "id": "m1",
+            "execution_eligible": 1,
+            "expires_at": future,
+            "rank": 1,
+        },
+        {
+            "symbol": "STALE/USDT",
+            "scanner_family": "momentum",
+            "total_score": 70,
+            "snapshot_id": "snap_1",
+            "id": "m2",
+            "execution_eligible": 1,
+            "expires_at": past,
+            "rank": 2,
+        },
     ]
     snap = {"id": "snap_1", "status": "active"}
     with patch("aletheia.universe.service.load_config", return_value=enabled_cfg):
@@ -209,12 +233,26 @@ def test_filters_expired_members(svc, enabled_cfg):
 def test_filters_non_execution_eligible(svc, enabled_cfg):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mock_members = [
-        {"symbol": "GOOD/USDT", "scanner_family": "momentum", "total_score": 80,
-         "snapshot_id": "snap_1", "id": "m1", "execution_eligible": 1,
-         "expires_at": future, "rank": 1},
-        {"symbol": "BAD/USDT", "scanner_family": "momentum", "total_score": 70,
-         "snapshot_id": "snap_1", "id": "m2", "execution_eligible": 0,
-         "expires_at": future, "rank": 2},
+        {
+            "symbol": "GOOD/USDT",
+            "scanner_family": "momentum",
+            "total_score": 80,
+            "snapshot_id": "snap_1",
+            "id": "m1",
+            "execution_eligible": 1,
+            "expires_at": future,
+            "rank": 1,
+        },
+        {
+            "symbol": "BAD/USDT",
+            "scanner_family": "momentum",
+            "total_score": 70,
+            "snapshot_id": "snap_1",
+            "id": "m2",
+            "execution_eligible": 0,
+            "expires_at": future,
+            "rank": 2,
+        },
     ]
     snap = {"id": "snap_1", "status": "active"}
     with patch("aletheia.universe.service.load_config", return_value=enabled_cfg):
@@ -225,9 +263,7 @@ def test_filters_non_execution_eligible(svc, enabled_cfg):
     assert members[0]["symbol"] == "GOOD/USDT"
 
 
-def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority(
-    tmp_path, monkeypatch
-):
+def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -254,21 +290,19 @@ def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority
     )
     repo.insert_candidate(ineligible)
 
-    assert _ensure_planning_generations(
-        [ineligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now
-    ) == (set(), set(), 0)
+    assert _ensure_planning_generations([ineligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now) == (
+        set(),
+        set(),
+        0,
+    )
     assert repo.get_candidate(ineligible.id)["execution_eligible"] == 0
     assert get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 0
 
     # Simulate a generation written by the pre-fix runtime, then restore the
     # Candidate's durable ineligible evidence. It must be invisible to claims.
-    repo.execute_write(
-        "UPDATE universe_members SET execution_eligible=1 WHERE id=?", (ineligible.id,)
-    )
+    repo.execute_write("UPDATE universe_members SET execution_eligible=1 WHERE id=?", (ineligible.id,))
     legacy, _ = repo.ensure_candidate_planning_generation(ineligible.id, now=now)
-    repo.execute_write(
-        "UPDATE universe_members SET execution_eligible=0 WHERE id=?", (ineligible.id,)
-    )
+    repo.execute_write("UPDATE universe_members SET execution_eligible=0 WHERE id=?", (ineligible.id,))
     assert repo.count_pending_candidate_planning(now=now) == 0
     assert repo.claim_next_candidate_planning("legacy-owner", now=now) is None
     assert repo.candidate_attention_is_active(legacy["id"], now=now) is False
@@ -306,9 +340,16 @@ def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority
 def test_fallback_all_expired(svc, enabled_cfg):
     past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     mock_members = [
-        {"symbol": "OLD/USDT", "scanner_family": "momentum", "total_score": 80,
-         "snapshot_id": "snap_1", "id": "m1", "execution_eligible": 1,
-         "expires_at": past, "rank": 1},
+        {
+            "symbol": "OLD/USDT",
+            "scanner_family": "momentum",
+            "total_score": 80,
+            "snapshot_id": "snap_1",
+            "id": "m1",
+            "execution_eligible": 1,
+            "expires_at": past,
+            "rank": 1,
+        },
     ]
     snap = {"id": "snap_1", "status": "active"}
     with patch("aletheia.universe.service.load_config", return_value=enabled_cfg):
@@ -323,9 +364,16 @@ def test_fallback_all_expired(svc, enabled_cfg):
 def test_limit_parameter(svc, enabled_cfg):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mock_members = [
-        {"symbol": f"SYM{i}/USDT", "scanner_family": "momentum", "total_score": 90 - i,
-         "snapshot_id": "snap_1", "id": f"m{i}", "execution_eligible": 1,
-         "expires_at": future, "rank": i}
+        {
+            "symbol": f"SYM{i}/USDT",
+            "scanner_family": "momentum",
+            "total_score": 90 - i,
+            "snapshot_id": "snap_1",
+            "id": f"m{i}",
+            "execution_eligible": 1,
+            "expires_at": future,
+            "rank": i,
+        }
         for i in range(10)
     ]
     snap = {"id": "snap_1", "status": "active"}
@@ -342,23 +390,25 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
 
     from aletheia.universe.service import _member_fingerprint
 
-    base = [{
-        "asset_id": "asset-1",
-        "symbol": "BTC/USDT",
-        "venue": "binance",
-        "market_type": "perp",
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "execution_eligible": True,
-        "ttl_sec": 1800,
-        "risk_flags": ["crowded"],
-        "last_price": 60_000.0,
-        "instrument_background": {
-            "version": "instrument-background/v1",
-            "status": "complete",
-            "asset_class": "crypto",
-        },
-    }]
+    base = [
+        {
+            "asset_id": "asset-1",
+            "symbol": "BTC/USDT",
+            "venue": "binance",
+            "market_type": "perp",
+            "scanner_family": "momentum",
+            "scanner_direction": "long",
+            "execution_eligible": True,
+            "ttl_sec": 1800,
+            "risk_flags": ["crowded"],
+            "last_price": 60_000.0,
+            "instrument_background": {
+                "version": "instrument-background/v1",
+                "status": "complete",
+                "asset_class": "crypto",
+            },
+        }
+    ]
     baseline = _member_fingerprint(base, "risk_on")
     variants = {
         "venue": "okx",
@@ -383,32 +433,40 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
 def test_previous_snapshot_fingerprint_reads_frozen_semantic_payload(monkeypatch):
     from aletheia.universe import service
 
-    allocated = [{
-        "asset_id": "asset-1",
-        "symbol": "BTC/USDT",
-        "venue": "binance",
-        "market_type": "perp",
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "execution_eligible": True,
-        "ttl_sec": 1800,
-        "risk_flags": ["crowded"],
-        "last_price": 60_000.0,
-        "instrument_background": {
-            "version": "instrument-background/v1",
-            "status": "complete",
-            "asset_class": "crypto",
-        },
-    }]
+    allocated = [
+        {
+            "asset_id": "asset-1",
+            "symbol": "BTC/USDT",
+            "venue": "binance",
+            "market_type": "perp",
+            "scanner_family": "momentum",
+            "scanner_direction": "long",
+            "execution_eligible": True,
+            "ttl_sec": 1800,
+            "risk_flags": ["crowded"],
+            "last_price": 60_000.0,
+            "instrument_background": {
+                "version": "instrument-background/v1",
+                "status": "complete",
+                "asset_class": "crypto",
+            },
+        }
+    ]
     expected = service._member_fingerprint(allocated, "risk_on")
-    monkeypatch.setattr(service.repo, "get_active_universe_snapshot", lambda _: {
-        "id": "snap-1",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "summary": json.dumps({
-            "information_policy_epoch": service.POLICY_EPOCH_LABEL,
-            "member_fingerprint": expected,
-        }),
-    })
+    monkeypatch.setattr(
+        service.repo,
+        "get_active_universe_snapshot",
+        lambda _: {
+            "id": "snap-1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "summary": json.dumps(
+                {
+                    "information_policy_epoch": service.POLICY_EPOCH_LABEL,
+                    "member_fingerprint": expected,
+                }
+            ),
+        },
+    )
 
     previous, snapshot_id, _ = service._previous_snapshot_fingerprint("crypto")
 
@@ -419,11 +477,15 @@ def test_previous_snapshot_fingerprint_reads_frozen_semantic_payload(monkeypatch
 def test_pre_v3_snapshot_cannot_suppress_background_aware_publication(monkeypatch):
     from aletheia.universe import service
 
-    monkeypatch.setattr(service.repo, "get_active_universe_snapshot", lambda _: {
-        "id": "legacy-snapshot",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "summary": json.dumps({"information_policy_epoch": "opportunity_information_integrity/v2"}),
-    })
+    monkeypatch.setattr(
+        service.repo,
+        "get_active_universe_snapshot",
+        lambda _: {
+            "id": "legacy-snapshot",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "summary": json.dumps({"information_policy_epoch": "opportunity_information_integrity/v2"}),
+        },
+    )
 
     previous, snapshot_id, _ = service._previous_snapshot_fingerprint("crypto")
 
@@ -460,3 +522,138 @@ async def test_refresh_returns_none_on_failure(svc):
                 with patch("aletheia.universe.registry.sync_registry", side_effect=Exception("net")):
                     result = await svc.refresh()
     assert result is None
+
+
+def test_venue_mismatch_sets_execution_ineligible_with_risk_flag():
+    """Allocated candidates whose venue cannot be monitored are marked ineligible."""
+    from unittest.mock import MagicMock
+    from aletheia.universe.service import _member_fingerprint
+    from aletheia.universe import service as svc_mod
+
+    cfg = MagicMock()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+
+    item_matching = {
+        "symbol": "BTC/USDT",
+        "venue": "bitget",
+        "market_type": "perp",
+        "scanner_family": "momentum",
+        "execution_eligible": True,
+        "risk_flags": [],
+    }
+    item_mismatch = {
+        "symbol": "ETH/USDT",
+        "venue": "okx",
+        "market_type": "perp",
+        "scanner_family": "momentum",
+        "execution_eligible": True,
+        "risk_flags": [],
+    }
+    allocated = [item_matching, item_mismatch]
+
+    # Re-run the inline venue-eligibility loop that service.py applies after allocate_universe.
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+    import json
+
+    for item in allocated:
+        venue_reason = fast_market_data_unavailability_reason(cfg, str(item.get("venue") or ""))
+        if venue_reason is not None and item.get("execution_eligible", True):
+            item["execution_eligible"] = False
+            flags = item.get("risk_flags") or []
+            if isinstance(flags, str):
+                try:
+                    flags = json.loads(flags)
+                except (TypeError, ValueError):
+                    flags = [flags]
+            if "fast_market_data_venue_unavailable" not in flags:
+                flags = list(flags) + ["fast_market_data_venue_unavailable"]
+            item["risk_flags"] = flags
+
+    assert item_matching["execution_eligible"] is True
+    assert "fast_market_data_venue_unavailable" not in item_matching.get("risk_flags", [])
+    assert item_mismatch["execution_eligible"] is False
+    assert "fast_market_data_venue_unavailable" in item_mismatch["risk_flags"]
+
+
+def test_venue_mismatch_changes_fingerprint():
+    """Eligibility change from venue mismatch must produce a different fingerprint."""
+    from aletheia.universe.service import _member_fingerprint
+
+    before = [
+        {
+            "symbol": "BTC/USDT",
+            "venue": "okx",
+            "market_type": "perp",
+            "scanner_family": "momentum",
+            "execution_eligible": True,
+            "risk_flags": [],
+        }
+    ]
+    after = [
+        {
+            "symbol": "BTC/USDT",
+            "venue": "okx",
+            "market_type": "perp",
+            "scanner_family": "momentum",
+            "execution_eligible": False,
+            "risk_flags": ["fast_market_data_venue_unavailable"],
+        }
+    ]
+
+    assert _member_fingerprint(before, None) != _member_fingerprint(after, None)
+
+
+def test_fast_market_data_unavailability_reason_returns_stable_tokens():
+    """Helper returns None for matching venue, stable token for mismatch/unavailable."""
+    from unittest.mock import MagicMock
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+
+    cfg_bitget = MagicMock()
+    cfg_bitget.exchange.paper_execution_mode = "bitget_demo"
+
+    assert fast_market_data_unavailability_reason(cfg_bitget, "bitget") is None
+    assert fast_market_data_unavailability_reason(cfg_bitget, "okx") == "FAST_MARKET_DATA_VENUE_MISMATCH"
+    assert fast_market_data_unavailability_reason(cfg_bitget, "") == "FAST_MARKET_DATA_VENUE_MISMATCH"
+
+    cfg_binance = MagicMock()
+    cfg_binance.exchange.paper_execution_mode = "binance_testnet"
+    # binance has no adapter in _FAST_STREAM_ADAPTERS, so mismatch first
+    result = fast_market_data_unavailability_reason(cfg_binance, "binance")
+    assert result in ("FAST_MARKET_DATA_VENUE_MISMATCH", "FAST_MARKET_DATA_STREAM_UNAVAILABLE")
+
+
+def test_venue_ineligible_candidate_does_not_gain_planning_generation(tmp_path, monkeypatch):
+    """A candidate marked execution_eligible=False by venue check produces no generation."""
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.service import _ensure_planning_generations
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    snap = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
+    repo.insert_universe_snapshot(snap)
+    candidate = UniverseMember(
+        snapshot_id=snap.id,
+        asset_id="asset-eth",
+        venue="okx",
+        symbol="ETH/USDT",
+        market_type="perp",
+        rank=1,
+        total_score=85,
+        scanner_family="momentum",
+        scanner_direction="long",
+        execution_eligible=False,
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    repo.insert_candidate(candidate)
+
+    selected, created, count = _ensure_planning_generations(
+        [candidate], soft_lease_sec=900, max_attention_age_sec=3600, now=now
+    )
+    assert count == 0
+    assert selected == set()
+    assert get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 0

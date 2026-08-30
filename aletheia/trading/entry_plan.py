@@ -38,9 +38,7 @@ ENTRY_PLAN_STATUSES = (
 )
 
 ENTRY_PLAN_TRANSITIONS = {
-    "waiting": frozenset(
-        {"risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}
-    ),
+    "waiting": frozenset({"risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}),
     "triggered": frozenset({"risk_reserved", "invalidated", "expired", "cancelled", "failed"}),
     "risk_reserved": frozenset({"ordered", "invalidated", "expired", "cancelled", "failed"}),
     "ordered": frozenset({"partially_filled", "filled", "cancelled", "failed"}),
@@ -233,8 +231,8 @@ class EntryPlan(BaseModel):
         if low <= 0 or high < low:
             raise ValueError("entry_plan_entry_zone_invalid")
         entry = self.limit_price if self.limit_price is not None else (low + high) / 2
-        invalidation_reference = self.limit_price if self.limit_price is not None else (
-            low if self.direction == "long" else high
+        invalidation_reference = (
+            self.limit_price if self.limit_price is not None else (low if self.direction == "long" else high)
         )
         if self.direction == "long":
             if not (self.stop_price < entry < self.target_price):
@@ -274,6 +272,7 @@ class EntryPlan(BaseModel):
             object.__setattr__(self, "trigger_params", params)
         elif self.trigger_spec_id is not None or self.trigger_spec_version is not None:
             raise ValueError("resting_maker_cannot_require_trigger")
+        strict_tactic_contract = self.behavior_version == "entry-planner/v3"
         if self.order_tactic == "POST_ONLY_LIMIT":
             if not self.maker_required or self.time_in_force != "POST_ONLY":
                 raise ValueError("maker_tactic_requires_post_only")
@@ -281,6 +280,15 @@ class EntryPlan(BaseModel):
                 raise ValueError("maker_tactic_requires_exact_limit_price")
             if not low <= self.limit_price <= high:
                 raise ValueError("maker_limit_outside_entry_zone")
+            if strict_tactic_contract and (
+                self.price_rule != "EXACT_LIMIT"
+                or self.bbo_reference is not None
+                or self.max_wait_sec <= 0
+                or self.max_requotes != 0
+                or self.cancel_replace_policy != "CANCEL_ONLY"
+                or self.max_slippage_bps is not None
+            ):
+                raise ValueError("maker_tactic_contract_incomplete")
         else:
             if self.execution_mode != "TRIGGERED":
                 raise ValueError("urgent_taker_requires_triggered_plan")
@@ -292,6 +300,15 @@ class EntryPlan(BaseModel):
                 raise ValueError("urgent_taker_bbo_side_mismatch")
             if self.max_slippage_bps is None or self.max_slippage_bps <= 0:
                 raise ValueError("urgent_taker_requires_slippage_envelope")
+            if strict_tactic_contract and (
+                self.limit_price is not None
+                or self.max_wait_sec != 0
+                or self.max_requotes != 0
+                or self.cancel_replace_policy != "CANCEL_ONLY"
+                or self.worst_price is None
+                or self.worst_price <= 0
+            ):
+                raise ValueError("urgent_taker_contract_incomplete")
         if self.taker_fallback_allowed:
             raise ValueError("entry_plan_v1_taker_fallback_unavailable")
         if self.order_tactic == "POST_ONLY_LIMIT" and self.worst_price is not None:

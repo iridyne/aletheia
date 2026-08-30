@@ -290,13 +290,19 @@ def _insert_many(table: str, rows: list[dict]) -> int:
 
 
 def _select_all(
-    table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100
+    table: str,
+    where: str | None = None,
+    params: tuple = (),
+    order: str = "rowid DESC",
+    limit: int | None = 100,
 ) -> list[dict]:
     db = get_db()
     sql = f"SELECT * FROM {table}"
     if where:
         sql += f" WHERE {where}"
-    sql += f" ORDER BY {order} LIMIT {max(1, limit)}"
+    sql += f" ORDER BY {order}"
+    if limit is not None:
+        sql += f" LIMIT {max(1, limit)}"
     rows = db.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
@@ -2092,12 +2098,14 @@ def list_capital_events_page(
         params = (before_detected_at, before_detected_at, before_id)
     total_row = get_db().execute("SELECT COUNT(*) FROM capital_events").fetchone()
     total = int(total_row[0]) if total_row is not None else 0
-    rows = get_db().execute(
-        "SELECT page.* "
-        f"FROM capital_events AS page{where} "
-        "ORDER BY detected_at DESC, id DESC LIMIT ?",
-        (*params, page_limit + 1),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            f"SELECT page.* FROM capital_events AS page{where} ORDER BY detected_at DESC, id DESC LIMIT ?",
+            (*params, page_limit + 1),
+        )
+        .fetchall()
+    )
     has_more = len(rows) > page_limit
     events = [dict(row) for row in rows[:page_limit]]
     last = events[-1] if has_more and events else None
@@ -2105,11 +2113,7 @@ def list_capital_events_page(
         "events": events,
         "total": total,
         "has_more": has_more,
-        "next_cursor": (
-            {"detected_at": last["detected_at"], "id": last["id"]}
-            if last is not None
-            else None
-        ),
+        "next_cursor": ({"detected_at": last["detected_at"], "id": last["id"]} if last is not None else None),
     }
 
 
@@ -2804,6 +2808,15 @@ def has_order_for_proposal(proposal_id: str) -> bool:
         .fetchone()
         is not None
     )
+
+
+def get_order_for_entry_plan(entry_plan_id: str) -> dict | None:
+    """Return the entry Order durably attributed to one EntryPlan."""
+    row = get_db().execute(
+        "SELECT * FROM orders WHERE entry_plan_id=? ORDER BY created_at ASC LIMIT 1",
+        (entry_plan_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 # --- Risk Decisions ---
@@ -8326,10 +8339,14 @@ def insert_universe_members_batch(members: list[UniverseMember]) -> int:
 
 def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict]:
     if limit is None:
-        rows = get_db().execute(
-            "SELECT * FROM universe_members WHERE snapshot_id = ? ORDER BY rank ASC",
-            (snapshot_id,),
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                "SELECT * FROM universe_members WHERE snapshot_id = ? ORDER BY rank ASC",
+                (snapshot_id,),
+            )
+            .fetchall()
+        )
         return [dict(row) for row in rows]
     return _select_all(
         "universe_members",
@@ -8444,18 +8461,26 @@ def get_candidate_planning_for_candidate(
     *,
     now: datetime | None = None,
 ) -> dict | None:
-    row = get_db().execute(
-        "SELECT * FROM candidate_planning_generations "
-        "WHERE candidate_id=? "
-        "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
-        (candidate_id,),
-    ).fetchone()
-    if row is None:
-        row = get_db().execute(
-            "SELECT * FROM candidate_planning_generations WHERE last_candidate_id=? "
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM candidate_planning_generations "
+            "WHERE candidate_id=? "
             "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
             (candidate_id,),
-        ).fetchone()
+        )
+        .fetchone()
+    )
+    if row is None:
+        row = (
+            get_db()
+            .execute(
+                "SELECT * FROM candidate_planning_generations WHERE last_candidate_id=? "
+                "ORDER BY is_current DESC, updated_at DESC, id DESC LIMIT 1",
+                (candidate_id,),
+            )
+            .fetchone()
+        )
     return _effective_candidate_attention(dict(row) if row else None, now=now)
 
 
@@ -8476,13 +8501,17 @@ def expire_candidate_attention(*, now: datetime | None = None) -> dict[str, int]
     timestamp = current.isoformat()
     counts = {"ttl_expired": 0, "max_attention_age": 0}
     with transaction(immediate=True):
-        rows = get_db().execute(
-            "SELECT id, soft_expires_at, hard_expires_at "
-            "FROM candidate_planning_generations "
-            "WHERE is_current=1 AND attention_status='active' "
-            "AND (soft_expires_at<=? OR hard_expires_at<=?)",
-            (timestamp, timestamp),
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                "SELECT id, soft_expires_at, hard_expires_at "
+                "FROM candidate_planning_generations "
+                "WHERE is_current=1 AND attention_status='active' "
+                "AND (soft_expires_at<=? OR hard_expires_at<=?)",
+                (timestamp, timestamp),
+            )
+            .fetchall()
+        )
         for row in rows:
             reason = "max_attention_age" if str(row["hard_expires_at"]) <= timestamp else "ttl_expired"
             updated = execute_write(
@@ -8505,12 +8534,16 @@ def candidate_attention_is_active(
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
     expire_candidate_attention(now=current)
-    row = get_db().execute(
-        "SELECT pg.* FROM candidate_planning_generations pg "
-        "JOIN universe_members um ON um.id=pg.last_candidate_id "
-        "WHERE pg.id=? AND pg.is_current=1 AND um.execution_eligible=1",
-        (generation_id,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT pg.* FROM candidate_planning_generations pg "
+            "JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "WHERE pg.id=? AND pg.is_current=1 AND um.execution_eligible=1",
+            (generation_id,),
+        )
+        .fetchone()
+    )
     return bool(row and _candidate_attention_valid(dict(row), timestamp))
 
 
@@ -8546,10 +8579,9 @@ def reconcile_candidate_attention(
     with transaction(immediate=True):
         rows = [
             dict(row)
-            for row in get_db().execute(
-                "SELECT * FROM candidate_planning_generations "
-                "WHERE is_current=1 AND attention_status='active'"
-            ).fetchall()
+            for row in get_db()
+            .execute("SELECT * FROM candidate_planning_generations WHERE is_current=1 AND attention_status='active'")
+            .fetchall()
         ]
         for row in rows:
             generation_id = str(row["id"])
@@ -8624,17 +8656,12 @@ def ensure_candidate_planning_generation(
             .fetchone()
         )
         existing = dict(existing_row) if existing_row else None
-        existing_candidate = (
-            get_candidate(str(existing["last_candidate_id"])) if existing is not None else None
-        )
+        existing_candidate = get_candidate(str(existing["last_candidate_id"])) if existing is not None else None
         eligibility_recovered = bool(
             existing is not None
             and (
                 existing.get("attention_terminal_reason") == "admission_lost"
-                or (
-                    existing_candidate is not None
-                    and not bool(existing_candidate.get("execution_eligible"))
-                )
+                or (existing_candidate is not None and not bool(existing_candidate.get("execution_eligible")))
             )
         )
         if (
@@ -9041,11 +9068,12 @@ def list_active_entry_plans(limit: int = 100) -> list[dict]:
     placeholders = ",".join("?" for _ in _ACTIVE_ENTRY_PLAN_STATUSES)
     return [
         dict(row)
-        for row in get_db().execute(
-            f"SELECT * FROM entry_plans WHERE status IN ({placeholders}) "
-            "ORDER BY updated_at DESC, id DESC LIMIT ?",
+        for row in get_db()
+        .execute(
+            f"SELECT * FROM entry_plans WHERE status IN ({placeholders}) ORDER BY updated_at DESC, id DESC LIMIT ?",
             (*_ACTIVE_ENTRY_PLAN_STATUSES, max(1, min(int(limit), 200))),
-        ).fetchall()
+        )
+        .fetchall()
     ]
 
 
@@ -9053,7 +9081,8 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
     timestamp = datetime.now(timezone.utc).isoformat()
     return [
         dict(row)
-        for row in get_db().execute(
+        for row in get_db()
+        .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
             "um.execution_eligible, um.expires_at AS candidate_expires_at "
@@ -9063,7 +9092,8 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
             "ORDER BY MIN(pg.soft_expires_at, pg.hard_expires_at), pg.id LIMIT ?",
             (timestamp, timestamp, max(1, min(int(limit), 200))),
-        ).fetchall()
+        )
+        .fetchall()
     ]
 
 
@@ -9075,7 +9105,8 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
     placeholders = ",".join("?" for _ in active_plan_states)
     return [
         dict(row)
-        for row in get_db().execute(
+        for row in get_db()
+        .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
             "um.execution_eligible, um.expires_at AS candidate_expires_at, "
@@ -9089,7 +9120,8 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
             "ORDER BY CASE WHEN pg.attention_status='active' THEN 0 ELSE 1 END, "
             "MIN(pg.soft_expires_at, pg.hard_expires_at), pg.id LIMIT ?",
             (*active_plan_states, timestamp, timestamp, max(1, min(int(limit), 200))),
-        ).fetchall()
+        )
+        .fetchall()
     ]
 
 
@@ -9098,31 +9130,35 @@ def get_entry_workbench_summary(*, now: datetime | None = None) -> dict[str, int
     now_iso = timestamp.isoformat()
     warning_iso = (timestamp + timedelta(seconds=300)).isoformat()
     placeholders = ",".join("?" for _ in _ACTIVE_ENTRY_PLAN_STATUSES)
-    row = get_db().execute(
-        f"SELECT "
-        f"(SELECT COUNT(*) FROM entry_plans WHERE status IN ({placeholders})) AS active_entry_plans, "
-        "(SELECT COUNT(*) FROM candidate_planning_generations "
-        " WHERE is_current=1 AND attention_status='active' "
-        " AND soft_expires_at>? AND hard_expires_at>? AND attempt_count<3 "
-        " AND (status='pending' OR status='unavailable')) AS needs_planning, "
-        "(SELECT COUNT(*) FROM candidate_planning_generations "
-        " WHERE is_current=1 AND attention_status='active' "
-        " AND MIN(soft_expires_at, hard_expires_at)>? "
-        " AND MIN(soft_expires_at, hard_expires_at)<=?) + "
-        f"(SELECT COUNT(*) FROM entry_plans WHERE status IN ({placeholders}) "
-        " AND json_extract(plan_json, '$.expires_at')>? "
-        " AND json_extract(plan_json, '$.expires_at')<=?) AS expiring_soon",
-        (
-            *_ACTIVE_ENTRY_PLAN_STATUSES,
-            now_iso,
-            now_iso,
-            now_iso,
-            warning_iso,
-            *_ACTIVE_ENTRY_PLAN_STATUSES,
-            now_iso,
-            warning_iso,
-        ),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            f"SELECT "
+            f"(SELECT COUNT(*) FROM entry_plans WHERE status IN ({placeholders})) AS active_entry_plans, "
+            "(SELECT COUNT(*) FROM candidate_planning_generations "
+            " WHERE is_current=1 AND attention_status='active' "
+            " AND soft_expires_at>? AND hard_expires_at>? AND attempt_count<3 "
+            " AND (status='pending' OR status='unavailable')) AS needs_planning, "
+            "(SELECT COUNT(*) FROM candidate_planning_generations "
+            " WHERE is_current=1 AND attention_status='active' "
+            " AND MIN(soft_expires_at, hard_expires_at)>? "
+            " AND MIN(soft_expires_at, hard_expires_at)<=?) + "
+            f"(SELECT COUNT(*) FROM entry_plans WHERE status IN ({placeholders}) "
+            " AND json_extract(plan_json, '$.expires_at')>? "
+            " AND json_extract(plan_json, '$.expires_at')<=?) AS expiring_soon",
+            (
+                *_ACTIVE_ENTRY_PLAN_STATUSES,
+                now_iso,
+                now_iso,
+                now_iso,
+                warning_iso,
+                *_ACTIVE_ENTRY_PLAN_STATUSES,
+                now_iso,
+                warning_iso,
+            ),
+        )
+        .fetchone()
+    )
     return {key: int(row[key] or 0) for key in row.keys()}
 
 
@@ -9140,7 +9176,8 @@ def list_planning_history(
     params.append(max(1, min(int(limit), 201)))
     return [
         _effective_candidate_attention(dict(row), now=now)
-        for row in get_db().execute(
+        for row in get_db()
+        .execute(
             "SELECT pg.*, ep.status AS entry_plan_status, ep.execution_mode, "
             "ep.order_id, ep.terminal_at AS entry_plan_terminal_at, "
             "ep.terminal_reason AS entry_plan_terminal_reason "
@@ -9148,17 +9185,15 @@ def list_planning_history(
             "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
             f"{where} ORDER BY pg.updated_at DESC, pg.id DESC LIMIT ?",
             tuple(params),
-        ).fetchall()
+        )
+        .fetchall()
     ]
 
 
-def list_watchable_entry_plans(limit: int = 100) -> list[dict]:
+def list_watchable_entry_plans(limit: int | None = 100) -> list[dict]:
     return _select_all(
         "entry_plans",
-        where=(
-            "status IN "
-            "('waiting','triggered','risk_reserved','ordered','partially_filled')"
-        ),
+        where=("status IN ('waiting','triggered','risk_reserved','ordered','partially_filled')"),
         order="created_at ASC",
         limit=limit,
     )
