@@ -223,6 +223,7 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
     [
         ("order_type", "market", "entry_plan_order_type_mismatch"),
         ("stop_price", 99, "entry_plan_stop_price_mismatch"),
+        ("stop_source", "default", "entry_plan_stop_source_mismatch"),
         ("take_profit", 106, "entry_plan_take_profit_mismatch"),
         ("expected_horizon_hours", 5, "entry_plan_expected_horizon_hours_mismatch"),
         ("order_tactic", "POST_ONLY_LIMIT", "entry_plan_order_tactic_mismatch"),
@@ -272,6 +273,41 @@ def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(
     )
 
     assert violation in violations
+
+
+def test_canonical_risk_enforces_the_plan_worst_price_boundary(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.risk import engine
+
+    base_plan = _plan()
+    plan = base_plan.model_copy(update={"worst_price": 100.04})
+    payload, digest = entry_plan_payload(plan)
+    monkeypatch.setattr(
+        engine,
+        "get_entry_plan",
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+    )
+    monkeypatch.setattr(
+        engine,
+        "get_candidate_planning_generation",
+        lambda _generation_id: {"is_current": 1},
+    )
+    proposal = build_entry_plan_order_intent(
+        base_plan,
+        bid=100,
+        ask=100.05,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        source_observed_at=datetime.now(timezone.utc).isoformat(),
+    ).model_copy(update={"worst_price": plan.worst_price})
+    resolved = SimpleNamespace(
+        policy=SimpleNamespace(policy_id="demo-v1", revision=1),
+        policy_hash="risk-hash",
+    )
+
+    assert "entry_plan_worst_price_exceeded" in engine._entry_plan_authority_violations(
+        proposal, capital_base=1_000, resolved_policy=resolved
+    )
 
 
 def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypatch):

@@ -150,6 +150,8 @@ def _entry_plan_authority_violations(
             matches = False
         if not matches:
             violations.append(f"entry_plan_{field}_mismatch")
+    if proposal.stop_source != "operator":
+        violations.append("entry_plan_stop_source_mismatch")
     if proposal.order_tactic != plan.order_tactic:
         violations.append("entry_plan_order_tactic_mismatch")
     if str(proposal.time_in_force or "").upper() != plan.time_in_force:
@@ -178,7 +180,20 @@ def _entry_plan_authority_violations(
         in_entry_envelope = False
     if not in_entry_envelope:
         violations.append("entry_plan_entry_envelope_exceeded")
-    elif plan.order_tactic == "POST_ONLY_LIMIT":
+    if plan.worst_price is not None:
+        try:
+            worst_price = float(plan.worst_price)
+            worst_price_exceeded = (
+                not math.isfinite(worst_price)
+                or proposal_price is None
+                or (plan.direction == "long" and proposal_price > worst_price)
+                or (plan.direction == "short" and proposal_price < worst_price)
+            )
+        except (TypeError, ValueError):
+            worst_price_exceeded = True
+        if worst_price_exceeded:
+            violations.append("entry_plan_worst_price_exceeded")
+    if plan.order_tactic == "POST_ONLY_LIMIT":
         try:
             exact_limit = plan.limit_price is not None and math.isclose(
                 proposal_price, float(plan.limit_price), rel_tol=1e-9, abs_tol=1e-9
