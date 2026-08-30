@@ -7,7 +7,12 @@ def test_gateway_restart_reports_stop_and_start_durations(monkeypatch):
     from aletheia.gateway import lifecycle
 
     monkeypatch.setattr(gateway_cli, "_maybe_configure_windows_lan_firewall", lambda **_kwargs: None)
-    monkeypatch.setattr(lifecycle, "do_stop", lambda: None)
+    stop_calls = []
+    monkeypatch.setattr(
+        lifecycle,
+        "do_stop",
+        lambda **kwargs: stop_calls.append(kwargs),
+    )
     monkeypatch.setattr(lifecycle, "do_start", lambda **_kwargs: None)
     ticks = iter([10.0, 12.5, 20.0])
     monkeypatch.setattr(gateway_cli.time, "monotonic", lambda: next(ticks))
@@ -16,6 +21,7 @@ def test_gateway_restart_reports_stop_and_start_durations(monkeypatch):
 
     assert result.exit_code == 0
     assert "Gateway restart completed in 10.0s (stop 2.5s; start/readiness 7.5s)." in result.output
+    assert stop_calls == [{"preserve_recovery": True}]
 
 
 def test_gateway_restart_reports_pending_readiness_after_timeout(monkeypatch):
@@ -24,7 +30,7 @@ def test_gateway_restart_reports_pending_readiness_after_timeout(monkeypatch):
     from aletheia.gateway import lifecycle
 
     monkeypatch.setattr(gateway_cli, "_maybe_configure_windows_lan_firewall", lambda **_kwargs: None)
-    monkeypatch.setattr(lifecycle, "do_stop", lambda: None)
+    monkeypatch.setattr(lifecycle, "do_stop", lambda **_kwargs: None)
     monkeypatch.setattr(lifecycle, "do_start", lambda **_kwargs: False)
     ticks = iter([10.0, 12.5, 27.5])
     monkeypatch.setattr(gateway_cli.time, "monotonic", lambda: next(ticks))
@@ -43,7 +49,7 @@ def test_gateway_restart_propagates_start_readiness_exit(monkeypatch):
     from aletheia.gateway import lifecycle
 
     monkeypatch.setattr(gateway_cli, "_maybe_configure_windows_lan_firewall", lambda **_kwargs: None)
-    monkeypatch.setattr(lifecycle, "do_stop", lambda: None)
+    monkeypatch.setattr(lifecycle, "do_stop", lambda **_kwargs: None)
     monkeypatch.setattr(lifecycle, "do_start", lambda **_kwargs: (_ for _ in ()).throw(typer.Exit(2)))
 
     result = CliRunner().invoke(gateway_cli.gateway_app, ["restart"])

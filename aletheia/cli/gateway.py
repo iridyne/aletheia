@@ -147,7 +147,7 @@ def restart(
     _maybe_configure_windows_lan_firewall(enabled=lan_firewall)
     from aletheia.gateway.lifecycle import do_stop, do_start
     started_at = time.monotonic()
-    do_stop()
+    do_stop(preserve_recovery=True)
     stopped_at = time.monotonic()
     ready = do_start(no_browser=not browser, foreground=False)
     finished_at = time.monotonic()

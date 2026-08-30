@@ -1,8 +1,8 @@
 # Historical macOS gateway watchdog
 
 > Current builds no longer expose or install this watchdog. It remains documented
-> only to identify registrations created by older versions; `gateway stop` removes
-> it before stopping the new on-demand session service.
+> only to identify registrations created by older versions; the current
+> `gateway enable` and `gateway stop` paths remove it.
 
 ## Architecture
 
@@ -53,6 +53,23 @@ are the successful periodic-job evidence.
 
 ## Migration
 
-Run `uv run aletheia gateway stop` once to unregister the old watchdog, then use
-`gateway start` for an on-demand session. The gateway will not return after a
-stop unless an operator explicitly starts it.
+Run `uv run aletheia gateway enable` to migrate the old watchdog. The command
+first installs and validates the current persistent session-service definition
+and enables its login recovery. It then removes only a historical label whose
+plist—and, when loaded, live `launchctl` definition—proves the active checkout's
+expected Aletheia command and interpreter path.
+If cleanup fails while a verified old recovery definition remains, a newly
+enabled replacement is disabled again. If all verified old definitions were
+already removed before the failure, or the replacement was already enabled,
+the replacement stays enabled to avoid a recovery-owner gap. An ambiguous or
+inaccessible definition is never deleted.
+
+`gateway restart` performs this migration before stopping, so a legacy-only host
+retains login recovery after the transient Gateway process restarts. To remove a
+verified old watchdog and stop the current Gateway session, run
+`uv run aletheia gateway stop`. Stop preserves the
+current service's login-recovery setting; run `uv run aletheia gateway disable`
+before stop when the Gateway must remain stopped after the next login.
+If the runtime stop succeeds but legacy cleanup fails, the CLI still completes
+PID, orphan, tunnel, and port teardown, then reports the recovery cleanup as a
+partial-stop error.

@@ -77,6 +77,67 @@ def test_doctor_cli_arrow_falls_back_when_stdout_encoding_cannot_encode(monkeypa
     assert doctor_cmd._arrow() == "->"
 
 
+def test_legacy_launchd_probe_names_current_migration_command(monkeypatch):
+    from aletheia.gateway import autostart
+
+    monkeypatch.setattr(dx.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        autostart,
+        "_legacy_launchd_present",
+        lambda **kwargs: ["com.aletheia.gateway.watchdog"],
+    )
+    report = dx.Report()
+
+    dx._probe_legacy_launchd(report)
+
+    assert report.checks[0].fix_hint == (
+        "`aletheia gateway enable` migrates them to the current session service; "
+        "`aletheia gateway stop` removes them and stops the current session "
+        "(`aletheia gateway disable` first to disable login recovery)"
+    )
+
+
+def test_legacy_launchd_probe_reports_unavailable_state(monkeypatch):
+    from aletheia.gateway import autostart
+
+    monkeypatch.setattr(dx.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        autostart,
+        "_legacy_launchd_present",
+        lambda **kwargs: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    report = dx.Report()
+
+    dx._probe_legacy_launchd(report)
+
+    assert report.checks[0].severity == "warn"
+    assert report.checks[0].detail == "legacy Aletheia lifecycle state not available"
+
+
+def test_gateway_service_probe_warns_for_foreign_enabled_definition(monkeypatch):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "backend": "session",
+            "registration": "persistent",
+            "installed": False,
+            "enabled": True,
+            "runtime": "stopped",
+            "recovery_scope": "login",
+            "reason": "ownership_conflict",
+        },
+    )
+    report = dx.Report()
+
+    dx._probe_gateway_service(report)
+
+    assert report.checks[0].severity == "warn"
+    assert "reason=ownership_conflict" in report.checks[0].detail
+
+
 def test_doctor_cli_glyphs_use_unicode_when_stdout_supports_it(monkeypatch):
     import sys
 

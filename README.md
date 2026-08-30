@@ -42,6 +42,9 @@ Useful commands:
 ```bash
 aletheia gateway status
 aletheia gateway restart
+aletheia gateway enable
+aletheia gateway disable
+aletheia gateway stop
 aletheia doctor
 aletheia observe list
 aletheia observe status <observation-id>
