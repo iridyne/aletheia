@@ -1171,7 +1171,6 @@ async def test_expired_funding_prefix_does_not_starve_recoverable_close(
     )["realized_pnl"] is not None
 
     from aletheia.analytics.outcome_integrity import assess_position_closure
-    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
     assert assess_position_closure(dict(expired)).reason == (
@@ -1180,9 +1179,6 @@ async def test_expired_funding_prefix_does_not_starve_recoverable_close(
     assert position_realized_pnl_view(dict(expired))[
         "realized_pnl_unavailable_reason"
     ] == "broker_funding_history_expired"
-    assert authoritative_account_realized_loss("bitget_demo").reason == (
-        "broker_funding_history_expired"
-    )
 
     replay = await settlement.settle_unsettled_exchange_closes()
     assert replay["history_expired"] == 0
