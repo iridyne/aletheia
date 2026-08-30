@@ -73,14 +73,19 @@ def lifecycle_task_snapshot() -> list[dict[str, object]]:
     rows = []
     for task_id, policy in LIFESPAN_TASK_CATALOG.items():
         task = _lifespan_tasks.get(task_id)
+        runtime_status = {}
         if task_id == "pi_daemon":
             from aletheia.agent_runtime.pi_daemon import current_daemon_task
 
             task = current_daemon_task()
         elif task_id == "fast_trigger_watch":
-            from aletheia.agent_runtime.fast_trigger_watch import current_fast_trigger_task
+            from aletheia.agent_runtime.fast_trigger_watch import (
+                current_fast_trigger_task,
+                fast_trigger_watch_status,
+            )
 
             task = current_fast_trigger_task()
+            runtime_status = {"runtime_status": fast_trigger_watch_status()}
         direct = policy["owner"] == "server.lifespan"
         rows.append(
             {
@@ -99,6 +104,7 @@ def lifecycle_task_snapshot() -> list[dict[str, object]]:
                 if direct
                 else "module_owned",
                 "stop_timeout_sec": None,
+                **runtime_status,
             }
         )
     return rows

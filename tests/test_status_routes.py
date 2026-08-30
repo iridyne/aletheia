@@ -218,3 +218,21 @@ def test_lifecycle_task_registry_separates_direct_and_module_owned_work():
     assert rows["exchange_auto_resume"]["ownership"] == "module_owned"
     assert rows["exchange_auto_resume"]["state"] == "module_owned"
     assert all(row["stop_timeout_sec"] is None for row in rows.values())
+
+
+def test_lifecycle_status_exposes_exact_watched_entry_plan_ids(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch
+    from aletheia.server.app import lifecycle_task_snapshot
+
+    monkeypatch.setattr(
+        fast_trigger_watch,
+        "_status",
+        {
+            "running": True,
+            "reason": None,
+            "watched_setups": 1,
+            "watched_entry_plan_ids": ["plan-exact-venue"],
+        },
+    )
+    rows = {row["task_id"]: row for row in lifecycle_task_snapshot()}
+    assert rows["fast_trigger_watch"]["runtime_status"]["watched_entry_plan_ids"] == ["plan-exact-venue"]
