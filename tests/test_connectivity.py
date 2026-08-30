@@ -589,7 +589,7 @@ def test_self_heal_no_restart_when_exchange_down(tmp_path, monkeypatch):
     from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     exits: list[int] = []
@@ -620,7 +620,7 @@ def test_self_heal_restarts_when_exchange_up_but_data_stale(tmp_path, monkeypatc
     from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     exits: list[int] = []
