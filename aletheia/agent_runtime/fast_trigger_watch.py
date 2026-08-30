@@ -284,6 +284,13 @@ def _invalidate_pre_order_entry_plan(
             proposal_id = str(proposal["id"])
             if repo.has_order_for_proposal(proposal_id):
                 return "stale"
+            if (
+                proposal["execution_mode"] != "paper_internal"
+                and proposal["status"] == "executing"
+            ):
+                # An expired external owner may already have crossed the exchange
+                # boundary; only Gateway reconciliation may resolve that exposure.
+                return "external_execution"
             claim = repo.get_proposal_execution_claim(proposal_id)
             if claim is not None:
                 try:
@@ -466,7 +473,7 @@ async def _load_entry_plan_watchers(
                     reason=reason,
                     now=now,
                 )
-                if outcome == "active_claim":
+                if outcome in {"active_claim", "external_execution"}:
                     # Never abandon an in-flight pre-Order authority at the cap.
                     plans[plan.plan_id] = plan
             continue

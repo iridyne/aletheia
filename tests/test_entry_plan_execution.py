@@ -468,12 +468,25 @@ def _persist_waiting_plan(
     return plan
 
 
-def test_watcher_capacity_cleanup_releases_interrupted_pre_order_reservation():
+@pytest.mark.parametrize(
+    ("account_mode", "expected_outcome", "expected_status", "authority_released"),
+    [
+        ("paper_internal", "invalidated", "invalidated", True),
+        ("bitget_demo", "external_execution", "risk_reserved", False),
+    ],
+)
+def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
+    account_mode,
+    expected_outcome,
+    expected_status,
+    authority_released,
+):
     from aletheia.agent_runtime.fast_trigger_watch import (
         _invalidate_pre_order_entry_plan,
     )
 
     plan = _persist_waiting_plan(
+        account_mode=account_mode,
         mode="RESTING_MAKER",
         tactic="POST_ONLY_LIMIT",
     )
@@ -497,6 +510,7 @@ def test_watcher_capacity_cleanup_releases_interrupted_pre_order_reservation():
         now=now,
     )
     repo.insert_trade_proposal(proposal)
+    repo.update_trade_proposal(proposal.id, status="executing")
     repo.acquire_entry_risk_reservation(
         proposal_id=proposal.id,
         proposal_commit_hash=proposal.commit_hash,
@@ -510,7 +524,7 @@ def test_watcher_capacity_cleanup_releases_interrupted_pre_order_reservation():
     assert repo.insert_proposal_execution_claim(
         proposal.id,
         "interrupted-owner",
-        (now - timedelta(seconds=31)).isoformat(),
+        (now - timedelta(seconds=601)).isoformat(),
         (now - timedelta(seconds=1)).isoformat(),
     )
 
@@ -521,10 +535,10 @@ def test_watcher_capacity_cleanup_releases_interrupted_pre_order_reservation():
         now=now,
     )
 
-    assert outcome == "invalidated"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "invalidated"
-    assert repo.get_entry_risk_reservation(proposal.id) is None
-    assert repo.get_proposal_execution_claim(proposal.id) is None
+    assert outcome == expected_outcome
+    assert repo.get_entry_plan(plan.plan_id)["status"] == expected_status
+    assert (repo.get_entry_risk_reservation(proposal.id) is None) is authority_released
+    assert (repo.get_proposal_execution_claim(proposal.id) is None) is authority_released
     assert repo.has_order_for_proposal(proposal.id) is False
 
 
