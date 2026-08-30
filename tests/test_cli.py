@@ -208,6 +208,61 @@ def test_inspect_status(cli_db):
     assert "=== Data Quality ===" in result.output
 
 
+def test_inspect_audit_events_filters_before_limit_and_uses_canonical_fields(cli_db):
+    import json
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    target = AuditEvent(
+        id="target-audit-event",
+        timestamp="2026-08-22T00:00:00+00:00",
+        actor="operator",
+        source="test",
+        event_type="live_unlocked",
+        entity_type="runtime",
+        entity_id="runtime-1",
+        message="Live trading unlocked",
+    )
+    repo.insert_audit_event(target)
+    for index in range(21):
+        repo.insert_audit_event(
+            AuditEvent(
+                actor="system",
+                source="test",
+                event_type="unrelated",
+                message=f"unrelated {index}",
+            )
+        )
+
+    result = runner.invoke(
+        app,
+        [
+            "inspect",
+            "audit-events",
+            "--event-type",
+            "live_unlocked",
+            "--limit",
+            "20",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == [
+        {
+            "id": "target-audit-event",
+            "event_type": "live_unlocked",
+            "entity_type": "runtime",
+            "entity_id": "runtime-1",
+            "actor": "operator",
+            "source": "test",
+            "message": "Live trading unlocked",
+            "timestamp": "2026-08-22T00:00:00+00:00",
+        }
+    ]
+
+
 def test_inspect_pnl(cli_db):
     """inspect pnl runs without error."""
     result = runner.invoke(app, ["inspect", "pnl"])

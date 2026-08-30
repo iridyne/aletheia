@@ -433,7 +433,16 @@ def insert_audit_event_once(event: AuditEvent) -> bool:
     return cursor.rowcount == 1
 
 
-def list_audit_events(limit: int = 50) -> list[dict]:
+def list_audit_events(
+    limit: int = 50, event_type: str | None = None,
+) -> list[dict]:
+    if event_type:
+        return _select_all(
+            "audit_events",
+            where="event_type = ?",
+            params=(event_type,),
+            limit=limit,
+        )
     return _select_all("audit_events", limit=limit)
 
 
