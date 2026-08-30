@@ -289,3 +289,146 @@ def test_trade_and_summary_channels_are_independent(
         else:
             assert payload["realized_pnl"] == 12.34
             assert payload["unrealized_pnl"] == 5.67
+
+
+# ─── Issue #1745 ──────────────────────────────────────────────────────────────
+# Fill/summary producers must emit plain text; command replies must be routed
+# through send_message() with parse_mode=None (explicit plain-text delivery).
+
+def test_trade_fill_escapes_dynamic_text_once_at_final_telegram_boundary(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia import notifications
+    from aletheia.telegram.bot import TelegramBot
+
+    cfg = load_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.notify_trade_fills = True
+    save_config(cfg)
+    delivered = []
+
+    def configure(bot):
+        bot.allowed_chat_ids = [999]
+        return True
+
+    async def send_message(bot, chat_id, text, *, parse_mode):
+        delivered.append((chat_id, text, parse_mode))
+
+    monkeypatch.setattr(notifications, "_is_duplicate", lambda message: False)
+    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(TelegramBot, "configure", configure)
+    monkeypatch.setattr(TelegramBot, "send_message", send_message)
+    monkeypatch.setattr(notifications, "_send_webhook", lambda *args, **kwargs: None)
+
+    notifications.notify_trade_fill(
+        symbol="BTC&USDT<x>",
+        direction="long",
+        quantity=0.01,
+        fill_price=60000.0,
+        position_id="pos-1745-fill",
+        execution_mode="paper_internal",
+    )
+
+    assert len(delivered) == 1
+    chat_id, text, parse_mode = delivered[0]
+    assert chat_id == 999
+    assert parse_mode == "HTML"
+    assert text.startswith("⚠️ <b>Aletheia:</b> Trade Fill [Paper Internal]")
+    assert "BTC&amp;USDT&lt;x&gt;" in text
+    assert "&amp;amp;" not in text
+    assert "<code>" not in text
+
+
+def test_daily_summary_reaches_final_telegram_boundary_without_literal_markup(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia import notifications
+    import aletheia.portfolio.pnl as pnl
+    from aletheia.telegram.bot import TelegramBot
+
+    cfg = load_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.notify_daily_summary = True
+    save_config(cfg)
+    delivered = []
+
+    def configure(bot):
+        bot.allowed_chat_ids = [999]
+        return True
+
+    async def send_message(bot, chat_id, text, *, parse_mode):
+        delivered.append((chat_id, text, parse_mode))
+
+    monkeypatch.setattr(notifications, "_is_duplicate", lambda message: False)
+    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(TelegramBot, "configure", configure)
+    monkeypatch.setattr(TelegramBot, "send_message", send_message)
+    monkeypatch.setattr(notifications, "_send_webhook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pnl, "today_realized_pnl", lambda: 9.99)
+    monkeypatch.setattr(
+        pnl,
+        "compute_portfolio",
+        lambda: {
+            "unrealized_pnl": 1.23,
+            "positions_count": 3,
+            "total_value_usdt": 500.0,
+        },
+    )
+
+    notifications.notify_daily_summary()
+
+    assert len(delivered) == 1
+    chat_id, text, parse_mode = delivered[0]
+    assert chat_id == 999
+    assert parse_mode == "HTML"
+    assert text.startswith("⚠️ <b>Aletheia:</b> Daily Summary")
+    assert "<code>" not in text
+    assert "Realized: +9.99 USDT" in text
+
+
+@pytest.mark.anyio
+async def test_command_reply_plain_text(tmp_path, monkeypatch):
+    """Issue #1745: _handle_update() routes replies through send_message(parse_mode=None)
+    and command output contains no literal HTML tags."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.telegram.bot as bot_module
+    from aletheia.telegram.bot import TelegramBot
+
+    cfg = load_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.allowed_chat_ids = [999]
+    save_config(cfg)
+    # Patch get_secret at its import site inside aletheia.telegram.bot
+    monkeypatch.setattr(bot_module, "get_secret",
+                        lambda key: "fake-token" if "telegram" in key else None)
+
+    delivered: list[tuple[int, str, str | None]] = []
+
+    async def fake_send_message(self, chat_id: int, text: str, *, parse_mode="HTML") -> None:
+        delivered.append((chat_id, text, parse_mode))
+
+    monkeypatch.setattr(TelegramBot, "send_message", fake_send_message)
+
+    bot = TelegramBot()
+    bot.configure()
+
+    class _NoPost:
+        async def post(self, url, *, json=None):
+            raise AssertionError("raw client.post must not be called for command replies")
+
+    for cmd in ("/status", "/help", "/positions", "/pnl"):
+        delivered.clear()
+        update = {"message": {"chat": {"id": 999}, "text": cmd}}
+        await bot._handle_update(update, _NoPost())
+        assert len(delivered) == 1, f"{cmd}: must route through send_message"
+        _, text, parse_mode = delivered[0]
+        assert parse_mode is None, f"{cmd}: must use parse_mode=None (plain text)"
+        assert "<b>" not in text and "<code>" not in text, \
+            f"{cmd}: response must contain no HTML markup"
