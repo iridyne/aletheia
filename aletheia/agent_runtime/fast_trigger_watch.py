@@ -35,6 +35,7 @@ _status: dict[str, object] = {
     "running": False,
     "reason": "fast_trigger_disabled",
     "watched_setups": 0,
+    "watched_entry_plan_ids": [],
 }
 _WATCHER_RELOAD_INTERVAL_SEC = 2.0
 
@@ -96,11 +97,11 @@ def start_fast_trigger_watch(
         return _watch_task
     reason = _configured_block_reason(cfg)
     if reason:
-        _status = {"running": False, "reason": reason, "watched_setups": 0}
+        _status = {"running": False, "reason": reason, "watched_setups": 0, "watched_entry_plan_ids": []}
         return None
     _stop_event = asyncio.Event()
     _watch_task = loop.create_task(_watch_loop(cfg), name="fast_trigger_watch")
-    _status = {"running": True, "reason": None, "watched_setups": 0}
+    _status = {"running": True, "reason": None, "watched_setups": 0, "watched_entry_plan_ids": []}
     return _watch_task
 
 
@@ -141,6 +142,7 @@ async def reconfigure_fast_trigger_watch(cfg, loop: asyncio.AbstractEventLoop) -
             "running": False,
             "reason": "fast_trigger_lifecycle_unavailable",
             "watched_setups": 0,
+            "watched_entry_plan_ids": [],
             "configured_mode": cfg.fast_trigger.mode,
             "task_started": False,
         }
@@ -322,11 +324,7 @@ async def _load_entry_plan_watchers(
             policy_changed = True
         account_changed = str(cfg.exchange.paper_execution_mode) != plan.execution_account_mode
         if policy_changed or account_changed:
-            reason = (
-                "entry_plan_risk_authority_revoked"
-                if policy_changed
-                else "entry_plan_execution_account_changed"
-            )
+            reason = "entry_plan_risk_authority_revoked" if policy_changed else "entry_plan_execution_account_changed"
             if row["status"] in {"ordered", "partially_filled"}:
                 from aletheia.execution.gateway import cancel_entry_plan_order
 
@@ -358,6 +356,27 @@ async def _load_entry_plan_watchers(
                     reason="entry_plan_expired",
                 )
             continue
+        if plan.venue.lower() != fast_market_data_venue_for_config(cfg):
+            # Exact-venue invariant: no Fast Monitoring engine for this plan's
+            # venue.  Pre-order states transition to invalidated immediately;
+            # ordered/partially_filled go through Gateway so any ambiguous
+            # partial-fill state stays reconciled.
+            venue_reason = "entry_plan_execution_venue_unavailable"
+            if row["status"] in {"ordered", "partially_filled"}:
+                await asyncio.to_thread(
+                    cancel_entry_plan_order,
+                    plan.plan_id,
+                    reason=venue_reason,
+                )
+            else:
+                await asyncio.to_thread(
+                    repo.transition_entry_plan,
+                    plan.plan_id,
+                    expected_status=row["status"],
+                    status="invalidated",
+                    reason=venue_reason,
+                )
+            continue
         if (
             plan.order_tactic == "POST_ONLY_LIMIT"
             and row["status"] in {"ordered", "partially_filled"}
@@ -366,9 +385,9 @@ async def _load_entry_plan_watchers(
         ):
             order = await asyncio.to_thread(repo.get_order, row["order_id"])
             if order is not None:
-                placed_at = datetime.fromisoformat(
-                    str(order["created_at"]).replace("Z", "+00:00")
-                ).astimezone(timezone.utc)
+                placed_at = datetime.fromisoformat(str(order["created_at"]).replace("Z", "+00:00")).astimezone(
+                    timezone.utc
+                )
                 if (now - placed_at).total_seconds() >= plan.max_wait_sec:
                     from aletheia.execution.gateway import cancel_entry_plan_order
 
@@ -378,8 +397,6 @@ async def _load_entry_plan_watchers(
                         reason="entry_plan_maker_timeout",
                     )
                     continue
-        if plan.venue.lower() != fast_market_data_venue_for_config(cfg):
-            continue
         plans[plan.plan_id] = plan
         if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
             continue
@@ -402,6 +419,20 @@ async def _load_entry_plan_watchers(
         await _prewarm_market_structure(engine, instrument)
         engines[plan.plan_id] = engine
     return plans, engines
+
+
+def _watched_instruments(
+    setup_engines: dict[str, TriggerEngine],
+    plan_engines: dict[str, TriggerEngine],
+    plans: dict[str, EntryPlan],
+) -> set[InstrumentId]:
+    instruments = {engine.instrument for engine in (*setup_engines.values(), *plan_engines.values())}
+    instruments.update(
+        InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+        for plan in plans.values()
+        if plan.order_tactic == "POST_ONLY_LIMIT"
+    )
+    return instruments
 
 
 async def _cancel_open_entry_plans(reason: str) -> None:
@@ -433,7 +464,7 @@ async def _watch_loop(cfg) -> None:
         reason = _configured_block_reason(cfg)
         if reason:
             await _cancel_open_entry_plans(reason)
-            _status = {"running": False, "reason": reason, "watched_setups": 0}
+            _status = {"running": False, "reason": reason, "watched_setups": 0, "watched_entry_plan_ids": []}
             try:
                 await asyncio.wait_for(stop.wait(), timeout=5.0)
             except TimeoutError:
@@ -445,17 +476,13 @@ async def _watch_loop(cfg) -> None:
             await stream.connect()
             setups, engines = await _load_watchers(cfg)
             plans, plan_engines = await _load_entry_plan_watchers(cfg)
-            instruments = {engine.instrument for engine in (*engines.values(), *plan_engines.values())}
-            instruments.update(
-                InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
-                for plan in plans.values()
-                if plan.execution_mode == "RESTING_MAKER"
-            )
+            instruments = _watched_instruments(engines, plan_engines, plans)
             await stream.set_instruments(instruments)
             _status = {
                 "running": True,
                 "reason": None,
                 "watched_setups": len(setups) + len(plans),
+                "watched_entry_plan_ids": list(plans.keys())[: int(cfg.fast_trigger.max_setups)],
             }
             iterator = stream.events().__aiter__()
             subscribed = instruments
@@ -478,13 +505,10 @@ async def _watch_loop(cfg) -> None:
                 if now >= next_watcher_reload:
                     fresh_setups, fresh_engines = await _load_watchers(cfg, engines)
                     fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg, plan_engines)
-                    fresh_instruments = {
-                        engine.instrument for engine in (*fresh_engines.values(), *fresh_plan_engines.values())
-                    }
-                    fresh_instruments.update(
-                        InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
-                        for plan in fresh_plans.values()
-                        if plan.execution_mode == "RESTING_MAKER"
+                    fresh_instruments = _watched_instruments(
+                        fresh_engines,
+                        fresh_plan_engines,
+                        fresh_plans,
                     )
                     if fresh_instruments != subscribed:
                         if event_task is not None:
@@ -509,6 +533,7 @@ async def _watch_loop(cfg) -> None:
                         for engine in (*engines.values(), *plan_engines.values()):
                             engine.confirm_subscription()
                     _status["watched_setups"] = len(setups) + len(plans)
+                    _status["watched_entry_plan_ids"] = list(plans.keys())[: int(cfg.fast_trigger.max_setups)]
                     next_watcher_reload = now + _WATCHER_RELOAD_INTERVAL_SEC
                 if not done:
                     continue
@@ -644,6 +669,7 @@ async def _watch_loop(cfg) -> None:
                 "running": True,
                 "reason": f"fast_trigger_stream_error:{type(exc).__name__}",
                 "watched_setups": 0,
+                "watched_entry_plan_ids": [],
             }
             logger.warning("Fast Trigger stream restarting: %s", type(exc).__name__)
         finally:
@@ -657,4 +683,9 @@ async def _watch_loop(cfg) -> None:
             except TimeoutError:
                 pass
             backoff = min(backoff * 2, 30.0)
-    _status = {"running": False, "reason": "fast_trigger_stream_closed", "watched_setups": 0}
+    _status = {
+        "running": False,
+        "reason": "fast_trigger_stream_closed",
+        "watched_setups": 0,
+        "watched_entry_plan_ids": [],
+    }

@@ -4,7 +4,6 @@ import asyncio
 import threading
 import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
-import json
 
 from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
 from aletheia.model_provider.openai_compatible import (
@@ -1817,3 +1816,144 @@ def test_databricks_rejects_plaintext_remote_workspace_but_allows_loopback():
         model="endpoint",
     )
     assert provider.workspace_url == "http://127.0.0.1:9000"
+
+
+# ── Responses protocol payload contract ─────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_responses_protocol_sends_strict_json_schema_in_text_format():
+    """Responses payload must place json_schema under text.format — never top-level."""
+    provider = OpenAICompatibleProvider(
+        base_url="http://localhost:8000/v1",
+        model="deepseek-v4-flash",
+        protocol="responses",
+    )
+    sent = {}
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        def json(self):
+            return {"output_text": '{"ok": true}', "model": "deepseek-v4-flash", "usage": {}}
+
+    async def fake_post(self, url, json=None, headers=None):
+        sent.update(url=url, payload=json)
+        return FakeResponse()
+
+    schema = {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+        "additionalProperties": False,
+    }
+    with patch("httpx.AsyncClient.post", new=fake_post):
+        await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "go"}],
+                response_format="json_schema",
+                structured_schema=schema,
+                structured_schema_name="plan_intent",
+            )
+        )
+
+    fmt = sent["payload"]["text"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["name"] == "plan_intent"
+    assert fmt["strict"] is True
+    assert fmt["schema"] == schema
+    assert "response_format" not in sent["payload"]
+
+
+@pytest.mark.anyio
+async def test_responses_protocol_maps_reasoning_effort_to_reasoning_object():
+    """reasoning_effort must be forwarded as reasoning={"effort": ...}, not the flat key."""
+    provider = OpenAICompatibleProvider(
+        base_url="http://localhost:8000/v1",
+        model="deepseek-v4-flash",
+        protocol="responses",
+    )
+    sent = {}
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        def json(self):
+            return {"output_text": "ok", "model": "deepseek-v4-flash", "usage": {}}
+
+    async def fake_post(self, url, json=None, headers=None):
+        sent.update(url=url, payload=json)
+        return FakeResponse()
+
+    with patch("httpx.AsyncClient.post", new=fake_post):
+        await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "go"}],
+                reasoning_effort="none",
+            )
+        )
+
+    assert sent["payload"]["reasoning"] == {"effort": "none"}
+    assert "reasoning_effort" not in sent["payload"]
+
+
+@pytest.mark.anyio
+async def test_responses_protocol_retries_without_reasoning_preserving_schema():
+    """On explicit reasoning-field rejection, retry once and keep text.format unchanged."""
+    import httpx
+
+    provider = OpenAICompatibleProvider(
+        base_url="http://localhost:8000/v1",
+        model="deepseek-v4-flash",
+        protocol="responses",
+    )
+    schema = {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+        "additionalProperties": False,
+    }
+    rejected = httpx.Response(
+        400,
+        request=httpx.Request("POST", "http://localhost:8000/v1/responses"),
+        json={"error": {"param": "reasoning", "message": "unknown field 'reasoning'"}},
+    )
+    ok_body = {
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": '{"ok": true}'}]}],
+        "model": "deepseek-v4-flash",
+        "usage": {},
+    }
+    success = httpx.Response(
+        200,
+        request=httpx.Request("POST", "http://localhost:8000/v1/responses"),
+        json=ok_body,
+    )
+    post = AsyncMock(side_effect=[rejected, success])
+
+    with patch("httpx.AsyncClient.post", post):
+        response = await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "go"}],
+                response_format="json_schema",
+                structured_schema=schema,
+                structured_schema_name="plan_intent",
+                reasoning_effort="none",
+            )
+        )
+
+    assert response.content == '{"ok": true}'
+    assert post.await_count == 2
+    first = post.await_args_list[0].kwargs["json"]
+    second = post.await_args_list[1].kwargs["json"]
+    # First attempt included reasoning
+    assert first["reasoning"] == {"effort": "none"}
+    assert first["text"]["format"]["type"] == "json_schema"
+    assert first["text"]["format"]["strict"] is True
+    # Retry drops reasoning but leaves text.format intact
+    assert "reasoning" not in second
+    assert second["text"]["format"]["type"] == "json_schema"
+    assert second["text"]["format"]["name"] == "plan_intent"
+    assert second["text"]["format"]["strict"] is True
+    assert second["text"]["format"]["schema"] == schema

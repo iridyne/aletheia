@@ -70,11 +70,7 @@ def _instrument_from_arg(arg: dict, known: set[InstrumentId]) -> InstrumentId | 
     else:
         return None
     return next(
-        (
-            item for item in known
-            if item.market_type == market_type
-            and item.symbol.replace("/", "").upper() == inst_id
-        ),
+        (item for item in known if item.market_type == market_type and item.symbol.replace("/", "").upper() == inst_id),
         None,
     )
 
@@ -117,9 +113,7 @@ def parse_bitget_message(
         message_ts = int(message.get("ts") or received)
         if isinstance(row, dict):
             ts = int(row.get("ts") or message_ts)
-            sequence = int(
-                row.get("seq") or row.get("seqId") or message_ts * 1000 + index
-            )
+            sequence = int(row.get("seq") or row.get("seqId") or message_ts * 1000 + index)
         else:
             ts = int(row[0]) if row else received
             # Candle rows repeat their bar-open timestamp throughout the minute;
@@ -141,11 +135,7 @@ def parse_bitget_message(
             size = _positive(row.get("size"))
             side = str(row.get("side") or "").lower()
             if price is not None and size is not None and side in {"buy", "sell"}:
-                events.append(
-                    FastMarketEvent(
-                        event_type="trade", price=price, size=size, side=side, **common
-                    )
-                )
+                events.append(FastMarketEvent(event_type="trade", price=price, size=size, side=side, **common))
         elif channel == "books5" and isinstance(row, dict):
             try:
                 bids = tuple((float(level[0]), float(level[1])) for level in row.get("bids", ()))
@@ -217,8 +207,11 @@ class BitgetFastMarketStream:
             raise
         except Exception:
             self._health = self._health.model_copy(
-                update={"connected": False, "subscriptions_confirmed": False,
-                        "reason": "fast_trigger_stream_disconnected:bitget"}
+                update={
+                    "connected": False,
+                    "subscriptions_confirmed": False,
+                    "reason": "fast_trigger_stream_disconnected:bitget",
+                }
             )
 
     async def set_instruments(self, instruments: set[InstrumentId]) -> None:
@@ -228,28 +221,34 @@ class BitgetFastMarketStream:
             raise ValueError("fast_trigger_stream_venue_mismatch:bitget")
         previous = self._instruments
         if previous:
-            await self._ws.send_json({
-                "op": "unsubscribe",
-                "args": [_bitget_arg(item, channel) for item in previous for channel in _CHANNELS],
-            })
+            await self._ws.send_json(
+                {
+                    "op": "unsubscribe",
+                    "args": [_bitget_arg(item, channel) for item in previous for channel in _CHANNELS],
+                }
+            )
         self._instruments = set(instruments)
         self._confirmed.clear()
         if instruments:
-            await self._ws.send_json({
-                "op": "subscribe",
-                "args": [_bitget_arg(item, channel) for item in instruments for channel in _CHANNELS],
-            })
+            await self._ws.send_json(
+                {
+                    "op": "subscribe",
+                    "args": [_bitget_arg(item, channel) for item in instruments for channel in _CHANNELS],
+                }
+            )
         self._health = self._health.model_copy(update={"subscriptions_confirmed": False})
 
     def _record_ack(self, payload: dict) -> None:
         if payload.get("event") != "subscribe" or not isinstance(payload.get("arg"), dict):
             return
         arg = payload["arg"]
-        self._confirmed.add((
-            str(arg.get("instType") or ""),
-            str(arg.get("channel") or ""),
-            str(arg.get("instId") or ""),
-        ))
+        self._confirmed.add(
+            (
+                str(arg.get("instType") or ""),
+                str(arg.get("channel") or ""),
+                str(arg.get("instId") or ""),
+            )
+        )
         expected = {
             (value["instType"], value["channel"], value["instId"])
             for item in self._instruments
@@ -275,9 +274,7 @@ class BitgetFastMarketStream:
                     continue
                 self._record_ack(payload)
                 self._health = self._health.model_copy(update={"last_received_at_ms": received})
-                for event in parse_bitget_message(
-                    payload, self._instruments, received_timestamp_ms=received
-                ):
+                for event in parse_bitget_message(payload, self._instruments, received_timestamp_ms=received):
                     yield event
             elif message.type in {
                 aiohttp.WSMsgType.CLOSE,
@@ -286,8 +283,11 @@ class BitgetFastMarketStream:
             }:
                 break
         self._health = self._health.model_copy(
-            update={"connected": False, "subscriptions_confirmed": False,
-                    "reason": "fast_trigger_stream_disconnected:bitget"}
+            update={
+                "connected": False,
+                "subscriptions_confirmed": False,
+                "reason": "fast_trigger_stream_disconnected:bitget",
+            }
         )
 
     def health(self) -> FastStreamHealth:
@@ -335,10 +335,28 @@ def fast_market_data_venue_for_config(cfg) -> str:
 
 def fast_market_stream_available_for_config(cfg) -> bool:
     venue = fast_market_data_venue_for_config(cfg)
-    return any(
-        execution_venue_for_mode(mode) == venue
-        for mode in _FAST_STREAM_ADAPTERS
-    )
+    return any(execution_venue_for_mode(mode) == venue for mode in _FAST_STREAM_ADAPTERS)
+
+
+def fast_market_data_unavailability_reason(cfg, venue: str) -> str | None:
+    """Return a stable token if the exact candidate venue cannot be monitored; None if consumable.
+
+    Used as a shared exact-venue invariant across Universe allocation, Entry Planner
+    admission, and Fast Trigger Watch validation. Returning a token (not None) means
+    no Fast Monitoring engine exists for the candidate's physical venue.
+
+    Stable tokens:
+    - ``FAST_MARKET_DATA_VENUE_MISMATCH``: candidate venue differs from the
+      configured fast-monitoring venue.
+    - ``FAST_MARKET_DATA_STREAM_UNAVAILABLE``: no adapter covers the configured
+      monitoring venue at all.
+    """
+    configured_venue = fast_market_data_venue_for_config(cfg)
+    if str(venue or "").lower() != configured_venue:
+        return "FAST_MARKET_DATA_VENUE_MISMATCH"
+    if not any(execution_venue_for_mode(mode) == configured_venue for mode in _FAST_STREAM_ADAPTERS):
+        return "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
+    return None
 
 
 def fast_market_stream_for_config(cfg) -> FastMarketStream:
@@ -346,10 +364,7 @@ def fast_market_stream_for_config(cfg) -> FastMarketStream:
 
     venue = fast_market_data_venue_for_config(cfg)
     adapter_mode = next(
-        (
-            mode for mode in _FAST_STREAM_ADAPTERS
-            if execution_venue_for_mode(mode) == venue
-        ),
+        (mode for mode in _FAST_STREAM_ADAPTERS if execution_venue_for_mode(mode) == venue),
         None,
     )
     if adapter_mode is None:

@@ -11,6 +11,7 @@ from typing import Callable
 class TriggerSpecContract:
     spec_id: str
     version: str
+    candidate_families: tuple[str, ...]
     data_requirements: tuple[str, ...]
     freshness_ms: int
     validate_params: Callable[[dict], dict]
@@ -41,6 +42,7 @@ _REGISTRY = {
     ("momentum-retrace-reclaim", "v1"): TriggerSpecContract(
         spec_id="momentum-retrace-reclaim",
         version="v1",
+        candidate_families=("momentum",),
         data_requirements=("quote", "trade", "books5", "candle1m"),
         freshness_ms=2_000,
         validate_params=_momentum_params,
@@ -50,6 +52,25 @@ _REGISTRY = {
 
 def registered_trigger_specs() -> tuple[TriggerSpecContract, ...]:
     return tuple(_REGISTRY.values())
+
+
+def compatible_trigger_specs(candidate_family: str) -> tuple[TriggerSpecContract, ...]:
+    family = str(candidate_family)
+    return tuple(contract for contract in _REGISTRY.values() if family in contract.candidate_families)
+
+
+def require_compatible_trigger_spec(
+    candidate_family: str,
+    spec_id: str,
+    version: str,
+) -> TriggerSpecContract:
+    try:
+        contract = _REGISTRY[(spec_id, version)]
+    except KeyError as exc:
+        raise ValueError("trigger_spec_not_registered") from exc
+    if str(candidate_family) not in contract.candidate_families:
+        raise ValueError("trigger_spec_candidate_family_unsupported")
+    return contract
 
 
 def require_registered_trigger_spec(

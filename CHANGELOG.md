@@ -9,6 +9,7 @@ their own independent versions.
 ### Changed
 
 * **entry:** split Entry Planner PlanIntent production from deterministic EntryPlan compilation, with portable strict structured outputs and operator-configurable deep-tier fallback (including DeepSeek V4 Flash).
+* **entry:** fail closed on unmonitorable exact venues, restore Resting Maker, Triggered Maker, and Triggered Taker, cancel new maker Orders after 60 seconds from durable Order creation, and align planner admission with the configured deep provider ([#2546](https://github.com/iridyne/aletheia/issues/2546)).
 
 ## [0.8.4](https://github.com/iridyne/aletheia/compare/v0.8.3...v0.8.4) (2026-08-27)
 

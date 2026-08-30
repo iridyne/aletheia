@@ -42,7 +42,9 @@ def test_fast_monitoring_is_deterministic_and_gateway_owned():
         _watch_loop,
     )
 
-    source = "\n".join(inspect.getsource(value) for value in (_load_entry_plan_watchers, _prewarm_market_structure, _watch_loop))
+    source = "\n".join(
+        inspect.getsource(value) for value in (_load_entry_plan_watchers, _prewarm_market_structure, _watch_loop)
+    )
     assert "llm_" not in source.lower()
     assert "get_market_data_provider" not in source
     assert "cancel_entry_plan_order" in source
@@ -98,3 +100,73 @@ def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback():
     assert ENTRY_PLANNER_MAX_CONCURRENCY == 15
     assert "asyncio.TaskGroup" in batch_source
     assert "group.create_task" in batch_source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S05",
+        "entry_plan_contract",
+        "Exact-venue execution eligibility",
+        "L2a",
+        "Execution eligibility fails closed when Fast Monitoring cannot consume the Candidate's exact physical venue.",
+        status="implemented",
+    )
+)
+def test_exact_venue_capability_is_one_shared_executable_invariant():
+    from aletheia.config.loader import load_config
+    from aletheia.universe.fast_stream import (
+        fast_market_data_unavailability_reason,
+    )
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    assert fast_market_data_unavailability_reason(cfg, "bitget") is None
+    assert fast_market_data_unavailability_reason(cfg, "binance") == "FAST_MARKET_DATA_VENUE_MISMATCH"
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S06",
+        "entry_plan_contract",
+        "PlanIntent authority and failure semantics",
+        "L2a",
+        "PlanIntent exposes a strict required qualitative tactic matrix and only compatible registered TriggerSpecs.",
+        status="implemented",
+    )
+)
+def test_plan_intent_and_trigger_registry_expose_complete_authority():
+    import json
+
+    from aletheia.agent_shell.entry_planner import PlanIntent
+    from aletheia.model_provider.base import portable_json_schema_payload
+    from aletheia.trading.trigger_specs import compatible_trigger_specs
+
+    schema = portable_json_schema_payload(PlanIntent)
+    assert set(schema["required"]) == set(schema["properties"])
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["order_tactic"]["type"] == ["string", "null"]
+    encoded = json.dumps(schema)
+    assert "$ref" not in encoded and "$defs" not in encoded and "anyOf" not in encoded
+    assert [(spec.spec_id, spec.version) for spec in compatible_trigger_specs("momentum")] == [
+        ("momentum-retrace-reclaim", "v1")
+    ]
+    assert compatible_trigger_specs("value") == ()
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S07",
+        "entry_plan_contract",
+        "Deep-tier provider admission",
+        "L2a",
+        "Entry Planner resolves one deep-provider alias and passes it to both capacity admission and inference workers.",
+        status="implemented",
+    )
+)
+def test_entry_planner_batch_captures_one_deep_provider_identity():
+    from aletheia.agent_shell.entry_planner import run_entry_planner_batch
+
+    source = inspect.getsource(run_entry_planner_batch)
+    assert source.count('get_provider_for_tier("deep")') == 1
+    assert "available_capacity(\n        provider_name" in source
+    assert "provider_name=provider_name" in source

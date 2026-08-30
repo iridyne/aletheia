@@ -40,14 +40,16 @@ def _fixture_ohlcv(symbol: str, timeframe: str, limit: int) -> list[list[float]]
         # Keep the confirmation in completed bars: the production feature path
         # correctly discards the latest forming candles.
         volume = 5_000.0 if index >= limit - 4 else 1_000.0
-        rows.append([
-            float(start_ms + index * step_ms),
-            opened,
-            max(opened, price) * 1.001,
-            min(opened, price) * 0.999,
-            price,
-            volume,
-        ])
+        rows.append(
+            [
+                float(start_ms + index * step_ms),
+                opened,
+                max(opened, price) * 1.001,
+                min(opened, price) * 0.999,
+                price,
+                volume,
+            ]
+        )
     return rows
 
 
@@ -178,7 +180,9 @@ class _StockLinkedExchange(_FixtureExchange):
             balancing_returns = [-0.0066, 0.001] * 4 + [-0.0066]
             momentum_returns = [0.009] * 5
             for change, row in zip(
-                balancing_returns + momentum_returns, rows[-15:-1], strict=True,
+                balancing_returns + momentum_returns,
+                rows[-15:-1],
+                strict=True,
             ):
                 close *= 1 + change
                 row[1:5] = [close * 0.999, close * 1.001, close * 0.998, close]
@@ -205,9 +209,7 @@ class _StockLinkedCCXTProvider(_FixtureCCXTProvider):
 
 
 @pytest.mark.asyncio
-async def test_real_universe_refresh_reaches_one_durable_no_plan(
-    e2e_db, monkeypatch, tmp_path
-):
+async def test_real_universe_refresh_keeps_unmonitorable_candidate_ineligible(e2e_db, monkeypatch, tmp_path):
     import aletheia.config.loader as config_loader
 
     from aletheia.agent_runtime.tool_registry import init_tool_registry
@@ -250,42 +252,42 @@ async def test_real_universe_refresh_reaches_one_durable_no_plan(
     # Production bootstrap normally registers this permission surface before the
     # scheduler runs paper_trader.
     init_tool_registry()
-    monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.CCXTProvider", _FixtureCCXTProvider
-    )
+    monkeypatch.setattr("aletheia.data.ccxt_provider.CCXTProvider", _FixtureCCXTProvider)
     monkeypatch.setattr(
         "aletheia.model_provider.router.get_provider_for_tier",
         lambda _tier: "fixture",
     )
+
     async def fixed_operator_response(*_args, **_kwargs):
         # The model proposes an entry with a sub-threshold conviction. Since
         # Phase C (2026-07-18) the real conviction gate raises
         # DecisionUnavailable('operator_low_conviction') instead of terminally
         # skipping, so this end-to-end walkthrough exercises the non-terminal
         # defer path all the way to persisted trace + evaluation_deferred result.
-        return ({
-            "action": "trade",
-            "symbol": "SOL/USDT",
-            "direction": "long",
-            "market_type": "spot",
-            "conviction": 10,
-            "reasoning": "The fixture deliberately waits for stronger confirmation.",
-            "bear_case": "Relative strength can fade.",
-            "stop_price": 1.0,
-            "take_profit": 1_000.0,
-            "parameter_rationale": {
-                "entry_price": "use the exact fresh fixture mark",
-                "stop_loss": "fixture-only invalidation below the market",
-                "take_profit": "fixture-only target above the market",
-                "notional_usdt": "defer to deterministic paper sizing",
-                "leverage": "spot uses no leverage",
+        return (
+            {
+                "action": "trade",
+                "symbol": "SOL/USDT",
+                "direction": "long",
+                "market_type": "spot",
+                "conviction": 10,
+                "reasoning": "The fixture deliberately waits for stronger confirmation.",
+                "bear_case": "Relative strength can fade.",
+                "stop_price": 1.0,
+                "take_profit": 1_000.0,
+                "parameter_rationale": {
+                    "entry_price": "use the exact fresh fixture mark",
+                    "stop_loss": "fixture-only invalidation below the market",
+                    "take_profit": "fixture-only target above the market",
+                    "notional_usdt": "defer to deterministic paper sizing",
+                    "leverage": "spot uses no leverage",
+                },
+                "key_assumptions": ["the public fixture remains fresh"],
             },
-            "key_assumptions": ["the public fixture remains fresh"],
-        }, None)
+            None,
+        )
 
-    monkeypatch.setattr(
-        "aletheia.agents.helpers.llm_structured", fixed_operator_response
-    )
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", fixed_operator_response)
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "reflection.json")
 
     # Use the production collector to make the emitter's freshness decision real;
@@ -299,154 +301,24 @@ async def test_real_universe_refresh_reaches_one_durable_no_plan(
 
     candidates = repo.list_universe_members(snapshot_id, limit=10)
     assert len(candidates) == 1
-    generation = e2e_db.execute(
-        "SELECT * FROM candidate_planning_generations WHERE is_current=1"
-    ).fetchone()
-    assert generation is not None
-    assert generation["last_candidate_id"] == candidates[0]["id"]
+    candidate = candidates[0]
+    assert not bool(candidate["execution_eligible"])
+    flags = candidate.get("risk_flags") or []
+    if isinstance(flags, str):
+        import json
+
+        flags = json.loads(flags)
+    assert "fast_market_data_venue_unavailable" in flags
+    generation = e2e_db.execute("SELECT * FROM candidate_planning_generations WHERE is_current=1").fetchone()
+    assert generation is None
     assert repo.list_opportunities(limit=10) == []
-
-    from aletheia.agent_shell.entry_planner import PlanIntent, plan_next_candidate
-
-    async def no_plan(_context):
-        return PlanIntent(
-            decision="NO_PLAN",
-            reason_code="INSUFFICIENT_EVIDENCE",
-            thesis="",
-            scenario="",
-        )
-
-    planning = await plan_next_candidate(no_plan)
-    assert planning["status"] == "no_plan"
-    assert repo.get_candidate_planning_generation(generation["id"])["status"] == "no_plan"
-    return
-
-    opportunities = repo.list_opportunities(limit=10)
-    assert len(opportunities) == 1
-    opportunity = opportunities[0]
-    assert opportunity["source_agent"] == "universe_scanner"
-    assert opportunity["symbol"] == "SOL/USDT"
-    assert opportunity["market"] == "spot"
-    assert opportunity["direction_bias"] == "long"
-    assert opportunity["execution_eligible"] == 1
-    assert opportunity["status"] == "open"
-    assert opportunity["universe_snapshot_id"] == snapshot_id
-    assert opportunity["universe_member_id"]
-
-    ranker_result = await run_paper_trader(
-        permission_mode="Paper", run_id="universe-to-operator-ranker"
-    )
-    assert ranker_result["errors"] == []
-    assert ranker_result["outputs"][-1] == "signals_pending:1"
-
-    pending_rows = e2e_db.execute(
-        "SELECT action,symbol,direction,market_type,opportunity_id,signal_source "
-        "FROM pi_decisions WHERE action='signal_pending'"
-    ).fetchall()
-    assert [dict(row) for row in pending_rows] == [{
-        "action": "signal_pending",
-        "symbol": opportunity["symbol"],
-        "direction": opportunity["direction_bias"],
-        "market_type": opportunity["market"],
-        "opportunity_id": opportunity["id"],
-        "signal_source": "market_observer",
-    }]
-    assert repo.get_opportunity(opportunity["id"])["status"] == "queued"
-
-    result = await evaluate_trading_opportunity({})
-    # Phase C (2026-07-18): sub-threshold conviction is a non-terminal defer,
-    # not a skip. The pending carrier stays queued, no final PiDecision is
-    # written, and material_context_change reopens evaluation on the next wake.
-    assert result["action"] == "evaluation_deferred"
-    assert result["defer_reason"] == "operator_low_conviction"
-    assert result["defer_stage"] == "operator_conviction_gate"
-    assert result["opportunity_id"] == opportunity["id"]
-    assert result["operator_evaluation_event_id"]
-
-    decision_rows = e2e_db.execute(
-        "SELECT action,symbol,direction,market_type,opportunity_id,signal_source,"
-        "proposal_id,proposal_status FROM pi_decisions WHERE opportunity_id=? "
-        "ORDER BY CASE WHEN action='signal_pending' THEN 0 ELSE 1 END, rowid",
-        (opportunity["id"],),
-    ).fetchall()
-    # Only the original signal_pending row — a defer does NOT synthesize a final
-    # PiDecision (DL-INV-2 v1.5).
-    assert len(decision_rows) == 1
-    assert decision_rows[0]["action"] == "signal_pending"
-    identity_fields = (
-        "symbol", "direction", "market_type", "opportunity_id", "signal_source"
-    )
-    assert tuple(decision_rows[0][field] for field in identity_fields) == (
-        opportunity["symbol"],
-        opportunity["direction_bias"],
-        opportunity["market"],
-        opportunity["id"],
-        "market_observer",
-    )
-    # Opportunity NOT consumed as reviewed — it stays queued for re-evaluation.
-    assert repo.get_opportunity(opportunity["id"])["status"] == "queued"
-    assert e2e_db.execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
-
-    # The defer event is persisted with the new event_kind.
-    defer_event = e2e_db.execute(
-        "SELECT event_kind FROM operator_evaluation_events WHERE id=?",
-        (result["operator_evaluation_event_id"],),
-    ).fetchone()
-    assert defer_event is not None
-    assert defer_event["event_kind"] == "operator_decision_deferred_low_conviction"
-
-    # The pending queue still exposes the carrier (it remains unresolved).
-    visible_pending, queue = _build_pending_signal_queue(limit=10)
-    assert queue["unresolved_total"] == 1
-    assert queue["expired_unconsumed_rows"] == 0
-
-    evidence = e2e_db.execute(
-        "SELECT candidate_kind,filter_name,stage,decision,reason_code,"
-        "opportunity_id,universe_snapshot_id,universe_member_id,symbol,"
-        "market_type,direction FROM filter_decisions WHERE opportunity_id=? "
-        "ORDER BY evaluated_at,rowid",
-        (opportunity["id"],),
-    ).fetchall()
-    evidence_keys = {
-        (row["filter_name"], row["stage"], row["decision"], row["reason_code"])
-        for row in evidence
-    }
-    assert (
-        "opportunity_emission",
-        "signal_emitter",
-        "passed",
-        "triggered_opportunity_created",
-    ) in evidence_keys
-    assert any(row["stage"] == "paper_ranker" for row in evidence)
-    assert (
-        "signal_batch_limit", "paper_trader_selection", "passed", "signal_batch_limit"
-    ) in evidence_keys
-    assert (
-        "signal_enqueue", "paper_trader_enqueue", "passed", "signal_enqueued"
-    ) in evidence_keys
-    # Phase C reason_code: operator_low_conviction (was conviction_below_minimum).
-    assert (
-        "operator_conviction_gate",
-        "system_operator",
-        "rejected",
-        "operator_low_conviction",
-    ) in evidence_keys
-
-    # Every per-candidate fact, from emitter to Operator, retains the same source
-    # identity instead of switching symbol, market, member, or Opportunity.
-    assert {row["opportunity_id"] for row in evidence} == {opportunity["id"]}
-    assert {row["universe_snapshot_id"] for row in evidence} == {snapshot_id}
-    assert {row["universe_member_id"] for row in evidence} == {
-        opportunity["universe_member_id"]
-    }
-    assert {row["symbol"] for row in evidence} == {opportunity["symbol"]}
-    assert {row["market_type"] for row in evidence} == {"spot"}
-    assert {row["direction"] for row in evidence} == {"long"}
 
 
 @pytest.mark.asyncio
 async def test_stock_linked_perp_reaches_candidate_planning_context(
-    e2e_db, monkeypatch, tmp_path,
+    e2e_db,
+    monkeypatch,
+    tmp_path,
 ):
     import json
 
@@ -490,9 +362,7 @@ async def test_stock_linked_perp_reaches_candidate_planning_context(
     save_config(cfg)
 
     init_tool_registry()
-    monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.CCXTProvider", _StockLinkedCCXTProvider
-    )
+    monkeypatch.setattr("aletheia.data.ccxt_provider.CCXTProvider", _StockLinkedCCXTProvider)
     monkeypatch.setattr(
         "aletheia.agents.paper_trader_ranker.get_current_regime",
         lambda: (_ for _ in ()).throw(AssertionError("crypto regime leaked")),
@@ -509,25 +379,29 @@ async def test_stock_linked_perp_reaches_candidate_planning_context(
     collected = await collect_market_snapshots()
     assert collected["errors"] == []
     assert collected["collected"] == ["binance:SOXL/USDT:perp"]
-    repo.insert_open_interest_snapshot({
-        "symbol": "SOXL/USDT",
-        "exchange": "binance",
-        "open_interest_usd": 12_000_000.0,
-        "oi_change_1h_pct": 6.0,
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-    })
-    repo.insert_orderbook_snapshot({
-        "symbol": "SOXL/USDT",
-        "exchange": "binance",
-        "market_type": "perp",
-        "bid_price": 99.99,
-        "ask_price": 100.01,
-        "spread_bps": 2.0,
-        "bid_depth_10bps_usd": 1_500_000.0,
-        "ask_depth_10bps_usd": 1_500_000.0,
-        "total_depth_10bps_usd": 3_000_000.0,
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-    })
+    repo.insert_open_interest_snapshot(
+        {
+            "symbol": "SOXL/USDT",
+            "exchange": "binance",
+            "open_interest_usd": 12_000_000.0,
+            "oi_change_1h_pct": 6.0,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    repo.insert_orderbook_snapshot(
+        {
+            "symbol": "SOXL/USDT",
+            "exchange": "binance",
+            "market_type": "perp",
+            "bid_price": 99.99,
+            "ask_price": 100.01,
+            "spread_bps": 2.0,
+            "bid_depth_10bps_usd": 1_500_000.0,
+            "ask_depth_10bps_usd": 1_500_000.0,
+            "total_depth_10bps_usd": 3_000_000.0,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
     snapshot_id = await UniverseService().refresh()
     assert snapshot_id is not None
@@ -535,9 +409,7 @@ async def test_stock_linked_perp_reaches_candidate_planning_context(
     assert len(candidates) == 1
     assert candidates[0]["symbol"] == "SOXL/USDT"
     assert candidates[0]["market_type"] == "perp"
-    generation = e2e_db.execute(
-        "SELECT * FROM candidate_planning_generations WHERE is_current=1"
-    ).fetchone()
+    generation = e2e_db.execute("SELECT * FROM candidate_planning_generations WHERE is_current=1").fetchone()
     assert generation is not None
     assert generation["last_candidate_id"] == candidates[0]["id"]
     assert generation["symbol"] == "SOXL/USDT"
@@ -557,9 +429,7 @@ async def test_stock_linked_perp_reaches_candidate_planning_context(
     assert metadata["instrument_background"]["physical_market_type"] == "perp"
     assert metadata["analysis_context"]["kind"] == "stock_linked_perp"
 
-    ranker_result = await run_paper_trader(
-        permission_mode="Paper", run_id="stock-linked-to-operator-ranker"
-    )
+    ranker_result = await run_paper_trader(permission_mode="Paper", run_id="stock-linked-to-operator-ranker")
     assert ranker_result["errors"] == []
     assert ranker_result["outputs"][-1] == "signals_pending:1"
 

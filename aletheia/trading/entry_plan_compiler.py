@@ -9,10 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
 from aletheia.trading.instruments import get_max_leverage
-from aletheia.trading.trigger_specs import (
-    registered_trigger_specs,
-    require_registered_trigger_spec,
-)
+from aletheia.trading.trigger_specs import require_compatible_trigger_spec
 
 if TYPE_CHECKING:
     from aletheia.agent_shell.entry_planner import PlanIntent
@@ -61,17 +58,26 @@ def _stop_reference(feature: dict, cfg) -> tuple[float, float]:
 
 def _require_trigger(
     intent: "PlanIntent",
-    *,
+    candidate_family: str,
     entry_zone: tuple[float, float],
     stop_price: float,
     entry_price: float,
 ):
     spec_id = str(intent.trigger_spec_id)
     spec_version = str(intent.trigger_spec_version)
-    spec_key = (spec_id, spec_version)
-    registered = {(spec.spec_id, spec.version) for spec in registered_trigger_specs()}
-    if spec_key not in registered:
-        raise _intent_error("TRIGGER_SPEC_NOT_REGISTERED")
+    try:
+        contract = require_compatible_trigger_spec(
+            candidate_family,
+            spec_id,
+            spec_version,
+        )
+    except ValueError as exc:
+        code = (
+            "NO_COMPATIBLE_TRIGGER_SPEC"
+            if str(exc) == "trigger_spec_candidate_family_unsupported"
+            else "UNSUPPORTED_TRIGGER_SPEC"
+        )
+        raise _intent_error(code) from exc
     raw_params = {
         "breakout_level": entry_price,
         "pullback_low": entry_zone[0],
@@ -81,7 +87,7 @@ def _require_trigger(
         "invalidation_price": stop_price,
     }
     try:
-        return require_registered_trigger_spec(spec_id, spec_version, raw_params)
+        return contract, contract.validate_params(raw_params)
     except ValueError as exc:
         raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
 
@@ -98,7 +104,6 @@ def compile_entry_plan(
     from aletheia.agent_shell.entry_planner import PlanIntentError
 
     try:
-
         if intent.decision != "ENTRY_PLAN":
             raise PlanIntentError("COMPILER_ENTRY_INTENT_REQUIRED")
         raw_market_type = generation.get("market_type")
@@ -114,6 +119,17 @@ def compile_entry_plan(
         execution_mode = cast(
             Literal["RESTING_MAKER", "TRIGGERED"],
             intent.execution_mode,
+        )
+        tactic_pair = (execution_mode, intent.order_tactic)
+        if tactic_pair not in {
+            ("RESTING_MAKER", "POST_ONLY_LIMIT"),
+            ("TRIGGERED", "POST_ONLY_LIMIT"),
+            ("TRIGGERED", "OPPOSING_BBO_IOC"),
+        }:
+            raise PlanIntentError("COMPILER_TACTIC_INVALID")
+        order_tactic = cast(
+            Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"],
+            intent.order_tactic,
         )
         if intent.risk_tier not in _RISK_REWARD_TARGET:
             raise PlanIntentError("COMPILER_RISK_TIER_INVALID")
@@ -155,9 +171,7 @@ def compile_entry_plan(
         except Exception as exc:
             raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
         max_leverage = (
-            1
-            if market_type == "spot"
-            else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[intent.risk_tier])
+            1 if market_type == "spot" else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[intent.risk_tier])
         )
         max_risk_pct = min(
             float(policy.loss.max_single_trade_risk_pct),
@@ -184,9 +198,7 @@ def compile_entry_plan(
             float(policy.capital.max_position_margin_usdt) * max_leverage,
             risk_bounded_notional,
         )
-        total_exposure_cap = (
-            float(policy.capital.max_total_exposure_pct) / 100.0 * float(capital_base)
-        )
+        total_exposure_cap = float(policy.capital.max_total_exposure_pct) / 100.0 * float(capital_base)
         if total_exposure_cap > 0:
             max_notional = min(max_notional, total_exposure_cap)
         per_symbol_cap = per_symbol_notional_ceiling(
@@ -199,15 +211,16 @@ def compile_entry_plan(
         if max_leverage < 1 or max_risk_pct <= 0 or max_notional <= 0:
             raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID")
 
-        maker = intent.execution_mode == "RESTING_MAKER"
+        maker = order_tactic == "POST_ONLY_LIMIT"
         trigger_spec_id = None
         trigger_spec_version = None
         trigger_params: dict = {}
         trigger_requirements: tuple[str, ...] = ()
         trigger_freshness_ms = None
-        if not maker:
+        if execution_mode == "TRIGGERED":
             contract, trigger_params = _require_trigger(
                 intent,
+                candidate_family=str(generation["candidate_family"]),
                 entry_zone=entry_zone,
                 stop_price=stop_price,
                 entry_price=entry_price,
@@ -238,28 +251,26 @@ def compile_entry_plan(
                 trigger_data_requirements=trigger_requirements,
                 trigger_freshness_ms=trigger_freshness_ms,
                 entry_zone=entry_zone,
-                invalidation_conditions=(
-                    ("close_below_stop",) if direction == "long" else ("close_above_stop",)
-                ),
+                invalidation_conditions=(("close_below_stop",) if direction == "long" else ("close_above_stop",)),
                 invalidation_price=stop_price,
                 stop_price=stop_price,
                 target_price=target_price,
                 expected_horizon_hours=_HORIZON_HOURS[intent.horizon],
                 approved_at=current.isoformat(),
                 expires_at=expires.isoformat(),
-                order_tactic="POST_ONLY_LIMIT" if maker else "OPPOSING_BBO_IOC",
+                order_tactic=order_tactic,
                 maker_required=maker,
                 time_in_force="POST_ONLY" if maker else "IOC",
                 limit_price=entry_price if maker else None,
                 price_rule="EXACT_LIMIT" if maker else "OPPOSING_BBO",
                 bbo_reference=None if maker else ("ask" if direction == "long" else "bid"),
-                max_wait_sec=0,
+                max_wait_sec=60 if maker else 0,
                 cancel_replace_policy="CANCEL_ONLY",
                 max_requotes=0,
                 partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
                 taker_fallback_allowed=False,
                 max_slippage_bps=None if maker else 20.0,
-                worst_price=None,
+                worst_price=(None if maker else entry_price * (1.002 if direction == "long" else 0.998)),
                 max_notional=max_notional,
                 max_risk_pct=max_risk_pct,
                 max_leverage=max_leverage,
@@ -268,12 +279,10 @@ def compile_entry_plan(
                 risk_policy_id=str(policy.policy_id),
                 risk_policy_revision=int(policy.revision),
                 risk_policy_hash=resolved_policy.policy_hash,
-                behavior_version="entry-planner/v2",
+                behavior_version="entry-planner/v3",
             )
         except ValueError as exc:
-            raise PlanIntentError(
-                f"COMPILER_GEOMETRY_UNSATISFIABLE:{str(exc)[:100]}"
-            ) from exc
+            raise PlanIntentError(f"COMPILER_GEOMETRY_UNSATISFIABLE:{str(exc)[:100]}") from exc
     except PlanIntentError:
         raise
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
