@@ -1021,6 +1021,8 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
     transitions = []
     cancellations = []
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _plan_id: row)
+    monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     if integrity == "contract":
         monkeypatch.setattr(
             watch.EntryPlan,
@@ -1046,16 +1048,12 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
         ]
     else:
         assert cancellations == []
-        assert transitions == [
-            (
-                row["id"],
-                {
-                    "expected_status": status,
-                    "status": "failed",
-                    "reason": "entry_plan_hash_mismatch",
-                },
-            )
-        ]
+        assert len(transitions) == 1
+        plan_id, kwargs = transitions[0]
+        assert plan_id == row["id"]
+        assert kwargs["expected_status"] == status
+        assert kwargs["status"] == "failed"
+        assert kwargs["reason"] == "entry_plan_hash_mismatch"
 
 
 @pytest.mark.asyncio
@@ -1122,14 +1120,21 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
 
     transitions = []
     cancellations = []
+    rows = [
+        {"id": "waiting-plan", "status": "waiting"},
+        {"id": "ordered-plan", "status": "ordered"},
+    ]
     monkeypatch.setattr(
         watch.repo,
         "list_watchable_entry_plans",
-        lambda _limit: [
-            {"id": "waiting-plan", "status": "waiting"},
-            {"id": "ordered-plan", "status": "ordered"},
-        ],
+        lambda _limit: rows,
     )
+    monkeypatch.setattr(
+        watch.repo,
+        "get_entry_plan",
+        lambda plan_id: next(row for row in rows if row["id"] == plan_id),
+    )
+    monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     monkeypatch.setattr(
         watch.repo,
         "transition_entry_plan",
@@ -1142,16 +1147,12 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
 
     await watch._cancel_open_entry_plans("fast_trigger_paused")
 
-    assert transitions == [
-        (
-            "waiting-plan",
-            {
-                "expected_status": "waiting",
-                "status": "invalidated",
-                "reason": "fast_trigger_paused",
-            },
-        )
-    ]
+    assert len(transitions) == 1
+    plan_id, kwargs = transitions[0]
+    assert plan_id == "waiting-plan"
+    assert kwargs["expected_status"] == "waiting"
+    assert kwargs["status"] == "invalidated"
+    assert kwargs["reason"] == "fast_trigger_paused"
     assert cancellations == [("ordered-plan", "fast_trigger_paused")]
 
 
@@ -1661,6 +1662,8 @@ async def test_venue_mismatch_waiting_plan_invalidates_explicitly(monkeypatch):
     transitions = []
     cancellations = []
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _plan_id: row)
+    monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
     monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
     monkeypatch.setattr(

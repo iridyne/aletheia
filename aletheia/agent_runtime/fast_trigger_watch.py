@@ -246,18 +246,14 @@ async def _handle_entry_plan_integrity_failure(
     reason: str,
     cancel_entry_plan_order,
 ) -> None:
-    """Keep an owned external order under Gateway supervision after plan corruption."""
+    """Keep unresolved execution authority under Gateway supervision."""
 
-    if row["status"] in {"ordered", "partially_filled"}:
-        # Gateway preserves cancel-pending/ambiguous state for the next reload.
-        await asyncio.to_thread(cancel_entry_plan_order, row["id"], reason=reason)
-        return
-    await asyncio.to_thread(
-        repo.transition_entry_plan,
-        row["id"],
-        expected_status=row["status"],
+    await _terminalize_entry_plan(
+        row,
         status="failed",
         reason=reason,
+        cancel_entry_plan_order=cancel_entry_plan_order,
+        now=datetime.now(timezone.utc),
     )
 
 
@@ -267,6 +263,7 @@ def _invalidate_pre_order_entry_plan(
     expected_status: str,
     reason: str,
     now: datetime,
+    terminal_status: str = "invalidated",
 ) -> str:
     """Invalidate before Order creation and release stale pre-Order authority."""
 
@@ -284,6 +281,7 @@ def _invalidate_pre_order_entry_plan(
                 "executing",
                 "submission_unknown",
                 "materialization_missing",
+                "executed",
             }:
                 # An expired external owner may already have crossed the exchange
                 # boundary; only Gateway reconciliation may resolve that exposure.
@@ -301,7 +299,7 @@ def _invalidate_pre_order_entry_plan(
         if not repo.transition_entry_plan(
             plan_id,
             expected_status=expected_status,
-            status="invalidated",
+            status=terminal_status,
             reason=reason,
             now=now,
         ):
@@ -314,7 +312,51 @@ def _invalidate_pre_order_entry_plan(
                     proposal_id,
                     str(claim["owner_token"]),
                 )
-    return "invalidated"
+    return terminal_status
+
+
+async def _terminalize_entry_plan(
+    row: dict,
+    *,
+    status: str,
+    reason: str,
+    cancel_entry_plan_order,
+    now: datetime,
+) -> str:
+    if row["status"] in {"ordered", "partially_filled"}:
+        result = await asyncio.to_thread(
+            cancel_entry_plan_order,
+            row["id"],
+            reason=reason,
+        )
+        return str(result.get("status") or "cancel_pending")
+    outcome = await asyncio.to_thread(
+        _invalidate_pre_order_entry_plan,
+        row["id"],
+        expected_status=row["status"],
+        terminal_status=status,
+        reason=reason,
+        now=now,
+    )
+    if outcome == "order_present":
+        result = await asyncio.to_thread(
+            cancel_entry_plan_order,
+            row["id"],
+            reason=reason,
+        )
+        return str(result.get("status") or "cancel_pending")
+    return outcome
+
+
+def _entry_plan_outcome_is_unresolved(outcome: str) -> bool:
+    return outcome not in {
+        "invalidated",
+        "expired",
+        "failed",
+        "cancelled",
+        "filled",
+        "stale",
+    }
 
 
 async def _load_entry_plan_watchers(
@@ -351,22 +393,15 @@ async def _load_entry_plan_watchers(
             plan.planning_generation_id,
         )
         if generation is None or not bool(generation["is_current"]):
-            if row["status"] in {"ordered", "partially_filled"}:
-                from aletheia.execution.gateway import cancel_entry_plan_order
-
-                await asyncio.to_thread(
-                    cancel_entry_plan_order,
-                    plan.plan_id,
-                    reason="incompatible_planning_generation",
-                )
-            else:
-                await asyncio.to_thread(
-                    repo.transition_entry_plan,
-                    plan.plan_id,
-                    expected_status=row["status"],
-                    status="invalidated",
-                    reason="incompatible_planning_generation",
-                )
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason="incompatible_planning_generation",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
             continue
         try:
             from aletheia.risk.policy import resolve_risk_policy
@@ -381,58 +416,42 @@ async def _load_entry_plan_watchers(
             policy_changed = True
         account_changed = str(cfg.exchange.paper_execution_mode) != plan.execution_account_mode
         if policy_changed or account_changed:
-            reason = "entry_plan_risk_authority_revoked" if policy_changed else "entry_plan_execution_account_changed"
-            if row["status"] in {"ordered", "partially_filled"}:
-                from aletheia.execution.gateway import cancel_entry_plan_order
-
-                await asyncio.to_thread(cancel_entry_plan_order, plan.plan_id, reason=reason)
-            else:
-                await asyncio.to_thread(
-                    repo.transition_entry_plan,
-                    plan.plan_id,
-                    expected_status=row["status"],
-                    status="invalidated",
-                    reason=reason,
-                )
+            reason = (
+                "entry_plan_risk_authority_revoked"
+                if policy_changed
+                else "entry_plan_execution_account_changed"
+            )
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason=reason,
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
             continue
         if datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00")) <= now:
-            if row["status"] not in {"ordered", "partially_filled"}:
-                await asyncio.to_thread(
-                    repo.transition_entry_plan,
-                    plan.plan_id,
-                    expected_status=row["status"],
-                    status="expired",
-                    reason="entry_plan_expired",
-                )
-            else:
-                from aletheia.execution.gateway import cancel_entry_plan_order
-
-                await asyncio.to_thread(
-                    cancel_entry_plan_order,
-                    plan.plan_id,
-                    reason="entry_plan_expired",
-                )
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="expired",
+                reason="entry_plan_expired",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
             continue
         if plan.venue.lower() != fast_market_data_venue_for_config(cfg):
-            # Exact-venue invariant: no Fast Monitoring engine for this plan's
-            # venue.  Pre-order states transition to invalidated immediately;
-            # ordered/partially_filled go through Gateway so any ambiguous
-            # partial-fill state stays reconciled.
-            venue_reason = "entry_plan_execution_venue_unavailable"
-            if row["status"] in {"ordered", "partially_filled"}:
-                await asyncio.to_thread(
-                    cancel_entry_plan_order,
-                    plan.plan_id,
-                    reason=venue_reason,
-                )
-            else:
-                await asyncio.to_thread(
-                    repo.transition_entry_plan,
-                    plan.plan_id,
-                    expected_status=row["status"],
-                    status="invalidated",
-                    reason=venue_reason,
-                )
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason="entry_plan_execution_venue_unavailable",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
             continue
         if (
             plan.order_tactic == "POST_ONLY_LIMIT"
@@ -455,24 +474,16 @@ async def _load_entry_plan_watchers(
                     )
                     continue
         if len(plans) >= monitoring_limit:
-            reason = "entry_plan_monitoring_capacity_unavailable"
-            if row["status"] in {"ordered", "partially_filled"}:
-                await asyncio.to_thread(
-                    cancel_entry_plan_order,
-                    plan.plan_id,
-                    reason=reason,
-                )
-            else:
-                outcome = await asyncio.to_thread(
-                    _invalidate_pre_order_entry_plan,
-                    plan.plan_id,
-                    expected_status=row["status"],
-                    reason=reason,
-                    now=now,
-                )
-                if outcome in {"active_claim", "external_execution", "order_present"}:
-                    # Never abandon an in-flight pre-Order authority at the cap.
-                    plans[plan.plan_id] = plan
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason="entry_plan_monitoring_capacity_unavailable",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                # Never abandon unresolved execution authority at the cap.
+                plans[plan.plan_id] = plan
             continue
         plans[plan.plan_id] = plan
         if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
@@ -515,17 +526,15 @@ def _watched_instruments(
 async def _cancel_open_entry_plans(reason: str) -> None:
     from aletheia.execution.gateway import cancel_entry_plan_order
 
+    now = datetime.now(timezone.utc)
     for row in await asyncio.to_thread(repo.list_watchable_entry_plans, 100):
-        if row["status"] in {"ordered", "partially_filled"}:
-            await asyncio.to_thread(cancel_entry_plan_order, row["id"], reason=reason)
-        else:
-            await asyncio.to_thread(
-                repo.transition_entry_plan,
-                row["id"],
-                expected_status=row["status"],
-                status="invalidated",
-                reason=reason,
-            )
+        await _terminalize_entry_plan(
+            row,
+            status="invalidated",
+            reason=reason,
+            cancel_entry_plan_order=cancel_entry_plan_order,
+            now=now,
+        )
 
 
 async def _watch_loop(cfg) -> None:
@@ -635,25 +644,21 @@ async def _watch_loop(cfg) -> None:
                         if row is None:
                             continue
                         if invalidated:
-                            if row["status"] in {"ordered", "partially_filled"}:
-                                from aletheia.execution.gateway import cancel_entry_plan_order
-
-                                await asyncio.to_thread(
-                                    cancel_entry_plan_order,
-                                    plan_id,
-                                    reason="entry_plan_price_invalidated",
-                                )
-                            elif row["status"] in {
+                            if row["status"] in {
                                 "waiting",
                                 "triggered",
                                 "risk_reserved",
+                                "ordered",
+                                "partially_filled",
                             }:
-                                await asyncio.to_thread(
-                                    repo.transition_entry_plan,
-                                    plan_id,
-                                    expected_status=row["status"],
+                                from aletheia.execution.gateway import cancel_entry_plan_order
+
+                                await _terminalize_entry_plan(
+                                    row,
                                     status="invalidated",
                                     reason="entry_plan_price_invalidated",
+                                    cancel_entry_plan_order=cancel_entry_plan_order,
+                                    now=datetime.now(timezone.utc),
                                 )
                             continue
                         if plan.execution_mode == "RESTING_MAKER" and row["status"] == "waiting":

@@ -472,21 +472,27 @@ def _persist_waiting_plan(
     (
         "account_mode",
         "plan_status",
+        "proposal_status",
+        "claim_active",
         "order_present",
         "expected_outcome",
         "authority_released",
     ),
     [
-        ("paper_internal", "waiting", False, "invalidated", True),
-        ("paper_internal", "triggered", False, "invalidated", True),
-        ("paper_internal", "risk_reserved", False, "invalidated", True),
-        ("bitget_demo", "triggered", False, "external_execution", False),
-        ("bitget_demo", "risk_reserved", True, "order_present", False),
+        ("paper_internal", "waiting", "executing", False, False, "invalidated", True),
+        ("paper_internal", "triggered", "executing", False, False, "invalidated", True),
+        ("paper_internal", "risk_reserved", "executing", False, False, "invalidated", True),
+        ("paper_internal", "waiting", "executing", True, False, "active_claim", False),
+        ("bitget_demo", "triggered", "executing", False, False, "external_execution", False),
+        ("bitget_demo", "waiting", "executed", False, False, "external_execution", False),
+        ("bitget_demo", "risk_reserved", "executing", False, True, "order_present", False),
     ],
 )
 def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
     account_mode,
     plan_status,
+    proposal_status,
+    claim_active,
     order_present,
     expected_outcome,
     authority_released,
@@ -522,7 +528,7 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         now=now,
     )
     repo.insert_trade_proposal(proposal)
-    repo.update_trade_proposal(proposal.id, status="executing")
+    repo.update_trade_proposal(proposal.id, status=proposal_status)
     repo.acquire_entry_risk_reservation(
         proposal_id=proposal.id,
         proposal_commit_hash=proposal.commit_hash,
@@ -537,7 +543,11 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         proposal.id,
         "interrupted-owner",
         (now - timedelta(seconds=601)).isoformat(),
-        (now - timedelta(seconds=1)).isoformat(),
+        (
+            (now + timedelta(seconds=60)).isoformat()
+            if claim_active
+            else (now - timedelta(seconds=1)).isoformat()
+        ),
     )
     if order_present:
         decision = RiskDecision(
@@ -587,7 +597,18 @@ def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
     plan = _persist_waiting_plan()
     assert repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered")
     assert repo.transition_entry_plan(plan.plan_id, expected_status="triggered", status="risk_reserved")
+    now = datetime.now(timezone.utc)
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=99.9,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+    )
+    repo.insert_trade_proposal(proposal)
     order = Order(
+        proposal_id=proposal.id,
         entry_plan_id=plan.plan_id,
         symbol=plan.symbol,
         market_type="usdt_futures",
@@ -849,6 +870,30 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
     assert result["status"] == "filled"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
     assert repo.get_order(order.id)["status"] == "filled"
+
+
+def test_gateway_cancel_recovers_order_through_proposal_relation():
+    from aletheia.execution import gateway
+
+    plan, order = _persist_ordered_plan()
+    repo.get_db().execute(
+        "UPDATE entry_plans SET order_id=NULL WHERE id=?",
+        (plan.plan_id,),
+    )
+    repo.insert_fill(
+        Fill(
+            order_id=order.id,
+            fill_price=100,
+            fill_quantity=1,
+            fee_source="reconciled",
+        )
+    )
+    repo.update_order(order.id, status="filled")
+
+    result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
+
+    assert result["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
 
 
 def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
