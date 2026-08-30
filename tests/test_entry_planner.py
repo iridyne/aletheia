@@ -8,6 +8,7 @@ from aletheia.agent_shell.entry_planner import (
     ENTRY_PLANNER_MAX_CONCURRENCY,
     ENTRY_PLANNER_MIN_CONCURRENCY,
     PlanIntent,
+    _PlanIntentWire,
     PlannerBackpressure,
     plan_next_candidate,
     run_entry_planner_batch,
@@ -539,9 +540,10 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
 
 
 def test_plan_intent_portable_schema_requires_every_strict_property():
-    schema = portable_json_schema_payload(PlanIntent)
+    schema = portable_json_schema_payload(_PlanIntentWire)
     properties = schema["properties"]
     assert set(schema["required"]) == set(properties)
+    assert set(properties) == set(PlanIntent.model_fields)
     assert schema["additionalProperties"] is False
     assert properties["order_tactic"]["type"] == ["string", "null"]
     encoded = json.dumps(schema, sort_keys=True)
@@ -714,9 +716,26 @@ def test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt(monkey
     assert result == _no_plan_intent()
     assert captured["provider"] == "deep-paid"
     assert captured["reasoning_effort"] == "none"
-    assert captured["schema"] is PlanIntent
+    assert captured["schema"] is _PlanIntentWire
     assert "TRIGGERED + POST_ONLY_LIMIT" in captured["system"]
     assert "TRIGGERED + OPPOSING_BBO_IOC" in captured["system"]
+
+
+def test_system_operator_canonicalizes_no_plan_execution_noise(monkeypatch):
+    async def structured(*_args, **_kwargs):
+        return {
+            **_no_plan_intent("CONFLICTING_SIGNALS").model_dump(mode="json"),
+            "execution_mode": "RESTING_MAKER",
+            "order_tactic": "POST_ONLY_LIMIT",
+            "risk_tier": "LOW",
+            "horizon": "INTRADAY",
+        }, None
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    result = asyncio.run(system_operator_entry_planner({"candidate": {"symbol": "ETH/USDT"}}))
+    assert result == _no_plan_intent("CONFLICTING_SIGNALS")
 
 
 def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch):

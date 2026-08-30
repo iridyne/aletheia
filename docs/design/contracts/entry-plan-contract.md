@@ -56,6 +56,10 @@ The allowed intent matrix is:
 | `TRIGGERED` | `POST_ONLY_LIMIT` | compatible registered spec |
 | `TRIGGERED` | `OPPOSING_BBO_IOC` | compatible registered spec |
 
+After the model selects `NO_PLAN`, execution-only fields are non-authoritative
+and are canonicalized to the null/`NONE` row above before semantic validation.
+The model-owned decision, reason, thesis, scenario, and evidence remain unchanged.
+
 The TriggerSpec registry is the only source of Candidate-family compatibility,
 data requirements, freshness, and parameter validation. Planner context lists
 only specs compatible with the Candidate family. An unsupported or absent
