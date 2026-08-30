@@ -39,5 +39,5 @@ def test_nomination_manifest_cost_is_reported_without_fabricated_runtime_cost():
     assert result.qualified_economic_knowledge_n == 0
     assert result.knowledge_yield == 0.0
     assert result.estimated_generation_cost_usd == 0.01
-    assert result.availability == "partial"
-    assert result.unavailable_reasons == ["root_outcome_lineage_incomplete"]
+    assert result.availability == "complete"
+    assert result.unavailable_reasons == []
