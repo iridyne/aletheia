@@ -4,6 +4,12 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## Unreleased
+
+### Changed
+
+* **entry:** split Entry Planner PlanIntent production from deterministic EntryPlan compilation, with portable strict structured outputs and operator-configurable deep-tier fallback (including DeepSeek V4 Flash).
+
 ## [0.8.4](https://github.com/iridyne/aletheia/compare/v0.8.3...v0.8.4) (2026-08-27)
 
 

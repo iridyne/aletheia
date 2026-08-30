@@ -64,6 +64,11 @@ class PiCLIProvider(ModelProvider):
         if request.system:
             prompt_parts.append(f"system: {request.system}")
         prompt_parts.extend(f"{message['role']}: {message['content']}" for message in request.messages)
+        # ponytail: CLI harness has no native strict-JSON channel; keep prompt-embedded schema
+        if request.response_format == "json_schema" and request.structured_schema is not None:
+            prompt_parts.append(
+                f"Respond with only JSON matching this schema: {json.dumps(request.structured_schema)}"
+            )
         argv = [*self._base_argv(), "-p"]
         if self.model:
             argv.extend(("--model", self.model))
@@ -86,6 +91,7 @@ class PiCLIProvider(ModelProvider):
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
         schema_payload = model_json_schema_payload(schema)
         messages = list(request.messages)
+        # ponytail: CLI harness has no native strict-JSON channel; keep prompt-embedded schema
         messages.append(
             {
                 "role": "user",

@@ -16,8 +16,12 @@ import shutil
 from aletheia.gateway.logs import redact_log_text
 from aletheia.model_provider.cli_harness import run_cli
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth,
+    ModelProvider,
+    ModelRequest,
+    StructuredModelRequest,
+    ModelResponse,
+    ModelHealth,
+    model_json_schema_payload,
 )
 
 logger = logging.getLogger("aletheia.model_provider.codex")
@@ -47,6 +51,12 @@ class CodexCLIProvider(ModelProvider):
         prompt = request.system or ""
         for msg in request.messages:
             prompt += f"\n{msg['role']}: {msg['content']}"
+        # ponytail: CLI harness has no native strict-JSON channel; keep prompt-embedded schema
+        if request.response_format == "json_schema" and request.structured_schema is not None:
+            prompt += (
+                "\nRespond with ONLY valid JSON matching this schema: "
+                f"{json.dumps(request.structured_schema)}"
+            )
 
         # Text completion only — read-only sandbox keeps codex from shell/write
         # surface. `exec` is already non-interactive (no approval prompts), and
@@ -102,7 +112,18 @@ class CodexCLIProvider(ModelProvider):
         return ModelResponse(content=text, model=self.model or "codex", usage=usage)
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        mr = ModelRequest(messages=request.messages, system=request.system,
+        messages = list(request.messages)
+        # ponytail: CLI harness has no native strict-JSON channel; keep prompt-embedded schema
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Respond with ONLY valid JSON matching this schema: "
+                    f"{json.dumps(model_json_schema_payload(schema))}"
+                ),
+            }
+        )
+        mr = ModelRequest(messages=messages, system=request.system,
                           temperature=request.temperature, max_tokens=request.max_tokens)
         resp = await self.complete(mr)
         return _extract_json(resp.content)

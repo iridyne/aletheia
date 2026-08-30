@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from aletheia.agent_shell.entry_planner import (
     ENTRY_PLANNER_MAX_CONCURRENCY,
     ENTRY_PLANNER_MIN_CONCURRENCY,
+    PlanIntent,
     PlannerBackpressure,
     plan_next_candidate,
     run_entry_planner_batch,
@@ -295,7 +296,7 @@ def test_attention_is_rechecked_before_model_invocation(monkeypatch):
     async def planner(_context):
         nonlocal calls
         calls += 1
-        return {"result": "NO_PLAN", "reasoning": "should not run"}
+        return PlanIntent(decision="NO_PLAN", reason_code="STALE_FACTS")
 
     monkeypatch.setattr(repo, "candidate_attention_is_active", lambda _generation_id: False)
     result = asyncio.run(plan_next_candidate(planner))
@@ -340,7 +341,7 @@ def test_no_plan_is_durable_until_new_generation():
     async def planner(_context):
         nonlocal calls
         calls += 1
-        return {"result": "NO_PLAN", "reasoning": "no bounded entry geometry"}
+        return PlanIntent(decision="NO_PLAN", reason_code="INSUFFICIENT_EVIDENCE")
 
     assert asyncio.run(plan_next_candidate(planner))["status"] == "no_plan"
     assert asyncio.run(plan_next_candidate(planner))["status"] == "idle"
@@ -352,6 +353,165 @@ def test_no_plan_is_durable_until_new_generation():
     assert next_generation["id"] != candidate.id
     assert asyncio.run(plan_next_candidate(planner))["status"] == "no_plan"
     assert calls == 2
+
+def test_plan_intent_no_plan_persists_reason_code(monkeypatch):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    def unexpected_defer(*_args, **_kwargs):
+        raise AssertionError("NO_PLAN must not defer candidate planning")
+
+    monkeypatch.setattr(repo, "defer_candidate_planning", unexpected_defer)
+    monkeypatch.setattr(repo, "defer_candidate_planning_with_code", unexpected_defer)
+
+    async def planner(_context):
+        return PlanIntent(decision="NO_PLAN", reason_code="STALE_FACTS")
+
+    result = asyncio.run(plan_next_candidate(planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert result["status"] == "no_plan"
+    assert json.loads(stored["result_json"])["reason_code"] == "STALE_FACTS"
+
+
+
+def test_entry_planner_persists_plan_for_paper_internal():
+    from aletheia.config.loader import load_config
+
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    db = repo.get_db()
+    db.execute(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?, ?, ?, ?)",
+        ("feature-btc-entry-plan", candidate.asset_id, datetime.now(timezone.utc).isoformat(), 1.5),
+    )
+    db.commit()
+
+    async def planner(_context):
+        return PlanIntent(
+            decision="ENTRY_PLAN",
+            reason_code="OK",
+            thesis="bounded momentum continuation",
+            scenario="retrace then reclaim",
+            execution_mode="TRIGGERED",
+            trigger_spec_id="momentum-retrace-reclaim",
+            trigger_spec_version="v1",
+            risk_tier="LOW",
+            horizon="INTRADAY",
+        )
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    assert result["status"] == "planned", result
+    plan = EntryPlan.model_validate_json(repo.get_entry_plan(result["entry_plan_id"])["plan_json"])
+    assert plan.planning_generation_id == generation["id"]
+    assert plan.execution_account_mode == "paper_internal"
+    assert plan.stop_price < 100 < plan.target_price
+    assert plan.trigger_data_requirements == ("quote", "trade", "books5", "candle1m")
+    assert plan.max_leverage == 2
+
+
+def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.config.loader import load_config
+    from aletheia.trading.entry_plan_compiler import compile_entry_plan
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    policy = SimpleNamespace(
+        policy_id="test-policy",
+        revision=1,
+        capital=SimpleNamespace(
+            max_position_margin_usdt=1_000_000,
+            max_total_exposure_pct=100,
+        ),
+        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
+    )
+    resolved = SimpleNamespace(policy=policy, policy_hash="test-policy-hash")
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.resolve_risk_policy",
+        lambda *_args, **_kwargs: resolved,
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.get_max_leverage",
+        lambda *_args, **_kwargs: 20,
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.engine.account_equity_for_execution",
+        lambda *_args, **_kwargs: 100_000.0,
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.engine.per_symbol_notional_ceiling",
+        lambda *_args, **_kwargs: 1_000_000_000.0,
+    )
+
+    def compile_for(market_type):
+        return compile_entry_plan(
+            {
+                "id": f"generation-{market_type}",
+                "last_candidate_id": f"candidate-{market_type}",
+                "candidate_family": "momentum",
+                "venue": "bitget",
+                "symbol": "BTC/USDT",
+                "market_type": market_type,
+                "direction": "long",
+            },
+            {"entry_price_usd": 100.0},
+            {"atr_pct": 10.0},
+            PlanIntent(
+                decision="ENTRY_PLAN",
+                reason_code="OK",
+                thesis="x",
+                scenario="y",
+                execution_mode="RESTING_MAKER",
+                risk_tier="LOW",
+                horizon="INTRADAY",
+            ),
+            cfg,
+        )
+
+    perp = compile_for("perp")
+    spot = compile_for("spot")
+    worst_entry = perp.entry_zone[1]
+    risk_budget = 100_000.0 * perp.max_risk_pct / 100.0
+    stop_fraction = abs(worst_entry - perp.stop_price) / worst_entry
+    assert perp.max_notional <= risk_budget / stop_fraction
+    assert spot.max_leverage == 1
+
+
+def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    async def empty_structured(*_args, **_kwargs):
+        return None, "structured_empty_content"
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", empty_structured)
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    result = asyncio.run(plan_next_candidate(system_operator_entry_planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert result["status"] == "unavailable"
+    assert json.loads(stored["result_json"])["reason"].startswith("PLANNER_EMPTY_CONTENT")
+
+
+def test_planner_schema_invalid_records_planner_schema_invalid_reason(monkeypatch):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    async def invalid_structured(*_args, **_kwargs):
+        return None, "structured_schema_invalid: literal_error at decision"
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", invalid_structured)
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    result = asyncio.run(plan_next_candidate(system_operator_entry_planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert result["status"] == "unavailable"
+    assert json.loads(stored["result_json"])["reason"].startswith("PLANNER_SCHEMA_INVALID:")
+
+
 
 
 def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
@@ -411,7 +571,7 @@ def test_entry_planner_batch_claims_rank_order_before_parallel_planning(monkeypa
             all_started.set()
         await asyncio.wait_for(all_started.wait(), timeout=1)
         active -= 1
-        return {"result": "NO_PLAN", "reasoning": "bounded parallel test"}
+        return PlanIntent(decision="NO_PLAN", reason_code="INSUFFICIENT_EVIDENCE")
 
     monkeypatch.setattr(
         "aletheia.agent_shell.entry_planner.system_operator_entry_planner",
@@ -566,7 +726,12 @@ def test_no_plan_terminals_candidate_attention():
     assert repo.complete_candidate_planning_no_plan(
         generation["id"],
         "owner",
-        {"result": "NO_PLAN", "reasoning": "insufficient geometry"},
+        PlanIntent(
+            decision="NO_PLAN",
+            reason_code="INSUFFICIENT_EVIDENCE",
+            thesis="",
+            scenario="",
+        ).model_dump(mode="json"),
     )
     stored = repo.get_candidate_planning_generation(generation["id"])
     assert stored["attention_status"] == "terminal"

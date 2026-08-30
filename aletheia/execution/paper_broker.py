@@ -71,6 +71,10 @@ def execute_paper_order(
     trade_school: str = "short_term",
     attribution_snapshot: dict[str, Any] | str | None = None,
     source: str = "native",
+    entry_plan_id: str | None = None,
+    order_tactic: str | None = None,
+    time_in_force: str | None = None,
+    post_only: bool | None = None,
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
@@ -79,7 +83,17 @@ def execute_paper_order(
     its original stop/TP; a different Proposal always gets a separate lineage.
     """
     if execution_mode == "paper_internal" and order_type != "market":
-        raise ValueError("paper_internal_market_only")
+        if not entry_plan_id:
+            raise ValueError("paper_internal_market_only")
+        from aletheia.storage.repositories import get_trade_proposal
+
+        proposal = get_trade_proposal(proposal_id)
+        if (
+            proposal is None
+            or proposal.get("entry_plan_id") != entry_plan_id
+            or order_tactic not in {"POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"}
+        ):
+            raise ValueError("paper_internal_entry_plan_limit_authority_required")
 
     from aletheia.config.loader import load_config
     cfg = load_config()
@@ -107,6 +121,13 @@ def execute_paper_order(
         status="filled",
         filled_at=filled_at,
         source=source,
+        entry_plan_id=entry_plan_id,
+        order_tactic=order_tactic,
+        time_in_force=time_in_force,
+        post_only=post_only,
+        requested_liquidity=(
+            "maker" if post_only is True else "taker" if post_only is False else None
+        ),
     )
     fill = Fill(
         order_id=order.id,

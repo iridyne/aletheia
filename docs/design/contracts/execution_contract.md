@@ -91,9 +91,11 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
   只接受有限的 `0..200` bps。canonical config load、Settings mutation 与 Paper
   broker 使用同一范围；非法 restored/manual config 必须在 Order、Fill、Position、
   cash event 或 ExitPlan 写入前失败，不能生成 favorable slippage、负 fee 或乐观零成本。
-- 本地纸面入场只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
-  `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单；交易所 demo/testnet
-  仍可按各自 adapter 能力使用 limit。
+- 本地纸面入场通常只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
+  普通 `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单。唯一例外是
+  `§3.0a` 的持久 Entry Plan → Proposal → Risk 权威链所拥有的 bounded Limit Order Intent；
+  Paper broker 立即模拟成交并保留 requested tactic，但不得写 maker `realized_liquidity` 或声称
+  Post-Only queue fidelity。交易所 demo/testnet 仍按各自 adapter 能力使用 limit。
 - 入场价只来自配置行情 venue 的同 canonical symbol、同物理 `spot/perp` 新鲜精确 mark；内存
   mark 必须小于 90 秒，SQLite 精确回退不得超过 120 秒。跨 venue、跨 spot/perp、symbol-only
   或 stale row 都不能建立 Proposal，pending 留待后续重试。

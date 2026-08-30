@@ -54,6 +54,12 @@ class ClaudeCLIProvider(ModelProvider):
             prompt += request.system + "\n\n"
         for msg in request.messages:
             prompt += f"{msg['role']}: {msg['content']}\n"
+        # ponytail: CLI harness has no native strict-JSON channel; keep prompt-embedded schema
+        if request.response_format == "json_schema" and request.structured_schema is not None:
+            prompt += (
+                "\nRespond with ONLY valid JSON matching this schema: "
+                f"{json.dumps(request.structured_schema)}\n"
+            )
 
         argv = [
             self.command,
@@ -120,6 +126,7 @@ class ClaudeCLIProvider(ModelProvider):
         prompt = ""
         for msg in request.messages:
             prompt += f"{msg['role']}: {msg['content']}\n"
+        # ponytail: CLI harness has no native strict-JSON channel; keep prompt-embedded schema
         prompt += f"\nRespond with ONLY valid JSON matching this schema: {json.dumps(schema_json)}"
 
         mr = ModelRequest(
