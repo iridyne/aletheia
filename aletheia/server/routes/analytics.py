@@ -1964,6 +1964,8 @@ def get_learning_funnel():
     # Count from full table (cnt only covers last 30 rows and guard_candidate is rare there).
     total_by_type = {row["item_type"]: row["count"] for row in type_total}
     layer3_guards_in_window = min(int(total_by_type.get("guard_candidate", 0)), 3)
+    # Active guard count comes from canonical SQLite trading_guard rows only.
+    active_guards_total = int(total_by_type.get("trading_guard", 0))
 
     _CONTRADICTION_SCAN_LIMIT = 500
     _CONTRADICTION_ELIGIBLE_TYPES = (
@@ -1972,14 +1974,12 @@ def get_learning_funnel():
     )
 
     contradictions: list[dict] = []
-    active_guards_total: int | None = None
     contradictions_checked = True
     contradiction_eligible_total: int | None = None
     contradiction_inspected: int | None = None
     contradiction_truncated: bool | None = None
     try:
         from aletheia.knowledge.document import read_knowledge_document
-        from aletheia.knowledge.guards import load_trading_guards
         from aletheia.knowledge.manager import detect_contradictions
 
         # COUNT(*) OVER() and the bounded rows come from one SQLite statement,
@@ -2014,27 +2014,6 @@ def get_learning_funnel():
         contradiction_inspected = len(contradiction_items)
         if not provenance_complete:
             query_errors["contradictions_provenance"] = "unavailable"
-        active_guards = load_trading_guards(status="active")
-        active_guards_total = len(active_guards)
-        for guard in active_guards:
-            meta = guard.model_dump()
-            applies = meta.get("applies_to") or {}
-            symbols = applies.get("symbol") or [None]
-            directions = applies.get("direction") or [None]
-            for symbol in symbols:
-                for direction in directions:
-                    contradiction_items.append({
-                        "id": guard.guard_id,
-                        "item_type": "trading_guard",
-                        "title": guard.title,
-                        "status": guard.status,
-                        "metadata": {
-                            "symbol": symbol,
-                            "direction": direction,
-                            "block_candidate": guard.block_candidate,
-                            "enforcement": guard.enforcement,
-                        },
-                    })
         contradictions = detect_contradictions(contradiction_items)
         # A truncated or provenance-incomplete scan cannot claim completeness:
         # findings are a lower bound, not a confirmed zero.
@@ -2042,7 +2021,6 @@ def get_learning_funnel():
             contradictions_checked = False
     except Exception:
         contradictions = []
-        active_guards_total = None
         contradictions_checked = False
         contradiction_eligible_total = None
         contradiction_inspected = None

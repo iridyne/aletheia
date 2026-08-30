@@ -85,11 +85,17 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
   const guardCandidates = funnelQuery.data
     ? funnelQuery.data.knowledge_items_by_type.find(item => item.item_type === 'guard_candidate')?.count ?? 0
     : null
-  const contradictions = funnelQuery.data?.contradictions.checked ? funnelQuery.data.contradictions.count ?? 0 : null
+  const contradictionData = funnelQuery.data?.contradictions
+  const contradictions = contradictionData?.checked
+    ? contradictionData.count ?? 0
+    : contradictionData?.items.length ? contradictionData.items.length : null
+  const contradictionsDisplay = contradictionData?.checked
+    ? contradictions
+    : contradictions == null ? null : `≥${contradictions} (partial scan)`
   const controllerSignals = controllerQuery.data ? controllerQuery.data.persistent_recommendations.length : null
   const attentionValues = [proposedLessons, guardCandidates, contradictions, controllerSignals]
   const knownAttentionTotal = attentionValues.reduce<number>((total, value) => total + (value ?? 0), 0)
-  const attentionComplete = attentionValues.every(value => value != null) && !funnelQuery.isError && !controllerQuery.isError
+  const attentionComplete = attentionValues.every(value => value != null) && contradictionData?.checked === true && !funnelQuery.isError && !controllerQuery.isError
   const recent = summary?.recent_knowledge_items.slice(0, 5) ?? []
   const job = summary?.dreaming_job
   const lastRun = summary?.recent_dreaming_runs[0]
@@ -110,7 +116,7 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
         <ContributionFact label="Learning job" value={learningPulseValue(summary?.dreaming_job_availability === 'unavailable' ? 'unavailable' : runState, humanize(job?.status || lastRun?.status || 'not recorded'))} note={`Last success ${fmtTimestamp(job?.last_succeeded_at || lastRun?.ended_at)}${job?.next_due_at ? `; next ${fmtTimestamp(job.next_due_at)}` : ''}`} />
         <ContributionFact label="New knowledge" value={learningPulseValue(runState, summary?.recent_knowledge_total ?? 0)} note="Created in the last 24 hours" />
         <ContributionFact label="Impact verdict" value={learningPulseValue(impactState, experiment ? humanize(experiment.measurement.state) : 'Not measured')} note={humanize(experiment?.measurement.reason || 'No current experiment')} />
-        <ContributionFact label="Needs review" value={attentionComplete ? knownAttentionTotal : 'Partial'} note={`${proposedLessons ?? 'unknown'} lessons; ${guardCandidates ?? 'unknown'} guard candidates; ${contradictions ?? 'unknown'} contradictions`} />
+        <ContributionFact label="Needs review" value={attentionComplete ? knownAttentionTotal : 'Partial'} note={`${proposedLessons ?? 'unknown'} lessons; ${guardCandidates ?? 'unknown'} guard candidates; ${contradictionsDisplay ?? 'unknown'} contradictions`} />
       </div>
 
       <div className="learning-home-grid">
@@ -133,7 +139,7 @@ export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => 
         <div className="learning-attention-grid">
           <AttentionItem label="Proposed lessons" value={proposedLessons} detail="Review before application" onClick={() => onNavigate('knowledge')} />
           <AttentionItem label="Guard candidates" value={guardCandidates} detail="Human review required" onClick={() => onNavigate('knowledge')} />
-          <AttentionItem label="Contradictions" value={contradictions} detail="Resolve conflicting knowledge" onClick={() => onNavigate('operations')} />
+          <AttentionItem label="Contradictions" value={contradictionsDisplay} detail="Resolve conflicting knowledge" onClick={() => onNavigate('operations')} />
           <AttentionItem label="Persistent filter signals" value={controllerSignals} detail="Review only; no automatic change" onClick={() => onNavigate('operations')} />
         </div>
       </Card>
@@ -166,9 +172,9 @@ function ImpactSummary({ item }: { item: LearningContributionProjection['items']
   </div>
 }
 
-function AttentionItem({ label, value, detail, onClick }: { label: string; value: number | null; detail: string; onClick: () => void }) {
+function AttentionItem({ label, value, detail, onClick }: { label: string; value: number | string | null; detail: string; onClick: () => void }) {
   return <Button type="button" className="learning-attention-item" onClick={onClick}>
-    <strong>{value == null ? 'Unavailable' : value.toLocaleString()}</strong>
+    <strong>{value == null ? 'Unavailable' : typeof value === 'number' ? value.toLocaleString() : value}</strong>
     <span>{label}</span>
     <small>{detail}</small>
   </Button>
@@ -1247,7 +1253,7 @@ export function LearningFunnelPanel() {
         <span className="lf-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
         <span className="lf-meta-pill">Lessons applied: <strong>{lessonApplied ?? 'Unavailable'}</strong> / proposed: <strong>{lessonProposed ?? 'Unavailable'}</strong></span>
         <span className="lf-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active ?? 'Unavailable'}</strong></span>
-        <span className="lf-meta-pill">Contradictions needing review: <strong>{data.contradictions.checked ? contradictionCount ?? 0 : data.contradictions.truncated ? `≥${data.contradictions.items.length} (partial scan)` : 'Unavailable'}</strong></span>
+        <span className="lf-meta-pill">Contradictions needing review: <strong>{data.contradictions.checked ? contradictionCount ?? 0 : data.contradictions.items.length ? `≥${data.contradictions.items.length} (partial scan)` : 'Unavailable'}</strong></span>
       </div>
       <div className="lf-bars">
         {data.knowledge_items_by_type.map(({ item_type, count }) => {

@@ -378,12 +378,12 @@ async def test_learning_funnel_missing_inline_provenance_is_unavailable(client):
 
 @pytest.mark.anyio
 async def test_learning_funnel_detection_failure_clears_coverage(client, monkeypatch):
-    from aletheia.knowledge import guards
+    from aletheia.knowledge import manager as knowledge_manager
 
     monkeypatch.setattr(
-        guards,
-        "load_trading_guards",
-        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("guard read failed")),
+        knowledge_manager,
+        "detect_contradictions",
+        lambda items: (_ for _ in ()).throw(RuntimeError("detector failed")),
     )
 
     response = await client.get("/api/analytics/learning-funnel")
@@ -449,6 +449,47 @@ async def test_learning_funnel_exhaustive_scan_returns_checked(client):
     assert c["inspected"] == c["eligible_total"]
     assert c["truncated"] is False
     assert isinstance(c["count"], int)
+
+
+@pytest.mark.anyio
+async def test_learning_funnel_contradiction_input_is_db_only(client, monkeypatch):
+    """File-backed guards must never enter the contradiction detector input.
+
+    Regression for P2 finding on PR #2561: load_trading_guards() was called
+    inside the contradiction block, injecting file-system items AFTER
+    contradiction_inspected was fixed, so the denominator lied and file-only
+    active guards could enter detect_contradictions() without being counted.
+    """
+    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+    from aletheia.knowledge import guards as guards_module
+
+    # Guarantee load_trading_guards is never invoked from the contradiction path.
+    def _must_not_call(**_kwargs):
+        raise AssertionError("load_trading_guards must not be called from contradiction detection")
+
+    monkeypatch.setattr(guards_module, "load_trading_guards", _must_not_call)
+
+    # Insert a DB guard_candidate — this IS a canonical item and must reach the detector.
+    text = "Avoid BTC/USDT long"
+    insert_knowledge_item(KnowledgeItem(
+        item_type="guard_candidate",
+        title=text,
+        confidence="high_confidence",
+        **canonicalize_inline_document(text),
+    ))
+
+    response = await client.get("/api/analytics/learning-funnel")
+
+    assert response.status_code == 200
+    body = response.json()
+    # No exception from the monkeypatched guard — load_trading_guards was not called.
+    assert "contradictions" not in body.get("query_errors", {})
+    c = body["contradictions"]
+    assert c["checked"] is True
+    assert c["eligible_total"] >= 1  # the guard_candidate row above
+    assert c["inspected"] == c["eligible_total"]
 
 @pytest.mark.anyio
 async def test_learning_funnel_optional_read_failures_are_not_zero(client, monkeypatch):
