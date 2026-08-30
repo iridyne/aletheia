@@ -89,6 +89,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
     """Start the gateway (foreground or background)."""
     from aletheia.gateway import service_control
     if not foreground and service_control.is_machine_selected():
+        _check_circuit_break_auto_reset()
         if is_running():
             _echo_stdout_safe(f"Gateway already running (PID {read_pid()}).")
             raise typer.Exit(0)
@@ -131,10 +132,8 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
             )
             assert_preflight_or_exit(preflight_result)
         raise
-
-    # T7: If a circuit-break state file exists and 30 min of stability has elapsed,
-    # auto-clear the breaker and re-enable the watchdog before attempting a new start.
     _check_circuit_break_auto_reset()
+
 
     # Preflight checks — fail fast if environment is broken
     preflight_result = run_preflight_checks()
@@ -375,8 +374,8 @@ def _circuit_break_state_path():
     return get_data_dir() / "circuit_break.json"
 
 
-def _write_circuit_break_state() -> None:
-    """Persist a circuit-break timestamp so auto-reset can evaluate elapsed time."""
+def _write_circuit_break_state(*, recovery_owner: str) -> None:
+    """Persist the disabled recovery owner so auto-reset restores only that owner."""
     try:
         import json as _json
         import datetime as _dt
@@ -386,6 +385,7 @@ def _write_circuit_break_state() -> None:
             _json.dumps({
                 "tripped_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
                 "source": "circuit_breaker",
+                "recovery_owner": recovery_owner,
             }),
             encoding="utf-8",
         )
@@ -444,10 +444,47 @@ def _check_circuit_break_auto_reset() -> None:
         if recent_failures:
             return  # new failures since the trip — leave the breaker closed
 
-        # Stable for >30 min with no new failures: restore the recovery owner
-        # disabled by the breaker before clearing its durable state.
+        # Stable for >30 min with no new failures: restore only the recovery
+        # owner disabled by the breaker. If an operator removed that owner while
+        # the breaker was closed, reconcile the marker without recreating it.
         try:
             from aletheia.gateway import service_control
+            recovery_owner = data.get("recovery_owner")
+            current_service = service_control.status()
+            owner_states = {
+                service_control.SESSION_BACKEND: current_service.get("session", {}),
+                service_control.WINDOWS_SERVICE_BACKEND: current_service.get("machine", {}),
+            }
+            if recovery_owner is None:
+                known_states = [
+                    value
+                    for state in owner_states.values()
+                    for value in (state.get("installed"), state.get("enabled"))
+                ]
+                if any(value is None for value in known_states):
+                    return
+                path.unlink(missing_ok=True)
+                return
+            if recovery_owner == "legacy_macos":
+                from aletheia.gateway import autostart
+                if not autostart._legacy_launchd_present(
+                    labels=autostart._SESSION_SERVICE_LEGACY_LAUNCHD_LABELS,
+                ):
+                    path.unlink(missing_ok=True)
+                    return
+            owner_state = owner_states.get(recovery_owner)
+            if owner_state is not None:
+                if owner_state.get("installed") is False:
+                    path.unlink(missing_ok=True)
+                    return
+                if owner_state.get("installed") is not True:
+                    return
+            if recovery_owner not in {
+                service_control.SESSION_BACKEND,
+                service_control.WINDOWS_SERVICE_BACKEND,
+                "legacy_macos",
+            }:
+                return
             enabled = service_control.enable(source="auto_reset")
         except Exception:
             return
@@ -509,19 +546,45 @@ def _check_spawn_circuit_breaker() -> None:
             from aletheia.gateway import autostart, service_control
             current_service = service_control.status()
             recovery_present = current_service.get("enabled") is True
+            recovery_owner = (
+                current_service.get("backend")
+                if recovery_present
+                else None
+            )
             if not recovery_present and platform.system() == "Darwin":
                 recovery_present = bool(autostart._legacy_launchd_present(
                     labels=autostart._SESSION_SERVICE_LEGACY_LAUNCHD_LABELS,
                 ))
-            if recovery_present:
+                if recovery_present:
+                    recovery_owner = "legacy_macos"
+            if recovery_present and recovery_owner:
                 disabled = service_control.disable(source="circuit_breaker")
-                if disabled.get("ok"):
-                    _write_circuit_break_state()  # T7: persist timestamp for auto-reset
+                recovery_mutated = (
+                    disabled.get("ok")
+                    or disabled.get("persistent_disabled") is True
+                    or (
+                        disabled.get("legacy_mutated") is True
+                        and disabled.get("legacy_preserved") is False
+                    )
+                )
+                if (
+                    recovery_owner == service_control.WINDOWS_SERVICE_BACKEND
+                    and not recovery_mutated
+                ):
+                    post_state = service_control.status().get("machine", {})
+                    recovery_mutated = post_state.get("enabled") is not True
+                if recovery_mutated:
+                    _write_circuit_break_state(recovery_owner=recovery_owner)
+                    circuit_closed = disabled.get("legacy_preserved") is not True
                     _notify_gateway_problem(
-                        "Aletheia Gateway autostart disabled by circuit breaker",
+                        "Aletheia Gateway autostart disabled by circuit breaker"
+                        if circuit_closed else
+                        "Aletheia Gateway circuit breaker only partially disabled recovery",
                         f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
-                        f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
-                        "has been disabled to stop the restart loop. Fix the root cause and "
+                        f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. "
+                        + ("Autostart recovery has been disabled. " if circuit_closed else
+                           "A legacy recovery owner remains active; the restart loop may continue. ")
+                        + "Fix the root cause and "
                         "re-enable with `gateway enable`, or wait 30 min for "
                         "auto-reset.",
                         source="gateway_lifecycle",
