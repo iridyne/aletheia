@@ -1900,7 +1900,8 @@ async def test_responses_protocol_maps_reasoning_effort_to_reasoning_object():
 
 
 @pytest.mark.anyio
-async def test_responses_protocol_retries_without_reasoning_preserving_schema():
+@pytest.mark.parametrize("rejected_param", ["reasoning", "reasoning.effort"])
+async def test_responses_protocol_retries_without_reasoning_preserving_schema(rejected_param):
     """On explicit reasoning-field rejection, retry once and keep text.format unchanged."""
     import httpx
 
@@ -1918,7 +1919,7 @@ async def test_responses_protocol_retries_without_reasoning_preserving_schema():
     rejected = httpx.Response(
         400,
         request=httpx.Request("POST", "http://localhost:8000/v1/responses"),
-        json={"error": {"param": "reasoning", "message": "unknown field 'reasoning'"}},
+        json={"error": {"param": rejected_param, "message": f"Unknown parameter: '{rejected_param}'"}},
     )
     ok_body = {
         "output": [{"type": "message", "content": [{"type": "output_text", "text": '{"ok": true}'}]}],

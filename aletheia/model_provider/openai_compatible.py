@@ -115,7 +115,10 @@ def _responses_reasoning_is_unsupported(response: httpx.Response) -> bool:
     implement the optional ``reasoning`` object. Retry once without it rather
     than hard-failing the whole call; ``text.format`` is never touched.
     """
-    return _optional_request_field_is_unsupported(response, "reasoning")
+    return (
+        _optional_request_field_is_unsupported(response, "reasoning")
+        or _optional_request_field_is_unsupported(response, "reasoning.effort")
+    )
 
 
 def _json_object_is_unsupported(response: httpx.Response) -> bool:

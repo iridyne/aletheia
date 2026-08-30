@@ -778,7 +778,10 @@ def test_frame_to_gateway_p95_is_within_local_budget(tmp_path, monkeypatch):
 def test_default_local_paper_uses_bitget_public_fast_stream():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_execution
-    from aletheia.universe.fast_stream import fast_market_data_venue_for_config
+    from aletheia.universe.fast_stream import (
+        fast_market_data_unavailability_reason,
+        fast_market_data_venue_for_config,
+    )
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
@@ -787,6 +790,8 @@ def test_default_local_paper_uses_bitget_public_fast_stream():
 
     assert fast_market_data_venue_for_config(cfg) == "bitget"
     assert validate_fast_trigger_execution(cfg) is None
+    cfg.fast_trigger.mode = "off"
+    assert fast_market_data_unavailability_reason(cfg, "bitget") == "FAST_TRIGGER_DISABLED"
 
 
 def test_fast_trigger_refuses_observe_permission():
@@ -1903,6 +1908,8 @@ async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
         ("plan-10", "entry_plan_maker_timeout"),
         ("plan-11", "entry_plan_monitoring_capacity_unavailable"),
     ]
+
+
 
 
 @pytest.mark.asyncio

@@ -468,6 +468,66 @@ def _persist_waiting_plan(
     return plan
 
 
+def test_watcher_capacity_cleanup_releases_interrupted_pre_order_reservation():
+    from aletheia.agent_runtime.fast_trigger_watch import (
+        _invalidate_pre_order_entry_plan,
+    )
+
+    plan = _persist_waiting_plan(
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+    )
+    assert repo.transition_entry_plan(
+        plan.plan_id,
+        expected_status="waiting",
+        status="triggered",
+    )
+    assert repo.transition_entry_plan(
+        plan.plan_id,
+        expected_status="triggered",
+        status="risk_reserved",
+    )
+    now = datetime.now(timezone.utc)
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=99.9,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=proposal.id,
+        proposal_commit_hash=proposal.commit_hash,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        execution_mode=proposal.execution_mode,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        leverage=proposal.leverage,
+    )
+    assert repo.insert_proposal_execution_claim(
+        proposal.id,
+        "interrupted-owner",
+        (now - timedelta(seconds=31)).isoformat(),
+        (now - timedelta(seconds=1)).isoformat(),
+    )
+
+    outcome = _invalidate_pre_order_entry_plan(
+        plan.plan_id,
+        expected_status="risk_reserved",
+        reason="entry_plan_monitoring_capacity_unavailable",
+        now=now,
+    )
+
+    assert outcome == "invalidated"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "invalidated"
+    assert repo.get_entry_risk_reservation(proposal.id) is None
+    assert repo.get_proposal_execution_claim(proposal.id) is None
+    assert repo.has_order_for_proposal(proposal.id) is False
+
+
 def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
     plan = _persist_waiting_plan()
     assert repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered")

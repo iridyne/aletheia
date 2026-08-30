@@ -261,6 +261,58 @@ async def _handle_entry_plan_integrity_failure(
     )
 
 
+def _invalidate_pre_order_entry_plan(
+    plan_id: str,
+    *,
+    expected_status: str,
+    reason: str,
+    now: datetime,
+) -> str:
+    """Invalidate before Order creation and release stale pre-Order authority."""
+
+    with repo.transaction(immediate=True):
+        current = repo.get_entry_plan(plan_id)
+        if current is None or current["status"] != expected_status:
+            return "stale"
+        proposal = (
+            repo.get_trade_proposal_by_entry_plan(plan_id)
+            if expected_status == "risk_reserved"
+            else None
+        )
+        claim = None
+        if proposal is not None:
+            proposal_id = str(proposal["id"])
+            if repo.has_order_for_proposal(proposal_id):
+                return "stale"
+            claim = repo.get_proposal_execution_claim(proposal_id)
+            if claim is not None:
+                try:
+                    lease_expires_at = datetime.fromisoformat(
+                        str(claim["lease_expires_at"]).replace("Z", "+00:00")
+                    ).astimezone(timezone.utc)
+                except (TypeError, ValueError):
+                    return "active_claim"
+                if lease_expires_at > now:
+                    return "active_claim"
+        if not repo.transition_entry_plan(
+            plan_id,
+            expected_status=expected_status,
+            status="invalidated",
+            reason=reason,
+            now=now,
+        ):
+            return "stale"
+        if proposal is not None:
+            proposal_id = str(proposal["id"])
+            repo.release_entry_risk_reservation(proposal_id)
+            if claim is not None:
+                repo.release_proposal_execution_claim(
+                    proposal_id,
+                    str(claim["owner_token"]),
+                )
+    return "invalidated"
+
+
 async def _load_entry_plan_watchers(
     cfg,
     existing: dict[str, TriggerEngine] | None = None,
@@ -407,13 +459,16 @@ async def _load_entry_plan_watchers(
                     reason=reason,
                 )
             else:
-                await asyncio.to_thread(
-                    repo.transition_entry_plan,
+                outcome = await asyncio.to_thread(
+                    _invalidate_pre_order_entry_plan,
                     plan.plan_id,
                     expected_status=row["status"],
-                    status="invalidated",
                     reason=reason,
+                    now=now,
                 )
+                if outcome == "active_claim":
+                    # Never abandon an in-flight pre-Order authority at the cap.
+                    plans[plan.plan_id] = plan
             continue
         plans[plan.plan_id] = plan
         if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":

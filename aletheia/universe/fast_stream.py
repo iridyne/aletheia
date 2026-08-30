@@ -346,11 +346,14 @@ def fast_market_data_unavailability_reason(cfg, venue: str) -> str | None:
     no Fast Monitoring engine exists for the candidate's physical venue.
 
     Stable tokens:
+    - ``FAST_TRIGGER_DISABLED``: Fast Monitoring is explicitly disabled.
     - ``FAST_MARKET_DATA_VENUE_MISMATCH``: candidate venue differs from the
       configured fast-monitoring venue.
     - ``FAST_MARKET_DATA_STREAM_UNAVAILABLE``: no adapter covers the configured
       monitoring venue at all.
     """
+    if cfg.fast_trigger.mode == "off":
+        return "FAST_TRIGGER_DISABLED"
     configured_venue = fast_market_data_venue_for_config(cfg)
     if str(venue or "").lower() != configured_venue:
         return "FAST_MARKET_DATA_VENUE_MISMATCH"
