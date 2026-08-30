@@ -469,16 +469,26 @@ def _persist_waiting_plan(
 
 
 @pytest.mark.parametrize(
-    ("account_mode", "expected_outcome", "expected_status", "authority_released"),
+    (
+        "account_mode",
+        "plan_status",
+        "order_present",
+        "expected_outcome",
+        "authority_released",
+    ),
     [
-        ("paper_internal", "invalidated", "invalidated", True),
-        ("bitget_demo", "external_execution", "risk_reserved", False),
+        ("paper_internal", "waiting", False, "invalidated", True),
+        ("paper_internal", "triggered", False, "invalidated", True),
+        ("paper_internal", "risk_reserved", False, "invalidated", True),
+        ("bitget_demo", "triggered", False, "external_execution", False),
+        ("bitget_demo", "risk_reserved", True, "order_present", False),
     ],
 )
 def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
     account_mode,
+    plan_status,
+    order_present,
     expected_outcome,
-    expected_status,
     authority_released,
 ):
     from aletheia.agent_runtime.fast_trigger_watch import (
@@ -490,16 +500,18 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         mode="RESTING_MAKER",
         tactic="POST_ONLY_LIMIT",
     )
-    assert repo.transition_entry_plan(
-        plan.plan_id,
-        expected_status="waiting",
-        status="triggered",
-    )
-    assert repo.transition_entry_plan(
-        plan.plan_id,
-        expected_status="triggered",
-        status="risk_reserved",
-    )
+    if plan_status in {"triggered", "risk_reserved"}:
+        assert repo.transition_entry_plan(
+            plan.plan_id,
+            expected_status="waiting",
+            status="triggered",
+        )
+    if plan_status == "risk_reserved":
+        assert repo.transition_entry_plan(
+            plan.plan_id,
+            expected_status="triggered",
+            status="risk_reserved",
+        )
     now = datetime.now(timezone.utc)
     proposal = build_entry_plan_order_intent(
         plan,
@@ -527,20 +539,49 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         (now - timedelta(seconds=601)).isoformat(),
         (now - timedelta(seconds=1)).isoformat(),
     )
+    if order_present:
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode=proposal.execution_mode,
+            decision_role="authoritative",
+            evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash,
+            proposal_execution_mode=proposal.execution_mode,
+        )
+        repo.insert_risk_decision(decision)
+        repo.insert_order(
+            Order(
+                proposal_id=proposal.id,
+                risk_decision_id=decision.id,
+                entry_plan_id=plan.plan_id,
+                symbol=proposal.symbol,
+                market_type=proposal.market_type,
+                direction=proposal.direction,
+                order_type=proposal.order_type,
+                quantity=proposal.quantity,
+                price=proposal.price,
+                execution_mode=proposal.execution_mode,
+                status="pending",
+                source="native",
+                client_order_id=proposal.id,
+            )
+        )
 
     outcome = _invalidate_pre_order_entry_plan(
         plan.plan_id,
-        expected_status="risk_reserved",
+        expected_status=plan_status,
         reason="entry_plan_monitoring_capacity_unavailable",
         now=now,
     )
 
     assert outcome == expected_outcome
-    assert repo.get_entry_plan(plan.plan_id)["status"] == expected_status
+    assert repo.get_entry_plan(plan.plan_id)["status"] == (
+        "invalidated" if authority_released else plan_status
+    )
     assert (repo.get_entry_risk_reservation(proposal.id) is None) is authority_released
     assert (repo.get_proposal_execution_claim(proposal.id) is None) is authority_released
-    assert repo.has_order_for_proposal(proposal.id) is False
-
+    assert repo.has_order_for_proposal(proposal.id) is order_present
 
 def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
     plan = _persist_waiting_plan()

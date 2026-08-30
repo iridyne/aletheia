@@ -274,16 +274,12 @@ def _invalidate_pre_order_entry_plan(
         current = repo.get_entry_plan(plan_id)
         if current is None or current["status"] != expected_status:
             return "stale"
-        proposal = (
-            repo.get_trade_proposal_by_entry_plan(plan_id)
-            if expected_status == "risk_reserved"
-            else None
-        )
+        proposal = repo.get_trade_proposal_by_entry_plan(plan_id)
         claim = None
         if proposal is not None:
             proposal_id = str(proposal["id"])
             if repo.has_order_for_proposal(proposal_id):
-                return "stale"
+                return "order_present"
             if proposal["execution_mode"] != "paper_internal" and proposal["status"] in {
                 "executing",
                 "submission_unknown",
@@ -474,7 +470,7 @@ async def _load_entry_plan_watchers(
                     reason=reason,
                     now=now,
                 )
-                if outcome in {"active_claim", "external_execution"}:
+                if outcome in {"active_claim", "external_execution", "order_present"}:
                     # Never abandon an in-flight pre-Order authority at the cap.
                     plans[plan.plan_id] = plan
             continue
