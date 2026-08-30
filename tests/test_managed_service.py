@@ -49,6 +49,34 @@ def test_macos_start_and_stop_register_only_for_the_running_session(tmp_path, mo
     assert not service._macos_plist_path().exists()
 
 
+def test_macos_stop_reports_runtime_stopped_when_plist_removal_fails(
+    tmp_path,
+    monkeypatch,
+):
+    from aletheia.gateway import managed_service as service
+
+    monkeypatch.setattr(service, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(service, "_macos_domain", lambda: "gui/501")
+    path = service._macos_plist_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("owned", encoding="utf-8")
+    monkeypatch.setattr(service, "_launchctl", lambda args: _proc())
+    original_unlink = type(path).unlink
+
+    def fail_owned_unlink(candidate, *args, **kwargs):
+        if candidate == path:
+            raise OSError("denied")
+        return original_unlink(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(type(path), "unlink", fail_owned_unlink)
+
+    result = service._stop_macos()
+
+    assert result["ok"] is False
+    assert result["reason"] == "plist_remove_error"
+    assert result["runtime_stopped"] is True
+
+
 def test_linux_uses_a_non_restarting_user_transient_service(monkeypatch):
     from aletheia.gateway import managed_service as service
 

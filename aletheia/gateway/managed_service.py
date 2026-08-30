@@ -271,12 +271,21 @@ def _stop_macos() -> dict:
         return {"supported": False, "managed": False, "ok": False, "platform": "launchd", "reason": "launchctl_unavailable"}
     except Exception as exc:
         return {"supported": True, "managed": None, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": type(exc).__name__}
+    booted_out = proc.returncode == 0
     if proc.returncode != 0 and not _is_not_found(proc.stderr):
         return {"supported": True, "managed": None, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": (proc.stderr or "").strip()[:200]}
     try:
         path.unlink(missing_ok=True)
     except OSError as exc:
-        return {"supported": True, "managed": False, "ok": False, "platform": "launchd", "reason": "plist_remove_error", "detail": type(exc).__name__}
+        return {
+            "supported": True,
+            "managed": False,
+            "ok": False,
+            "platform": "launchd",
+            "reason": "plist_remove_error",
+            "detail": type(exc).__name__,
+            "runtime_stopped": booted_out,
+        }
     return {"supported": True, "managed": False, "ok": True, "platform": "launchd"}
 
 

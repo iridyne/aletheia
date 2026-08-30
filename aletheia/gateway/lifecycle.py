@@ -444,7 +444,15 @@ def _check_circuit_break_auto_reset() -> None:
         if recent_failures:
             return  # new failures since the trip — leave the breaker closed
 
-        # Stable for >30 min with no new failures: reset.
+        # Stable for >30 min with no new failures: restore the recovery owner
+        # disabled by the breaker before clearing its durable state.
+        try:
+            from aletheia.gateway import service_control
+            enabled = service_control.enable(source="auto_reset")
+        except Exception:
+            return
+        if not enabled.get("ok"):
+            return
         path.unlink(missing_ok=True)
         try:
             from aletheia.files.jsonl import write_audit
@@ -457,13 +465,6 @@ def _check_circuit_break_auto_reset() -> None:
                     "Watchdog re-enabled."
                 ),
             })
-        except Exception:
-            pass
-        try:
-            from aletheia.gateway import service_control
-            current_service = service_control.status()
-            if current_service.get("scope") == "session" and current_service.get("installed"):
-                service_control.enable(source="auto_reset")
         except Exception:
             pass
     except Exception:
@@ -503,22 +504,28 @@ def _check_spawn_circuit_breaker() -> None:
             return
         if (now - oldest).total_seconds() > _CIRCUIT_BREAKER_WINDOW_SEC:
             return
-        # Threshold hit within window — disable watchdog and alert.
+        # Threshold hit within window — disable every verified recovery owner.
         try:
-            from aletheia.gateway import service_control
+            from aletheia.gateway import autostart, service_control
             current_service = service_control.status()
-            if current_service.get("scope") == "session" and current_service.get("enabled"):
-                service_control.disable(source="circuit_breaker")
-                _write_circuit_break_state()  # T7: persist timestamp for auto-reset
-                _notify_gateway_problem(
-                    "Aletheia Gateway autostart disabled by circuit breaker",
-                    f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
-                    f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
-                    "has been disabled to stop the restart loop. Fix the root cause and "
-                    "re-enable with `gateway enable`, or wait 30 min for "
-                    "auto-reset.",
-                    source="gateway_lifecycle",
-                )
+            recovery_present = current_service.get("enabled") is True
+            if not recovery_present and platform.system() == "Darwin":
+                recovery_present = bool(autostart._legacy_launchd_present(
+                    labels=autostart._SESSION_SERVICE_LEGACY_LAUNCHD_LABELS,
+                ))
+            if recovery_present:
+                disabled = service_control.disable(source="circuit_breaker")
+                if disabled.get("ok"):
+                    _write_circuit_break_state()  # T7: persist timestamp for auto-reset
+                    _notify_gateway_problem(
+                        "Aletheia Gateway autostart disabled by circuit breaker",
+                        f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
+                        f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
+                        "has been disabled to stop the restart loop. Fix the root cause and "
+                        "re-enable with `gateway enable`, or wait 30 min for "
+                        "auto-reset.",
+                        source="gateway_lifecycle",
+                    )
         except Exception:
             pass
     except Exception:
@@ -575,7 +582,7 @@ def _run_server(cfg) -> None:
     )
 
 
-def do_stop(*, preserve_recovery: bool = False) -> None:
+def do_stop(*, preserve_recovery: bool = False, operator_stop: bool = False) -> None:
     """Stop the gateway: tree-kill the supervisor (+ its uvicorn child), clean any
     orphaned uvicorn processes we previously spawned, and wait for the port to free.
 
@@ -589,7 +596,7 @@ def do_stop(*, preserve_recovery: bool = False) -> None:
     try:
         from aletheia.gateway import service_control
         machine_selected = service_control.is_machine_selected()
-        managed = service_control.stop(preserve_recovery=preserve_recovery)
+        managed = service_control.stop(preserve_recovery=preserve_recovery, operator_stop=operator_stop)
     except Exception as exc:
         managed = {"ok": False, "reason": "service_manager_error", "detail": type(exc).__name__}
     partial_stop = managed.get("runtime_stopped") is True
@@ -653,9 +660,10 @@ def do_stop(*, preserve_recovery: bool = False) -> None:
 
     _audit_stop(freed=freed, killed_any=killed_any)
     if partial_stop:
-        reason = managed.get("reason", "legacy_launchd_cleanup_error")
+        reason = managed.get("reason", "service_cleanup_error")
+        cleanup_target = managed.get("cleanup_target", "service registration")
         _echo_safe(
-            f"Gateway runtime stopped, but legacy recovery cleanup failed: {reason}.",
+            f"Gateway runtime stopped, but {cleanup_target} cleanup failed: {reason}.",
         )
         raise typer.Exit(1)
     if not freed:

@@ -122,7 +122,7 @@ def start(
 def stop():
     """Stop the running gateway."""
     from aletheia.gateway.lifecycle import do_stop
-    do_stop()
+    do_stop(operator_stop=True)
 
 
 @gateway_app.command()

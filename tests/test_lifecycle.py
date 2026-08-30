@@ -140,7 +140,7 @@ def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_
     assert "stop blocked by task_scheduler: access_denied" in capsys.readouterr().err.lower()
 
 
-def test_do_stop_finishes_teardown_after_legacy_cleanup_failure(
+def test_do_stop_reports_transient_cleanup_failure_after_runtime_stop(
     tmp_path,
     monkeypatch,
     capsys,
@@ -156,7 +156,8 @@ def test_do_stop_finishes_teardown_after_legacy_cleanup_failure(
         lambda **_kwargs: {
             "ok": False,
             "runtime_stopped": True,
-            "reason": "ownership_conflict",
+            "reason": "launchctl_error",
+            "cleanup_target": "transient service registration",
         },
     )
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
@@ -174,7 +175,7 @@ def test_do_stop_finishes_teardown_after_legacy_cleanup_failure(
 
     assert killed == [999]
     err = capsys.readouterr().err.lower()
-    assert "runtime stopped, but legacy recovery cleanup failed" in err
+    assert "runtime stopped, but transient service registration cleanup failed" in err
     assert "no processes were terminated" not in err
 
 
@@ -830,6 +831,45 @@ def test_verify_started_beacon_ignored_when_pid_mismatch(tmp_path, monkeypatch):
         lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
 
 
+def test_spawn_circuit_breaker_disables_legacy_only_recovery(monkeypatch):
+    import datetime as _dt
+
+    from aletheia.files import jsonl
+    from aletheia.gateway import autostart, lifecycle, service_control
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    failures = [
+        {
+            "event_type": "gateway_spawn_failed",
+            "ts": (now - _dt.timedelta(minutes=offset)).isoformat(),
+        }
+        for offset in (2, 1, 0)
+    ]
+    monkeypatch.setattr(jsonl, "read_jsonl", lambda _name: failures)
+    monkeypatch.setattr(service_control, "status", lambda: {"enabled": False})
+    monkeypatch.setattr(
+        autostart,
+        "_legacy_launchd_present",
+        lambda *, labels: True,
+    )
+    disabled_sources = []
+    monkeypatch.setattr(
+        service_control,
+        "disable",
+        lambda *, source: disabled_sources.append(source) or {"ok": True},
+    )
+    state_writes = []
+    alerts = []
+    monkeypatch.setattr(lifecycle, "_write_circuit_break_state", lambda: state_writes.append(True))
+    monkeypatch.setattr(lifecycle, "_notify_gateway_problem", lambda *args, **kwargs: alerts.append(args))
+
+    lifecycle._check_spawn_circuit_breaker()
+
+    assert disabled_sources == ["circuit_breaker"]
+    assert state_writes == [True]
+    assert len(alerts) == 1
+
+
 def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch):
     """After 30+ min of stability, do_start auto-clears the circuit-break file and
     re-enables the watchdog without operator intervention.
@@ -866,6 +906,33 @@ def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch)
 
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "gateway_circuit_breaker_reset" for e in read_jsonl("audit.jsonl"))
+
+
+def test_circuit_break_auto_reset_preserves_state_when_reenable_fails(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    import datetime as _dt
+    import json as _json
+
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(
+        _json.dumps({"tripped_at": old_ts, "source": "circuit_breaker"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        service_control,
+        "enable",
+        lambda *, source: {"ok": False, "reason": "launchctl_error"},
+    )
+
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert cb_path.exists()
 
 
 def test_circuit_break_does_not_reset_within_window(tmp_path, monkeypatch):
