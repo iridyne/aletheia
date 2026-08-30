@@ -155,6 +155,9 @@ def uninstall(*, backend: str | None = None, elevate: bool = True, source: str =
     backend = backend or current.get("backend")
     if current.get("running"):
         return {**current, "ok": False, "reason": "service_running"}
+    session = current.get("session", {})
+    if backend == SESSION_BACKEND and not session.get("installed") and session.get("enabled"):
+        return {**current, **session, "ok": False, "reason": "ownership_conflict"}
     if backend == WINDOWS_SERVICE_BACKEND:
         return windows_machine_service.uninstall(elevate=elevate)
     if backend == SESSION_BACKEND:
@@ -208,7 +211,10 @@ def disable(*, elevate: bool = True, source: str = "cli") -> dict:
         return current
     if current.get("backend") == WINDOWS_SERVICE_BACKEND and current.get("installed"):
         return windows_machine_service.disable(elevate=elevate)
-    if not current["session"].get("installed"):
+    session = current["session"]
+    if not session.get("installed"):
+        if session.get("enabled"):
+            return {**current, **session, "ok": False, "reason": "ownership_conflict"}
         return {**current, "ok": True, "enabled": False}
     return session_service.disable(source=source)
 
@@ -224,10 +230,20 @@ def start(*, no_browser: bool = True, elevate: bool = True) -> dict:
     return managed_service.start(no_browser=no_browser)
 
 
-def stop(*, elevate: bool = True, preserve_recovery: bool = False) -> dict:
+def stop(*, elevate: bool = True, preserve_recovery: bool = False, operator_stop: bool = False) -> dict:
     current = status()
     if current.get("reason") == "backend_conflict":
         return current
+    session = current.get("session", {})
+    if session.get("installed") and (
+        session.get("owned") is not True
+        or session.get("config_valid") is not True
+    ):
+        return {
+            **current,
+            "ok": False,
+            "reason": session.get("reason") or "ownership_conflict",
+        }
     migrated_recovery = False
     if preserve_recovery and platform.system() == "Darwin":
         from aletheia.gateway import autostart
@@ -250,10 +266,26 @@ def stop(*, elevate: bool = True, preserve_recovery: bool = False) -> dict:
     transient_owner = current.get("transient", {}).get("managed") is True
     if current.get("backend") == WINDOWS_SERVICE_BACKEND and current.get("installed"):
         stopped = windows_machine_service.stop(elevate=elevate)
-    elif transient_owner:
+    elif migrated_recovery and transient_owner:
+        # Only prefer the pre-migration transient owner on the macOS legacy migration
+        # path: the transient was the proven runtime, and we just bootstrapped a
+        # persistent replacement.  Normal stops must select the installed persistent
+        # owner first so a stale transient registration cannot override it.
         stopped = managed_service.stop()
     elif current["session"].get("installed"):
         stopped = session_service.stop()
+        if stopped.get("ok") and transient_owner:
+            transient_stopped = managed_service.stop()
+            if not transient_stopped.get("ok"):
+                return {
+                    **transient_stopped,
+                    "persistent_stopped": True,
+                    "runtime_stopped": (
+                        stopped.get("runtime_stopped") is True
+                        or transient_stopped.get("runtime_stopped") is True
+                    ),
+                }
+            stopped = {**stopped, "transient_stopped": True}
     else:
         stopped = managed_service.stop()
     if not stopped.get("ok"):
@@ -267,9 +299,10 @@ def stop(*, elevate: bool = True, preserve_recovery: bool = False) -> dict:
                 "runtime_stopped": False,
             }
         stopped = replacement_stopped
-    cleanup_failure = _cleanup_legacy_macos(
-        source="restart" if preserve_recovery else "cli",
-    )
-    if cleanup_failure:
-        return {**stopped, **cleanup_failure, "runtime_stopped": True}
+    if operator_stop:
+        # Destructive legacy cleanup only for explicit operator stop.  Internal
+        # readiness-failure stops and all restart paths must not remove recovery.
+        cleanup_failure = _cleanup_legacy_macos(source="cli")
+        if cleanup_failure:
+            return {**stopped, **cleanup_failure, "runtime_stopped": True}
     return stopped

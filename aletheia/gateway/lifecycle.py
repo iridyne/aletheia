@@ -575,7 +575,7 @@ def _run_server(cfg) -> None:
     )
 
 
-def do_stop(*, preserve_recovery: bool = False) -> None:
+def do_stop(*, preserve_recovery: bool = False, operator_stop: bool = False) -> None:
     """Stop the gateway: tree-kill the supervisor (+ its uvicorn child), clean any
     orphaned uvicorn processes we previously spawned, and wait for the port to free.
 
@@ -589,7 +589,7 @@ def do_stop(*, preserve_recovery: bool = False) -> None:
     try:
         from aletheia.gateway import service_control
         machine_selected = service_control.is_machine_selected()
-        managed = service_control.stop(preserve_recovery=preserve_recovery)
+        managed = service_control.stop(preserve_recovery=preserve_recovery, operator_stop=operator_stop)
     except Exception as exc:
         managed = {"ok": False, "reason": "service_manager_error", "detail": type(exc).__name__}
     partial_stop = managed.get("runtime_stopped") is True

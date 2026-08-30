@@ -308,7 +308,12 @@ def _stop_windows() -> dict:
     if proc.returncode != 0 and not _managed._is_not_found(proc.stderr):
         reason = "access_denied" if _managed._is_access_denied(proc.stderr) else "schtasks_error"
         return {**current, "ok": False, "reason": reason, "detail": (proc.stderr or "").strip()[:200]}
-    return {**current, "ok": True, "running": False}
+    return {
+        **current,
+        "ok": True,
+        "running": False,
+        "runtime_stopped": proc.returncode == 0,
+    }
 
 
 def _uninstall_windows() -> dict:
@@ -521,7 +526,12 @@ def _stop_macos() -> dict:
         return {**current, "ok": False, "reason": "launchctl_error", "detail": type(exc).__name__}
     if proc.returncode != 0 and not _managed._is_not_found(proc.stderr):
         return {**current, "ok": False, "reason": "launchctl_error", "detail": (proc.stderr or "")[:200]}
-    return {**current, "running": False, "ok": True}
+    return {
+        **current,
+        "running": False,
+        "runtime_stopped": proc.returncode == 0,
+        "ok": True,
+    }
 
 
 def _uninstall_macos() -> dict:
@@ -704,7 +714,12 @@ def _run_linux(action: str) -> dict:
         return {**current, "ok": False, "reason": "systemd_error", "detail": type(exc).__name__}
     if proc.returncode != 0:
         return {**current, "ok": False, "reason": "systemd_error", "detail": (proc.stderr or "")[:200]}
-    return {**current, "running": action == "start", "ok": True}
+    return {
+        **current,
+        "running": action == "start",
+        "ok": True,
+        **({"runtime_stopped": True} if action == "stop" else {}),
+    }
 
 
 def _uninstall_linux() -> dict:
