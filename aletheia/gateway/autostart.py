@@ -42,11 +42,15 @@ TASK_NAME = "Aletheia Trading OS Gateway"
 LAUNCHD_LABEL = "com.aletheia.trading-os.gateway"
 LAUNCHD_INTERVAL_SEC = 60
 
-# Exact historical Aletheia labels superseded by LAUNCHD_LABEL.
-# Migration removes these on enable/disable to eliminate the second lifecycle controller.
-# Never enumerate arbitrary user LaunchAgents — only these known project-owned labels.
+# Exact historical Aletheia labels superseded by the periodic watchdog.
+# The current session-service migration also owns the watchdog's final label.
+# Never enumerate arbitrary user LaunchAgents.
 _LEGACY_LAUNCHD_LABELS: tuple[str, ...] = (
     "com.aletheia.gateway.watchdog",
+)
+_SESSION_SERVICE_LEGACY_LAUNCHD_LABELS = (
+    *_LEGACY_LAUNCHD_LABELS,
+    LAUNCHD_LABEL,
 )
 
 # How often the task re-checks the gateway (and resurrects a dead supervisor).
@@ -359,59 +363,193 @@ def _classify_launchctl_error(stderr: str) -> str:
     return "launchctl_error"
 
 
-def _bootout_legacy_macos() -> list[str]:
-    """Bootout and remove plists for known historical Aletheia LaunchAgent labels.
+class LegacyLaunchdOwnershipError(RuntimeError):
+    """A known historical label has no verifiable Aletheia definition."""
 
-    Tolerates not_found (already gone) on every label — the call is idempotent.
-    Returns the list of labels that were actually found and removed.
-    Stops on access_denied to surface the error to the caller without swallowing it.
-    Raises on unexpected launchctl errors so _enable_macos/_disable_macos can decide.
-    """
-    removed: list[str] = []
+
+class LegacyLaunchdMutationError(RuntimeError):
+    """Legacy cleanup failed after its mutation phase began."""
+
+    def __init__(self, reason: str, detail: str, *, mutated: bool):
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
+        self.mutated = mutated
+
+
+def _legacy_launchd_payload_owned(payload: object, label: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    args = payload.get("ProgramArguments")
+    working_directory = payload.get("WorkingDirectory")
+    if (
+        not isinstance(args, list)
+        or len(args) != 6
+        or not all(isinstance(item, str) for item in args)
+        or not isinstance(working_directory, str)
+    ):
+        return False
+    project_root = Path(working_directory)
+    executable = Path(args[0])
+    return (
+        payload.get("Label") == label
+        and project_root == Path(_PROJECT_ROOT)
+        and executable == Path(sys.executable)
+        and executable.name.startswith("python")
+        and args[1:] == [
+            "-m",
+            "aletheia.main",
+            "gateway",
+            "start",
+            "--no-browser",
+        ]
+        and payload.get("RunAtLoad") is True
+        and payload.get("StartInterval") == LAUNCHD_INTERVAL_SEC
+        and payload.get("AbandonProcessGroup") is True
+        and "EnvironmentVariables" not in payload
+        and "KeepAlive" not in payload
+    )
+
+
+def _legacy_launchd_loaded_owned(output: str) -> bool:
+    arguments = re.search(r"^\s*arguments\s*=\s*\{\s*(.*?)^\s*\}", output, re.M | re.S)
+    if arguments is None:
+        return False
+    loaded_args = [
+        line.strip()
+        for line in arguments.group(1).splitlines()
+        if line.strip()
+    ]
+    expected_args = [
+        str(sys.executable),
+        "-m",
+        "aletheia.main",
+        "gateway",
+        "start",
+        "--no-browser",
+    ]
+    program = re.search(r"^\s*program\s*=\s*(.+?)\s*$", output, re.M)
+    working_directory = re.search(
+        r"^\s*working directory\s*=\s*(.+?)\s*$",
+        output,
+        re.M,
+    )
+    return (
+        program is not None
+        and program.group(1) == str(sys.executable)
+        and working_directory is not None
+        and working_directory.group(1) == str(_PROJECT_ROOT)
+        and loaded_args == expected_args
+    )
+
+
+def _bootout_legacy_macos(
+    labels: tuple[str, ...] = _LEGACY_LAUNCHD_LABELS,
+    *,
+    source: str = "gateway_lifecycle",
+) -> list[str]:
+    """Remove only verified historical Aletheia LaunchAgent definitions."""
     try:
         uid = os.getuid()
     except AttributeError:
         uid = 0
-    for label in _LEGACY_LAUNCHD_LABELS:
+    verified: list[tuple[str, str, Path, bool]] = []
+    for label in labels:
         target = f"gui/{uid}/{label}"
-        try:
-            proc = _launchctl(["bootout", target])
-        except FileNotFoundError:
-            break  # launchctl unavailable — nothing to clean up
-        if proc.returncode != 0:
-            reason = _classify_launchctl_error(proc.stderr)
-            if reason == "not_found":
-                pass  # already gone — still check for orphan plist below
-            elif reason == "access_denied":
-                raise PermissionError(f"launchctl bootout {target}: access denied")
-            # ignore other transient errors; still attempt plist removal
         plist = _launch_agents_dir() / f"{label}.plist"
         try:
+            proc = _launchctl(["print", target])
+        except FileNotFoundError as exc:
+            raise RuntimeError("launchctl unavailable") from exc
+        loaded = proc.returncode == 0
+        if not loaded:
+            reason = _classify_launchctl_error(proc.stderr)
+            if reason == "access_denied":
+                raise PermissionError(f"launchctl print {target}: access denied")
+            if reason != "not_found":
+                raise RuntimeError(f"launchctl print {target} failed")
+        if not loaded and not plist.exists():
+            continue
+        try:
+            payload = plistlib.loads(plist.read_bytes())
+        except Exception as exc:
+            raise LegacyLaunchdOwnershipError(label) from exc
+        if not _legacy_launchd_payload_owned(payload, label):
+            raise LegacyLaunchdOwnershipError(label)
+        if loaded and not _legacy_launchd_loaded_owned(proc.stdout):
+            raise LegacyLaunchdOwnershipError(label)
+        verified.append((label, target, plist, loaded))
+
+    removed: list[str] = []
+    for label, target, plist, loaded in verified:
+        booted_out = False
+        if loaded:
+            try:
+                proc = _launchctl(["bootout", target])
+            except Exception as exc:
+                raise LegacyLaunchdMutationError(
+                    "legacy_launchd_cleanup_error",
+                    type(exc).__name__,
+                    mutated=bool(removed),
+                ) from exc
+            if proc.returncode != 0:
+                reason = _classify_launchctl_error(proc.stderr)
+                if reason != "not_found":
+                    raise LegacyLaunchdMutationError(
+                        "access_denied" if reason == "access_denied"
+                        else "legacy_launchd_cleanup_error",
+                        f"launchctl bootout {target}: {reason}",
+                        mutated=bool(removed),
+                    )
+            else:
+                booted_out = True
+        try:
             plist.unlink(missing_ok=True)
-        except OSError:
+        except OSError as exc:
+            raise LegacyLaunchdMutationError(
+                "legacy_launchd_cleanup_error",
+                f"legacy plist removal failed: {label}",
+                mutated=bool(removed) or booted_out,
+            ) from exc
+        try:
+            write_audit({
+                "actor": "human",
+                "source": source,
+                "event_type": "gateway_legacy_launchd_removed",
+                "entity_type": "gateway_service",
+                "entity_id": label,
+                "message": f"Removed verified legacy LaunchAgent {label}.",
+            })
+        except Exception:
             pass
-        if proc.returncode == 0:
-            removed.append(label)
+        removed.append(label)
     return removed
 
 
-def _legacy_launchd_present() -> list[str]:
-    """Return legacy Aletheia labels that are currently loaded in launchd."""
+def _legacy_launchd_present(
+    labels: tuple[str, ...] = _LEGACY_LAUNCHD_LABELS,
+) -> list[str]:
+    """Return historical labels that remain loaded or installed."""
     try:
         uid = os.getuid()
     except AttributeError:
         uid = 0
     present: list[str] = []
-    for label in _LEGACY_LAUNCHD_LABELS:
+    for label in labels:
         target = f"gui/{uid}/{label}"
         try:
             proc = _launchctl(["print", target])
-        except FileNotFoundError:
-            break
+        except FileNotFoundError as exc:
+            raise RuntimeError("launchctl unavailable") from exc
         if proc.returncode == 0:
             present.append(label)
-        # also flag an orphan plist with no loaded job
-        elif (_launch_agents_dir() / f"{label}.plist").exists():
+            continue
+        reason = _classify_launchctl_error(proc.stderr)
+        if reason == "access_denied":
+            raise PermissionError(f"launchctl print {target}: access denied")
+        if reason != "not_found":
+            raise RuntimeError(f"launchctl print {target} failed")
+        if (_launch_agents_dir() / f"{label}.plist").exists():
             present.append(label)
     return present
 
@@ -605,10 +743,10 @@ def _enable_macos(source: str) -> dict:
             "reason": "plist_install_error", "detail": type(exc).__name__,
         }
 
-    # Remove known legacy labels before installing the current one so there is
-    # never more than one Aletheia lifecycle controller active at the same time.
+    # Remove verified older labels before loading the current definition so
+    # there is never more than one Aletheia lifecycle controller active.
     try:
-        _bootout_legacy_macos()
+        _bootout_legacy_macos(source=source)
     except PermissionError as exc:
         path.unlink(missing_ok=True)
         return {
@@ -616,6 +754,34 @@ def _enable_macos(source: str) -> dict:
             "installed": False, "platform": "launchd",
             "task_name": LAUNCHD_LABEL, "reason": "access_denied",
             "detail": str(exc)[:200],
+        }
+    except LegacyLaunchdOwnershipError:
+        path.unlink(missing_ok=True)
+        return {
+            "supported": True, "enabled": None, "ok": False,
+            "installed": False, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL, "reason": "ownership_conflict",
+            "detail": "legacy_launchd_definition",
+        }
+    except LegacyLaunchdMutationError as exc:
+        if not exc.mutated:
+            path.unlink(missing_ok=True)
+        return {
+            "supported": True, "enabled": None, "ok": False,
+            "installed": exc.mutated, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL,
+            "reason": exc.reason,
+            "detail": exc.detail,
+            **({"replacement_kept": True} if exc.mutated else {}),
+        }
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        return {
+            "supported": True, "enabled": None, "ok": False,
+            "installed": False, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL,
+            "reason": "legacy_launchd_cleanup_error",
+            "detail": type(exc).__name__,
         }
 
     # Replace an already loaded definition so path/interpreter drift is repaired.
@@ -751,7 +917,7 @@ def _disable_macos(source: str) -> dict:
 
     # Best-effort: also remove legacy labels so no stale watchdog remains.
     try:
-        _bootout_legacy_macos()
+        _bootout_legacy_macos(source=source)
     except (PermissionError, Exception):
         pass  # disable still succeeds; doctor probe will surface lingering legacy jobs
 

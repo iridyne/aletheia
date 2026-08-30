@@ -468,9 +468,17 @@ def _probe_legacy_launchd(report: Report) -> None:
     if platform.system() != "Darwin":
         return
     try:
-        from aletheia.gateway.autostart import _legacy_launchd_present
-        found = _legacy_launchd_present()
+        from aletheia.gateway import autostart
+        found = autostart._legacy_launchd_present(
+            labels=autostart._SESSION_SERVICE_LEGACY_LAUNCHD_LABELS,
+        )
     except Exception:
+        report.add(
+            "process.legacy_launchd",
+            "warn",
+            "legacy Aletheia lifecycle state not available",
+            "restore launchctl access before changing Gateway lifecycle ownership",
+        )
         return
     if found:
         labels = ", ".join(found)
@@ -478,7 +486,9 @@ def _probe_legacy_launchd(report: Report) -> None:
             "process.legacy_launchd",
             "warn",
             f"legacy Aletheia lifecycle job(s) still loaded: {labels}",
-            "`aletheia gateway enable-autostart` migrates them automatically",
+            "`aletheia gateway enable` migrates them to the current session service; "
+            "`aletheia gateway stop` removes them and stops the current session "
+            "(`aletheia gateway disable` first to disable login recovery)",
         )
     else:
         report.add("process.legacy_launchd", "ok", "no legacy Aletheia lifecycle jobs")

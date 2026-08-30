@@ -1,3 +1,5 @@
+import plistlib
+
 from types import SimpleNamespace
 
 
@@ -141,6 +143,126 @@ def test_macos_enablement_is_separate_from_running_state(tmp_path, monkeypatch):
     assert enabled.exists()
     assert session_service._enable_macos(False)["ok"] is True
     assert canonical.exists() and not enabled.exists()
+
+
+def test_macos_install_rejects_foreign_enabled_definition(tmp_path, monkeypatch):
+    from aletheia.gateway import session_service
+
+    canonical = tmp_path / "service" / "gateway.plist"
+    enabled = tmp_path / "LaunchAgents" / "gateway.plist"
+    expected = {
+        "Label": session_service.MACOS_LABEL,
+        "ProgramArguments": ["/project/.venv/bin/python", "-m", "aletheia.main"],
+        "WorkingDirectory": "/project",
+        "RunAtLoad": True,
+    }
+    enabled.parent.mkdir(parents=True)
+    enabled.write_bytes(plistlib.dumps({**expected, "Label": "foreign.service"}))
+    monkeypatch.setattr(session_service, "_macos_canonical_path", lambda: canonical)
+    monkeypatch.setattr(session_service, "_macos_enabled_path", lambda: enabled)
+    monkeypatch.setattr(session_service, "_build_macos_plist", lambda: expected)
+    monkeypatch.setattr(
+        session_service,
+        "_macos_payload_valid",
+        lambda payload: payload == expected,
+    )
+    monkeypatch.setattr(
+        session_service._managed,
+        "_launchctl",
+        lambda args: _proc(1),
+    )
+    monkeypatch.setattr(session_service, "is_running", lambda: False)
+
+    result = session_service._install_macos()
+
+    assert result["ok"] is False
+    assert result["reason"] == "ownership_conflict"
+    assert enabled.exists()
+    assert not canonical.exists()
+    assert result["installed"] is False
+    assert result["enabled"] is True
+
+
+def test_macos_install_reports_state_after_racy_canonical_rollback(
+    tmp_path,
+    monkeypatch,
+):
+    from aletheia.gateway import session_service
+
+    canonical = tmp_path / "service" / "gateway.plist"
+    enabled = tmp_path / "LaunchAgents" / "gateway.plist"
+    enabled.parent.mkdir(parents=True)
+    enabled.write_text("foreign", encoding="utf-8")
+    states = iter([
+        session_service._result(backend="launchd", owned=True, config_valid=True),
+        session_service._result(
+            backend="launchd",
+            installed=True,
+            enabled=True,
+            owned=False,
+            config_valid=False,
+        ),
+        session_service._result(
+            backend="launchd",
+            installed=False,
+            enabled=True,
+            owned=False,
+            config_valid=False,
+        ),
+    ])
+    monkeypatch.setattr(session_service, "_status_macos", lambda: next(states))
+    monkeypatch.setattr(session_service, "_macos_canonical_path", lambda: canonical)
+    monkeypatch.setattr(
+        session_service,
+        "_build_macos_plist",
+        lambda: {"Label": session_service.MACOS_LABEL},
+    )
+
+    result = session_service._install_macos()
+
+    assert result["ok"] is False
+    assert result["reason"] == "ownership_conflict"
+    assert result["installed"] is False
+    assert result["enabled"] is True
+    assert not canonical.exists()
+    assert enabled.exists()
+
+
+def test_macos_install_reports_new_canonical_rollback_failure(tmp_path, monkeypatch):
+    from aletheia.gateway import session_service
+
+    canonical = tmp_path / "service" / "gateway.plist"
+    states = iter([
+        session_service._result(backend="launchd", owned=True, config_valid=True),
+        session_service._result(
+            backend="launchd",
+            installed=True,
+            enabled=True,
+            owned=False,
+            config_valid=False,
+        ),
+    ])
+    monkeypatch.setattr(session_service, "_status_macos", lambda: next(states))
+    monkeypatch.setattr(session_service, "_macos_canonical_path", lambda: canonical)
+    monkeypatch.setattr(
+        session_service,
+        "_build_macos_plist",
+        lambda: {"Label": session_service.MACOS_LABEL},
+    )
+    original_unlink = session_service.Path.unlink
+
+    def fail_canonical_unlink(path, *args, **kwargs):
+        if path == canonical:
+            raise OSError("denied")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(session_service.Path, "unlink", fail_canonical_unlink)
+
+    result = session_service._install_macos()
+
+    assert result["ok"] is False
+    assert result["reason"] == "canonical_rollback_error"
+    assert canonical.exists()
 
 
 def test_persistent_services_accept_only_equivalent_python_aliases(monkeypatch):

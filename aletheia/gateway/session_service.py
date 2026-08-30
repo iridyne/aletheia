@@ -404,6 +404,15 @@ def _status_macos() -> dict:
     canonical = _macos_canonical_path()
     enabled_path = _macos_enabled_path()
     if not canonical.exists():
+        if enabled_path.exists():
+            return _result(
+                backend="launchd",
+                installed=False,
+                enabled=True,
+                owned=False,
+                config_valid=False,
+                reason="ownership_conflict",
+            )
         return _result(backend="launchd", owned=True, config_valid=True)
     try:
         payload = plistlib.loads(canonical.read_bytes())
@@ -428,13 +437,38 @@ def _status_macos() -> dict:
 
 def _install_macos() -> dict:
     current = _status_macos()
-    if current.get("installed") and current.get("owned") is not True:
+    if current.get("owned") is False:
         return {**current, "ok": False, "reason": "ownership_conflict"}
+    canonical = _macos_canonical_path()
+    canonical_existed = canonical.exists()
     try:
-        _write_plist(_macos_canonical_path(), _build_macos_plist())
+        _write_plist(canonical, _build_macos_plist())
     except Exception as exc:
-        return {**current, "ok": False, "reason": "plist_write_error", "detail": type(exc).__name__}
-    return _result(backend="launchd", installed=True, owned=True, config_valid=True, recovery_scope="login", ok=True)
+        return {
+            **current,
+            "ok": False,
+            "reason": "plist_write_error",
+            "detail": type(exc).__name__,
+        }
+    verified = _status_macos()
+    if (
+        verified.get("installed") is not True
+        or verified.get("owned") is not True
+        or verified.get("config_valid") is not True
+    ):
+        if not canonical_existed:
+            try:
+                canonical.unlink(missing_ok=True)
+            except OSError as exc:
+                return {
+                    **verified,
+                    "ok": False,
+                    "reason": "canonical_rollback_error",
+                    "detail": type(exc).__name__,
+                }
+        rolled_back = _status_macos()
+        return {**rolled_back, "ok": False, "reason": "ownership_conflict"}
+    return {**verified, "ok": True}
 
 
 def _enable_macos(enabled: bool) -> dict:

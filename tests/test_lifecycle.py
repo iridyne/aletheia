@@ -47,7 +47,7 @@ def setup_env(tmp_path, monkeypatch):
     from aletheia.gateway import service_control
     monkeypatch.setattr(service_control, "is_machine_selected", lambda: False)
     monkeypatch.setattr(service_control, "start", lambda **_kwargs: {"ok": True})
-    monkeypatch.setattr(service_control, "stop", lambda: {"ok": True})
+    monkeypatch.setattr(service_control, "stop", lambda **_kwargs: {"ok": True})
 
 
 def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
@@ -124,7 +124,11 @@ def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     monkeypatch.setattr(
         service_control, "stop",
-        lambda: {"ok": False, "platform": "task_scheduler", "reason": "access_denied"},
+        lambda **_kwargs: {
+            "ok": False,
+            "platform": "task_scheduler",
+            "reason": "access_denied",
+        },
     )
     killed = []
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
@@ -134,6 +138,44 @@ def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_
 
     assert killed == []
     assert "stop blocked by task_scheduler: access_denied" in capsys.readouterr().err.lower()
+
+
+def test_do_stop_finishes_teardown_after_legacy_cleanup_failure(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "_auto_stop_tunnel", lambda: None)
+    monkeypatch.setattr(
+        service_control,
+        "stop",
+        lambda **_kwargs: {
+            "ok": False,
+            "runtime_stopped": True,
+            "reason": "ownership_conflict",
+        },
+    )
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [999])
+    killed = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(
+        lifecycle,
+        "wait_port_free",
+        lambda port, host, timeout=10.0: True,
+    )
+
+    with pytest.raises(typer.Exit):
+        lifecycle.do_stop()
+
+    assert killed == [999]
+    err = capsys.readouterr().err.lower()
+    assert "runtime stopped, but legacy recovery cleanup failed" in err
+    assert "no processes were terminated" not in err
 
 
 def test_do_start_refuses_unverified_port_holder(tmp_path, monkeypatch, capsys):
@@ -874,7 +916,11 @@ def test_do_start_background_stops_registration_when_readiness_fails(tmp_path, m
     from aletheia.gateway import service_control
     stopped = []
     monkeypatch.setattr(service_control, "start", lambda **_kwargs: {"ok": True})
-    monkeypatch.setattr(service_control, "stop", lambda: stopped.append(True) or {"ok": True})
+    monkeypatch.setattr(
+        service_control,
+        "stop",
+        lambda **_kwargs: stopped.append(True) or {"ok": True},
+    )
     monkeypatch.setattr(lifecycle, "_verify_started", lambda *_args, **_kwargs: (_ for _ in ()).throw(typer.Exit(1)))
 
     with pytest.raises(typer.Exit):

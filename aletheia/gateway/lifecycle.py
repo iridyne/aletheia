@@ -575,7 +575,7 @@ def _run_server(cfg) -> None:
     )
 
 
-def do_stop() -> None:
+def do_stop(*, preserve_recovery: bool = False) -> None:
     """Stop the gateway: tree-kill the supervisor (+ its uvicorn child), clean any
     orphaned uvicorn processes we previously spawned, and wait for the port to free.
 
@@ -589,10 +589,11 @@ def do_stop() -> None:
     try:
         from aletheia.gateway import service_control
         machine_selected = service_control.is_machine_selected()
-        managed = service_control.stop()
+        managed = service_control.stop(preserve_recovery=preserve_recovery)
     except Exception as exc:
         managed = {"ok": False, "reason": "service_manager_error", "detail": type(exc).__name__}
-    if not managed.get("ok"):
+    partial_stop = managed.get("runtime_stopped") is True
+    if not managed.get("ok") and not partial_stop:
         platform_name = managed.get("platform", "service manager")
         reason = managed.get("reason", "service_stop_failed")
         detail = managed.get("detail")
@@ -634,26 +635,29 @@ def do_stop() -> None:
         killed_any = True
 
     if not killed_any and not port_in_use(port, host):
-        # Nothing to do: no tracked gateway, no orphans, port is free.
         clear_pid()
+        freed = True
         _echo_stdout_safe("Gateway is not running.")
-        return
-
-    # Wait for the port to actually release BEFORE clearing the pidfile, so a
-    # concurrent start in the kill window still sees a tracked gateway
-    # rather than "untracked but port held" → false-orphan misdiagnosis.
-    freed = wait_port_free(port, host, timeout=5.0)
-
-    if freed:
-        clear_pid()
-        _echo_stdout_safe("Gateway stopped.")
     else:
-        _echo_safe(
-            f"Verified gateway processes were stopped, but port {port} is still in use. "
-            "Refusing to terminate an unverified holder.",
-        )
+        # Wait for the port to actually release BEFORE clearing the pidfile, so a
+        # concurrent start in the kill window still sees a tracked gateway.
+        freed = wait_port_free(port, host, timeout=5.0)
+        if freed:
+            clear_pid()
+            _echo_stdout_safe("Gateway stopped.")
+        else:
+            _echo_safe(
+                f"Verified gateway processes were stopped, but port {port} is still in use. "
+                "Refusing to terminate an unverified holder.",
+            )
 
     _audit_stop(freed=freed, killed_any=killed_any)
+    if partial_stop:
+        reason = managed.get("reason", "legacy_launchd_cleanup_error")
+        _echo_safe(
+            f"Gateway runtime stopped, but legacy recovery cleanup failed: {reason}.",
+        )
+        raise typer.Exit(1)
     if not freed:
         raise typer.Exit(1)
 
