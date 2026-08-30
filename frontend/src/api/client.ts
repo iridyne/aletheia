@@ -277,7 +277,7 @@ export interface LearningFunnelProjection {
 	ps_lessons: { availability: "available" | "unavailable"; total: number | null; by_status: Array<{ status: string; count: number }> | null; latest_created_at: string | null };
 	active_guards_total: number | null;
 	serenity_opportunities_active: number | null;
-	contradictions: { checked: boolean; count: number | null; items: unknown[]; note: string };
+	contradictions: { checked: boolean; count: number | null; items: unknown[]; eligible_total: number | null; inspected: number | null; truncated: boolean | null; note: string };
 	query_errors: Record<string, string>;
 }
 

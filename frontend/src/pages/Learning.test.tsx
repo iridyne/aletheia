@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const queryState = vi.hoisted(() => ({
   mode: 'error' as 'error' | 'loading' | 'stale' | 'partial' | 'success',
   semanticFailure: false,
+  partialScan: false,
   markdownData: { content: 'Retained markdown' } as { content?: string; error?: string },
 }))
 
@@ -42,7 +43,18 @@ vi.mock('@tanstack/react-query', () => ({
           pi_actual_visibility: { layer3_lesson_hits: 0, layer3_guards_available: 0, note: '' },
           ps_lessons: { availability: 'available', total: 0, by_status: [], latest_created_at: null },
           serenity_opportunities_active: 0,
-          contradictions: { checked: true, count: 0, items: [], note: '' },
+          contradictions: queryState.partialScan
+            ? {
+                checked: false,
+                count: null,
+                items: [
+                  { id: 'conflict-1' },
+                  { id: 'conflict-2' },
+                  { id: 'conflict-3' },
+                ],
+                note: 'incomplete provenance',
+              }
+            : { checked: true, count: 0, items: [], note: '' },
           active_guards_total: 0,
           query_errors: { pi_guards_window: 'read_failed' },
         }
@@ -78,6 +90,7 @@ describe('Learning workbench query honesty', () => {
   beforeEach(() => {
     queryState.mode = 'error'
     queryState.semanticFailure = false
+    queryState.partialScan = false
     queryState.markdownData = { content: 'Retained markdown' }
   })
 
@@ -202,4 +215,19 @@ describe('Learning workbench query honesty', () => {
     expect(missingHtml).toContain('File not found on disk')
     expect(conflictHtml).toContain('Content unavailable: integrity verification failed')
   })
+
+  it('renders preserved findings as a lower bound on both Learning surfaces', () => {
+    queryState.mode = 'success'
+    queryState.partialScan = true
+
+    const html = renderToStaticMarkup(<>
+      <LearningOverview onNavigate={() => {}} />
+      <LearningFunnelPanel />
+    </>)
+
+    expect(html.match(/≥3 \(partial scan\)/g)).toHaveLength(3)
+    expect(html).toContain('3 known open items; some counts unavailable')
+    expect(html).not.toContain('No open items')
+  })
+
 })

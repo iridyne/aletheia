@@ -262,6 +262,27 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **历史证据**: `docs/archive/legacy/issues/archive/audits/PIPELINE_GAPS.md §B1`
 
+### B1-D1. GET /api/analytics/learning-funnel — contradictions 覆盖率字段（#1886，2026-08-30）
+
+> **Contract Delta: MODIFIED** — D1（observable API response change）
+
+`contradictions` 响应对象新增三个字段，消除扫描上限（500 行）导致的误导性"完成"断言：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `eligible_total` | `int \| null` | 符合条件的 active 行总数（扫描前计数；扫描异常时为 null） |
+| `inspected` | `int \| null` | 实际送入检测器且内联 provenance 校验通过的行数（不超过 `min(eligible_total, 500)`） |
+| `truncated` | `bool \| null` | `eligible_total > 500` 时为 `true`；扫描异常时为 null |
+
+**行为变化**：
+- `truncated=true` 时 `checked` 强制为 `false`，`count` 为 `null`——findings 仅为下界，不是确认零值。
+- `truncated=false` 且 `checked=true` 时，`count` 仍为精确值；穷尽扫描的"零冲突"结论有效。
+- 任一候选行缺少 canonical inline provenance 或完整性校验失败时，`checked=false`、`count=null`，并在 `query_errors.contradictions_provenance` 返回稳定的 `unavailable`；已检出的 findings 仍作为下界保留。
+- UI 在 `checked=false && truncated=true` 时展示 `≥N (partial scan)`，禁止展示"No open items"。
+
+**DB 路径变化**：`GET /learning-funnel` 的矛盾扫描 SELECT 不再包含 `file_path`，消除了每次 Dashboard 刷新触发的同步 Markdown 文件读取。canonical inline provenance（`content`/`content_format`/`content_sha256`/`metadata_json`，由 #1839 写入）直接送入检测器；无内联证据的 legacy 行返回 `unavailable` 状态，对应 signal 被跳过（partial，不猜测）。
+
+
 ### B2. guard_candidate → trading_guard 晋升
 
 `guard_candidate` 当前通过人工路径
