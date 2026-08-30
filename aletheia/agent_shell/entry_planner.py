@@ -146,6 +146,19 @@ def _canonicalize_no_plan(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class _PlanIntentWireSchema:
+    @classmethod
+    def model_json_schema(cls) -> dict[str, Any]:
+        return _PlanIntentWire.model_json_schema()
+
+    @classmethod
+    def model_validate(cls, payload: dict[str, Any]) -> PlanIntent:
+        canonical = dict(_canonicalize_no_plan(payload))
+        payload.clear()
+        payload.update(canonical)
+        return PlanIntent.model_validate(payload)
+
+
 def _validate_intent_against_candidate(
     intent: PlanIntent,
     generation: dict,
@@ -435,7 +448,7 @@ STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
         result, error = await llm_structured(
             system_prompt,
             json.dumps(context, sort_keys=True, default=str),
-            schema=_PlanIntentWire,
+            schema=_PlanIntentWireSchema,
             max_tokens=768,
             provider=provider_name,
             fallback_to_defaults=False,
