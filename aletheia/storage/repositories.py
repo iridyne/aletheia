@@ -2810,6 +2810,15 @@ def has_order_for_proposal(proposal_id: str) -> bool:
     )
 
 
+def get_order_for_proposal(proposal_id: str) -> dict | None:
+    """Return the durable Order representing one Proposal, if present."""
+    row = get_db().execute(
+        "SELECT * FROM orders WHERE proposal_id=? ORDER BY created_at DESC LIMIT 1",
+        (proposal_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 # --- Risk Decisions ---
 
 

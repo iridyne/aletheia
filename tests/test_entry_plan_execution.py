@@ -880,6 +880,10 @@ def test_gateway_cancel_recovers_order_through_proposal_relation():
         "UPDATE entry_plans SET order_id=NULL WHERE id=?",
         (plan.plan_id,),
     )
+    assert repo.get_entry_plan(plan.plan_id)["order_id"] is None
+    proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    assert proposal is not None
+    assert repo.get_order_for_proposal(proposal["id"])["id"] == order.id
     repo.insert_fill(
         Fill(
             order_id=order.id,

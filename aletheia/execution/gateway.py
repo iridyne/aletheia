@@ -470,7 +470,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     if order is None:
         proposal = repo.get_trade_proposal_by_entry_plan(plan_id)
         if proposal is not None:
-            order = repo.get_order_by_proposal(str(proposal["id"]))
+            order = repo.get_order_for_proposal(str(proposal["id"]))
     if order is None or not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
     if order.get("execution_mode") != "bitget_demo":
