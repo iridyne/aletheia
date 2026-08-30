@@ -219,7 +219,7 @@ def test_health_alert_fires_on_unhealthy_transition(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _disable_self_heal(monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)  # reset leaked global
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
 
     sent = []
     monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
@@ -237,7 +237,7 @@ def test_health_alert_dedupes_consecutive(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _disable_self_heal(monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)  # reset leaked global
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     sent = []
     monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
     monkeypatch.setattr(health, "compute_health",
@@ -245,6 +245,36 @@ def test_health_alert_dedupes_consecutive(tmp_path, monkeypatch):
     health.run_health_check()
     health.run_health_check()  # still unhealthy -> no second alert
     assert len(sent) == 1
+
+
+def test_durable_issue_does_not_suppress_new_incident(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _disable_self_heal(monkeypatch)
+    from aletheia.agent_runtime import health
+
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
+    sent = []
+    monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
+    results = iter([
+        {
+            "healthy": False,
+            "issues": ["broker_funding_history_expired:1"],
+        },
+        {
+            "healthy": False,
+            "issues": [
+                "broker_funding_history_expired:1",
+                "exchange_unreachable",
+            ],
+        },
+    ])
+    monkeypatch.setattr(health, "compute_health", lambda: next(results))
+
+    health.run_health_check()
+    health.run_health_check()
+
+    assert len(sent) == 2
+    assert "exchange_unreachable" in sent[1]
 
 
 def test_health_no_alert_when_healthy(tmp_path, monkeypatch):
@@ -469,7 +499,7 @@ def test_code_drift_does_not_restart_twice(tmp_path, monkeypatch):
     monkeypatch.setattr(build_info, "code_drift_issue",
                         lambda: "code_updated_pending_restart:aaa..bbb")
     monkeypatch.setattr(health, "_market_data_stale_minutes", lambda cfg: 60.0)
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     restarted_for = []
@@ -495,7 +525,7 @@ def test_code_drift_first_time_still_restarts(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build_info, "code_drift_issue",
                         lambda: "code_updated_pending_restart:aaa..bbb")
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     restarted_for = []

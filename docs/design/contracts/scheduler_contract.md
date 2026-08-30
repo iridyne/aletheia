@@ -180,8 +180,8 @@ independent one-minute delivery path.
 
 ### 3.3 Broker funding settlement
 
-`broker_funding_settler` runs every 30 minutes on `io`, starts three minutes after boot, is
-essential during layered pause, has `max_instances=1`, and is bounded by a 60-second async
+`broker_funding_settler` runs every 30 minutes on `io`, starts four minutes after boot, is
+essential during layered pause, has `max_instances=1`, and is bounded by a 120-second async
 timeout. It scans unresolved verified exchange-futures closes through a durable
 `(closed_at,rowid)` keyset cursor. A bounded credential-free UTA retention classification budget
 is separate from the bounded broker-I/O budget: only the matching profile's

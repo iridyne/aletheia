@@ -33,8 +33,9 @@ _FAILED_STATUSES = {
 _IN_PROGRESS_STATUSES = {"queued", "running"}
 _OBSERVER_MAX_STALENESS_MIN = 45.0
 
-# In-process de-dupe of consecutive unhealthy alerts.
-_last_alerted_unhealthy = False
+# In-process de-dupe by issue kind. Durable warnings must not suppress alerts
+# when an independent incident appears before health returns to fully healthy.
+_last_alerted_issue_keys: frozenset[str] = frozenset()
 
 # --- Deterministic self-heal state (see HealthConfig.self_heal_*) ---
 # Indirection over os._exit so tests can patch it without killing the test
@@ -763,29 +764,33 @@ def _check_ranker_admission_starvation() -> None:
 
 
 def run_health_check() -> dict:
-    """Evaluate health; alert on transition into unhealthy, then self-heal.
+    """Evaluate health; alert on new issue kinds, then self-heal.
 
     Self-heal is deterministic (no LLM): it acts on the issue strings
     compute_health() already produces. Restart-fixable signals (code drift, stale
     feed) trigger a guarded, rate-limited exit(42) respawn; orphan PIDs get cleaned;
     everything else (LLM down, kill switch, bad strategy runs) is alert-only."""
-    global _last_alerted_unhealthy, _self_heal_suppressed_alerted
+    global _last_alerted_issue_keys, _self_heal_suppressed_alerted
     cfg = load_config()
     if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
         _check_ranker_admission_starvation()
     h = compute_health()
+    current_issue_keys = frozenset(
+        str(issue).partition(":")[0] for issue in h["issues"]
+    )
+    new_issue_keys = current_issue_keys - _last_alerted_issue_keys
     if not h["healthy"]:
-        if not _last_alerted_unhealthy:
+        if new_issue_keys:
             msg = "; ".join(h["issues"])
             _send_alert(msg)
             write_audit({
                 "actor": "system", "source": "scheduler", "event_type": "health_alert",
                 "entity_type": "system_health", "message": f"Unhealthy: {msg}",
             })
-            _last_alerted_unhealthy = True
+        _last_alerted_issue_keys = current_issue_keys
     else:
-        # Healthy again — reset both dedupe flags so the next downturn re-alerts.
-        _last_alerted_unhealthy = False
+        # Healthy again — reset both dedupe states so the next downturn re-alerts.
+        _last_alerted_issue_keys = frozenset()
         _self_heal_suppressed_alerted = False
         return h
     if not cfg.health.self_heal_enabled:
