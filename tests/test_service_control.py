@@ -781,3 +781,81 @@ def test_disable_cleans_verified_legacy_recovery_without_session_install(monkeyp
     assert result["ok"] is True
     assert result["enabled"] is False
     assert sources == ["circuit_breaker"]
+
+
+def test_disable_reports_persistent_owner_disabled_when_legacy_cleanup_fails(
+    monkeypatch,
+):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "session",
+            "session": _state(installed=True, enabled=True),
+            "machine": _state(),
+            "transient": {"managed": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control.session_service,
+        "disable",
+        lambda *, source: {"ok": True, "enabled": False},
+    )
+    monkeypatch.setattr(
+        service_control,
+        "_cleanup_legacy_macos",
+        lambda *, source: {
+            "ok": False,
+            "reason": "legacy_launchd_cleanup_error",
+            "legacy_mutated": False,
+            "legacy_preserved": True,
+        },
+    )
+
+    result = service_control.disable(source="circuit_breaker")
+
+    assert result["ok"] is False
+    assert result["enabled"] is False
+    assert result["persistent_disabled"] is True
+    assert result["cleanup_target"] == "legacy recovery"
+
+
+def test_disable_does_not_claim_already_disabled_persistent_owner_was_mutated(
+    monkeypatch,
+):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "session",
+            "session": _state(installed=True, enabled=False),
+            "machine": _state(),
+            "transient": {"managed": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control.session_service,
+        "disable",
+        lambda *, source: {"ok": True, "enabled": False},
+    )
+    monkeypatch.setattr(
+        service_control,
+        "_cleanup_legacy_macos",
+        lambda *, source: {
+            "ok": False,
+            "reason": "legacy_launchd_cleanup_error",
+            "legacy_mutated": False,
+            "legacy_preserved": True,
+        },
+    )
+
+    result = service_control.disable(source="circuit_breaker")
+
+    assert result["ok"] is False
+    assert result["persistent_disabled"] is False

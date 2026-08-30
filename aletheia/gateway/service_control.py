@@ -225,6 +225,7 @@ def disable(*, elevate: bool = True, source: str = "cli") -> dict:
         return {
             **disabled,
             **cleanup_failure,
+            "persistent_disabled": session.get("enabled") is True,
             "cleanup_target": "legacy recovery",
         }
     return disabled
