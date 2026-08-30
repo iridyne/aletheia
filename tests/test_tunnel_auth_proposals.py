@@ -252,9 +252,9 @@ async def test_reject_actor_source_is_owner_for_tunnel_authenticated_calls(clien
     import aletheia.files.jsonl as jsonl_mod
     original_write_audit = jsonl_mod.write_audit
 
-    def _capturing_write_audit(event):
+    def _capturing_write_audit(event, **kwargs):
         audit_events.append(dict(event))
-        return original_write_audit(event)
+        return original_write_audit(event, **kwargs)
 
     import aletheia.files.jsonl as jsonl_mod
     original = jsonl_mod.write_audit
@@ -283,9 +283,9 @@ async def test_reject_actor_source_is_dashboard_for_local_calls(client, tmp_path
     import aletheia.files.jsonl as jsonl_mod
     original = jsonl_mod.write_audit
 
-    def _capturing_write_audit(event):
+    def _capturing_write_audit(event, **kwargs):
         audit_events.append(dict(event))
-        return original(event)
+        return original(event, **kwargs)
 
     proposal = _make_pending_proposal()
     jsonl_mod.write_audit = _capturing_write_audit

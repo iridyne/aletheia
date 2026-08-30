@@ -45,11 +45,12 @@ def test_dcls_seed_is_wired_into_hypothesis_generation():
 
 @spec_claim(SpecClaim(
     "DCLS-B01", "operator_layer", "manual control-loop diagnostic", "L2b",
-    "Control-loop simulation remains an explicit local diagnostic and does not consume routine PR or scheduled CI capacity.",
+    "Control-loop simulation remains an explicit local diagnostic. Routine PR CI "
+    "does not run remotely; owner-triggered full validation may include it.",
     status="implemented",
 ))
 def test_dcls_is_kept_out_of_routine_ci():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
-    assert "--ignore=tests/simulation" in ci
+    assert "pull_request:" not in ci
     assert "DCLS_MAX_EXAMPLES" not in ci
     assert not (ROOT / ".github/workflows/dcls-nightly.yml").exists()

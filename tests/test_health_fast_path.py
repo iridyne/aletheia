@@ -1,3 +1,6 @@
+import time
+
+
 def test_exchange_reachable_uses_cached_connectivity_probe(monkeypatch):
     import aletheia.agent_runtime.connectivity as connectivity
     from aletheia.agent_runtime.health import _exchange_reachable
@@ -9,7 +12,7 @@ def test_exchange_reachable_uses_cached_connectivity_probe(monkeypatch):
     monkeypatch.setattr(
         connectivity,
         "get_status",
-        lambda: {"last_probe": {"reachable": True, "exchange": "okx", "ts": 1.0}},
+        lambda: {"last_probe": {"reachable": True, "exchange": "okx", "ts": time.time()}},
     )
 
     assert _exchange_reachable() is True
@@ -22,7 +25,7 @@ def test_exchange_reachable_reports_cached_failure(monkeypatch):
     monkeypatch.setattr(
         connectivity,
         "get_status",
-        lambda: {"last_probe": {"reachable": False, "exchange": "okx", "ts": 1.0}},
+        lambda: {"last_probe": {"reachable": False, "exchange": "okx", "ts": time.time()}},
     )
 
     assert _exchange_reachable() is False

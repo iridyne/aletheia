@@ -214,4 +214,4 @@ async def test_knowledge_content_falls_back_to_inline_storage(client):
     resp = await client.get(f"/api/knowledge/{item.id}/content")
 
     assert resp.status_code == 200
-    assert resp.json() == {"id": item.id, "content": "Persisted inline knowledge"}
+    assert resp.json() == {"id": item.id, "content": "Persisted inline knowledge", "source_state": "available_inline"}

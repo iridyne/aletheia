@@ -7,9 +7,15 @@ CCXTProvider fix was committed, /api/health still reported healthy).
 
 All tests are pure (no git, no network) — git_ops.current_commit is monkeypatched.
 """
+import pytest
 
 from aletheia.agent_runtime import build_info
 from aletheia.update import git_ops
+
+
+@pytest.fixture(autouse=True)
+def _restore_boot_commit(monkeypatch):
+    monkeypatch.setattr(build_info, "_boot_commit", build_info.get_boot_commit())
 
 
 def _set_boot(monkeypatch, value):
