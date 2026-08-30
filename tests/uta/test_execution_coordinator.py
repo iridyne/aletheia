@@ -185,6 +185,9 @@ def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeyp
 
 def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "validate_native_order_authority", lambda _order: None)
     proposal_id, risk_id = "proposal-protected", "risk-protected"
     _authority(proposal_id, risk_id, order_type="limit")
     captured = []
@@ -216,6 +219,8 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
         take_profit_price=110.0,
         time_in_force="GTC",
         post_only=True,
+        entry_plan_id="entry-plan-1",
+        order_tactic="POST_ONLY_LIMIT",
     )
 
     [command] = captured
@@ -223,6 +228,11 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
     assert command.take_profit_price == 110
     assert command.time_in_force == "GTC"
     assert command.post_only is True
+    [stored] = repo.list_orders(limit=10)
+    assert stored["entry_plan_id"] == "entry-plan-1"
+    assert stored["order_tactic"] == "POST_ONLY_LIMIT"
+    assert stored["time_in_force"] == "GTC"
+    assert stored["post_only"] == 1
 
 
 def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeypatch):
