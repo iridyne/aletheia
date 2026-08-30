@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.knowledge.manager import create_guard_candidate
 from aletheia.learning.hypothesis_research import research_learning_hypothesis
 from aletheia.learning.hypotheses import HypothesisResearchEvidenceV1
+from aletheia.learning.t0_context import T0ContextDomainV1, T0ContextEnvelopeV1
+from aletheia.learning.t0_coverage import get_t0_coverage_contract
 
 
 _BLOCK_ACTIONS = {"block_scanner", "block_direction", "block_symbol"}
@@ -63,6 +66,7 @@ async def route_automatic_block_recommendation(
                 target_horizon="4h",
                 path_id="ranker_learned_guard",
                 consumer="paper ranker",
+                t0_envelopes=_build_ranker_guard_t0_envelopes(source_ids),
                 deadline=deadline,
             )
         )
@@ -220,6 +224,272 @@ async def route_automatic_block_recommendation(
         "research_status": research.research_status,
         "original_action": action,
     }
+
+
+def _build_ranker_guard_t0_envelopes(
+    source_artifact_ids: list[str],
+) -> list[T0ContextEnvelopeV1]:
+    """Reconstruct exact Ranker T0 projections from immutable decision facts."""
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    contract = get_t0_coverage_contract("ranker_learned_guard")
+    db = get_db()
+    envelopes: list[T0ContextEnvelopeV1] = []
+    for artifact_id in source_artifact_ids:
+        item = repo.get_knowledge_item(artifact_id)
+        if item is None or item.get("item_type") != "trade_case_study":
+            continue
+        document = read_knowledge_document(item)
+        if document.state in {"integrity_conflict", "unavailable"}:
+            continue
+        position_id = str(document.metadata.get("position_id") or "").strip()
+        position = repo.get_position(position_id) if position_id else None
+        if not position:
+            continue
+        opportunity_id = str(position.get("opportunity_id") or "").strip()
+        opened_at = str(position.get("opened_at") or "").strip()
+        opened = _t0_instant(opened_at)
+        if not opportunity_id or opened is None:
+            continue
+        candidates = [
+            dict(row)
+            for row in db.execute(
+                "SELECT * FROM filter_decisions WHERE opportunity_id=? "
+                "AND stage='paper_ranker' ORDER BY evaluated_at, sequence_no, id",
+                (opportunity_id,),
+            ).fetchall()
+            if (
+                (evaluated := _t0_instant(str(row["evaluated_at"] or ""))) is not None
+                and evaluated <= opened
+            )
+        ]
+        if not candidates:
+            continue
+        anchor_times = [
+            value
+            for row in candidates
+            if (value := _t0_instant(str(row["evaluated_at"]))) is not None
+        ]
+        anchor = max(anchor_times)
+        cohort = [
+            row for row in candidates
+            if _t0_instant(str(row["evaluated_at"])) == anchor
+        ]
+        if len(cohort) > 20:
+            continue
+        run_ids = {str(row.get("run_id") or "") for row in cohort}
+        if len(run_ids) > 1:
+            continue
+        source_refs = [f"filter_decision:{row['id']}" for row in cohort]
+        source_hashes = [
+            hashlib.sha256(
+                json.dumps(row, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+            for row in cohort
+        ]
+        inputs = {
+            str(row["filter_name"]): parsed
+            for row in cohort
+            if (parsed := _json_object(row.get("input_snapshot")))
+        }
+        ordering = [
+            {
+                "filter_name": row["filter_name"],
+                "sequence_no": row["sequence_no"],
+                "filter_version": row["filter_version"],
+                "parameters": _json_object(row.get("parameter_snapshot")),
+            }
+            for row in cohort
+        ]
+        first = cohort[0]
+        population = {
+            key: first.get(key)
+            for key in ("run_id", "universe_snapshot_id", "universe_member_id")
+            if first.get(key)
+        }
+        guard_rows = [
+            row for row in cohort if row["filter_name"] == "guard_candidate_block"
+        ]
+        guard_manifest = {
+            "decisions": [
+                {
+                    "decision": row["decision"],
+                    "reason_code": row["reason_code"],
+                    "inputs": _json_object(row.get("input_snapshot")),
+                    "parameters": _json_object(row.get("parameter_snapshot")),
+                }
+                for row in guard_rows
+            ]
+        } if guard_rows else {}
+        outcome = db.execute(
+            "SELECT id, outcome_candidate_key, horizon, entry_price_usd, "
+            "entry_spread_bps, funding_rate_at_entry, entry_ts, cost_model_version "
+            "FROM filter_candidate_outcomes "
+            "WHERE outcome_candidate_key=? AND horizon='4h' "
+            "ORDER BY entry_ts, id LIMIT 1",
+            (f"opportunity:{opportunity_id}",),
+        ).fetchone()
+        outcome_data = dict(outcome) if outcome is not None else {}
+        entry_at = _t0_instant(str(outcome_data.get("entry_ts") or ""))
+        outcome_matches_cohort = (
+            outcome_data.get("outcome_candidate_key")
+            == f"opportunity:{opportunity_id}"
+            and outcome_data.get("horizon") == "4h"
+            and entry_at is not None
+            and entry_at <= anchor
+        )
+        liquidity = {
+            key: outcome_data[key]
+            for key in (
+                "entry_price_usd", "entry_spread_bps",
+                "funding_rate_at_entry", "cost_model_version",
+            )
+            if outcome_matches_cohort and outcome_data.get(key) is not None
+        }
+        liquidity_refs = (
+            [f"filter_candidate_outcome:{outcome_data['id']}"]
+            if liquidity else []
+        )
+        liquidity_hashes = (
+            [
+                hashlib.sha256(
+                    json.dumps(
+                        outcome_data, sort_keys=True, default=str,
+                    ).encode("utf-8")
+                ).hexdigest()
+            ]
+            if liquidity else []
+        )
+        domain_values = {
+            "candidate": {
+                key: first.get(key)
+                for key in (
+                    "candidate_key", "opportunity_id", "decision", "reason_code",
+                )
+                if first.get(key)
+            },
+            "population": population,
+            "features": inputs,
+            "market_identity": {
+                key: first.get(key)
+                for key in (
+                    "venue", "symbol", "market_type", "direction", "scanner_family",
+                )
+                if first.get(key)
+            },
+            "regime": (
+                {"regime_tag": first["regime_tag"]} if first.get("regime_tag") else {}
+            ),
+            "liquidity_cost": liquidity,
+            "ordering_policy": {"gates": ordering} if ordering else {},
+            "guard_manifest": guard_manifest,
+        }
+        domains = [
+            _t0_domain(
+                name,
+                domain_values.get(name, {}),
+                source_refs=(
+                    liquidity_refs if name == "liquidity_cost" else source_refs
+                ),
+                source_hashes=(
+                    liquidity_hashes if name == "liquidity_cost" else source_hashes
+                ),
+                observed_at=(
+                    entry_at.isoformat()
+                    if name == "liquidity_cost" and entry_at is not None
+                    else anchor.isoformat()
+                ),
+            )
+            for name in (*contract.required_domains, *contract.recommended_domains)
+        ]
+        population_identity = (
+            f"universe_snapshot:{population['universe_snapshot_id']}"
+            if population.get("universe_snapshot_id")
+            else f"ranker_run:{population['run_id']}"
+            if population.get("run_id")
+            else None
+        )
+        observed_world_hash = hashlib.sha256(
+            json.dumps(domain_values, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        versions = sorted({str(row["filter_version"]) for row in cohort})
+        envelopes.append(T0ContextEnvelopeV1(
+            path_id=contract.path_id,
+            consumer="paper ranker",
+            consumer_stage=contract.consumer_stage,
+            t0_anchor_kind=contract.anchor_kind,
+            anchor_entity_id=f"filter_decision:{first['id']}",
+            anchor_at=anchor.isoformat(),
+            capture_mode="reconstructed_exact",
+            runtime_session_id=None,
+            producer_commit=(
+                str(first["code_commit"]) if first.get("code_commit") else None
+            ),
+            behavior_fingerprint=hashlib.sha256(
+                json.dumps(versions).encode("utf-8")
+            ).hexdigest(),
+            policy_epoch=None,
+            required_domains=list(contract.required_domains),
+            recommended_domains=list(contract.recommended_domains),
+            domains=domains,
+            root_causal_identity=f"position:{position_id}",
+            population_identity=population_identity,
+            observed_world_hash=observed_world_hash,
+            completeness_reasons=[
+                f"required_domain_unavailable:{domain.domain}"
+                for domain in domains
+                if domain.domain in contract.required_domains
+                and domain.state != "available"
+            ],
+        ))
+    return envelopes
+
+
+def _t0_domain(
+    name: str,
+    values: dict[str, Any],
+    *,
+    source_refs: list[str],
+    source_hashes: list[str],
+    observed_at: str,
+) -> T0ContextDomainV1:
+    if not values:
+        return T0ContextDomainV1(
+            domain=name,
+            state="unavailable",
+            source_class="observed_fact",
+            unavailable_reason="canonical decision-time fact unavailable",
+        )
+    return T0ContextDomainV1(
+        domain=name,
+        state="available",
+        source_class="observed_fact",
+        values=values,
+        source_refs=source_refs,
+        source_hashes=source_hashes,
+        source_observed_at=observed_at,
+        received_at=observed_at,
+    )
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _t0_instant(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _candidate_explanation(
