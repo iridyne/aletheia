@@ -638,6 +638,41 @@ def test_unsupported_candidate_family_trigger_terminalizes_once():
     assert json.loads(stored["result_json"])["reason_code"] == "NO_COMPATIBLE_TRIGGER_SPEC"
 
 
+def test_missing_trigger_identity_terminalizes_after_one_physical_call(monkeypatch):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    calls = 0
+
+    async def invalid_structured(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "decision": "ENTRY_PLAN",
+            "reason_code": "OK",
+            "thesis": "x",
+            "scenario": "y",
+            "evidence_refs": [],
+            "execution_mode": "TRIGGERED",
+            "order_tactic": "POST_ONLY_LIMIT",
+            "trigger_spec_id": None,
+            "trigger_spec_version": None,
+            "risk_tier": "LOW",
+            "horizon": "INTRADAY",
+        }, None
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", invalid_structured)
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    first = asyncio.run(plan_next_candidate(system_operator_entry_planner))
+    second = asyncio.run(plan_next_candidate(system_operator_entry_planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert first["status"] == "no_plan"
+    assert second["status"] == "idle"
+    assert calls == 1
+    assert stored["attempt_count"] == 1
+    assert json.loads(stored["result_json"])["reason_code"] == "TRIGGER_SPEC_NOT_REGISTERED"
+
+
 def test_legacy_venue_mismatch_consumes_no_model_call():
     from aletheia.config.loader import load_config
 

@@ -288,6 +288,18 @@ async def plan_next_candidate(
             "model_invoked": False,
         }
     except PlanIntentError as exc:
+        if exc.code == "TRIGGER_SPEC_NOT_REGISTERED":
+            stored = _complete_semantic_no_plan(
+                generation["id"],
+                owner,
+                exc.code,
+                detail=str(exc),
+            )
+            return {
+                "status": "no_plan" if stored else "stale",
+                "planning_generation_id": generation["id"],
+                "model_invoked": True,
+            }
         repo.defer_candidate_planning_with_code(generation["id"], owner, exc.code, str(exc))
         return {
             "status": "unavailable",
@@ -311,10 +323,23 @@ async def plan_next_candidate(
     try:
         intent = PlanIntent.model_validate(raw)
     except ValidationError as exc:
+        code = _intent_validation_code(exc)
+        if code == "TRIGGER_SPEC_NOT_REGISTERED":
+            stored = _complete_semantic_no_plan(
+                generation["id"],
+                owner,
+                code,
+                detail=str(exc),
+            )
+            return {
+                "status": "no_plan" if stored else "stale",
+                "planning_generation_id": generation["id"],
+                "model_invoked": True,
+            }
         repo.defer_candidate_planning_with_code(
             generation["id"],
             owner,
-            f"INTENT_SEMANTIC:{_intent_validation_code(exc)}",
+            f"INTENT_SEMANTIC:{code}",
         )
         return {
             "status": "unavailable",
@@ -443,7 +468,10 @@ STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
     try:
         return PlanIntent.model_validate(result)
     except ValidationError as exc:
-        raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{_intent_validation_code(exc)}") from exc
+        code = _intent_validation_code(exc)
+        if code == "TRIGGER_SPEC_NOT_REGISTERED":
+            raise PlanIntentError(code) from exc
+        raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{code}") from exc
 
 
 async def run_entry_planner_once(

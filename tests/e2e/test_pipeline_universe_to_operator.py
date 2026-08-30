@@ -315,7 +315,7 @@ async def test_real_universe_refresh_keeps_unmonitorable_candidate_ineligible(e2
 
 
 @pytest.mark.asyncio
-async def test_stock_linked_perp_reaches_candidate_planning_context(
+async def test_stock_linked_perp_stays_ineligible_without_exact_monitoring_venue(
     e2e_db,
     monkeypatch,
     tmp_path,
@@ -325,12 +325,6 @@ async def test_stock_linked_perp_reaches_candidate_planning_context(
     import aletheia.config.loader as config_loader
 
     from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agent_shell.trading_context import (
-        build_enriched_trading_context,
-        scope_operator_context_to_candidate,
-    )
-    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
-    from aletheia.agents.paper_trader import run_paper_trader
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories as repo
     from aletheia.trading.market_data import collect_market_snapshots
@@ -407,49 +401,14 @@ async def test_stock_linked_perp_reaches_candidate_planning_context(
     assert snapshot_id is not None
     candidates = repo.list_universe_members(snapshot_id, limit=10)
     assert len(candidates) == 1
-    assert candidates[0]["symbol"] == "SOXL/USDT"
-    assert candidates[0]["market_type"] == "perp"
+    candidate = candidates[0]
+    assert candidate["symbol"] == "SOXL/USDT"
+    assert candidate["market_type"] == "perp"
+    assert not bool(candidate["execution_eligible"])
+    flags = candidate.get("risk_flags") or []
+    if isinstance(flags, str):
+        flags = json.loads(flags)
+    assert "fast_market_data_venue_unavailable" in flags
     generation = e2e_db.execute("SELECT * FROM candidate_planning_generations WHERE is_current=1").fetchone()
-    assert generation is not None
-    assert generation["last_candidate_id"] == candidates[0]["id"]
-    assert generation["symbol"] == "SOXL/USDT"
-    assert generation["market_type"] == "perp"
+    assert generation is None
     assert repo.list_opportunities(limit=10) == []
-    return
-
-    opportunities = repo.list_opportunities(limit=10)
-    assert len(opportunities) == 1
-    opportunity = opportunities[0]
-    metadata = json.loads(opportunity["metadata"])
-    assert opportunity["symbol"] == "SOXL/USDT"
-    assert opportunity["market"] == "perp"
-    assert opportunity["asset_class"] == "equity"
-    assert opportunity["asset_subclass"] == "stock_linked_perp"
-    assert opportunity["execution_eligible"] == 1
-    assert metadata["instrument_background"]["physical_market_type"] == "perp"
-    assert metadata["analysis_context"]["kind"] == "stock_linked_perp"
-
-    ranker_result = await run_paper_trader(permission_mode="Paper", run_id="stock-linked-to-operator-ranker")
-    assert ranker_result["errors"] == []
-    assert ranker_result["outputs"][-1] == "signals_pending:1"
-
-    context = build_enriched_trading_context(authorize_learning=False)
-    context["layer2"]["reflection"] = "SENTINEL_GLOBAL_CRYPTO_REFLECTION"
-    scoped = scope_operator_context_to_candidate(context, opportunity["id"])
-    candidate = scoped["layer2"]["pending_signals"][0]
-    feature = scoped["layer1"]["features"][0]
-    assert candidate["instrument_background"] == metadata["instrument_background"]
-    assert candidate["analysis_context"] == metadata["analysis_context"]
-    assert candidate["market_type"] == "usdt_futures"
-    assert candidate["b2_evidence"]["status"] == "not_applicable"
-    assert scoped["layer1"]["regime"] is None
-    assert scoped["layer2"]["reflection"] is None
-    assert feature["relative_strength_24h"] is None
-    assert feature["btc_beta"] is None
-
-    prompt = _build_assessment_prompt(scoped)
-    assert "SOXL/USDT is a Binance USDT perpetual" in prompt
-    assert "+3x DAILY exposure" in prompt
-    assert "ICESEMIT" in prompt
-    assert "RS24h=" not in prompt
-    assert "SENTINEL_GLOBAL_CRYPTO_REFLECTION" not in prompt

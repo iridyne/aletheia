@@ -269,8 +269,9 @@ async def _load_entry_plan_watchers(
 
     plans: dict[str, EntryPlan] = {}
     engines: dict[str, TriggerEngine] = {}
+    monitoring_limit = int(cfg.fast_trigger.max_setups)
     now = datetime.now(timezone.utc)
-    for row in await asyncio.to_thread(repo.list_watchable_entry_plans, int(cfg.fast_trigger.max_setups)):
+    for row in await asyncio.to_thread(repo.list_watchable_entry_plans, None):
         payload = str(row["plan_json"])
         if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
             await _handle_entry_plan_integrity_failure(
@@ -397,6 +398,8 @@ async def _load_entry_plan_watchers(
                         reason="entry_plan_maker_timeout",
                     )
                     continue
+        if len(plans) >= monitoring_limit:
+            continue
         plans[plan.plan_id] = plan
         if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
             continue

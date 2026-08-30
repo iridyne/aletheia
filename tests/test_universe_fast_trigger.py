@@ -1822,6 +1822,82 @@ async def test_resting_maker_timeout_uses_orders_created_at_not_plan_age(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    rows = []
+    plans = {}
+    for index in range(11):
+        payload = f"plan-{index}"
+        plan_id = payload
+        ordered = index == 10
+        rows.append(
+            {
+                "id": plan_id,
+                "status": "ordered" if ordered else "waiting",
+                "plan_json": payload,
+                "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+                "order_id": "order-beyond-cap" if ordered else None,
+            }
+        )
+        plans[payload] = SimpleNamespace(
+            plan_id=plan_id,
+            planning_generation_id=f"generation-{index}",
+            risk_policy_id="p1",
+            risk_policy_revision=1,
+            risk_policy_hash="ph",
+            execution_account_mode="bitget_demo",
+            execution_mode="RESTING_MAKER",
+            order_tactic="POST_ONLY_LIMIT",
+            max_wait_sec=60,
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            venue="bitget",
+            symbol=f"ASSET{index}/USDT",
+            market_type="perp",
+            direction="long",
+        )
+
+    requested_limits = []
+
+    def list_plans(limit=100):
+        requested_limits.append(limit)
+        return rows if limit is None else rows[:limit]
+
+    cancellations = []
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", list_plans)
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda payload: plans[payload])
+    monkeypatch.setattr(
+        watch.repo,
+        "get_order",
+        lambda _id: {"created_at": (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()},
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="p1", revision=1),
+            policy_hash="ph",
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
+    )
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+    )
+
+    watched, _ = await watch._load_entry_plan_watchers(cfg)
+
+    assert requested_limits == [None]
+    assert len(watched) == 10
+    assert cancellations == [("plan-10", "entry_plan_maker_timeout")]
+
+
+@pytest.mark.asyncio
 async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch):
     """A TRIGGERED+POST_ONLY_LIMIT plan still in 'waiting' state must NOT be
     subject to maker timeout — the order hasn't been placed yet."""
