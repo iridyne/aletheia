@@ -2106,16 +2106,16 @@ def audit_events(
 ):
     """Show audit trail entries (security/trust events)."""
     from aletheia.storage.repositories import list_audit_events
-    rows = list_audit_events(limit=limit)
-    if event_type:
-        rows = [r for r in rows if r.get("event_type") == event_type]
+    rows = list_audit_events(limit=limit, event_type=event_type)
     display = [{
-        "id": r.get("id", "")[:8],
+        "id": r.get("id"),
         "event_type": r.get("event_type"),
         "entity_type": r.get("entity_type"),
+        "entity_id": r.get("entity_id"),
         "actor": r.get("actor"),
-        "message": (str(r.get("details") or ""))[:80],
-        "created_at": r.get("created_at"),
+        "source": r.get("source"),
+        "message": (str(r.get("message") or ""))[:80],
+        "timestamp": r.get("timestamp"),
     } for r in rows]
     _output(display, json_output)
 
