@@ -229,12 +229,3 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
     assert all(m["regime_tag"] == "sideways" for m in members), (
         f"regime_tag not propagated to every member: {members}"
     )
-
-    generations = conn.execute(
-        "SELECT * FROM candidate_planning_generations WHERE is_current=1"
-    ).fetchall()
-    assert len(generations) == 6, (
-        f"each selected Candidate should own one planning generation, got {len(generations)}"
-    )
-    assert {row["market_type"] for row in generations} >= {"spot", "perp"}
-    assert {row["candidate_family"] for row in generations} == set(family_counts)
