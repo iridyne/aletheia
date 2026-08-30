@@ -219,6 +219,16 @@ const closedColumns = [
 					</span>
 				);
 			}
+			if (reason === "broker_funding_history_expired") {
+				return (
+					<span
+						className="pnl-warning"
+						title="UTA private funding history expired; realized_pnl stays NULL (never fabricated)"
+					>
+						funding history expired
+					</span>
+				);
+			}
 			return <span className="text-muted">{humanize(reason)}</span>;
 		},
 	}),
@@ -989,10 +999,13 @@ function PositionDetail({
 							position.realized_pnl_unavailable_reason ===
 							"funding_permanently_unrecoverable"
 								? "funding lost — settler gave up (never fabricated)"
-								: humanize(
-										position.realized_pnl_unavailable_reason ||
-											"economics unavailable",
-									)
+								: position.realized_pnl_unavailable_reason ===
+										"broker_funding_history_expired"
+									? "funding history expired — economics unavailable (never fabricated)"
+									: humanize(
+											position.realized_pnl_unavailable_reason ||
+												"economics unavailable",
+										)
 						}
 					/>
 				)}

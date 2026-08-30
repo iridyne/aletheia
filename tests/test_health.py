@@ -132,6 +132,51 @@ def test_funding_audit_backlog_degrades_health_and_warns_doctor(
     assert "2026-08-23T00:00:00+00:00" in check.detail
 
 
+def test_funding_recovery_states_degrade_health_and_doctor(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import Position
+
+    for position_id, reason in (
+        ("funding-terminal", "broker_funding_history_expired"),
+        ("funding-retry", "incomplete_funding_economics"),
+    ):
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            current_price=110.0,
+            execution_mode="bitget_demo",
+        ))
+        repo.update_position(
+            position_id,
+            status="closed",
+            realized_pnl=None,
+            funding_source="unavailable",
+            outcome_eligible=False,
+            outcome_exclusion_reason=reason,
+        )
+
+    result = health.compute_health()
+    assert result["status"] == "degraded"
+    assert "broker_funding_history_expired:1" in result["issues"]
+    assert "broker_funding_recovery_pending:1" in result["issues"]
+
+    report = doctor.Report()
+    doctor._probe_health(report)
+    check = next(item for item in report.checks if item.name == "health.rollup")
+    assert check.severity == "warn"
+    assert "broker_funding_history_expired:1" in check.detail
+    assert "broker_funding_recovery_pending:1" in check.detail
+
+
 def test_funding_audit_probe_unavailable_is_not_reported_healthy(
     tmp_path, monkeypatch,
 ):
@@ -174,7 +219,7 @@ def test_health_alert_fires_on_unhealthy_transition(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _disable_self_heal(monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)  # reset leaked global
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
 
     sent = []
     monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
@@ -192,7 +237,7 @@ def test_health_alert_dedupes_consecutive(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _disable_self_heal(monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)  # reset leaked global
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     sent = []
     monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
     monkeypatch.setattr(health, "compute_health",
@@ -200,6 +245,36 @@ def test_health_alert_dedupes_consecutive(tmp_path, monkeypatch):
     health.run_health_check()
     health.run_health_check()  # still unhealthy -> no second alert
     assert len(sent) == 1
+
+
+def test_durable_issue_does_not_suppress_new_incident(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _disable_self_heal(monkeypatch)
+    from aletheia.agent_runtime import health
+
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
+    sent = []
+    monkeypatch.setattr(health, "_send_alert", lambda msg: sent.append(msg))
+    results = iter([
+        {
+            "healthy": False,
+            "issues": ["broker_funding_history_expired:1"],
+        },
+        {
+            "healthy": False,
+            "issues": [
+                "broker_funding_history_expired:1",
+                "exchange_unreachable",
+            ],
+        },
+    ])
+    monkeypatch.setattr(health, "compute_health", lambda: next(results))
+
+    health.run_health_check()
+    health.run_health_check()
+
+    assert len(sent) == 2
+    assert "exchange_unreachable" in sent[1]
 
 
 def test_health_no_alert_when_healthy(tmp_path, monkeypatch):
@@ -424,7 +499,7 @@ def test_code_drift_does_not_restart_twice(tmp_path, monkeypatch):
     monkeypatch.setattr(build_info, "code_drift_issue",
                         lambda: "code_updated_pending_restart:aaa..bbb")
     monkeypatch.setattr(health, "_market_data_stale_minutes", lambda cfg: 60.0)
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     restarted_for = []
@@ -450,7 +525,7 @@ def test_code_drift_first_time_still_restarts(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build_info, "code_drift_issue",
                         lambda: "code_updated_pending_restart:aaa..bbb")
-    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_last_alerted_issue_keys", frozenset())
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
 
     restarted_for = []

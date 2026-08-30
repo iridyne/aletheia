@@ -1086,6 +1086,14 @@ def _patch_scheduler_result(
         ("broker_funding_settler", {"checked": 2, "settled": 1, "still_pending": 1,
                                      "errors": ["position-2: TimeoutError"]},
          "broker_funding_settler_reported_errors"),
+        ("broker_funding_settler",
+         {"checked": 0, "settled": 0, "still_pending": 0, "errors": [],
+          "terminal_total": 2, "retry_pending_total": 0},
+         "broker_funding_history_expired"),
+        ("broker_funding_settler",
+         {"checked": 0, "settled": 0, "still_pending": 1, "errors": [],
+          "terminal_total": 0, "retry_pending_total": 1},
+         "broker_funding_recovery_pending"),
     ],
 )
 def test_scheduler_result_failures_survive_outer_wrapper(

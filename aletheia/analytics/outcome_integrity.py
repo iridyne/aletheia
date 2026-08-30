@@ -48,6 +48,7 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     # surfaces the actual reason instead of collapsing to
     # "not_marked_eligible".
     "funding_permanently_unrecoverable",
+    "broker_funding_history_expired",
     "pre_clean_window",
     "incident_window",
     "missing_attribution",

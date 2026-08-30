@@ -1005,3 +1005,438 @@ async def test_binance_funding_reader_uses_signed_income_history():
     assert ledger["events"][0]["event_id"] == "binance-funding-1"
     assert ledger["events"][0]["funding_cost"] == -0.75
     exchange.fapiPrivateGetIncome.assert_awaited_once()
+
+
+def _seed_exchange_close_for_recovery(
+    *,
+    position_id: str,
+    mode: str,
+    symbol: str,
+    opened_at: datetime,
+    closed_at: datetime,
+) -> None:
+    position = Position(
+        id=position_id,
+        symbol=symbol,
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        entry_fee=0.05,
+        current_price=110.0,
+        execution_mode=mode,
+        opened_at=opened_at.isoformat(),
+    )
+    repo.insert_position(position)
+    from aletheia.portfolio.pnl import close_position
+
+    close_position(
+        position.id,
+        exit_price=110.0,
+        actual_exit_fee=0.1,
+        closed_at=closed_at.isoformat(),
+        verified_exit_evidence={
+            "source": "private_fills",
+            "fill_ids": [f"fill:{position.id}"],
+            "fill_quantity": 1.0,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_expired_funding_prefix_does_not_starve_recoverable_close(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    expired_closed = now - timedelta(days=100)
+    for index in range(51):
+        _seed_exchange_close_for_recovery(
+            position_id=f"expired-{index:02d}",
+            mode="bitget_demo",
+            symbol="BTC/USDT",
+            opened_at=expired_closed - timedelta(hours=1),
+            closed_at=expired_closed,
+        )
+    _seed_exchange_close_for_recovery(
+        position_id="expired-current-day",
+        mode="bitget_demo",
+        symbol="XRP/USDT",
+        opened_at=now - timedelta(days=100),
+        closed_at=now - timedelta(minutes=1),
+    )
+    _seed_exchange_close_for_recovery(
+        position_id="transient",
+        mode="bitget_demo",
+        symbol="ETH/USDT",
+        opened_at=now - timedelta(hours=4),
+        closed_at=now - timedelta(hours=3),
+    )
+    _seed_exchange_close_for_recovery(
+        position_id="recoverable",
+        mode="okx_demo",
+        symbol="SOL/USDT",
+        opened_at=now - timedelta(hours=2),
+        closed_at=now - timedelta(hours=1),
+    )
+    _seed_exchange_close_for_recovery(
+        position_id="recoverable-binance",
+        mode="binance_testnet",
+        symbol="ADA/USDT",
+        opened_at=now - timedelta(hours=2),
+        closed_at=now - timedelta(minutes=30),
+    )
+
+    network_calls: list[tuple[str, str]] = []
+
+    class FundingClient:
+        async def get_funding_ledger(
+            self,
+            *,
+            broker_id,
+            symbol,
+            start_time_ms,
+            end_time_ms,
+            **_kwargs,
+        ):
+            network_calls.append((broker_id, symbol))
+            if symbol == "ETH/USDT":
+                raise TimeoutError("transient fixture")
+            return make_complete_ledger(
+                broker_id=broker_id,
+                account_environment=(
+                    "testnet" if broker_id == "binance_testnet" else "demo"
+                ),
+                source_endpoint="/fixture/private/funding",
+                history_start_ms=start_time_ms,
+                history_end_ms=end_time_ms,
+                events=[],
+            )
+
+        async def close(self):
+            return None
+
+    from aletheia.portfolio import broker_funding_settlement as settlement
+
+    monkeypatch.setattr(
+        settlement,
+        "_client_for_mode",
+        lambda _mode: FundingClient(),
+    )
+    result = await settlement.settle_unsettled_exchange_closes()
+
+    assert result["checked"] == 55
+    assert result["broker_io_attempted"] == 3
+    assert result["history_expired"] == 52
+    assert result["settled"] == 2
+    assert result["still_pending"] == 1
+    assert result["terminal_total"] == 52
+    assert result["retry_pending_total"] == 1
+    assert network_calls == [
+        ("bitget_demo", "ETH/USDT"),
+        ("okx_demo", "SOL/USDT"),
+        ("binance_testnet", "ADA/USDT"),
+    ]
+    expired = repo._select_one("positions", "expired-00")
+    assert expired["realized_pnl"] is None
+    assert expired["funding_cost"] is None
+    assert expired["funding_source"] == "unavailable"
+    assert expired["outcome_eligible"] == 0
+    assert expired["outcome_exclusion_reason"] == (
+        "broker_funding_history_expired"
+    )
+    terminal = json.loads(expired["reconciliation_evidence"])[
+        "funding_terminal"
+    ]
+    assert terminal["reason"] == "broker_funding_history_expired"
+    assert terminal["retention_days"] == 90
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE "
+        "event_type='exchange_position_funding_history_expired'"
+    ).fetchone()[0] == 52
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM outcome_hook_jobs "
+        "WHERE position_id LIKE 'expired-%'"
+    ).fetchone()[0] == 0
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE position_id LIKE 'expired-%'"
+    ).fetchone()[0] == 0
+    assert repo._select_one("positions", "recoverable")["realized_pnl"] is not None
+    assert repo._select_one(
+        "positions", "recoverable-binance"
+    )["realized_pnl"] is not None
+
+    from aletheia.analytics.outcome_integrity import assess_position_closure
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    assert assess_position_closure(dict(expired)).reason == (
+        "broker_funding_history_expired"
+    )
+    assert position_realized_pnl_view(dict(expired))[
+        "realized_pnl_unavailable_reason"
+    ] == "broker_funding_history_expired"
+    assert authoritative_account_realized_loss("bitget_demo").reason == (
+        "broker_funding_history_expired"
+    )
+
+    replay = await settlement.settle_unsettled_exchange_closes()
+    assert replay["history_expired"] == 0
+    assert replay["terminal_total"] == 52
+    assert replay["retry_pending_total"] == 1
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE "
+        "event_type='exchange_position_funding_history_expired'"
+    ).fetchone()[0] == 52
+
+
+@pytest.mark.asyncio
+async def test_funding_cursor_progress_survives_connection_reopen(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    expired_closed = now - timedelta(days=100)
+    for index in range(7):
+        _seed_exchange_close_for_recovery(
+            position_id=f"bounded-expired-{index}",
+            mode="bitget_demo",
+            symbol="BTC/USDT",
+            opened_at=expired_closed - timedelta(hours=1),
+            closed_at=expired_closed,
+        )
+    _seed_exchange_close_for_recovery(
+        position_id="bounded-fresh",
+        mode="okx_demo",
+        symbol="SOL/USDT",
+        opened_at=now - timedelta(hours=2),
+        closed_at=now - timedelta(hours=1),
+    )
+
+    class FundingClient:
+        async def get_funding_ledger(
+            self, *, broker_id, start_time_ms, end_time_ms, **_kwargs
+        ):
+            return make_complete_ledger(
+                broker_id=broker_id,
+                account_environment="demo",
+                source_endpoint="/fixture/private/funding",
+                history_start_ms=start_time_ms,
+                history_end_ms=end_time_ms,
+                events=[],
+            )
+
+        async def close(self):
+            return None
+
+    from aletheia.portfolio import broker_funding_settlement as settlement
+    from aletheia.storage.sqlite import close_db
+
+    monkeypatch.setattr(
+        settlement,
+        "_client_for_mode",
+        lambda _mode: FundingClient(),
+    )
+    first = await settlement.settle_unsettled_exchange_closes(scan_limit=3)
+    assert (first["checked"], first["history_expired"], first["settled"]) == (
+        3,
+        3,
+        0,
+    )
+    close_db()
+    second = await settlement.settle_unsettled_exchange_closes(scan_limit=3)
+    assert (second["checked"], second["history_expired"], second["settled"]) == (
+        3,
+        3,
+        0,
+    )
+    close_db()
+    third = await settlement.settle_unsettled_exchange_closes(scan_limit=3)
+    assert (third["checked"], third["history_expired"], third["settled"]) == (
+        2,
+        1,
+        1,
+    )
+    assert repo._select_one("positions", "bounded-fresh")[
+        "funding_source"
+    ] == "broker_ledger"
+
+
+@pytest.mark.asyncio
+async def test_funding_terminal_audit_retries_after_connection_reopen(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _seed_exchange_close_for_recovery(
+        position_id="audit-expired",
+        mode="bitget_demo",
+        symbol="BTC/USDT",
+        opened_at=now - timedelta(days=100),
+        closed_at=now - timedelta(minutes=2),
+    )
+    _seed_exchange_close_for_recovery(
+        position_id="audit-fresh",
+        mode="okx_demo",
+        symbol="SOL/USDT",
+        opened_at=now - timedelta(hours=2),
+        closed_at=now - timedelta(minutes=1),
+    )
+
+    class FundingClient:
+        async def get_funding_ledger(
+            self, *, broker_id, start_time_ms, end_time_ms, **_kwargs
+        ):
+            return make_complete_ledger(
+                broker_id=broker_id,
+                account_environment="demo",
+                source_endpoint="/fixture/private/funding",
+                history_start_ms=start_time_ms,
+                history_end_ms=end_time_ms,
+                events=[],
+            )
+
+        async def close(self):
+            return None
+
+    from aletheia.files import jsonl as jsonl_mod
+    from aletheia.portfolio import broker_funding_settlement as settlement
+    from aletheia.portfolio.funding_audit import (
+        funding_audit_backlog,
+        reconcile_funding_audits,
+    )
+    from aletheia.storage.sqlite import close_db
+
+    real_writer = jsonl_mod.write_audits_deduplicated
+    monkeypatch.setattr(
+        jsonl_mod,
+        "write_audits_deduplicated",
+        lambda _events: set(),
+    )
+    monkeypatch.setattr(
+        settlement,
+        "_client_for_mode",
+        lambda _mode: FundingClient(),
+    )
+    result = await settlement.settle_unsettled_exchange_closes()
+
+    assert result["history_expired"] == 1
+    assert result["settled"] == 1
+    assert result["still_pending"] == 0
+    assert result["audit_pending"] == 2
+    assert funding_audit_backlog()["count"] == 2
+
+    terminal_event = dict(repo.get_db().execute(
+        "SELECT id, timestamp FROM audit_events "
+        "WHERE entity_id='audit-expired' AND "
+        "event_type='exchange_position_funding_history_expired'"
+    ).fetchone())
+    assert terminal_event["timestamp"] == (
+        now - timedelta(days=10)
+    ).isoformat()
+
+    close_db()
+    monkeypatch.setattr(
+        jsonl_mod,
+        "write_audits_deduplicated",
+        real_writer,
+    )
+    reconciled = reconcile_funding_audits()
+    assert reconciled["attempted"] == 2
+    assert reconciled["mirrored"] == 2
+    assert reconciled["pending"] == 0
+    assert funding_audit_backlog()["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_expired_funding_terminalization_stale_owner_is_noop(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _seed_exchange_close_for_recovery(
+        position_id="expired-owner-conflict",
+        mode="bitget_demo",
+        symbol="BTC/USDT",
+        opened_at=now - timedelta(days=100, hours=1),
+        closed_at=now - timedelta(days=100),
+    )
+    from aletheia.portfolio import broker_funding_settlement as settlement
+    from aletheia.uta import manager as uta_manager
+
+    real_contract = uta_manager.funding_history_retention_contract
+
+    def change_owner(execution_mode, *, cfg):
+        repo.update_position(
+            "expired-owner-conflict",
+            outcome_exclusion_reason="manual_owner_state",
+        )
+        return real_contract(execution_mode, cfg=cfg)
+
+    monkeypatch.setattr(
+        uta_manager,
+        "funding_history_retention_contract",
+        change_owner,
+    )
+    result = await settlement.settle_unsettled_exchange_closes()
+    stored = repo._select_one("positions", "expired-owner-conflict")
+
+    assert result["checked"] == 1
+    assert result["broker_io_attempted"] == 0
+    assert result["history_expired"] == 0
+    assert result["stale_noop"] == 1
+    assert result["errors"] == []
+    assert stored["outcome_exclusion_reason"] == "manual_owner_state"
+    assert stored["realized_pnl"] is None
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE "
+        "event_type='exchange_position_funding_history_expired'"
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_malformed_funding_window_remains_retryable_and_rotates(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _seed_exchange_close_for_recovery(
+        position_id="malformed-window",
+        mode="bitget_demo",
+        symbol="BTC/USDT",
+        opened_at=now - timedelta(hours=2),
+        closed_at=now - timedelta(hours=1),
+    )
+    repo.update_position("malformed-window", opened_at="not-a-timestamp")
+
+    from aletheia.portfolio import broker_funding_settlement as settlement
+
+    result = await settlement.settle_unsettled_exchange_closes()
+    stored = repo._select_one("positions", "malformed-window")
+
+    assert result["checked"] == 1
+    assert result["broker_io_attempted"] == 0
+    assert result["history_expired"] == 0
+    assert result["still_pending"] == 1
+    assert result["cursor_advanced"] is True
+    assert result["errors"] == [
+        "malformed-window: BrokerFundingIntegrityError"
+    ]
+    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert stored["realized_pnl"] is None

@@ -215,7 +215,7 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 | Learning lifecycle transition | `learning_lifecycle_transition` | `learning/lifecycle.py`；SQLite lifecycle event/state 先原子提交，JSONL mirror 使用 stable event id 幂等补写 |
-| Funding settlement/correction | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` | `portfolio/funding_audit.py`；会计事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
+| Funding settlement/correction/terminal history expiry | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` / `exchange_position_funding_history_expired` | `portfolio/funding_audit.py` + `portfolio/broker_funding_settlement.py`；会计或 terminal-state 事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
 | 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
@@ -250,12 +250,16 @@ sink 不会产生重复记录。Order、结果类型或 reason 改变代表不�
 
 ### §6.3c Funding settlement audit outbox
 
-新发生的 paper 与 exchange funding settlement/correction 使用 versioned canonical tuple
+新发生的 paper/exchange funding settlement/correction，以及 exchange funding history terminal
+classification，使用 versioned canonical tuple
 `(position_id, event_type, funding_accounting_version, funding_economics_fingerprint,
-transition_fingerprint, occurred_at)` 派生每次会计 transition occurrence 的 stable audit ID。
-`transition_fingerprint` 绑定完整 before/after 会计事实，`occurred_at` 区分相同事实再次损坏并修复的独立发生。
-Position/PnL、close projection、paper cash、Outcome hook intent 与同一 `AuditEvent`
-在一个 SQLite transaction 内提交；JSONL mirror 失败不得回滚或重放这些会计事实。
+transition_fingerprint, occurred_at)` 派生每次 transition occurrence 的 stable audit ID。
+`transition_fingerprint` 绑定完整 before/after 事实。Settlement/correction 的 `occurred_at`
+来自不可变会计 occurrence；history expiry 使用 `history_start + profile retention` 的确定性
+边界，绝不使用重试处理时间生成新身份。Position/PnL、close projection、paper cash、Outcome
+hook intent 与同一 settlement/correction `AuditEvent` 在一个 SQLite transaction 内提交；
+history expiry 只原子提交 Position terminal reason 与同一 `AuditEvent`，保持 PnL/close
+projection/cash/hook 不变。JSONL mirror 失败不得回滚或重放这些事实。
 
 `audit_events.jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at`
 仅由 opt-in funding audit 使用。`NULL` 表示 unmanaged；历史与普通 audit 保持 `NULL`，不得因 migration
