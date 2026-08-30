@@ -763,11 +763,14 @@ async def _fetch_single_feature(
             )
             if fr_data:
                 mark_price = fr_data.get("markPrice")
-                if fr_data.get("fundingRate") is not None:
-                    funding_rate = float(fr_data["fundingRate"])
-                    funding_observed_at = _funding_observed_at(
-                        fr_data, received_at=now
-                    )
+                live_rate = fr_data.get("fundingRate")
+                if live_rate is not None and not isinstance(live_rate, bool):
+                    live_funding_rate = float(live_rate)
+                    if math.isfinite(live_funding_rate):
+                        funding_rate = live_funding_rate
+                        funding_observed_at = _funding_observed_at(
+                            fr_data, received_at=now
+                        )
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 

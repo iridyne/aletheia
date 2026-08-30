@@ -218,3 +218,67 @@ def test_only_explicit_derivative_market_types_read_derivative_enrichment(monkey
             now=datetime.now(timezone.utc),
         )
     assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("live_rate", "fallback_rate", "expected"),
+    [
+        ("NaN", 0.0001, 0.0001),
+        ("Infinity", None, None),
+        ("-Infinity", -0.0001, -0.0001),
+        (True, 0.0001, 0.0001),
+        (False, None, None),
+        (-0.0002, 0.0001, -0.0002),
+    ],
+)
+async def test_live_funding_override_requires_finite_rate(
+    monkeypatch, live_rate, fallback_rate, expected,
+):
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.features import _fetch_single_feature
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(repo, "latest_orderbook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        repo,
+        "latest_funding_rate",
+        lambda *args, **kwargs: (
+            {
+                "funding_rate": fallback_rate,
+                "observed_at": now.isoformat(),
+            }
+            if fallback_rate is not None
+            else None
+        ),
+    )
+    monkeypatch.setattr(repo, "latest_open_interest", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "get_latest_feature_snapshot", lambda *args: None)
+
+    class Exchange:
+        id = "okx"
+
+        async def fetch_ohlcv(self, *args, **kwargs):
+            return []
+
+        async def fetch_funding_rate(self, *args, **kwargs):
+            return {"fundingRate": live_rate}
+
+        async def fetch_open_interest(self, *args, **kwargs):
+            return {}
+
+    feature = await _fetch_single_feature(
+        Exchange(),
+        {
+            "id": "asset-btc",
+            "symbol": "BTC/USDT",
+            "venue": "okx",
+            "market_type": "perp",
+        },
+        {"quoteVolume": 1_000_000, "bid": 100, "ask": 101},
+        now,
+        lambda symbol: f"{symbol}:USDT",
+    )
+
+    assert feature is not None
+    assert feature["funding_rate"] == expected
