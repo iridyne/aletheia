@@ -260,6 +260,7 @@ def _assemble_t0_envelope_context(
     envelopes: list[T0ContextEnvelopeV1],
 ) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
     contract = get_t0_coverage_contract(path_id)
+    from aletheia.storage import repositories as repo
     if not envelopes:
         return {}, ["canonical_t0_envelope_unavailable"], [], []
     bindings: list[tuple[str, T0ContextEnvelopeV1]] = []
@@ -321,16 +322,25 @@ def _assemble_t0_envelope_context(
                         "opportunity:"
                     )
                 ).strip()
+        position_id = (
+            envelope.root_causal_identity.removeprefix("position:")
+            if envelope.root_causal_identity.startswith("position:")
+            else ""
+        )
+        opened_at = envelope.anchor_at
+        if position_id:
+            position = repo.get_position(position_id)
+            opened = _parse_aware_timestamp((position or {}).get("opened_at"))
+            if opened is None:
+                missing.append(f"position_opened_at_unavailable:{source_artifact_id}")
+                continue
+            opened_at = opened.isoformat()
         outcome_ids.append(envelope.root_causal_identity)
         cases.append({
             "source_artifact_id": source_artifact_id,
-            "position_id": (
-                envelope.root_causal_identity.removeprefix("position:")
-                if envelope.root_causal_identity.startswith("position:")
-                else ""
-            ),
+            "position_id": position_id,
             "opportunity_id": opportunity_id,
-            "opened_at": envelope.anchor_at,
+            "opened_at": opened_at,
         })
     return (
         {key: recorded[key] for key in sorted(recorded)},

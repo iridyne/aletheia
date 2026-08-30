@@ -303,7 +303,9 @@ def current_disqualification_reasons(
         params,
     ).fetchall()
     if any(
-        str(row["action"]) in {"refreeze", "idle_expired", "terminate"}
+        str(row["action"]) in {
+            "refreeze", "retire_idle", "idle_expired", "terminate",
+        }
         for row in lifecycle
     ):
         reasons.append("later_lifecycle_refreeze")

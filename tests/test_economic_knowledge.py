@@ -154,3 +154,29 @@ def test_current_projection_is_read_only_and_zero_is_honest():
     }
     assert len(facts) == 1
     assert before == after
+
+
+def test_historical_projection_excludes_idle_retirement_after_cutoff():
+    from aletheia.learning.economic_knowledge import (
+        project_economic_knowledge_as_of,
+    )
+    from aletheia.learning.ledger import insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+
+    verdict = _verdict()
+    insert_lifecycle_event(LearningLifecycleEvent(
+        dedup_key="historical-idle-retirement",
+        hypothesis_id=verdict.hypothesis_id,
+        experiment_id=verdict.experiment_id,
+        from_stage="paper_10",
+        action="retire_idle",
+        reason="insufficient_data:idle_expired",
+        created_at="2999-01-01T00:00:00+00:00",
+    ))
+
+    assert len(project_economic_knowledge_as_of(
+        "2998-01-01T00:00:00+00:00",
+    )) == 1
+    assert project_economic_knowledge_as_of(
+        "3000-01-01T00:00:00+00:00",
+    ) == []

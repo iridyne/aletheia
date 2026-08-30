@@ -298,7 +298,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             price=100.0,
             execution_mode="paper_internal",
             scanner_family="momentum",
-            opened_at="2026-08-16T00:00:00+00:00",
+            opened_at="2026-08-16T00:01:00+00:00",
         )
         opportunity_ids.append(opportunity_id)
         repo.update_opportunity(
@@ -340,8 +340,8 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             execution_mode="paper_internal",
             status="closed",
             source="native",
-            opened_at="2026-08-16T00:00:00+00:00",
-            closed_at="2026-08-16T04:00:00+00:00",
+            opened_at="2026-08-16T00:01:00+00:00",
+            closed_at="2026-08-16T04:01:00+00:00",
             close_reason="stop_loss",
             close_category="strategy",
             entry_price_source="local_fill",
@@ -395,7 +395,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         entry_price=100.0,
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
-        created_at="2026-08-16T00:00:00+00:00",
+        created_at="2026-08-16T00:00:30+00:00",
     ))
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
@@ -414,7 +414,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             entry_price=100.0,
             outcome_candidate_key=f"opportunity:alternative-{rank}",
             was_selected=False,
-            created_at="2026-08-16T00:00:00+00:00",
+            created_at="2026-08-16T00:00:30+00:00",
         ))
         insert_canonical_outcome_for_shadow(
             f"causal-shadow-alt-{rank}", horizon="4h", net_return_pct=1.0,
@@ -515,13 +515,13 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             regime_tag="risk_off",
             inputs={"candidate_score": 1.0, "active_guard_ids": []},
             parameters={"guard_contract": "candidate-guard/v1"},
-            evaluated_at="2026-08-16T00:00:00+00:00",
+            evaluated_at="2026-08-16T00:00:30+00:00",
             outcome_candidate_key=f"opportunity:{source_opportunity_id}",
             entry_price_usd=None if index == 0 else 100.0,
             entry_spread_bps=None if index == 0 else 1.0,
             funding_rate_at_entry=None if index == 0 else 0.001,
             entry_ts=(
-                None if index == 0 else "2026-08-16T00:00:00+00:00"
+                None if index == 0 else "2026-08-16T00:00:30+00:00"
             ),
             raise_on_error=True,
         )
@@ -552,6 +552,18 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     assert outcomes == []
     assert cases == []
     assert any(reason.startswith("source_t0_identity_mismatch:") for reason in missing)
+    scope_mismatch = await guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={
+            **evidence,
+            "factor_keys": [
+                "momentum:ETH/USDT:long:medium_confidence:not_late",
+            ],
+        },
+        source_id=case_ids[0],
+    )
+    assert scope_mismatch["reason"] == "research_scope_identity_mismatch"
+    assert review_calls == []
 
     async def ready_review(*, user, **_kwargs):
         payload = json.loads(user)
@@ -584,6 +596,37 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     assert wired["research_status"] == "ready"
     assert wired["hypothesis_status"] == "proposed"
     assert list_records("learning_hypotheses")
+    record_filter_decision(
+        candidate_key=f"opportunity:{opportunity_id}",
+        candidate_kind="opportunity",
+        filter_name="guard_candidate_block",
+        stage="paper_ranker",
+        sequence_no=2,
+        decision="passed",
+        reason_code="retry_no_active_guard_block",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        run_id="later-ranker-retry",
+        opportunity_id=opportunity_id,
+        universe_snapshot_id="canonical-universe",
+        universe_member_id="canonical-member-0",
+        venue="bitget",
+        direction="long",
+        scanner_family="momentum",
+        regime_tag="risk_off",
+        inputs={"candidate_score": 1.0, "active_guard_ids": []},
+        parameters={"guard_contract": "candidate-guard/v1"},
+        evaluated_at="2026-08-16T00:00:40+00:00",
+        raise_on_error=True,
+    )
+    retry_envelope = guard_routing._build_ranker_guard_t0_envelopes(
+        [case_ids[0]],
+    )[0]
+    retry_liquidity = next(
+        domain for domain in retry_envelope.domains
+        if domain.domain == "liquidity_cost"
+    )
+    assert retry_liquidity.state == "unavailable"
 
     ufc = get_learning_path("universe_family_calibration")
     learned_guard = get_learning_path("ranker_learned_guard")

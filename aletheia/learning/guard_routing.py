@@ -55,6 +55,15 @@ async def route_automatic_block_recommendation(
         if value
     ))
     if research_evidence is None:
+        t0_envelopes = _build_ranker_guard_t0_envelopes(source_ids)
+        if len(t0_envelopes) == len(source_ids) and not _t0_matches_guard_scope(
+            t0_envelopes, field=field, value=value, scope=scope,
+        ):
+            return {
+                "action": "guard_shadow_unavailable",
+                "reason": "research_scope_identity_mismatch",
+                "research_status": "insufficient_context",
+            }
         research = HypothesisResearchEvidenceV1.model_validate(
             await research_learning_hypothesis(
                 candidate_explanation=_candidate_explanation(
@@ -66,7 +75,7 @@ async def route_automatic_block_recommendation(
                 target_horizon="4h",
                 path_id="ranker_learned_guard",
                 consumer="paper ranker",
-                t0_envelopes=_build_ranker_guard_t0_envelopes(source_ids),
+                t0_envelopes=t0_envelopes,
                 deadline=deadline,
             )
         )
@@ -83,6 +92,19 @@ async def route_automatic_block_recommendation(
         return {
             "action": "guard_shadow_unavailable",
             "reason": f"research_{research.research_status}",
+            "research_status": research.research_status,
+            "research_evidence": research_payload,
+        }
+    if not _research_matches_guard_scope(
+        research,
+        field=field,
+        value=value,
+        scope=scope,
+        expected_sources=len(source_ids),
+    ):
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": "research_scope_identity_mismatch",
             "research_status": research.research_status,
             "research_evidence": research_payload,
         }
@@ -338,7 +360,7 @@ def _build_ranker_guard_t0_envelopes(
             == f"opportunity:{opportunity_id}"
             and outcome_data.get("horizon") == "4h"
             and entry_at is not None
-            and entry_at <= anchor
+            and entry_at == anchor
         )
         liquidity = {
             key: outcome_data[key]
@@ -500,6 +522,76 @@ def _candidate_explanation(
         f"the recorded scope {json.dumps(scope, sort_keys=True)} may improve net "
         "candidate utility over the declared 4h horizon."
     )
+
+
+def _research_matches_guard_scope(
+    research: HypothesisResearchEvidenceV1,
+    *,
+    field: str,
+    value: str,
+    scope: dict[str, Any],
+    expected_sources: int,
+) -> bool:
+    entries = research.relevant_context.recorded_at_t0.get("market_identity")
+    if not isinstance(entries, list) or len(entries) != expected_sources:
+        return False
+    markets = [
+        entry.get("value") if isinstance(entry, dict) else None
+        for entry in entries
+    ]
+    return _market_identities_match_guard(
+        markets, field=field, value=value, scope=scope,
+    )
+
+
+def _t0_matches_guard_scope(
+    envelopes: list[T0ContextEnvelopeV1],
+    *,
+    field: str,
+    value: str,
+    scope: dict[str, Any],
+) -> bool:
+    markets: list[dict[str, Any] | None] = []
+    for envelope in envelopes:
+        identities = [
+            domain.values
+            for domain in envelope.domains
+            if domain.domain == "market_identity" and domain.state == "available"
+        ]
+        if len(identities) != 1:
+            return False
+        markets.append(identities[0])
+    return _market_identities_match_guard(
+        markets, field=field, value=value, scope=scope,
+    )
+
+
+def _market_identities_match_guard(
+    markets: list[dict[str, Any] | None],
+    *,
+    field: str,
+    value: str,
+    scope: dict[str, Any],
+) -> bool:
+    symbols = {str(item) for item in scope.get("symbol") or []}
+    scanners = {str(item).lower() for item in scope.get("scanner_family") or []}
+    for market in markets:
+        if not isinstance(market, dict):
+            return False
+        symbol = str(market.get("symbol") or "")
+        scanner = str(market.get("scanner_family") or "").lower()
+        direction = str(market.get("direction") or "").lower()
+        if symbol not in symbols or scanner not in scanners:
+            return False
+        actual = {
+            "symbol": symbol,
+            "scanner_family": scanner,
+            "direction": direction,
+        }.get(field, "")
+        expected = value if field == "symbol" else value.lower()
+        if actual != expected:
+            return False
+    return bool(markets)
 
 
 def _predicate(action: str, recommendation: dict) -> tuple[str | None, str | None]:
