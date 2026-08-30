@@ -8,6 +8,7 @@ from aletheia.agent_shell.entry_planner import (
     ENTRY_PLANNER_MAX_CONCURRENCY,
     ENTRY_PLANNER_MIN_CONCURRENCY,
     PlanIntent,
+    _PlanIntentWireSchema,
     PlannerBackpressure,
     plan_next_candidate,
     run_entry_planner_batch,
@@ -539,15 +540,41 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
 
 
 def test_plan_intent_portable_schema_requires_every_strict_property():
-    schema = portable_json_schema_payload(PlanIntent)
+    schema = portable_json_schema_payload(_PlanIntentWireSchema)
     properties = schema["properties"]
     assert set(schema["required"]) == set(properties)
+    assert set(properties) == set(PlanIntent.model_fields)
     assert schema["additionalProperties"] is False
     assert properties["order_tactic"]["type"] == ["string", "null"]
     encoded = json.dumps(schema, sort_keys=True)
     assert "$ref" not in encoded
     assert "$defs" not in encoded
     assert "anyOf" not in encoded
+
+
+def test_plan_intent_wire_schema_canonicalizes_no_plan_but_rejects_invalid_entry():
+    no_plan = {
+        **_no_plan_intent("CONFLICTING_SIGNALS").model_dump(mode="json"),
+        "execution_mode": "RESTING_MAKER",
+        "order_tactic": "POST_ONLY_LIMIT",
+    }
+    assert _PlanIntentWireSchema.model_validate(no_plan) == _no_plan_intent("CONFLICTING_SIGNALS")
+    assert no_plan["execution_mode"] is None
+    assert no_plan["order_tactic"] is None
+
+    invalid_entry = {
+        **no_plan,
+        "decision": "ENTRY_PLAN",
+        "reason_code": "OK",
+        "thesis": "x",
+        "scenario": "y",
+        "execution_mode": "RESTING_MAKER",
+        "order_tactic": "OPPOSING_BBO_IOC",
+        "risk_tier": "LOW",
+        "horizon": "INTRADAY",
+    }
+    with pytest.raises(ValueError, match="RESTING_MAKER_TACTIC_INVALID"):
+        _PlanIntentWireSchema.model_validate(invalid_entry)
 
 
 @pytest.mark.parametrize(
@@ -714,9 +741,26 @@ def test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt(monkey
     assert result == _no_plan_intent()
     assert captured["provider"] == "deep-paid"
     assert captured["reasoning_effort"] == "none"
-    assert captured["schema"] is PlanIntent
+    assert captured["schema"] is _PlanIntentWireSchema
     assert "TRIGGERED + POST_ONLY_LIMIT" in captured["system"]
     assert "TRIGGERED + OPPOSING_BBO_IOC" in captured["system"]
+
+
+def test_system_operator_canonicalizes_no_plan_execution_noise(monkeypatch):
+    async def structured(*_args, **_kwargs):
+        return {
+            **_no_plan_intent("CONFLICTING_SIGNALS").model_dump(mode="json"),
+            "execution_mode": "RESTING_MAKER",
+            "order_tactic": "POST_ONLY_LIMIT",
+            "risk_tier": "LOW",
+            "horizon": "INTRADAY",
+        }, None
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    result = asyncio.run(system_operator_entry_planner({"candidate": {"symbol": "ETH/USDT"}}))
+    assert result == _no_plan_intent("CONFLICTING_SIGNALS")
 
 
 def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch):

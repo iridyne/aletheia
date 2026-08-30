@@ -28,7 +28,7 @@ class PlanIntentError(ValueError):
         super().__init__(message)
 
 
-class PlanIntent(BaseModel):
+class _PlanIntentWire(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["ENTRY_PLAN", "NO_PLAN"]
@@ -49,6 +49,8 @@ class PlanIntent(BaseModel):
     risk_tier: Literal["LOW", "MEDIUM", "NONE"]
     horizon: Literal["INTRADAY", "SWING", "NONE"]
 
+
+class PlanIntent(_PlanIntentWire):
     @model_validator(mode="after")
     def _validate_semantics(self) -> "PlanIntent":
         trigger_fields_empty = self.trigger_spec_id is None and self.trigger_spec_version is None
@@ -128,6 +130,33 @@ def _candidate_context(
             for spec in compatible_trigger_specs(str(candidate.get("scanner_family") or ""))
         ],
     }
+
+
+def _canonicalize_no_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("decision") != "NO_PLAN":
+        return payload
+    return {
+        **payload,
+        "execution_mode": None,
+        "order_tactic": None,
+        "trigger_spec_id": None,
+        "trigger_spec_version": None,
+        "risk_tier": "NONE",
+        "horizon": "NONE",
+    }
+
+
+class _PlanIntentWireSchema:
+    @classmethod
+    def model_json_schema(cls) -> dict[str, Any]:
+        return _PlanIntentWire.model_json_schema()
+
+    @classmethod
+    def model_validate(cls, payload: dict[str, Any]) -> PlanIntent:
+        canonical = dict(_canonicalize_no_plan(payload))
+        payload.clear()
+        payload.update(canonical)
+        return PlanIntent.model_validate(payload)
 
 
 def _validate_intent_against_candidate(
@@ -419,7 +448,7 @@ STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
         result, error = await llm_structured(
             system_prompt,
             json.dumps(context, sort_keys=True, default=str),
-            schema=PlanIntent,
+            schema=_PlanIntentWireSchema,
             max_tokens=768,
             provider=provider_name,
             fallback_to_defaults=False,
@@ -445,6 +474,7 @@ STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
         raise PlanIntentError("PLANNER_UNAVAILABLE")
     if result is None:
         raise PlanIntentError("PLANNER_UNAVAILABLE")
+    result = _canonicalize_no_plan(result)
     try:
         return PlanIntent.model_validate(result)
     except ValidationError as exc:

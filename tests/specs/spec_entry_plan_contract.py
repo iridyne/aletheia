@@ -130,23 +130,49 @@ def test_exact_venue_capability_is_one_shared_executable_invariant():
         "entry_plan_contract",
         "PlanIntent authority and failure semantics",
         "L2a",
-        "PlanIntent exposes a strict required qualitative tactic matrix and only compatible registered TriggerSpecs.",
+        "PlanIntent exposes a strict wire matrix and canonicalizes non-authoritative NO_PLAN execution fields.",
         status="implemented",
     )
 )
 def test_plan_intent_and_trigger_registry_expose_complete_authority():
     import json
 
-    from aletheia.agent_shell.entry_planner import PlanIntent
+    from aletheia.agent_shell.entry_planner import (
+        PlanIntent,
+        _PlanIntentWireSchema,
+        _canonicalize_no_plan,
+    )
     from aletheia.model_provider.base import portable_json_schema_payload
     from aletheia.trading.trigger_specs import compatible_trigger_specs
 
-    schema = portable_json_schema_payload(PlanIntent)
+    schema = portable_json_schema_payload(_PlanIntentWireSchema)
     assert set(schema["required"]) == set(schema["properties"])
     assert schema["additionalProperties"] is False
     assert schema["properties"]["order_tactic"]["type"] == ["string", "null"]
     encoded = json.dumps(schema)
     assert "$ref" not in encoded and "$defs" not in encoded and "anyOf" not in encoded
+    assert set(schema["properties"]) == set(PlanIntent.model_fields)
+    assert _canonicalize_no_plan(
+        {
+            "decision": "NO_PLAN",
+            "reason_code": "CONFLICTING_SIGNALS",
+            "execution_mode": "RESTING_MAKER",
+            "order_tactic": "POST_ONLY_LIMIT",
+            "trigger_spec_id": None,
+            "trigger_spec_version": None,
+            "risk_tier": "LOW",
+            "horizon": "INTRADAY",
+        }
+    ) == {
+        "decision": "NO_PLAN",
+        "reason_code": "CONFLICTING_SIGNALS",
+        "execution_mode": None,
+        "order_tactic": None,
+        "trigger_spec_id": None,
+        "trigger_spec_version": None,
+        "risk_tier": "NONE",
+        "horizon": "NONE",
+    }
     assert [(spec.spec_id, spec.version) for spec in compatible_trigger_specs("momentum")] == [
         ("momentum-retrace-reclaim", "v1")
     ]
