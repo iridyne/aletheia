@@ -1247,7 +1247,7 @@ export function LearningFunnelPanel() {
         <span className="lf-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
         <span className="lf-meta-pill">Lessons applied: <strong>{lessonApplied ?? 'Unavailable'}</strong> / proposed: <strong>{lessonProposed ?? 'Unavailable'}</strong></span>
         <span className="lf-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active ?? 'Unavailable'}</strong></span>
-        <span className="lf-meta-pill">Contradictions needing review: <strong>{data.contradictions.checked ? contradictionCount ?? 0 : 'Unavailable'}</strong></span>
+        <span className="lf-meta-pill">Contradictions needing review: <strong>{data.contradictions.checked ? contradictionCount ?? 0 : data.contradictions.truncated ? `≥${data.contradictions.items.length} (partial scan)` : 'Unavailable'}</strong></span>
       </div>
       <div className="lf-bars">
         {data.knowledge_items_by_type.map(({ item_type, count }) => {

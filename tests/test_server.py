@@ -278,20 +278,23 @@ async def test_guard_reads_fail_with_stable_unavailable_response(client, monkeyp
 
 @pytest.mark.anyio
 async def test_learning_funnel_reports_contradictions(client):
+    from aletheia.knowledge.document import canonicalize_inline_document
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
+    support = canonicalize_inline_document("BTC/USDT long opportunity")
+    block = canonicalize_inline_document("Avoid BTC/USDT long")
     insert_knowledge_item(KnowledgeItem(
         item_type="trading_memo",
         title="BTC/USDT long opportunity",
-        content="",
         confidence="high_confidence",
+        **support,
     ))
     insert_knowledge_item(KnowledgeItem(
         item_type="guard_candidate",
         title="Avoid BTC/USDT long",
-        content="",
         confidence="medium_confidence",
+        **block,
     ))
 
     from aletheia.server.routes.analytics import get_learning_funnel
@@ -303,6 +306,149 @@ async def test_learning_funnel_reports_contradictions(client):
     assert first["symbol"] == "BTC/USDT"
     assert first["direction"] == "long"
 
+
+
+@pytest.mark.anyio
+async def test_learning_funnel_contradiction_via_frontmatter_body(client):
+    """Conflict whose symbol/direction live only in frontmatter and stance only in body.
+
+    Regression for #1886: the earlier SELECT omitted content/file_path so the
+    detector fell back to title-only extraction and missed frontmatter evidence.
+    """
+    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    # Symbol and direction are only in frontmatter; stance only in body.
+    support_content = "---\nsymbol: ETH/USDT\ndirection: long\n---\nResearch supports this long opportunity."
+    support = canonicalize_inline_document(support_content)
+    block = canonicalize_inline_document("Avoid ETH/USDT long")
+    insert_knowledge_item(KnowledgeItem(
+        item_type="research_note",
+        title="Late-entry evidence",  # neutral title — no symbol/direction in title
+        confidence="high_confidence",
+        **support,
+    ))
+    insert_knowledge_item(KnowledgeItem(
+        item_type="guard_candidate",
+        title="Avoid ETH/USDT long",
+        confidence="medium_confidence",
+        **block,
+    ))
+
+    from aletheia.server.routes.analytics import get_learning_funnel
+
+    body = get_learning_funnel()
+    c = body["contradictions"]
+    assert c["checked"] is True
+    assert c["count"] >= 1
+    assert c["eligible_total"] is not None
+    symbols = {item["symbol"] for item in c["items"]}
+    assert "ETH/USDT" in symbols, "frontmatter-only evidence must be detected"
+
+
+@pytest.mark.anyio
+async def test_learning_funnel_missing_inline_provenance_is_unavailable(client):
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    item = KnowledgeItem(
+        item_type="research_note",
+        title="Legacy body-only evidence",
+        content="Research supports BTC/USDT long.",
+        confidence="high_confidence",
+    )
+    insert_knowledge_item(item)
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE knowledge_items SET content_format=NULL, content_sha256=NULL, "
+        "metadata_json=NULL WHERE id=?",
+        (item.id,),
+    )
+    db.commit()
+    response = await client.get("/api/analytics/learning-funnel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["contradictions"]["checked"] is False
+    assert body["contradictions"]["count"] is None
+    assert body["query_errors"]["contradictions_provenance"] == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_learning_funnel_detection_failure_clears_coverage(client, monkeypatch):
+    from aletheia.knowledge import guards
+
+    monkeypatch.setattr(
+        guards,
+        "load_trading_guards",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("guard read failed")),
+    )
+
+    response = await client.get("/api/analytics/learning-funnel")
+
+    assert response.status_code == 200
+    contradictions = response.json()["contradictions"]
+    assert contradictions["checked"] is False
+    assert contradictions["count"] is None
+    assert contradictions["eligible_total"] is None
+    assert contradictions["inspected"] is None
+    assert contradictions["truncated"] is None
+
+
+@pytest.mark.anyio
+async def test_learning_funnel_truncated_scan_is_partial(client):
+    """A real 500-row slice cannot hide an older conflict as a confirmed zero."""
+    from aletheia.knowledge.document import canonicalize_inline_document
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    for title in ("ETH/USDT long opportunity", "Avoid ETH/USDT long"):
+        insert_knowledge_item(KnowledgeItem(
+            item_type="research_note",
+            title=title,
+            confidence="high_confidence",
+            **canonicalize_inline_document(title),
+        ))
+    for index in range(500):
+        text = f"Unrelated canonical evidence {index}"
+        insert_knowledge_item(KnowledgeItem(
+            item_type="research_note",
+            title=text,
+            confidence="medium_confidence",
+            **canonicalize_inline_document(text),
+        ))
+
+    response = await client.get("/api/analytics/learning-funnel")
+
+    assert response.status_code == 200
+    body = response.json()
+    contradictions = body["contradictions"]
+    assert contradictions["checked"] is False
+    assert contradictions["count"] is None
+    assert contradictions["truncated"] is True
+    assert contradictions["eligible_total"] == 502
+    assert contradictions["inspected"] == 500
+    assert all(
+        item.get("symbol") != "ETH/USDT"
+        for item in contradictions["items"]
+    )
+
+
+@pytest.mark.anyio
+async def test_learning_funnel_exhaustive_scan_returns_checked(client):
+    """A corpus small enough to scan fully still returns checked=true and exact count."""
+    from aletheia.server.routes.analytics import get_learning_funnel
+
+    body = get_learning_funnel()
+    c = body["contradictions"]
+    # Fresh test DB has ≤ 500 eligible items — scan must be exhaustive.
+    assert c["checked"] is True
+    assert isinstance(c["eligible_total"], int)
+    assert c["inspected"] == c["eligible_total"]
+    assert c["truncated"] is False
+    assert isinstance(c["count"], int)
 
 @pytest.mark.anyio
 async def test_learning_funnel_optional_read_failures_are_not_zero(client, monkeypatch):

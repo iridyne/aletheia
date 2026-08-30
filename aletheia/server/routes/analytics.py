@@ -1965,29 +1965,55 @@ def get_learning_funnel():
     total_by_type = {row["item_type"]: row["count"] for row in type_total}
     layer3_guards_in_window = min(int(total_by_type.get("guard_candidate", 0)), 3)
 
+    _CONTRADICTION_SCAN_LIMIT = 500
+    _CONTRADICTION_ELIGIBLE_TYPES = (
+        "'research_note','strategy_memory','trading_memo','trading_guard',"
+        "'guard_candidate','trade_case_study','calibration_report'"
+    )
+
     contradictions: list[dict] = []
     active_guards_total: int | None = None
     contradictions_checked = True
+    contradiction_eligible_total: int | None = None
+    contradiction_inspected: int | None = None
+    contradiction_truncated: bool | None = None
     try:
-        from aletheia.knowledge.manager import detect_contradictions
+        from aletheia.knowledge.document import read_knowledge_document
         from aletheia.knowledge.guards import load_trading_guards
+        from aletheia.knowledge.manager import detect_contradictions
 
-        # Hot dashboard path: keep this DB-only. Passing file_path would make the
-        # detector read hundreds of Markdown files on every Learning refresh.
-        contradiction_items = [
+        # COUNT(*) OVER() and the bounded rows come from one SQLite statement,
+        # so concurrent writers cannot make coverage disagree with the slice.
+        selected_rows = [
             dict(r) for r in db.execute(
-                "SELECT id,item_type,title,confidence,status,tags,content,"
-                "content_format,content_sha256,metadata_json,symbol,direction,"
-                "scanner_family,outcome "
+                "SELECT id,item_type,title,confidence,status,tags,"
+                "content,content_format,content_sha256,metadata_json,"
+                "symbol,direction,scanner_family,outcome,"
+                "COUNT(*) OVER() AS _eligible_total "
                 "FROM knowledge_items "
                 "WHERE status='active' "
-                "AND item_type IN ("
-                "'research_note','strategy_memory','trading_memo','trading_guard',"
-                "'guard_candidate','trade_case_study','calibration_report'"
-                ") "
-                "ORDER BY rowid DESC LIMIT 500"
+                f"AND item_type IN ({_CONTRADICTION_ELIGIBLE_TYPES}) "
+                f"ORDER BY rowid DESC LIMIT {_CONTRADICTION_SCAN_LIMIT}"
             )
         ]
+        contradiction_eligible_total = (
+            int(selected_rows[0]["_eligible_total"]) if selected_rows else 0
+        )
+        truncated = contradiction_eligible_total > _CONTRADICTION_SCAN_LIMIT
+        contradiction_truncated = truncated
+        for item in selected_rows:
+            item.pop("_eligible_total", None)
+        contradiction_items = []
+        provenance_complete = True
+        for item in selected_rows:
+            document = read_knowledge_document(item)
+            if document.state not in {"available", "available_inline"}:
+                provenance_complete = False
+                continue
+            contradiction_items.append(item)
+        contradiction_inspected = len(contradiction_items)
+        if not provenance_complete:
+            query_errors["contradictions_provenance"] = "unavailable"
         active_guards = load_trading_guards(status="active")
         active_guards_total = len(active_guards)
         for guard in active_guards:
@@ -2010,10 +2036,17 @@ def get_learning_funnel():
                         },
                     })
         contradictions = detect_contradictions(contradiction_items)
+        # A truncated or provenance-incomplete scan cannot claim completeness:
+        # findings are a lower bound, not a confirmed zero.
+        if truncated or not provenance_complete:
+            contradictions_checked = False
     except Exception:
         contradictions = []
         active_guards_total = None
         contradictions_checked = False
+        contradiction_eligible_total = None
+        contradiction_inspected = None
+        contradiction_truncated = None
         query_errors["contradictions"] = "read_failed"
 
     return {
@@ -2032,6 +2065,9 @@ def get_learning_funnel():
             "checked": contradictions_checked,
             "count": len(contradictions) if contradictions_checked else None,
             "items": contradictions[:10],
+            "eligible_total": contradiction_eligible_total,
+            "inspected": contradiction_inspected,
+            "truncated": contradiction_truncated,
             "note": "Conservative support-vs-block detector; findings require human review.",
         },
         "query_errors": query_errors,
