@@ -65,6 +65,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
 | `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |
 | `reconciliation_integrity_incidents` | Restart-safe close/reopen circuit breaker and explicit recovery evidence | scoped fingerprint, status, source mix, detected/clean timestamps, clean count, resolution actor/reason, semantics version | position reconciler + Learning control |
+| `broker_funding_settlement_cursor` | Singleton durable scheduling cursor for unresolved exchange-close funding recovery; it rotates retryable/conflicting prefixes without owning Position state | queue_id, last_closed_at, last_position_rowid, updated_at | broker funding settler |
 | `shadow_trades` | What-if trades for comparison. A legacy batch derived from a later-invalidated Position remains retained but is marked invalid and excluded from decision reads. | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs, invalidated_at, invalidation_reason | counterfactual |
 | `portfolio_snapshots` | Periodic portfolio/account snapshots; `account_equity_usdt` is the only field eligible for the Overview account-equity curve. Legacy local rows with only `total_value_usdt` are position notional and excluded from that curve. Realized PnL may be NULL when included close economics are incomplete. | total_value_usdt, account_equity_usdt, unrealized_pnl, nullable realized_pnl, execution_mode | scheduler job |
 | `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, economically complete realized-PnL settlements, owner-approved numeric correction deltas, and one position-linked `position_economics_invalidated` reversal when exit-price evidence is rejected. Numeric corrections reuse `manual_credit`/`manual_debit`; invalidation has its own unique append-only marker so cash, Position economics, and derived outcomes converge without rewriting history. | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
@@ -225,6 +226,11 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 `(jsonl_mirror_status, timestamp, id)` 支持对 `pending/failed` 行进行有界、oldest-first
 reconcile。成功后写 `jsonl_mirrored_at` 并清除 error class；`mirrored` 不得被迟到失败降级。
 JSONL payload 由同一 audit 行重建，不复制 raw broker ledger、provider error 或 credential。
+
+`broker_funding_settlement_cursor` stores only the next-scan keyset authority for the single
+exchange funding-recovery queue. Cursor CAS and Position accounting transactions are independent:
+advancing the cursor never proves settlement or changes economics, while restart/replay resumes
+after the last inspected `(closed_at,rowid)` and wraps oldest-first within the bounded scan.
 
 **Runtime Session provenance (expand-only, nullable).** The seven core trading-fact
 tables (`opportunities`, `pi_decisions`, `trade_proposals`, `risk_decisions`,
@@ -650,6 +656,13 @@ canonical fingerprint，包括 close 时记录的 `seed_close_anchor`；历史 i
 在没有可信 broker ledger 或完整 local-simulation 时间窗时必须保留 `NULL`。这种关闭仍有真实 close Order/Fill 和 closed 生命周期，
 但固定为 `incomplete_funding_economics`、不得进入 eligible Outcome/outbox，也不得追加
 `paper_account_events.position_closed`。spot 明确写 funding `0/not_applicable`。
+
+只有 matching UTA profile 明确返回 `funding_history_retention_expired` 时，exchange-backed
+Position 才可把自动重试状态改为 `broker_funding_history_expired`。该 terminal reason 仍保留
+`funding_cost=NULL`、`realized_pnl=NULL`、`funding_source='unavailable'` 与
+`outcome_eligible=false`；版本化 `reconciliation_evidence.funding_terminal` 和同 transaction
+的 funding audit 记录 retention 边界。任何其他 unavailable/partial/error、malformed
+evidence 或 identity/CAS conflict 都不得写这个 reason。
 
 `local-paper-funding-v2` 使用 `(exchange, canonical_symbol, UTC whole-second settlement)` 作为
 会计事件身份，只归一严格小于一秒的表示偏差。完整历史结算可作为 `historical_ledger` 恢复

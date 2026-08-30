@@ -28,6 +28,139 @@ _EXCHANGE_FUNDING_MODES = (
     "binance_live_limited",
 )
 
+BROKER_FUNDING_HISTORY_EXPIRED = "broker_funding_history_expired"
+_FUNDING_QUEUE_ID = "exchange_funding"
+
+
+class FundingHistoryRetentionExpired(Exception):
+    """Typed UTA profile result proving private funding history is irrecoverable."""
+
+    def __init__(
+        self,
+        *,
+        retention_days: int,
+        profile_version: str,
+        received_at: datetime,
+        source: str,
+    ) -> None:
+        super().__init__("UTA funding history retention expired")
+        self.retention_days = retention_days
+        self.profile_version = profile_version
+        self.received_at = received_at
+        self.source = source
+
+
+def _cursor_key(row: dict) -> tuple[str, int]:
+    return str(row.get("closed_at") or ""), int(row["funding_queue_rowid"])
+
+
+def _select_funding_queue_rows(
+    limit: int,
+) -> tuple[list[dict], tuple[str, int] | None]:
+    """Read one bounded keyset page, wrapping only after reaching the tail."""
+    db = get_db()
+    cursor_row = db.execute(
+        "SELECT last_closed_at, last_position_rowid "
+        "FROM broker_funding_settlement_cursor WHERE queue_id=?",
+        (_FUNDING_QUEUE_ID,),
+    ).fetchone()
+    cursor = (
+        (str(cursor_row["last_closed_at"]), int(cursor_row["last_position_rowid"]))
+        if cursor_row is not None
+        else None
+    )
+    placeholders = ",".join("?" for _ in _EXCHANGE_FUNDING_MODES)
+    base = f"""SELECT rowid AS funding_queue_rowid, * FROM positions
+        WHERE status='closed' AND market_type='usdt_futures'
+          AND execution_mode IN ({placeholders})
+          AND realized_pnl IS NULL
+          AND outcome_exclusion_reason='incomplete_funding_economics'"""
+
+    def page(clause: str, params: tuple[object, ...], page_limit: int) -> list[dict]:
+        return [
+            dict(row)
+            for row in db.execute(
+                base + clause + " ORDER BY COALESCE(closed_at,''), rowid LIMIT ?",
+                (*_EXCHANGE_FUNDING_MODES, *params, page_limit),
+            ).fetchall()
+        ]
+
+    if cursor is None:
+        return page("", (), limit), None
+    closed_at, position_rowid = cursor
+    rows = page(
+        " AND (COALESCE(closed_at,'') > ? OR "
+        "(COALESCE(closed_at,'') = ? AND rowid > ?))",
+        (closed_at, closed_at, position_rowid),
+        limit,
+    )
+    if len(rows) < limit:
+        rows.extend(page(
+            " AND (COALESCE(closed_at,'') < ? OR "
+            "(COALESCE(closed_at,'') = ? AND rowid <= ?))",
+            (closed_at, closed_at, position_rowid),
+            limit - len(rows),
+        ))
+    return rows, cursor
+
+
+def funding_recovery_state_counts() -> dict[str, int]:
+    """Count durable unresolved and terminal exchange funding states."""
+    placeholders = ",".join("?" for _ in _EXCHANGE_FUNDING_MODES)
+    rows = get_db().execute(
+        f"""SELECT outcome_exclusion_reason, COUNT(*) AS count
+            FROM positions
+            WHERE status='closed' AND market_type='usdt_futures'
+              AND execution_mode IN ({placeholders})
+              AND realized_pnl IS NULL
+              AND outcome_exclusion_reason IN (
+                  'incomplete_funding_economics',
+                  'broker_funding_history_expired'
+              )
+            GROUP BY outcome_exclusion_reason""",
+        _EXCHANGE_FUNDING_MODES,
+    ).fetchall()
+    counts = {
+        str(row["outcome_exclusion_reason"]): int(row["count"])
+        for row in rows
+    }
+    return {
+        "retry_pending": counts.get("incomplete_funding_economics", 0),
+        "terminal": counts.get(BROKER_FUNDING_HISTORY_EXPIRED, 0),
+    }
+
+
+def _advance_funding_queue_cursor(
+    previous: tuple[str, int] | None,
+    row: dict,
+) -> bool:
+    """CAS scheduling progress without changing Position owner state."""
+    closed_at, position_rowid = _cursor_key(row)
+    now = datetime.now(timezone.utc).isoformat()
+    with repo.transaction(immediate=True):
+        if previous is None:
+            result = get_db().execute(
+                "INSERT OR IGNORE INTO broker_funding_settlement_cursor "
+                "(queue_id,last_closed_at,last_position_rowid,updated_at) "
+                "VALUES (?,?,?,?)",
+                (_FUNDING_QUEUE_ID, closed_at, position_rowid, now),
+            )
+        else:
+            result = get_db().execute(
+                "UPDATE broker_funding_settlement_cursor SET "
+                "last_closed_at=?, last_position_rowid=?, updated_at=? "
+                "WHERE queue_id=? AND last_closed_at=? AND last_position_rowid=?",
+                (
+                    closed_at,
+                    position_rowid,
+                    now,
+                    _FUNDING_QUEUE_ID,
+                    previous[0],
+                    previous[1],
+                ),
+            )
+    return result.rowcount == 1
+
 
 def _fingerprint(evidence: dict) -> str:
     return "sha256:" + hashlib.sha256(
@@ -128,7 +261,7 @@ def materialize_broker_funding_economics(
         if current.get("realized_pnl") is None:
             changed_fields = sorted(
                 key
-                for key in set(row) | set(current)
+                for key in (set(row) | set(current)) - {"funding_queue_rowid"}
                 if row.get(key) != current.get(key)
             )
             if changed_fields:
@@ -330,6 +463,147 @@ def materialize_broker_funding_economics(
     }
 
 
+def _terminalize_funding_history_expired(
+    row: dict,
+    expiry: FundingHistoryRetentionExpired,
+    *,
+    history_start_ms: int,
+    history_end_ms: int,
+) -> dict:
+    """Stop only automatic retry while preserving unavailable economics."""
+    from aletheia.portfolio.funding_audit import (
+        funding_audit_id,
+        insert_pending_funding_audit,
+    )
+
+    position_id = str(row.get("id") or "")
+    terminal = {
+        "status": "terminal",
+        "reason": BROKER_FUNDING_HISTORY_EXPIRED,
+        "uta_reason": "funding_history_retention_expired",
+        "position_id": position_id,
+        "execution_mode": str(row.get("execution_mode") or ""),
+        "symbol": str(row.get("symbol") or ""),
+        "history_start_ms": int(history_start_ms),
+        "history_end_ms": int(history_end_ms),
+        "retention_days": expiry.retention_days,
+        "profile_version": expiry.profile_version,
+        "source": expiry.source,
+        "accounting_version": "broker-funding-retention-v1",
+    }
+    terminal_fingerprint = _fingerprint(terminal)
+    before = {
+        "realized_pnl": None,
+        "funding_cost": None,
+        "funding_source": "unavailable",
+        "outcome_eligible": False,
+        "outcome_exclusion_reason": "incomplete_funding_economics",
+    }
+    after = {
+        **before,
+        "outcome_exclusion_reason": BROKER_FUNDING_HISTORY_EXPIRED,
+        "funding_terminal": terminal,
+    }
+    occurred_at = datetime.fromtimestamp(
+        (
+            history_start_ms
+            + expiry.retention_days * 24 * 60 * 60 * 1000
+        )
+        / 1000,
+        tz=timezone.utc,
+    ).isoformat()
+    audit_event_id = funding_audit_id(
+        position_id=position_id,
+        event_type="exchange_position_funding_history_expired",
+        accounting_version="broker-funding-retention-v1",
+        fingerprint=terminal_fingerprint,
+        transition_fingerprint=_fingerprint({"before": before, "after": after}),
+        occurred_at=occurred_at,
+    )
+
+    with repo.transaction(immediate=True):
+        current = repo._select_one("positions", position_id)
+        if current is None:
+            return {"status": "stale_noop", "audit_event_id": None}
+        changed_fields = sorted(
+            key
+            for key in (set(row) | set(current)) - {"funding_queue_rowid"}
+            if row.get(key) != current.get(key)
+        )
+        if (
+            changed_fields
+            or current.get("status") != "closed"
+            or current.get("execution_mode") not in _EXCHANGE_FUNDING_MODES
+            or current.get("market_type") != "usdt_futures"
+            or not current.get("exit_fill_verified")
+            or current.get("realized_pnl") is not None
+            or current.get("funding_cost") is not None
+            or current.get("funding_source") != "unavailable"
+            or bool(current.get("outcome_eligible"))
+            or current.get("outcome_exclusion_reason")
+            != "incomplete_funding_economics"
+        ):
+            return {"status": "stale_noop", "audit_event_id": None}
+
+        close_events = [
+            dict(event)
+            for event in get_db().execute(
+                """SELECT * FROM position_close_events
+                   WHERE position_id=? AND is_partial=0 ORDER BY rowid""",
+                (position_id,),
+            ).fetchall()
+        ]
+        if (
+            len(close_events) != 1
+            or close_events[0].get("realized_pnl") is not None
+            or not _close_event_matches_position(close_events[0], current)
+        ):
+            raise ValueError("exactly one matching NULL-economics close is required")
+
+        raw_evidence = current.get("reconciliation_evidence")
+        if raw_evidence:
+            try:
+                evidence_root = json.loads(str(raw_evidence))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError("position reconciliation evidence is malformed") from exc
+            if not isinstance(evidence_root, dict):
+                raise ValueError("position reconciliation evidence is malformed")
+        else:
+            evidence_root = {}
+        previous_terminal = evidence_root.get("funding_terminal")
+        if previous_terminal is not None and previous_terminal != terminal:
+            raise ValueError("funding terminal evidence conflict")
+        evidence_root["funding_terminal"] = terminal
+
+        repo.update_position(
+            position_id,
+            funding_source="unavailable",
+            outcome_eligible=False,
+            outcome_exclusion_reason=BROKER_FUNDING_HISTORY_EXPIRED,
+            reconciliation_evidence=json.dumps(
+                evidence_root,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        insert_pending_funding_audit(AuditEvent(
+            id=audit_event_id,
+            timestamp=occurred_at,
+            actor="system",
+            source="broker_funding_settler",
+            event_type="exchange_position_funding_history_expired",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(before, sort_keys=True),
+            after_state=json.dumps(after, sort_keys=True),
+            message=(
+                f"Excluded expired broker funding history for Position {position_id}; "
+                "net economics remain unavailable"
+            ),
+        ))
+    return {"status": "terminalized", "audit_event_id": audit_event_id}
+
+
 async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dict:
     from aletheia.execution.broker_funding import make_complete_ledger
     from aletheia.uta.compat import scope_from_local
@@ -348,6 +622,16 @@ async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dic
         )),
     )
     if report.completeness is not ReadCompleteness.COMPLETE:
+        from aletheia.uta.funding import FUNDING_HISTORY_RETENTION_EXPIRED
+        if report.reason_code == FUNDING_HISTORY_RETENTION_EXPIRED:
+            from aletheia.uta.manager import funding_history_retention_contract
+            retention_days, _ = funding_history_retention_contract(execution_mode)
+            raise FundingHistoryRetentionExpired(
+                retention_days=retention_days,
+                profile_version=report.profile_version,
+                received_at=report.received_at,
+                source="uta_report",
+            )
         raise ValueError(report.reason_code or "UTA funding ledger incomplete")
     events = [
         {
@@ -409,60 +693,113 @@ def _client_for_mode(execution_mode: str):
     return _UTAFundingProjection(execution_mode)
 
 
-async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
-    """Recover already-closed exchange futures after funding bills become visible."""
-    placeholders = ",".join("?" for _ in _EXCHANGE_FUNDING_MODES)
-    rows = [
-        dict(row)
-        for row in get_db().execute(
-            f"""SELECT * FROM positions
-                WHERE status='closed' AND market_type='usdt_futures'
-                  AND execution_mode IN ({placeholders})
-                  AND realized_pnl IS NULL
-                  AND outcome_exclusion_reason='incomplete_funding_economics'
-                ORDER BY closed_at ASC, rowid ASC LIMIT ?""",
-            (*_EXCHANGE_FUNDING_MODES, int(limit)),
-        ).fetchall()
-    ]
+async def settle_unsettled_exchange_closes(
+    limit: int = 50,
+    *,
+    scan_limit: int = 100,
+) -> dict:
+    """Recover exchange closes with bounded fair scheduling and broker I/O."""
+    from aletheia.config.loader import load_config
+    from aletheia.uta.funding import is_funding_history_retention_expired
+    from aletheia.uta.manager import funding_history_retention_contract
+
+    broker_budget = min(max(int(limit), 0), 50)
+    classification_budget = min(max(int(scan_limit), 0), 100)
+    rows, cursor = (
+        _select_funding_queue_rows(classification_budget)
+        if broker_budget and classification_budget
+        else ([], None)
+    )
+    cfg = load_config()
+    checked = 0
+    broker_io_attempted = 0
     settled = 0
+    history_expired = 0
+    stale_noop = 0
     still_pending = 0
     audit_pending = 0
+    cursor_advanced = False
+    cursor_conflict = False
     errors: list[str] = []
     for row in rows:
+        if cursor_conflict or broker_io_attempted >= broker_budget:
+            break
+        checked += 1
         position_id = str(row.get("id") or "")
         client = None
         try:
             start_ms, end_ms = funding_query_window(row, row.get("closed_at"))
-            client = _client_for_mode(str(row["execution_mode"]))
-            ledger = await client.get_funding_ledger(
-                broker_id=str(row["execution_mode"]),
-                symbol=str(row["symbol"]),
-                start_time_ms=start_ms,
-                end_time_ms=end_ms,
+            execution_mode = str(row["execution_mode"])
+            retention_days, profile_version = funding_history_retention_contract(
+                execution_mode,
+                cfg=cfg,
             )
-            funding = compute_stored_broker_funding(
-                get_db(),
-                position=row,
-                closed_at=row["closed_at"],
-                ledger=ledger,
-            )
-            if not funding.complete or funding.funding_cost is None:
-                still_pending += 1
-                continue
-            materialized = materialize_broker_funding_economics(
-                row,
-                funding_cost=funding.funding_cost,
-                funding_evidence=funding.evidence,
-                funding_ledger=ledger,
-            )
-            settled += 1
-            audit_pending += int(
-                materialized.get("audit_mirror_status") != "mirrored"
-            )
+            received_at = datetime.now(timezone.utc)
+            expiry: FundingHistoryRetentionExpired | None = None
+            ledger: dict | None = None
+            if is_funding_history_retention_expired(
+                datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc),
+                received_at=received_at,
+                retention_days=retention_days,
+            ):
+                expiry = FundingHistoryRetentionExpired(
+                    retention_days=retention_days,
+                    profile_version=profile_version,
+                    received_at=received_at,
+                    source="uta_profile_preflight",
+                )
+            else:
+                broker_io_attempted += 1
+                client = _client_for_mode(execution_mode)
+                try:
+                    ledger = await client.get_funding_ledger(
+                        broker_id=execution_mode,
+                        symbol=str(row["symbol"]),
+                        start_time_ms=start_ms,
+                        end_time_ms=end_ms,
+                    )
+                except FundingHistoryRetentionExpired as exc:
+                    expiry = exc
+
+            if expiry is not None:
+                terminalized = _terminalize_funding_history_expired(
+                    row,
+                    expiry,
+                    history_start_ms=start_ms,
+                    history_end_ms=end_ms,
+                )
+                if terminalized["status"] == "terminalized":
+                    history_expired += 1
+                    audit_pending += 1
+                else:
+                    stale_noop += 1
+            else:
+                if ledger is None:
+                    raise RuntimeError("UTA funding ledger unavailable")
+                funding = compute_stored_broker_funding(
+                    get_db(),
+                    position=row,
+                    closed_at=row["closed_at"],
+                    ledger=ledger,
+                )
+                if not funding.complete or funding.funding_cost is None:
+                    still_pending += 1
+                else:
+                    materialized = materialize_broker_funding_economics(
+                        row,
+                        funding_cost=funding.funding_cost,
+                        funding_evidence=funding.evidence,
+                        funding_ledger=ledger,
+                    )
+                    settled += 1
+                    audit_pending += int(
+                        materialized.get("audit_mirror_status") != "mirrored"
+                    )
         except Exception as exc:
             logger.warning(
                 "broker funding settler failed for %s (%s)",
-                position_id, type(exc).__name__,
+                position_id,
+                type(exc).__name__,
             )
             errors.append(f"{position_id}: {type(exc).__name__}")
             still_pending += 1
@@ -472,11 +809,24 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
                     await client.close()
                 except Exception:
                     pass
+            if _advance_funding_queue_cursor(cursor, row):
+                cursor = _cursor_key(row)
+                cursor_advanced = True
+            else:
+                errors.append(f"{position_id}: FundingQueueCursorConflict")
+                cursor_conflict = True
+    recovery_state = funding_recovery_state_counts()
     return {
-        "checked": len(rows),
+        "checked": checked,
+        "broker_io_attempted": broker_io_attempted,
         "settled": settled,
+        "history_expired": history_expired,
+        "stale_noop": stale_noop,
+        "cursor_advanced": cursor_advanced,
         "still_pending": still_pending,
         "audit_pending": audit_pending,
+        "retry_pending_total": recovery_state["retry_pending"],
+        "terminal_total": recovery_state["terminal"],
         "errors": errors,
         "as_of": datetime.now(timezone.utc).isoformat(),
     }

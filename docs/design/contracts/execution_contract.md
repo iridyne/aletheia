@@ -649,6 +649,22 @@ identity-only 路径吸收；已经 current 的行再次 apply 必须为 no-op�
 
 exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
 
+当 UTA 的同账户 funding ledger 以稳定 reason
+`funding_history_retention_expired` 证明查询起点早于该 profile 的私有历史保留边界时，
+`broker_funding_settler` 可在一个 immediate transaction 中把同一条仍为 closed、verified、
+`NULL` economics 且 reason 为 `incomplete_funding_economics` 的 Position 改为
+`broker_funding_history_expired`。该 terminal 状态只停止自动重试：`funding_cost` 与
+`realized_pnl` 继续为 `NULL`、`funding_source='unavailable'`、`outcome_eligible=false`，
+Order、Fill、Position、full-close event、cash 与 Outcome/Learning authority 都不得改变。
+转换必须同时写入版本化、无凭证的 reconciliation evidence 和 durable funding audit/outbox；
+malformed evidence、身份不匹配、stale snapshot、credential/network/permission failure、
+不完整但未过期的报告均保持 retryable，不得被 terminalize。
+
+恢复队列以 durable `(closed_at,rowid)` keyset cursor 轮转，并分别限制本地 retention
+classification 与 broker I/O。expired、retryable 或 CAS-conflict 前缀都不能永久遮挡后续
+Position 或另一 execution mode；cursor 只改变 scheduler 的下一扫描位置，不改变业务 owner
+state。每轮仍有明确 scan/I/O 上限，不能以扩大 `LIMIT` 代替公平性。
+
 真实 close Order/Fill 可以结束执行生命周期，但它不能证明持仓期间的 funding。期货没有可信账户
 账单，或本地模拟的事件窗口不完整时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
 

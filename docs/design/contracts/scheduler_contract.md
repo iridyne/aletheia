@@ -178,6 +178,18 @@ not structural proof. Durable scheduler success/failure is recorded by the norma
 path. Eligible results enqueue durable outcome hooks, and `outcome_hook_replay` remains their
 independent one-minute delivery path.
 
+### 3.3 Broker funding settlement
+
+`broker_funding_settler` runs every 30 minutes on `io`, starts three minutes after boot, is
+essential during layered pause, has `max_instances=1`, and is bounded by a 60-second async
+timeout. It scans unresolved verified exchange-futures closes through a durable
+`(closed_at,rowid)` keyset cursor. A bounded credential-free UTA retention classification budget
+is separate from the bounded broker-I/O budget: only the matching profile's
+`funding_history_retention_expired` result may atomically terminalize automatic recovery as
+`broker_funding_history_expired`; all other incomplete/error states remain retryable. Cursor
+advancement changes scheduling position only, so malformed/CAS-conflicting or transient prefixes
+cannot starve later recoverable closes without fabricating economics or changing execution facts.
+
 #### Owner-facing projection (target, no scheduling change)
 
 Learning Contribution Observability adds no job, trigger, timeout or executor. Its target

@@ -132,6 +132,51 @@ def test_funding_audit_backlog_degrades_health_and_warns_doctor(
     assert "2026-08-23T00:00:00+00:00" in check.detail
 
 
+def test_funding_recovery_states_degrade_health_and_doctor(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import Position
+
+    for position_id, reason in (
+        ("funding-terminal", "broker_funding_history_expired"),
+        ("funding-retry", "incomplete_funding_economics"),
+    ):
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            current_price=110.0,
+            execution_mode="bitget_demo",
+        ))
+        repo.update_position(
+            position_id,
+            status="closed",
+            realized_pnl=None,
+            funding_source="unavailable",
+            outcome_eligible=False,
+            outcome_exclusion_reason=reason,
+        )
+
+    result = health.compute_health()
+    assert result["status"] == "degraded"
+    assert "broker_funding_history_expired:1" in result["issues"]
+    assert "broker_funding_recovery_pending:1" in result["issues"]
+
+    report = doctor.Report()
+    doctor._probe_health(report)
+    check = next(item for item in report.checks if item.name == "health.rollup")
+    assert check.severity == "warn"
+    assert "broker_funding_history_expired:1" in check.detail
+    assert "broker_funding_recovery_pending:1" in check.detail
+
+
 def test_funding_audit_probe_unavailable_is_not_reported_healthy(
     tmp_path, monkeypatch,
 ):

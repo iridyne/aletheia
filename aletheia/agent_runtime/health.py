@@ -418,6 +418,27 @@ def compute_health() -> dict:
         )
         initializing.append("funding_audit_mirror_unknown")
 
+    try:
+        from aletheia.portfolio.broker_funding_settlement import (
+            funding_recovery_state_counts,
+        )
+
+        funding_state = funding_recovery_state_counts()
+        if funding_state["terminal"]:
+            issues.append(
+                f"broker_funding_history_expired:{funding_state['terminal']}"
+            )
+        if funding_state["retry_pending"]:
+            issues.append(
+                f"broker_funding_recovery_pending:{funding_state['retry_pending']}"
+            )
+    except Exception as exc:
+        logger.warning(
+            "broker funding recovery health probe failed: %s",
+            type(exc).__name__,
+        )
+        initializing.append("broker_funding_recovery_unknown")
+
     if not issues and not initializing:
         status = "healthy"
     elif not issues:

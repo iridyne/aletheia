@@ -52,6 +52,7 @@
 | 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
 | 36a | paper_funding_settler | 30min | io | Recover complete local-paper futures funding from persisted live/history evidence and atomically converge Position, close event, cash, eligibility, audit, and durable outcome hooks; read source I/O never spans the SQLite writer transaction |
+| 36b | broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
 | 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | learning_measurement | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
 | 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one owner-gated paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
@@ -80,6 +81,13 @@ collector. It runs during layered pause, keeps incomplete facts `NULL`, and may 
 settlements only as `local_simulation` evidence. It never labels age alone as structural failure.
 When evidence becomes complete it calls the single atomic materializer; downstream feedback is
 durably queued and independently retried by `outcome_hook_replay`.
+
+`broker_funding_settler` is exchange-accounting recovery, not trading authority. It runs during
+layered pause and rotates a durable scheduling cursor so expired, transient, malformed, or
+CAS-conflicting prefixes cannot starve later closes. Only the matching UTA profile's typed
+`funding_history_retention_expired` result may write the terminal automatic-retry reason
+`broker_funding_history_expired`; PnL/funding remain `NULL`, no cash or Outcome/Learning hook is
+created, and credential/network/permission failures stay retryable.
 
 `funding_audit_reconciler` is audit delivery maintenance, not an accounting or trading job. New
 paper/broker funding settlements commit the authoritative SQLite audit with their economics and

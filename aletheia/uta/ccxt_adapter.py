@@ -10,6 +10,10 @@ from importlib.metadata import version
 from typing import Any
 
 from aletheia.uta.errors import UTAError, UTAErrorCode
+from aletheia.uta.funding import (
+    FUNDING_HISTORY_RETENTION_EXPIRED,
+    is_funding_history_retention_expired,
+)
 from aletheia.uta.models import (
     AccountAuthorityProbeReport,
     AccountSnapshot,
@@ -754,13 +758,17 @@ class CCXTUTAAdapter:
                 reason_code="funding_history_start_required",
                 profile_version=self._profile_version,
             )
-        if query.scope.start_at < received_at - timedelta(days=self._profile.private_history_retention_days):
+        if is_funding_history_retention_expired(
+            query.scope.start_at,
+            received_at=received_at,
+            retention_days=self._profile.private_history_retention_days,
+        ):
             return FundingLedgerReport(
                 identity=self.identity,
                 completeness=ReadCompleteness.PARTIAL,
                 scope=query.scope,
                 received_at=received_at,
-                reason_code="funding_history_retention_expired",
+                reason_code=FUNDING_HISTORY_RETENTION_EXPIRED,
                 profile_version=self._profile_version,
             )
         try:

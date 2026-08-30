@@ -112,6 +112,20 @@ def _profile_spec(cfg, execution_mode: str):
     raise KeyError(execution_mode)
 
 
+def funding_history_retention_contract(
+    execution_mode: str,
+    *,
+    cfg=None,
+) -> tuple[int, str]:
+    """Return the active profile's credential-free funding retention contract."""
+    cfg = cfg or load_config()
+    profile_type = _profile_spec(cfg, execution_mode)[-1]
+    return (
+        int(profile_type.private_history_retention_days),
+        str(profile_type.profile_version),
+    )
+
+
 def _account_generation(cfg, execution_mode: str, scope: str, profile: str) -> int:
     secret_generation = get_credential_generation(scope)
     config_generation = cfg.exchange.uta_account_config_generation_for(execution_mode)

@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, Mapping
 
 from aletheia.data.symbols import to_canonical
+
+FUNDING_HISTORY_RETENTION_EXPIRED = "funding_history_retention_expired"
+
+
+def is_funding_history_retention_expired(
+    start_at: datetime,
+    *,
+    received_at: datetime,
+    retention_days: int,
+) -> bool:
+    """Apply the same credential-free retention boundary as the UTA adapter."""
+    return start_at < received_at - timedelta(days=retention_days)
 
 
 def _event(event_id, symbol, amount, currency, timestamp, raw_type) -> dict:
