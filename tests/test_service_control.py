@@ -643,6 +643,7 @@ def test_stop_reports_persistent_runtime_stopped_when_transient_cleanup_fails(
     assert result["ok"] is False
     assert result["persistent_stopped"] is True
     assert result["runtime_stopped"] is True
+    assert result["cleanup_target"] == "transient service registration"
 
 
 def test_stop_does_not_infer_persistent_stop_from_global_pid_state(monkeypatch):
@@ -677,7 +678,38 @@ def test_stop_does_not_infer_persistent_stop_from_global_pid_state(monkeypatch):
     assert result["runtime_stopped"] is False
 
 
-def test_foreign_enabled_only_session_blocks_disable_and_uninstall(monkeypatch):
+def test_stop_reports_direct_transient_cleanup_target(monkeypatch):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "session",
+            "session": _state(),
+            "machine": _state(),
+            "transient": {"managed": True, "running": True},
+        },
+    )
+    monkeypatch.setattr(
+        service_control.managed_service,
+        "stop",
+        lambda: {
+            "ok": False,
+            "reason": "launchctl_error",
+            "runtime_stopped": True,
+        },
+    )
+
+    result = service_control.stop()
+
+    assert result["ok"] is False
+    assert result["runtime_stopped"] is True
+    assert result["cleanup_target"] == "transient service registration"
+
+
+def test_foreign_enabled_only_session_blocks_stop_disable_and_uninstall(monkeypatch):
     """Enabled-only foreign session definitions must fail closed; no false success."""
     from aletheia.gateway import service_control
 
@@ -691,6 +723,7 @@ def test_foreign_enabled_only_session_blocks_disable_and_uninstall(monkeypatch):
             "running": False,
             "session": foreign_session,
             "machine": _state(),
+            "transient": {"managed": True},
         },
     )
     monkeypatch.setattr(
@@ -703,6 +736,15 @@ def test_foreign_enabled_only_session_blocks_disable_and_uninstall(monkeypatch):
         "uninstall",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not mutate foreign definition")),
     )
+    monkeypatch.setattr(
+        service_control.managed_service,
+        "stop",
+        lambda: (_ for _ in ()).throw(AssertionError("must not stop before ownership validation")),
+    )
+
+    stop_result = service_control.stop()
+    assert stop_result["ok"] is False
+    assert stop_result["reason"] == "ownership_conflict"
 
     disable_result = service_control.disable()
     assert disable_result["ok"] is False
@@ -711,3 +753,31 @@ def test_foreign_enabled_only_session_blocks_disable_and_uninstall(monkeypatch):
     uninstall_result = service_control.uninstall()
     assert uninstall_result["ok"] is False
     assert uninstall_result["reason"] == "ownership_conflict"
+
+
+def test_disable_cleans_verified_legacy_recovery_without_session_install(monkeypatch):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "transient",
+            "session": _state(installed=False, enabled=False),
+            "machine": _state(),
+            "transient": {"managed": True},
+        },
+    )
+    sources = []
+    monkeypatch.setattr(
+        service_control,
+        "_cleanup_legacy_macos",
+        lambda *, source: sources.append(source),
+    )
+
+    result = service_control.disable(source="circuit_breaker")
+
+    assert result["ok"] is True
+    assert result["enabled"] is False
+    assert sources == ["circuit_breaker"]

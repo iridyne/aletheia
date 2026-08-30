@@ -215,8 +215,19 @@ def disable(*, elevate: bool = True, source: str = "cli") -> dict:
     if not session.get("installed"):
         if session.get("enabled"):
             return {**current, **session, "ok": False, "reason": "ownership_conflict"}
-        return {**current, "ok": True, "enabled": False}
-    return session_service.disable(source=source)
+        disabled = {**current, "ok": True, "enabled": False}
+    else:
+        disabled = session_service.disable(source=source)
+        if not disabled.get("ok"):
+            return disabled
+    cleanup_failure = _cleanup_legacy_macos(source=source)
+    if cleanup_failure:
+        return {
+            **disabled,
+            **cleanup_failure,
+            "cleanup_target": "legacy recovery",
+        }
+    return disabled
 
 
 def start(*, no_browser: bool = True, elevate: bool = True) -> dict:
@@ -235,7 +246,7 @@ def stop(*, elevate: bool = True, preserve_recovery: bool = False, operator_stop
     if current.get("reason") == "backend_conflict":
         return current
     session = current.get("session", {})
-    if session.get("installed") and (
+    if (session.get("installed") or session.get("enabled")) and (
         session.get("owned") is not True
         or session.get("config_valid") is not True
     ):
@@ -284,10 +295,20 @@ def stop(*, elevate: bool = True, preserve_recovery: bool = False, operator_stop
                         stopped.get("runtime_stopped") is True
                         or transient_stopped.get("runtime_stopped") is True
                     ),
+                    "cleanup_target": "transient service registration",
                 }
             stopped = {**stopped, "transient_stopped": True}
     else:
         stopped = managed_service.stop()
+        if (
+            not stopped.get("ok")
+            and stopped.get("runtime_stopped") is True
+            and not stopped.get("cleanup_target")
+        ):
+            stopped = {
+                **stopped,
+                "cleanup_target": "transient service registration",
+            }
     if not stopped.get("ok"):
         return stopped
     if migrated_recovery and transient_owner:
@@ -304,5 +325,10 @@ def stop(*, elevate: bool = True, preserve_recovery: bool = False, operator_stop
         # readiness-failure stops and all restart paths must not remove recovery.
         cleanup_failure = _cleanup_legacy_macos(source="cli")
         if cleanup_failure:
-            return {**stopped, **cleanup_failure, "runtime_stopped": True}
+            return {
+                **stopped,
+                **cleanup_failure,
+                "runtime_stopped": True,
+                "cleanup_target": "legacy recovery",
+            }
     return stopped
