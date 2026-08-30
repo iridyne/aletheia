@@ -160,6 +160,10 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
             detected_at="2026-01-01T00:00:00+00:00",
         )
 
+    async def fake_settle_due():
+        return None
+
+
     monkeypatch.setattr("aletheia.universe.registry.sync_registry", fake_sync_registry)
     monkeypatch.setattr("aletheia.universe.features.collect_features", fake_collect_features)
     monkeypatch.setattr("aletheia.universe.scanners.run_all_scanners", fake_run_all_scanners)
@@ -177,8 +181,12 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.universe.allocator.allocate_universe", capture_allocate)
     monkeypatch.setattr("aletheia.regime.collector.collect_regime_inputs", fake_regime_inputs)
     monkeypatch.setattr("aletheia.regime.detector.debounced_detect", fake_detect)
-    monkeypatch.setattr("aletheia.universe.outcome_recorder.settle_due", lambda: None)
+    monkeypatch.setattr("aletheia.universe.outcome_recorder.settle_due", fake_settle_due)
     monkeypatch.setattr("aletheia.universe.outcome_recorder.register_pending", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.has_fresh_market_snapshot",
+        lambda *_args, **_kwargs: True,
+    )
     monkeypatch.setattr(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         lambda _ctx: {"status": "watch"},
