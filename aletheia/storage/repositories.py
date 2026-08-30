@@ -2810,11 +2810,11 @@ def has_order_for_proposal(proposal_id: str) -> bool:
     )
 
 
-def get_order_for_proposal(proposal_id: str) -> dict | None:
-    """Return the durable Order representing one Proposal, if present."""
+def get_order_for_entry_plan(entry_plan_id: str) -> dict | None:
+    """Return the entry Order durably attributed to one EntryPlan."""
     row = get_db().execute(
-        "SELECT * FROM orders WHERE proposal_id=? ORDER BY created_at DESC LIMIT 1",
-        (proposal_id,),
+        "SELECT * FROM orders WHERE entry_plan_id=? ORDER BY created_at ASC LIMIT 1",
+        (entry_plan_id,),
     ).fetchone()
     return dict(row) if row else None
 

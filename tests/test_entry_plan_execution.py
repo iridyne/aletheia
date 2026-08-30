@@ -872,7 +872,7 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
     assert repo.get_order(order.id)["status"] == "filled"
 
 
-def test_gateway_cancel_recovers_order_through_proposal_relation():
+def test_gateway_cancel_recovers_exact_entry_order_relation():
     from aletheia.execution import gateway
 
     plan, order = _persist_ordered_plan()
@@ -883,7 +883,24 @@ def test_gateway_cancel_recovers_order_through_proposal_relation():
     assert repo.get_entry_plan(plan.plan_id)["order_id"] is None
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
     assert proposal is not None
-    assert repo.get_order_for_proposal(proposal["id"])["id"] == order.id
+    close_order = Order(
+        proposal_id=proposal["id"],
+        symbol=order.symbol,
+        market_type=order.market_type,
+        direction="short",
+        order_type="market",
+        quantity=0.5,
+        execution_mode=order.execution_mode,
+        exchange_order_id="newer-close-order",
+        client_order_id="newer-close-order",
+        position_id="position-1",
+        close_reason="stop_loss",
+        status="submitted",
+        source="adopted",
+        created_at=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+    )
+    repo.insert_order(close_order)
+    assert repo.get_order_for_entry_plan(plan.plan_id)["id"] == order.id
     repo.insert_fill(
         Fill(
             order_id=order.id,
