@@ -115,7 +115,7 @@ def test_filter_controller_skips_both_insufficient(monkeypatch):
     monkeypatch.setattr(
         filter_controller,
         "compute_filter_feedback",
-        lambda min_samples=0: [
+        lambda min_samples=0, *, as_of_at=None: [
             _R("insufficient_data", "n/a"),
             _R("insufficient_data", "n/a"),
             _R("hold", "hold"),

@@ -17,7 +17,8 @@ learning_app.add_typer(yield_app, name="yield")
 
 
 def _echo(value) -> None:
-    if hasattr(value, "model_dump"):
+    from pydantic import BaseModel
+    if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
     typer.echo(json.dumps(value, indent=2, sort_keys=True, default=str))
 
