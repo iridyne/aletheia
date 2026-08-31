@@ -568,6 +568,20 @@ def universe(
         result.append(entry)
     _output(result, json_output)
 
+@inspect_app.command("momentum-geometry-replay")
+def momentum_geometry_replay(
+    entry_plan_id: str = typer.Option(..., "--entry-plan-id"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Replay paired v1/v2 Momentum candle geometry without production writes."""
+
+    from aletheia.analytics.momentum_geometry_replay import build_momentum_geometry_replay
+
+    try:
+        report = build_momentum_geometry_replay(entry_plan_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    _output(report, json_output)
 
 # ---------------------------------------------------------------------------
 # 6. opportunities

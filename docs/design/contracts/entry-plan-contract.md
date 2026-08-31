@@ -118,6 +118,35 @@ that explicitly rejects only this optional field may be retried once without
 `reasoning`; the strict JSON Schema request is preserved unchanged. There is no
 provider-specific fallback or prompt-embedded schema downgrade.
 
+## Read-only Momentum geometry measurement
+
+`momentum-geometry-measurement/v2` is the preregistered, read-only measurement
+contract for #2556. It pairs one exact Momentum Candidate occurrence and
+immutable Entry Plan under the same direction, PlanIntent-derived Risk policy,
+plan T0 cutoff, cost identity, and four-hour outcome identity.
+
+The control identity is `momentum-retrace-reclaim/v1`. Its compiled
+`breakout_level` is the Candidate `entry_price_usd`; this is baseline evidence,
+not a claim that Candidate price is a causal breakout. The treatment identity is
+`momentum-retrace-reclaim/v2`: bars 1–20 define the directional breakout, bar 21
+must be completed and close strictly beyond it, ATR is the frozen
+`atr-true-range-sma-14/v1`, and subsequent candle evidence records bounded
+pullback, explicit sweep, and reclaim geometry.
+
+Every T0 bar must be continuous, exact-instrument, provider-identified, completed,
+first persisted no later than plan approval, and unchanged after that cutoff.
+Missing provenance, forming/future data, a non-confirming bar, or identity mismatch
+is `unavailable`; no fallback may relabel Candidate price as treatment breakout.
+No-trigger and unavailable units remain in the intent-to-treat denominator with
+the frozen no-entry utility.
+
+Historical Candle Geometry never fabricates quote, trade, Books5, fee, funding,
+or execution evidence. Without those retained facts, Trigger status and
+cost-after Geometry Lift remain explicitly unavailable. The inspect report has
+no production write, Risk, Gateway, or activation authority.
+
+`tests/specs/spec_entry_plan_contract.py::test_momentum_geometry_measurement_is_read_only_and_fail_closed`
+is the executable claim for this boundary.
 ## Non-goals
 
 This Contract does not add an exchange, market-data adapter, database table,

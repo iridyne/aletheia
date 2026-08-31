@@ -196,3 +196,34 @@ def test_entry_planner_batch_captures_one_deep_provider_identity():
     assert source.count('get_provider_for_tier("deep")') == 1
     assert "available_capacity(\n        provider_name" in source
     assert "provider_name=provider_name" in source
+@spec_claim(
+    SpecClaim(
+        "EP-S08",
+        "entry_plan_contract",
+        "Read-only Momentum geometry measurement",
+        "L2a",
+        "Paired Momentum replay proves Candidate-price control geometry, requires causal 20+1 bars, preserves the full denominator, and cannot grant production authority.",
+        status="implemented",
+    )
+)
+def test_momentum_geometry_measurement_is_read_only_and_fail_closed():
+    from aletheia.analytics.momentum_geometry_replay import (
+        CONTROL_IDENTITY,
+        TREATMENT_IDENTITY,
+        _build_momentum_geometry_replay,
+        build_momentum_geometry_replay,
+        measurement_contract,
+    )
+
+    contract = measurement_contract()
+    assert contract["control_version"] == CONTROL_IDENTITY
+    assert contract["treatment_version"] == TREATMENT_IDENTITY
+    assert contract["no_entry_utility"] == 0.0
+    assert contract["historical_microstructure"].startswith("unavailable")
+    public_source = inspect.getsource(build_momentum_geometry_replay)
+    load_source = inspect.getsource(_build_momentum_geometry_replay)
+    assert "readonly_db" in public_source
+    assert "get_ohlcv_candles" in load_source
+    assert "include_provenance=True" in load_source
+    assert "insert_" not in load_source
+    assert "execute_write" not in load_source
