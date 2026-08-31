@@ -374,8 +374,16 @@ def _circuit_break_state_path():
     return get_data_dir() / "circuit_break.json"
 
 
-def _write_circuit_break_state(*, recovery_owner: str) -> None:
-    """Persist the disabled recovery owner so auto-reset restores only that owner."""
+def _clear_circuit_break_state() -> None:
+    """Reconcile breaker recovery intent after an explicit operator mutation."""
+    _circuit_break_state_path().unlink(missing_ok=True)
+
+def _write_circuit_break_state(
+    *,
+    recovery_owner: str,
+    circuit_closed: bool,
+) -> None:
+    """Persist the mutated recovery owner even when breaker closure is partial."""
     try:
         import json as _json
         import datetime as _dt
@@ -386,6 +394,7 @@ def _write_circuit_break_state(*, recovery_owner: str) -> None:
                 "tripped_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
                 "source": "circuit_breaker",
                 "recovery_owner": recovery_owner,
+                "circuit_closed": circuit_closed,
             }),
             encoding="utf-8",
         )
@@ -456,11 +465,14 @@ def _check_circuit_break_auto_reset() -> None:
                 service_control.WINDOWS_SERVICE_BACKEND: current_service.get("machine", {}),
             }
             if recovery_owner is None:
-                installed_states = [
-                    state.get("installed")
+                recovery_states = [
+                    (state.get("installed"), state.get("enabled"))
                     for state in owner_states.values()
                 ]
-                if any(installed is None for installed in installed_states):
+                if any(
+                    installed is None or enabled is None
+                    for installed, enabled in recovery_states
+                ):
                     return
                 path.unlink(missing_ok=True)
                 return
@@ -554,24 +566,44 @@ def _check_spawn_circuit_breaker() -> None:
                 recovery_mutated = (
                     disabled.get("ok")
                     or disabled.get("persistent_disabled") is True
+                    or disabled.get("recovery_disabled") is True
+                    or disabled.get("disable_indeterminate") is True
                     or (
                         disabled.get("legacy_mutated") is True
                         and disabled.get("legacy_preserved") is False
                     )
                 )
                 if recovery_mutated:
-                    _write_circuit_break_state(recovery_owner=recovery_owner)
+                    circuit_closed = (
+                        disabled.get("ok") is True
+                        and disabled.get("legacy_preserved") is not True
+                        and disabled.get("disable_indeterminate") is not True
+                    )
+                    _write_circuit_break_state(
+                        recovery_owner=recovery_owner,
+                        circuit_closed=circuit_closed,
+                    )
+                    if circuit_closed:
+                        title = "Aletheia Gateway autostart disabled by circuit breaker"
+                        detail = (
+                            f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
+                            f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
+                            "has been disabled to stop the restart loop. Fix the root cause and "
+                            "re-enable with `gateway enable`, or wait 30 min for auto-reset."
+                        )
+                    else:
+                        title = "Aletheia Gateway circuit breaker only partially applied"
+                        detail = (
+                            f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times, but "
+                            f"recovery disablement is incomplete or indeterminate "
+                            f"({disabled.get('reason', 'unknown')}). Manual intervention is "
+                            "required because a recovery owner may still restart the Gateway."
+                        )
                     _notify_gateway_problem(
-                        "Aletheia Gateway autostart disabled by circuit breaker",
-                        f"Gateway failed to start {_CIRCUIT_BREAKER_THRESHOLD} times in "
-                        f"{_CIRCUIT_BREAKER_WINDOW_SEC // 60} minutes. Autostart watchdog "
-                        "has been disabled to stop the restart loop. Fix the root cause and "
-                        "re-enable with `gateway enable`, or wait 30 min for "
-                        "auto-reset.",
+                        title,
+                        detail,
                         source="gateway_lifecycle",
                     )
-        except Exception:
-            pass
     except Exception:
         pass
 

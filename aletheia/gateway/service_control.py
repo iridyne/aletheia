@@ -210,7 +210,24 @@ def disable(*, elevate: bool = True, source: str = "cli") -> dict:
     if current.get("reason") == "backend_conflict":
         return current
     if current.get("backend") == WINDOWS_SERVICE_BACKEND and current.get("installed"):
-        return windows_machine_service.disable(elevate=elevate)
+        disabled = windows_machine_service.disable(elevate=elevate)
+        if disabled.get("ok"):
+            return disabled
+        if disabled.get("reason") not in {
+            "elevation_timeout",
+            "elevated_result_missing",
+            "elevated_result_invalid",
+        }:
+            return disabled
+        try:
+            reconciled = windows_machine_service.status()
+        except Exception:
+            reconciled = {"enabled": None}
+        if reconciled.get("enabled") is False:
+            return {**disabled, "recovery_disabled": True}
+        if reconciled.get("enabled") is None:
+            return {**disabled, "disable_indeterminate": True}
+        return disabled
     session = current["session"]
     if not session.get("installed"):
         if session.get("enabled"):
