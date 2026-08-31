@@ -154,10 +154,12 @@ async def reconfigure_fast_trigger_watch(cfg, loop: asyncio.AbstractEventLoop) -
     _watch_task = None
     _stop_event = None
     reason = _configured_block_reason(cfg)
-    if reason:
-        await _cancel_open_entry_plans(reason)
+    cleanup = await _cancel_open_entry_plans(reason) if reason else None
     task = start_fast_trigger_watch(loop, cfg)
     status = fast_trigger_watch_status()
+    if cleanup is not None:
+        status["cancellation_cleanup"] = cleanup
+        _status["cancellation_cleanup"] = cleanup
     status["configured_mode"] = cfg.fast_trigger.mode
     status["task_started"] = task is not None
     return status
@@ -523,18 +525,37 @@ def _watched_instruments(
     return instruments
 
 
-async def _cancel_open_entry_plans(reason: str) -> None:
+async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
     from aletheia.execution.gateway import cancel_entry_plan_order
 
+    cleanup = {"checked": 0, "terminalized": 0, "unresolved": 0, "remaining_unattempted": 0}
+    through = await asyncio.to_thread(repo.watchable_entry_plan_high_watermark)
+    if through is None:
+        return cleanup
+
     now = datetime.now(timezone.utc)
-    for row in await asyncio.to_thread(repo.list_watchable_entry_plans, 100):
-        await _terminalize_entry_plan(
-            row,
-            status="invalidated",
-            reason=reason,
-            cancel_entry_plan_order=cancel_entry_plan_order,
-            now=now,
+    after: tuple[str, str] | None = None
+    while True:
+        rows = await asyncio.to_thread(
+            repo.list_watchable_entry_plans_page,
+            after=after,
+            through=through,
+            limit=100,
         )
+        if not rows:
+            return cleanup
+        for row in rows:
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason=reason,
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            cleanup["checked"] += 1
+            key = "unresolved" if _entry_plan_outcome_is_unresolved(outcome) else "terminalized"
+            cleanup[key] += 1
+        after = (str(rows[-1]["created_at"]), str(rows[-1]["id"]))
 
 
 async def _watch_loop(cfg) -> None:
@@ -549,8 +570,14 @@ async def _watch_loop(cfg) -> None:
         cfg = await asyncio.to_thread(load_config, persist_migrations=False)
         reason = _configured_block_reason(cfg)
         if reason:
-            await _cancel_open_entry_plans(reason)
-            _status = {"running": False, "reason": reason, "watched_setups": 0, "watched_entry_plan_ids": []}
+            cleanup = await _cancel_open_entry_plans(reason)
+            _status = {
+                "running": False,
+                "reason": reason,
+                "watched_setups": 0,
+                "watched_entry_plan_ids": [],
+                "cancellation_cleanup": cleanup,
+            }
             try:
                 await asyncio.wait_for(stop.wait(), timeout=5.0)
             except TimeoutError:

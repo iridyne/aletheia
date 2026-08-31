@@ -1121,13 +1121,18 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
     transitions = []
     cancellations = []
     rows = [
-        {"id": "waiting-plan", "status": "waiting"},
-        {"id": "ordered-plan", "status": "ordered"},
+        {"id": "waiting-plan", "status": "waiting", "created_at": "2026-08-31T00:00:00+00:00"},
+        {"id": "ordered-plan", "status": "ordered", "created_at": "2026-08-31T00:00:01+00:00"},
     ]
     monkeypatch.setattr(
         watch.repo,
-        "list_watchable_entry_plans",
-        lambda _limit: rows,
+        "watchable_entry_plan_high_watermark",
+        lambda: (rows[-1]["created_at"], rows[-1]["id"]),
+    )
+    monkeypatch.setattr(
+        watch.repo,
+        "list_watchable_entry_plans_page",
+        lambda *, after, through, limit: rows if after is None else [],
     )
     monkeypatch.setattr(
         watch.repo,
@@ -1154,6 +1159,47 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
     assert kwargs["status"] == "invalidated"
     assert kwargs["reason"] == "fast_trigger_paused"
     assert cancellations == [("ordered-plan", "fast_trigger_paused")]
+
+
+@pytest.mark.asyncio
+async def test_blocked_cleanup_pages_past_unresolved_prefix(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    rows = [
+        {
+            "id": f"plan-{index:03d}",
+            "status": "ordered" if index < 100 else "waiting",
+            "created_at": "2026-08-31T00:00:00+00:00",
+        }
+        for index in range(101)
+    ]
+    attempts = []
+
+    def page(*, after, through, limit):
+        remaining = [row for row in rows if after is None or (row["created_at"], row["id"]) > after]
+        return remaining[:limit]
+
+    async def terminalize(row, **_kwargs):
+        attempts.append(row["id"])
+        return "cancel_pending" if row["status"] == "ordered" else "invalidated"
+
+    monkeypatch.setattr(
+        watch.repo,
+        "watchable_entry_plan_high_watermark",
+        lambda: (rows[-1]["created_at"], rows[-1]["id"]),
+    )
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans_page", page)
+    monkeypatch.setattr(watch, "_terminalize_entry_plan", terminalize)
+
+    cleanup = await watch._cancel_open_entry_plans("fast_trigger_kill_switch_active")
+
+    assert attempts == [row["id"] for row in rows]
+    assert cleanup == {
+        "checked": 101,
+        "terminalized": 1,
+        "unresolved": 100,
+        "remaining_unattempted": 0,
+    }
 
 
 @pytest.mark.asyncio
