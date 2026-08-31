@@ -7,14 +7,15 @@
 > machine-readable trading mainline is [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md).
 > This file is not a roadmap or runtime-status page.
 >
-> Last aligned with current authorities: 2026-08-08.
+> Last aligned with current authorities: 2026-08-31.
 
 ## Product boundary
 
-Aletheia is a local-first, single-owner crypto trading research and decision
-system. It connects market observation, System Operator judgment, bounded paper
-execution, hard Risk approval, outcome accounting, and measured Learning without
-granting an LLM direct exchange, credential, Risk-limit, or live-unlock authority.
+Aletheia is a local-first, single-owner trading research and decision system. Its
+currently supported mainline remains crypto-focused. It connects market
+observation, System Operator judgment, bounded paper execution, hard Risk
+approval, outcome accounting, and measured Learning without granting an LLM
+direct exchange, credential, Risk-limit, or live-unlock authority.
 
 The current MVP mainline is deliberately narrow:
 
@@ -53,6 +54,30 @@ factory driving production entries.
 The repository contains additional implemented or experimental capabilities. Their
 presence does not widen the supported mainline; use the exact status and gap in
 [Capability Ground Truth](CAPABILITY_GROUND_TRUTH.md).
+
+## Approved implementation scope, not current support
+
+The accepted [CN Equity Market Kernel Proposal](../design/proposals/cn-equity-market-kernel.md)
+authorizes implementation of `market_id=cn_equity` under Issue #2572. This is
+an implementation boundary, not a claim that any current Runtime observes,
+trades, accounts for, or qualifies mainland equities.
+
+The bounded target is CNY-denominated Shanghai and Shenzhen A-shares, long-only,
+through `disabled -> observe -> shadow -> paper`, with `disabled` as the
+default. Initial entry eligibility is limited to ordinary Shanghai and Shenzhen
+main-board shares. ST/*ST, IPO/listing-stage, STAR Market, and ChiNext shares are
+observation-only for new entry while canonical close-only handling remains
+mandatory for an existing Position whose classification changes. Unknown
+classification, B-shares, Beijing Stock Exchange, and every non-CNY or other
+instrument class fail closed.
+
+CN evidence, strategy, and Paper accounting must reuse the existing Candidate →
+Plan → Proposal → Risk → Execution Gateway → Order/Fill/Position → Outcome →
+Learning authority chain. Research and execution Sidecars remain replaceable
+tools with no Risk, accounting, credential, route, or decision authority. No
+broker route or `live` state is authorized. Capability Ground Truth may report
+CN support only after the exact implementation, Runtime, accounting, and strategy
+qualification gates record their separate results.
 
 ## Current Learning scope
 
