@@ -1,7 +1,19 @@
 ---
-schema_version: 1
+schema_version: 2
 scope_id: crypto-stock-linked-paper-mainline-v2
 status: active
+authorized_extensions:
+  cn_equity:
+    proposal: docs/design/proposals/cn-equity-market-kernel.md
+    tracking_issue: 2572
+    implementation_state: authorized_not_implemented
+    default_runtime_state: disabled
+    permitted_runtime_states:
+      - disabled
+      - observe
+      - shadow
+      - paper
+    live_allowed: false
 instrument_profiles:
   crypto:
     asset_class: crypto
@@ -46,15 +58,25 @@ allowed to count as the active MVP mainline. It narrows the broader product map;
 it does not describe every research, observation, reconciliation, or historical
 compatibility path in the repository.
 
-The active instruments are crypto spot/perpetuals plus the narrowly verified
+The active instruments remain crypto spot/perpetuals plus the narrowly verified
 exchange-listed `stock_linked_perp` profile. For the latter, a complete
 `instrument-background/v1` and supported analysis context are mandatory; this
 does not declare ordinary equities, indices, commodities, prediction markets, or
-arbitrary exchange derivatives executable. All admitted instruments share one
+arbitrary exchange derivatives executable. All active instruments share one
 System Operator, one Risk Engine, and one Execution Gateway. The active execution
 mode is the local `paper_internal` simulator. Exchange demo modes remain supported
 adapters, but are not part of this active-scope proof until an owner-selected demo
 mode is added here with matching Golden Path and replay evidence.
+
+The `authorized_extensions.cn_equity` declaration admits only the bounded
+implementation work approved by its Proposal. It does not add CN Equity to the
+active instrument profiles or current Runtime proof. CN starts semantically
+`disabled`: no CN V2 producer, Candidate, Proposal, reservation, Order, Fill,
+Position, Outcome, or qualification fact may be created until the corresponding
+Contract, executable SpecClaim, feature state, and preceding Phase Gate are
+merged. Later `observe`, `shadow`, and internal `paper` states must continue
+through the same System Operator/Risk/Gateway authorities. No `live` state,
+broker route, cross-currency netting, or support claim is admitted here.
 
 Learning measurement, lifecycle automation, and the sole measured Paper influence
 path are enabled by default. A Learning result can affect a later decision only

@@ -8,7 +8,7 @@
 > Current ownership and progress live in GitHub. Historical strategy-phase gates
 > were retired when the RuleSet/DSL/backtest decision path was removed.
 >
-> Last aligned with code and contracts: 2026-08-08.
+> Last aligned with code and contracts: 2026-08-31.
 
 ## Gate A - Active paper mainline eligibility
 
@@ -29,6 +29,30 @@ Evidence may count toward the current MVP only when all of the following are tru
 
 Passing a test suite does not pass this gate for a Runtime. Use
 `uv run aletheia doctor` and current runtime evidence.
+
+## Gate CN - Bounded CN Equity implementation and promotion
+
+The accepted CN Equity Proposal and Product/Runtime scope authorize implementation
+only. They do not pass a Runtime gate or make CN Equity supported. Promotion is
+strictly one-way through `disabled -> observe -> shadow -> paper`; a failure
+returns the extension to the last proved lower state without rewriting evidence.
+No `live` state exists.
+
+| Target state | Required proof before entry |
+|---|---|
+| `disabled` | Default. No CN V2 producer or CN Candidate/Proposal/reservation/order/accounting write is reachable. Contracts and compatibility readers may be merged behind this fence. |
+| `observe` | Versioned CN identity, calendar/rules/tradability, point-in-time data manifest, and Universe publication are complete; missing/stale/unknown facts fail closed; observation has no Proposal, reservation, Risk approval, Gateway call, or execution side effect. |
+| `shadow` | The complete Candidate → Plan → exact Proposal → Risk → Gateway → exit → Outcome chain is contract- and spec-conformant, but execution is denied and no executable approval or accounting mutation is emitted. An exact merged commit and frozen data/policy/account/experiment identity start a fresh window. |
+| `paper` | The fresh Shadow window is clean; the owner explicitly admits the exact epoch; only the dedicated CNY Internal Paper account/Risk pool is reachable; settlement, fees, tax, reservations, corporate actions, restart, reconciliation, and canonical entry/exit are proven. |
+
+CN qualification closes as two independent facts:
+`paper_accounting_qualified` and exactly one of
+`strategy_paper_promotion_passed` or `strategy_paper_promotion_failed` for
+the same frozen epoch. A failed strategy result preserves valid accounting proof
+but forbids strategy promotion. Backtest, Shadow, Paper, and any future broker
+evidence are separate classes and cannot be pooled. Capability Ground Truth is
+updated only from exact merged/runtime evidence and must continue to report Live
+as unavailable.
 
 ## Gate B - Learning shadow measurement readiness
 

@@ -47,15 +47,26 @@ def _call_names(relative_path: str) -> set[str]:
 @spec_claim(SpecClaim(
     "AR-S01", "active_runtime_scope", "frontmatter declaration", "L2a",
     "The active instrument-aware paper mainline names exact crypto and verified "
-    "stock-linked profiles plus one decision, risk, execution, "
-    "outcome, and Learning authority boundary.",
+    "stock-linked profiles plus one decision, risk, execution, outcome, and "
+    "Learning authority boundary, while CN Equity remains an authorized disabled "
+    "extension.",
 ))
 def test_active_runtime_scope_is_complete_and_narrow():
     scope = _scope()
     assert scope == {
-        "schema_version": 1,
+        "schema_version": 2,
         "scope_id": "crypto-stock-linked-paper-mainline-v2",
         "status": "active",
+        "authorized_extensions": {
+            "cn_equity": {
+                "proposal": "docs/design/proposals/cn-equity-market-kernel.md",
+                "tracking_issue": 2572,
+                "implementation_state": "authorized_not_implemented",
+                "default_runtime_state": "disabled",
+                "permitted_runtime_states": ["disabled", "observe", "shadow", "paper"],
+                "live_allowed": False,
+            },
+        },
         "instrument_profiles": {
             "crypto": {
                 "asset_class": "crypto",
