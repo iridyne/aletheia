@@ -24,9 +24,14 @@ the market identity, calendar, rules, tradability, costs, settlement, and
 point-in-time evidence needed to represent CN equities honestly.
 
 The first supported boundary is `market_id=cn_equity`, CNY-denominated A-shares
-listed in Shanghai or Shenzhen, long-only, through observation, Shadow, and the
-internal Paper route. B-shares and any non-CNY instrument fail closed. This
-Proposal does not authorize broker connectivity or Live trading.
+listed in Shanghai or Shenzhen, long-only. Only seasoned, non-ST Shanghai and
+Shenzhen main-board A-shares may progress through observation, Shadow, and the
+internal Paper route. ST/*ST, IPO/listing-stage, STAR Market, and ChiNext shares
+are observation-only; they cannot produce an executable Plan, Proposal,
+reservation, or Order. Unknown board/treatment/listing classification, B-shares,
+and any non-CNY instrument fail closed. Widening any category requires a new D1
+Issue and qualification epoch. This Proposal does not authorize broker
+connectivity or Live trading.
 Implementation and qualification are tracked by parent Issue #2572 and its
 child Issues.
 
@@ -170,7 +175,11 @@ unavailable, never converted to healthy zero values.
 The first corporate-action contract supports only cash dividends and
 split/bonus actions. Each action has stable action and revision IDs plus record,
 ex, effective, and payable dates. Unsupported or incomplete actions freeze new
-entry for the affected instrument instead of mutating positions approximately.
+entry and place every affected open Position, UTA/account fact, exit sizing,
+accounting result, Outcome, qualification sample, and Learning cohort in an
+explicit integrity-blocked state until canonical posting or reconciliation
+resolves the action. Approximate Position mutation and incomplete exit economics
+are forbidden.
 
 External TSP, Qlib, AKQuant, vn.py, provider, and broker code is replaceable.
 TSP or another licensed provider may export manifests; Qlib is offline research
@@ -260,15 +269,17 @@ remains blocked evidence and cannot be fabricated as a fill.
 Corporate actions apply only through an append-only
 `CorporateActionLedgerEvent` transaction. Cash dividends move through
 receivable to payable cash; split/bonus events adjust settlement lots and cost
-basis and create an immutable adjustment projection for every active stop,
-target, invalidation, and other price-based protection fact. The original plan
-is never rewritten; canonical exit reads the latest complete projection linked
-to it. Open orders and reservations are cancelled, released, and reconciled
-before posting. Revisions reverse and rebook; callers cannot directly overwrite
-a Position. If a revision affects a closed Position, the same append-only
-correction chain recomputes or invalidates realized economics and Outcome
-eligibility before the revision becomes complete, and Learning excludes the
-superseded cohort.
+basis. Both supported action types create an effective-dated, revision-linked
+immutable projection for every active stop, target, invalidation, and other
+price-based protection fact using the official ex-right/ex-dividend adjustment.
+If that projection cannot be proved, the protection and Position remain
+integrity-blocked. The original plan is never rewritten; canonical exit reads
+the latest complete projection linked to it. Open orders and reservations are
+cancelled, released, and reconciled before posting. Revisions reverse and
+rebook; callers cannot directly overwrite a Position. If a revision affects a
+closed Position, the same append-only correction chain recomputes or invalidates
+realized economics and Outcome eligibility before the revision becomes complete,
+and Learning excludes the superseded cohort.
 
 ### Outcome and qualification truth
 
@@ -347,8 +358,12 @@ created.
 
 Before the first CN V2 write, rollback is configuration or binary rollback to
 the prior behavior. After the first V2 write, an old binary that cannot read V2
-is forbidden; recovery is a forward fix or restoration from a verified
-pre-migration backup. Because current Crypto producers remain on v1, the
+is forbidden and forward repair/replay plus reconciliation is the default.
+Backup restoration is allowed only from a dependency-closed checkpoint captured
+under an authoritative write fence, including SQLite and referenced manifests,
+with proof that no Crypto or CN order, fill, position, ledger, outcome, or other
+authoritative write exists after the checkpoint; otherwise restoration is data
+loss and prohibited. Because current Crypto producers remain on v1, the
 discriminated v1/v2 reader and required projections remain for the lifetime of
 both producer schemas. Removing either requires a separately approved migration,
 not expiry of the Paper qualification window.
