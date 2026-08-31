@@ -214,18 +214,31 @@ snapshots. Risk approves or rejects that Proposal unchanged.
 The TriggerSpec key becomes `(market_id, candidate_family, spec_id, version)`.
 A spec declares required data, closed-bar semantics, trading phase, freshness,
 parameters, failure reasons, and referenced market facts. Before the first
-eligible strategy exposure, its immutable policy epoch preregisters the
-hypothesis, allowed intervention, comparison/control, statistical unit, outcome
-horizon, sample and time gates, confidence method, economic and harm thresholds,
-and invalidation/termination rules. Strategy thresholds belong to that epoch,
-not the Kernel contract, and cannot be selected after viewing its evidence.
+eligible strategy exposure, one immutable experiment identity preregisters the
+path/hypothesis/experiment/stage, decision consumer, treatment and control
+behavior including static fallback, allowed effect, statistical/assignment unit,
+assignment salt and allocation, outcome source/cost/integrity contract, metric
+version and horizon, behavior-contract hash and policy epoch, sample/time/
+confidence/economic/harm gates, owner admission and termination rules, and every
+refutation or invalidation condition required by the Experiment Protocol.
+Strategy thresholds belong to that identity and cannot be selected after
+viewing its evidence; any identity change starts a new cohort from zero.
 
 ### UTA, Risk, and typed reservations
 
 CN account evidence separately represents cash total, available, and
 withdrawable balances and position total, sellable, frozen, and pending
 quantities plus settlement lots. Completeness, source time, account generation,
-and SettlementProfile identity are mandatory.
+SettlementProfile identity, and a versioned `AccountTaxProfile` with investor
+tax status and holding-lot acquisition dates are mandatory.
+
+Internal Paper uses a dedicated account and Risk pool with `base_currency=CNY`.
+Its cash, positions, reservations, collateral, exposure, leverage, and limits are
+segregated from every Crypto/USDT pool; neither may collateralize or net the
+other. Cross-pool exposure or PnL aggregation is `not available` in this Epic.
+A future combined portfolio view requires a separately approved D1 contract
+binding effective-dated FX source/hash and base-currency identity through Risk
+and Outcome; it cannot infer or silently treat CNY as USDT.
 
 One persistent reservation repository owns two resource types: CNY cash for buy
 Proposals and instrument shares for sell Proposals. Buy reservation equals exact
@@ -271,15 +284,19 @@ idempotency key. It passes through RiskApproval and Gateway. A T+1-blocked exit
 remains blocked evidence and cannot be fabricated as a fill.
 
 Corporate actions apply only through an append-only
-`CorporateActionLedgerEvent` transaction. Cash dividends move through
-receivable to payable cash; split/bonus events adjust settlement lots and cost
-basis. Both supported action types create an effective-dated, revision-linked
-immutable projection for every active stop, target, invalidation, and other
-price-based protection fact using the official ex-right/ex-dividend adjustment.
-If that projection cannot be proved, the protection and Position remain
-integrity-blocked. The original plan is never rewritten; canonical exit reads
-the latest complete projection linked to it. Open orders and reservations are
-cancelled, released, and reconciled before posting. Revisions reverse and
+`CorporateActionLedgerEvent` transaction. A cash dividend first records gross
+receivable and a worst-case contingent tax liability under the exact
+`AccountTaxProfile`; only the conservatively net amount may become available
+cash. Sale/lot settlement computes the final holding-period liability and books
+the delta. Missing or stale tax identity keeps dividend cash, realized Outcome,
+and qualification unavailable. Split/bonus events adjust settlement lots and
+cost basis. Both supported action types create an effective-dated,
+revision-linked immutable projection for every active stop, target, invalidation,
+and other price-based protection fact using the official ex-right/ex-dividend
+adjustment. If that projection cannot be proved, the protection and Position
+remain integrity-blocked. The original plan is never rewritten; canonical exit
+reads the latest complete projection linked to it. Open orders and reservations
+are cancelled, released, and reconciled before posting. Revisions reverse and
 rebook; callers cannot directly overwrite a Position. If a revision affects a
 closed Position, the same append-only correction chain recomputes or invalidates
 realized economics and Outcome eligibility before the revision becomes complete,
