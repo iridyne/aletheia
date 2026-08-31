@@ -9199,6 +9199,42 @@ def list_watchable_entry_plans(limit: int | None = 100) -> list[dict]:
     )
 
 
+def watchable_entry_plan_high_watermark() -> tuple[str, str] | None:
+    row = (
+        get_db()
+        .execute(
+            "SELECT created_at, id FROM entry_plans "
+            "WHERE status IN ('waiting','triggered','risk_reserved','ordered','partially_filled') "
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+        )
+        .fetchone()
+    )
+    return (str(row["created_at"]), str(row["id"])) if row else None
+
+
+def list_watchable_entry_plans_page(
+    *,
+    after: tuple[str, str] | None,
+    through: tuple[str, str],
+    limit: int = 100,
+) -> list[dict]:
+    where = [
+        "status IN ('waiting','triggered','risk_reserved','ordered','partially_filled')",
+        "(created_at < ? OR (created_at = ? AND id <= ?))",
+    ]
+    params: list[str] = [through[0], through[0], through[1]]
+    if after is not None:
+        where.append("(created_at > ? OR (created_at = ? AND id > ?))")
+        params.extend((after[0], after[0], after[1]))
+    return _select_all(
+        "entry_plans",
+        where=" AND ".join(where),
+        params=tuple(params),
+        order="created_at ASC, id ASC",
+        limit=limit,
+    )
+
+
 def has_current_entry_plan_for_instrument(venue: str, symbol: str, market_type: str, direction: str) -> bool:
     row = (
         get_db()
