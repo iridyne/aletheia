@@ -2,13 +2,64 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, model_validator
 
+CN_EQUITY_INSTRUMENT_IDENTITY_VERSION = "instrument-identity/v2"
+
+
+class CNEquityInstrumentIdentityV2(BaseModel):
+    """Immutable identity for Shanghai/Shenzhen CNY A-share observation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["instrument-identity/v2"] = CN_EQUITY_INSTRUMENT_IDENTITY_VERSION
+    market_id: Literal["cn_equity"] = "cn_equity"
+    venue: Literal["XSHG", "XSHE"]
+    canonical_symbol: str
+    instrument_class: Literal["equity"] = "equity"
+    currency: Literal["CNY"] = "CNY"
+
+    @model_validator(mode="after")
+    def _validate_a_share_identity(self):
+        if (
+            len(self.canonical_symbol) != 6
+            or not self.canonical_symbol.isascii()
+            or not self.canonical_symbol.isdigit()
+        ):
+            raise ValueError("cn_equity_canonical_symbol_invalid")
+        prefixes = (
+            ("600", "601", "603", "605", "688")
+            if self.venue == "XSHG"
+            else ("000", "001", "002", "003", "300", "301")
+        )
+        if not self.canonical_symbol.startswith(prefixes):
+            raise ValueError("cn_equity_venue_or_share_class_unsupported")
+        return self
+
+    @property
+    def instrument_key(self) -> str:
+        return (
+            f"{self.market_id}:{self.venue}:{self.canonical_symbol}:"
+            f"{self.instrument_class}"
+        )
+
+    @property
+    def market_type(self) -> Literal["cn_equity"]:
+        """Compatibility projection for shared UTA report consumers."""
+        return self.market_id
+
+    def storage_projection(self) -> dict[str, str]:
+        return {
+            "market_id": self.market_id,
+            "instrument_key": self.instrument_key,
+            "instrument_identity_version": self.schema_version,
+        }
 
 def _decimal_from_lossless(value: object) -> Decimal | None:
     if value is None or isinstance(value, Decimal):
@@ -136,8 +187,39 @@ class InstrumentIdentity(UTAModel):
     quantity_precision: PositiveDecimalValue | None = None
 
 
+class CryptoInstrumentIdentityV1(InstrumentIdentity):
+    schema_version: Literal["instrument-identity/v1"] = "instrument-identity/v1"
+    market_id: Literal["crypto"] = "crypto"
+
+    @property
+    def instrument_key(self) -> str:
+        return f"{self.market_id}:{self.market_type}:{self.canonical_symbol}"
+
+
+InstrumentIdentityV1OrV2 = Annotated[
+    Union[CryptoInstrumentIdentityV1, CNEquityInstrumentIdentityV2],
+    Field(discriminator="schema_version"),
+]
+UTAInstrumentIdentity = Union[InstrumentIdentity, InstrumentIdentityV1OrV2]
+_INSTRUMENT_IDENTITY_ADAPTER = TypeAdapter(InstrumentIdentityV1OrV2)
+
+
+def read_instrument_identity(payload: dict[str, object] | str) -> InstrumentIdentityV1OrV2:
+    """Read explicitly versioned identities and unchanged legacy Crypto V1 payloads."""
+
+    raw: dict[str, object]
+    if isinstance(payload, str):
+        raw = json.loads(payload)
+    else:
+        raw = payload
+    if "schema_version" not in raw:
+        raw = {**raw, "schema_version": "instrument-identity/v1"}
+    return _INSTRUMENT_IDENTITY_ADAPTER.validate_python(raw)
+
+
 class QueryScope(UTAModel):
     sub_account_id: str | None = None
+    # Request routing remains Crypto-only until a CN adapter is authorized.
     instrument: InstrumentIdentity | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None
@@ -287,7 +369,7 @@ class PositionQuery(UTAModel):
 
 class PositionStatusReport(UTAModel):
     identity: UTAAccountIdentity
-    instrument: InstrumentIdentity
+    instrument: UTAInstrumentIdentity
     venue_position_id: str | None = None
     side: str
     quantity: DecimalValue
@@ -327,7 +409,7 @@ class OrderQuery(UTAModel):
 
 class OrderStatusReport(UTAModel):
     identity: UTAAccountIdentity
-    instrument: InstrumentIdentity
+    instrument: UTAInstrumentIdentity
     client_order_id: str | None = None
     venue_order_id: str | None = None
     side: str
@@ -372,7 +454,7 @@ class FillQuery(UTAModel):
 
 class FillReport(UTAModel):
     identity: UTAAccountIdentity
-    instrument: InstrumentIdentity
+    instrument: UTAInstrumentIdentity
     client_order_id: str | None = None
     venue_order_id: str | None = None
     venue_fill_id: str = Field(min_length=1)
@@ -424,7 +506,7 @@ class FundingLedgerQuery(UTAModel):
 
 class FundingLedgerEntry(UTAModel):
     identity: UTAAccountIdentity
-    instrument: InstrumentIdentity
+    instrument: UTAInstrumentIdentity
     settlement_at: datetime
     amount: DecimalValue
     currency: str = Field(min_length=1)

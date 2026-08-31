@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v53"
+SCHEMA_VERSION = "aletheia-sqlite-v54"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -5338,6 +5338,90 @@ _BROKER_FUNDING_SETTLEMENT_CURSOR_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+# Deploy this schema before any V2 producer. A v53 binary rejects a v54 database
+# through the existing schema-ahead fence; rollback therefore restores the
+# verified pre-migration backup. No historical row is rewritten or inferred.
+_CN_EQUITY_IDENTITY_ROW_CHECKS = {
+    "universe_members": "market_type = 'cn_equity' AND venue IS NOT NULL AND venue = substr(instrument_key, 11, 4)",
+    "opportunities": "market = 'cn_equity' AND asset_class IS NOT NULL AND asset_class = 'equity'",
+    "orders": "market_type = 'cn_equity'",
+    "positions": "market_type = 'cn_equity'",
+}
+_CN_EQUITY_IDENTITY_LEGACY_CHECKS = {
+    "universe_members": "market_type IS NOT 'cn_equity'",
+    "opportunities": "market IS NOT 'cn_equity'",
+    "orders": "market_type IS NOT 'cn_equity'",
+    "positions": "market_type IS NOT 'cn_equity'",
+}
+_CN_EQUITY_IDENTITY_KEY_CHECK = (
+    "market_id = 'cn_equity' AND "
+    "instrument_identity_version = 'instrument-identity/v2' AND "
+    "length(instrument_key) = 28 AND ("
+    "instrument_key GLOB 'cn_equity:XSHG:[0-9][0-9][0-9][0-9][0-9][0-9]:equity' OR "
+    "instrument_key GLOB 'cn_equity:XSHE:[0-9][0-9][0-9][0-9][0-9][0-9]:equity')"
+)
+_CN_EQUITY_IDENTITY_VENUE_CHECK = (
+    "((substr(instrument_key, 11, 4) = 'XSHG' AND "
+    "substr(instrument_key, 16, 3) IN ('600', '601', '603', '605', '688')) OR "
+    "(substr(instrument_key, 11, 4) = 'XSHE' AND "
+    "substr(instrument_key, 16, 3) IN ('000', '001', '002', '003', '300', '301')))"
+)
+_CN_EQUITY_INSTRUMENT_IDENTITY_COLUMNS = tuple(
+    (column, table, column_type)
+    for table, row_check in _CN_EQUITY_IDENTITY_ROW_CHECKS.items()
+    for column, column_type in (
+        ("market_id", "TEXT"),
+        ("instrument_key", "TEXT"),
+        (
+            "instrument_identity_version",
+            "TEXT CHECK ((market_id IS NULL AND instrument_key IS NULL AND "
+            "instrument_identity_version IS NULL AND "
+            + _CN_EQUITY_IDENTITY_LEGACY_CHECKS[table]
+            + ") OR (market_id IS NOT NULL AND instrument_key IS NOT NULL AND "
+            "instrument_identity_version IS NOT NULL AND ("
+            + _CN_EQUITY_IDENTITY_KEY_CHECK
+            + ") AND "
+            + _CN_EQUITY_IDENTITY_VENUE_CHECK
+            + " AND symbol = substr(instrument_key, 16, 6) AND "
+            + row_check
+            + "))",
+        ),
+    )
+)
+_CN_EQUITY_INSTRUMENT_IDENTITY_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_universe_members_instrument_identity
+    ON universe_members(market_id, instrument_key) WHERE instrument_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_opportunities_instrument_identity
+    ON opportunities(market_id, instrument_key) WHERE instrument_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_instrument_identity
+    ON orders(market_id, instrument_key) WHERE instrument_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_positions_instrument_identity
+    ON positions(market_id, instrument_key) WHERE instrument_key IS NOT NULL;
+"""
+_CN_EQUITY_INSTRUMENT_IDENTITY_TRIGGER_SQL = "".join(
+    f"""
+CREATE TRIGGER IF NOT EXISTS trg_{table}_instrument_identity_immutable
+BEFORE UPDATE OF market_id, instrument_key, instrument_identity_version ON {table}
+WHEN NOT (
+    OLD.market_id IS NEW.market_id
+    AND OLD.instrument_key IS NEW.instrument_key
+    AND OLD.instrument_identity_version IS NEW.instrument_identity_version
+)
+BEGIN
+    SELECT RAISE(ABORT, 'instrument_identity_immutable');
+END;
+"""
+    for table in _CN_EQUITY_IDENTITY_ROW_CHECKS
+)
+_CN_EQUITY_INSTRUMENT_IDENTITY_CHECKSUM = hashlib.sha256(
+    (
+        repr(_CN_EQUITY_INSTRUMENT_IDENTITY_COLUMNS)
+        + _CN_EQUITY_INSTRUMENT_IDENTITY_INDEX_SQL
+        + _CN_EQUITY_INSTRUMENT_IDENTITY_TRIGGER_SQL
+        + "cn_equity_instrument_identity_v2"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -5445,7 +5529,11 @@ _MIGRATION_DESCRIPTIONS = {
     "20260830_0051_funding_audit_outbox_v52": (
         "durable JSONL mirror state for opt-in funding settlement audits"
     ),
+    "20260831_0053_cn_equity_instrument_identity_v54": (
+        "nullable versioned market and instrument identity projections"
+    ),
 }
+
 
 
 def _migration_duration_estimate(
@@ -5995,6 +6083,17 @@ def _apply_funding_audit_outbox_v52(db: sqlite3.Connection) -> None:
 def _apply_broker_funding_settlement_cursor_v53(db: sqlite3.Connection) -> None:
     """Persist only the scheduling keyset for exchange funding recovery."""
     db.executescript(_BROKER_FUNDING_SETTLEMENT_CURSOR_SQL)
+    db.execute("PRAGMA optimize")
+
+def _apply_cn_equity_instrument_identity_v54(db: sqlite3.Connection) -> None:
+    """Add nullable, atomic versioned identity projections without rewriting history."""
+
+    for column, table, column_type in _CN_EQUITY_INSTRUMENT_IDENTITY_COLUMNS:
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_CN_EQUITY_INSTRUMENT_IDENTITY_INDEX_SQL)
+    db.executescript(_CN_EQUITY_INSTRUMENT_IDENTITY_TRIGGER_SQL)
     db.execute("PRAGMA optimize")
 
 
@@ -6609,7 +6708,14 @@ _MIGRATIONS = (
         schema_version="aletheia-sqlite-v53",
         apply=_apply_broker_funding_settlement_cursor_v53,
     ),
+    MigrationStep(
+        migration_id="20260831_0053_cn_equity_instrument_identity_v54",
+        checksum=_CN_EQUITY_INSTRUMENT_IDENTITY_CHECKSUM,
+        schema_version="aletheia-sqlite-v54",
+        apply=_apply_cn_equity_instrument_identity_v54,
+    ),
 )
+
 
 
 def _legacy_baseline_implementation_checksum() -> str:

@@ -223,6 +223,9 @@ class Opportunity(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
     market: str
+    market_id: str | None = None
+    instrument_key: str | None = None
+    instrument_identity_version: str | None = None
     direction_bias: str | None = None
     thesis: str | None = None
     confidence: str = "speculative"
@@ -533,6 +536,10 @@ class Order(_Provenanced):
     risk_decision_id: str | None = None
     symbol: str
     market_type: str
+    market_id: str | None = None
+    instrument_key: str | None = None
+    instrument_identity_version: str | None = None
+
     direction: str
     order_type: str
     quantity: float
@@ -591,6 +598,10 @@ class Position(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
     market_type: str
+    market_id: str | None = None
+    instrument_key: str | None = None
+    instrument_identity_version: str | None = None
+
     direction: str
     quantity: float
     entry_price: float
@@ -1587,6 +1598,10 @@ class UniverseMember(BaseModel):
     venue: str | None = None
     symbol: str
     market_type: str = "spot"
+    market_id: str | None = None
+    instrument_key: str | None = None
+    instrument_identity_version: str | None = None
+
     rank: int
     total_score: float
     opportunity_score: float | None = None

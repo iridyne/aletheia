@@ -20,6 +20,8 @@ offlined (don't need LLM); e2e claims mock the LLM like test_entry_logic does.
 
 import inspect
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -416,3 +418,49 @@ async def test_observer_emitted_evidence_failure_rolls_back_opportunity(
     assert db.execute(
         "SELECT 1 FROM settings WHERE key='agent.market_observer.round_robin.v1'"
     ).fetchone() is None
+
+
+@spec_claim(
+    SpecClaim(
+        "OD-S03",
+        "data_layer_contract",
+        "§3 CN Equity instrument identity",
+        "L2b",
+        "Identity readers discriminate Crypto V1 and CN Equity V2 without symbol collisions",
+    ),
+)
+def test_versioned_identity_reader_is_market_discriminated():
+    from aletheia.uta.models import (
+        CNEquityInstrumentIdentityV2,
+        CryptoInstrumentIdentityV1,
+        InstrumentIdentity,
+        read_instrument_identity,
+    )
+
+    crypto = CryptoInstrumentIdentityV1(
+        canonical_symbol="600000",
+        venue_symbol="600000",
+        market_type="spot",
+        base_currency="600000",
+        quote_currency="USDT",
+    )
+    cn_equity = CNEquityInstrumentIdentityV2(venue="XSHG", canonical_symbol="600000")
+    legacy_crypto = InstrumentIdentity(
+        canonical_symbol="BTC/USDT",
+        venue_symbol="BTCUSDT",
+        market_type="spot",
+        base_currency="BTC",
+        quote_currency="USDT",
+    )
+
+    assert read_instrument_identity(crypto.model_dump_json()) == crypto
+    assert read_instrument_identity(cn_equity.model_dump_json()) == cn_equity
+    legacy_read = read_instrument_identity(legacy_crypto.model_dump_json())
+    assert isinstance(legacy_read, CryptoInstrumentIdentityV1)
+    assert legacy_read.canonical_symbol == legacy_crypto.canonical_symbol
+    assert crypto.instrument_key == "crypto:spot:600000"
+    assert cn_equity.instrument_key == "cn_equity:XSHG:600000:equity"
+    assert crypto.instrument_key != cn_equity.instrument_key
+
+    with pytest.raises(ValueError):
+        read_instrument_identity({"schema_version": "instrument-identity/v3"})

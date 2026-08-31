@@ -234,9 +234,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 54)
+        f"aletheia-sqlite-v{version}" for version in range(2, 55)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v53"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v54"
     connection.close()
 
 
@@ -599,7 +599,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             retry_count INTEGER NOT NULL DEFAULT 0,
             idempotency_key TEXT
         );
-        CREATE TABLE orders (id TEXT PRIMARY KEY);
+        CREATE TABLE orders (id TEXT PRIMARY KEY, symbol TEXT, market_type TEXT);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
         CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
         CREATE TABLE agent_run_artifacts (
@@ -613,7 +613,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-        CREATE TABLE positions (id TEXT PRIMARY KEY, status TEXT);
+        CREATE TABLE positions (id TEXT PRIMARY KEY, status TEXT, symbol TEXT, market_type TEXT);
         CREATE TABLE paper_account_events (
             id TEXT PRIMARY KEY,
             action TEXT NOT NULL CHECK (action IN (
@@ -632,7 +632,12 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         );
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
-        CREATE TABLE opportunities (id TEXT PRIMARY KEY);
+        CREATE TABLE opportunities (
+            id TEXT PRIMARY KEY, symbol TEXT, market TEXT, asset_class TEXT
+        );
+        CREATE TABLE universe_members (
+            id TEXT PRIMARY KEY, venue TEXT, symbol TEXT, market_type TEXT
+        );
         CREATE TABLE pi_decisions (id TEXT PRIMARY KEY);
         CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY);
         CREATE TABLE market_ohlcv (
@@ -691,8 +696,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260830_0052_broker_funding_settlement_cursor_v53",
-        "aletheia-sqlite-v53",
+        "20260831_0053_cn_equity_instrument_identity_v54",
+        "aletheia-sqlite-v54",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")
