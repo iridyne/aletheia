@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import readonly_db
 
 CONTRACT_VERSION = "momentum-geometry-measurement/v2"
 CONTROL_SPEC_ID = "momentum-retrace-reclaim"
@@ -173,6 +174,18 @@ def _validate_t0_bars(
     return None
 
 
+def _validate_post_t0_bars(
+    bars: Sequence[Mapping[str, Any]],
+    *,
+    future_start_ms: int,
+    valid_until_ms: int,
+) -> str | None:
+    expected = list(range(future_start_ms, valid_until_ms - _BAR_MS + 1, _BAR_MS))
+    if [int(bar["ts"]) for bar in bars] != expected:
+        return "post_t0_completed_15m_window_unavailable"
+    return None
+
+
 def _atr_abs(bars: Sequence[Mapping[str, Any]]) -> float:
     true_ranges = []
     for previous, current in zip(bars[-15:-1], bars[-14:]):
@@ -267,7 +280,28 @@ def replay_momentum_geometry_pair(
         cutoff_ms = _instant_ms(plan["approved_at"])
     except (KeyError, TypeError, ValueError):
         return _unavailable("plan_t0_cutoff_unavailable", control_breakout_level=control_breakout)
+    try:
+        expires_ms = _instant_ms(plan["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return _unavailable("plan_expiry_unavailable", control_breakout_level=control_breakout)
+    if expires_ms <= cutoff_ms:
+        return _unavailable("plan_expiry_not_after_t0", control_breakout_level=control_breakout)
     bar_error = _validate_t0_bars(t0_bars, cutoff_ms=cutoff_ms)
+    if bar_error:
+        return _unavailable(bar_error, control_breakout_level=control_breakout)
+
+    future_start_ms = math.ceil(cutoff_ms / _BAR_MS) * _BAR_MS
+    valid_until_ms = min(expires_ms, cutoff_ms + _HORIZON_MS)
+    path_bars = [
+        bar
+        for bar in post_t0_bars
+        if future_start_ms <= int(bar["ts"]) and int(bar["ts"]) + _BAR_MS <= valid_until_ms
+    ]
+    bar_error = _validate_post_t0_bars(
+        path_bars,
+        future_start_ms=future_start_ms,
+        valid_until_ms=valid_until_ms,
+    )
     if bar_error:
         return _unavailable(bar_error, control_breakout_level=control_breakout)
 
@@ -313,7 +347,7 @@ def replay_momentum_geometry_pair(
         else worst_entry - minimum_risk_reward * (invalidation - worst_entry)
     )
     control_path = _candle_path(
-        post_t0_bars,
+        path_bars,
         direction=direction,
         breakout=control_breakout,
         pullback_band=(
@@ -324,7 +358,7 @@ def replay_momentum_geometry_pair(
         entry_zone=control_zone,
     )
     treatment_path = _candle_path(
-        post_t0_bars,
+        path_bars,
         direction=direction,
         breakout=breakout,
         pullback_band=pullback_band,
@@ -332,7 +366,8 @@ def replay_momentum_geometry_pair(
         entry_zone=entry_zone,
     )
     instrument = f"{plan['venue']}:{plan['symbol']}:{plan['market_type']}"
-    source_hash = _source_hash(instrument, t0_bars)
+    source_bars = [*t0_bars, *path_bars]
+    source_hash = _source_hash(instrument, source_bars)
     return {
         "verdict": "candle_geometry_evaluable",
         "reason": None,
@@ -348,7 +383,7 @@ def replay_momentum_geometry_pair(
             "cost_model_version": COST_MODEL_VERSION,
             "outcome_version": OUTCOME_VERSION,
         },
-        "source_candle_ids": [f"{instrument}:15m:{int(bar['ts'])}" for bar in t0_bars],
+        "source_candle_ids": [f"{instrument}:15m:{int(bar['ts'])}" for bar in source_bars],
         "source_hash": source_hash,
         "control": {
             "geometry_version": CONTROL_IDENTITY,
@@ -394,7 +429,7 @@ def replay_momentum_geometry_pair(
     }
 
 
-def build_momentum_geometry_replay(entry_plan_id: str) -> dict[str, Any]:
+def _build_momentum_geometry_replay(entry_plan_id: str) -> dict[str, Any]:
     """Load one immutable Entry Plan pair from SQLite without writing state."""
 
     row = repo.get_entry_plan(entry_plan_id)
@@ -419,6 +454,8 @@ def build_momentum_geometry_replay(entry_plan_id: str) -> dict[str, Any]:
     )
     completed = [bar for bar in bars if int(bar["ts"]) + _BAR_MS <= cutoff_ms]
     t0_bars = completed[-21:]
+    expires_ms = _instant_ms(plan["expires_at"])
+    valid_until_ms = min(expires_ms, cutoff_ms + _HORIZON_MS)
     future_start = math.ceil(cutoff_ms / _BAR_MS) * _BAR_MS
     future = repo.get_ohlcv_candles(
         str(row["symbol"]),
@@ -426,10 +463,14 @@ def build_momentum_geometry_replay(entry_plan_id: str) -> dict[str, Any]:
         64,
         str(row["venue"]),
         str(row["market_type"]),
-        before_ts=cutoff_ms + _HORIZON_MS + _BAR_MS,
+        before_ts=valid_until_ms,
         include_provenance=True,
     )
-    post_t0 = [bar for bar in future if future_start <= int(bar["ts"]) < cutoff_ms + _HORIZON_MS]
+    post_t0 = [
+        bar
+        for bar in future
+        if future_start <= int(bar["ts"]) and int(bar["ts"]) + _BAR_MS <= valid_until_ms
+    ]
     report = replay_momentum_geometry_pair(
         candidate=candidate,
         plan=plan,
@@ -437,3 +478,16 @@ def build_momentum_geometry_replay(entry_plan_id: str) -> dict[str, Any]:
         post_t0_bars=post_t0,
     )
     return {"contract": measurement_contract(), "report": report}
+
+
+def build_momentum_geometry_replay(entry_plan_id: str) -> dict[str, Any]:
+    """Load one immutable Entry Plan pair through the physical read-only boundary."""
+
+    try:
+        with readonly_db():
+            return _build_momentum_geometry_replay(entry_plan_id)
+    except FileNotFoundError:
+        return {
+            "contract": measurement_contract(),
+            "report": _unavailable("database_unavailable"),
+        }

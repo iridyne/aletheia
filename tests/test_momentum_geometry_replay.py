@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+import pytest
 
 from aletheia.analytics.momentum_geometry_replay import (
     build_momentum_geometry_replay,
@@ -62,16 +63,31 @@ def _pair(direction: str = "long") -> tuple[dict, dict, list[dict], list[dict]]:
         candidate_price = 101.5
         control_zone = (101.0, 102.0)
         invalidation, target = 98.0, 108.0
-        future = [
-            {"ts": cutoff, "high": 100.4, "low": 99.4, "close": 100.2},
-        ]
+        first_future = (100.0, 100.4, 99.4, 100.2)
+        neutral_future = (102.0, 103.0, 101.5, 102.0)
     else:
         candidate_price = 98.5
         control_zone = (98.0, 99.0)
         invalidation, target = 102.0, 92.0
-        future = [
-            {"ts": cutoff, "high": 100.6, "low": 99.6, "close": 99.8},
-        ]
+        first_future = (100.0, 100.6, 99.6, 99.8)
+        neutral_future = (97.0, 98.0, 96.0, 97.0)
+    future = []
+    for index in range(16):
+        open_, high, low, close = first_future if index == 0 else neutral_future
+        persisted_at = _instant(cutoff + (index + 1) * BAR_MS)
+        future.append(
+            {
+                "ts": cutoff + index * BAR_MS,
+                "open": open_,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": 10.0,
+                "provider": "fixture",
+                "first_persisted_at": persisted_at,
+                "last_mutated_at": persisted_at,
+            }
+        )
     candidate = {
         "id": f"candidate-{direction}",
         "scanner_family": "momentum",
@@ -126,7 +142,7 @@ def test_replay_proves_candidate_price_control_and_true_breakout_treatment():
     assert result["treatment"]["pullback_seen_at"] == 21 * BAR_MS
     assert result["treatment"]["sweep_seen_at"] == 21 * BAR_MS
     assert result["treatment"]["reclaim_seen_at"] == 21 * BAR_MS
-    assert len(result["source_candle_ids"]) == 21
+    assert len(result["source_candle_ids"]) == 37
     assert result["economics"]["status"] == "unavailable"
 
 
@@ -191,6 +207,59 @@ def test_replay_rejects_forming_t0_bar():
 
     assert result["verdict"] == "unavailable"
     assert result["reason"] == "t0_bar_forming_or_future"
+def test_replay_rejects_partial_or_gapped_post_t0_window():
+    candidate, plan, bars, future = _pair()
+
+    for retained in (future[:-1], [*future[:5], *future[6:]]):
+        result = replay_momentum_geometry_pair(
+            candidate=candidate,
+            plan=plan,
+            t0_bars=bars,
+            post_t0_bars=retained,
+        )
+        assert result["verdict"] == "unavailable"
+        assert result["reason"] == "post_t0_completed_15m_window_unavailable"
+
+
+def test_replay_caps_geometry_at_plan_expiry():
+    candidate, plan, bars, future = _pair()
+    cutoff = 21 * BAR_MS
+    plan["expires_at"] = _instant(cutoff + 4 * BAR_MS)
+    future[0] = {**future[1], "ts": cutoff}
+
+    result = replay_momentum_geometry_pair(
+        candidate=candidate,
+        plan=plan,
+        t0_bars=bars,
+        post_t0_bars=future,
+    )
+
+    assert result["verdict"] == "candle_geometry_evaluable"
+    assert result["treatment"]["reclaim_seen_at"] is None
+    assert len(result["source_candle_ids"]) == 25
+
+
+def test_replay_hashes_post_t0_evidence():
+    candidate, plan, bars, future = _pair()
+    original = replay_momentum_geometry_pair(
+        candidate=candidate,
+        plan=plan,
+        t0_bars=bars,
+        post_t0_bars=future,
+    )
+    future[-1]["close"] = 101.75
+
+    corrected = replay_momentum_geometry_pair(
+        candidate=candidate,
+        plan=plan,
+        t0_bars=bars,
+        post_t0_bars=future,
+    )
+
+    assert corrected["source_hash"] != original["source_hash"]
+    assert corrected["treatment"]["geometry_fingerprint"] != original["treatment"]["geometry_fingerprint"]
+
+
 def test_measurement_contract_keeps_full_denominator_and_missing_facts_unavailable():
     contract = measurement_contract()
 
@@ -230,3 +299,18 @@ def test_builder_loads_exact_instrument_bars_without_writes(monkeypatch):
     assert len(calls) == 2
     assert all(call[:5] == ("BTC/USDT", "15m", 64, "bitget", "perp") for call in calls)
     assert all(call[6] == {"include_provenance": True} for call in calls)
+
+
+@pytest.mark.real_db
+def test_builder_reports_missing_database_without_creating_state(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite_store
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    sqlite_store.reset_db()
+
+    result = build_momentum_geometry_replay("missing")
+
+    assert result["report"]["reason"] == "database_unavailable"
+    assert not (tmp_path / "app.db").exists()
+    assert not (tmp_path / "app.write.lock").exists()

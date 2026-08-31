@@ -210,6 +210,7 @@ def test_momentum_geometry_measurement_is_read_only_and_fail_closed():
     from aletheia.analytics.momentum_geometry_replay import (
         CONTROL_IDENTITY,
         TREATMENT_IDENTITY,
+        _build_momentum_geometry_replay,
         build_momentum_geometry_replay,
         measurement_contract,
     )
@@ -219,8 +220,10 @@ def test_momentum_geometry_measurement_is_read_only_and_fail_closed():
     assert contract["treatment_version"] == TREATMENT_IDENTITY
     assert contract["no_entry_utility"] == 0.0
     assert contract["historical_microstructure"].startswith("unavailable")
-    source = inspect.getsource(build_momentum_geometry_replay)
-    assert "get_ohlcv_candles" in source
-    assert "include_provenance=True" in source
-    assert "insert_" not in source
-    assert "execute_write" not in source
+    public_source = inspect.getsource(build_momentum_geometry_replay)
+    load_source = inspect.getsource(_build_momentum_geometry_replay)
+    assert "readonly_db" in public_source
+    assert "get_ohlcv_candles" in load_source
+    assert "include_provenance=True" in load_source
+    assert "insert_" not in load_source
+    assert "execute_write" not in load_source
