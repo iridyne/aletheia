@@ -23,9 +23,10 @@ Outcome → Learning chain remains the only authority path. The change adds only
 the market identity, calendar, rules, tradability, costs, settlement, and
 point-in-time evidence needed to represent CN equities honestly.
 
-The first supported boundary is `market_id=cn_equity`, Shanghai and Shenzhen
-cash equities, long-only, through observation, Shadow, and the internal Paper
-route. This Proposal does not authorize broker connectivity or Live trading.
+The first supported boundary is `market_id=cn_equity`, CNY-denominated A-shares
+listed in Shanghai or Shenzhen, long-only, through observation, Shadow, and the
+internal Paper route. B-shares and any non-CNY instrument fail closed. This
+Proposal does not authorize broker connectivity or Live trading.
 Implementation and qualification are tracked by parent Issue #2572 and its
 child Issues.
 
@@ -49,8 +50,8 @@ not replace them.
 
 ### Goals
 
-- Represent CN equity instruments without forcing them through crypto symbol
-  canonicalization.
+- Represent CNY-denominated Shanghai and Shenzhen A-shares without forcing them
+  through crypto symbol canonicalization; reject B-shares and other currencies.
 - Preserve effective-dated, source-attributed market rules, tradability, fee,
   settlement, and point-in-time data facts.
 - Add a versioned CN Entry Plan payload while retaining the current Crypto v1
@@ -134,14 +135,19 @@ Account entitlement and route capability remain UTA/Execution facts.
 `MarketFeeSchedule` contains statutory and exchange charges.
 `PlanningCostAssumption` is a conservative account-independent research input.
 `ExecutionCostProfile` owns route/account commission, minimum-fee, and slippage
-assumptions. If the exact execution profile invalidates a plan boundary or edge,
-the system rejects it and creates a new planning generation; it never mutates an
-accepted plan.
+assumptions. Order-level fees use a cumulative accumulator: every partial Fill
+books only the delta between the aggregate fee owed after that Fill and the
+amount already booked, and a terminal adjustment remains covered by the
+original worst-case reservation. If the exact execution profile invalidates a
+plan boundary or edge, the system rejects it and creates a new planning
+generation; it never mutates an accepted plan.
 
 `SettlementProfile` is the single settlement authority. It separately defines
 share sellability, cash availability, and cash withdrawability. Rule snapshots
-reference its ID and hash. Risk, order, fill, ledger, and exit facts must retain
-the same settlement identity.
+reference its ID and hash. Entry artifacts retain the historical profile used
+when they were created. Every exit Proposal binds the currently effective
+profile and explicitly links any transition from the Position's prior profile;
+its Risk, order, fill, and ledger chain then retain that exit profile identity.
 
 Missing, stale, future-dated, incomplete, or mismatched facts fail closed with
 stable reason codes. Implementations may not fall back to customary percentages,
@@ -194,8 +200,12 @@ snapshots. Risk approves or rejects that Proposal unchanged.
 
 The TriggerSpec key becomes `(market_id, candidate_family, spec_id, version)`.
 A spec declares required data, closed-bar semantics, trading phase, freshness,
-parameters, failure reasons, and referenced market facts. Strategy thresholds
-belong to a preregistered policy epoch, not the Kernel contract.
+parameters, failure reasons, and referenced market facts. Before the first
+eligible strategy exposure, its immutable policy epoch preregisters the
+hypothesis, allowed intervention, comparison/control, statistical unit, outcome
+horizon, sample and time gates, confidence method, economic and harm thresholds,
+and invalidation/termination rules. Strategy thresholds belong to that epoch,
+not the Kernel contract, and cannot be selected after viewing its evidence.
 
 ### UTA, Risk, and typed reservations
 
@@ -215,9 +225,12 @@ original = held + consumed + released
 
 Paper Risk compare-and-set creates `HELD`; Gateway atomically binds an order and
 moves it to `SUBMITTED`; fills consume exact resources and recompute remaining
-worst-case held value; rejection, cancellation remainder, expiry, failure, or
-reconciliation releases the remainder. Every transition records expected state,
-actor, resource, amount, and causal IDs.
+worst-case held value. Approval TTL may expire and release only a pre-submission
+`HELD` reservation. Once `SUBMITTED`, resources remain held until rejection,
+cancellation remainder, failure, or reconciliation proves a terminal order
+state and releases them atomically; an elapsed approval TTL alone can never
+release a live order. Every transition records expected state, actor, resource,
+amount, and causal IDs.
 
 Shadow produces only non-executable `RiskEvaluation` and
 `RouteValidationResult` artifacts. Route validation does not resolve, register,
@@ -247,9 +260,15 @@ remains blocked evidence and cannot be fabricated as a fill.
 Corporate actions apply only through an append-only
 `CorporateActionLedgerEvent` transaction. Cash dividends move through
 receivable to payable cash; split/bonus events adjust settlement lots and cost
-basis. Open orders and reservations are cancelled, released, and reconciled
+basis and create an immutable adjustment projection for every active stop,
+target, invalidation, and other price-based protection fact. The original plan
+is never rewritten; canonical exit reads the latest complete projection linked
+to it. Open orders and reservations are cancelled, released, and reconciled
 before posting. Revisions reverse and rebook; callers cannot directly overwrite
-a Position.
+a Position. If a revision affects a closed Position, the same append-only
+correction chain recomputes or invalidates realized economics and Outcome
+eligibility before the revision becomes complete, and Learning excludes the
+superseded cohort.
 
 ### Outcome and qualification truth
 
@@ -329,8 +348,10 @@ created.
 Before the first CN V2 write, rollback is configuration or binary rollback to
 the prior behavior. After the first V2 write, an old binary that cannot read V2
 is forbidden; recovery is a forward fix or restoration from a verified
-pre-migration backup. Compatibility readers and projections remain until the
-Paper qualification window closes.
+pre-migration backup. Because current Crypto producers remain on v1, the
+discriminated v1/v2 reader and required projections remain for the lifetime of
+both producer schemas. Removing either requires a separately approved migration,
+not expiry of the Paper qualification window.
 
 The runtime state is exactly `disabled | observe | shadow | paper`, defaulting
 to `disabled`; no `live` value is introduced. Failure of a gate stops promotion
