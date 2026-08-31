@@ -27,11 +27,15 @@ The first supported boundary is `market_id=cn_equity`, CNY-denominated A-shares
 listed in Shanghai or Shenzhen, long-only. Only seasoned, non-ST Shanghai and
 Shenzhen main-board A-shares may progress through observation, Shadow, and the
 internal Paper route. ST/*ST, IPO/listing-stage, STAR Market, and ChiNext shares
-are observation-only; they cannot produce an executable Plan, Proposal,
-reservation, or Order. Unknown board/treatment/listing classification, B-shares,
-and any non-CNY instrument fail closed. Widening any category requires a new D1
-Issue and qualification epoch. This Proposal does not authorize broker
-connectivity or Live trading.
+are observation-only for new entry; they cannot produce an entry Plan, entry
+Proposal, cash reservation, or buy Order. If an already-owned supported Position
+later enters one of those categories, it becomes close-only: no exposure may be
+added, but canonical exit continues through the current RuleSnapshot,
+sellable-share reservation, RiskApproval, and Gateway. Unknown
+board/treatment/listing classification, B-shares, and any non-CNY instrument fail
+closed for entry. Widening entry eligibility requires a new D1 Issue and
+qualification epoch. This Proposal does not authorize broker connectivity or
+Live trading.
 Implementation and qualification are tracked by parent Issue #2572 and its
 child Issues.
 
