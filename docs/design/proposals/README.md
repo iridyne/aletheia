@@ -27,6 +27,10 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [CN Equity Market Kernel](cn-equity-market-kernel.md): a second explicitly
+  gated market using versioned identity, point-in-time market facts, the existing
+  Risk/Gateway authority chain, and independently qualified Paper accounting and
+  strategy evidence.
 - [Complete Unified Trading Account](unified_trading_account.md): one private
   external-account read/write boundary beneath Gateway authority, with explicit
   evidence, reconciliation and profile qualification semantics.
