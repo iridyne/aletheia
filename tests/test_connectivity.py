@@ -478,6 +478,44 @@ async def test_auto_resume_on_connectivity_restored(tmp_path, monkeypatch):
     assert len(resume_events) >= 1
 
 
+@pytest.mark.asyncio
+async def test_exchange_auto_resume_survives_transient_config_read(monkeypatch):
+    import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.runtime.acquire_pause("connectivity", reason="test", generation="generation-1")
+    cfg.health.exchange_auto_resume_success_threshold = 1
+    reads = 0
+
+    def flaky_load_config():
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise OSError("temporary config read failure")
+        return cfg
+
+    reachable = {"reachable": True, "latency_ms": 1.0, "error": None, "exchange": "okx"}
+    external = {"reachable": True, "status": "disabled", "error": None}
+    resume = AsyncMock(return_value=True)
+    monkeypatch.setattr("aletheia.config.loader.load_config", flaky_load_config)
+    monkeypatch.setattr(conn_mod.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        conn_mod,
+        "_probe_exchange_and_external",
+        AsyncMock(return_value=(reachable, external)),
+    )
+    monkeypatch.setattr(conn_mod, "_resume_from_network", resume)
+
+    await conn_mod._exchange_auto_resume_loop(
+        interval_sec=0,
+        pause_generation="generation-1",
+    )
+
+    assert reads == 2
+    resume.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # Test 3: Startup gate — exchange unreachable at boot → immediate pause
 # ---------------------------------------------------------------------------

@@ -28,11 +28,11 @@ logger = logging.getLogger("aletheia.auto_resume")
 _active_task: asyncio.Task | None = None
 
 
-def _classify_stall(results: list[dict]) -> str:
+def _classify_stall(results: list[dict], cfg=None) -> str:
     """Classify root cause from probe results for actionable escalation."""
     from aletheia.config.secrets import get_secret
 
-    cfg = load_config()
+    cfg = cfg or load_config()
     default_provider = cfg.models.default_provider
     provider_cfg = cfg.models.providers.get(default_provider)
     if provider_cfg:
@@ -118,7 +118,15 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
     while True:
         await asyncio.sleep(current_interval)
 
-        cfg = load_config()
+        try:
+            cfg = load_config()
+        except Exception as exc:
+            logger.warning(
+                "auto_resume: config read failed (%s), retry in %ds",
+                type(exc).__name__,
+                current_interval,
+            )
+            continue
         if not cfg.runtime.paused:
             logger.info("auto_resume: system already resumed — exiting loop")
             return
@@ -156,7 +164,7 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
             if consecutive_failures >= stall_threshold and (
                 consecutive_failures - last_escalation_at >= stall_threshold
             ):
-                cause = _classify_stall(probe_results)
+                cause = _classify_stall(probe_results, cfg)
                 _escalate_stall(cause, consecutive_failures)
                 last_escalation_at = consecutive_failures
                 current_interval = max(1, min(
@@ -175,7 +183,7 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
         except Exception as e:
             consecutive_failures += 1
             probe_results = [{"provider": "unknown", "usable": False, "error": str(e)}]
-            cause = _classify_stall(probe_results)
+            cause = _classify_stall(probe_results, cfg)
             if consecutive_failures >= stall_threshold and (
                 consecutive_failures - last_escalation_at >= stall_threshold
             ):
