@@ -201,9 +201,10 @@ CREATE TABLE IF NOT EXISTS viability_reports (
 CREATE INDEX IF NOT EXISTS idx_viability_reports_scope_window
     ON viability_reports(scope, window_end DESC);
 
--- Phase 2A scaffold (see docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md).
--- Idempotent CREATE. No writer wired yet; no check executed against it in the
--- provider layer until Phase 2B ships the shadow-mode hook.
+-- Durable budget-policy storage for the current LLM economics harness.
+-- See docs/design/proposals/tokenomics_harness.md. The table is isolated from
+-- trading state; runtime observation/enforcement semantics live in the shared
+-- economics/model-provider paths rather than in schema comments.
 CREATE TABLE IF NOT EXISTS economics_budgets (
     id TEXT PRIMARY KEY,
     scope TEXT NOT NULL CHECK(scope IN
