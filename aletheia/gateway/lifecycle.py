@@ -599,7 +599,7 @@ def do_stop(*, preserve_recovery: bool = False, operator_stop: bool = False) -> 
         managed = service_control.stop(preserve_recovery=preserve_recovery, operator_stop=operator_stop)
     except Exception as exc:
         managed = {"ok": False, "reason": "service_manager_error", "detail": type(exc).__name__}
-    partial_stop = managed.get("runtime_stopped") is True
+    partial_stop = not managed.get("ok") and managed.get("runtime_stopped") is True
     if not managed.get("ok") and not partial_stop:
         platform_name = managed.get("platform", "service manager")
         reason = managed.get("reason", "service_stop_failed")
