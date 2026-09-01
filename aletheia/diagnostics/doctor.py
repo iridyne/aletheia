@@ -4086,7 +4086,14 @@ def _probe_serenity_pipeline(report: Report) -> None:
         detail += f"; latest attempt={attempted['status']}"
         if attempted["error_type"]:
             detail += f" ({attempted['error_type']})"
-    if age is not None and age > 1560:  # 26h — serenity runs once per 24h; 12h fired daily false-positives
+    if age is not None and age < -5:
+        report.add(
+            "data.serenity_pipeline",
+            "warn",
+            f"Serenity latest success timestamp is in the future: {detail}",
+            "inspect runtime clock and persisted Serenity run timestamps",
+        )
+    elif age is not None and age > 1560:  # 26h — serenity runs once per 24h; 12h fired daily false-positives
         report.add("data.serenity_pipeline", "warn",
                    f"Serenity research stale: {detail}",
                    "dreaming_daily missed 02:00 CST and startup catch-up has not completed")
