@@ -1817,6 +1817,38 @@ async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync(
 
 
 @pytest.mark.asyncio
+async def test_binance_connect_uses_managed_proxy_session(monkeypatch):
+    from aletheia.universe import fast_stream
+
+    class _Session:
+        closed = False
+
+        async def ws_connect(self, _endpoint, **kwargs):
+            calls.append(kwargs)
+            raise RuntimeError("stop_after_managed_session")
+
+        async def close(self):
+            self.closed = True
+
+    session = _Session()
+    calls = []
+    monkeypatch.setenv("HTTPS_PROXY", "http://managed-proxy.invalid:7890")
+    monkeypatch.setattr(fast_stream, "apply_proxy_env", lambda: None)
+    monkeypatch.setattr(
+        fast_stream,
+        "aiohttp_session",
+        lambda **_kwargs: session,
+    )
+
+    stream = fast_stream.BinanceFastMarketStream()
+    with pytest.raises(RuntimeError, match="stop_after_managed_session"):
+        await stream.connect()
+
+    assert calls == [{"heartbeat": 30, "proxy": "http://managed-proxy.invalid:7890"}]
+    assert session.closed is True
+
+
+@pytest.mark.asyncio
 async def test_bitget_malformed_time_or_sequence_does_not_terminate_stream():
     import aiohttp
 

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 import json
 import math
+import os
 import time
 from typing import Literal, Protocol
 
@@ -14,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, LIVE_EXECUTION_MODES
 from aletheia.data.symbols import InstrumentId, to_binance
+from aletheia.net import aiohttp_session, apply_proxy_env
 
 
 class FastMarketEvent(BaseModel):
@@ -581,10 +583,13 @@ class BinanceFastMarketStream:
     async def connect(self) -> None:
         if self._sockets:
             return
-        self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15, connect=10))
+        self._session = aiohttp_session(timeout=aiohttp.ClientTimeout(total=15, connect=10))
+        apply_proxy_env()
+        configured_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        websocket_proxy = configured_proxy if str(configured_proxy or "").lower().startswith(("http://", "https://")) else None
         try:
             for market_type, endpoint in self._endpoints.items():
-                ws = await self._session.ws_connect(endpoint, heartbeat=30)
+                ws = await self._session.ws_connect(endpoint, heartbeat=30, proxy=websocket_proxy)
                 self._sockets[market_type] = ws
                 self._reader_tasks.append(asyncio.create_task(self._read_socket(market_type, ws)))
         except Exception:
