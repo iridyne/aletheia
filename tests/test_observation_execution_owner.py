@@ -375,6 +375,21 @@ def test_worker_lock_releases_and_can_be_reacquired(tmp_path, monkeypatch):
         pass
 
     reset_lab_db()
+def test_worker_pass_writes_unknown_signature_without_cycle_guard_pollution(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.observation_lab.db import reset_lab_db
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion, worker_pass_lock
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+    with worker_pass_lock(source_commit=None) as lock_path:
+        signature = lock_path.read_text()
+    assert "source_commit=unknown" in signature
+
+    with worker_cycle_exclusion():
+        pass
+    assert lock_path.read_text() == signature
+    reset_lab_db()
 
 def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypatch):
     """A Main cycle cannot enter while an already-started Worker cycle runs."""

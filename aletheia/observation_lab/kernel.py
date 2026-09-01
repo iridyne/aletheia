@@ -494,9 +494,30 @@ def _finalize_window(
     created = False
     try:
         if path.exists():
-            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                raise FileExistsError(path)
-            staged.unlink(missing_ok=True)
+            existing = path.read_bytes()
+            if hashlib.sha256(existing).hexdigest() == digest:
+                staged.unlink(missing_ok=True)
+            else:
+                try:
+                    envelope = json.loads(
+                        gzip.decompress(existing) if path.suffix == ".gz" else existing
+                    )
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    raise FileExistsError(path) from None
+                identity_fields = (
+                    "observation_id", "generation", "kind", "handler_version", "spec_hash"
+                )
+                referenced = get_lab_db().execute(
+                    "SELECT 1 FROM observation_windows WHERE artifact_path=? LIMIT 1", (str(path),)
+                ).fetchone()
+                if (
+                    not isinstance(envelope, dict) or
+                    window.get("artifact_path") or window.get("artifact_sha256") or referenced
+                    or any(envelope.get(field) != payload[field] for field in identity_fields)
+                ):
+                    raise FileExistsError(path)
+                os.replace(staged, path)
+                created = True
         else:
             os.replace(staged, path)
             created = True
@@ -650,6 +671,8 @@ def active_retention_claims() -> dict[str, Any]:
 def invalidate_active_for_restore(*, joint_cut_proven: bool) -> int:
     """Invalidate active windows after a restore whose joint cut is unproven."""
     from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    if joint_cut_proven:
+        return 0
 
     with worker_cycle_exclusion():
         with lab_transaction(immediate=True) as db:
@@ -658,7 +681,7 @@ def invalidate_active_for_restore(*, joint_cut_proven: bool) -> int:
                 "WHERE status='active'",
                 (
                     _utc().isoformat(),
-                    "restore_joint_cut_proven" if joint_cut_proven else "restore_continuity_unproven",
+                    "restore_continuity_unproven",
                 ),
             )
         return max(0, result.rowcount)

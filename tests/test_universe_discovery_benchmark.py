@@ -134,6 +134,20 @@ def test_capture_is_frozen_lossless_and_idempotent(benchmark_db):
     status = benchmark.status_benchmark(window["id"], now=started_at)
     assert status["phase"] == "collecting"
     assert status["promotion_eligible"] is False
+def test_capture_rejects_unavailable_current_producer_provenance(benchmark_db, monkeypatch):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="startup-commit")
+    monkeypatch.setattr(benchmark, "_current_commit", lambda: None)
+
+    result = benchmark.capture_completed_run(
+        scanner_run_id="unknown-producer",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+    )
+
+    assert result == {"accepted": False, "reason": "producer_provenance_unavailable"}
+    assert repo.list_universe_discovery_batches(window["id"]) == []
 
 
 
@@ -166,11 +180,65 @@ def test_app_batch_reconciles_when_lab_append_initially_fails(benchmark_db, monk
 
     assert repeated["idempotent"] is True
     status = benchmark.status_benchmark(window["id"], now=started_at)
-    assert status["unit_counts"] == {"admitted": len(_population())}
+    assert status["unit_counts"] == {"admitted": len(_population()) + 1}
     batches, outcomes, orphan_count = benchmark._admitted_snapshot(status)
     assert len(batches) == 1
     assert outcomes
     assert orphan_count == 0
+def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
+    benchmark_db, monkeypatch
+):
+    from aletheia.observation_lab import kernel
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.agent_runtime import runtime_session
+
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    real_capture_event = kernel.capture_event
+    monkeypatch.setattr(runtime_session, "current_provenance", lambda: {})
+    monkeypatch.setattr(
+        kernel, "capture_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("lab append failed"))
+    )
+    original = _population()
+    with pytest.raises(RuntimeError, match="lab append failed"):
+        benchmark.capture_completed_run(
+            scanner_run_id="canonical-retry", population=original,
+            allocated=original[:5], entry_ts=started_at,
+        )
+
+    monkeypatch.setattr(kernel, "capture_event", real_capture_event)
+    monkeypatch.setattr(benchmark, "_current_commit", lambda: None)
+    monkeypatch.setattr(
+        runtime_session, "current_provenance",
+        lambda: {"runtime_session_id": "retry-session"},
+    )
+    changed = [{**row, "asset_id": f"changed-{index}"} for index, row in enumerate(original)]
+    result = benchmark.capture_completed_run(
+        scanner_run_id="canonical-retry", population=changed,
+        allocated=changed[:5], entry_ts=started_at,
+    )
+
+    persisted = decode_filter_decision_batch(
+        repo.list_universe_discovery_batches(window["id"])[0]["candidate_facts"]
+    )
+    keys = {
+        row[0] for row in get_lab_db().execute(
+            "SELECT unit_key FROM observation_units WHERE observation_id=? "
+            "AND source_kind='universe_candidate'", (window["id"],)
+        ).fetchall()
+    }
+    assert result["idempotent"] is True
+    assert keys == {
+        f"{result['batch_id']}:{'|'.join(benchmark._identity(item))}" for item in persisted
+    }
+    assert not any("changed-" in key for key in keys)
+    sessions = {
+        row[0] for row in get_lab_db().execute(
+            "SELECT producer_runtime_session_id FROM observation_units WHERE observation_id=?",
+            (window["id"],),
+        ).fetchall()
+    }
+    assert sessions == {None}
 
 
 def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, monkeypatch):
@@ -203,6 +271,75 @@ def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, 
     domain = benchmark._handler_finalize(terminal)
     assert domain["population_batches"] == []
     assert domain["outcomes"] == []
+
+
+def test_empty_batch_has_durable_admission_marker(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+
+    result = benchmark.capture_completed_run(
+        scanner_run_id="empty-run", population=[], allocated=[], entry_ts=started_at,
+    )
+    batches, outcomes, orphan_count = benchmark._admitted_snapshot(
+        benchmark.status_benchmark(window["id"])
+    )
+
+    assert result["accepted"] is True
+    assert len(batches) == 1
+    assert outcomes == []
+    assert orphan_count == 0
+
+
+def test_legacy_admitted_batch_retry_keeps_historical_unit_hashes(benchmark_db, monkeypatch):
+    from aletheia.observation_lab import kernel
+
+    handler = kernel._handler("universe_discovery", benchmark._HANDLER_VERSION)
+    assert handler is not None
+
+    def legacy_capture(_window, event):
+        batch_id = str(event["batch_id"])
+        return kernel.ObservationProgress(
+            summary={"batch_id": batch_id},
+            units=tuple({
+                "unit_key": f"{batch_id}:{'|'.join(benchmark._identity(item))}",
+                "source_kind": "universe_candidate",
+                "source_ref": f"legacy:{batch_id}",
+                "source_hash": "f" * 64,
+                "known_at": event["known_at"],
+                "admission": "admitted",
+            } for item in event["population"]),
+        )
+
+    kernel.register_handler(
+        kernel.ObservationHandler(
+            kind=handler.kind, version=handler.version,
+            normalize_spec=handler.normalize_spec, capture=legacy_capture,
+            advance=handler.advance, finalize=handler.finalize,
+            retention_claims=handler.retention_claims,
+        ),
+        replace=True,
+    )
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population()
+    first = benchmark.capture_completed_run(
+        scanner_run_id="legacy-units", population=population,
+        allocated=population[:5], entry_ts=started_at,
+    )
+
+    kernel.register_handler(handler, replace=True)
+    monkeypatch.setattr(
+        kernel, "capture_event",
+        lambda *_args, **_kwargs: pytest.fail("admitted legacy batch must not be re-appended"),
+    )
+    repeated = benchmark.capture_completed_run(
+        scanner_run_id="legacy-units", population=population,
+        allocated=population[:5], entry_ts=started_at,
+    )
+
+    assert first["accepted"] is True
+    assert repeated["idempotent"] is True
+    assert benchmark._admitted_snapshot(benchmark.status_benchmark(window["id"]))[2] == 0
 def test_runtime_commit_change_is_capture_provenance_not_causal_identity(
     benchmark_db, monkeypatch
 ):
@@ -275,6 +412,31 @@ def test_finalize_reports_unavailable_and_writes_hashed_package(benchmark_db):
         economics={}, settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
     ) is False
 
+def test_finalize_marks_orphan_app_batch_integrity_unavailable(benchmark_db, monkeypatch):
+    from aletheia.observation_lab import kernel
+    from aletheia.observation_lab.kernel import advance_windows
+
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    monkeypatch.setattr(
+        kernel, "capture_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("lab unavailable"))
+    )
+    with pytest.raises(RuntimeError, match="lab unavailable"):
+        benchmark.capture_completed_run(
+            scanner_run_id="orphan-final", population=_population(),
+            allocated=_population()[:5], entry_ts=started_at,
+        )
+
+    advanced = advance_windows(now="2026-01-16T06:00:00+00:00")
+    result = advanced["results"][f"{window['id']}:{window['generation']}"]
+    status = benchmark.status_benchmark(window["id"])
+    output = Path(status["artifact_path"])
+    package = json.loads(gzip.decompress(output.read_bytes()))
+    analysis = package["domain_result"]["analysis"]
+    assert result["status"] == "finalized"
+    assert analysis["conclusion"] == "unavailable"
+    assert "orphan_app_batch" in analysis["integrity"]["reasons"]
+    assert package["manifest"]["orphan_batch_count"] == 1
 
 def test_finalize_waits_for_frozen_outcome_contract_readiness(benchmark_db):
     started_at = "2026-01-01T00:00:00+00:00"
@@ -661,6 +823,29 @@ def test_cli_finalize_copies_runner_canonical_artifact_without_reanalysis(benchm
     assert hashlib.sha256(requested.read_bytes()).hexdigest() == result["artifact_sha256"]
 
 
+def test_cli_finalize_decodes_canonical_gzip_to_requested_json(benchmark_db):
+    from aletheia.cli.evidence_cmd import evidence_app
+    from aletheia.observation_lab.kernel import advance_windows
+
+    window = benchmark.start_benchmark(
+        now="2026-01-01T00:00:00+00:00", code_commit="commit-a"
+    )
+    advanced = advance_windows(now="2026-01-16T06:00:00+00:00")
+    assert advanced["results"][f"{window['id']}:{window['generation']}"]["status"] == "finalized"
+    requested = benchmark_db / "operator-requested.json"
+    cli = CliRunner().invoke(
+        evidence_app,
+        [
+            "universe-discovery", "finalize", "--id", window["id"],
+            "--output", str(requested), "--json",
+        ],
+    )
+    assert cli.exit_code == 0, cli.output
+    result = json.loads(cli.output)
+    canonical = Path(result["artifact_path"])
+    assert canonical.suffix == ".gz"
+    assert gzip.decompress(canonical.read_bytes()) == requested.read_bytes()
+    assert json.loads(requested.read_text())["observation_id"] == window["id"]
 def test_inactive_benchmark_rows_leave_general_settlement_queue(benchmark_db):
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
