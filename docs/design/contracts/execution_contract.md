@@ -39,6 +39,11 @@ durable close client identity。入场 RiskDecision 不能被复制到平仓单�
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../../governance/policies/trust_and_change_control.md))。
 
+Gateway 的新执行入口只接受 `source='native'`。调用方传入 `adopted` 或未知 source 时，
+`submit_proposal()` 必须在 Proposal 落库前拒绝，`execute_existing_proposal()` 必须在 claim、Risk 或
+broker 副作用前拒绝。`source='adopted'` 只属于 Position Reconciler 直接持久化的 synthetic
+Proposal/Order/Fill/Position 事实，不得进入新订单执行。可执行检查：`EX-B20`。
+
 Entry Plan 是 Universe-linked Proposal 的唯一 active 上游，不是执行旁路。它以 plan id 绑定
 immutable Proposal、authoritative RiskDecision 和 stable client order identity；duplicate execute
 只能恢复同一链，`submission_unknown` 必须先对账且禁止重发。V1 exchange tactic 只允许
