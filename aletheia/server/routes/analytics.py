@@ -255,6 +255,7 @@ def get_equity_curve(
     )
     rows = rows[-max(1, min(limit, 5000)):]
     genuine_rows = [row for row in rows if assess_reportable_outcome(row).eligible]
+    cutoff_instant = _analytics_instant(cutoff)
 
     def _points(source_rows: list[dict]) -> tuple[list[dict], float | None]:
         cumulative = 0.0
@@ -267,8 +268,14 @@ def get_equity_curve(
             pnl = float(value)
             cumulative += pnl
             recorded += 1
-            if cutoff is not None and str(row.get("closed_at") or "") < cutoff:
-                continue
+            if cutoff is not None:
+                closed_instant = _analytics_instant(row.get("closed_at"))
+                if (
+                    cutoff_instant is None
+                    or closed_instant is None
+                    or closed_instant < cutoff_instant
+                ):
+                    continue
             points.append({
                 "time": row["closed_at"],
                 "pnl": round(pnl, 4),
