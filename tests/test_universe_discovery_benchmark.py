@@ -552,19 +552,23 @@ def _insert_open_runtime_session(*, session_id: str, commit: str, started_at: da
 def _mock_gateway_process(monkeypatch, *, started_at: datetime) -> None:
     import psutil
 
-    from aletheia.gateway import pidfile
+    from aletheia.gateway import frontdoor_route, pidfile
 
     class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
         def create_time(self):
             return started_at.timestamp()
 
         def children(self, *, recursive):
             assert recursive is True
-            return []
+            return [Process(5678)] if self.pid == 1234 else []
 
+    monkeypatch.setattr(frontdoor_route, "read_frontdoor_route", lambda: {"backend_pid": 5678})
     monkeypatch.setattr(pidfile, "read_pid", lambda: 1234)
     monkeypatch.setattr(pidfile, "is_running", lambda: True)
-    monkeypatch.setattr(psutil, "Process", lambda pid: Process())
+    monkeypatch.setattr(psutil, "Process", Process)
 
 
 def test_cli_start_uses_verified_current_runtime_among_stale_open_sessions(

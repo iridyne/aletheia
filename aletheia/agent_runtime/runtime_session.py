@@ -51,16 +51,19 @@ def current_external_gateway_session(
     try:
         import psutil
 
+        from aletheia.gateway.frontdoor_route import read_frontdoor_route
         from aletheia.gateway.pidfile import is_running, read_pid
 
         pid = read_pid()
-        if not pid or not is_running():
+        route = read_frontdoor_route()
+        backend_pid = int((route or {}).get("backend_pid") or 0)
+        if not pid or not backend_pid or not is_running():
             return None
         root = psutil.Process(pid)
-        process_starts = [
-            process.create_time()
-            for process in (root, *root.children(recursive=True))
-        ]
+        managed_pids = {root.pid, *(child.pid for child in root.children(recursive=True))}
+        if backend_pid not in managed_pids:
+            return None
+        process_starts = [psutil.Process(backend_pid).create_time()]
         if open_sessions is None:
             from aletheia.storage.sqlite import get_db
 
