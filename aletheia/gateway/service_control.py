@@ -274,7 +274,10 @@ def stop(*, elevate: bool = True, preserve_recovery: bool = False, operator_stop
             if not migrated.get("ok"):
                 return migrated
             migrated_recovery = True
-    transient_owner = current.get("transient", {}).get("managed") is True
+    transient = current.get("transient", {})
+    transient_owner = (
+        transient.get("managed") is True and transient.get("running") is True
+    )
     if current.get("backend") == WINDOWS_SERVICE_BACKEND and current.get("installed"):
         stopped = windows_machine_service.stop(elevate=elevate)
     elif migrated_recovery and transient_owner:

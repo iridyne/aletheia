@@ -745,6 +745,48 @@ def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
     assert applier._restart_gateway()["ok"] is True
 
 
+def test_restart_gateway_succeeds_with_persistent_owner_and_unmanaged_transient(
+    monkeypatch,
+):
+    from aletheia.gateway import service_control
+    from aletheia.update import applier
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "session",
+            "installed": True,
+            "session": {
+                "installed": True,
+                "enabled": True,
+                "running": True,
+                "owned": True,
+                "config_valid": True,
+            },
+            "machine": {},
+            "transient": {"managed": False, "running": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control.session_service,
+        "stop",
+        lambda: {"ok": True, "runtime_stopped": True},
+    )
+    monkeypatch.setattr(
+        service_control.managed_service,
+        "stop",
+        lambda: pytest.fail("unmanaged transient cleanup must not block update"),
+    )
+
+    def run(*_args, **_kwargs):
+        assert service_control.stop()["ok"] is True
+        return _FakeProc()
+
+    monkeypatch.setattr(applier.subprocess, "run", run)
+
+    assert applier._restart_gateway() == {"ok": True}
 def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
