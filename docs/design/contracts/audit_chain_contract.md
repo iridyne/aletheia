@@ -129,7 +129,7 @@ def _last_non_empty_line(paths: list[Path]) -> str:
 
 因此新文件首条记录的 `_prev_hash` 指向轮转前最后一条记录的哈希——**链在文件轮转边界保持连续**。
 
-`verify_audit_chain()` 对此有专项容错逻辑 (`jsonl.py:303-310`): 文件首行（`is_first_in_file=True`）的 `_prev_hash` 不匹配时标记为 benign `reanchors` 而非 error，以兼容轮转边界的历史竞态记录。并发写入者共享同一 `_prev_hash` 的情况同样被容忍（Pattern 2）。
+`verify_audit_chain()` 对所有文件执行同一连续性校验。后续文件首行必须精确指向前一轮转文件的尾记录；文件位置或重复 `_prev_hash` 不能作为重置链的授权。任何边界不匹配均使验证结果为 `valid=false`。
 
 ---
 
