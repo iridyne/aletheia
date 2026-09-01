@@ -192,6 +192,13 @@ def submit_proposal(
     Flow: Proposal -> Risk Engine -> Permission -> Live State -> Execution -> Fill -> Audit
     """
     _reject_preview_execution()
+    if source != "native":
+        return {
+            "status": "rejected",
+            "reason_code": "non_native_proposal_not_executable",
+            "proposal_id": None,
+            "message": "Only native Proposals may enter execution; no Proposal was created.",
+        }
     invalid_exit_intent = exit_intent_violations(
         expected_horizon_hours=expected_horizon_hours,
         stop_source=stop_source,
@@ -314,6 +321,13 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
                 "status": proposal.status,
                 "proposal_id": proposal.id,
                 "message": (f"Proposal is already marked as {proposal.status}; no new order was created."),
+            }
+        if proposal.source != "native":
+            return {
+                "status": "rejected",
+                "reason_code": "non_native_proposal_not_executable",
+                "proposal_id": proposal.id,
+                "message": "Only native Proposals may enter execution; no order was created.",
             }
         if proposal.status not in {"pending", "approved", "executing"}:
             return {

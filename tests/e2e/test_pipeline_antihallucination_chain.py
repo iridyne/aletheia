@@ -7,13 +7,13 @@ The invariant being protected (LEARNING_LOOP_AUDIT §R0 + CR-EX-03):
     FTS retrieval pool
 
 A trade that opened from a real, attributable opportunity becomes a high_confidence
-case study and enters the retrieval pool the PI/ranker learn from. A trade missing
-the opportunity link is excluded before case creation — so the learning loop cannot
-be fed by un-attributable (hallucination-prone) outcomes.
+case study and enters the retrieval pool the PI/ranker learn from. A reconciler-
+adopted trade without native attribution/economics is excluded before case creation,
+so the learning loop cannot be fed by un-attributable outcomes.
 
-No module-to-module mocking: the proposal goes through the real Execution Gateway,
-risk engine, paper broker, PnL close, case builder, and FTS retrieval. Only the DB is
-the e2e in-process SQLite (network/LLM are never touched on the paper path).
+No module-to-module mocking: native execution uses the real Gateway/Risk/paper broker,
+adoption uses the real reconciler, and both continue through PnL close, case builder,
+and FTS retrieval. Only the DB is in-process SQLite (no network/LLM is used).
 """
 
 from datetime import datetime, timezone
@@ -39,15 +39,26 @@ def _run_paper_trade(
     from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
     from aletheia.portfolio.outcome_closure import close_position_verified
 
-    res = submit_proposal(
-        symbol=symbol, market_type="spot", direction="long",
-        quantity=round(60.0 / entry, 6), price=entry,
-        execution_mode="paper_internal",
-        strategy_id=strategy_id, opportunity_id=opportunity_id,
-        stop_price=stop_price, take_profit=take_profit, risk_reward=risk_reward,
-        source=source,
-    )
-    assert res["status"] == "executed", f"paper proposal should execute, got {res}"
+    if source == "adopted":
+        from aletheia.portfolio.position_reconciler import adopt_position
+
+        res = adopt_position(
+            {
+                "symbol": symbol, "side": "long", "market_type": "spot",
+                "quantity": round(60.0 / entry, 6), "entry_price": entry,
+                "mark_price": entry, "unrealized_pnl": 0.0,
+            },
+            account_mode="demo",
+        )
+    else:
+        res = submit_proposal(
+            symbol=symbol, market_type="spot", direction="long",
+            quantity=round(60.0 / entry, 6), price=entry,
+            execution_mode="paper_internal",
+            strategy_id=strategy_id, opportunity_id=opportunity_id,
+            stop_price=stop_price, take_profit=take_profit, risk_reward=risk_reward,
+        )
+        assert res["status"] == "executed", f"paper proposal should execute, got {res}"
     pos_id = res["position_id"]
     position = repo._select_one("positions", pos_id)
     quantity = float(position["quantity"])
@@ -119,10 +130,8 @@ class TestAntiHallucinationChain:
         assert pos_row["strategy_id"] == strat.id
 
         # ── Broken chain: a trade with NO opportunity link (un-attributable) ──
-        # Use source="adopted" so the risk engine skips the native paper checks
-        # (paper_market_data_unavailable, proposal_opportunity_required,
-        # incomplete_entry_plan) that require a linked opportunity.  This mirrors
-        # a reconciler-adopted position that is intentionally missing attribution.
+        # Use the reconciler-owned adoption path for an intentionally unattributed
+        # external position; adopted facts must never enter Gateway execution.
         eth_pos = _run_paper_trade(
             "ETH/USDT", 3000.0, 3300.0,
             opportunity_id=None, strategy_id=None,
@@ -131,7 +140,7 @@ class TestAntiHallucinationChain:
         eth_row = repo._select_one("positions", eth_pos)
         assert eth_row["opportunity_id"] is None
         assert eth_row["outcome_eligible"] == 0
-        assert eth_row["outcome_exclusion_reason"] == "missing_attribution"
+        assert eth_row["outcome_exclusion_reason"] == "incomplete_realized_economics"
 
         # ── Build case studies from the real closed positions ──
         from aletheia.analytics.trade_case_builder import build_case_studies

@@ -150,6 +150,53 @@ def test_preview_runtime_blocks_execution_before_persistence(tmp_path, monkeypat
 
 @spec_claim(
     SpecClaim(
+        "EX-B20", "execution_contract", "§1 entry ownership", "L2b",
+        "Gateway rejects non-native proposal sources before creating or claiming executable state",
+    ),
+)
+def test_gateway_rejects_non_native_execution_before_side_effects(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution.gateway import execute_existing_proposal, submit_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    for source in ("adopted", "human", "adopte"):
+        submitted = submit_proposal(
+            symbol="BTC/USDT", market_type="spot", direction="long",
+            quantity=0.001, price=60_000.0, execution_mode="paper_internal",
+            source=source,
+        )
+        assert submitted == {
+            "status": "rejected",
+            "reason_code": "non_native_proposal_not_executable",
+            "proposal_id": None,
+            "message": "Only native Proposals may enter execution; no Proposal was created.",
+        }
+    assert repo.list_trade_proposals(limit=10) == []
+
+    adopted = TradeProposal(
+        symbol="ETH/USDT", market_type="spot", direction="long",
+        quantity=0.01, price=3_000.0, execution_mode="paper_internal",
+        source="adopted",
+    )
+    repo.insert_trade_proposal(adopted)
+
+    executed = execute_existing_proposal(adopted.id)
+    assert executed == {
+        "status": "rejected",
+        "reason_code": "non_native_proposal_not_executable",
+        "proposal_id": adopted.id,
+        "message": "Only native Proposals may enter execution; no order was created.",
+    }
+    assert repo.get_proposal_execution_claim(adopted.id) is None
+    assert repo.list_orders(limit=10) == []
+    assert repo.list_fills(limit=10) == []
+    assert repo.list_positions(limit=10) == []
+
+
+@spec_claim(
+    SpecClaim(
         "EX-B02", "execution_contract", "§2 proposal status", "L2b",
         "TradeProposal default status is 'pending'",
     ),
