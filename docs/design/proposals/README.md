@@ -51,8 +51,6 @@ Proposal as stable decision history.
 - [Universe continuous scoring safety](universe_continuous_scoring_safety.md):
   bounded continuous curves plus raw-evidence, missingness, reversible-feedback,
   and pessimistic-promotion safeguards.
-- [Tokenomics harness phase plan](tokenomics_harness_phase_plan_2026-07-30.md):
-  controlled inference-harness rollout.
 - [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
   API profile instances, CLI harness integrations, OAuth connections, and the
   staged retirement of the legacy model-settings mutation path.
@@ -72,6 +70,10 @@ Proposal as stable decision history.
   on-demand planning ownership, RESTING_MAKER/TRIGGERED execution, Gateway-owned
   cancel and canonical Risk. Normative behavior is in the decision-lifecycle and
   execution contracts.
+- [Tokenomics / LLM Economics Harness](tokenomics_harness.md): implemented
+  in-process LLM usage/budget/admission governance layered on the existing
+  provider and economics truth surfaces; historical dated research remains under
+  `docs/research/tokenomics/`.
 
 ## Superseded proposals
 
