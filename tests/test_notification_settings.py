@@ -42,6 +42,58 @@ def test_webhook_timeout_boundaries_are_accepted():
 
 
 @pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "   ",
+        "/relative",
+        "ftp://example.test/hook",
+        "https:///hook",
+        "https://user@example.test/hook",
+        "https://example.test:bad/hook",
+    ],
+)
+def test_enabled_webhook_rejects_unusable_url(url):
+    with pytest.raises(ValidationError):
+        WebhookConfig(enabled=True, url=url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://example.test/hook", "https://example.test:8443/hook"],
+)
+def test_enabled_webhook_accepts_http_urls_and_normalizes_whitespace(url):
+    cfg = WebhookConfig(enabled=True, url=f"  {url}  ")
+    assert cfg.url == url
+
+
+def test_failed_webhook_enable_assignment_preserves_disabled_state():
+    cfg = WebhookConfig(url="not a URL")
+
+    with pytest.raises(ValidationError):
+        cfg.enabled = True
+
+    assert cfg.enabled is False
+
+
+def test_invalid_webhook_candidate_has_no_persistence_or_audit(monkeypatch):
+    cfg = AletheiaConfig()
+    saved = []
+    audited = []
+    monkeypatch.setattr(settings, "load_config", lambda: cfg)
+    monkeypatch.setattr(settings, "save_config", lambda value: saved.append(value))
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda event: audited.append(event))
+
+    with pytest.raises(HTTPException) as exc_info:
+        settings.update_webhook_config(settings.WebhookConfigUpdate(enabled=True, url="not a URL"))
+
+    assert exc_info.value.status_code == 422
+    assert saved == []
+    assert audited == []
+    assert cfg.webhook.enabled is False
+
+
+@pytest.mark.parametrize(
     ("model", "field", "value"),
     [
         (settings.TelegramConfigUpdate, "daily_summary_hour_cst", 24),

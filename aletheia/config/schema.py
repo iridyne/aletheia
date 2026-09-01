@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 import logging
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, field_validator, model_validator
@@ -1071,6 +1072,36 @@ class WebhookConfig(BaseModel):
     notify_alerts: bool = True
     notify_daily_summary: bool = True
     timeout_sec: WebhookTimeoutSeconds = 10.0
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def normalize_url(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_enabled_url(cls, value: object) -> object:
+        if not isinstance(value, Mapping) or not value.get("enabled"):
+            return value
+        raw_url = value.get("url")
+        url = raw_url.strip() if isinstance(raw_url, str) else ""
+        if not url or any(character.isspace() for character in url):
+            raise ValueError("enabled webhook requires a valid HTTP(S) URL")
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+            hostname = parsed.hostname
+        except ValueError as exc:
+            raise ValueError("enabled webhook requires a valid HTTP(S) URL") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or port == 0
+        ):
+            raise ValueError("enabled webhook requires a valid HTTP(S) URL")
+        return value
 
 
 class HealthConfig(BaseModel):
