@@ -8,6 +8,9 @@ telemetry is pruned. JSONL rotates at a size cap without losing content.
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
+import pytest
+from pydantic import ValidationError
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
@@ -43,6 +46,16 @@ def test_usage_retention_defaults_are_90_days():
     assert retention.agent_runs_days == 90
     assert retention.tool_calls_days == 90
     assert retention.runtime_sessions_days == 90
+
+
+def test_retention_config_rejects_nonpositive_cleanup_windows():
+    from aletheia.config.schema import RetentionConfig
+
+    cleanup_fields = RetentionConfig.model_fields.keys() - {"app_db_capacity_mb"}
+    for field in cleanup_fields:
+        for value in (0, -1):
+            with pytest.raises(ValidationError, match=field):
+                RetentionConfig.model_validate({field: value})
 
 
 def test_retention_settings_usage_windows_are_limited_to_90_days(monkeypatch):
