@@ -83,10 +83,7 @@ def test_target_fresh_smoke_loads_target_smoke_module(monkeypatch, tmp_path):
         seen["kwargs"] = kwargs
         return SimpleNamespace(
             returncode=0,
-            stdout=(
-                target_fresh._RESULT_PREFIX
-                + '{"ok": true, "stage": "done", "detail": ""}\n'
-            ),
+            stdout=(target_fresh._RESULT_PREFIX + '{"ok": true, "stage": "done", "detail": ""}\n'),
             stderr="",
         )
 
@@ -227,10 +224,16 @@ def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
         },
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        applier,
+        "rollback_applied_update",
+        lambda result: {"rolled_back": True, "actual_head": "old-sha"},
+    )
 
     result = continuity.apply_update_with_continuity(restart=True)
 
-    assert result["applied"] is True
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
     assert result["continuity_verified"] is False
     assert result["continuity_state"] == "unproven"
     assert "update_metadata_persist_unverified" in result["continuity"]["comparison"]["proof_gaps"]

@@ -52,13 +52,9 @@ def _snapshot(
                 "available": runtime_proof_available,
                 "owner": runtime_owner,
                 "job_id": "filter_controller_observe",
-                "main_cycle_registered": (
-                    main_cycle_registered if runtime_proof_available else None
-                ),
+                "main_cycle_registered": (main_cycle_registered if runtime_proof_available else None),
                 "exclusive": (
-                    not (runtime_owner == "worker" and main_cycle_registered)
-                    if runtime_proof_available
-                    else None
+                    not (runtime_owner == "worker" and main_cycle_registered) if runtime_proof_available else None
                 ),
             },
         },
@@ -76,9 +72,7 @@ def _snapshot(
                 "total": len(observation_ids) if identities_available else None,
             },
             "manifest_generations": generations,
-            "checkpoint": {
-                "verified": {"ok": checkpoint_ok, "reason": "ok" if checkpoint_ok else "drift"}
-            },
+            "checkpoint": {"verified": {"ok": checkpoint_ok, "reason": "ok" if checkpoint_ok else "drift"}},
             "experiments": {
                 "total": len(observation_ids),
                 "collecting": len(observation_ids),
@@ -103,9 +97,7 @@ def test_compare_allows_normal_observation_progress():
     after["observation"]["experiments"]["collecting"] = 1
     after["observation"]["experiments"]["ready_for_review"] = 2
 
-    result = compare_update_continuity(
-        before, after, expected_target="new222", restart=True
-    )
+    result = compare_update_continuity(before, after, expected_target="new222", restart=True)
 
     assert result["ok"] is True
     assert result["failures"] == []
@@ -135,9 +127,7 @@ def test_compare_detects_worker_identity_change():
 
     result = compare_update_continuity(
         _snapshot(worker_sha="worker111"),
-        _snapshot(
-            worker_sha="worker222", disk_sha="new222", gateway_sha="new222"
-        ),
+        _snapshot(worker_sha="worker222", disk_sha="new222", gateway_sha="new222"),
         expected_target="new222",
         restart=True,
     )
@@ -150,9 +140,7 @@ def test_compare_detects_data_root_change():
 
     result = compare_update_continuity(
         _snapshot(data_root="sha256:before"),
-        _snapshot(
-            data_root="sha256:after", disk_sha="new222", gateway_sha="new222"
-        ),
+        _snapshot(data_root="sha256:after", disk_sha="new222", gateway_sha="new222"),
         expected_target="new222",
         restart=True,
     )
@@ -165,9 +153,7 @@ def test_compare_detects_observation_history_loss():
 
     result = compare_update_continuity(
         _snapshot(observation_ids=("obs-a", "obs-b")),
-        _snapshot(
-            observation_ids=("obs-b",), disk_sha="new222", gateway_sha="new222"
-        ),
+        _snapshot(observation_ids=("obs-b",), disk_sha="new222", gateway_sha="new222"),
         expected_target="new222",
         restart=True,
     )
@@ -180,9 +166,7 @@ def test_compare_detects_manifest_generation_regression():
 
     result = compare_update_continuity(
         _snapshot(generations={"obs-a": 4}),
-        _snapshot(
-            generations={"obs-a": 3}, disk_sha="new222", gateway_sha="new222"
-        ),
+        _snapshot(generations={"obs-a": 3}, disk_sha="new222", gateway_sha="new222"),
         expected_target="new222",
         restart=True,
     )
@@ -202,9 +186,7 @@ def test_preflight_fails_closed_on_structural_checkpoint_drift():
 def test_preflight_detects_duplicate_worker_and_main_cycle_owner():
     from aletheia.update.continuity import evaluate_preflight
 
-    result = evaluate_preflight(
-        _snapshot(owner="worker", main_cycle_registered=True)
-    )
+    result = evaluate_preflight(_snapshot(owner="worker", main_cycle_registered=True))
 
     assert result["ok"] is False
     assert "duplicate_observation_cycle_owner" in result["failures"]
@@ -342,9 +324,7 @@ def test_fresh_capture_parses_target_process_payload(monkeypatch):
     monkeypatch.setattr(
         continuity.subprocess,
         "run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=0, stdout=stdout, stderr=""
-        ),
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
     )
 
     result = continuity.capture_update_continuity_fresh()
@@ -360,9 +340,7 @@ def test_fresh_capture_failure_is_explicit(monkeypatch):
     monkeypatch.setattr(
         continuity.subprocess,
         "run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=1, stdout="", stderr="boom"
-        ),
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="boom"),
     )
 
     result = continuity.capture_update_continuity_fresh()
@@ -371,13 +349,55 @@ def test_fresh_capture_failure_is_explicit(monkeypatch):
     assert result["capture_error"] == "target_postflight_process_failed"
 
 
+def test_minimal_collector_does_not_call_full_diagnostics():
+    import inspect
+    from aletheia.update import continuity
+
+    source = inspect.getsource(continuity.capture_update_continuity)
+    assert "build_control_status" not in source
+    assert "_collect_overview" not in source
+    assert "experiments" not in source
+    assert "ufc" not in source.lower()
+
+
+def test_unavailable_target_capture_is_only_a_proof_gap():
+    from aletheia.update import continuity
+
+    result = continuity.compare_update_continuity(
+        _snapshot(),
+        continuity._unavailable_fresh_snapshot("target_postflight_process_failed"),
+        expected_target="new222",
+        restart=True,
+    )
+
+    assert result["failures"] == []
+    assert result["proof_gaps"] == ["target_postflight_projection_unavailable"]
+    assert result["structural_ok"] is True
+
+
+def test_unavailable_capture_preserves_direct_gateway_mismatch():
+    from aletheia.update import continuity
+
+    after = continuity._unavailable_fresh_snapshot("target_postflight_process_failed")
+    after["gateway"] = {
+        "boot_commit": "wrong",
+        "current_commit": "wrong",
+        "health_status": "healthy",
+    }
+    result = continuity.compare_update_continuity(_snapshot(), after, expected_target="new222", restart=True)
+
+    assert result["failures"] == ["boot_commit_mismatch", "current_commit_mismatch"]
+    assert result["proof_gaps"] == ["target_postflight_projection_unavailable"]
+
+
 def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatch):
     from aletheia.update import applier, continuity
 
     before = _snapshot(capture_source="in_process")
     after = _snapshot(disk_sha="new222", gateway_sha="new222")
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
-    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: after["gateway"])
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
     seen = {}
 
     def apply_update(*, restart, progress=None):
@@ -396,11 +416,11 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
 
     monkeypatch.setattr(applier, "apply_update", apply_update)
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
-
     result = continuity.apply_update_with_continuity(restart=True)
 
     assert seen["restart"] is True
     assert result["applied"] is True
+    assert result.get("rolled_back") is not True
     assert result["continuity_verified"] is True
     assert result["continuity_state"] == "verified"
     assert result["runtime_old_commit"] == "old111"
@@ -413,7 +433,8 @@ def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeyp
     before = _snapshot(disk_sha="target-sha", gateway_sha="old-sha", capture_source="in_process")
     after = _snapshot(disk_sha="target-sha", gateway_sha="target-sha")
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
-    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: after["gateway"])
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
     monkeypatch.setattr(
         applier,
         "apply_update",
@@ -427,7 +448,6 @@ def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeyp
         },
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
-
     result = continuity.apply_update_with_continuity(restart=True)
 
     assert result["runtime_old_commit"] == "old-sha"
@@ -461,14 +481,16 @@ def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
     from aletheia.update import applier, continuity
 
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
+    initializing = _snapshot(
+        disk_sha="new222",
+        gateway_sha="new222",
+        health_status="initializing",
+    )
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: initializing["gateway"])
     monkeypatch.setattr(
         continuity,
         "capture_update_continuity_fresh",
-        lambda: _snapshot(
-            disk_sha="new222",
-            gateway_sha="new222",
-            health_status="initializing",
-        ),
+        lambda **_: initializing,
     )
     monkeypatch.setattr(
         applier,
@@ -482,19 +504,27 @@ def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
         },
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
-    monkeypatch.setattr(continuity.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(
+        applier,
+        "rollback_applied_update",
+        lambda result: {"rolled_back": True, "actual_head": "old111"},
+    )
+    now = [0.0]
+    monkeypatch.setattr(continuity.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(continuity.time, "sleep", lambda value: now.__setitem__(0, now[0] + value))
 
     result = continuity.apply_update_with_continuity(restart=True)
 
-    assert result["applied"] is True
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
     assert result["continuity_verified"] is False
     assert result["continuity_state"] == "unproven"
     assert result["reason"] == "observer_continuity_unproven"
     assert result["continuity"]["comparison"]["failures"] == []
-    assert "main_health_not_verified" in result["continuity"]["comparison"]["proof_gaps"]
+    assert "target_postflight_projection_unavailable" in result["continuity"]["comparison"]["proof_gaps"]
 
 
-def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatch):
+def test_wrapper_rolls_back_postflight_failure(monkeypatch):
     from aletheia.update import applier, continuity
 
     monkeypatch.setattr(
@@ -502,14 +532,16 @@ def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatc
         "capture_update_continuity",
         lambda: _snapshot(worker_sha="worker111"),
     )
+    after = _snapshot(
+        worker_sha="worker222",
+        disk_sha="new222",
+        gateway_sha="new222",
+    )
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: after["gateway"])
     monkeypatch.setattr(
         continuity,
         "capture_update_continuity_fresh",
-        lambda: _snapshot(
-            worker_sha="worker222",
-            disk_sha="new222",
-            gateway_sha="new222",
-        ),
+        lambda **_: after,
     )
     monkeypatch.setattr(
         applier,
@@ -523,10 +555,16 @@ def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatc
         },
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        applier,
+        "rollback_applied_update",
+        lambda result: {"rolled_back": True, "actual_head": "old111"},
+    )
 
     result = continuity.apply_update_with_continuity(restart=True)
 
-    assert result["applied"] is True
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
     assert result["continuity_verified"] is False
     assert result["continuity_state"] == "failed"
     assert result["reason"] == "observer_continuity_failed"
@@ -541,7 +579,8 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     before = _snapshot()
     after = _snapshot(disk_sha="new222", gateway_sha="new222")
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
-    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: after["gateway"])
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
     monkeypatch.setattr(
         applier,
         "apply_update",

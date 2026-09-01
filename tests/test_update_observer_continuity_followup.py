@@ -34,9 +34,7 @@ def _minimal_snapshot(*, checkpoint_reason: str = "fingerprint_match") -> dict:
             },
             "identities": {"available": True, "ids": ["obs-1"]},
             "manifest_generations": {"obs-1": 2},
-            "checkpoint": {
-                "verified": {"ok": checkpoint_ok, "reason": checkpoint_reason}
-            },
+            "checkpoint": {"verified": {"ok": checkpoint_ok, "reason": checkpoint_reason}},
         },
     }
 
@@ -45,9 +43,7 @@ def test_preflight_allows_manifest_lifecycle_checkpoint_drift():
     from aletheia.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(
-        checkpoint_reason=(
-            "fingerprint_mismatch: app_head(v35→v35) count(35→35) manifests(2→1)"
-        )
+        checkpoint_reason=("fingerprint_mismatch: app_head(v35→v35) count(35→35) manifests(2→1)")
     )
 
     result = evaluate_preflight(snapshot)
@@ -61,9 +57,7 @@ def test_preflight_still_fails_closed_on_app_migration_checkpoint_drift():
     from aletheia.update.continuity import evaluate_preflight
 
     snapshot = _minimal_snapshot(
-        checkpoint_reason=(
-            "fingerprint_mismatch: app_head(v34→v35) count(34→35) manifests(2→2)"
-        )
+        checkpoint_reason=("fingerprint_mismatch: app_head(v34→v35) count(34→35) manifests(2→2)")
     )
 
     result = evaluate_preflight(snapshot)
@@ -101,21 +95,80 @@ def test_postflight_wait_survives_initializing_then_healthy(monkeypatch):
         current_commit="target-sha",
         health_status="healthy",
     )
-    snapshots = iter([initializing, healthy])
+    gateways = iter([initializing["gateway"], healthy["gateway"]])
     sleeps: list[float] = []
-    monkeypatch.setattr(
-        continuity,
-        "capture_update_continuity_fresh",
-        lambda: next(snapshots),
-    )
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: next(gateways))
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: healthy)
     monkeypatch.setattr(continuity.time, "sleep", lambda value: sleeps.append(value))
 
-    result = continuity.capture_update_continuity_until_settled(
-        "target-sha", timeout_sec=4, poll_sec=2
-    )
+    result = continuity.capture_update_continuity_until_settled("target-sha", timeout_sec=4, poll_sec=2)
 
     assert result["gateway"]["health_status"] == "healthy"
     assert sleeps == [2.0]
+
+
+def test_postflight_deadline_counts_wait_and_captures_once(monkeypatch):
+    from aletheia.update import continuity
+
+    now = [0.0]
+    calls = {"gateway": 0, "capture": 0}
+
+    def monotonic():
+        return now[0]
+
+    def sleep(value):
+        now[0] += value
+
+    def gateway(**_):
+        calls["gateway"] += 1
+        return {
+            "available": True,
+            "boot_commit": "target-sha",
+            "current_commit": "target-sha",
+            "health_status": "initializing",
+        }
+
+    monkeypatch.setattr(continuity.time, "monotonic", monotonic)
+    monkeypatch.setattr(continuity.time, "sleep", sleep)
+    monkeypatch.setattr(continuity, "_gateway_status", gateway)
+    monkeypatch.setattr(
+        continuity,
+        "capture_update_continuity_fresh",
+        lambda **_: calls.__setitem__("capture", calls["capture"] + 1),
+    )
+
+    result = continuity.capture_update_continuity_until_settled("target-sha", timeout_sec=10, poll_sec=3)
+
+    assert now[0] == 10
+    assert calls == {"gateway": 4, "capture": 0}
+    assert result["capture_available"] is False
+    assert result["last_stage"] == "gateway_wait"
+
+
+def test_postflight_ready_uses_remaining_deadline_for_one_capture(monkeypatch):
+    from aletheia.update import continuity
+
+    now = [0.0]
+    timeouts = []
+    ready = {
+        "available": True,
+        "boot_commit": "target-sha",
+        "current_commit": "target-sha",
+        "health_status": "healthy",
+    }
+    monkeypatch.setattr(continuity.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: ready)
+
+    def capture(*, timeout_sec):
+        timeouts.append(timeout_sec)
+        now[0] += 1
+        return _minimal_snapshot()
+
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", capture)
+    result = continuity.capture_update_continuity_until_settled("target-sha", timeout_sec=7, poll_sec=2)
+
+    assert timeouts == [7.0]
+    assert result["timings_ms"]["target_capture"] == 1000
 
 
 def test_preflight_proof_gap_cannot_be_erased_by_healthy_postflight(monkeypatch):
