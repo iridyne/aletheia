@@ -574,6 +574,73 @@ def test_normal_stop_selects_installed_persistent_owner_over_transient(monkeypat
     assert stopped == ["session", "transient"]
 
 
+def test_persistent_stop_ignores_unowned_stopped_transient_cleanup(monkeypatch):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "session",
+            "installed": True,
+            "session": _state(
+                installed=True, enabled=True, running=True, owned=True, config_valid=True
+            ),
+            "machine": _state(),
+            "transient": {"managed": True, "running": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control.session_service,
+        "stop",
+        lambda: {"ok": True, "runtime_stopped": True},
+    )
+    def fail_transient_cleanup():
+        raise AssertionError("stopped transient cleanup must not run")
+
+    monkeypatch.setattr(
+        service_control.managed_service,
+        "stop",
+        fail_transient_cleanup,
+    )
+
+    assert service_control.stop() == {"ok": True, "runtime_stopped": True}
+
+
+def test_explicit_stop_fails_closed_when_stopped_transient_cleanup_fails(monkeypatch):
+    from aletheia.gateway import service_control
+
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "reason": None,
+            "backend": "session",
+            "installed": True,
+            "session": _state(
+                installed=True, enabled=True, running=True, owned=True, config_valid=True
+            ),
+            "machine": _state(),
+            "transient": {"managed": True, "running": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control.session_service,
+        "stop",
+        lambda: {"ok": True, "runtime_stopped": True},
+    )
+    monkeypatch.setattr(
+        service_control.managed_service,
+        "stop",
+        lambda: {"ok": False, "reason": "service_cleanup_error"},
+    )
+
+    result = service_control.stop(operator_stop=True)
+
+    assert result["ok"] is False
+    assert result["persistent_stopped"] is True
+    assert result["cleanup_target"] == "transient service registration"
 def test_stop_rejects_untrusted_installed_session(monkeypatch):
     from aletheia.gateway import service_control
 
@@ -624,7 +691,7 @@ def test_stop_reports_persistent_runtime_stopped_when_transient_cleanup_fails(
             "backend": "session",
             "session": _state(installed=True, running=True),
             "machine": _state(),
-            "transient": {"managed": True},
+            "transient": {"managed": True, "running": True},
         },
     )
     monkeypatch.setattr(
