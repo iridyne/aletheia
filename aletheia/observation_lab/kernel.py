@@ -472,7 +472,7 @@ def _finalize_window(
         "handler_version": window["handler_version"],
         "spec_hash": window["spec_hash"],
         "evidence_cutoff": window["collect_until"],
-        "finalized_at": at.isoformat(),
+        "finalized_at": str(window["finalize_not_before"]),
         "producer_provenance": {
             "commits": sorted(
                 {row[0] for row in provenance_rows if row[0]}
@@ -650,6 +650,8 @@ def active_retention_claims() -> dict[str, Any]:
 def invalidate_active_for_restore(*, joint_cut_proven: bool) -> int:
     """Invalidate active windows after a restore whose joint cut is unproven."""
     from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    if joint_cut_proven:
+        return 0
 
     with worker_cycle_exclusion():
         with lab_transaction(immediate=True) as db:
@@ -658,7 +660,7 @@ def invalidate_active_for_restore(*, joint_cut_proven: bool) -> int:
                 "WHERE status='active'",
                 (
                     _utc().isoformat(),
-                    "restore_joint_cut_proven" if joint_cut_proven else "restore_continuity_unproven",
+                    "restore_continuity_unproven",
                 ),
             )
         return max(0, result.rowcount)

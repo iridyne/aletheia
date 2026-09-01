@@ -102,10 +102,12 @@ def _release_exclusive(fd: int) -> None:
 
 
 @contextlib.contextmanager
-def _hold_cycle_lock(*, source_commit: str | None = None):
+def _hold_cycle_lock(*, source_commit: str | None = None, write_signature: bool = False):
     lock_path = _lock_path()
     depth = getattr(_cycle_state, "depth", 0)
     if depth:
+        if write_signature:
+            _write_lock_signature(_cycle_state.fd, source_commit=source_commit)
         _cycle_state.depth = depth + 1
         try:
             yield lock_path
@@ -120,11 +122,13 @@ def _hold_cycle_lock(*, source_commit: str | None = None):
         _acquire_exclusive(fd, lock_path)
         acquired = True
         _cycle_state.depth = 1
-        if source_commit is not None:
+        _cycle_state.fd = fd
+        if write_signature:
             _write_lock_signature(fd, source_commit=source_commit)
         yield lock_path
     finally:
         _cycle_state.depth = 0
+        _cycle_state.fd = None
         if acquired:
             _release_exclusive(fd)
         try:
@@ -136,7 +140,7 @@ def _hold_cycle_lock(*, source_commit: str | None = None):
 @contextlib.contextmanager
 def worker_pass_lock(*, source_commit: str | None = None):
     """Acquire the Observation Worker pass lock and persist its pass signature."""
-    with _hold_cycle_lock(source_commit=source_commit) as lock_path:
+    with _hold_cycle_lock(source_commit=source_commit, write_signature=True) as lock_path:
         yield lock_path
 
 

@@ -573,7 +573,9 @@ def capture_completed_run(
             str(window["id"]), int(window["generation"]), reason="frozen_contract_changed"
         )
         return {"accepted": False, "reason": "frozen_contract_changed", "invalidated": True}
-    producer_commit = _current_commit() or str(window["code_commit"])
+    producer_commit = _current_commit()
+    if producer_commit is None:
+        return {"accepted": False, "reason": "producer_provenance_unavailable"}
     batch, outcomes = build_capture(
         window=window, scanner_run_id=scanner_run_id, population=population,
         allocated=allocated, entry_ts=entry_ts, regime_tag=regime_tag,
@@ -586,10 +588,23 @@ def capture_completed_run(
     if result.get("accepted"):
         persisted_commit = result.pop("_producer_commit", None)
         persisted_session = result.pop("_producer_runtime_session_id", None)
+        persisted_batch = next(
+            (
+                row for row in repo.list_universe_discovery_batches(str(window["id"]))
+                if str(row["benchmark_batch_id"]) == str(result["batch_id"])
+            ),
+            None,
+        )
+        if persisted_batch is None:
+            raise RuntimeError("persisted_benchmark_batch_unavailable")
+        persisted_population = decode_filter_decision_batch(str(persisted_batch["candidate_facts"]))
+        if len(persisted_population) != int(persisted_batch["candidate_count"]):
+            raise RuntimeError("persisted_benchmark_batch_population_mismatch")
         capture_event(
             str(window["id"]), int(window["generation"]), str(window["contract_hash"]),
-            {"batch_id": result["batch_id"], "known_at": entry_ts, "population": population},
-            producer_commit=str(persisted_commit or producer_commit),
+            {"batch_id": result["batch_id"], "known_at": persisted_batch["evaluated_at"],
+             "population": persisted_population},
+            producer_commit=str(persisted_commit or persisted_batch["code_commit"]),
             producer_runtime_session_id=(
                 str(persisted_session) if persisted_session else (
                     str(outcomes[0].get("producer_runtime_session_id"))
@@ -1027,8 +1042,15 @@ def _handler_advance(window: dict[str, Any]):
 def _handler_finalize(window: dict[str, Any]) -> dict[str, Any]:
     benchmark_window = _as_benchmark_window(window)
     window_id = str(benchmark_window["id"])
-    batches, outcomes, _ = _admitted_snapshot(window)
+    batches, outcomes, orphan_batch_count = _admitted_snapshot(window)
     analysis = analyze_benchmark(window_id, snapshot=(benchmark_window, batches, outcomes))
+    if orphan_batch_count:
+        analysis["integrity"]["complete"] = False
+        analysis["integrity"]["reasons"] = sorted(
+            {*analysis["integrity"]["reasons"], "orphan_app_batch"}
+        )
+        analysis["conclusion"] = "unavailable"
+        analysis["family_winner"] = {"status": "no_supported_winner"}
     runtime_session_ids = sorted({
         str(row[field])
         for row in outcomes
@@ -1053,6 +1075,7 @@ def _handler_finalize(window: dict[str, Any]) -> dict[str, Any]:
             "started_at": benchmark_window["started_at"],
             "capture_ends_at": benchmark_window["capture_ends_at"],
             "promotion_eligible": False,
+            "orphan_batch_count": orphan_batch_count,
             "runtime_session_ids": runtime_session_ids,
         },
         "contract": json.loads(str(benchmark_window["contract_json"])),
@@ -1107,7 +1130,7 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
         raise ValueError("benchmark_frozen_contract_drift")
     try:
         finalized = finalize_window(
-            window_id, int(window["generation"]), now=now, output=output,
+            window_id, int(window["generation"]), now=now,
         )
     except ValueError as exc:
         if str(exc) == "window_finalize_not_due":
@@ -1121,13 +1144,15 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
     requested = Path(output).expanduser().resolve()
     if requested != canonical:
         requested.parent.mkdir(parents=True, exist_ok=True)
+        requested_artifact = artifact if requested.suffix == ".gz" else gzip.decompress(artifact)
+        requested_digest = hashlib.sha256(requested_artifact).hexdigest()
         staged = requested.with_name(f".{requested.name}.{uuid.uuid4().hex}.tmp")
         try:
-            staged.write_bytes(artifact)
-            if hashlib.sha256(staged.read_bytes()).hexdigest() != digest:
+            staged.write_bytes(requested_artifact)
+            if hashlib.sha256(staged.read_bytes()).hexdigest() != requested_digest:
                 raise RuntimeError("benchmark_artifact_copy_verification_failed")
             if requested.exists():
-                if hashlib.sha256(requested.read_bytes()).hexdigest() != digest:
+                if hashlib.sha256(requested.read_bytes()).hexdigest() != requested_digest:
                     raise FileExistsError(requested)
                 staged.unlink(missing_ok=True)
             else:

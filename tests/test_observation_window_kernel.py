@@ -316,6 +316,80 @@ def test_explicit_unproven_restore_invalidates_active_windows(tmp_path, monkeypa
     assert status["status"] == "invalidated"
     assert status["terminal_reason"] == "restore_continuity_unproven"
     reset_lab_db()
+def test_proven_joint_cut_preserves_active_windows(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.observation_lab.db import reset_lab_db
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler, ObservationProgress, invalidate_active_for_restore,
+        register_handler, start_window, status_window,
+    )
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+    register_handler(ObservationHandler(
+        kind="proven-restore", version="v1", normalize_spec=lambda spec: spec,
+        capture=None, advance=lambda _window: ObservationProgress(summary={}),
+        finalize=lambda _window: {}, retention_claims=lambda _window: (),
+    ), replace=True)
+    window = start_window(
+        observation_id="proven-restore", kind="proven-restore", handler_version="v1",
+        slot_key="proven-restore-slot", authority_mode="observe_only", spec={"v": 1},
+        started_at=_utc(), collect_until=_utc(2), finalize_not_before=_utc(3),
+    )
+
+    assert invalidate_active_for_restore(joint_cut_proven=True) == 0
+    assert status_window(window["observation_id"], window["generation"])["status"] == "active"
+    reset_lab_db()
+
+
+def test_finalize_recovers_verified_artifact_left_before_terminal_commit(tmp_path, monkeypatch):
+    import gzip
+    from contextlib import contextmanager
+
+    import aletheia.config.loader as loader
+    import aletheia.observation_lab.kernel as kernel
+    from aletheia.observation_lab.db import reset_lab_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+    kernel.register_handler(kernel.ObservationHandler(
+        kind="crash-recovery", version="v1", normalize_spec=lambda spec: spec,
+        capture=None,
+        advance=lambda _window: kernel.ObservationProgress(summary={"ready": True}, can_finalize=True),
+        finalize=lambda _window: {"result": "fixed"}, retention_claims=lambda _window: (),
+    ), replace=True)
+    window = kernel.start_window(
+        observation_id="crash-recovery", kind="crash-recovery", handler_version="v1",
+        slot_key="crash-recovery-slot", authority_mode="observe_only", spec={"v": 1},
+        started_at=_utc(), collect_until=_utc(2), finalize_not_before=_utc(3),
+    )
+    output = tmp_path / "orphan.json.gz"
+    real_transaction = kernel.lab_transaction
+
+    @contextmanager
+    def crash_before_commit(*args, **kwargs):
+        with real_transaction(*args, **kwargs) as db:
+            yield db
+            raise SystemExit("simulated process exit")
+
+    monkeypatch.setattr(kernel, "lab_transaction", crash_before_commit)
+    with pytest.raises(SystemExit, match="simulated process exit"):
+        kernel.finalize_window(
+            window["observation_id"], window["generation"], now=_utc(3), output=output,
+        )
+    reset_lab_db()
+    assert output.exists()
+    assert kernel.status_window(window["observation_id"], window["generation"])["status"] == "active"
+
+    monkeypatch.setattr(kernel, "lab_transaction", real_transaction)
+    finalized = kernel.finalize_window(
+        window["observation_id"], window["generation"], now=_utc(4), output=output,
+    )
+    assert finalized["status"] == "finalized"
+    assert finalized["terminal_at"] == _utc(4).isoformat()
+    artifact = json.loads(gzip.decompress(output.read_bytes()))
+    assert artifact["finalized_at"] == _utc(3).isoformat()
+    reset_lab_db()
 
 def test_real_smc_shape_uses_causal_v1_unavailable_no_trigger_and_external_authority(
     tmp_path, monkeypatch
