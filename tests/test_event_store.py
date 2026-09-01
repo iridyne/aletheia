@@ -247,3 +247,59 @@ def test_append_many_duplicate_event_id_with_distinct_idempotency_key_raises(
         "SELECT event_id FROM ps_event_log WHERE idempotency_key = ?", ("many-idem-key",)
     ).fetchone()
     assert row is None
+
+
+@pytest.mark.parametrize("tail_kind", ("partial", "complete"))
+def test_jsonl_retry_repairs_provable_unterminated_tail(
+    tmp_path, monkeypatch, tail_kind
+):
+    import aletheia.config.loader as loader
+    from aletheia.storage.event_store import _jsonl_path
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    store = _store()
+    event = store._prepare(make_event("test.tail", "thing", "tail-1"))
+    persisted, inserted = store._write_db(event)
+    assert inserted
+
+    line = json.dumps(persisted.model_dump(), ensure_ascii=False).encode("utf-8")
+    path = _jsonl_path(persisted.created_at)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(line[: len(line) // 2] if tail_kind == "partial" else line)
+
+    assert store._attempt_jsonl_mirror(persisted) is True
+    second = store.append(make_event("test.next", "thing", "tail-2"))
+
+    records = _jsonl_lines(path)
+    assert [record["event_id"] for record in records] == [
+        persisted.event_id,
+        second.event_id,
+    ]
+
+
+def test_jsonl_retry_does_not_append_to_ambiguous_unterminated_tail(
+    tmp_path, monkeypatch
+):
+    import aletheia.config.loader as loader
+    from aletheia.storage.event_store import _jsonl_path
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    store = _store()
+    event = store._prepare(make_event("test.tail", "thing", "tail-ambiguous"))
+    persisted, inserted = store._write_db(event)
+    assert inserted
+
+    path = _jsonl_path(persisted.created_at)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ambiguous_tail = b'{"event_id":"different-event"'
+    path.write_bytes(ambiguous_tail)
+
+    assert store._attempt_jsonl_mirror(persisted) is False
+    assert path.read_bytes() == ambiguous_tail
+    row = get_db().execute(
+        "SELECT jsonl_mirror_status, jsonl_last_error_class "
+        "FROM ps_event_log WHERE event_id=?",
+        (persisted.event_id,),
+    ).fetchone()
+    assert tuple(row) == ("failed", "EventJsonlMirrorIncompleteTail")

@@ -57,6 +57,34 @@ class EventJsonlMirrorDuplicate(OSError):
     """Existing JSONL mirror has multiple physical rows for one event identity."""
 
 
+class EventJsonlMirrorIncompleteTail(OSError):
+    """The JSONL mirror ends with bytes that cannot be safely completed."""
+
+
+class EventJsonlMirrorReadbackFailed(OSError):
+    """A completed append could not be proved from the physical mirror."""
+
+
+def _event_jsonl_match_count(path: Path, event: PSEvent) -> int:
+    matches = 0
+    if not path.exists():
+        return matches
+    with path.open("rb") as existing:
+        for raw in existing:
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(parsed, dict) or parsed.get("event_id") != event.event_id:
+                continue
+            if parsed.get("payload_hash") != event.payload_hash:
+                raise EventJsonlMirrorPayloadMismatch(
+                    "event JSONL mirror has same event_id with different payload_hash"
+                )
+            matches += 1
+    return matches
+
+
 class EventStore:
     """Append-only event store backed by SQLite + JSONL files."""
 
@@ -304,34 +332,53 @@ class EventStore:
     def _write_jsonl(self, event: PSEvent) -> None:
         """Idempotently append one event to its monthly JSONL mirror."""
         line = json.dumps(event.model_dump(), ensure_ascii=False)
+        encoded = line.encode("utf-8")
         path = _jsonl_path(event.created_at)
         # ponytail: monthly O(n) scan is enough for local logs; add a side index only
         # if measured mirror retries make startup reconciliation material.
         with _JSONL_LOCK:
             with _exclusive_file_lock(_jsonl_lock_path(path)):
-                existing_matches = 0
-                if path.exists():
-                    with path.open("rb") as existing:
-                        for raw in existing:
-                            try:
-                                parsed = json.loads(raw)
-                            except (json.JSONDecodeError, UnicodeDecodeError):
-                                continue
-                            if not isinstance(parsed, dict) or parsed.get("event_id") != event.event_id:
-                                continue
-                            if parsed.get("payload_hash") != event.payload_hash:
+                if path.exists() and path.stat().st_size:
+                    data = path.read_bytes()
+                    if not data.endswith(b"\n"):
+                        tail = data[data.rfind(b"\n") + 1:]
+                        try:
+                            parsed_tail = json.loads(tail)
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            if not encoded.startswith(tail):
+                                raise EventJsonlMirrorIncompleteTail(
+                                    "event JSONL mirror ends with an unrepairable partial record"
+                                ) from None
+                            suffix = encoded[len(tail):] + b"\n"
+                        else:
+                            if not isinstance(parsed_tail, dict):
+                                raise EventJsonlMirrorIncompleteTail(
+                                    "event JSONL mirror ends with a non-object record"
+                                )
+                            if (
+                                parsed_tail.get("event_id") == event.event_id
+                                and parsed_tail.get("payload_hash") != event.payload_hash
+                            ):
                                 raise EventJsonlMirrorPayloadMismatch(
                                     "event JSONL mirror has same event_id with different payload_hash"
                                 )
-                            existing_matches += 1
+                            suffix = b"\n"
+                        with path.open("ab") as stream:
+                            stream.write(suffix)
+
+                existing_matches = _event_jsonl_match_count(path, event)
                 if existing_matches == 1:
                     return
                 if existing_matches > 1:
                     raise EventJsonlMirrorDuplicate(
                         "event JSONL mirror has duplicate physical rows for event_id"
                     )
-                with open(path, "a", encoding="utf-8") as f:
-                    f.write(line + "\n")
+                with path.open("ab") as stream:
+                    stream.write(encoded + b"\n")
+                if _event_jsonl_match_count(path, event) != 1:
+                    raise EventJsonlMirrorReadbackFailed(
+                        "event JSONL mirror append could not be verified"
+                    )
 
     def _row_to_event(self, row) -> PSEvent:
         """Convert a sqlite3.Row to PSEvent."""
