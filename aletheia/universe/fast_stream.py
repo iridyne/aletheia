@@ -83,6 +83,15 @@ def _positive(value: object) -> float | None:
     return number if number > 0 else None
 
 
+def _nonnegative_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    if isinstance(value, str) and (not value or not value.isascii() or not value.isdecimal()):
+        return None
+    number = int(value)
+    return number if 0 <= number <= 2**63 - 1 else None
+
+
 def parse_bitget_message(
     message: dict,
     instruments: set[InstrumentId],
@@ -99,7 +108,11 @@ def parse_bitget_message(
     if instrument is None:
         return []
     channel = str(arg.get("channel") or "")
-    received = received_timestamp_ms or int(time.time() * 1000)
+    received = received_timestamp_ms if received_timestamp_ms is not None else int(time.time() * 1000)
+    raw_message_ts = message.get("ts")
+    message_ts = received if raw_message_ts is None else _nonnegative_int(raw_message_ts)
+    if message_ts is None:
+        return []
     events: list[FastMarketEvent] = []
     rows = data
     if channel == "trade":
@@ -110,15 +123,24 @@ def parse_bitget_message(
     for index, row in enumerate(rows):
         if not isinstance(row, (dict, list, tuple)):
             continue
-        message_ts = int(message.get("ts") or received)
         if isinstance(row, dict):
-            ts = int(row.get("ts") or message_ts)
-            sequence = int(row.get("seq") or row.get("seqId") or message_ts * 1000 + index)
+            raw_ts = row.get("ts")
+            ts = message_ts if raw_ts is None else _nonnegative_int(raw_ts)
+            raw_sequence = row.get("seq")
+            if raw_sequence is None:
+                raw_sequence = row.get("seqId")
+            sequence = (
+                message_ts * 1000 + index
+                if raw_sequence is None
+                else _nonnegative_int(raw_sequence)
+            )
         else:
-            ts = int(row[0]) if row else received
+            ts = _nonnegative_int(row[0]) if row else received
             # Candle rows repeat their bar-open timestamp throughout the minute;
             # use the envelope update timestamp as the event sequence identity.
             sequence = message_ts * 1000 + index
+        if ts is None or sequence is None:
+            continue
         common = {
             "instrument": instrument,
             "exchange_timestamp_ms": ts,
