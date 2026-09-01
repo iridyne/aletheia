@@ -766,7 +766,7 @@ def test_restart_gateway_succeeds_with_persistent_owner_and_unmanaged_transient(
                 "config_valid": True,
             },
             "machine": {},
-            "transient": {"managed": False, "running": False},
+            "transient": {"managed": True, "running": False},
         },
     )
     monkeypatch.setattr(
@@ -777,7 +777,7 @@ def test_restart_gateway_succeeds_with_persistent_owner_and_unmanaged_transient(
     monkeypatch.setattr(
         service_control.managed_service,
         "stop",
-        lambda: pytest.fail("unmanaged transient cleanup must not block update"),
+        lambda: pytest.fail("stopped transient cleanup must not block update"),
     )
 
     def run(*_args, **_kwargs):

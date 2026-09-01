@@ -588,7 +588,7 @@ def test_persistent_stop_ignores_unowned_stopped_transient_cleanup(monkeypatch):
                 installed=True, enabled=True, running=True, owned=True, config_valid=True
             ),
             "machine": _state(),
-            "transient": {"managed": False, "running": False},
+            "transient": {"managed": True, "running": False},
         },
     )
     monkeypatch.setattr(
@@ -597,7 +597,7 @@ def test_persistent_stop_ignores_unowned_stopped_transient_cleanup(monkeypatch):
         lambda: {"ok": True, "runtime_stopped": True},
     )
     def fail_transient_cleanup():
-        raise AssertionError("unowned transient cleanup must not run")
+        raise AssertionError("stopped transient cleanup must not run")
 
     monkeypatch.setattr(
         service_control.managed_service,
