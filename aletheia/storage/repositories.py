@@ -437,6 +437,16 @@ def insert_audit_event_once(event: AuditEvent) -> bool:
         tuple(data.values()),
     )
     return cursor.rowcount == 1
+def has_audit_event(*, event_type: str, entity_id: str) -> bool:
+    row = (
+        get_db()
+        .execute(
+            "SELECT 1 FROM audit_events WHERE event_type=? AND entity_id=? LIMIT 1",
+            (event_type, entity_id),
+        )
+        .fetchone()
+    )
+    return row is not None
 
 
 def list_audit_events(

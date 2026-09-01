@@ -147,6 +147,19 @@ no production write, Risk, Gateway, or activation authority.
 
 `tests/specs/spec_entry_plan_contract.py::test_momentum_geometry_measurement_is_read_only_and_fail_closed`
 is the executable claim for this boundary.
+## Momentum geometry v2 Shadow boundary
+
+`momentum-retrace-reclaim/v2` is registered for deterministic validation but is
+not planner-visible and has no Paper execution authority. Its pure compiler
+requires one explicit, causal 21-bar snapshot and persists exact geometry and
+source fingerprints in the immutable Entry Plan. Missing or invalid geometry
+fails closed without falling back to v1.
+
+Fast Monitoring may load such an explicitly created v2 plan only as a Shadow
+state machine. It records durable `armed → pullback → sweep → reclaim →
+triggered` or `invalidated` audit facts, restores terminal Shadow state after a
+restart, and never forwards a v2 trigger into Proposal, Risk, Gateway, or order
+creation. The existing v1 plan and execution path remain unchanged.
 ## Non-goals
 
 This Contract does not add an exchange, market-data adapter, database table,
