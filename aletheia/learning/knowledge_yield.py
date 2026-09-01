@@ -189,9 +189,8 @@ def build_knowledge_yield_report(
         nomination_rows = get_db().execute(
             f"SELECT envelope_json, source_bundle_hash FROM learning_hypothesis_nominations "
             f"WHERE hypothesis_id IN ({','.join('?' for _ in hypothesis_ids)}) "
-            f"AND aletheia_instant_us(created_at) >= ? "
             f"AND aletheia_instant_us(created_at) < ?",
-            tuple(sorted(hypothesis_ids)) + (start_us, end_us),
+            tuple(sorted(hypothesis_ids)) + (end_us,),
         ).fetchall()
         costs: list[float] = []
         missing_cost = False

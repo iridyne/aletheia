@@ -180,3 +180,21 @@ def test_historical_projection_excludes_idle_retirement_after_cutoff():
     assert project_economic_knowledge_as_of(
         "3000-01-01T00:00:00+00:00",
     ) == []
+def test_historical_projection_keeps_cutoff_cost_contract(monkeypatch):
+    from aletheia.learning import economic_knowledge
+
+    verdict = _verdict()
+    monkeypatch.setattr(
+        economic_knowledge, "COST_MODEL_VERSION", "future-cost-model-v999"
+    )
+
+    current = economic_knowledge.assess_economic_knowledge(verdict.verdict_id)
+    assert current.status == "not_qualified"
+    assert "cost_model_version_mismatch" in current.reasons
+    assert economic_knowledge.project_current_economic_knowledge() == []
+
+    historical = economic_knowledge.project_economic_knowledge_as_of(
+        "2998-01-01T00:00:00+00:00"
+    )
+    assert len(historical) == 1
+    assert historical[0].cost_model_version == COST_MODEL_VERSION

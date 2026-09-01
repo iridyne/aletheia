@@ -316,6 +316,7 @@ def test_duplicate_invalid_and_refreeze_share_one_drag_entity():
         stage="paper_10",
         assignment_salt="drag-salt-1",
         primary_metric="utility-v6",
+        created_at="2026-08-02T00:00:00+00:00",
         status="active",
     ))
     harm = json.dumps({

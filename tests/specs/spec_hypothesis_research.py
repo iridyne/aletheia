@@ -536,6 +536,24 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         assert liquidity.state == "available"
         assert liquidity.source_refs[0].startswith("filter_candidate_outcome:")
         assert liquidity.source_hashes
+    from aletheia.storage.sqlite import get_db
+
+    original_liquidity = next(
+        domain for domain in t0_envelopes[1].domains
+        if domain.domain == "liquidity_cost"
+    )
+    assert "cost_model_version" not in original_liquidity.values
+    outcome_id = original_liquidity.source_refs[0].split(":", 1)[1]
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET cost_model_version=? WHERE id=?",
+        ("settlement-cost-model-v999", outcome_id),
+    )
+    rebuilt = guard_routing._build_ranker_guard_t0_envelopes([case_ids[1]])[0]
+    rebuilt_liquidity = next(
+        domain for domain in rebuilt.domains if domain.domain == "liquidity_cost"
+    )
+    assert "cost_model_version" not in rebuilt_liquidity.values
+    assert rebuilt_liquidity.source_hashes == original_liquidity.source_hashes
     mismatched = t0_envelopes[0].model_copy(update={
         "anchor_entity_id": t0_envelopes[1].anchor_entity_id,
         "anchor_at": t0_envelopes[1].anchor_at,

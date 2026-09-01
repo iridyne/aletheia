@@ -347,7 +347,7 @@ def _build_ranker_guard_t0_envelopes(
         } if guard_rows else {}
         outcome = db.execute(
             "SELECT id, outcome_candidate_key, horizon, entry_price_usd, "
-            "entry_spread_bps, funding_rate_at_entry, entry_ts, cost_model_version "
+            "entry_spread_bps, funding_rate_at_entry, entry_ts "
             "FROM filter_candidate_outcomes "
             "WHERE outcome_candidate_key=? AND horizon='4h' "
             "ORDER BY entry_ts, id LIMIT 1",
@@ -366,7 +366,7 @@ def _build_ranker_guard_t0_envelopes(
             key: outcome_data[key]
             for key in (
                 "entry_price_usd", "entry_spread_bps",
-                "funding_rate_at_entry", "cost_model_version",
+                "funding_rate_at_entry",
             )
             if outcome_matches_cohort and outcome_data.get(key) is not None
         }

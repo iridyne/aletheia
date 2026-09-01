@@ -63,6 +63,15 @@ class EconomicKnowledgeAssessmentV1(BaseModel):
 
 def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
     """Qualify one consumed confirmatory verdict without writing projected truth."""
+    return _assess_economic_knowledge(verdict_id, require_current_cost_model=True)
+
+
+def _assess_economic_knowledge(
+    verdict_id: str,
+    *,
+    require_current_cost_model: bool,
+) -> EconomicKnowledgeAssessmentV1:
+    """Qualify one consumed confirmatory verdict without writing projected truth."""
     from aletheia.storage.sqlite import get_db
 
     row = get_db().execute(
@@ -136,7 +145,17 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
         reasons.append("metric_version_mismatch")
     if not data.get("inference_plan_hash") or not data.get("inference_cutoff_fingerprint"):
         reasons.append("fixed_look_identity_incomplete")
-    if not isinstance(metrics, dict) or metrics.get("expected_cost_model_version") != COST_MODEL_VERSION:
+    recorded_cost_model_version = (
+        metrics.get("expected_cost_model_version") if isinstance(metrics, dict) else None
+    )
+    if (
+        not isinstance(recorded_cost_model_version, str)
+        or not recorded_cost_model_version.strip()
+        or (
+            require_current_cost_model
+            and recorded_cost_model_version != COST_MODEL_VERSION
+        )
+    ):
         reasons.append("cost_model_version_mismatch")
     numeric = ("baseline", "observed", "delta", "confidence_low", "confidence_high")
     if any(data.get(key) is None for key in numeric):
@@ -152,6 +171,7 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
             status="not_qualified",
             reasons=list(dict.fromkeys(reasons)),
         )
+    assert isinstance(recorded_cost_model_version, str)
     fact = EconomicKnowledgeFactV1(
         knowledge_id=f"economic-knowledge:{verdict_id}",
         source_cohort=str(data["cohort_id"]),
@@ -171,7 +191,7 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
         target_horizon=str(data["target_horizon"]),
         outcome_contract_version=str(data["outcome_contract_version"]),
         metric_version=str(data["metric_version"]),
-        cost_model_version=COST_MODEL_VERSION,
+        cost_model_version=recorded_cost_model_version,
         unique_treatment_n=int(data["unique_treatment_n"]),
         actual_intervention_treatment_n=(
             actual_n if isinstance(actual_n, int) and not isinstance(actual_n, bool) else 0
@@ -236,7 +256,10 @@ def _project_economic_knowledge(
             ).fetchone()
             if consumed_before_cutoff is None:
                 continue
-        assessment = assess_economic_knowledge(verdict_id)
+        assessment = _assess_economic_knowledge(
+            verdict_id,
+            require_current_cost_model=as_of_us is None,
+        )
         if (
             assessment.fact is not None
             and not current_disqualification_reasons(verdict_id, as_of=as_of)
