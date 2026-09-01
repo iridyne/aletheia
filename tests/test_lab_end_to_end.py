@@ -59,11 +59,12 @@ def test_end_to_end_lab_runner_writes_all_expected_state():
     # both files after one pass.
     summary = run_lab_windows()
 
-    # (1) Runner reports both default windows ran cleanly.
-    assert summary["windows_run"] == 2
+    # (1) Runner reports all default windows ran cleanly.
+    assert summary["windows_run"] == 3
     assert summary["windows_errored"] == 0
     assert "filter_shadow_evaluate" in summary["results"]
     assert "ufc_shadow_equivalence" in summary["results"]
+    assert "durable_observation_windows" in summary["results"]
 
     # (2) filter_shadow_evaluate captured 50 units (25 passed + 25 rejected).
     filter_result = summary["results"]["filter_shadow_evaluate"]
