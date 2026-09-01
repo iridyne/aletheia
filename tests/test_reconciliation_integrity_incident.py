@@ -343,11 +343,17 @@ def test_operator_prompt_progressive_unlock_and_rollout_share_incident_refreeze(
     }
 
     from aletheia.trading import persona_rollout
-    rollout_cfg = SimpleNamespace(trading=SimpleNamespace(
-        persona_auto_advance_enabled=True,
-        persona_sizing_enabled=True,
-        persona_progressive_unlock_enabled=True,
-    ))
+    rollout_cfg = SimpleNamespace(
+        trading=SimpleNamespace(
+            persona_auto_advance_enabled=True,
+            persona_sizing_enabled=True,
+            persona_progressive_unlock_enabled=True,
+        ),
+        runtime=SimpleNamespace(kill_switch_active=False),
+        exchange=SimpleNamespace(
+            paper_execution_mode="paper_internal",
+        ),
+    )
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: rollout_cfg)
     monkeypatch.setattr(
         "aletheia.config.loader.save_config",

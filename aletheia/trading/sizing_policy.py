@@ -27,6 +27,7 @@ fail-safe, not a bug — the learner activates only where it has enough clean ev
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
@@ -106,19 +107,31 @@ def clean_close_count(
         return 0
 
 
-def in_distress(cfg=None) -> bool:
-    """True when the account is in drawdown or the kill switch is active — the
-    progressive-unlock gate refreezes ALL params in distress."""
-    from aletheia.config.loader import load_config
-    cfg = cfg or load_config()
+DistressAssessment = Literal["healthy", "distressed", "unavailable"]
+
+
+def assess_persona_distress(cfg=None) -> DistressAssessment:
+    """Assess whether drawdown evidence permits dynamic Persona authority."""
     try:
+        from aletheia.config.loader import load_config
+
+        cfg = cfg or load_config()
         if getattr(cfg.runtime, "kill_switch_active", False):
-            return True
-        from aletheia.risk.engine import _portfolio_drawdown_scale
+            return "distressed"
         mode = cfg.exchange.paper_execution_mode or "paper_internal"
-        return _portfolio_drawdown_scale(mode) < 0.8
+        from aletheia.risk.engine import _portfolio_drawdown_assessment
+
+        scale, available = _portfolio_drawdown_assessment(mode, cfg)
+        if not available:
+            return "unavailable"
+        return "distressed" if scale < 0.8 else "healthy"
     except Exception:
-        return False
+        return "unavailable"
+
+
+def in_distress(cfg=None) -> bool:
+    """Fail closed unless Persona has verified healthy drawdown evidence."""
+    return assess_persona_distress(cfg) != "healthy"
 
 
 def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:

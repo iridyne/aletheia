@@ -1102,10 +1102,12 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
 
     if bool(getattr(runtime, "kill_switch_active", False)):
         return _refreeze_all("account_distress", report_without_rollout=True)
-    from aletheia.trading.sizing_policy import in_distress
+    from aletheia.trading.sizing_policy import assess_persona_distress
 
-    if in_distress(cfg):
-        return _refreeze_all("account_distress", report_without_rollout=True)
+    distress = assess_persona_distress(cfg)
+    if distress != "healthy":
+        reason = "account_distress" if distress == "distressed" else "distress_evidence_unavailable"
+        return _refreeze_all(reason, report_without_rollout=True)
     try:
         from aletheia.learning.control import global_learning_refreeze_reason
 
@@ -1134,8 +1136,10 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     if not getattr(t, "persona_progressive_unlock_enabled", False):
         return {"action": "hold", "reason": "persona_progressive_unlock_enabled=False"}
 
-    if in_distress(cfg):
-        return _refreeze_all("account_distress")
+    distress = assess_persona_distress(cfg)
+    if distress != "healthy":
+        reason = "account_distress" if distress == "distressed" else "distress_evidence_unavailable"
+        return _refreeze_all(reason)
 
     state = current_persona_rollout(cfg, create=True, now=now)
     if state is None:

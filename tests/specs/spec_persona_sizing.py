@@ -872,6 +872,51 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     assert "new enablement is blocked" in settings_src
 
 
+@pytest.mark.parametrize(
+    "evidence_failure",
+    ["incomplete", "account_view_exception", "snapshot_exception"],
+)
+def test_persona_rollout_refreezes_when_drawdown_evidence_is_unavailable(
+    tmp_path,
+    monkeypatch,
+    evidence_failure,
+):
+    _setup_db(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading.persona_rollout import advance_persona_rollout
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    def probe(cfg=None):
+        if evidence_failure == "account_view_exception":
+            raise RuntimeError("account view unavailable")
+        if evidence_failure == "incomplete":
+            return False, "okx_demo not connected"
+        return True, "okx_demo connected"
+
+    monkeypatch.setattr(
+        "aletheia.portfolio.exchange_sync.active_broker_view_complete",
+        probe,
+    )
+    if evidence_failure == "snapshot_exception":
+
+        def snapshot_probe(**kwargs):
+            raise RuntimeError("snapshot read failed")
+
+        monkeypatch.setattr(
+            "aletheia.storage.repositories.list_portfolio_snapshots",
+            snapshot_probe,
+        )
+
+    result = advance_persona_rollout()
+
+    assert result["action"] == "refrozen"
+    assert result["reason"] == "distress_evidence_unavailable"
+
+
 def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timezone
