@@ -50,6 +50,7 @@ from aletheia.storage.models import (
     StrategyRecord,
     TradeProposal,
     UniverseSetup,
+    UniverseDiscoveryBenchmark,
     decode_strategy_parameters,
 )
 from aletheia.storage.sqlite import (
@@ -9799,6 +9800,277 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
         )
     return db.total_changes - before
 
+_UNIVERSE_DISCOVERY_BATCH_COLUMNS = (
+    "id", "dedup_key", "run_id", "candidate_kind", "filter_name", "stage",
+    "candidate_count", "passed_count", "rejected_count", "not_applicable_count",
+    "error_count", "candidate_facts", "parameter_snapshot", "filter_version",
+    "code_commit", "evaluated_at", "benchmark_window_id", "benchmark_batch_id",
+)
+_UNIVERSE_DISCOVERY_OUTCOME_COLUMNS = (
+    "id", "outcome_candidate_key", "venue", "symbol", "market_type", "direction",
+    "scanner_family", "regime_tag", "horizon", "allocation_selected",
+    "entry_price_usd", "entry_spread_bps", "funding_rate_at_entry", "entry_ts",
+    "due_at", "settled_at", "exit_price_usd", "gross_return_pct",
+    "directional_return_pct", "estimated_fee_pct", "estimated_spread_slippage_pct",
+    "estimated_funding_pct", "net_return_pct", "min_tradable_edge_pct", "mfe_pct",
+    "mae_pct", "settlement_price_source", "settlement_lag_sec", "cost_model_version",
+    "analysis_notional_quote", "producer_runtime_session_id", "producer_commit",
+    "producer_behavior_fingerprint", "settlement_runtime_session_id",
+    "settlement_producer_commit", "settlement_behavior_fingerprint", "status",
+    "rsi_1h_at_entry", "rsi_15m_at_entry", "return_24h_at_entry",
+    "direction_exhaustion_signal", "benchmark_window_id", "benchmark_batch_id",
+    "benchmark_cohorts", "benchmark_cost_snapshot", "benchmark_path_facts",
+)
+
+
+def _benchmark_payload(value) -> dict:
+    if isinstance(value, BaseModel):
+        return value.model_dump()
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"Unsupported benchmark payload type: {type(value)!r}")
+
+
+def insert_universe_discovery_benchmark(window) -> dict:
+    """Insert one frozen read-only benchmark window, enforcing one active row."""
+    data = _benchmark_payload(window)
+    data["promotion_eligible"] = 0
+    columns = (
+        "id", "status", "contract_json", "contract_hash", "code_commit", "started_at",
+        "capture_ends_at", "finalize_not_before", "created_at", "invalidated_at",
+        "invalidation_reason", "aborted_at", "abort_reason", "finalized_at",
+        "summary_json", "artifact_path", "artifact_sha256", "artifact_size",
+        "capture_count", "last_capture_at", "promotion_eligible",
+    )
+    row = {column: data[column] for column in columns if column in data}
+    try:
+        with transaction(immediate=True):
+            _insert("universe_discovery_benchmarks", row)
+    except sqlite3.IntegrityError as exc:
+        if "uq_universe_discovery_benchmark_active" in str(exc) or "UNIQUE constraint failed" in str(exc):
+            raise ValueError("active_universe_discovery_benchmark_exists") from exc
+        raise
+    stored = _select_one("universe_discovery_benchmarks", str(data["id"]))
+    if stored is None:
+        raise RuntimeError("universe discovery benchmark insert did not persist")
+    return stored
+
+
+def get_universe_discovery_benchmark(window_id: str | None = None) -> dict | None:
+    db = get_db()
+    if window_id:
+        row = db.execute(
+            "SELECT * FROM universe_discovery_benchmarks WHERE id=?", (window_id,)
+        ).fetchone()
+    else:
+        row = db.execute(
+            "SELECT * FROM universe_discovery_benchmarks "
+            "WHERE status='active' ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_universe_discovery_benchmarks(limit: int = 20) -> list[dict]:
+    return _select_all(
+        "universe_discovery_benchmarks",
+        order="started_at DESC, id DESC",
+        limit=limit,
+    )
+
+
+def update_universe_discovery_benchmark(window_id: str, **updates) -> dict:
+    allowed = {
+        "status", "invalidated_at", "invalidation_reason", "aborted_at", "abort_reason",
+        "finalized_at", "summary_json", "artifact_path", "artifact_sha256", "artifact_size",
+        "capture_count", "last_capture_at",
+    }
+    unknown = set(updates) - allowed
+    if unknown:
+        raise ValueError(f"unknown benchmark update fields: {sorted(unknown)}")
+    if not updates:
+        row = get_universe_discovery_benchmark(window_id)
+        if row is None:
+            raise KeyError(window_id)
+        return row
+    with transaction(immediate=True):
+        cur = execute_write(
+            f"UPDATE universe_discovery_benchmarks SET {', '.join(f'{key}=?' for key in updates)} WHERE id=?",
+            [*updates.values(), window_id],
+        )
+        if cur.rowcount != 1:
+            raise KeyError(window_id)
+    row = get_universe_discovery_benchmark(window_id)
+    if row is None:
+        raise RuntimeError("benchmark update disappeared")
+    return row
+
+
+def invalidate_universe_discovery_benchmark(
+    window_id: str, *, reason: str, at: str,
+) -> bool:
+    with transaction(immediate=True):
+        cur = execute_write(
+            "UPDATE universe_discovery_benchmarks SET status='invalidated', "
+            "invalidated_at=?, invalidation_reason=? "
+            "WHERE id=? AND status='active'",
+            (at, reason, window_id),
+        )
+        return bool(cur.rowcount == 1)
+
+
+def abort_universe_discovery_benchmark(
+    window_id: str, *, reason: str, at: str,
+) -> bool:
+    with transaction(immediate=True):
+        cur = execute_write(
+            "UPDATE universe_discovery_benchmarks SET status='aborted', "
+            "aborted_at=?, abort_reason=? "
+            "WHERE id=? AND status='active'",
+            (at, reason, window_id),
+        )
+        return bool(cur.rowcount == 1)
+
+
+def capture_universe_discovery_batch(
+    window_id: str,
+    batch,
+    outcomes: list[dict],
+    *,
+    captured_at: str,
+    cadence_sec: int = 4 * 60 * 60,
+    max_batches: int = 84,
+) -> dict:
+    """Atomically accept one benchmark population batch and its outcome intents."""
+    batch_data = _benchmark_payload(batch)
+    batch_id = str(batch_data.get("benchmark_batch_id") or batch_data.get("id") or "")
+    if not batch_id:
+        raise ValueError("benchmark batch id is required")
+    batch_data.update({"benchmark_window_id": window_id, "benchmark_batch_id": batch_id})
+    captured_dt = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+    if captured_dt.tzinfo is None:
+        captured_dt = captured_dt.replace(tzinfo=timezone.utc)
+    captured_dt = captured_dt.astimezone(timezone.utc)
+
+    with transaction(immediate=True):
+        window = get_db().execute(
+            "SELECT * FROM universe_discovery_benchmarks WHERE id=?", (window_id,)
+        ).fetchone()
+        if window is None:
+            raise KeyError(window_id)
+        if str(window["status"]) != "active":
+            return {"accepted": False, "reason": f"window_{window['status']}", "batch_id": batch_id}
+        existing = get_db().execute(
+            "SELECT id FROM filter_decision_batches WHERE benchmark_window_id=? AND benchmark_batch_id=?",
+            (window_id, batch_id),
+        ).fetchone()
+        if existing:
+            return {"accepted": True, "idempotent": True, "reason": "already_captured", "batch_id": batch_id}
+        if int(window["capture_count"] or 0) >= max_batches:
+            return {"accepted": False, "reason": "capture_limit_reached", "batch_id": batch_id}
+        end_dt = datetime.fromisoformat(str(window["capture_ends_at"]).replace("Z", "+00:00"))
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        if captured_dt >= end_dt.astimezone(timezone.utc):
+            return {"accepted": False, "reason": "capture_window_closed", "batch_id": batch_id}
+        latest = get_db().execute(
+            "SELECT evaluated_at FROM filter_decision_batches "
+            "WHERE benchmark_window_id=? ORDER BY evaluated_at DESC, id DESC LIMIT 1",
+            (window_id,),
+        ).fetchone()
+        if latest and latest["evaluated_at"]:
+            previous_dt = datetime.fromisoformat(str(latest["evaluated_at"]).replace("Z", "+00:00"))
+            if previous_dt.tzinfo is None:
+                previous_dt = previous_dt.replace(tzinfo=timezone.utc)
+            if (captured_dt - previous_dt.astimezone(timezone.utc)).total_seconds() < cadence_sec:
+                return {"accepted": False, "reason": "cadence_not_due", "batch_id": batch_id}
+
+        batch_row = {column: batch_data[column] for column in _UNIVERSE_DISCOVERY_BATCH_COLUMNS}
+        _insert("filter_decision_batches", batch_row)
+
+        outcome_rows: list[dict] = []
+        for outcome in outcomes:
+            data = _benchmark_payload(outcome)
+            data.update({"benchmark_window_id": window_id, "benchmark_batch_id": batch_id})
+            if "benchmark_cohorts" not in data or data["benchmark_cohorts"] is None:
+                data["benchmark_cohorts"] = "[]"
+            outcome_rows.append({column: data.get(column) for column in _UNIVERSE_DISCOVERY_OUTCOME_COLUMNS})
+        inserted_outcomes = 0
+        if outcome_rows:
+            columns = list(_UNIVERSE_DISCOVERY_OUTCOME_COLUMNS)
+            before = get_db().total_changes
+            execute_many_write(
+                f"INSERT INTO filter_candidate_outcomes ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)}) "
+                "ON CONFLICT(outcome_candidate_key, horizon) DO NOTHING",
+                [[row[column] for column in columns] for row in outcome_rows],
+            )
+            inserted_outcomes = get_db().total_changes - before
+        execute_write(
+            "UPDATE universe_discovery_benchmarks SET capture_count=capture_count+1, last_capture_at=? WHERE id=?",
+            (captured_dt.isoformat(), window_id),
+        )
+    return {
+        "accepted": True,
+        "idempotent": False,
+        "batch_id": batch_id,
+        "outcomes_inserted": inserted_outcomes,
+    }
+
+
+def list_universe_discovery_batches(window_id: str) -> list[dict]:
+    return _select_all(
+        "filter_decision_batches",
+        where="benchmark_window_id=?",
+        params=(window_id,),
+        order="evaluated_at ASC, id ASC",
+        limit=None,
+    )
+
+
+def list_universe_discovery_outcomes(window_id: str) -> list[dict]:
+    return _select_all(
+        "filter_candidate_outcomes",
+        where="benchmark_window_id=?",
+        params=(window_id,),
+        order="entry_ts ASC, id ASC",
+        limit=None,
+    )
+
+
+def list_pending_universe_discovery_outcomes(before_ts: str, limit: int = 200) -> list[dict]:
+    active = get_universe_discovery_benchmark()
+    if not active or str(active.get("status")) != "active" or limit <= 0:
+        return []
+    return _select_all(
+        "filter_candidate_outcomes",
+        where=(
+            "benchmark_window_id=? AND status='pending' AND due_at<=? "
+            "AND typeof(venue)='text' AND TRIM(venue, "
+            f"{SQLITE_PYTHON_STRIP_CHARS_SQL})<>''"
+        ),
+        params=(active["id"], before_ts),
+        order="due_at ASC, id ASC",
+        limit=limit,
+    )
+
+
+def finalize_universe_discovery_benchmark(
+    window_id: str,
+    *,
+    finalized_at: str,
+    summary_json: str,
+    artifact_path: str,
+    artifact_sha256: str,
+    artifact_size: int,
+) -> bool:
+    with transaction(immediate=True):
+        cur = execute_write(
+            "UPDATE universe_discovery_benchmarks SET status='finalized', finalized_at=?, "
+            "summary_json=?, artifact_path=?, artifact_sha256=?, artifact_size=? "
+            "WHERE id=? AND status='active'",
+            (finalized_at, summary_json, artifact_path, artifact_sha256, artifact_size, window_id),
+        )
+        return bool(cur.rowcount == 1)
 
 def list_pending_filter_candidate_outcomes(
     before_ts: str,
