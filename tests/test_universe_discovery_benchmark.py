@@ -426,7 +426,7 @@ def test_analysis_uses_frozen_costs_and_gates_incomplete_family_winner(benchmark
     assert analysis["family_winner"] == {"status": "no_supported_winner"}
 
 
-def test_finalize_rejects_changed_outcome_snapshot_and_removes_artifact(benchmark_db, monkeypatch):
+def test_finalize_cleans_artifact_when_transaction_snapshot_fails(benchmark_db, monkeypatch):
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
     benchmark.capture_completed_run(
@@ -442,14 +442,129 @@ def test_finalize_rejects_changed_outcome_snapshot_and_removes_artifact(benchmar
     def changing(window_id):
         nonlocal calls
         calls += 1
-        rows = original(window_id)
         if calls == 2:
-            rows[0] = {**rows[0], "status": "settled"}
-        return rows
+            raise RuntimeError("snapshot read failed")
+        return original(window_id)
 
     monkeypatch.setattr(repo, "list_universe_discovery_outcomes", changing)
     output = benchmark_db / "raced.json.gz"
-    with pytest.raises(RuntimeError, match="benchmark_finalize_race"):
+    with pytest.raises(RuntimeError, match="snapshot read failed"):
         benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
     assert output.exists() is False
     assert repo.get_universe_discovery_benchmark(window["id"])["status"] == "active"
+
+
+def test_finalize_requires_durable_runtime_commit(benchmark_db, monkeypatch):
+    window = benchmark.start_benchmark(now="2026-01-01T00:00:00+00:00", code_commit="commit-a")
+    output = benchmark_db / "missing-commit.json.gz"
+    monkeypatch.setattr(benchmark, "_current_commit", lambda: None)
+    with pytest.raises(ValueError, match="benchmark_runtime_commit_unavailable"):
+        benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
+    assert output.exists() is False
+
+
+def test_inactive_benchmark_rows_leave_general_settlement_queue(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(
+        scanner_run_id="inactive-queue",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    benchmark.abort_benchmark(window["id"], reason="test", now="2026-01-02T00:00:00+00:00")
+    pending = repo.list_pending_filter_candidate_outcomes("2026-02-01T00:00:00+00:00", limit=1000)
+    assert not {row["benchmark_window_id"] for row in pending} - {None}
+
+
+def test_capture_preserves_source_specific_regime_and_durable_session_only(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population(2)
+    population[0]["analysis_context"] = {"kind": "crypto"}
+    population[1]["analysis_context"] = {"kind": "equity"}
+    benchmark.capture_completed_run(
+        scanner_run_id="source-semantics",
+        population=population,
+        allocated=population,
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    rows = repo.list_universe_discovery_outcomes(window["id"])
+    by_asset = {}
+    for row in rows:
+        by_asset.setdefault(json.loads(row["benchmark_path_facts"])["asset_id"], row)
+    assert by_asset["asset-0"]["regime_tag"] == "sideways"
+    assert by_asset["asset-1"]["regime_tag"] is None
+    assert all(row["producer_runtime_session_id"] is None for row in rows)
+
+
+def test_matching_rejects_invalid_control_price():
+    population = _population(2)
+    selected_identity = benchmark._identity(population[0])
+    population[1]["last_price"] = 0.0
+    memberships, annotations = benchmark._cohort_memberships(
+        population,
+        allocated=[population[0]],
+        audits={
+            benchmark._identity(item): {
+                "family_evidence": {family: {"applicability": "not_applicable"} for family in benchmark.FAMILIES}
+            }
+            for item in population
+        },
+        max_candidates=2,
+    )
+    assert "matched_non_selected" not in memberships.get(
+        (benchmark._identity(population[1]), population[0]["scanner_direction"]), set()
+    )
+    assert "matched_pair_id" not in annotations.get((selected_identity, population[0]["scanner_direction"]), {})
+
+
+def test_analysis_excludes_partial_family_batch_and_keeps_selected_asset_weights(benchmark_db, monkeypatch):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(
+        scanner_run_id="inference-inputs",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    batches = repo.list_universe_discovery_batches(window["id"])
+    outcomes = repo.list_universe_discovery_outcomes(window["id"])
+    family_labels = [f"family:{family}" for family in benchmark.FAMILIES] + ["simple_momentum"]
+    target = next(
+        row
+        for row in outcomes
+        if row["horizon"] == "4h"
+        and "production_selected" not in json.loads(row["benchmark_cohorts"])
+        and any(label in family_labels for label in json.loads(row["benchmark_cohorts"]))
+    )
+    target_label = next(label for label in json.loads(target["benchmark_cohorts"]) if label in family_labels)
+    other_label = next(label for label in family_labels if label != target_label)
+    ordered = sorted((target_label, other_label), key=family_labels.index)
+    comparison = f"{ordered[0]}_vs_{ordered[1]}"
+    for row in outcomes:
+        if row is target or row["horizon"] != "4h":
+            continue
+        row.update(
+            status="settled",
+            exit_price_usd=float(row["entry_price_usd"]) * 1.01,
+            settlement_price_source="horizon_ohlcv",
+        )
+
+    calls = {}
+
+    def capture_inputs(differences, *, contract_hash, comparison):
+        calls[comparison] = differences
+        return {"available": False, "reason": "test"}
+
+    monkeypatch.setattr(benchmark, "MIN_INFERENCE_BATCHES", 1)
+    monkeypatch.setattr(benchmark, "_paired_inference", capture_inputs)
+    benchmark.analyze_benchmark(window["id"], snapshot=(window, batches, outcomes))
+    assert calls[comparison] == {}
+    selected_values = next(iter(calls["selected_vs_zero"].values()))
+    assert len(selected_values) == sum(
+        row["horizon"] == "4h" and "production_selected" in json.loads(row["benchmark_cohorts"]) for row in outcomes
+    )

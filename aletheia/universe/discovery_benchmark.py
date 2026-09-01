@@ -270,7 +270,12 @@ def _cohort_memberships(
         direction = str(raw.get("scanner_direction") or raw.get("direction") or "").lower()
         note = annotations[(identity, direction)]
         note["production_rank"] = rank
-        if raw.get("execution_eligible", True) and _finite(raw.get("last_price")) not in (None, 0.0) and _direction_tradable(item, direction):
+        if (
+            raw.get("execution_eligible", True)
+            and (price := _finite(raw.get("last_price"))) is not None
+            and price > 0
+            and _direction_tradable(item, direction)
+        ):
             selected.append((identity, direction))
             memberships[(identity, direction)].add("production_selected")
         else:
@@ -325,7 +330,13 @@ def _cohort_memberships(
             if identity in used or identity[:2] != selected_identity[:2]:
                 continue
             candidate_direction = str(item.get("scanner_direction") or item.get("direction") or "").lower()
-            if candidate_direction != direction or not _direction_tradable(item, candidate_direction):
+            candidate_price = _finite(item.get("last_price"))
+            if (
+                candidate_direction != direction
+                or candidate_price is None
+                or candidate_price <= 0
+                or not _direction_tradable(item, candidate_direction)
+            ):
                 continue
             vector = [ranks[field].get(identity) for field in rank_fields]
             if tuple(_tertile(value) for value in vector[:3]) != selected_strata or any(value is None for value in selected_vector + vector):
@@ -375,37 +386,47 @@ def build_capture(
     facts: list[dict[str, Any]] = []
     for item in normalized:
         identity = _identity(item)
-        facts.append({
-            "decision": "passed",
-            "asset_id": item.get("asset_id"),
-            "feature_snapshot_id": item.get("feature_snapshot_id"),
-            "venue": item.get("venue"),
-            "symbol": item.get("symbol"),
-            "market_type": _market(item.get("market_type")),
-            "entry_price_usd": item.get("last_price"),
-            "quote_volume_24h": item.get("quote_volume_24h"),
-            "spread_bps": item.get("spread_bps"),
-            "depth_10bps_usd": item.get("depth_10bps_usd"),
-            "atr_pct": item.get("atr_pct"),
-            "return_4h": item.get("return_4h"),
-            "return_24h": item.get("return_24h"),
-            "funding_rate": item.get("funding_rate"),
-            "data_freshness_sec": item.get("data_freshness_sec"),
-            "regime_tag": regime_tag,
-            "production_scanner_family": item.get("scanner_family"),
-            "production_scanner_direction": item.get("scanner_direction") or item.get("direction"),
-            "production_total_score": item.get("total_score"),
-            "production_execution_eligible": item.get("execution_eligible", True),
-            "production_execution_ineligible_reason": item.get("execution_ineligible_reason"),
-            "authority": audits[identity]["authority"],
-            "family_evidence": audits[identity]["family_evidence"],
-            "cohorts": sorted({label for (member_identity, _), labels in memberships.items() if member_identity == identity for label in labels}),
-            "direction_annotations": {
-                direction: note
-                for (member_identity, direction), note in sorted(annotations.items())
-                if member_identity == identity
-            },
-        })
+        item_regime_tag = regime_tag if (item.get("analysis_context") or {}).get("kind") == "crypto" else None
+        facts.append(
+            {
+                "decision": "passed",
+                "asset_id": item.get("asset_id"),
+                "feature_snapshot_id": item.get("feature_snapshot_id"),
+                "venue": item.get("venue"),
+                "symbol": item.get("symbol"),
+                "market_type": _market(item.get("market_type")),
+                "entry_price_usd": item.get("last_price"),
+                "quote_volume_24h": item.get("quote_volume_24h"),
+                "spread_bps": item.get("spread_bps"),
+                "depth_10bps_usd": item.get("depth_10bps_usd"),
+                "atr_pct": item.get("atr_pct"),
+                "return_4h": item.get("return_4h"),
+                "return_24h": item.get("return_24h"),
+                "funding_rate": item.get("funding_rate"),
+                "data_freshness_sec": item.get("data_freshness_sec"),
+                "regime_tag": item_regime_tag,
+                "production_scanner_family": item.get("scanner_family"),
+                "production_scanner_direction": item.get("scanner_direction") or item.get("direction"),
+                "production_total_score": item.get("total_score"),
+                "production_execution_eligible": item.get("execution_eligible", True),
+                "production_execution_ineligible_reason": item.get("execution_ineligible_reason"),
+                "authority": audits[identity]["authority"],
+                "family_evidence": audits[identity]["family_evidence"],
+                "cohorts": sorted(
+                    {
+                        label
+                        for (member_identity, _), labels in memberships.items()
+                        if member_identity == identity
+                        for label in labels
+                    }
+                ),
+                "direction_annotations": {
+                    direction: note
+                    for (member_identity, direction), note in sorted(annotations.items())
+                    if member_identity == identity
+                },
+            }
+        )
     contract_hash = str(window["contract_hash"])
     parameter_snapshot = _json({"contract_hash": contract_hash, "scanner_run_id": scanner_run_id})
     dedup_key = hashlib.sha256(f"{window['id']}|{scanner_run_id}|{contract_hash}".encode()).hexdigest()
@@ -430,17 +451,19 @@ def build_capture(
     by_identity = {_identity(item): item for item in normalized}
     cost_snapshot = _json(_frozen_config(cfg)["costs"])
     try:
-        from aletheia.agent_runtime.runtime_session import current_session
+        from aletheia.agent_runtime.runtime_session import current_provenance
 
-        runtime_session = current_session() or {}
+        provenance = current_provenance()
     except Exception:
-        runtime_session = {}
+        provenance = {}
     outcome_rows: list[dict[str, Any]] = []
     for (identity, direction), labels in sorted(memberships.items()):
         item = by_identity[identity]
-        key = "universe-discovery:" + hashlib.sha256(
-            f"{window['id']}|{batch_id}|{identity}|{direction}".encode()
-        ).hexdigest()[:24]
+        item_regime_tag = regime_tag if (item.get("analysis_context") or {}).get("kind") == "crypto" else None
+        key = (
+            "universe-discovery:"
+            + hashlib.sha256(f"{window['id']}|{batch_id}|{identity}|{direction}".encode()).hexdigest()[:24]
+        )
         rows = build_candidate_outcomes(
             outcome_candidate_key=key,
             venue=identity[0],
@@ -448,7 +471,7 @@ def build_capture(
             market_type=identity[1],
             direction=direction,
             scanner_family=None,
-            regime_tag=regime_tag,
+            regime_tag=item_regime_tag,
             entry_price_usd=float(item["last_price"]),
             entry_spread_bps=_finite(item.get("spread_bps")),
             funding_rate_at_entry=_finite(item.get("funding_rate")),
@@ -468,16 +491,18 @@ def build_capture(
         }
         for row in rows:
             data = row.model_dump()
-            data.update({
-                "benchmark_window_id": str(window["id"]),
-                "benchmark_batch_id": batch_id,
-                "benchmark_cohorts": _json(sorted(labels)),
-                "benchmark_cost_snapshot": cost_snapshot,
-                "benchmark_path_facts": _json(path_facts),
-                "producer_runtime_session_id": runtime_session.get("session_id"),
-                "producer_commit": str(window["code_commit"]),
-                "producer_behavior_fingerprint": contract_hash,
-            })
+            data.update(
+                {
+                    "benchmark_window_id": str(window["id"]),
+                    "benchmark_batch_id": batch_id,
+                    "benchmark_cohorts": _json(sorted(labels)),
+                    "benchmark_cost_snapshot": cost_snapshot,
+                    "benchmark_path_facts": _json(path_facts),
+                    "producer_runtime_session_id": provenance.get("runtime_session_id"),
+                    "producer_commit": str(window["code_commit"]),
+                    "producer_behavior_fingerprint": contract_hash,
+                }
+            )
             outcome_rows.append(data)
     return batch, outcome_rows
 
@@ -680,19 +705,27 @@ def analyze_benchmark(
 
     family_labels = [f"family:{family}" for family in FAMILIES] + ["simple_momentum"]
     batch_cohort_values: dict[tuple[str, str], list[float]] = defaultdict(list)
+    batch_cohort_intended: Counter[tuple[str, str]] = Counter()
     for row in measurements:
-        if row["horizon"] != "4h" or row["frozen_net_return_pct"] is None:
+        if row["horizon"] != "4h":
             continue
         for cohort in row["cohorts"]:
             if cohort in family_labels:
-                batch_cohort_values[(str(row["benchmark_batch_id"]), cohort)].append(float(row["frozen_net_return_pct"]))
+                key = (str(row["benchmark_batch_id"]), cohort)
+                batch_cohort_intended[key] += 1
+                if row["frozen_net_return_pct"] is not None:
+                    batch_cohort_values[key].append(float(row["frozen_net_return_pct"]))
     comparisons: dict[str, dict[str, Any]] = {}
     for left_index, left in enumerate(family_labels):
         for right in family_labels[left_index + 1:]:
             differences = {
-                batch_id: statistics.fmean(batch_cohort_values[(batch_id, left)]) - statistics.fmean(batch_cohort_values[(batch_id, right)])
-                for batch_id in {key[0] for key in batch_cohort_values}
-                if batch_cohort_values.get((batch_id, left)) and batch_cohort_values.get((batch_id, right))
+                batch_id: statistics.fmean(batch_cohort_values[(batch_id, left)])
+                - statistics.fmean(batch_cohort_values[(batch_id, right)])
+                for batch_id in {key[0] for key in batch_cohort_intended}
+                if batch_cohort_intended[(batch_id, left)] > 0
+                and batch_cohort_intended[(batch_id, right)] > 0
+                and len(batch_cohort_values[(batch_id, left)]) == batch_cohort_intended[(batch_id, left)]
+                and len(batch_cohort_values[(batch_id, right)]) == batch_cohort_intended[(batch_id, right)]
             }
             key = f"{left}_vs_{right}"
             comparisons[key] = _paired_inference(differences, contract_hash=str(window["contract_hash"]), comparison=key)
@@ -732,9 +765,18 @@ def analyze_benchmark(
 
     selected_ci = None
     selected_batches = {
-        batch_id: statistics.fmean(values)
-        for batch_id in {key[0] for key in batch_cohort_values}
-        if (values := [float(row["frozen_net_return_pct"]) for row in measurements if row["horizon"] == "4h" and row["benchmark_batch_id"] == batch_id and "production_selected" in row["cohorts"] and row["frozen_net_return_pct"] is not None])
+        batch_id: values
+        for batch_id in {str(row["benchmark_batch_id"]) for row in measurements}
+        if (
+            values := [
+                float(row["frozen_net_return_pct"])
+                for row in measurements
+                if row["horizon"] == "4h"
+                and row["benchmark_batch_id"] == batch_id
+                and "production_selected" in row["cohorts"]
+                and row["frozen_net_return_pct"] is not None
+            ]
+        )
     }
     if len(selected_batches) >= MIN_INFERENCE_BATCHES:
         selected_inference = _paired_inference(selected_batches, contract_hash=str(window["contract_hash"]), comparison="selected_vs_zero")
@@ -871,10 +913,10 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
     )
     if _hash(current_contract) != str(window["contract_hash"]):
         raise ValueError("benchmark_frozen_contract_drift")
-    from aletheia.agent_runtime.build_info import get_boot_commit
-
-    boot_commit = get_boot_commit()
-    if boot_commit and boot_commit != str(window["code_commit"]):
+    runtime_commit = _current_commit()
+    if runtime_commit is None:
+        raise ValueError("benchmark_runtime_commit_unavailable")
+    if runtime_commit != str(window["code_commit"]):
         raise ValueError("benchmark_runtime_commit_drift")
     batches = repo.list_universe_discovery_batches(window_id)
     outcomes = repo.list_universe_discovery_outcomes(window_id)
@@ -906,25 +948,29 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
     summary_json = _json({"analysis": analysis, "artifact_sha256": digest, "artifact_size": len(artifact)})
     frozen_fields = ("status", "contract_json", "contract_hash", "code_commit", "started_at")
     finalized = False
-    with repo.transaction(immediate=True):
-        current_window = repo.get_universe_discovery_benchmark(window_id)
-        current_batches = repo.list_universe_discovery_batches(window_id)
-        current_outcomes = repo.list_universe_discovery_outcomes(window_id)
-        unchanged = (
-            current_window is not None
-            and not any(current_window.get(key) != window.get(key) for key in frozen_fields)
-            and current_batches == batches
-            and current_outcomes == outcomes
-        )
-        if unchanged:
-            finalized = repo.finalize_universe_discovery_benchmark(
-                window_id,
-                finalized_at=at.isoformat(),
-                summary_json=summary_json,
-                artifact_path=str(path),
-                artifact_sha256=digest,
-                artifact_size=len(artifact),
+    try:
+        with repo.transaction(immediate=True):
+            current_window = repo.get_universe_discovery_benchmark(window_id)
+            current_batches = repo.list_universe_discovery_batches(window_id)
+            current_outcomes = repo.list_universe_discovery_outcomes(window_id)
+            unchanged = (
+                current_window is not None
+                and not any(current_window.get(key) != window.get(key) for key in frozen_fields)
+                and current_batches == batches
+                and current_outcomes == outcomes
             )
+            if unchanged:
+                finalized = repo.finalize_universe_discovery_benchmark(
+                    window_id,
+                    finalized_at=at.isoformat(),
+                    summary_json=summary_json,
+                    artifact_path=str(path),
+                    artifact_sha256=digest,
+                    artifact_size=len(artifact),
+                )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     if not finalized:
         path.unlink(missing_ok=True)
         raise RuntimeError("benchmark_finalize_race")

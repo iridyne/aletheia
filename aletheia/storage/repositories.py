@@ -10092,6 +10092,9 @@ def list_pending_filter_candidate_outcomes(
         "filter_candidate_outcomes",
         where=(
             "status = 'pending' AND due_at <= ? "
+            "AND (benchmark_window_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM universe_discovery_benchmarks b "
+            "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status='active')) "
             "AND typeof(venue) = 'text' "
             f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
         ),
@@ -10106,7 +10109,10 @@ def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int
         get_db()
         .execute(
             "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
-            "WHERE status = 'pending' AND due_at <= ? AND ("
+            "WHERE status = 'pending' AND due_at <= ? "
+            "AND (benchmark_window_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM universe_discovery_benchmarks b "
+            "WHERE b.id=filter_candidate_outcomes.benchmark_window_id AND b.status='active')) AND ("
             "typeof(venue) <> 'text' "
             f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
             (before_ts,),
