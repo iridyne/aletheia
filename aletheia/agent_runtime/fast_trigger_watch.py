@@ -1007,7 +1007,7 @@ async def _watch_loop(cfg) -> None:
                 "watched_setups": 0,
                 "watched_entry_plan_ids": [],
             }
-            logger.warning("Fast Trigger stream restarting: %s", type(exc).__name__)
+            logger.warning("Fast Trigger stream restarting: %s", type(exc).__name__, exc_info=True)
         finally:
             if event_task is not None and not event_task.done():
                 event_task.cancel()
