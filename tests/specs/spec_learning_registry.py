@@ -75,7 +75,9 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     assert fpt.settings_supported is False
     assert fpt.allowed_effects == ("filter_parameter",)
     assert fpt.overlap_group == "filter_parameter"
-    assert supported_paper_influence_path_ids() == {"universe_family_calibration"}
+    assert supported_paper_influence_path_ids() == {
+        "universe_family_calibration", "momentum_entry_geometry",
+    }
     assert by_id["operator_learning_bundle"].consumer_wired is True
     assert by_id["operator_learning_bundle"].measurement_supported is False
 

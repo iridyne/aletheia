@@ -13,7 +13,7 @@ or bypasses a check — nothing else.
 
 ## What is gated
 
-`.coveragerc` scopes measurement to eight files:
+`.coveragerc` scopes measurement to ten files:
 
 | Boundary | File |
 |---|---|
@@ -25,6 +25,7 @@ or bypasses a check — nothing else.
 | Context-artifact compiler | `aletheia/economics/context_artifacts.py` |
 | Position replay | `aletheia/analytics/position_replay.py` |
 | Filter replay | `aletheia/counterfactual/filter_replay.py` |
+| Momentum geometry replay | `aletheia/analytics/momentum_geometry_replay.py` |
 | Cost / order reconciliation | `aletheia/execution/reconciliation.py` |
 
 Measurement is **branch coverage on top of line coverage** — the same
