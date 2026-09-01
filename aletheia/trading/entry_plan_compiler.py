@@ -170,25 +170,84 @@ def compile_entry_plan(
 
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[intent.horizon])
-        geometry: MomentumEntryGeometryV2 | None = None
+        treatment_exposure_id: str | None = None
+        selected_geometry: MomentumEntryGeometryV2 | None = None
+        candidate_key = candidate.get("learning_candidate_key")
+        execution_account_mode = str(cfg.exchange.paper_execution_mode)
+        is_v1_momentum = (
+            execution_mode == "TRIGGERED"
+            and generation.get("candidate_family") == "momentum"
+            and (str(intent.trigger_spec_id), str(intent.trigger_spec_version))
+            == ("momentum-retrace-reclaim", "v1")
+        )
+        if is_v1_momentum and execution_account_mode in {"paper_internal", "bitget_demo"} and candidate_key:
+            geometry_error: str | None = None
+            if candles is None:
+                geometry_error = "momentum_candles_missing"
+            else:
+                try:
+                    selected_geometry = compile_momentum_entry_geometry_v2(
+                        candidate=candidate,
+                        feature=feature or {},
+                        candles=candles,
+                        direction=direction,
+                        minimum_risk_reward=_RISK_REWARD_TARGET[intent.risk_tier],
+                        source_cutoff_at=current,
+                        valid_until=expires,
+                    )
+                except MomentumGeometryUnavailable as exc:
+                    geometry_error = str(exc)
+            from aletheia.learning.experiments import apply_numeric_treatment
+
+            decision = apply_numeric_treatment(
+                path_id="momentum_entry_geometry",
+                scope={"candidate_family": "momentum", "execution_mode": "paper"},
+                action={"trigger_spec_id": "momentum-retrace-reclaim", "trigger_spec_version": "v2"},
+                source_cohort="exact-momentum-candidate/v1",
+                target_horizon="4h",
+                candidate_key=str(candidate_key),
+                baseline=0.0,
+                treatment=1.0 if selected_geometry is not None else 0.0,
+                consumer="entry_plan_compiler",
+                consumer_stage="entry_geometry",
+                outcome_candidate_key=f"{candidate_key}:4h",
+                manifest={
+                    "candidate_id": generation["last_candidate_id"],
+                    "control": "momentum-retrace-reclaim/v1",
+                    "treatment": "momentum-retrace-reclaim/v2",
+                    "geometry_available": selected_geometry is not None,
+                    "unavailable_reason": geometry_error,
+                },
+            )
+            treatment_exposure_id = decision.exposure_id
+            if selected_geometry is not None and decision.value == 1.0:
+                intent = intent.model_copy(
+                    update={
+                        "trigger_spec_id": "momentum-retrace-reclaim",
+                        "trigger_spec_version": "v2",
+                    }
+                )
+
+        geometry: MomentumEntryGeometryV2 | None = selected_geometry
         if execution_mode == "TRIGGERED" and (
             str(intent.trigger_spec_id),
             str(intent.trigger_spec_version),
         ) == _MOMENTUM_V2:
-            if candles is None:
-                raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
-            try:
-                geometry = compile_momentum_entry_geometry_v2(
-                    candidate=candidate,
-                    feature=feature or {},
-                    candles=candles,
-                    direction=direction,
-                    minimum_risk_reward=_RISK_REWARD_TARGET[intent.risk_tier],
-                    source_cutoff_at=current,
-                    valid_until=expires,
-                )
-            except MomentumGeometryUnavailable as exc:
-                raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", str(exc)) from exc
+            if geometry is None:
+                if candles is None:
+                    raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
+                try:
+                    geometry = compile_momentum_entry_geometry_v2(
+                        candidate=candidate,
+                        feature=feature or {},
+                        candles=candles,
+                        direction=direction,
+                        minimum_risk_reward=_RISK_REWARD_TARGET[intent.risk_tier],
+                        source_cutoff_at=current,
+                        valid_until=expires,
+                    )
+                except MomentumGeometryUnavailable as exc:
+                    raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", str(exc)) from exc
             entry_zone = geometry.entry_zone
             stop_price = geometry.stop_price
             target_price = geometry.target_price
@@ -342,6 +401,7 @@ def compile_entry_plan(
                 risk_policy_revision=int(policy.revision),
                 risk_policy_hash=resolved_policy.policy_hash,
                 behavior_version=behavior_version,
+                treatment_exposure_id=treatment_exposure_id,
             )
         except ValueError as exc:
             raise PlanIntentError(f"COMPILER_GEOMETRY_UNSATISFIABLE:{str(exc)[:100]}") from exc

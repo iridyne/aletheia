@@ -147,19 +147,21 @@ no production write, Risk, Gateway, or activation authority.
 
 `tests/specs/spec_entry_plan_contract.py::test_momentum_geometry_measurement_is_read_only_and_fail_closed`
 is the executable claim for this boundary.
-## Momentum geometry v2 Shadow boundary
+## Momentum geometry v2 controlled Paper boundary
 
-`momentum-retrace-reclaim/v2` is registered for deterministic validation but is
-not planner-visible and has no Paper execution authority. Its pure compiler
-requires one explicit, causal 21-bar snapshot and persists exact geometry and
-source fingerprints in the immutable Entry Plan. Missing or invalid geometry
-fails closed without falling back to v1.
+The planner continues to request `momentum-retrace-reclaim/v1`. For an exact
+Momentum Candidate with 21 completed causal bars, the existing Learning allocator
+may assign the same PlanIntent to `momentum-retrace-reclaim/v2`. Control remains
+v1. Missing or invalid geometry records an unavailable denominator unit and keeps
+the v1 behavior.
 
-Fast Monitoring may load such an explicitly created v2 plan only as a Shadow
-state machine. It records durable `armed → pullback → sweep → reclaim →
-triggered` or `invalidated` audit facts, restores terminal Shadow state after a
-restart, and never forwards a v2 trigger into Proposal, Risk, Gateway, or order
-creation. The existing v1 plan and execution path remain unchanged.
+A v2 Entry Plan persists its immutable treatment-exposure receipt, exact geometry,
+and source fingerprints. Execution fails closed unless that receipt proves an
+applied `momentum_entry_geometry` treatment. Only `paper_internal` and
+`bitget_demo` are eligible; Live remains unavailable. The existing sizing formula,
+Risk policy, Gateway, quantity-at-trigger calculation, and protective exit path are
+unchanged. Fast Monitoring uses the same v2 state machine and forwards a trigger
+only after this authority check.
 ## Non-goals
 
 This Contract does not add an exchange, market-data adapter, database table,

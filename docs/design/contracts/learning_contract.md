@@ -92,6 +92,7 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `operator_learning_bundle` | wired | current Opportunity outcome is not causal to the later prompt treatment | unsupported | static no-Learning prompt baseline; no new formal exposure or authority |
 | `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
 | `ranker_case_score` | wired | exact candidate-level 4h `filter_candidate_outcomes` | supported for Shadow measurement; Paper authority unsupported | candidate-level Shadow measurement; actual Ranker delta remains `0` |
+| `momentum_entry_geometry` | Entry Plan compiler | exact Momentum Candidate exposure plus 4h `filter_candidate_outcomes` | stable control/treatment assignment; Paper-only v2 authority requires the immutable treatment exposure receipt | v1 control and v2 causal geometry preserve the same Candidate, PlanIntent, sizing, Risk, Gateway, and outcome identity |
 | `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
 | `ranker_learned_guard` | wired | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
 | `risk_lesson_constraint` | wired | unsupported | unsupported | automatic lessons advisory-only; manual/owner lessons are non-experimental static constraints |
@@ -101,8 +102,9 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `filter_parameter_tune` | unwired skeleton | unsupported | unsupported | deferred design; no override table, producer or authority |
 | `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary, registry-backed measured-path UI and current-route performance contract implemented; drill-down/full workbench incomplete |
 
-Both `universe_family_calibration` and `ranker_case_score` are currently
-`measurement_supported`. UFC remains the only Paper-authority-capable path;
+`universe_family_calibration`, `ranker_case_score`, and `momentum_entry_geometry`
+are `measurement_supported`. UFC and Momentum geometry are Paper-authority-capable;
+Momentum v2 remains fail-closed unless its exact treatment exposure is present and applied.
 `ranker_case_score` is explicitly Shadow-only (`paper_authority_supported=False`)
 and its Ranker delta remains zero. Any further path requires its own causal unit,
 outcome adapter, behavior contract, failure semantics, focused tests and a new

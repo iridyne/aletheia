@@ -934,25 +934,24 @@ async def _watch_loop(cfg) -> None:
                     if plan is None:
                         continue
                     ready = await _observe_entry_plan_engine(plan, engine, event)
-                    if _is_momentum_v2_trigger_plan(plan):
-                        if engine.state == "invalidated":
-                            from aletheia.execution.gateway import cancel_entry_plan_order
+                    if _is_momentum_v2_trigger_plan(plan) and engine.state == "invalidated":
+                        from aletheia.execution.gateway import cancel_entry_plan_order
 
-                            row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
-                            if row is not None and row["status"] == "waiting":
-                                await _terminalize_entry_plan(
-                                    row,
-                                    status="invalidated",
-                                    reason="entry_plan_price_invalidated",
-                                    cancel_entry_plan_order=cancel_entry_plan_order,
-                                    now=datetime.now(timezone.utc),
-                                )
-                        if ready is not None:
-                            logger.info(
-                                "fast trigger shadow plan=%s result=trigger_observed",
-                                plan_id,
+                        row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
+                        if row is not None and row["status"] == "waiting":
+                            await _terminalize_entry_plan(
+                                row,
+                                status="invalidated",
+                                reason="entry_plan_price_invalidated",
+                                cancel_entry_plan_order=cancel_entry_plan_order,
+                                now=datetime.now(timezone.utc),
                             )
                         continue
+                    if _is_momentum_v2_trigger_plan(plan) and ready is not None:
+                        logger.info(
+                            "fast trigger treatment plan=%s result=trigger_observed",
+                            plan_id,
+                        )
                     if ready is not None:
                         from aletheia.execution.entry_plan_execution import execute_entry_plan
 

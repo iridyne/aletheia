@@ -670,7 +670,7 @@ def _load_exact_outcomes(
     """Resolve all requested outcomes with two bounded, exact-key query sets."""
     cutoff = datetime.now(timezone.utc) if as_of_at is None else as_of_at
     requested = {key for key in outcome_candidate_keys if key}
-    if path_id == RANKER_CASE_PATH_ID:
+    if path_id in {RANKER_CASE_PATH_ID, "momentum_entry_geometry"}:
         return _load_ranker_case_outcomes(
             requested,
             horizon,

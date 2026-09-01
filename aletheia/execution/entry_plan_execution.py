@@ -16,7 +16,30 @@ from aletheia.trading.entry_plan import (
 from aletheia.trading.instruments import instrument_market_to_db_market
 
 
-_SHADOW_ONLY_TRIGGER = ("momentum-retrace-reclaim", "v2")
+_MOMENTUM_V2_TRIGGER = ("momentum-retrace-reclaim", "v2")
+
+
+def _require_momentum_v2_authority(plan: EntryPlan) -> None:
+    if _trigger_identity(plan) != _MOMENTUM_V2_TRIGGER:
+        return
+    if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
+        raise ValueError("entry_plan_tactic_capability_unavailable")
+    if not plan.treatment_exposure_id:
+        raise ValueError("entry_plan_treatment_exposure_required")
+    from aletheia.learning.ledger import get_exposure
+
+    exposure = get_exposure(plan.treatment_exposure_id)
+    if (
+        exposure is None
+        or exposure.get("path_id") != "momentum_entry_geometry"
+        or exposure.get("assignment") != "treatment"
+        or json.loads(str(exposure.get("after_json") or "{}")).get("value") != 1.0
+        or not json.loads(str(exposure.get("manifest_json") or "{}")).get("geometry_available")
+    ):
+        raise ValueError("entry_plan_treatment_exposure_invalid")
+
+
+
 
 
 def _trigger_identity(plan: EntryPlan) -> tuple[str, str] | None:
@@ -43,8 +66,7 @@ def build_entry_plan_order_intent(
     now: datetime | None = None,
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
-    if _trigger_identity(plan) == _SHADOW_ONLY_TRIGGER:
-        raise ValueError("entry_plan_trigger_spec_shadow_only")
+    _require_momentum_v2_authority(plan)
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if _instant(plan.expires_at) <= current:
@@ -59,12 +81,16 @@ def build_entry_plan_order_intent(
         raise ValueError("entry_exact_bbo_invalid")
 
     if plan.order_tactic == "POST_ONLY_LIMIT":
+        if plan.limit_price is None:
+            raise ValueError("entry_plan_limit_price_required")
         price = float(plan.limit_price)
         if (plan.direction == "long" and price >= ask) or (plan.direction == "short" and price <= bid):
             raise ValueError("post_only_would_cross_bbo")
         time_in_force = "post_only"
         post_only = True
     else:
+        if plan.max_slippage_bps is None or plan.worst_price is None:
+            raise ValueError("entry_plan_taker_bounds_required")
         price = opposing_bbo_price(
             direction=plan.direction,
             bid=bid,
@@ -102,6 +128,9 @@ def build_entry_plan_order_intent(
             {
                 "entry_plan_id": plan.plan_id,
                 "planning_generation_id": plan.planning_generation_id,
+                "treatment_exposure_id": plan.treatment_exposure_id,
+                "geometry_version": plan.trigger_params.get("geometry_version"),
+                "geometry_fingerprint": plan.trigger_params.get("geometry_fingerprint"),
                 "market_received_at": observed_at,
                 "market_source_at": source_observed_at,
                 **({"entry_trigger": dict(trigger_evidence)} if trigger_evidence is not None else {}),
@@ -139,8 +168,7 @@ def execute_entry_plan(
     if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
         raise ValueError("entry_plan_hash_mismatch")
     plan = EntryPlan.model_validate_json(payload)
-    if _trigger_identity(plan) == _SHADOW_ONLY_TRIGGER:
-        raise ValueError("entry_plan_trigger_spec_shadow_only")
+    _require_momentum_v2_authority(plan)
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 

@@ -211,6 +211,7 @@ class EntryPlan(BaseModel):
     risk_policy_revision: int = Field(ge=1)
     risk_policy_hash: str = Field(min_length=1)
     behavior_version: str = Field(min_length=1)
+    treatment_exposure_id: str | None = None
     runtime_session_id: str | None = None
     producer_commit: str | None = None
     behavior_fingerprint: str | None = None
