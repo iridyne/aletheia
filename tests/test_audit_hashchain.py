@@ -158,3 +158,22 @@ def test_verify_audit_chain_spans_rotated_files(tmp_path, monkeypatch):
     result = verify_audit_chain()
     assert result["valid"] is True
     assert result["records"] == 4
+
+
+def test_verify_detects_tampered_rotated_tail(tmp_path, monkeypatch):
+    import aletheia.files.jsonl as jmod
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
+
+    monkeypatch.setattr(jmod, "_max_bytes", lambda: 1)
+    for i in range(3):
+        write_audit({"action": f"event_{i}", "timestamp": f"2026-01-01T00:00:0{i}"})
+
+    rotated = tmp_path / "audit.jsonl.1"
+    record = json.loads(rotated.read_text("utf-8"))
+    record["action"] = "tampered"
+    rotated.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    result = verify_audit_chain()
+
+    assert result["valid"] is False
+    assert result["reanchors"] == 0

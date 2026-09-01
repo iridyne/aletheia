@@ -502,11 +502,8 @@ def verify_audit_chain() -> dict:
     error_timestamps parallels errors: each entry is the ISO-8601 created_at
     of the offending record, or "" if unavailable (e.g. invalid JSON).
 
-    Known benign breaks:
-    - File rotation boundaries: the first record in a new file may reference a
-      hash from before the rotation event.  Re-anchor on boundary mismatch.
-    - Historical concurrency race: before the file lock was added, two records
-      could share the same _prev_hash.  Tolerate consecutive duplicates.
+    Every hashed record must link to the exact preceding record, including
+    across file rotation boundaries.
     """
     path = _log_dir() / "audit.jsonl"
     paths = _jsonl_paths_chronological(path)
@@ -516,25 +513,13 @@ def verify_audit_chain() -> dict:
     errors: list[str] = []
     error_timestamps: list[str] = []
     prev_hash = _GENESIS_HASH
-    prev_record_prev_hash: str | None = None  # the _prev_hash field of the prior record
     count = 0
-    reanchors = 0
 
-    # #43 fix: "first record in file" was previously treated as an unconditional
-    # benign reanchor. That masked HEAD TRUNCATION of the oldest file — an
-    # attacker (or accidental `head -c`) could lop off the beginning of the
-    # first audit file and the verifier would silently reanchor from the new
-    # first line as if it were normal rotation. Only allow the reanchor when
-    # there IS a prior file in the chronological list, i.e. when this really is
-    # a rotation boundary. The oldest file's first record must chain from
-    # _GENESIS_HASH; anything else is a real head-truncation error.
-    for path_index, current_path in enumerate(paths):
+    for current_path in paths:
         try:
             line_iter = current_path.open("r", encoding="utf-8")
         except OSError:
             continue
-        is_first_in_file = True
-        is_oldest_file = path_index == 0
         with line_iter as f:
             for i, raw_line in enumerate(f, 1):
                 raw_line = raw_line.strip()
@@ -548,46 +533,25 @@ def verify_audit_chain() -> dict:
                     errors.append(f"{label}: invalid JSON")
                     error_timestamps.append("")
                     prev_hash = _GENESIS_HASH
-                    prev_record_prev_hash = None
-                    is_first_in_file = False
                     continue
 
                 record_prev = record.get("_prev_hash")
                 if record_prev is None:
                     prev_hash = _hash_record(raw_line)
-                    prev_record_prev_hash = None
-                    is_first_in_file = False
                     continue
 
                 if record_prev != prev_hash:
-                    benign = False
-                    # Pattern 1: first record AFTER a real file rotation
-                    # boundary. Only benign when there's a prior file — the
-                    # oldest file's first line must chain from _GENESIS_HASH
-                    # or it means the head was truncated (#43).
-                    if is_first_in_file and not is_oldest_file:
-                        benign = True
-                    # Pattern 2: concurrent-writer race — this record shares
-                    # the same _prev_hash as the previous record
-                    elif prev_record_prev_hash and record_prev == prev_record_prev_hash:
-                        benign = True
+                    errors.append(
+                        f"{label}: _prev_hash mismatch "
+                        f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
+                    )
+                    rec_ts = record.get("created_at") or record.get("timestamp") or ""
+                    error_timestamps.append(str(rec_ts))
 
-                    if benign:
-                        reanchors += 1
-                    else:
-                        errors.append(
-                            f"{label}: _prev_hash mismatch "
-                            f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
-                        )
-                        rec_ts = record.get("created_at") or record.get("timestamp") or ""
-                        error_timestamps.append(str(rec_ts))
-
-                prev_record_prev_hash = record_prev
                 prev_hash = _hash_record(raw_line)
-                is_first_in_file = False
 
     return {"valid": len(errors) == 0, "records": count, "errors": errors,
-            "error_timestamps": error_timestamps, "reanchors": reanchors}
+            "error_timestamps": error_timestamps, "reanchors": 0}
 
 
 def write_error(record: dict) -> None:

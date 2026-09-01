@@ -7,9 +7,8 @@ tolerated head truncation of the very first file — an attacker (or a
 misuse of `head`, `truncate`, or a corrupted disk read) could chop the
 oldest records off and the verifier would silently reanchor.
 
-Now the reanchor is only allowed when the current file has a PRIOR file
-in the chronological list. The oldest file's first record must chain
-from _GENESIS_HASH.
+Every hashed row must now link to the exact prior row across all files.
+Filename position cannot authorize a chain reset.
 """
 
 from __future__ import annotations
@@ -85,15 +84,8 @@ def test_head_truncation_of_oldest_file_now_reads_as_error(tmp_path, monkeypatch
     assert tampered["reanchors"] == 0
 
 
-def test_legitimate_rotation_still_reanchors_benignly(tmp_path, monkeypatch):
-    """#43 fix must NOT break the legitimate rotation-boundary reanchor path.
-
-    Manually construct the shape: audit.jsonl.1 with a valid chain, and a
-    fresh audit.jsonl whose first record's `_prev_hash` = GENESIS (i.e. it
-    doesn't chain from the .1 tail — historically this happened when the
-    in-memory hash cache was reset between rotation and the next write).
-    That boundary mismatch MUST still be a benign reanchor because there
-    IS a prior file in the chronological list."""
+def test_independently_anchored_rotated_file_is_invalid(tmp_path, monkeypatch):
+    """A later file cannot use its filename as authority to reset the chain."""
     _setup_env(tmp_path, monkeypatch)
     _seed_chain(tmp_path)
 
@@ -101,8 +93,6 @@ def test_legitimate_rotation_still_reanchors_benignly(tmp_path, monkeypatch):
     rotated_path = tmp_path / "logs" / "audit.jsonl.1"
     audit_path.rename(rotated_path)
 
-    # Hand-write a fresh audit.jsonl chained from GENESIS (bypasses
-    # write_audit's `use_cache=False` disk re-read).
     from aletheia.files.jsonl import _GENESIS_HASH
     fresh_record = {
         "actor": "system", "source": "test", "event_type": "test_event",
@@ -116,12 +106,6 @@ def test_legitimate_rotation_still_reanchors_benignly(tmp_path, monkeypatch):
     result = verify_audit_chain()
 
     assert result["records"] == 4
-    # audit.jsonl.1 chains from GENESIS (oldest → no head-trunc error);
-    # audit.jsonl's first record chains from GENESIS too but the running
-    # prev_hash is now the .1 tail — that's the benign rotation reanchor.
-    assert result["reanchors"] == 1, (
-        f"legitimate rotation must produce exactly one benign reanchor; got {result}"
-    )
-    assert not result["errors"], (
-        f"legitimate rotation must NOT produce errors; got {result['errors']}"
-    )
+    assert result["valid"] is False
+    assert result["reanchors"] == 0
+    assert result["errors"]
