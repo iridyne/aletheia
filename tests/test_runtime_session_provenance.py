@@ -570,9 +570,9 @@ def test_doctor_probe_recognizes_external_managed_gateway_session(tmp_path, monk
     session = rs.start_runtime_session()
     rs.reset_current_session()
     monkeypatch.setattr(
-        doctor,
-        "_external_gateway_runtime_session_id",
-        lambda open_sessions: session["session_id"],
+        rs,
+        "current_external_gateway_session",
+        lambda open_sessions: session,
     )
 
     report = Report(generated_at=datetime.now(timezone.utc).isoformat())
@@ -584,32 +584,39 @@ def test_doctor_probe_recognizes_external_managed_gateway_session(tmp_path, monk
     assert checks["trust.runtime_session.stale_open"].severity == "ok"
 
 
-def test_external_gateway_session_matches_live_process_start(tmp_path, monkeypatch):
+def test_external_gateway_session_matches_live_backend_process_start(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from datetime import datetime
 
-    from aletheia.diagnostics import doctor
-    from aletheia.gateway import pidfile
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.gateway import frontdoor_route, pidfile
     import psutil
 
-    started_at = "2026-08-08T00:01:08+00:00"
+    stale_started = "2026-08-08T00:00:01+00:00"
+    live_started = "2026-08-08T00:01:08+00:00"
 
     class _Process:
+        def __init__(self, pid):
+            self.pid = pid
+
         def create_time(self):
+            started_at = stale_started if self.pid == 123 else live_started
             return datetime.fromisoformat(started_at).timestamp() - 1
 
         def children(self, recursive=False):
             assert recursive is True
-            return []
+            return [_Process(456)] if self.pid == 123 else []
 
+    monkeypatch.setattr(frontdoor_route, "read_frontdoor_route", lambda: {"backend_pid": 456})
     monkeypatch.setattr(pidfile, "read_pid", lambda: 123)
     monkeypatch.setattr(pidfile, "is_running", lambda: True)
-    monkeypatch.setattr(psutil, "Process", lambda pid: _Process())
+    monkeypatch.setattr(psutil, "Process", _Process)
 
-    assert doctor._external_gateway_runtime_session_id([
-        {"session_id": "live-session", "started_at": started_at},
-        {"session_id": "old-crash", "started_at": "2026-08-07T22:00:00+00:00"},
-    ]) == "live-session"
+    session = rs.current_external_gateway_session([
+        {"session_id": "live-session", "started_at": live_started},
+        {"session_id": "stale-supervisor-match", "started_at": stale_started},
+    ])
+    assert session["session_id"] == "live-session"
 
 
 def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):

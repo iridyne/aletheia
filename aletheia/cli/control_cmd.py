@@ -56,14 +56,12 @@ def _deployed_commit() -> str:
     except Exception:
         pass
     try:
-        from aletheia.storage.sqlite import get_db
+        from aletheia.agent_runtime.runtime_session import (
+            current_external_gateway_session,
+        )
 
-        row = get_db().execute(
-            "SELECT boot_commit FROM runtime_sessions "
-            "WHERE ended_at IS NULL AND boot_commit IS NOT NULL "
-            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
-        ).fetchone()
-        return str(row["boot_commit"]) if row and row["boot_commit"] else ""
+        session = current_external_gateway_session()
+        return str((session or {}).get("boot_commit") or "")
     except Exception:
         return ""
 
@@ -141,17 +139,15 @@ def _runtime_session_status() -> dict[str, Any]:
                 "behavior_fingerprint": None,
             }
 
-        from aletheia.storage.sqlite import get_db
+        from aletheia.agent_runtime.runtime_session import (
+            current_external_gateway_session,
+        )
 
-        row = get_db().execute(
-            "SELECT * FROM runtime_sessions WHERE ended_at IS NULL "
-            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
-        ).fetchone()
-        session = dict(row) if row is not None else None
+        session = current_external_gateway_session()
         if not session:
             return {
                 "available": False,
-                "unavailable_reason": "runtime_session_not_persisted",
+                "unavailable_reason": "runtime_session_not_verified",
                 "session_id": None,
                 "runtime_id": None,
                 "boot_sha": None,
@@ -161,7 +157,7 @@ def _runtime_session_status() -> dict[str, Any]:
             "available": True,
             "unavailable_reason": None,
             "source": "durable_db",
-            "verification": "gateway_pid",
+            "verification": "gateway_process_tree",
             "verified_live_gateway": True,
             "session_id": session.get("session_id"),
             "runtime_id": session.get("runtime_id"),
