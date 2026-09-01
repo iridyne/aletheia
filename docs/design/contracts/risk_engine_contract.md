@@ -88,7 +88,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 >
 > 关卡 #5 的比较量：比较的是 **pledged cash（保证金）= notional / leverage**，而非原始名义价值。原始名义价值与可用现金相比时，任何杠杆 > `1/risk_pct` 的单子都会被错误拒绝（20% 风险时为 5x）；以保证金比较后，有效杠杆上限由账户余额自然决定，不受 per_trade_risk_pct 的隐式 cap。spec: RE-B05c、RE-B05d。
 
-> **Spot 杠杆身份**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`；其他值在 Risk admission 以 `invalid_spot_leverage` 稳定拒绝，paper proposal helper 也必须在持久化前拒绝。历史矛盾 spot Position 即使带有非 1x leverage，本地 paper 账本仍按完整 spot 名义占用现金，不能因坏数据释放购买力。期货的合法杠杆与保证金计算不变。spec: RE-B31。
+> **Spot 杠杆身份**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`；其他值在 Risk admission 以 `invalid_spot_leverage` 稳定拒绝，paper proposal helper 也必须在持久化前拒绝。历史矛盾 spot Position 即使带有非 1x leverage，本地 paper 账本仍按完整 spot 名义占用现金，不能因坏数据释放购买力。期货的合法杠杆与保证金计算不变。spec: RE-B32。
 
 > **本地合约资金费前置门**：`paper_internal + usdt_futures` 只有在该 symbol 存在新鲜、非预测跨 venue 的下一结算快照时才可开仓。通过只代表本地模拟器已有起始锚点；平仓仍逐事件验证完整时间窗，任何断档都关闭仓位但保持净收益不可用。spec: RE-B22、PL-LF-01~06。
 

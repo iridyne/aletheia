@@ -77,7 +77,7 @@ def test_risk_engine_has_minimum_check_count():
 
 @spec_claim(
     SpecClaim(
-        "RE-B31",
+        "RE-B32",
         "risk_engine_contract",
         "§2 spot leverage identity",
         "L2b",
