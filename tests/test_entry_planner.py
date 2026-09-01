@@ -19,6 +19,16 @@ from aletheia.trading.entry_plan import EntryPlan
 from aletheia.model_provider.base import portable_json_schema_payload
 
 
+@pytest.fixture(autouse=True)
+def _bitget_market_data_authority(_inmemory_db):
+    """Keep this module's Bitget candidates aligned with its market-data authority."""
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    save_config(cfg)
+
+
 def _candidate(
     *,
     regime: str = "trending",
