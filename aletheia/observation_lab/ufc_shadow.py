@@ -1,4 +1,4 @@
-"""UFC shadow-equivalence adoption (Issue #1072 Packet 1).
+"""UFC shadow-equivalence observation for Issue #1072.
 
 Registers the CURRENT active UFC generation in Observation Lab **without**
 resetting anything: no reassignment, no sample copying, no repooled cutoff,
@@ -15,9 +15,10 @@ What this module does:
    mismatch field. Never mutates the Learning verdict; never grants any
    authority.
 
-Owner review §1 guarded: current #447 window's identity is untouched. This
-module has no write path into ``learning_*`` tables and no path to Risk,
-Execution, credentials, or promotion.
+The current UFC window's identity is untouched. This module has no write path
+into ``learning_*`` tables and no path to Risk, Execution, credentials, or
+promotion. Historical implementation sequencing is not part of this module's
+runtime contract.
 """
 
 from __future__ import annotations
@@ -74,7 +75,8 @@ def _observation_id(
 ) -> str:
     """Stable Lab identity for one UFC generation.
 
-    Per new #1072 Packet 1: ``ufc:<experiment_id>:<policy_epoch>:<fixed_look_generation>``.
+    Current identity is
+    ``ufc:<experiment_id>:<policy_epoch>:<fixed_look_generation>``.
     ``fixed_look_generation`` comes from the experiment row's
     ``stage_generation`` field; ``policy_epoch`` is resolved via
     ``_resolve_policy_epoch`` because it is not a column on
