@@ -132,6 +132,95 @@ def test_observe_status_text_projects_durable_window_contract(runner: CliRunner)
 
 
 
+def test_observe_status_bootstraps_builtin_handlers_without_writing_window(
+    runner: CliRunner, monkeypatch
+) -> None:
+    from aletheia.observation_lab import kernel
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.runner import register_builtin_handlers
+
+    monkeypatch.setattr(kernel, "_HANDLERS", {})
+    register_builtin_handlers()
+    window = kernel.start_window(
+        observation_id="universe-standalone-handler",
+        kind="universe_discovery",
+        handler_version=next(
+            version
+            for kind, version in kernel.registered_handlers()
+            if kind == "universe_discovery"
+        ),
+        slot_key="universe_discovery_benchmark",
+        authority_mode="observe_only",
+        spec={"contract": "frozen"},
+        started_at="2026-09-01T00:00:00+00:00",
+        collect_until="2026-09-15T00:00:00+00:00",
+        finalize_not_before="2026-09-16T06:00:00+00:00",
+    )
+    before = get_lab_db().execute(
+        "SELECT last_error,last_advanced_at FROM observation_windows "
+        "WHERE observation_id=? AND generation=?",
+        (window["observation_id"], window["generation"]),
+    ).fetchone()
+
+    kernel._HANDLERS.clear()
+    text = runner.invoke(observe_app, ["status", window["observation_id"]])
+    assert text.exit_code == 0, text.stdout + text.stderr
+    assert "handler_available=True" in text.stdout
+    assert "phase=collecting" in text.stdout
+
+    kernel._HANDLERS.clear()
+    prefixed = runner.invoke(
+        observe_app, ["status", "universe-standalone", "--json"]
+    )
+    assert prefixed.exit_code == 0, prefixed.stdout + prefixed.stderr
+    payload = json.loads(prefixed.stdout)
+    assert payload["handler_available"] is True
+    assert payload["phase"] == "collecting"
+
+    after = get_lab_db().execute(
+        "SELECT last_error,last_advanced_at FROM observation_windows "
+        "WHERE observation_id=? AND generation=?",
+        (window["observation_id"], window["generation"]),
+    ).fetchone()
+    assert tuple(after) == tuple(before) == (None, None)
+
+
+def test_observe_status_keeps_unknown_durable_handler_unavailable(
+    runner: CliRunner, monkeypatch
+) -> None:
+    from aletheia.observation_lab import kernel
+
+    monkeypatch.setattr(kernel, "_HANDLERS", {})
+    kernel.register_handler(kernel.ObservationHandler(
+        kind="unknown-domain",
+        version="v1",
+        normalize_spec=lambda spec: spec,
+        capture=None,
+        advance=lambda _window: kernel.ObservationProgress(summary={}),
+        finalize=lambda _window: {},
+        retention_claims=lambda _window: (),
+    ))
+    kernel.start_window(
+        observation_id="unknown-domain-window",
+        kind="unknown-domain",
+        handler_version="v1",
+        slot_key="unknown-domain",
+        authority_mode="observe_only",
+        spec={},
+        started_at="2026-09-01T00:00:00+00:00",
+        collect_until="2026-09-15T00:00:00+00:00",
+        finalize_not_before="2026-09-16T06:00:00+00:00",
+    )
+    kernel._HANDLERS.clear()
+
+    result = runner.invoke(
+        observe_app, ["status", "unknown-domain-window", "--json"]
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["handler_available"] is False
+    assert payload["phase"] == "handler_unavailable"
 def test_observe_status_resolves_unique_durable_prefix_and_rejects_ambiguity(runner: CliRunner) -> None:
     from aletheia.observation_lab.kernel import (
         ObservationHandler, ObservationProgress, register_handler, start_window,

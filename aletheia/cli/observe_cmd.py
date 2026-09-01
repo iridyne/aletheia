@@ -72,6 +72,9 @@ def observation_status(
     from aletheia.observation_lab.kernel import status_window
     from aletheia.observation_lab.units import count_frozen_units
     from aletheia.storage import repositories as repo
+    from aletheia.observation_lab.runner import register_builtin_handlers
+
+    register_builtin_handlers()
 
     durable = None
     try:
