@@ -351,12 +351,15 @@ def test_finalize_recovers_verified_artifact_left_before_terminal_commit(tmp_pat
     from aletheia.observation_lab.db import reset_lab_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    domain_result = {"result": "first-attempt"}
     reset_lab_db()
     kernel.register_handler(kernel.ObservationHandler(
         kind="crash-recovery", version="v1", normalize_spec=lambda spec: spec,
         capture=None,
-        advance=lambda _window: kernel.ObservationProgress(summary={"ready": True}, can_finalize=True),
-        finalize=lambda _window: {"result": "fixed"}, retention_claims=lambda _window: (),
+        advance=lambda _window: kernel.ObservationProgress(
+            summary={"ready": True}, can_finalize=True
+        ),
+        finalize=lambda _window: dict(domain_result), retention_claims=lambda _window: (),
     ), replace=True)
     window = kernel.start_window(
         observation_id="crash-recovery", kind="crash-recovery", handler_version="v1",
@@ -380,6 +383,7 @@ def test_finalize_recovers_verified_artifact_left_before_terminal_commit(tmp_pat
     reset_lab_db()
     assert output.exists()
     assert kernel.status_window(window["observation_id"], window["generation"])["status"] == "active"
+    domain_result["result"] = "reconciled"
 
     monkeypatch.setattr(kernel, "lab_transaction", real_transaction)
     finalized = kernel.finalize_window(
@@ -389,6 +393,30 @@ def test_finalize_recovers_verified_artifact_left_before_terminal_commit(tmp_pat
     assert finalized["terminal_at"] == _utc(4).isoformat()
     artifact = json.loads(gzip.decompress(output.read_bytes()))
     assert artifact["finalized_at"] == _utc(3).isoformat()
+    assert artifact["domain_result"] == {"result": "reconciled"}
+
+    foreign = kernel.start_window(
+        observation_id="foreign-artifact", kind="crash-recovery", handler_version="v1",
+        slot_key="foreign-artifact-slot", authority_mode="observe_only", spec={"v": 1},
+        started_at=_utc(), collect_until=_utc(2), finalize_not_before=_utc(3),
+    )
+    foreign_output = tmp_path / "foreign.json.gz"
+    foreign_bytes = gzip.compress(
+        json.dumps({
+            "observation_id": "another-window", "generation": foreign["generation"],
+            "kind": "crash-recovery", "handler_version": "v1",
+            "spec_hash": foreign["spec_hash"],
+        }).encode(),
+        mtime=0,
+    )
+    foreign_output.write_bytes(foreign_bytes)
+    with pytest.raises(FileExistsError):
+        kernel.finalize_window(
+            foreign["observation_id"], foreign["generation"], now=_utc(4),
+            output=foreign_output,
+        )
+    assert foreign_output.read_bytes() == foreign_bytes
+    assert kernel.status_window(foreign["observation_id"], foreign["generation"])["status"] == "active"
     reset_lab_db()
 
 def test_real_smc_shape_uses_causal_v1_unavailable_no_trigger_and_external_authority(
