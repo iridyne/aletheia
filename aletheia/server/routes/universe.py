@@ -74,8 +74,11 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
         "universe": None,
         "summary": None,
         "entry_plans": None,
+        "current_candidates": None,
         "candidate_attention": None,
     }
+    active_snapshot_id = None
+    universe_read_available = False
     try:
         cfg = load_config()
         snap = repo.get_active_universe_snapshot()
@@ -99,6 +102,9 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
             ),
         }
         response["availability"]["universe"] = {"available": True, "stale": stale}
+        universe_read_available = True
+        if status == "active":
+            active_snapshot_id = str(snap["id"])
     except Exception as exc:
         response["universe"] = {
             "enabled": None,
@@ -114,6 +120,13 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
     readers = {
         "summary": lambda: repo.get_entry_workbench_summary(),
         "entry_plans": lambda: _active_entry_plan_projections(limit),
+        "current_candidates": lambda: (
+            repo.list_current_candidate_workbench(active_snapshot_id)
+            if active_snapshot_id
+            else []
+            if universe_read_available
+            else (_ for _ in ()).throw(RuntimeError("universe_read_unavailable"))
+        ),
         "candidate_attention": lambda: repo.list_entry_workbench_candidates(limit),
     }
     for section, read in readers.items():

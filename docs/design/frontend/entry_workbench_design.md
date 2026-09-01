@@ -10,6 +10,7 @@ Position. A Trigger exists only inside a `TRIGGERED` Entry Plan. The page lives
 at `/universe`; `/blotter` and `/proposals` are compatibility redirects to the
 default Entry Plans tab.
 
+Current Candidates belong to the current valid Snapshot's `universe_members`.
 Candidate attention belongs to `candidate_planning_generations`, while immutable
 plan facts and monotonic plan lifecycle belong to `entry_plans`. Snapshot members
 remain selection evidence and are not an economic ledger. Static fallback symbols
@@ -19,7 +20,7 @@ are instrument availability only and never become Candidate attention implicitly
 
 | Endpoint | Contract |
 | --- | --- |
-| `GET /api/universe/workbench` | Bounded active Entry Plans, bounded active Candidate attention, exact summary counts, Universe/fallback state, and per-section availability. |
+| `GET /api/universe/workbench` | All current Snapshot Candidates, bounded active Entry Plans and Candidate attention, exact summary counts, Universe/fallback state, and per-section availability. `current_candidates` is `null` on read failure and `[]` only after a successful read with no current Candidates. |
 | `GET /api/universe/entry-plans/{plan_id}` | Any active or terminal plan by exact identity; validates the stored V1 payload and hash. |
 | `GET /api/universe/candidates/{candidate_id}` | Exact Candidate evidence; `/members/{id}` remains compatibility. |
 | `GET /api/universe/planning-history?limit=&before=` | Stable `(updated_at,id)` pagination over planning generation plus Entry Plan ledgers. |
@@ -32,9 +33,9 @@ WebSocket fingerprints for `candidate_planning_generations` and `entry_plans`;
 
 ## Page structure
 
-The first viewport has one summary row: Active Entry Plans, Needs Planning,
-Expiring Soon, and Universe Status. Tabs are Entry Plans (default), Candidates,
-and Planning History. Manual Review is absent because the producer audit found no
+The first viewport has one summary row: Current Candidates, Planning Eligible,
+Blocked, and Active Entry Plans. Tabs are Current Candidates (default), Entry Plans,
+Planning Queue, and Planning History. Manual Review is absent because the producer audit found no
 durable review-required authority; `TradeProposal.status='pending'` is not such
 authority.
 

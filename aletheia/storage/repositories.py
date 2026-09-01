@@ -9180,6 +9180,35 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
     ]
 
 
+def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
+    """Project every Candidate in one exact Snapshot with optional planning facts."""
+
+    return [
+        {
+            **dict(row),
+            "venue": row["venue"] or row["registry_venue"],
+        }
+        for row in get_db()
+        .execute(
+            "SELECT um.*, ur.venue AS registry_venue, "
+            "pg.id AS planning_generation_id, pg.status AS planning_status, "
+            "pg.result_kind, pg.result_json AS planning_result_json, "
+            "pg.attempt_count, pg.attention_status, pg.soft_expires_at, "
+            "pg.hard_expires_at, pg.attention_terminal_reason, "
+            "ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
+            "ep.terminal_reason AS entry_plan_terminal_reason "
+            "FROM universe_members um "
+            "JOIN universe_registry ur ON ur.id=um.asset_id "
+            "LEFT JOIN candidate_planning_generations pg "
+            "ON pg.last_candidate_id=um.id AND pg.is_current=1 "
+            "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+            "WHERE um.snapshot_id=? ORDER BY um.rank, um.id",
+            (snapshot_id,),
+        )
+        .fetchall()
+    ]
+
+
 def get_entry_workbench_summary(*, now: datetime | None = None) -> dict[str, int]:
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     now_iso = timestamp.isoformat()

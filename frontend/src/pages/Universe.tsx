@@ -5,8 +5,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type {
   CandidateAttention,
+  CandidateWorkbenchRow,
   EntryPlan,
   EntryWorkbenchResponse,
+  OperatorStatus,
   PlanningHistoryResponse,
 } from '../types'
 import { DataTable } from '../components/DataTable'
@@ -19,6 +21,7 @@ import { fmtNum, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 
 const planCol = createColumnHelper<EntryPlan>()
 const candidateCol = createColumnHelper<CandidateAttention>()
+const currentCandidateCol = createColumnHelper<CandidateWorkbenchRow>()
 const historyCol = createColumnHelper<PlanningHistoryResponse['items'][number]>()
 
 function entryLabel(plan: EntryPlan) {
@@ -99,6 +102,20 @@ const candidateColumns = [
   candidateCol.accessor('attention_terminal_reason', { header: 'Terminal reason', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
 ]
 
+const currentCandidateColumns = [
+  currentCandidateCol.accessor('symbol', {
+    header: 'Candidate',
+    cell: info => <><strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
+  }),
+  currentCandidateCol.accessor(row => `Rank ${row.rank} · Score ${fmtNum(row.total_score)} · ${humanize(row.scanner_family)}`, { id: 'source', header: 'Source / rank' }),
+  currentCandidateCol.accessor(row => row.execution_eligible ? 'Eligible' : 'Blocked', {
+    id: 'eligible', header: 'Planning eligible', cell: info => <Badge tone={info.row.original.execution_eligible ? 'green' : 'red'}>{info.getValue()}</Badge>,
+  }),
+  currentCandidateCol.accessor(row => evidenceLabel(row.risk_flags), { id: 'risk', header: 'Risk reason' }),
+  currentCandidateCol.accessor(row => row.planning_status ? `${humanize(row.planning_status)} · ${row.attempt_count ?? 0} attempts` : 'No Planning Generation yet', { id: 'planning', header: 'Planning' }),
+  currentCandidateCol.accessor(row => row.entry_plan_status ? humanize(row.entry_plan_status) : row.result_kind === 'no_plan' ? 'No plan' : '—', { id: 'plan', header: 'Entry Plan' }),
+]
+
 const historyColumns = [
   historyCol.accessor('symbol', { header: 'Instrument', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   historyCol.accessor('updated_at', { header: 'Updated', cell: info => fmtTimestamp(info.getValue()) }),
@@ -112,12 +129,17 @@ export default function Universe() {
   const [search, setSearch] = useSearchParams()
   const [historyBefore, setHistoryBefore] = useState<string | null>(null)
   const [candidateFilter, setCandidateFilter] = useState('needs_planning')
-  const tab = search.get('tab') || 'plans'
+  const tab = search.get('tab') || 'current'
   const selectedPlanId = search.get('plan_id')
   const selectedCandidateId = search.get('candidate_id')
   const workbench = useQuery<EntryWorkbenchResponse>({
     queryKey: ['entry-workbench'],
     queryFn: api.getEntryWorkbench,
+    refetchInterval: 30_000,
+  })
+  const operatorStatus = useQuery<OperatorStatus>({
+    queryKey: ['operator-status'],
+    queryFn: api.getOperatorStatus,
     refetchInterval: 30_000,
   })
   const planDetail = useQuery<EntryPlan>({
@@ -135,7 +157,17 @@ export default function Universe() {
   const workbenchUnavailable = workbench.isError && !data
   const summary = data?.summary
   const plans = data?.entry_plans
+  const currentCandidates = data?.current_candidates
   const candidates = data?.candidate_attention
+  const stageCounts = useMemo(() => {
+    const counts: Record<string, number> = { no_generation: 0, pending: 0, planning: 0, unavailable: 0, no_plan: 0, planned: 0, active: 0, terminal: 0 }
+    for (const row of currentCandidates ?? []) {
+      if (!row.planning_generation_id) counts.no_generation += 1
+      else if (row.planning_status && row.planning_status in counts) counts[row.planning_status] += 1
+      if (row.entry_plan_status) counts[row.entry_plan_status && ['waiting', 'risk_reserved', 'triggered', 'ordered', 'partially_filled'].includes(row.entry_plan_status) ? 'active' : 'terminal'] += 1
+    }
+    return counts
+  }, [currentCandidates])
   const filteredCandidates = useMemo(() => {
     const rows = candidates ?? []
     const now = Date.now()
@@ -169,6 +201,12 @@ export default function Universe() {
     setSearch(params)
   }
   const openCandidate = (candidate: CandidateAttention) => openCandidateId(candidate.last_candidate_id)
+  const openCurrentCandidate = (candidate: CandidateWorkbenchRow) => {
+    const params = new URLSearchParams(search)
+    params.set('tab', 'current')
+    params.set('candidate_id', candidate.id)
+    setSearch(params)
+  }
   const closeDrawer = () => {
     const params = new URLSearchParams(search)
     params.delete('plan_id')
@@ -188,6 +226,14 @@ export default function Universe() {
 
   const tabs = [
     {
+      id: 'current',
+      label: 'Current Candidates',
+      badge: currentCandidates?.length,
+      render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.current_candidates?.available} loading={workbench.isPending} label="Current Candidates">
+        <DataTable columns={currentCandidateColumns} data={currentCandidates ?? []} onRowClick={openCurrentCandidate} emptyMessage="No Candidates in the current active Snapshot." tableId="entry-workbench-current-candidates" />
+      </ReadSection>,
+    },
+    {
       id: 'plans',
       label: 'Entry Plans',
       badge: plans?.length,
@@ -197,9 +243,9 @@ export default function Universe() {
     },
     {
       id: 'candidates',
-      label: 'Candidates',
+      label: 'Planning Queue',
       badge: candidates?.length,
-      render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.candidate_attention?.available} loading={workbench.isPending} label="Candidate attention">
+      render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.candidate_attention?.available} loading={workbench.isPending} label="Planning Queue">
         <label className="entry-workbench-filter">Candidate view
           <select value={candidateFilter} onChange={event => setCandidateFilter(event.target.value)}>
             <option value="needs_planning">Needs Planning</option>
@@ -232,11 +278,17 @@ export default function Universe() {
     />
 
     <section className="entry-workbench-summary" aria-label="Entry summary">
+      <MetricTile label="Current Candidates" value={currentCandidates?.length ?? '—'} context={universeStatus === 'active' && data?.universe.snapshot ? `snapshot ${data.universe.snapshot.id.slice(0, 8)}` : statusLabel} />
+      <MetricTile label="Planning Eligible" value={currentCandidates?.filter(row => row.execution_eligible).length ?? '—'} context={currentCandidates ? `${stageCounts.no_generation} without generation` : 'Candidate projection unavailable'} />
+      <MetricTile label="Blocked" value={currentCandidates?.filter(row => !row.execution_eligible).length ?? '—'} context="persisted Candidate risk evidence" tone={currentCandidates?.some(row => !row.execution_eligible) ? 'warning' : 'neutral'} />
       <MetricTile label="Active Entry Plans" value={summary?.active_entry_plans ?? '—'} context="waiting through partially filled" />
-      <MetricTile label="Needs Planning" value={summary?.needs_planning ?? '—'} context="active attention, retryable work" />
-      <MetricTile label="Expiring Soon" value={summary?.expiring_soon ?? '—'} context="within 5 minutes" tone={summary?.expiring_soon ? 'warning' : 'neutral'} />
-      <MetricTile label="Universe Status" value={statusLabel} context={data?.universe.snapshot ? `snapshot ${data.universe.snapshot.id.slice(0, 8)}` : 'no Candidate facts fabricated'} />
     </section>
+
+    <Card className="entry-workbench-notice">
+      {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Current-Snapshot terminal Entry Plans: {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
+      Active Entry Plans: {plans == null ? 'not available' : plans.length}. {' '}
+      {operatorStatus.isPending ? 'Checking planning health…' : operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
+    </Card>
 
     {workbenchUnavailable ? <Card role="alert">Entry Workbench is unavailable. Summary counts and rows are not inferred.</Card> : null}
 
@@ -247,7 +299,7 @@ export default function Universe() {
     <Tabs value={tab} onChange={setTab} tabs={tabs} />
 
     {selectedPlanId && <PlanDrawer plan={planDetail.data} unavailable={planDetail.isError} onClose={closeDrawer} onCandidate={() => planDetail.data && openCandidateId(planDetail.data.candidate_id)} onTrades={() => navigate(`/trades?tab=blotter&entry_plan_id=${encodeURIComponent(selectedPlanId)}`)} onCharts={() => planDetail.data && navigate(`/charts?symbol=${encodeURIComponent(planDetail.data.symbol)}&exchange=${encodeURIComponent(planDetail.data.venue)}&market_type=${encodeURIComponent(planDetail.data.market_type)}&entry_plan_id=${encodeURIComponent(selectedPlanId)}`)} />}
-    {selectedCandidateId && <CandidateDrawer candidateId={selectedCandidateId} candidate={candidates?.find(item => item.last_candidate_id === selectedCandidateId)} onClose={closeDrawer} />}
+    {selectedCandidateId && <CandidateDrawer candidateId={selectedCandidateId} candidate={candidates?.find(item => item.last_candidate_id === selectedCandidateId)} currentCandidate={currentCandidates?.find(item => item.id === selectedCandidateId)} onClose={closeDrawer} />}
   </div>
 }
 
@@ -310,15 +362,15 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
   </DetailDrawer>
 }
 
-function CandidateDrawer({ candidateId, candidate, onClose }: { candidateId: string; candidate?: CandidateAttention; onClose: () => void }) {
+function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: { candidateId: string; candidate?: CandidateAttention; currentCandidate?: CandidateWorkbenchRow; onClose: () => void }) {
   const detail = useQuery({
     queryKey: ['universe-candidate', candidateId],
     queryFn: () => api.getCandidate(candidateId),
   })
   const attention = candidate ?? detail.data?.attention
-  return <DetailDrawer open title={`${candidate?.symbol ?? 'Candidate'} attention`} onClose={onClose}>
+  return <DetailDrawer open title={`${candidate?.symbol ?? currentCandidate?.symbol ?? 'Candidate'} Candidate`} onClose={onClose}>
     {detail.isError ? <p>Candidate detail is unavailable.</p> : <>
-      <DrawerSection label="Attention">
+      {attention ? <DrawerSection label="Attention">
         <DrawerField label="Candidate ID" value={candidateId} mono />
         <DrawerField label="Started" value={fmtTimestamp(attention?.attention_started_at)} />
         <DrawerField label="Last requalified" value={fmtTimestamp(attention?.last_requalified_at)} />
@@ -326,9 +378,12 @@ function CandidateDrawer({ candidateId, candidate, onClose }: { candidateId: str
         <DrawerField label="Hard deadline" value={fmtTimestamp(attention?.hard_expires_at)} />
         <DrawerField label="Planning" value={attention?.status ? humanize(attention.status) : '—'} />
         <DrawerField label="Terminal reason" value={attention?.attention_terminal_reason ? humanize(attention.attention_terminal_reason) : attention?.attention_status === 'active' ? 'Active' : '—'} />
-      </DrawerSection>
+      </DrawerSection> : <DrawerSection label="Planning">
+        <DrawerField label="Planning Generation" value="Not created" />
+        <DrawerField label="Status" value="Candidate is visible independently of planning" />
+      </DrawerSection>}
       <DrawerSection label="Candidate evidence">
-        <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason)}`} />
+        <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family ?? currentCandidate?.scanner_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason ?? currentCandidate?.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />
         <DrawerField label="Score" value={detail.data?.member.total_score} />
         <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />

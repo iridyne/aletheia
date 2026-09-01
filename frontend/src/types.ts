@@ -558,6 +558,12 @@ export interface OperatorStatus {
   stale: boolean
   stale_after_sec: number
   heartbeat_age_sec?: number
+  trading_daemon?: {
+    state: string
+    running: boolean
+    fallback_blocker: string | null
+    last_error_summary: string | null
+  }
 }
 
 export interface OperatorTask {
@@ -929,6 +935,35 @@ export interface CandidateAttention {
   active_entry_plan_status: string | null
 }
 
+export interface CandidateWorkbenchRow {
+  id: string
+  snapshot_id: string
+  asset_id: string
+  venue: string
+  symbol: string
+  market_type: 'spot' | 'perp'
+  rank: number
+  total_score: number
+  scanner_family: string | null
+  scanner_direction: 'long' | 'short' | null
+  inclusion_reason: string | null
+  risk_flags: string | null
+  execution_eligible: number
+  expires_at: string
+  planning_generation_id: string | null
+  planning_status: string | null
+  result_kind: string | null
+  planning_result_json: string | null
+  attempt_count: number | null
+  attention_status: 'active' | 'terminal' | null
+  soft_expires_at: string | null
+  hard_expires_at: string | null
+  attention_terminal_reason: string | null
+  entry_plan_id: string | null
+  entry_plan_status: string | null
+  entry_plan_terminal_reason: string | null
+}
+
 export interface EntryWorkbenchResponse {
   generated_at: string
   availability: Record<string, { available: boolean; stale: boolean; reason?: string }>
@@ -940,6 +975,7 @@ export interface EntryWorkbenchResponse {
   }
   summary: { active_entry_plans: number; needs_planning: number; expiring_soon: number } | null
   entry_plans: EntryPlan[] | null
+  current_candidates: CandidateWorkbenchRow[] | null
   candidate_attention: CandidateAttention[] | null
 }
 
