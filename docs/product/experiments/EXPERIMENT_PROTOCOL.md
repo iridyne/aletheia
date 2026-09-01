@@ -293,8 +293,7 @@ break (venue, market_type, symbol, asset_id):
    contributes eligible top-K items using its own score and direction. These are
    observational family cohorts, not production winners.
 4. simple_momentum is the pure trailing-4h continuation baseline: score
-   abs(return_4h), perpetual direction from return sign, and spot long only for
-   positive return.
+   abs(return_4h) over positive-return spot assets and admit only spot long.
 
 An asset/direction may belong to multiple cohorts but receives one shared outcome
 key. The complete population fact, cohort membership, exact identity, T0 facts,

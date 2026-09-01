@@ -1023,6 +1023,41 @@ def test_matching_rejects_invalid_control_price():
     assert "matched_pair_id" not in annotations.get((selected_identity, population[0]["scanner_direction"]), {})
 
 
+def test_simple_momentum_admits_only_positive_spot_long():
+    population = _population(4)
+    cases = (
+        ("spot", 2.0),
+        ("spot", -4.0),
+        ("perp", 8.0),
+        ("perp", -10.0),
+    )
+    for item, (market_type, return_4h) in zip(population, cases, strict=True):
+        item["market_type"] = market_type
+        item["return_4h"] = return_4h
+
+    memberships, _ = benchmark._cohort_memberships(
+        population,
+        allocated=[],
+        audits={
+            benchmark._identity(item): {
+                "family_evidence": {
+                    family: {"applicability": "not_applicable"}
+                    for family in benchmark.FAMILIES
+                }
+            }
+            for item in population
+        },
+        max_candidates=1,
+    )
+
+    simple_momentum = {
+        (identity, direction)
+        for (identity, direction), labels in memberships.items()
+        if "simple_momentum" in labels
+    }
+    assert simple_momentum == {(benchmark._identity(population[0]), "long")}
+
+
 def test_analysis_excludes_partial_family_batch_and_keeps_selected_asset_weights(benchmark_db, monkeypatch):
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
