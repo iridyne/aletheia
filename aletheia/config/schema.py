@@ -1182,6 +1182,13 @@ class HealthConfig(BaseModel):
 
 
 class RetentionConfig(BaseModel):
+    @field_validator("*")
+    @classmethod
+    def reject_nonpositive_values(cls, value: int | float) -> int | float:
+        if value <= 0:
+            raise ValueError("retention values must be positive")
+        return value
+
     # Telemetry pruning (days). Trust-bearing records are NEVER pruned.
     agent_runs_days: int = 90
     tool_calls_days: int = 90
