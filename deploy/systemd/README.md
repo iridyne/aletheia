@@ -38,7 +38,15 @@ systemctl --user list-timers | grep aletheia-observer
 #    One manual pass:
 systemctl --user start aletheia-observer.service
 journalctl --user -u aletheia-observer.service -n 20
+#    Canonical read-only health projection (run from Main or Worker checkout):
+uv run aletheia observe overview --json
 ```
+
+## Operational health
+
+Use `uv run aletheia observe overview` as the single health entrypoint. It reads the configured execution owner, both SQLite stores, the user timer and last one-shot service result, the service's live `WorkingDirectory` and exact local HEAD, active windows, UFC equivalence, manifests and joint checkpoint. It never starts or reloads a unit, fetches a checkout, creates a missing Lab database or changes an Observation.
+
+The command always exits zero. Monitoring must inspect `overall_status` and `reason_codes` from `--json`: `unavailable` means required evidence cannot be read, while `degraded` means evidence is readable but unhealthy or inconsistent. Under Main ownership an unavailable user systemd manager is neutral, but an active Worker timer is degraded because it indicates duplicate ownership risk.
 
 ## Watching for Worker drift
 

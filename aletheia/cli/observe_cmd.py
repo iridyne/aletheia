@@ -156,6 +156,43 @@ def observation_overview(
         typer.echo(json.dumps(payload, indent=2, default=str))
         return
 
+    typer.echo(f"overall_status: {payload['overall_status']}")
+    typer.echo(
+        "reason_codes: "
+        + (", ".join(payload["reason_codes"]) if payload["reason_codes"] else "(none)")
+    )
+    typer.echo(f"execution_owner: {payload['execution_owner']}")
+    worker = payload["worker"]
+    typer.echo(
+        f"worker: systemd_available={worker['systemd_available']} "
+        f"checkout={worker['checkout']} head_sha={worker['head_sha']}"
+    )
+    typer.echo(
+        f"  timer: load={worker['timer']['load_state']} "
+        f"active={worker['timer']['active_state']}"
+    )
+    service_pass = worker["last_service_pass"]
+    typer.echo(
+        f"  last_service_pass: load={service_pass['load_state']} "
+        f"status={service_pass['status']} at={service_pass['at']} "
+        f"exit_code={service_pass['exit_code']}"
+    )
+    typer.echo("storage:")
+    for name in ("app_db", "lab_db"):
+        item = payload["storage"][name]
+        typer.echo(f"  {name}: status={item['status']} path={item['path']}")
+    typer.echo(
+        f"active_windows: available={payload['windows']['available']} "
+        f"count={payload['windows']['active_count']}"
+    )
+    for item in payload["windows"]["items"]:
+        typer.echo(
+            f"  {item['observation_id']} gen={item['generation']} "
+            f"kind={item['kind']} phase={item['phase']} "
+            f"handler_available={item['handler_available']} "
+            f"last_advanced_at={item['last_advanced_at']} "
+            f"last_error={item['last_error']}"
+        )
     typer.echo(
         f"experiments: {payload['experiments']['total']} total, "
         f"{payload['experiments']['collecting']} collecting, "
@@ -714,6 +751,100 @@ def close_observation(
         typer.echo(f"closed {row['id']} at {now}: {reason}")
 
 
+def _systemctl_show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
+    """Read one user unit without changing systemd state."""
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            unit,
+            f"--property={','.join(properties)}",
+            "--no-pager",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("systemctl_show_failed")
+    return {
+        key: value
+        for line in result.stdout.splitlines()
+        for key, separator, value in [line.partition("=")]
+        if separator and key
+    }
+
+
+def _git_head(checkout: str | None) -> str | None:
+    """Return the checkout's exact HEAD without fetching or mutating it."""
+    import subprocess
+
+    if not checkout or not Path(checkout).is_dir():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", checkout, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    head = result.stdout.strip()
+    return head if result.returncode == 0 and len(head) == 40 else None
+
+
+def _collect_worker_status() -> dict:
+    try:
+        timer = _systemctl_show(
+            "aletheia-observer.timer", ("LoadState", "ActiveState")
+        )
+        service = _systemctl_show(
+            "aletheia-observer.service",
+            (
+                "LoadState",
+                "Result",
+                "ExecMainStatus",
+                "ExecMainExitTimestamp",
+                "WorkingDirectory",
+            ),
+        )
+        systemd_available = True
+    except Exception:
+        timer = {}
+        service = {}
+        systemd_available = False
+
+    checkout = service.get("WorkingDirectory") or None
+    checkout_available = bool(checkout and Path(checkout).is_dir())
+    raw_exit_code = service.get("ExecMainStatus")
+    try:
+        exit_code = int(raw_exit_code) if raw_exit_code not in (None, "") else None
+    except ValueError:
+        exit_code = None
+    return {
+        "systemd_available": systemd_available,
+        "checkout": checkout,
+        "checkout_available": checkout_available,
+        "head_sha": _git_head(checkout) if checkout_available else None,
+        "timer": {
+            "load_state": timer.get("LoadState"),
+            "active_state": timer.get("ActiveState"),
+        },
+        "last_service_pass": {
+            "load_state": service.get("LoadState"),
+            "status": service.get("Result") or None,
+            "at": service.get("ExecMainExitTimestamp") or None,
+            "exit_code": exit_code,
+        },
+    }
+
+
 def _collect_overview(*, equivalence_limit: int = 5) -> dict:
     """Whole-Lab snapshot backing ``observe overview``.
 
@@ -721,68 +852,236 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
     and inspect the shape without spawning a subprocess. The CLI command
     is a thin renderer on top.
     """
+    from contextlib import ExitStack
+
+    from aletheia.config.loader import get_data_dir, read_only_config
     from aletheia.observation_lab.checkpoint import (
         latest_joint_checkpoint,
         verify_joint_checkpoint,
     )
-    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.db import get_lab_db, readonly_lab_db
+    from aletheia.observation_lab.execution_owner import get_execution_owner
+    from aletheia.observation_lab.kernel import status_window
     from aletheia.observation_lab.manifest import load_active_manifests
+    from aletheia.observation_lab.runner import register_builtin_handlers
     from aletheia.observation_lab.ufc_shadow import decode_equivalence_result
     from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import db_path, readonly_db
 
-    experiments = repo.list_filter_shadow_experiments(limit=1000)
-    counts = {"total": len(experiments)}
-    for status in ("collecting", "ready_for_review", "completed_no_support", "invalidated"):
-        counts[status] = sum(1 for r in experiments if r["status"] == status)
+    with read_only_config():
+        owner = get_execution_owner()
+    worker = _collect_worker_status()
+    reasons: set[str] = set()
+    unavailable_reasons: set[str] = set()
+    if owner not in {"main", "worker"}:
+        unavailable_reasons.add("execution_owner_unavailable")
 
-    limit = max(0, int(equivalence_limit))
-    equivalence_rows = [
-        dict(row) for row in get_lab_db().execute(
-            "SELECT observation_id, checked_at, matched, mismatch_field, "
-            "learning_verdict, recomputed_verdict, notes "
-            "FROM ufc_shadow_equivalence ORDER BY checked_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    ]
-    for row in equivalence_rows:
-        row["result"] = decode_equivalence_result(row)
-    recent_matched = sum(1 for row in equivalence_rows if row["result"] == "matched")
-    recent_mismatched = sum(
-        1 for row in equivalence_rows if row["result"] == "mismatched"
-    )
-    recent_skipped = sum(1 for row in equivalence_rows if row["result"] == "skipped")
-
-    active_manifests = load_active_manifests()
-    manifest_dicts = [
-        {
-            "observation_id": m.observation_id,
-            "generation": m.generation,
-            "manifest_hash": m.manifest_hash,
-            "composability_contract": m.composability_contract,
-            "effective_from": m.effective_from,
-            "effective_until": m.effective_until,
-        }
-        for m in active_manifests
-    ]
-
-    latest_cp = latest_joint_checkpoint()
-    verified = verify_joint_checkpoint()
-    checkpoint_payload = {
-        "latest": None if latest_cp is None else {
-            "recorded_at": latest_cp.recorded_at,
-            "joint_fingerprint": latest_cp.joint_fingerprint,
-            "app_migration_head": latest_cp.app_migration_head,
-            "app_migration_count": latest_cp.app_migration_count,
-            "active_manifest_count": latest_cp.active_manifest_count,
-        },
-        "verified": {
-            "ok": verified.ok,
-            "reason": verified.reason,
-            "current_fingerprint": verified.current_fingerprint,
-        },
+    app_path = db_path()
+    lab_path = get_data_dir() / "observation-lab" / "lab.db"
+    storage = {
+        "app_db": {"path": str(app_path), "status": "missing"},
+        "lab_db": {"path": str(lab_path), "status": "missing"},
     }
+    counts = {
+        "available": False,
+        "total": None,
+        "collecting": None,
+        "ready_for_review": None,
+        "completed_no_support": None,
+        "invalidated": None,
+    }
+    equivalence_rows: list[dict] = []
+    recent_matched = recent_mismatched = recent_skipped = None
+    manifest_dicts: list[dict] = []
+    manifest_count: int | None = None
+    checkpoint_payload = {
+        "latest": None,
+        "verified": {"ok": None, "reason": "unavailable", "current_fingerprint": None},
+    }
+    windows = {"available": False, "active_count": None, "items": []}
 
+    with ExitStack() as stack:
+        try:
+            app_db = stack.enter_context(readonly_db(allow_missing=True))
+            if app_db is not None:
+                storage["app_db"]["status"] = "reachable"
+        except Exception:
+            app_db = None
+            storage["app_db"]["status"] = "unreachable"
+        try:
+            lab_db = stack.enter_context(readonly_lab_db(allow_missing=True))
+            if lab_db is not None:
+                storage["lab_db"]["status"] = "reachable"
+        except Exception:
+            lab_db = None
+            storage["lab_db"]["status"] = "unreachable"
+
+        if app_db is not None:
+            try:
+                experiments = repo.list_filter_shadow_experiments(limit=1000)
+                counts = {"available": True, "total": len(experiments)}
+                for status in (
+                    "collecting",
+                    "ready_for_review",
+                    "completed_no_support",
+                    "invalidated",
+                ):
+                    counts[status] = sum(
+                        1 for row in experiments if row["status"] == status
+                    )
+            except Exception:
+                storage["app_db"]["status"] = "unreachable"
+                app_db = None
+
+        if lab_db is not None:
+            try:
+                limit = max(0, int(equivalence_limit))
+                equivalence_rows = [
+                    dict(row)
+                    for row in get_lab_db()
+                    .execute(
+                        "SELECT observation_id, checked_at, matched, mismatch_field, "
+                        "learning_verdict, recomputed_verdict, notes "
+                        "FROM ufc_shadow_equivalence ORDER BY checked_at DESC LIMIT ?",
+                        (limit,),
+                    )
+                    .fetchall()
+                ]
+                for row in equivalence_rows:
+                    row["result"] = decode_equivalence_result(row)
+                recent_matched = sum(
+                    1 for row in equivalence_rows if row["result"] == "matched"
+                )
+                recent_mismatched = sum(
+                    1 for row in equivalence_rows if row["result"] == "mismatched"
+                )
+                recent_skipped = sum(
+                    1 for row in equivalence_rows if row["result"] == "skipped"
+                )
+                active_manifests = load_active_manifests()
+                manifest_dicts = [
+                    {
+                        "observation_id": manifest.observation_id,
+                        "generation": manifest.generation,
+                        "manifest_hash": manifest.manifest_hash,
+                        "composability_contract": manifest.composability_contract,
+                        "effective_from": manifest.effective_from,
+                        "effective_until": manifest.effective_until,
+                    }
+                    for manifest in active_manifests
+                ]
+                manifest_count = len(manifest_dicts)
+            except Exception:
+                storage["lab_db"]["status"] = "unreachable"
+                lab_db = None
+
+        if lab_db is not None:
+            try:
+                register_builtin_handlers()
+                active_rows = (
+                    get_lab_db()
+                    .execute(
+                        "SELECT observation_id, generation FROM observation_windows "
+                        "WHERE status='active' ORDER BY observation_id, generation"
+                    )
+                    .fetchall()
+                )
+                items = []
+                for row in active_rows:
+                    status = status_window(str(row[0]), int(row[1]))
+                    items.append(
+                        {
+                            "observation_id": status["observation_id"],
+                            "generation": status["generation"],
+                            "kind": status["kind"],
+                            "phase": status["phase"],
+                            "handler_available": status["handler_available"],
+                            "last_advanced_at": status.get("last_advanced_at"),
+                            "last_error": status.get("last_error"),
+                        }
+                    )
+                windows = {
+                    "available": True,
+                    "active_count": len(items),
+                    "items": items,
+                }
+            except Exception:
+                reasons.add("window_state_unavailable")
+                unavailable_reasons.add("window_state_unavailable")
+
+        if app_db is not None and lab_db is not None:
+            try:
+                latest_cp = latest_joint_checkpoint()
+                verified = verify_joint_checkpoint()
+                checkpoint_payload = {
+                    "latest": None if latest_cp is None else {
+                        "recorded_at": latest_cp.recorded_at,
+                        "joint_fingerprint": latest_cp.joint_fingerprint,
+                        "app_migration_head": latest_cp.app_migration_head,
+                        "app_migration_count": latest_cp.app_migration_count,
+                        "active_manifest_count": latest_cp.active_manifest_count,
+                    },
+                    "verified": {
+                        "ok": verified.ok,
+                        "reason": verified.reason,
+                        "current_fingerprint": verified.current_fingerprint,
+                    },
+                }
+            except Exception:
+                storage["lab_db"]["status"] = "unreachable"
+
+    for name in ("app_db", "lab_db"):
+        status = storage[name]["status"]
+        if status != "reachable":
+            code = f"{name}_{status}"
+            reasons.add(code)
+            unavailable_reasons.add(code)
+
+    if owner == "worker":
+        if not worker["systemd_available"]:
+            reasons.add("worker_systemd_unavailable")
+            unavailable_reasons.add("worker_systemd_unavailable")
+        else:
+            if worker["timer"]["load_state"] != "loaded":
+                reasons.add("worker_timer_not_loaded")
+            if worker["timer"]["active_state"] != "active":
+                reasons.add("worker_timer_inactive")
+            service_pass = worker["last_service_pass"]
+            if service_pass["load_state"] != "loaded":
+                reasons.add("worker_service_not_loaded")
+            if service_pass["at"] is None:
+                reasons.add("worker_pass_not_recorded")
+            elif service_pass["status"] != "success" or service_pass["exit_code"] != 0:
+                reasons.add("worker_last_pass_failed")
+            if not worker.get("checkout_available", worker["checkout"] is not None):
+                reasons.add("worker_checkout_unavailable")
+            if worker["head_sha"] is None:
+                reasons.add("worker_head_unavailable")
+    elif worker["systemd_available"] and worker["timer"]["active_state"] == "active":
+        reasons.add("worker_timer_active_with_main_owner")
+
+    if windows["available"]:
+        for item in windows["items"]:
+            if not item["handler_available"]:
+                reasons.add("active_window_handler_unavailable")
+            if item["last_error"]:
+                reasons.add("active_window_last_error")
+    if checkpoint_payload["verified"]["ok"] is False:
+        reasons.add("observation_checkpoint_mismatch")
+    if recent_mismatched:
+        reasons.add("ufc_equivalence_mismatch")
+
+    reasons.update(unavailable_reasons)
+    overall_status = (
+        "unavailable" if unavailable_reasons else "degraded" if reasons else "healthy"
+    )
     return {
+        "overall_status": overall_status,
+        "reason_codes": sorted(reasons),
+        "execution_owner": owner,
+        "storage": storage,
+        "worker": worker,
+        "windows": windows,
         "experiments": counts,
         "ufc_equivalence": {
             "recent_records": [
@@ -807,12 +1106,14 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
             "recent_matched": recent_matched,
             "recent_mismatched": recent_mismatched,
             "recent_skipped": recent_skipped,
-            "recent_checked": recent_matched + recent_mismatched,
-            "recent_total": len(equivalence_rows),
+            "recent_checked": (
+                None if recent_matched is None else recent_matched + recent_mismatched
+            ),
+            "recent_total": None if recent_matched is None else len(equivalence_rows),
         },
         "manifests": {
             "active": manifest_dicts,
-            "active_count": len(manifest_dicts),
+            "active_count": manifest_count,
         },
         "checkpoint": checkpoint_payload,
     }
