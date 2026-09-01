@@ -48,9 +48,9 @@ This prevents a schema-changing target release from being followed by a stale pr
 
 ## Post-restart health proof
 
-The interactive source transaction polls only `/api/status` until the target boot/current commits and a settled health state are visible, then runs one target-loaded structural capture. HTTP waits, sleeps, and the fresh capture share one wall-clock deadline: 120 seconds interactively and 10 seconds for auto-update Observer postflight. The fresh capture uses the smaller of 20 seconds and the remaining deadline.
+The interactive source transaction polls only `/api/status` until the target boot/current commits and a non-negative health state are visible, then runs one target-loaded structural capture. HTTP waits, sleeps, and the fresh capture share one wall-clock deadline: 120 seconds interactively and 10 seconds for auto-update Observer postflight. The fresh capture uses the smaller of 20 seconds and the remaining deadline.
 
-A health state that is still `initializing`, or target evidence that cannot be captured before the deadline, remains `unproven`; it is never relabeled healthy or expanded into inferred owner/data-root/Worker failures. A directly observed new `degraded` state is a structural failure. When a restarted non-schema source update is failed or unproven, the updater attempts one rollback to the previous source and restarts the Gateway; it reports success only when the old HEAD, metadata, dependency/frontend restoration, and Gateway recovery are all proven.
+An `initializing` health state means the Gateway is serving the exact target but fresh-session business probes are still warming up; continuity preserves it as a warning and never relabels it healthy. Target evidence that cannot be captured before the deadline remains `unproven` and is never expanded into inferred owner/data-root/Worker failures. A directly observed new `degraded` state is a structural failure. When a restarted non-schema source update is failed or unproven, the updater attempts one rollback to the previous source and restarts the Gateway; it reports success only when the old HEAD, metadata, dependency/frontend restoration, and Gateway recovery are all proven.
 
 ## Fedora release-tag auto deployment
 

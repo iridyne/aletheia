@@ -717,6 +717,8 @@ def compare_update_continuity(
                     warnings.append("main_health_degraded")
                 else:
                     failures.append("main_health_degraded")
+            elif health_status == "initializing":
+                warnings.append("main_health_initializing")
             elif health_status != "healthy":
                 proof_gaps.append("main_health_not_verified")
 
@@ -763,7 +765,7 @@ def _postflight_settled(snapshot: dict[str, Any], target: str) -> bool:
         return False
     if gateway.get("boot_commit") != target or gateway.get("current_commit") != target:
         return False
-    return gateway.get("health_status") in {"healthy", "degraded"}
+    return gateway.get("health_status") in {"healthy", "degraded", "initializing"}
 
 
 def capture_update_continuity_until_settled(
