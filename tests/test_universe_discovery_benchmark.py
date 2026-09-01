@@ -180,7 +180,7 @@ def test_app_batch_reconciles_when_lab_append_initially_fails(benchmark_db, monk
 
     assert repeated["idempotent"] is True
     status = benchmark.status_benchmark(window["id"], now=started_at)
-    assert status["unit_counts"] == {"admitted": len(_population())}
+    assert status["unit_counts"] == {"admitted": len(_population()) + 1}
     batches, outcomes, orphan_count = benchmark._admitted_snapshot(status)
     assert len(batches) == 1
     assert outcomes
@@ -207,6 +207,7 @@ def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
         )
 
     monkeypatch.setattr(kernel, "capture_event", real_capture_event)
+    monkeypatch.setattr(benchmark, "_current_commit", lambda: None)
     monkeypatch.setattr(
         runtime_session, "current_provenance",
         lambda: {"runtime_session_id": "retry-session"},
@@ -222,7 +223,8 @@ def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
     )
     keys = {
         row[0] for row in get_lab_db().execute(
-            "SELECT unit_key FROM observation_units WHERE observation_id=?", (window["id"],)
+            "SELECT unit_key FROM observation_units WHERE observation_id=? "
+            "AND source_kind='universe_candidate'", (window["id"],)
         ).fetchall()
     }
     assert result["idempotent"] is True
@@ -269,6 +271,75 @@ def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, 
     domain = benchmark._handler_finalize(terminal)
     assert domain["population_batches"] == []
     assert domain["outcomes"] == []
+
+
+def test_empty_batch_has_durable_admission_marker(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+
+    result = benchmark.capture_completed_run(
+        scanner_run_id="empty-run", population=[], allocated=[], entry_ts=started_at,
+    )
+    batches, outcomes, orphan_count = benchmark._admitted_snapshot(
+        benchmark.status_benchmark(window["id"])
+    )
+
+    assert result["accepted"] is True
+    assert len(batches) == 1
+    assert outcomes == []
+    assert orphan_count == 0
+
+
+def test_legacy_admitted_batch_retry_keeps_historical_unit_hashes(benchmark_db, monkeypatch):
+    from aletheia.observation_lab import kernel
+
+    handler = kernel._handler("universe_discovery", benchmark._HANDLER_VERSION)
+    assert handler is not None
+
+    def legacy_capture(_window, event):
+        batch_id = str(event["batch_id"])
+        return kernel.ObservationProgress(
+            summary={"batch_id": batch_id},
+            units=tuple({
+                "unit_key": f"{batch_id}:{'|'.join(benchmark._identity(item))}",
+                "source_kind": "universe_candidate",
+                "source_ref": f"legacy:{batch_id}",
+                "source_hash": "f" * 64,
+                "known_at": event["known_at"],
+                "admission": "admitted",
+            } for item in event["population"]),
+        )
+
+    kernel.register_handler(
+        kernel.ObservationHandler(
+            kind=handler.kind, version=handler.version,
+            normalize_spec=handler.normalize_spec, capture=legacy_capture,
+            advance=handler.advance, finalize=handler.finalize,
+            retention_claims=handler.retention_claims,
+        ),
+        replace=True,
+    )
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population()
+    first = benchmark.capture_completed_run(
+        scanner_run_id="legacy-units", population=population,
+        allocated=population[:5], entry_ts=started_at,
+    )
+
+    kernel.register_handler(handler, replace=True)
+    monkeypatch.setattr(
+        kernel, "capture_event",
+        lambda *_args, **_kwargs: pytest.fail("admitted legacy batch must not be re-appended"),
+    )
+    repeated = benchmark.capture_completed_run(
+        scanner_run_id="legacy-units", population=population,
+        allocated=population[:5], entry_ts=started_at,
+    )
+
+    assert first["accepted"] is True
+    assert repeated["idempotent"] is True
+    assert benchmark._admitted_snapshot(benchmark.status_benchmark(window["id"]))[2] == 0
 def test_runtime_commit_change_is_capture_provenance_not_causal_identity(
     benchmark_db, monkeypatch
 ):

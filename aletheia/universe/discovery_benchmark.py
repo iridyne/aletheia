@@ -573,14 +573,25 @@ def capture_completed_run(
             str(window["id"]), int(window["generation"]), reason="frozen_contract_changed"
         )
         return {"accepted": False, "reason": "frozen_contract_changed", "invalidated": True}
-    producer_commit = _current_commit()
-    if producer_commit is None:
-        return {"accepted": False, "reason": "producer_provenance_unavailable"}
-    batch, outcomes = build_capture(
-        window=window, scanner_run_id=scanner_run_id, population=population,
-        allocated=allocated, entry_ts=entry_ts, regime_tag=regime_tag,
-        producer_commit=producer_commit, cfg=cfg,
+    batch_id = hashlib.sha256(f"{window['id']}|{scanner_run_id}".encode()).hexdigest()[:12]
+    persisted_batch = next(
+        (
+            row for row in repo.list_universe_discovery_batches(str(window["id"]))
+            if str(row["benchmark_batch_id"]) == batch_id
+        ),
+        None,
     )
+    if persisted_batch is None:
+        producer_commit = _current_commit()
+        if producer_commit is None:
+            return {"accepted": False, "reason": "producer_provenance_unavailable"}
+        batch, outcomes = build_capture(
+            window=window, scanner_run_id=scanner_run_id, population=population,
+            allocated=allocated, entry_ts=entry_ts, regime_tag=regime_tag,
+            producer_commit=producer_commit, cfg=cfg,
+        )
+    else:
+        batch, outcomes = persisted_batch, []
     result = repo.capture_universe_discovery_batch(
         str(window["id"]), batch, outcomes, captured_at=entry_ts,
         cadence_sec=CADENCE_SEC, max_batches=MAX_BATCHES, window_snapshot=window,
@@ -606,9 +617,27 @@ def capture_completed_run(
             if str(row["benchmark_batch_id"]) == str(result["batch_id"])
             and row.get("producer_runtime_session_id")
         }
+        if result.get("idempotent"):
+            from aletheia.observation_lab.db import get_lab_db
+
+            counts = dict(get_lab_db().execute(
+                "SELECT source_kind,COUNT(*) FROM observation_units "
+                "WHERE observation_id=? AND generation=? AND spec_hash=? "
+                "AND unit_key LIKE ? AND admission='admitted' GROUP BY source_kind",
+                (str(window["id"]), int(window["generation"]), str(window["contract_hash"]),
+                 f"{result['batch_id']}:%"),
+            ).fetchall())
+            candidate_count = int(counts.get("universe_candidate", 0))
+            expected_count = int(persisted_batch["candidate_count"])
+            has_marker = int(counts.get("universe_batch", 0)) == 1
+            if candidate_count == expected_count and (expected_count > 0 or has_marker):
+                return result
+            if candidate_count:
+                raise RuntimeError("partial_benchmark_batch_lab_admission")
         capture_event(
             str(window["id"]), int(window["generation"]), str(window["contract_hash"]),
             {"batch_id": result["batch_id"], "known_at": persisted_batch["evaluated_at"],
+             "batch_source_hash": _hash(persisted_population),
              "population": persisted_population},
             producer_commit=str(persisted_commit or persisted_batch["code_commit"]),
             producer_runtime_session_id=(
@@ -977,7 +1006,15 @@ def _handler_capture(window: dict[str, Any], event: dict[str, Any]):
     from aletheia.observation_lab.kernel import ObservationProgress
 
     batch_id = str(event["batch_id"])
-    units = []
+    units = [{
+        "unit_key": f"{batch_id}:__batch__",
+        "source_kind": "universe_batch",
+        "source_ref": f"filter_decision_batch:{batch_id}",
+        "source_hash": event["batch_source_hash"],
+        "known_at": event["known_at"],
+        "admission": "admitted",
+        "reason": "complete_batch_capture",
+    }]
     for item in event["population"]:
         identity = "|".join(_identity(item))
         units.append({
@@ -990,7 +1027,7 @@ def _handler_capture(window: dict[str, Any], event: dict[str, Any]):
             "reason": "complete_post_dedup_pre_allocation_cohort",
         })
     return ObservationProgress(
-        summary={"batch_id": batch_id, "population_size": len(units)},
+        summary={"batch_id": batch_id, "population_size": len(event["population"])},
         units=tuple(units),
     )
 
@@ -1001,18 +1038,28 @@ def _admitted_snapshot(window: Mapping[str, Any]) -> tuple[list[dict[str, Any]],
     window_id = str(window["observation_id"] if "observation_id" in window else window["id"])
     generation = int(window["generation"])
     spec_hash = str(window["spec_hash"] if "spec_hash" in window else window["contract_hash"])
+    rows = get_lab_db().execute(
+        "SELECT unit_key,source_kind FROM observation_units "
+        "WHERE observation_id=? AND generation=? AND spec_hash=? "
+        "AND source_kind IN ('universe_candidate','universe_batch') AND admission='admitted'",
+        (window_id, generation, spec_hash),
+    ).fetchall()
     unit_counts = Counter(
-        str(row[0]).split(":", 1)[0]
-        for row in get_lab_db().execute(
-            "SELECT unit_key FROM observation_units WHERE observation_id=? AND generation=? "
-            "AND spec_hash=? AND source_kind='universe_candidate' AND admission='admitted'",
-            (window_id, generation, spec_hash),
-        ).fetchall()
+        str(row["unit_key"]).split(":", 1)[0]
+        for row in rows if row["source_kind"] == "universe_candidate"
     )
+    batch_markers = {
+        str(row["unit_key"]).split(":", 1)[0]
+        for row in rows if row["source_kind"] == "universe_batch"
+    }
     all_batches = repo.list_universe_discovery_batches(window_id)
     batches = [
         batch for batch in all_batches
-        if unit_counts[str(batch["benchmark_batch_id"])] == int(batch["candidate_count"]) > 0
+        if unit_counts[str(batch["benchmark_batch_id"])] == int(batch["candidate_count"])
+        and (
+            str(batch["benchmark_batch_id"]) in batch_markers
+            or int(batch["candidate_count"]) > 0
+        )
     ]
     admitted_ids = {str(batch["benchmark_batch_id"]) for batch in batches}
     outcomes = [
