@@ -204,20 +204,8 @@ def freeze_fixed_look_cutoff(experiment_id: str) -> LearningInferenceDecision:
 def cutoff_assignment_unit_keys(decision: LearningInferenceDecision) -> tuple[str, ...]:
     if decision.status not in {"cutoff_frozen", "consumed"}:
         return ()
-    try:
-        payload = json.loads(decision.cutoff_json or "")
-        values = payload["assignment_unit_keys"]
-    except (TypeError, ValueError, KeyError):
-        raise InferenceContractError("inference cutoff is malformed") from None
-    if (
-        not isinstance(payload, dict)
-        or not isinstance(values, list)
-        or not values
-        or any(not isinstance(value, str) or not value for value in values)
-        or len(set(values)) != len(values)
-    ):
-        raise InferenceContractError("inference cutoff is malformed")
-    return tuple(values)
+    payload = _validated_cutoff(decision)
+    return tuple(payload["assignment_unit_keys"])
 
 
 def consume_fixed_look_verdict(verdict: LearningContributionVerdict) -> bool:
@@ -229,6 +217,7 @@ def consume_fixed_look_verdict(verdict: LearningContributionVerdict) -> bool:
         decision = get_fixed_look_decision(verdict.experiment_id)
         if decision is None or decision.status != "cutoff_frozen":
             return False
+        _validated_cutoff(decision)
         if (
             verdict.inference_contract_version != decision.inference_contract_version
             or verdict.inference_plan_hash != decision.plan_hash
@@ -293,6 +282,10 @@ def inference_authority_reason(verdict: dict[str, Any]) -> str | None:
         return "inference_decision_not_consumed"
     if decision.consumed_verdict_id != verdict_id:
         return "inference_consumed_verdict_mismatch"
+    try:
+        _validated_cutoff(decision)
+    except InferenceContractError:
+        return "inference_cutoff_invalid"
     if (
         verdict.get("inference_contract_version") != decision.inference_contract_version
         or verdict.get("inference_plan_hash") != decision.plan_hash
@@ -375,6 +368,29 @@ def _validated_plan(decision: LearningInferenceDecision) -> dict[str, Any]:
     if plan.get("inference_contract_version") != INFERENCE_CONTRACT_VERSION:
         raise InferenceContractError("inference contract mismatch")
     return plan
+
+
+def _validated_cutoff(decision: LearningInferenceDecision) -> dict[str, Any]:
+    try:
+        payload = json.loads(decision.cutoff_json or "")
+        values = payload["assignment_unit_keys"]
+    except (TypeError, ValueError, KeyError):
+        raise InferenceContractError("inference cutoff is malformed") from None
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(values, list)
+        or not values
+        or any(not isinstance(value, str) or not value for value in values)
+        or len(set(values)) != len(values)
+    ):
+        raise InferenceContractError("inference cutoff is malformed")
+    try:
+        fingerprint = _hash_json(payload)
+    except (TypeError, ValueError):
+        raise InferenceContractError("inference cutoff is malformed") from None
+    if fingerprint != decision.cutoff_fingerprint:
+        raise InferenceContractError("inference cutoff fingerprint mismatch")
+    return payload
 
 
 def _prospective_assignment_units(

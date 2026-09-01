@@ -271,6 +271,58 @@ def test_confirmatory_verdict_is_consumed_once_and_bound_to_frozen_cutoff():
     assert get_fixed_look_decision(experiment.experiment_id).consumed_verdict_id == verdict.verdict_id
 
 
+def test_mismatched_cutoff_fingerprint_cannot_select_consume_or_authorize(monkeypatch):
+    from aletheia.learning import fixed_look
+    from aletheia.learning.fixed_look import (
+        InferenceContractError,
+        consume_fixed_look_verdict,
+        cutoff_assignment_unit_keys,
+        get_fixed_look_decision,
+        inference_authority_reason,
+        register_fixed_look_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis, experiment = _paper_experiment(experiment_id="paper-corrupt-cutoff")
+    register_fixed_look_decision(
+        experiment,
+        hypothesis,
+        policy_epoch="epoch-fixed-look",
+        behavior_contract_hash="behavior-fixed-look",
+    )
+    cutoff_json = json.dumps(
+        {"assignment_unit_keys": ["treatment-1", "control-1"]},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    get_db().execute(
+        "UPDATE learning_inference_decisions SET status='cutoff_frozen', "
+        "cutoff_json=?, cutoff_fingerprint=?, cutoff_frozen_at=?, updated_at=? "
+        "WHERE experiment_id=?",
+        (cutoff_json, "0" * 64, _iso(), _iso(), experiment.experiment_id),
+    )
+    decision = get_fixed_look_decision(experiment.experiment_id)
+    assert decision is not None
+
+    with pytest.raises(InferenceContractError, match="cutoff fingerprint mismatch"):
+        cutoff_assignment_unit_keys(decision)
+
+    verdict = _positive_verdict(
+        hypothesis,
+        experiment,
+        decision,
+        verdict_id="corrupt-cutoff-verdict",
+    )
+    with pytest.raises(InferenceContractError, match="cutoff fingerprint mismatch"):
+        consume_fixed_look_verdict(verdict)
+
+    consumed = decision.model_copy(
+        update={"status": "consumed", "consumed_verdict_id": verdict.verdict_id},
+    )
+    monkeypatch.setattr(fixed_look, "get_fixed_look_decision", lambda _experiment_id: consumed)
+    assert inference_authority_reason(verdict.model_dump()) == "inference_cutoff_invalid"
+
+
 def test_monitoring_positive_is_never_authority_eligible():
     from aletheia.learning.fixed_look import inference_authority_reason
     from aletheia.learning.models import LearningContributionVerdict
