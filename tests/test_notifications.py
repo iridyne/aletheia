@@ -138,8 +138,8 @@ def test_webhook_respects_notify_alerts_false(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.webhook.enabled = True
     cfg.webhook.url = "http://example.test/hook"
+    cfg.webhook.enabled = True
     cfg.webhook.notify_alerts = False
     save_config(cfg)
 
@@ -162,8 +162,8 @@ def test_webhook_respects_notify_trade_fills_false(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.webhook.enabled = True
     cfg.webhook.url = "http://example.test/hook"
+    cfg.webhook.enabled = True
     cfg.webhook.notify_trade_fills = False
     save_config(cfg)
 
@@ -182,8 +182,8 @@ def test_webhook_respects_notify_daily_summary_false(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.webhook.enabled = True
     cfg.webhook.url = "http://example.test/hook"
+    cfg.webhook.enabled = True
     cfg.webhook.notify_daily_summary = False
     save_config(cfg)
 
@@ -236,8 +236,8 @@ def test_trade_and_summary_channels_are_independent(
     cfg.telegram.enabled = telegram_enabled
     cfg.telegram.notify_trade_fills = telegram_category
     cfg.telegram.notify_daily_summary = telegram_category
-    cfg.webhook.enabled = webhook_enabled
     cfg.webhook.url = "http://example.test/hook"
+    cfg.webhook.enabled = webhook_enabled
     cfg.webhook.notify_trade_fills = webhook_category
     cfg.webhook.notify_daily_summary = webhook_category
     save_config(cfg)
