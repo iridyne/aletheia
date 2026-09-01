@@ -505,7 +505,6 @@ def _entry_plan_outcome_is_unresolved(outcome: str) -> bool:
         "failed",
         "cancelled",
         "filled",
-        "stale",
     }
 
 

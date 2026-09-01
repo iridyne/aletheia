@@ -1315,6 +1315,37 @@ async def test_blocked_cleanup_pages_past_unresolved_prefix(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_blocked_cleanup_keeps_stale_cas_unresolved(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    row = {
+        "id": "concurrently-advanced-plan",
+        "status": "waiting",
+        "created_at": "2026-09-01T00:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        watch.repo,
+        "watchable_entry_plan_high_watermark",
+        lambda: (row["created_at"], row["id"]),
+    )
+    monkeypatch.setattr(
+        watch.repo,
+        "list_watchable_entry_plans_page",
+        lambda *, after, through, limit: [row] if after is None else [],
+    )
+
+    async def terminalize(*_args, **_kwargs):
+        return "stale"
+
+    monkeypatch.setattr(watch, "_terminalize_entry_plan", terminalize)
+
+    cleanup = await watch._cancel_open_entry_plans("fast_trigger_kill_switch_active")
+
+    assert cleanup["terminalized"] == 0
+    assert cleanup["unresolved"] == 1
+
+
+@pytest.mark.asyncio
 async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
     from aletheia.agent_runtime import fast_trigger_watch as watch
     from aletheia.config import loader
