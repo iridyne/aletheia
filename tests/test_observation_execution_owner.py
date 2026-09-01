@@ -292,6 +292,151 @@ def test_worker_lock_releases_and_can_be_reacquired(tmp_path, monkeypatch):
 
     reset_lab_db()
 
+def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypatch):
+    """A Main cycle cannot enter while an already-started Worker cycle runs."""
+    from threading import Event, Thread
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+    import aletheia.config.loader as loader
+    import aletheia.observation_lab.execution_owner as execution_owner
+    from aletheia.cli.observe_cmd import observe_app
+    from aletheia.observation_lab.db import reset_lab_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: SimpleNamespace(
+            controller=SimpleNamespace(shadow_enabled=True, min_samples_gate=7)
+        ),
+    )
+    owner = {"value": "worker"}
+    monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: owner["value"])
+    entered = Event()
+    release = Event()
+    active = 0
+    max_active = 0
+    calls: list[str] = []
+
+    def fake_runner(**_kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        calls.append(owner["value"])
+        try:
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(5), "timed out waiting to release Worker cycle"
+            return {"pass_status": "success"}
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe", fake_runner
+    )
+    failures: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "_record_job_failure",
+        lambda job, reason: failures.append((job, reason)),
+    )
+    reset_lab_db()
+
+    worker_result = {}
+    worker = Thread(
+        target=lambda: worker_result.setdefault(
+            "result", CliRunner().invoke(observe_app, ["run", "--quiet"])
+        )
+    )
+    worker.start()
+    assert entered.wait(5), "Worker cycle did not enter"
+
+    owner["value"] = "main"
+    scheduler_module._run_filter_controller_observe()
+    assert calls == ["worker"]
+    assert failures and "cycle_lock_contended" in failures[-1][1]
+
+    release.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert worker_result["result"].exit_code == 0
+
+    scheduler_module._run_filter_controller_observe()
+    assert calls == ["worker", "main"]
+    assert max_active == 1
+    reset_lab_db()
+
+
+def test_main_to_worker_transition_serializes_and_exception_releases_lock(
+    tmp_path, monkeypatch
+):
+    """Worker defers behind Main, then enters after Main raises and releases."""
+    from threading import Event, Thread
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+    import aletheia.config.loader as loader
+    import aletheia.observation_lab.execution_owner as execution_owner
+    from aletheia.cli.observe_cmd import observe_app
+    from aletheia.observation_lab.db import reset_lab_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: SimpleNamespace(
+            controller=SimpleNamespace(shadow_enabled=True, min_samples_gate=7)
+        ),
+    )
+    owner = {"value": "main"}
+    monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: owner["value"])
+    entered = Event()
+    release = Event()
+    calls: list[str] = []
+
+    def fake_runner(**_kwargs):
+        calls.append(owner["value"])
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5), "timed out waiting to release Main cycle"
+            raise RuntimeError("main cycle failed")
+        return {"pass_status": "success"}
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe", fake_runner
+    )
+    failures: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "_record_job_failure",
+        lambda job, reason: failures.append((job, reason)),
+    )
+    reset_lab_db()
+
+    main = Thread(target=scheduler_module._run_filter_controller_observe)
+    main.start()
+    assert entered.wait(5), "Main cycle did not enter"
+
+    owner["value"] = "worker"
+    contended = CliRunner().invoke(observe_app, ["run", "--quiet"])
+    assert contended.exit_code == 3
+    assert calls == ["main"]
+
+    release.set()
+    main.join(5)
+    assert not main.is_alive()
+    assert failures and failures[-1][1] == "main cycle failed"
+
+    after_release = CliRunner().invoke(observe_app, ["run", "--quiet"])
+    assert after_release.exit_code == 0
+    assert calls == ["main", "worker"]
+    reset_lab_db()
+
 
 # ─── (9) worker startup does not initialize trading authority ────────────────
 

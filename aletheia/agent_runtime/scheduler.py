@@ -3631,7 +3631,19 @@ def _run_filter_controller_observe():
         if not ctrl or not ctrl.shadow_enabled:
             return
         from aletheia.analytics.filter_controller import run_controller_observe
-        summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
+        from aletheia.observation_lab.worker_lock import (
+            WorkerCycleLockError,
+            worker_cycle_exclusion,
+        )
+        try:
+            with worker_cycle_exclusion():
+                summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
+        except WorkerCycleLockError as lock_exc:
+            logger.info("filter_controller_observe deferred: %s", lock_exc)
+            _record_job_failure(
+                "filter_controller_observe", f"cycle_lock_contended: {lock_exc}"
+            )
+            return
         # Issue #1240: record failure for partial/failed evidence passes so that
         # systemd/health monitoring can distinguish a clean pass from one with
         # missing or mismatched primary evidence (no exception needed to trigger it).

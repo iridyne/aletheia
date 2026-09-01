@@ -21,7 +21,7 @@ from aletheia.analytics.filter_evidence import (
 )
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import FilterDecisionBatch, UniverseDiscoveryBenchmark
+from aletheia.storage.models import FilterDecisionBatch
 from aletheia.universe.baseline_integrity import (
     BASELINE_INTEGRITY_CONTRACT_VERSION,
     audit_universe_baseline,
@@ -46,6 +46,9 @@ MIN_INFERENCE_BATCHES = 40
 MIN_OUTCOME_COVERAGE = 0.80
 MIN_MATCH_COVERAGE = 0.70
 BOOTSTRAP_DRAWS = 10_000
+
+_HANDLER_VERSION = "universe-discovery-handler/v1"
+_SLOT_KEY = "universe-discovery"
 _VALID_DIRECTIONS = frozenset({"long", "short"})
 _PERP_MARKETS = frozenset({"perp", "swap", "futures", "usdt_futures"})
 
@@ -124,14 +127,13 @@ def _frozen_config(cfg) -> dict[str, Any]:
     }
 
 
-def build_contract(*, code_commit: str, started_at: str, cfg=None) -> dict[str, Any]:
-    """Build the complete preregistered identity for one immutable window."""
+def build_contract(*, code_commit: str | None = None, started_at: str | None = None, cfg=None) -> dict[str, Any]:
+    """Build causal benchmark identity; runtime commit and interval are provenance."""
+    del code_commit, started_at
     cfg = cfg or load_config()
     semantics = family_semantics()
     return {
         "contract_version": BENCHMARK_CONTRACT_VERSION,
-        "started_at": _utc(started_at).isoformat(),
-        "code_commit": str(code_commit),
         "versions": {
             "baseline_integrity": BASELINE_INTEGRITY_CONTRACT_VERSION,
             "scanner_behavior": UNIVERSE_SCORER_BEHAVIOR_VERSION,
@@ -172,7 +174,20 @@ def build_contract(*, code_commit: str, started_at: str, cfg=None) -> dict[str, 
     }
 
 
+def _as_benchmark_window(window: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        **dict(window),
+        "id": str(window["observation_id"]),
+        "contract_json": str(window["spec_json"]),
+        "contract_hash": str(window["spec_hash"]),
+        "code_commit": window.get("producer_commit"),
+        "capture_ends_at": str(window["collect_until"]),
+    }
+
+
 def start_benchmark(*, now: str | datetime | None = None, code_commit: str | None = None, cfg=None) -> dict[str, Any]:
+    from aletheia.observation_lab.kernel import start_window
+
     cfg = cfg or load_config()
     if not cfg.universe.enabled:
         raise ValueError("universe_not_configured")
@@ -180,48 +195,50 @@ def start_benchmark(*, now: str | datetime | None = None, code_commit: str | Non
     if not commit:
         raise ValueError("runtime_boot_commit_unavailable")
     started = _utc(now)
-    contract = build_contract(code_commit=commit, started_at=started.isoformat(), cfg=cfg)
-    window = UniverseDiscoveryBenchmark(
-        contract_json=_json(contract),
-        contract_hash=_hash(contract),
-        code_commit=commit,
-        started_at=started.isoformat(),
-        capture_ends_at=(started + timedelta(days=CAPTURE_DAYS)).isoformat(),
-        finalize_not_before=(started + FINALIZE_DELAY).isoformat(),
-    )
-    return repo.insert_universe_discovery_benchmark(window)
+    legacy = repo.get_universe_discovery_benchmark()
+    if legacy is not None:
+        repo.invalidate_universe_discovery_benchmark(
+            str(legacy["id"]),
+            reason="superseded_by_observation_window_kernel",
+            at=started.isoformat(),
+        )
+    window_id = hashlib.sha256(
+        f"universe-discovery|{started.isoformat()}".encode("utf-8")
+    ).hexdigest()[:24]
+    return _as_benchmark_window(start_window(
+        observation_id=window_id,
+        kind="universe_discovery",
+        handler_version=_HANDLER_VERSION,
+        slot_key=_SLOT_KEY,
+        authority_mode="observe_only",
+        spec=build_contract(cfg=cfg),
+        started_at=started,
+        collect_until=started + timedelta(days=CAPTURE_DAYS),
+        finalize_not_before=started + FINALIZE_DELAY,
+        producer_commit=commit,
+    ))
 
 
 def abort_benchmark(window_id: str, *, reason: str, now: str | datetime | None = None) -> dict[str, Any]:
-    reason = str(reason).strip()
-    if not reason:
-        raise ValueError("abort_reason_required")
-    if not repo.abort_universe_discovery_benchmark(window_id, reason=reason, at=_utc(now).isoformat()):
-        raise ValueError("benchmark_not_active")
+    from aletheia.observation_lab.kernel import abort_window
+
+    del now
+    status = status_benchmark(window_id)
+    abort_window(window_id, int(status["generation"]), reason=reason)
     return status_benchmark(window_id)
 
 
 def status_benchmark(window_id: str | None = None, *, now: str | datetime | None = None) -> dict[str, Any]:
-    window = repo.get_universe_discovery_benchmark(window_id)
-    if window is None:
-        raise KeyError(window_id or "active")
+    from aletheia.observation_lab.kernel import status_window
+
+    raw = status_window(window_id, slot_key=_SLOT_KEY if window_id is None else None, now=now)
+    window = _as_benchmark_window(raw)
     outcomes = repo.list_universe_discovery_outcomes(str(window["id"]))
     batches = repo.list_universe_discovery_batches(str(window["id"]))
-    at = _utc(now)
-    stored_status = str(window["status"])
-    if stored_status != "active":
-        phase = stored_status
-    elif at < _utc(window["capture_ends_at"]):
-        phase = "collecting"
-    elif at < _utc(window["finalize_not_before"]):
-        phase = "settlement_grace"
-    else:
-        phase = "ready_to_finalize"
     counts = Counter(str(row.get("status") or "unknown") for row in outcomes)
     dates = {str(row.get("evaluated_at") or "")[:10] for row in batches if row.get("evaluated_at")}
     return {
         **window,
-        "phase": phase,
         "batch_count": len(batches),
         "utc_date_count": len(dates),
         "outcome_counts": dict(sorted(counts.items())),
@@ -382,6 +399,7 @@ def build_capture(
     allocated: Sequence[Mapping[str, Any]],
     entry_ts: str,
     regime_tag: str | None,
+    producer_commit: str,
     cfg=None,
 ) -> tuple[FilterDecisionBatch, list[dict[str, Any]]]:
     """Build, but do not persist, one lossless benchmark batch."""
@@ -452,7 +470,7 @@ def build_capture(
         candidate_facts=_encode_candidate_facts(facts),
         parameter_snapshot=parameter_snapshot,
         filter_version=BENCHMARK_CONTRACT_VERSION,
-        code_commit=str(window["code_commit"]),
+        code_commit=producer_commit,
         evaluated_at=_utc(entry_ts).isoformat(),
         benchmark_window_id=str(window["id"]),
         benchmark_batch_id=batch_id,
@@ -509,7 +527,7 @@ def build_capture(
                     "benchmark_cost_snapshot": cost_snapshot,
                     "benchmark_path_facts": _json(path_facts),
                     "producer_runtime_session_id": provenance.get("runtime_session_id"),
-                    "producer_commit": str(window["code_commit"]),
+                    "producer_commit": producer_commit,
                     "producer_behavior_fingerprint": contract_hash,
                 }
             )
@@ -526,29 +544,37 @@ def capture_completed_run(
     regime_tag: str | None = None,
     cfg=None,
 ) -> dict[str, Any]:
-    """Capture a completed production run; never changes production objects."""
-    window = repo.get_universe_discovery_benchmark()
-    if window is None:
+    """Capture the published run, then append its immutable Lab unit identities."""
+    from aletheia.observation_lab.kernel import capture_event, invalidate_window
+
+    try:
+        window = status_benchmark()
+    except KeyError:
         return {"accepted": False, "reason": "no_active_window"}
     cfg = cfg or load_config()
-    current = build_contract(code_commit=str(_current_commit() or ""), started_at=str(window["started_at"]), cfg=cfg)
+    current = build_contract(cfg=cfg)
     if _hash(current) != str(window["contract_hash"]):
-        reason = "frozen_contract_changed"
-        repo.invalidate_universe_discovery_benchmark(str(window["id"]), reason=reason, at=_utc().isoformat())
-        return {"accepted": False, "reason": reason, "invalidated": True}
+        invalidate_window(
+            str(window["id"]), int(window["generation"]), reason="frozen_contract_changed"
+        )
+        return {"accepted": False, "reason": "frozen_contract_changed", "invalidated": True}
+    producer_commit = _current_commit() or str(window["code_commit"])
     batch, outcomes = build_capture(
-        window=window,
-        scanner_run_id=scanner_run_id,
-        population=population,
-        allocated=allocated,
-        entry_ts=entry_ts,
-        regime_tag=regime_tag,
-        cfg=cfg,
+        window=window, scanner_run_id=scanner_run_id, population=population,
+        allocated=allocated, entry_ts=entry_ts, regime_tag=regime_tag,
+        producer_commit=producer_commit, cfg=cfg,
     )
-    return repo.capture_universe_discovery_batch(
+    result = repo.capture_universe_discovery_batch(
         str(window["id"]), batch, outcomes, captured_at=entry_ts,
-        cadence_sec=CADENCE_SEC, max_batches=MAX_BATCHES,
+        cadence_sec=CADENCE_SEC, max_batches=MAX_BATCHES, window_snapshot=window,
     )
+    if result.get("accepted"):
+        capture_event(
+            str(window["id"]), int(window["generation"]), str(window["contract_hash"]),
+            {"batch_id": result["batch_id"], "known_at": entry_ts, "population": population},
+            producer_commit=producer_commit,
+        )
+    return result
 
 
 def _percentile(values: Sequence[float], p: float) -> float | None:
@@ -644,7 +670,7 @@ def analyze_benchmark(
     snapshot: tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     if snapshot is None:
-        window = repo.get_universe_discovery_benchmark(window_id)
+        window = status_benchmark(window_id)
         batches = repo.list_universe_discovery_batches(window_id)
         rows = repo.list_universe_discovery_outcomes(window_id)
     else:
@@ -904,100 +930,163 @@ def analyze_benchmark(
     }
 
 
-def _artifact_bytes(package: Mapping[str, Any]) -> bytes:
-    payload = _json(package).encode("utf-8")
-    buffer = io.BytesIO()
-    with gzip.GzipFile(filename="", fileobj=buffer, mode="wb", mtime=0) as archive:
-        archive.write(payload)
-    return buffer.getvalue()
+def _handler_capture(window: dict[str, Any], event: dict[str, Any]):
+    from aletheia.observation_lab.kernel import ObservationProgress
 
-
-def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetime | None = None) -> dict[str, Any]:
-    window = repo.get_universe_discovery_benchmark(window_id)
-    if window is None:
-        raise KeyError(window_id)
-    if str(window["status"]) != "active":
-        raise ValueError(f"benchmark_{window['status']}")
-    at = _utc(now)
-    if at < _utc(window["finalize_not_before"]):
-        raise ValueError("benchmark_finalize_not_due")
-    current_contract = build_contract(
-        code_commit=str(window["code_commit"]),
-        started_at=str(window["started_at"]),
+    batch_id = str(event["batch_id"])
+    units = []
+    for item in event["population"]:
+        identity = "|".join(_identity(item))
+        units.append({
+            "unit_key": f"{batch_id}:{identity}",
+            "source_kind": "universe_candidate",
+            "source_ref": f"filter_decision_batch:{batch_id}:{identity}",
+            "source_hash": _hash(dict(item)),
+            "known_at": event["known_at"],
+            "admission": "admitted",
+            "reason": "complete_post_dedup_pre_allocation_cohort",
+        })
+    return ObservationProgress(
+        summary={"batch_id": batch_id, "population_size": len(units)},
+        units=tuple(units),
     )
-    if _hash(current_contract) != str(window["contract_hash"]):
-        repo.invalidate_universe_discovery_benchmark(
-            window_id, reason="frozen_contract_drift_at_finalization", at=at.isoformat()
-        )
-        raise ValueError("benchmark_frozen_contract_drift")
-    runtime_commit = _current_commit()
-    if runtime_commit is None:
-        raise ValueError("benchmark_runtime_commit_unavailable")
-    if runtime_commit != str(window["code_commit"]):
-        raise ValueError("benchmark_runtime_commit_drift")
-    batches = repo.list_universe_discovery_batches(window_id)
-    outcomes = repo.list_universe_discovery_outcomes(window_id)
-    analysis = analyze_benchmark(window_id, snapshot=(window, batches, outcomes))
+
+def _admitted_snapshot(window: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Return only app evidence whose complete cohort was admitted by lab.db."""
+    from aletheia.observation_lab.db import get_lab_db
+
+    window_id = str(window["observation_id"] if "observation_id" in window else window["id"])
+    generation = int(window["generation"])
+    spec_hash = str(window["spec_hash"] if "spec_hash" in window else window["contract_hash"])
+    unit_counts = Counter(
+        str(row[0]).split(":", 1)[0]
+        for row in get_lab_db().execute(
+            "SELECT unit_key FROM observation_units WHERE observation_id=? AND generation=? "
+            "AND spec_hash=? AND source_kind='universe_candidate' AND admission='admitted'",
+            (window_id, generation, spec_hash),
+        ).fetchall()
+    )
+    all_batches = repo.list_universe_discovery_batches(window_id)
+    batches = [
+        batch for batch in all_batches
+        if unit_counts[str(batch["benchmark_batch_id"])] == int(batch["candidate_count"]) > 0
+    ]
+    admitted_ids = {str(batch["benchmark_batch_id"]) for batch in batches}
+    outcomes = [
+        row for row in repo.list_universe_discovery_outcomes(window_id)
+        if str(row["benchmark_batch_id"]) in admitted_ids
+    ]
+    return batches, outcomes, len(all_batches) - len(batches)
+
+
+
+def _handler_advance(window: dict[str, Any]):
+    from aletheia.observation_lab.kernel import ObservationProgress
+
+    benchmark_window = _as_benchmark_window(window)
+    batches, outcomes, orphan_batch_count = _admitted_snapshot(window)
+    finalize_boundary = _utc(str(benchmark_window["finalize_not_before"]))
+    outcome_contract_closed = all(
+        row.get("due_at") and _utc(str(row["due_at"])) <= finalize_boundary
+        for row in outcomes
+    )
+    return ObservationProgress(
+        summary={
+            "batch_count": len(batches),
+            "orphan_batch_count": orphan_batch_count,
+            "outcome_counts": dict(sorted(Counter(str(row["status"]) for row in outcomes).items())),
+            "outcome_contract_closed": outcome_contract_closed,
+        },
+        can_finalize=outcome_contract_closed,
+    )
+
+
+def _handler_finalize(window: dict[str, Any], _path: Path) -> dict[str, Any]:
+    benchmark_window = _as_benchmark_window(window)
+    window_id = str(benchmark_window["id"])
+    batches, outcomes, _ = _admitted_snapshot(window)
+    analysis = analyze_benchmark(window_id, snapshot=(benchmark_window, batches, outcomes))
     runtime_session_ids = sorted({
         str(row[field])
         for row in outcomes
         for field in ("producer_runtime_session_id", "settlement_runtime_session_id")
         if row.get(field)
     })
-    package = {
+    commits = sorted({
+        str(value)
+        for value in [
+            benchmark_window.get("producer_commit"),
+            *(row.get("producer_commit") for row in outcomes),
+            *(row.get("settlement_producer_commit") for row in outcomes),
+        ]
+        if value
+    })
+    return {
         "manifest": {
             "format": BENCHMARK_CONTRACT_VERSION,
             "window_id": window_id,
-            "contract_hash": window["contract_hash"],
-            "code_commit": window["code_commit"],
-            "started_at": window["started_at"],
-            "capture_ends_at": window["capture_ends_at"],
-            "finalized_at": at.isoformat(),
+            "contract_hash": benchmark_window["contract_hash"],
+            "producer_commits": commits,
+            "started_at": benchmark_window["started_at"],
+            "capture_ends_at": benchmark_window["capture_ends_at"],
             "promotion_eligible": False,
             "runtime_session_ids": runtime_session_ids,
         },
-        "contract": json.loads(str(window["contract_json"])),
-        "population_batches": [{**batch, "candidate_facts": decode_filter_decision_batch(str(batch["candidate_facts"]))} for batch in batches],
+        "contract": json.loads(str(benchmark_window["contract_json"])),
+        "population_batches": [
+            {**batch, "candidate_facts": decode_filter_decision_batch(str(batch["candidate_facts"]))}
+            for batch in batches
+        ],
         "outcomes": outcomes,
         "analysis": analysis,
     }
-    artifact = _artifact_bytes(package)
-    path = Path(output).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as target:
-        target.write(artifact)
-    digest = hashlib.sha256(artifact).hexdigest()
-    summary_json = _json({"analysis": analysis, "artifact_sha256": digest, "artifact_size": len(artifact)})
-    frozen_fields = ("status", "contract_json", "contract_hash", "code_commit", "started_at")
-    finalized = False
-    try:
-        with repo.transaction(immediate=True):
-            current_window = repo.get_universe_discovery_benchmark(window_id)
-            current_batches = repo.list_universe_discovery_batches(window_id)
-            current_outcomes = repo.list_universe_discovery_outcomes(window_id)
-            unchanged = (
-                current_window is not None
-                and not any(current_window.get(key) != window.get(key) for key in frozen_fields)
-                and current_batches == batches
-                and current_outcomes == outcomes
-            )
-            if unchanged:
-                finalized = repo.finalize_universe_discovery_benchmark(
-                    window_id,
-                    finalized_at=at.isoformat(),
-                    summary_json=summary_json,
-                    artifact_path=str(path),
-                    artifact_sha256=digest,
-                    artifact_size=len(artifact),
-                )
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
-    if not finalized:
-        path.unlink(missing_ok=True)
-        raise RuntimeError("benchmark_finalize_race")
-    return {**status_benchmark(window_id, now=at), "analysis": analysis}
 
+
+def _register_observation_handler() -> None:
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler,
+        register_handler,
+        registered_handlers,
+    )
+
+    key = ("universe_discovery", _HANDLER_VERSION)
+    if key not in registered_handlers():
+        register_handler(ObservationHandler(
+            kind=key[0],
+            version=key[1],
+            normalize_spec=lambda spec: dict(spec),
+            capture=_handler_capture,
+            advance=_handler_advance,
+            finalize=_handler_finalize,
+            retention_claims=lambda window: (
+                {"domain": "filter_decision_batches", "earliest_at": window["started_at"]},
+                {"domain": "filter_candidate_outcomes", "earliest_at": window["started_at"]},
+            ),
+        ))
+
+
+def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetime | None = None) -> dict[str, Any]:
+    from aletheia.observation_lab.kernel import finalize_window, invalidate_window
+
+    window = status_benchmark(window_id, now=now)
+    if _hash(build_contract()) != str(window["contract_hash"]):
+        invalidate_window(window_id, int(window["generation"]), reason="frozen_contract_drift_at_finalization")
+        raise ValueError("benchmark_frozen_contract_drift")
+    try:
+        finalized = finalize_window(
+            window_id, int(window["generation"]), now=now, output=output,
+        )
+    except ValueError as exc:
+        if str(exc) == "window_finalize_not_due":
+            raise ValueError("benchmark_finalize_not_due") from exc
+        raise
+    return {
+        **status_benchmark(window_id, now=now),
+        "analysis": _handler_finalize(finalized, Path(output))["analysis"],
+    }
+
+
+_register_observation_handler()
 
 __all__ = [
     "BENCHMARK_CONTRACT_VERSION",

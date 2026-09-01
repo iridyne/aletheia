@@ -64,11 +64,31 @@ def list_observations(
 @observe_app.command("status")
 def observation_status(
     observation_id: str = typer.Argument(..., help="Observation id (or unique prefix)."),
+    generation: int | None = typer.Option(None, "--generation", min=1),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Show latest evaluation + frozen unit count for one Observation."""
+    """Show a durable Observation Window, falling back to legacy Shadow status."""
+    from aletheia.observation_lab.kernel import status_window
     from aletheia.observation_lab.units import count_frozen_units
     from aletheia.storage import repositories as repo
+
+    try:
+        durable = status_window(observation_id, generation) if generation else status_window(observation_id)
+    except KeyError:
+        durable = None
+    if durable is not None:
+        if json_output:
+            typer.echo(json.dumps(durable, indent=2, default=str))
+        else:
+            for key in (
+                "observation_id", "generation", "kind", "handler_version", "handler_available",
+                "slot_key", "authority_mode", "status", "phase", "spec_hash", "started_at",
+                "collect_until", "finalize_not_before", "unit_counts", "latest_summary",
+                "last_advanced_at", "last_error", "terminal_reason", "artifact_path",
+                "artifact_sha256",
+            ):
+                typer.echo(f"{key}={durable.get(key)}")
+        return
 
     row = _find_observation(observation_id)
     if row is None:

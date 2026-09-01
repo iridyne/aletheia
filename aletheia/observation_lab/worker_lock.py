@@ -1,18 +1,16 @@
-"""Cross-process cycle lock for the Observation Worker (Issue #1072).
+"""Cross-process lock for one complete Observation cycle (Issues #1072, #1386).
 
 One systemd timer + one CLI command yields at most one Worker pass at any time.
-The same lock also provides a short non-mutating exclusion guard for exceptional
-Main rollback windows: it prevents a new Worker pass from starting while Main
-restores its own pre-update state, without rewriting the Worker's persisted
-source/pass signature.
+Main uses the same lock for its complete cycle and for exceptional rollback
+windows, without rewriting the Worker's persisted source/pass signature.
 
 ## Contract
 
 - ``worker_pass_lock()`` acquires the exclusive lock and writes PID,
   ``acquired_at`` and Worker source commit for audit.
 - ``worker_cycle_exclusion()`` acquires the exact same lock but does not alter
-  the signature file contents. It is for brief integrity-critical exclusion,
-  not normal Worker scheduling.
+  the signature file contents. Main holds it for each complete cycle and for
+  brief integrity-critical exclusion.
 - both are fail-fast on contention; neither waits behind another owner.
 """
 
@@ -128,9 +126,8 @@ def worker_pass_lock(*, source_commit: str | None = None):
 def worker_cycle_exclusion():
     """Hold the Worker cycle lock without changing its persisted signature.
 
-    Intended for the exceptional Main rollback window only. The caller can read
-    the old signature while this guard is held and know that no new Worker pass
-    can start until the guarded operation completes.
+    Main holds this around a complete Observation cycle or an exceptional
+    rollback window. No Worker pass can start until the guarded operation ends.
     """
     lock_path = _lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)

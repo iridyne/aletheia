@@ -67,6 +67,33 @@ def _population(count: int = 18) -> list[dict]:
     return rows
 
 
+def test_start_supersedes_legacy_active_without_copying_samples(benchmark_db):
+    legacy = repo.insert_universe_discovery_benchmark({
+        "id": "legacy-active",
+        "status": "active",
+        "contract_json": json.dumps({"legacy": True}),
+        "contract_hash": "a" * 64,
+        "code_commit": "legacy-commit",
+        "started_at": "2025-12-01T00:00:00+00:00",
+        "capture_ends_at": "2025-12-15T00:00:00+00:00",
+        "finalize_not_before": "2025-12-16T06:00:00+00:00",
+        "created_at": "2025-12-01T00:00:00+00:00",
+        "summary_json": json.dumps({"legacy_samples": 7}),
+    })
+
+    fresh = benchmark.start_benchmark(
+        now="2026-01-01T00:00:00+00:00", code_commit="fresh-commit"
+    )
+    persisted = repo.get_universe_discovery_benchmark(legacy["id"])
+    status = benchmark.status_benchmark(fresh["id"])
+
+    assert persisted["status"] == "invalidated"
+    assert persisted["invalidation_reason"] == "superseded_by_observation_window_kernel"
+    assert json.loads(persisted["summary_json"]) == {"legacy_samples": 7}
+    assert fresh["id"] != legacy["id"]
+    assert fresh["generation"] == 1
+    assert status["unit_counts"] == {}
+
 def test_capture_is_frozen_lossless_and_idempotent(benchmark_db):
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
@@ -107,11 +134,86 @@ def test_capture_is_frozen_lossless_and_idempotent(benchmark_db):
     assert status["promotion_eligible"] is False
 
 
-def test_identity_drift_invalidates_without_rewriting_evidence(benchmark_db, monkeypatch):
+
+def test_app_batch_reconciles_when_lab_append_initially_fails(benchmark_db, monkeypatch):
+    from aletheia.observation_lab import kernel
+
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
-    monkeypatch.setattr(benchmark, "_current_commit", lambda: "commit-b")
+    real_capture_event = kernel.capture_event
+    attempts = 0
 
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("lab append failed")
+        return real_capture_event(*args, **kwargs)
+
+    monkeypatch.setattr(kernel, "capture_event", fail_once)
+    capture = {
+        "scanner_run_id": "reconcile-run",
+        "population": _population(),
+        "allocated": _population()[:5],
+        "entry_ts": started_at,
+        "regime_tag": "sideways",
+    }
+    with pytest.raises(RuntimeError, match="lab append failed"):
+        benchmark.capture_completed_run(**capture)
+    repeated = benchmark.capture_completed_run(**capture)
+
+    assert repeated["idempotent"] is True
+    status = benchmark.status_benchmark(window["id"], now=started_at)
+    assert status["unit_counts"] == {"admitted": len(_population())}
+    batches, outcomes, orphan_count = benchmark._admitted_snapshot(status)
+    assert len(batches) == 1
+    assert outcomes
+    assert orphan_count == 0
+
+
+def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, monkeypatch):
+    from aletheia.observation_lab import kernel
+
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    real_capture_event = kernel.capture_event
+
+    def abort_before_lab_append(observation_id, generation, *args, **kwargs):
+        kernel.abort_window(observation_id, generation, reason="operator race")
+        return real_capture_event(observation_id, generation, *args, **kwargs)
+
+    monkeypatch.setattr(kernel, "capture_event", abort_before_lab_append)
+    with pytest.raises(ValueError, match="window_aborted"):
+        benchmark.capture_completed_run(
+            scanner_run_id="terminal-race",
+            population=_population(),
+            allocated=_population()[:5],
+            entry_ts=started_at,
+            regime_tag="sideways",
+        )
+
+    terminal = benchmark.status_benchmark(window["id"], now=started_at)
+    assert len(repo.list_universe_discovery_batches(window["id"])) == 1
+    batches, outcomes, orphan_count = benchmark._admitted_snapshot(terminal)
+    assert batches == []
+    assert outcomes == []
+    assert orphan_count == 1
+    domain = benchmark._handler_finalize(terminal, benchmark_db / "unused")
+    assert domain["population_batches"] == []
+    assert domain["outcomes"] == []
+def test_runtime_commit_change_is_capture_provenance_not_causal_identity(
+    benchmark_db, monkeypatch
+):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    commit_reads = 0
+
+    def current_commit():
+        nonlocal commit_reads
+        commit_reads += 1
+        return "commit-b"
+
+    monkeypatch.setattr(benchmark, "_current_commit", current_commit)
     result = benchmark.capture_completed_run(
         scanner_run_id="scanner-run-2",
         population=_population(),
@@ -120,10 +222,25 @@ def test_identity_drift_invalidates_without_rewriting_evidence(benchmark_db, mon
         regime_tag=None,
     )
 
-    assert result == {"accepted": False, "reason": "frozen_contract_changed", "invalidated": True}
+    assert result["accepted"] is True
+    assert commit_reads == 1
     status = benchmark.status_benchmark(window["id"], now=started_at)
-    assert status["status"] == "invalidated"
-    assert status["batch_count"] == 0
+    batches = repo.list_universe_discovery_batches(window["id"])
+    outcomes = repo.list_universe_discovery_outcomes(window["id"])
+    assert status["status"] == "active"
+    assert status["spec_hash"] == window["spec_hash"]
+    assert batches[0]["code_commit"] == "commit-b"
+    assert {row["producer_commit"] for row in outcomes} == {"commit-b"}
+    assert "commit-a" not in status["contract_json"]
+    assert "commit-b" not in status["contract_json"]
+
+    output = benchmark_db / "commit-drift.json.gz"
+    benchmark.finalize_benchmark(
+        window["id"], output, now="2026-01-16T06:00:00+00:00"
+    )
+    package = json.loads(gzip.decompress(output.read_bytes()))
+    assert package["manifest"]["producer_commits"] == ["commit-a", "commit-b"]
+    assert package["producer_provenance"]["commits"] == ["commit-a", "commit-b"]
 
 
 def test_finalize_reports_unavailable_and_writes_hashed_package(benchmark_db):
@@ -152,13 +269,58 @@ def test_finalize_reports_unavailable_and_writes_hashed_package(benchmark_db):
     assert result["artifact_sha256"]
     pending = next(row for row in repo.list_universe_discovery_outcomes(window["id"]) if row["status"] == "pending")
     assert repo.settle_filter_candidate_outcome(
-        pending["id"],
-        exit_price=101.0,
-        settled_at="2026-01-16T06:00:01+00:00",
-        economics={},
-        settlement_price_source="horizon_ohlcv",
-        settlement_lag_sec=0.0,
+        pending["id"], exit_price=101.0, settled_at="2026-01-16T06:00:01+00:00",
+        economics={}, settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
     ) is False
+
+
+def test_finalize_waits_for_frozen_outcome_contract_readiness(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(
+        scanner_run_id="not-ready",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    outcome = repo.list_universe_discovery_outcomes(window["id"])[0]
+    repo.execute_write(
+        "UPDATE filter_candidate_outcomes SET due_at=? WHERE id=?",
+        ("2026-01-17T00:00:00+00:00", outcome["id"]),
+    )
+
+    progress = benchmark._handler_advance(benchmark.status_benchmark(window["id"]))
+    assert progress.can_finalize is False
+    assert progress.summary["outcome_contract_closed"] is False
+    with pytest.raises(ValueError, match="window_handler_not_ready"):
+        benchmark.finalize_benchmark(
+            window["id"], benchmark_db / "not-ready.json.gz",
+            now="2026-01-16T06:00:00+00:00",
+        )
+
+
+def test_migrated_handler_matches_legacy_evaluator_on_same_frozen_batches(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(
+        scanner_run_id="differential-fixture",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    frozen_window = benchmark.status_benchmark(window["id"])
+    batches = repo.list_universe_discovery_batches(window["id"])
+    outcomes = repo.list_universe_discovery_outcomes(window["id"])
+    legacy_payload = benchmark.analyze_benchmark(
+        window["id"], snapshot=(frozen_window, batches, outcomes)
+    )
+    migrated_payload = benchmark._handler_finalize(
+        frozen_window, benchmark_db / "unused"
+    )["analysis"]
+
+    assert migrated_payload == legacy_payload
 
 
 def test_active_benchmark_outcomes_preempt_older_backlog(benchmark_db, monkeypatch):
@@ -453,16 +615,21 @@ def test_finalize_cleans_artifact_when_transaction_snapshot_fails(benchmark_db, 
     with pytest.raises(RuntimeError, match="snapshot read failed"):
         benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
     assert output.exists() is False
-    assert repo.get_universe_discovery_benchmark(window["id"])["status"] == "active"
+    assert benchmark.status_benchmark(window["id"])["status"] == "active"
 
 
-def test_finalize_requires_durable_runtime_commit(benchmark_db, monkeypatch):
+def test_finalize_uses_durable_start_provenance_when_runtime_commit_is_unavailable(
+    benchmark_db, monkeypatch
+):
     window = benchmark.start_benchmark(now="2026-01-01T00:00:00+00:00", code_commit="commit-a")
     output = benchmark_db / "missing-commit.json.gz"
     monkeypatch.setattr(benchmark, "_current_commit", lambda: None)
-    with pytest.raises(ValueError, match="benchmark_runtime_commit_unavailable"):
-        benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
-    assert output.exists() is False
+    result = benchmark.finalize_benchmark(
+        window["id"], output, now="2026-01-16T06:00:00+00:00"
+    )
+    package = json.loads(gzip.decompress(output.read_bytes()))
+    assert result["status"] == "finalized"
+    assert package["manifest"]["producer_commits"] == ["commit-a"]
 
 
 def test_inactive_benchmark_rows_leave_general_settlement_queue(benchmark_db):
@@ -611,9 +778,9 @@ def test_finalize_contract_drift_persists_invalidation(benchmark_db, monkeypatch
     monkeypatch.setattr(benchmark, "build_contract", changed_contract)
     with pytest.raises(ValueError, match="benchmark_frozen_contract_drift"):
         benchmark.finalize_benchmark(window["id"], benchmark_db / "drift.json.gz", now="2026-01-16T06:00:00+00:00")
-    persisted = repo.get_universe_discovery_benchmark(window["id"])
+    persisted = benchmark.status_benchmark(window["id"])
     assert persisted["status"] == "invalidated"
-    assert persisted["invalidation_reason"] == "frozen_contract_drift_at_finalization"
+    assert persisted["terminal_reason"] == "frozen_contract_drift_at_finalization"
 
 
 def test_finalized_manifest_unions_capture_and_settlement_sessions(benchmark_db):

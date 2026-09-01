@@ -322,17 +322,32 @@ def _update(table: str, id_val: str, data: dict):
     )
 
 
+def _benchmark_outcome_write_allowed(window_id: str) -> bool:
+    legacy = get_db().execute(
+        "SELECT status FROM universe_discovery_benchmarks WHERE id=?", (window_id,)
+    ).fetchone()
+    if legacy is not None:
+        return str(legacy["status"]) == "active"
+    try:
+        from aletheia.observation_lab.kernel import status_window
+
+        return str(status_window(window_id)["status"]) == "active"
+    except KeyError:
+        return False
+
+
 def _update_pending(table: str, id_val: str, data: dict) -> bool:
     sets = ", ".join(f"{k} = ?" for k in data.keys())
-    benchmark_guard = (
-        " AND (benchmark_window_id IS NULL OR EXISTS ("
-        "SELECT 1 FROM universe_discovery_benchmarks b "
-        f"WHERE b.id={table}.benchmark_window_id AND b.status='active'))"
-        if table == "filter_candidate_outcomes"
-        else ""
-    )
+    if table == "filter_candidate_outcomes":
+        row = get_db().execute(
+            "SELECT benchmark_window_id FROM filter_candidate_outcomes WHERE id=?", (id_val,)
+        ).fetchone()
+        if row and row["benchmark_window_id"] and not _benchmark_outcome_write_allowed(
+            str(row["benchmark_window_id"])
+        ):
+            return False
     result = execute_write(
-        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'{benchmark_guard}",
+        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'",
         [*data.values(), id_val],
     )
     return bool(result.rowcount == 1)
@@ -7089,7 +7104,9 @@ def prune_shadow_trades(days: int = 90) -> int:
 
 
 def prune_filter_decision_batches(days: int = 30) -> int:
-    return _delete_old_rows("filter_decision_batches", days)
+    claim = _observation_retention_floor("filter_decision_batches")
+    cutoff = _effective_cutoff(days, claim)
+    return _delete_by_rowid_batches("filter_decision_batches", "evaluated_at < ?", (cutoff,))
 
 
 class ExperimentStateReadError(Exception):
@@ -7118,6 +7135,17 @@ def min_open_experiment_exposure_at() -> str | None:
         return None
     val = row["m"] if hasattr(row, "keys") else row[0]
     return str(val) if val else None
+
+def _observation_retention_floor(domain: str) -> str | None:
+    try:
+        from aletheia.observation_lab.kernel import active_retention_claims
+
+        state = active_retention_claims()
+    except Exception as exc:
+        raise ExperimentStateReadError(f"Failed to query Observation retention: {exc}") from exc
+    if not state["available"]:
+        raise ExperimentStateReadError("Observation retention claims unavailable")
+    return state["claims"].get(domain)
 
 
 def _effective_cutoff(
@@ -7168,6 +7196,11 @@ def prune_filter_candidate_outcomes(
     """
     if min_experiment_started_at is None:
         min_experiment_started_at = min_open_experiment_exposure_at()
+    observation_floor = _observation_retention_floor("filter_candidate_outcomes")
+    if observation_floor:
+        min_experiment_started_at = min(
+            value for value in (min_experiment_started_at, observation_floor) if value
+        )
     cutoff = _effective_cutoff(days, min_experiment_started_at)
 
     # A row still 'pending' at the cutoff was never measured, and deleting it
@@ -9946,6 +9979,7 @@ def capture_universe_discovery_batch(
     captured_at: str,
     cadence_sec: int = 4 * 60 * 60,
     max_batches: int = 84,
+    window_snapshot: dict | None = None,
 ) -> dict:
     """Atomically accept one benchmark population batch and its outcome intents."""
     batch_data = _benchmark_payload(batch)
@@ -9959,9 +9993,10 @@ def capture_universe_discovery_batch(
     captured_dt = captured_dt.astimezone(timezone.utc)
 
     with transaction(immediate=True):
-        window = get_db().execute(
+        stored_window = get_db().execute(
             "SELECT * FROM universe_discovery_benchmarks WHERE id=?", (window_id,)
         ).fetchone()
+        window = window_snapshot or stored_window
         if window is None:
             raise KeyError(window_id)
         if str(window["status"]) != "active":
@@ -9972,14 +10007,20 @@ def capture_universe_discovery_batch(
         ).fetchone()
         if existing:
             return {"accepted": True, "idempotent": True, "reason": "already_captured", "batch_id": batch_id}
-        if int(window["capture_count"] or 0) >= max_batches:
+        capture_count = get_db().execute(
+            "SELECT COUNT(*) FROM filter_decision_batches WHERE benchmark_window_id=?",
+            (window_id,),
+        ).fetchone()[0]
+        if int(capture_count) >= max_batches:
             return {"accepted": False, "reason": "capture_limit_reached", "batch_id": batch_id}
         started_dt = datetime.fromisoformat(str(window["started_at"]).replace("Z", "+00:00"))
         if started_dt.tzinfo is None:
             started_dt = started_dt.replace(tzinfo=timezone.utc)
         if captured_dt < started_dt.astimezone(timezone.utc):
             return {"accepted": False, "reason": "capture_before_window", "batch_id": batch_id}
-        end_dt = datetime.fromisoformat(str(window["capture_ends_at"]).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(
+            str(dict(window).get("capture_ends_at") or window["collect_until"]).replace("Z", "+00:00")
+        )
         if end_dt.tzinfo is None:
             end_dt = end_dt.replace(tzinfo=timezone.utc)
         if captured_dt >= end_dt.astimezone(timezone.utc):
@@ -10017,10 +10058,11 @@ def capture_universe_discovery_batch(
                 [[row[column] for column in columns] for row in outcome_rows],
             )
             inserted_outcomes = get_db().total_changes - before
-        execute_write(
-            "UPDATE universe_discovery_benchmarks SET capture_count=capture_count+1, last_capture_at=? WHERE id=?",
-            (captured_dt.isoformat(), window_id),
-        )
+        if stored_window is not None:
+            execute_write(
+                "UPDATE universe_discovery_benchmarks SET capture_count=capture_count+1, last_capture_at=? WHERE id=?",
+                (captured_dt.isoformat(), window_id),
+            )
     return {
         "accepted": True,
         "idempotent": False,
@@ -10050,9 +10092,19 @@ def list_universe_discovery_outcomes(window_id: str) -> list[dict]:
 
 
 def list_pending_universe_discovery_outcomes(before_ts: str, limit: int = 200) -> list[dict]:
-    active = get_universe_discovery_benchmark()
-    if not active or str(active.get("status")) != "active" or limit <= 0:
+    if limit <= 0:
         return []
+    try:
+        from aletheia.observation_lab.kernel import active_window
+
+        active = active_window(kind="universe_discovery")
+    except Exception:
+        active = None
+    if active is None:
+        active = get_universe_discovery_benchmark()
+    if not active or str(active.get("status")) != "active":
+        return []
+    window_id = str(active.get("observation_id") or active.get("id"))
     return _select_all(
         "filter_candidate_outcomes",
         where=(
@@ -10060,7 +10112,7 @@ def list_pending_universe_discovery_outcomes(before_ts: str, limit: int = 200) -
             "AND typeof(venue)='text' AND TRIM(venue, "
             f"{SQLITE_PYTHON_STRIP_CHARS_SQL})<>''"
         ),
-        params=(active["id"], before_ts),
+        params=(window_id, before_ts),
         order="due_at ASC, id ASC",
         limit=limit,
     )
