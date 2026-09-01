@@ -36,7 +36,7 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_frozen_units_experiment "
     "ON filter_shadow_frozen_units(experiment_id, first_evaluated_at);"
-    # UFC shadow-equivalence adoption (Issue #1072 Packet 1).
+    # UFC shadow-equivalence observation for Issue #1072.
     # One row per equivalence pass per (observation_id, cohort_key). Append-only:
     # a mismatch never overwrites a prior match; a subsequent match records a
     # new row so we retain the full history for causal audit.
@@ -58,7 +58,7 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_ufc_shadow_equivalence_obs "
     "ON ufc_shadow_equivalence(observation_id, checked_at DESC);"
-    # ExecutionManifest (Issue #1072 Cluster 3 / §"Minimal contracts").
+    # ExecutionManifest for Issue #1072's manifest contract.
     # Immutable per (observation_id, generation, manifest_hash). Publishing
     # a semantically different manifest for the same observation MUST create
     # a new generation — this table never UPDATEs, only INSERTs.
@@ -92,13 +92,11 @@ _LAB_SCHEMA_SQL = (
     "ON execution_manifests(effective_from, effective_until);"
     "CREATE INDEX IF NOT EXISTS idx_execution_manifests_interference "
     "ON execution_manifests(interference_key, effective_from);"
-    # Joint checkpoint (Issue #1072 Cluster 5 / §"Storage and runtime boundary").
-    # Every scheduled Lab pass computes and appends a fingerprint over the
-    # app.db migration head + lab.db manifest-set hashes. A restore that
-    # leaves those two out of step is detectable at startup: the freshly
-    # computed fingerprint disagrees with the most recent stored one, and
-    # the affected Observations fail closed as invalidated (per new #1072
-    # §"Storage and runtime boundary" verbatim).
+    # Joint checkpoint for Issue #1072's storage/runtime continuity evidence.
+    # Every scheduled Lab pass can append a fingerprint over the app.db
+    # migration head plus the active manifest-set hashes. A mismatch remains
+    # detectable; its authority/response is governed by the current checkpoint
+    # contract and executable tests rather than by an implementation-stage note.
     "CREATE TABLE IF NOT EXISTS joint_checkpoints ("
     "checkpoint_id TEXT PRIMARY KEY,"
     "recorded_at TEXT NOT NULL,"
@@ -111,13 +109,13 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_joint_checkpoints_recent "
     "ON joint_checkpoints(recorded_at DESC);"
-    # Typed exposure fact (Issue #1072 Cluster 4 / §"Exposure fact").
+    # Typed exposure fact for Issue #1072.
     # Append-only. Every eligible prospective unit — even one whose manifest
     # resolution declined (fail-closed conflict, not-effective window,
     # malformed input) — records a row so "unavailable / exclusion reason"
     # is inspectable at audit time. Lab side only; production
-    # ``learning_exposures`` remains the canonical write path for legacy
-    # UFC until Packet 2 rewires Main Runtime to consume manifests.
+    # ``learning_exposures`` remains the canonical write path for paths that
+    # have not been explicitly rewired to a compatible manifest consumer.
     "CREATE TABLE IF NOT EXISTS lab_exposures ("
     "exposure_id TEXT PRIMARY KEY,"
     "observation_id TEXT NOT NULL,"
