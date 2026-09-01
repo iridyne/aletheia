@@ -646,7 +646,8 @@ export interface EconomicsBudget {
 	id: string;
 	scope: string;
 	subject: string | null;
-	usd_cap: number;
+	usd_cap: number | null;
+	invalid_reason?: string;
 	window: string;
 	enabled: number;
 	source: string;
@@ -663,10 +664,11 @@ export interface WouldBlockObservation {
 	scope: string;
 	subject: string | null;
 	window: string;
-	usd_cap: number;
-	spent_before_call_usd: number;
-	projected_after_call_usd: number;
-	over_by_usd: number;
+	usd_cap: number | null;
+	spent_before_call_usd?: number;
+	projected_after_call_usd?: number;
+	over_by_usd?: number;
+	reason_code?: string;
 }
 
 export interface EconomicsWouldBlockEvent extends Record<string, unknown> {
