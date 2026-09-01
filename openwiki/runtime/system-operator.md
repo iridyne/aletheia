@@ -86,13 +86,15 @@ The PI Daemon runs as a long-lived `asyncio.Task` inside the uvicorn event loop.
 
 ### Internal Loop (`_pi_daemon_loop`)
 
-1. **Wait phase** — Awaits `_signal_event` with dynamic timeout.
+1. **Wait** — Awaits `_signal_event` with dynamic timeout.
 2. **Debounce** — Sleeps `debounce_sec` (8s) to collect burst signals.
 3. **Runtime guards** — Checks `cfg.runtime.paused` and `cfg.agent.permission_mode`.
 4. **Coalescer drain** — Drains `_pending_events` into the `WakeCoalescer`.
 5. **Evaluation gate** — Evaluates on generic wake, heartbeat, or rate-passing position events.
 6. **Evaluation** — Acquires `_eval_lock`, calls `_run_evaluation`.
 7. **Cooldown** — Bounded sleep before next cycle.
+
+These are runtime control-flow steps, not implementation stages.
 
 ## Trading Decision (`agent_shell/trading_decision.py`)
 
@@ -105,18 +107,20 @@ Rich decision object with:
 - `position_size_usdt`, `stop_price`, `take_profit`, `expected_horizon_hours`
 - `order_type` ("market" | "limit"), `market_type`, `venue`, `leverage`
 - Debate fields: `debate_ran`, `debate_initial_conviction`, `debate_bull_confidence`, `debate_bear_confidence`
-- R0 attribution: `opportunity_id`, `strategy_id`, `scanner_family`, `signal_source`
-- S4/P2: `bear_case`, `key_assumptions`, `observed_facts`, `interpretations`, `invalidation_conditions`
+- attribution: `opportunity_id`, `strategy_id`, `scanner_family`, `signal_source`
+- reasoning detail: `bear_case`, `key_assumptions`, `observed_facts`, `interpretations`, `invalidation_conditions`
 
 ### Decision Flow
 
 1. `_assess_opportunity(ctx)` — LLM structured call with `_DECISION_SCHEMA`.
 2. `_parse_decision(raw)` — Validates and parses raw LLM output into `TradingDecision`.
 3. On malformed → `_reassess_direct_skip` (one bounded correction pass).
-4. `_attach_opportunity_context` — R0 attribution: matches pick back to source opportunity.
+4. `_attach_opportunity_context` — matches pick back to source opportunity.
 5. Entry plan preflight — Validates entry mark.
 6. If conviction in uncertain range (40–80) → Bull/Bear debate.
 7. Conviction-based position sizing.
+
+This is the runtime decision flow; the numbering has no project-delivery meaning.
 
 ### Safety
 
@@ -145,11 +149,14 @@ Autonomous system governance at 4h cadence. The Operator is a **Supervisor, not 
 
 Main entry — called by scheduler every 4h.
 
-**Flow:**
-1. **Phase 1** — `build_system_assessment()`
-2. **Phase 2** — `decide_actions(assessment)`
-3. **Phase 3** — Execute actions by level
-4. **Phase 4** — Persist assessment as `knowledge_item`
+**Runtime flow:**
+
+- **Assessment** — `build_system_assessment()`
+- **Decision** — `decide_actions(assessment)`
+- **Action** — execute each approved action according to its permission level
+- **Persistence** — persist the resulting assessment as `knowledge_item`
+
+These names describe runtime semantics only; they are not development stages.
 
 ### `SystemAssessment` Dataclass
 
