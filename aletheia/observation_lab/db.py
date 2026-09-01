@@ -21,6 +21,7 @@ from pathlib import Path
 from aletheia.config.loader import get_data_dir
 
 _local = threading.local()
+_readonly_local = threading.local()
 _WRITE_LOCK = threading.RLock()
 
 
@@ -230,6 +231,12 @@ def get_lab_db() -> sqlite3.Connection:
     reopens against the new path. Schema is materialized on every open — the
     ``IF NOT EXISTS`` guard keeps it idempotent.
     """
+    readonly_connection = getattr(_readonly_local, "connection", None)
+    if readonly_connection is not None:
+        return readonly_connection
+    if getattr(_readonly_local, "block_missing", False):
+        raise FileNotFoundError(get_data_dir() / "observation-lab" / "lab.db")
+
     target = lab_db_path()
     cached_path = getattr(_local, "path", None)
     cached_conn = getattr(_local, "conn", None)
@@ -254,6 +261,46 @@ def get_lab_db() -> sqlite3.Connection:
     _local.conn = conn
     _local.path = target
     return conn
+
+
+@contextmanager
+def readonly_lab_db(*, allow_missing: bool = False):
+    """Open ``lab.db`` physically read-only without creating Lab state."""
+    previous_connection = getattr(_readonly_local, "connection", None)
+    previous_block = getattr(_readonly_local, "block_missing", False)
+    if previous_connection is not None:
+        yield previous_connection
+        return
+
+    path = get_data_dir() / "observation-lab" / "lab.db"
+    if not path.is_file():
+        if allow_missing:
+            _readonly_local.connection = None
+            _readonly_local.block_missing = True
+            try:
+                yield None
+            finally:
+                _readonly_local.connection = previous_connection
+                _readonly_local.block_missing = previous_block
+            return
+        raise FileNotFoundError(path)
+
+    connection = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=1.0,
+    )
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only=ON")
+    _readonly_local.connection = connection
+    _readonly_local.block_missing = False
+    try:
+        yield connection
+    finally:
+        _readonly_local.connection = previous_connection
+        _readonly_local.block_missing = previous_block
+        connection.close()
+
 
 @contextmanager
 def lab_transaction(*, immediate: bool = False):

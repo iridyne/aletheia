@@ -140,11 +140,13 @@ Its exact authority on mismatch is governed by the current checkpoint/backup con
 
 No Observation command may bypass Risk, Execution, credentials, config-mutation authority or owner-gated behavior promotion.
 
-Operator status should report current Lab owner, window results/errors, relevant manifest/checkpoint state and unavailable/degraded conditions honestly.
+`aletheia observe overview` is the single read-only operational health entrypoint. Its JSON projection preserves the existing experiments, UFC equivalence, manifests and checkpoint fields, and adds aggregate `healthy | degraded | unavailable` status, sorted reason codes, execution owner, physical storage reachability, live Worker systemd evidence and active durable windows. Text and JSON output render the same projection, and every health level exits zero so automation reads the status fields rather than treating a diagnostic state as a command failure.
+
+Overview opens both databases physically read-only and never creates a missing Lab directory, database or schema. It reports Worker checkout identity from the live service `WorkingDirectory` plus that checkout's exact local HEAD; it does not fetch, start, stop, reset or reload anything. `last_advanced_at` is evidence only: the command defines no synthetic freshness threshold, and zero active windows is healthy when the other required evidence is healthy.
 
 ## Failure semantics
 
-- missing Lab directory/database may be initialized idempotently;
+- mutating Lab entrypoints may initialize a missing Lab directory/database idempotently; read-only overview reports it unavailable without creating it;
 - corrupt/unopenable Lab state produces typed/degraded window results rather than silently claiming success;
 - one evaluator/window failure remains isolated;
 - concurrent worker ownership is rejected by the cross-process lock;
