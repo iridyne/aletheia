@@ -32,7 +32,7 @@ def _hist_cfg(
 class FakeJob:
     def __init__(self):
         self.trigger = None
-        self.next_run_time = None
+        self.next_run_time = object()
 
 
 class FakeScheduler:
@@ -43,6 +43,7 @@ class FakeScheduler:
         self.added = []
         self.removed = []
         self.rescheduled = []
+        self.modified = []
         self.paused = []
         self.timezone = None
 
@@ -69,10 +70,20 @@ class FakeScheduler:
         if job is None:
             raise KeyError(f"no job {job_id!r}")
         job.trigger = trigger
+        job.next_run_time = object()
         job.kwargs = kwargs
         self.rescheduled.append((job_id, trigger, kwargs))
 
+    def modify_job(self, job_id, **kwargs):
+        job = self._jobs.get(job_id)
+        if job is None:
+            raise KeyError(f"no job {job_id!r}")
+        for field, value in kwargs.items():
+            setattr(job, field, value)
+        self.modified.append((job_id, kwargs))
+
     def pause_job(self, job_id):
+        self._jobs[job_id].next_run_time = None
         self.paused.append(job_id)
 
 
@@ -244,7 +255,7 @@ def test_filter_controller_off_to_on_pauses_when_layered(monkeypatch):
     assert "filter_controller_observe" in paused_set
 
 
-def test_filter_controller_on_to_off_removes_job(monkeypatch):
+def test_filter_controller_shadow_disabled_keeps_paused_main_job(monkeypatch):
     from aletheia.agent_runtime import scheduler
 
     existing = FakeJob()
@@ -252,12 +263,17 @@ def test_filter_controller_on_to_off_removes_job(monkeypatch):
     monkeypatch.setattr(scheduler, "_scheduler", fs)
     paused_set = {"filter_controller_observe"}
     monkeypatch.setattr(scheduler, "_selectively_paused_jobs", paused_set)
+    monkeypatch.setattr(
+        "aletheia.observation_lab.execution_owner.is_worker_owner",
+        lambda: False,
+    )
 
     result = scheduler.reconcile_filter_controller(shadow_enabled=False, observe_interval_hours=4)
 
     assert result is True
-    assert "filter_controller_observe" in fs.removed
-    assert "filter_controller_observe" not in paused_set
+    assert "filter_controller_observe" not in fs.removed
+    assert existing.next_run_time is None
+    assert "filter_controller_observe" in paused_set
 
 
 def test_filter_controller_interval_change_reschedules(monkeypatch):
@@ -310,6 +326,33 @@ def test_reschedule_telegram_summary_no_scheduler_returns_false(monkeypatch):
 
     monkeypatch.setattr(scheduler, "_scheduler", None)
     assert scheduler.reschedule_telegram_summary(20) is False
+
+
+def test_trigger_changes_preserve_layered_pause(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    job_ids = {
+        "filter_controller_observe",
+        "daily_summary",
+        "universe_refresh",
+    }
+    jobs = {job_id: FakeJob() for job_id in job_ids}
+    for job in jobs.values():
+        job.next_run_time = None
+    fs = FakeScheduler(jobs=jobs)
+    monkeypatch.setattr(scheduler, "_scheduler", fs)
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", set(job_ids))
+    monkeypatch.setattr(
+        "aletheia.observation_lab.execution_owner.is_worker_owner",
+        lambda: False,
+    )
+
+    assert scheduler.reconcile_filter_controller(True, 8) is True
+    assert scheduler.reschedule_telegram_summary(20) is True
+    assert scheduler.reschedule_universe_refresh(30) is True
+
+    assert all(job.next_run_time is None for job in jobs.values())
+    assert scheduler._selectively_paused_jobs == job_ids
 
 
 # ─── Settings route integration ──────────────────────────────────────────────
