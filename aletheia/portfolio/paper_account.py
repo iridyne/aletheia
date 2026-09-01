@@ -97,7 +97,11 @@ def _unsettled_local_closes() -> list[dict]:
 def _reserved_margin_usdt(positions: list[dict]) -> float:
     total = 0.0
     for position in positions:
-        leverage = max(float(position.get("leverage") or 1), 1.0)
+        leverage = (
+            1.0
+            if position.get("market_type") == "spot"
+            else max(float(position.get("leverage") or 1), 1.0)
+        )
         total += float(position["quantity"]) * float(position["entry_price"]) / leverage
     return round(total, 8)
 

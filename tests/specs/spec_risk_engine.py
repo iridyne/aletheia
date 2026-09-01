@@ -77,6 +77,63 @@ def test_risk_engine_has_minimum_check_count():
 
 @spec_claim(
     SpecClaim(
+        "RE-B31",
+        "risk_engine_contract",
+        "§2 spot leverage identity",
+        "L2b",
+        "Native spot proposals accept only NULL or 1x leverage; contradictory "
+        "legacy paper positions still reserve their full spot notional.",
+        status="implemented",
+    ),
+)
+def test_spot_leverage_is_rejected_and_reserved_at_one_x(monkeypatch):
+    from aletheia.execution import paper_tools
+    from aletheia.portfolio.paper_account import _reserved_margin_usdt
+    from aletheia.risk.engine import _native_input_violations
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        leverage=10,
+        execution_mode="paper_internal",
+    )
+
+    assert "invalid_spot_leverage" in _native_input_violations(proposal)
+    side_effects = []
+    monkeypatch.setattr(
+        paper_tools, "insert_trade_proposal", lambda _: side_effects.append("proposal")
+    )
+    monkeypatch.setattr(
+        paper_tools, "execute_existing_proposal", lambda *_: side_effects.append("order")
+    )
+    with pytest.raises(ValueError, match="spot leverage must be 1"):
+        paper_tools.submit_prepared_paper_proposal(proposal)
+    assert side_effects == []
+    assert _reserved_margin_usdt(
+        [{"market_type": "spot", "quantity": 1.0, "entry_price": 100.0, "leverage": 10}]
+    ) == 100.0
+
+    for leverage in (None, 1):
+        valid_spot = proposal.model_copy(update={"leverage": leverage})
+        assert "invalid_spot_leverage" not in _native_input_violations(valid_spot)
+    assert _reserved_margin_usdt(
+        [
+            {
+                "market_type": "usdt_futures",
+                "quantity": 1.0,
+                "entry_price": 100.0,
+                "leverage": 10,
+            }
+        ]
+    ) == 10.0
+
+
+@spec_claim(
+    SpecClaim(
         "RE-B20", "risk_engine_contract", "§2 check 8 authoritative account loss", "L2b",
         "Daily-loss protection blocks when account truth is unavailable without fabricating a "
         "threshold breach, and exact authoritative loss retains the existing threshold check.",
