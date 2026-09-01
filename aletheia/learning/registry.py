@@ -52,6 +52,16 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         statistical_unit="universe_allocation_member",
     ),
     LearningPath(
+        "momentum_entry_geometry", "Momentum geometry v2", "Entry Plan compiler",
+        "controlled Paper TriggerSpec selection", ("entry_geometry",),
+        "momentum_geometry", "fixed-horizon candidate net outcome",
+        "momentum-retrace-reclaim/v1", measurement_supported=True,
+        behavior_contract_version="momentum-entry-geometry-treatment/v1",
+        outcome_contract_version=RANKER_CASE_OUTCOME_CONTRACT_VERSION,
+        metric_version="momentum_geometry_candidate_net_utility_v1",
+        statistical_unit="exact_momentum_candidate",
+    ),
+    LearningPath(
         "observer_advisory_bundle", "knowledge router and trading memo", "market observer",
         "advisory prompt context", ("prompt_advisory",), "observer",
         "fixed-horizon emitted-opportunity outcome", "empty Learning memory bundle",

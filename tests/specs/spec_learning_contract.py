@@ -21,7 +21,11 @@ def test_only_declared_closed_loops_are_measurement_supported():
         for path in LEARNING_PATHS
         if path.measurement_supported
     }
-    assert supported == {"universe_family_calibration", "ranker_case_score"}
+    assert supported == {
+        "universe_family_calibration",
+        "ranker_case_score",
+        "momentum_entry_geometry",
+    }
     assert any(
         path.consumer_wired and not path.measurement_supported
         for path in LEARNING_PATHS

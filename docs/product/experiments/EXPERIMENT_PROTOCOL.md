@@ -133,13 +133,13 @@ to its classification.
 
 ## 5. Current measured Learning protocol
 
-The registry is the executable path inventory. Both
-`universe_family_calibration` and `ranker_case_score` are currently
-measurement-supported; UFC is the only Paper-authority-capable path.
-
-`ranker_case_score` uses an exact candidate-level 4h
-`filter_candidate_outcomes` contract and remains Shadow-only. It does not
-emit UFC trial-integrity readiness or grant Paper authority.
+The registry is the executable path inventory. `universe_family_calibration`,
+`ranker_case_score`, and `momentum_entry_geometry` are measurement-supported.
+UFC and Momentum geometry can receive owner-gated Paper authority. Momentum uses
+one exact Candidate, a stable control/treatment assignment, and the exact 4h
+`filter_candidate_outcomes` adapter; v2 execution additionally requires its
+immutable applied-treatment exposure receipt. `ranker_case_score` remains
+Shadow-only and grants no Paper authority.
 
 ### Shadow measurement
 

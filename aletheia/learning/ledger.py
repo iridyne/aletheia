@@ -419,6 +419,11 @@ def get_trial_admission_event(successor_experiment_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_exposure(exposure_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM learning_exposures WHERE exposure_id=?", (exposure_id,)
+    ).fetchone()
+    return dict(row) if row else None
 def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM learning_exposures WHERE dedup_key=?", (dedup_key,)

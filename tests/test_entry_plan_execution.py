@@ -70,6 +70,43 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
     )
 
 
+def test_momentum_v2_requires_and_preserves_treatment_receipt(monkeypatch):
+    plan = _plan(account_mode="paper_internal").model_copy(
+        update={
+            "trigger_spec_version": "v2",
+            "treatment_exposure_id": "exposure-treatment",
+            "trigger_params": {
+                **_plan().trigger_params,
+                "geometry_version": "momentum-entry-geometry/v2",
+                "geometry_fingerprint": "f" * 64,
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.ledger.get_exposure",
+        lambda _exposure_id: {
+            "path_id": "momentum_entry_geometry",
+            "assignment": "treatment",
+            "after_json": json.dumps({"value": 1.0}),
+            "manifest_json": json.dumps({"geometry_available": True}),
+        },
+    )
+    observed_at = datetime.now(timezone.utc).isoformat()
+    proposal = build_entry_plan_order_intent(
+        plan, bid=100, ask=100.05, observed_at=observed_at, source_observed_at=observed_at
+    )
+    attribution = json.loads(proposal.attribution_snapshot)
+    assert attribution["treatment_exposure_id"] == "exposure-treatment"
+    assert attribution["geometry_version"] == "momentum-entry-geometry/v2"
+
+    with pytest.raises(ValueError, match="entry_plan_treatment_exposure_required"):
+        build_entry_plan_order_intent(
+            plan.model_copy(update={"treatment_exposure_id": None}),
+            bid=100,
+            ask=100.05,
+            observed_at=observed_at,
+            source_observed_at=observed_at,
+        )
 def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
     plan = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
     with pytest.raises(ValueError, match="post_only_would_cross_bbo"):

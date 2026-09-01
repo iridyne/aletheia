@@ -6,6 +6,7 @@ import asyncio
 import json
 import math
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -372,7 +373,23 @@ async def plan_next_candidate(
         )
         from aletheia.trading.entry_plan_compiler import compile_entry_plan
 
-        plan = compile_entry_plan(generation, candidate, feature, intent, cfg)
+        compile_now = datetime.now(timezone.utc)
+        candles = None
+        if generation.get("candidate_family") == "momentum" and intent.execution_mode == "TRIGGERED":
+            cutoff_ms = int(compile_now.timestamp() * 1000)
+            cutoff_ms -= cutoff_ms % (15 * 60 * 1000)
+            candles = repo.get_ohlcv_candles(
+                generation["symbol"],
+                "15m",
+                21,
+                generation["venue"],
+                generation["market_type"],
+                cutoff_ms,
+                include_provenance=True,
+            )
+        plan = compile_entry_plan(
+            generation, candidate, feature, intent, cfg, candles=candles, now=compile_now
+        )
     except PlanIntentError as exc:
         if exc.code in {
             "NO_COMPATIBLE_TRIGGER_SPEC",

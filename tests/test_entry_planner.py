@@ -479,8 +479,12 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
         *,
         execution_mode="RESTING_MAKER",
         order_tactic="POST_ONLY_LIMIT",
+        treatment=False,
     ):
         triggered = execution_mode == "TRIGGERED"
+        candidate = {"entry_price_usd": 100.0}
+        if treatment:
+            candidate["learning_candidate_key"] = "momentum-candidate-1"
         return compile_entry_plan(
             {
                 "id": f"generation-{market_type}-{execution_mode}-{order_tactic}",
@@ -491,7 +495,7 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
                 "market_type": market_type,
                 "direction": "long",
             },
-            {"entry_price_usd": 100.0},
+            candidate,
             {"atr_pct": 10.0},
             PlanIntent(
                 decision="ENTRY_PLAN",
@@ -507,6 +511,7 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
                 horizon="INTRADAY",
             ),
             cfg,
+            candles=[{}] if treatment else None,
         )
 
     perp = compile_for("perp")
@@ -537,6 +542,43 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
     assert triggered_taker.bbo_reference == "ask"
     assert triggered_taker.max_slippage_bps == 20.0
     assert triggered_taker.worst_price == pytest.approx(100.2)
+    trigger_params = {
+        "breakout_level": 100.0,
+        "pullback_low": 99.0,
+        "pullback_high": 100.0,
+        "entry_low": 100.0,
+        "entry_high": 101.0,
+        "invalidation_price": 98.0,
+        "sweep_low": 99.0,
+        "sweep_high": 100.0,
+        "atr_abs": 2.0,
+        "geometry_version": "momentum-entry-geometry/v2",
+        "geometry_fingerprint": "a" * 64,
+    }
+    geometry = SimpleNamespace(
+        entry_zone=(100.0, 101.0),
+        stop_price=98.0,
+        target_price=106.0,
+        trigger_params=lambda: trigger_params,
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.compile_momentum_entry_geometry_v2",
+        lambda **_kwargs: geometry,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **_kwargs: SimpleNamespace(value=1.0, exposure_id="exposure-treatment"),
+    )
+    treatment_plan = compile_for(
+        "perp",
+        execution_mode="TRIGGERED",
+        order_tactic="OPPOSING_BBO_IOC",
+        treatment=True,
+    )
+    assert treatment_plan.trigger_spec_version == "v2"
+    assert treatment_plan.treatment_exposure_id == "exposure-treatment"
+    assert treatment_plan.max_risk_pct == triggered_taker.max_risk_pct
+    assert treatment_plan.max_leverage == triggered_taker.max_leverage
 
 
 def test_plan_intent_portable_schema_requires_every_strict_property():
