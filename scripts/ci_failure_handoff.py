@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Produce the canonical machine-readable CI failure handoff (``ci_failure_handoff.v1``).
 
-Phase 1 (#2167 §1.5, addendum B): a future write-capable AI repair executor must
-be able to consume a failing CI run deterministically. This script is the
-repository-native reference producer of the versioned handoff schema and the
-fail-closed retry policy mapping.
+Issue #2167 requires a future write-capable AI repair executor to consume a
+failing CI run deterministically. This script is the repository-native
+reference producer of the versioned handoff schema and the fail-closed retry
+policy mapping.
 
 Schema (all fields bounded; never includes secrets or unbounded raw logs):
 
@@ -62,7 +62,7 @@ CATEGORIES = (
     "unknown",
 )
 
-# Fail-closed retry policy (addendum B). Single source of truth for advice flags.
+# Fail-closed retry policy for the CI handoff contract.
 CATEGORY_POLICY: dict[str, dict[str, bool]] = {
     "preflight_metadata": {
         "retry_without_code_change": True,
@@ -310,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def selftest() -> int:
-    """Smallest runnable proof of the handoff schema/policy (Phase 1 acceptance)."""
+    """Smallest runnable proof of the handoff schema and retry policy."""
     cases = [
         # (job, step, excerpt, explicit, expected_category, repair_commit_required)
         ("Verify Change Contract", "Verify Change Contract structure", "", "preflight_metadata", "preflight_metadata", False),
