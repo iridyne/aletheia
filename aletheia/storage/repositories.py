@@ -324,8 +324,15 @@ def _update(table: str, id_val: str, data: dict):
 
 def _update_pending(table: str, id_val: str, data: dict) -> bool:
     sets = ", ".join(f"{k} = ?" for k in data.keys())
+    benchmark_guard = (
+        " AND (benchmark_window_id IS NULL OR EXISTS ("
+        "SELECT 1 FROM universe_discovery_benchmarks b "
+        f"WHERE b.id={table}.benchmark_window_id AND b.status='active'))"
+        if table == "filter_candidate_outcomes"
+        else ""
+    )
     result = execute_write(
-        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'",
+        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'{benchmark_guard}",
         [*data.values(), id_val],
     )
     return bool(result.rowcount == 1)
@@ -9967,6 +9974,11 @@ def capture_universe_discovery_batch(
             return {"accepted": True, "idempotent": True, "reason": "already_captured", "batch_id": batch_id}
         if int(window["capture_count"] or 0) >= max_batches:
             return {"accepted": False, "reason": "capture_limit_reached", "batch_id": batch_id}
+        started_dt = datetime.fromisoformat(str(window["started_at"]).replace("Z", "+00:00"))
+        if started_dt.tzinfo is None:
+            started_dt = started_dt.replace(tzinfo=timezone.utc)
+        if captured_dt < started_dt.astimezone(timezone.utc):
+            return {"accepted": False, "reason": "capture_before_window", "batch_id": batch_id}
         end_dt = datetime.fromisoformat(str(window["capture_ends_at"]).replace("Z", "+00:00"))
         if end_dt.tzinfo is None:
             end_dt = end_dt.replace(tzinfo=timezone.utc)

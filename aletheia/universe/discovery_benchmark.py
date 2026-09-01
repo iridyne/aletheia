@@ -548,21 +548,40 @@ def _seed(contract_hash: str, comparison: str) -> int:
     return int(hashlib.sha256(f"{contract_hash}|{comparison}".encode()).hexdigest()[:16], 16)
 
 
-def _paired_inference(differences: Mapping[str, float], *, contract_hash: str, comparison: str) -> dict[str, Any]:
-    values = list(differences.values())
-    if len(values) < MIN_INFERENCE_BATCHES:
-        return {"available": False, "reason": "insufficient_complete_batches", "complete_batches": len(values)}
+def _paired_inference(
+    differences: Mapping[str, float | Sequence[float]],
+    *,
+    contract_hash: str,
+    comparison: str,
+) -> dict[str, Any]:
+    clusters = [
+        [float(value)] if isinstance(value, (int, float)) else [float(item) for item in value]
+        for value in differences.values()
+    ]
+    clusters = [cluster for cluster in clusters if cluster]
+    if len(clusters) < MIN_INFERENCE_BATCHES:
+        return {"available": False, "reason": "insufficient_complete_batches", "complete_batches": len(clusters)}
     rng = random.Random(_seed(contract_hash, comparison))
-    draws = [statistics.fmean(rng.choices(values, k=len(values))) for _ in range(BOOTSTRAP_DRAWS)]
+    values = [value for cluster in clusters for value in cluster]
+    draws = [
+        statistics.fmean(value for cluster in rng.choices(clusters, k=len(clusters)) for value in cluster)
+        for _ in range(BOOTSTRAP_DRAWS)
+    ]
     observed = statistics.fmean(values)
     extreme = 0
     for _ in range(BOOTSTRAP_DRAWS):
-        permuted = [value if rng.getrandbits(1) else -value for value in values]
+        permuted = [
+            value * sign
+            for cluster in clusters
+            for sign in (1 if rng.getrandbits(1) else -1,)
+            for value in cluster
+        ]
         if abs(statistics.fmean(permuted)) >= abs(observed):
             extreme += 1
     return {
         "available": True,
-        "complete_batches": len(values),
+        "complete_batches": len(clusters),
+        "complete_pairs": len(values),
         "mean_difference_pct": observed,
         "ci95": [_percentile(draws, 0.025), _percentile(draws, 0.975)],
         "p_value": (extreme + 1) / (BOOTSTRAP_DRAWS + 1),
@@ -584,19 +603,26 @@ def _holm(results: dict[str, dict[str, Any]]) -> None:
         running = max(running, min(1.0, p_value * (total - index)))
         results[key]["holm_adjusted_p"] = running
 
-
-def analyze_benchmark(window_id: str) -> dict[str, Any]:
-    window = repo.get_universe_discovery_benchmark(window_id)
+def analyze_benchmark(
+    window_id: str,
+    *,
+    snapshot: tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    if snapshot is None:
+        window = repo.get_universe_discovery_benchmark(window_id)
+        batches = repo.list_universe_discovery_batches(window_id)
+        rows = repo.list_universe_discovery_outcomes(window_id)
+    else:
+        window, batches, rows = snapshot
     if window is None:
         raise KeyError(window_id)
-    batches = repo.list_universe_discovery_batches(window_id)
-    rows = repo.list_universe_discovery_outcomes(window_id)
     contract = json.loads(str(window["contract_json"]))
     costs = contract["config"]["costs"]
     measurements: list[dict[str, Any]] = []
     for row in rows:
         value = dict(row)
         net = None
+        economics: dict[str, Any] | None = None
         if value.get("status") == "settled" and _finite(value.get("exit_price_usd")) not in (None, 0.0):
             economics = estimate_outcome_economics(
                 entry_price=float(value["entry_price_usd"]),
@@ -617,6 +643,10 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
             "cohorts": json.loads(value.get("benchmark_cohorts") or "[]"),
             "path": json.loads(value.get("benchmark_path_facts") or "{}"),
             "frozen_net_return_pct": net,
+            "frozen_cost_components": {
+                field: _finite(economics.get(field)) if economics else None
+                for field in ("estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct")
+            },
         })
 
     cohort_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -644,7 +674,7 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
         if pair.keys() >= {"selected", "control"}:
             paired_by_batch[batch_id].append(pair["selected"] - pair["control"])
     selected_control = _paired_inference(
-        {batch: statistics.fmean(values) for batch, values in paired_by_batch.items()},
+        paired_by_batch,
         contract_hash=str(window["contract_hash"]), comparison="selected_vs_matched",
     )
 
@@ -681,8 +711,9 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
     max_continuity_gap_sec = max(continuity_gaps, default=0.0)
     batch_dates = {timestamp.date().isoformat() for timestamp in batch_times}
     selected_4h = summaries.get("production_selected", {}).get("4h", {})
+    matched_4h = summaries.get("matched_non_selected", {}).get("4h", {})
     intended_selected = int(selected_4h.get("intended") or 0)
-    matched_intended = int(summaries.get("matched_non_selected", {}).get("4h", {}).get("intended") or 0)
+    matched_intended = int(matched_4h.get("intended") or 0)
     integrity_reasons: list[str] = []
     if len(batches) < MIN_BATCHES:
         integrity_reasons.append("insufficient_capture_batches")
@@ -692,6 +723,8 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
         integrity_reasons.append("material_capture_continuity_gap")
     if (selected_4h.get("coverage") or 0.0) < MIN_OUTCOME_COVERAGE:
         integrity_reasons.append("insufficient_selected_outcome_coverage")
+    if (matched_4h.get("coverage") or 0.0) < MIN_OUTCOME_COVERAGE:
+        integrity_reasons.append("insufficient_matched_outcome_coverage")
     if intended_selected == 0 or matched_intended / intended_selected < MIN_MATCH_COVERAGE:
         integrity_reasons.append("insufficient_matching_coverage")
     if not selected_control.get("available"):
@@ -720,22 +753,23 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
 
     family_means = {label: summaries.get(label, {}).get("4h", {}).get("mean_net_return_pct") for label in family_labels}
     supported = None
-    for candidate, mean in family_means.items():
-        if mean is None or mean <= 0:
-            continue
-        wins = []
-        for other in family_labels:
-            if other == candidate:
+    if not integrity_reasons:
+        for candidate, mean in family_means.items():
+            if mean is None or mean <= 0:
                 continue
-            direct = comparisons.get(f"{candidate}_vs_{other}")
-            inverse = comparisons.get(f"{other}_vs_{candidate}")
-            if direct:
-                wins.append(bool(direct.get("available") and direct.get("ci95", [0])[0] > 0 and direct.get("holm_adjusted_p", 1) < 0.05))
-            elif inverse:
-                wins.append(bool(inverse.get("available") and inverse.get("ci95", [0, 0])[1] < 0 and inverse.get("holm_adjusted_p", 1) < 0.05))
-        if wins and all(wins):
-            supported = candidate
-            break
+            wins = []
+            for other in family_labels:
+                if other == candidate:
+                    continue
+                direct = comparisons.get(f"{candidate}_vs_{other}")
+                inverse = comparisons.get(f"{other}_vs_{candidate}")
+                if direct:
+                    wins.append(bool(direct.get("available") and direct.get("ci95", [0])[0] > 0 and direct.get("holm_adjusted_p", 1) < 0.05))
+                elif inverse:
+                    wins.append(bool(inverse.get("available") and inverse.get("ci95", [0, 0])[1] < 0 and inverse.get("holm_adjusted_p", 1) < 0.05))
+            if wins and all(wins):
+                supported = candidate
+                break
 
     symbols = Counter(str(row["symbol"]) for row in measurements if row["horizon"] == "4h")
     dates = Counter(str(row["entry_ts"])[:10] for row in measurements if row["horizon"] == "4h")
@@ -762,7 +796,11 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
     cost_components = {
         field: (statistics.fmean(values) if values else None)
         for field in ("estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct")
-        if (values := [float(value) for row in selected_settled_4h if (value := _finite(row.get(field))) is not None]) is not None
+        if (values := [
+            float(value)
+            for row in selected_settled_4h
+            if (value := row["frozen_cost_components"].get(field)) is not None
+        ]) is not None
     }
     source_counts = Counter(str(row.get("settlement_price_source") or "unavailable") for row in measurements)
     settlement_lags = [value for row in measurements if (value := _finite(row.get("settlement_lag_sec"))) is not None]
@@ -840,7 +878,7 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
         raise ValueError("benchmark_runtime_commit_drift")
     batches = repo.list_universe_discovery_batches(window_id)
     outcomes = repo.list_universe_discovery_outcomes(window_id)
-    analysis = analyze_benchmark(window_id)
+    analysis = analyze_benchmark(window_id, snapshot=(window, batches, outcomes))
     runtime_session_ids = sorted({str(row.get("producer_runtime_session_id")) for row in outcomes if row.get("producer_runtime_session_id")})
     package = {
         "manifest": {
@@ -866,18 +904,29 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
         target.write(artifact)
     digest = hashlib.sha256(artifact).hexdigest()
     summary_json = _json({"analysis": analysis, "artifact_sha256": digest, "artifact_size": len(artifact)})
-    current_window = repo.get_universe_discovery_benchmark(window_id)
     frozen_fields = ("status", "contract_json", "contract_hash", "code_commit", "started_at")
-    if current_window is None or any(current_window.get(key) != window.get(key) for key in frozen_fields):
-        raise RuntimeError("benchmark_finalize_race")
-    if not repo.finalize_universe_discovery_benchmark(
-        window_id,
-        finalized_at=at.isoformat(),
-        summary_json=summary_json,
-        artifact_path=str(path),
-        artifact_sha256=digest,
-        artifact_size=len(artifact),
-    ):
+    finalized = False
+    with repo.transaction(immediate=True):
+        current_window = repo.get_universe_discovery_benchmark(window_id)
+        current_batches = repo.list_universe_discovery_batches(window_id)
+        current_outcomes = repo.list_universe_discovery_outcomes(window_id)
+        unchanged = (
+            current_window is not None
+            and not any(current_window.get(key) != window.get(key) for key in frozen_fields)
+            and current_batches == batches
+            and current_outcomes == outcomes
+        )
+        if unchanged:
+            finalized = repo.finalize_universe_discovery_benchmark(
+                window_id,
+                finalized_at=at.isoformat(),
+                summary_json=summary_json,
+                artifact_path=str(path),
+                artifact_sha256=digest,
+                artifact_size=len(artifact),
+            )
+    if not finalized:
+        path.unlink(missing_ok=True)
         raise RuntimeError("benchmark_finalize_race")
     return {**status_benchmark(window_id, now=at), "analysis": analysis}
 

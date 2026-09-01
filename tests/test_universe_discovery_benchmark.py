@@ -150,7 +150,15 @@ def test_finalize_reports_unavailable_and_writes_hashed_package(benchmark_db):
     assert package["manifest"]["promotion_eligible"] is False
     assert len(package["population_batches"][0]["candidate_facts"]) == len(_population())
     assert result["artifact_sha256"]
-
+    pending = next(row for row in repo.list_universe_discovery_outcomes(window["id"]) if row["status"] == "pending")
+    assert repo.settle_filter_candidate_outcome(
+        pending["id"],
+        exit_price=101.0,
+        settled_at="2026-01-16T06:00:01+00:00",
+        economics={},
+        settlement_price_source="horizon_ohlcv",
+        settlement_lag_sec=0.0,
+    ) is False
 
 
 def test_active_benchmark_outcomes_preempt_older_backlog(benchmark_db, monkeypatch):
@@ -343,3 +351,105 @@ def test_analysis_reports_gaps_strata_costs_and_settlement(benchmark_db):
     assert set(analysis["stratified_4h_summary"]) == {"direction", "market_type", "regime_tag"}
     assert set(analysis["costs"]) == {"assumptions", "selected_4h_mean_components"}
     assert set(analysis["settlement"]) == {"status_counts", "price_source_counts", "lag_sec"}
+    assert "insufficient_matched_outcome_coverage" in analysis["integrity"]["reasons"]
+def test_cluster_bootstrap_preserves_asset_level_estimand(monkeypatch):
+    monkeypatch.setattr(benchmark, "MIN_INFERENCE_BATCHES", 2)
+    monkeypatch.setattr(benchmark, "BOOTSTRAP_DRAWS", 100)
+    result = benchmark._paired_inference(
+        {"batch-a": [10.0], "batch-b": [0.0, 0.0, 0.0]},
+        contract_hash="contract",
+        comparison="asset-weighted",
+    )
+    assert result["complete_batches"] == 2
+    assert result["complete_pairs"] == 4
+    assert result["mean_difference_pct"] == 2.5
+
+
+def test_capture_rejects_t0_before_preregistered_window(benchmark_db):
+    window = benchmark.start_benchmark(now="2026-01-02T00:00:00+00:00", code_commit="commit-a")
+    result = benchmark.capture_completed_run(
+        scanner_run_id="predates-window",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts="2026-01-01T23:59:59+00:00",
+        regime_tag="sideways",
+    )
+    assert result == {
+        "accepted": False,
+        "reason": "capture_before_window",
+        "batch_id": result["batch_id"],
+    }
+    assert repo.list_universe_discovery_batches(window["id"]) == []
+
+
+def test_analysis_uses_frozen_costs_and_gates_incomplete_family_winner(benchmark_db, monkeypatch):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(
+        scanner_run_id="frozen-costs",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    batches = repo.list_universe_discovery_batches(window["id"])
+    outcomes = repo.list_universe_discovery_outcomes(window["id"])
+    for row in outcomes:
+        row.update({
+            "status": "settled",
+            "exit_price_usd": float(row["entry_price_usd"]) * 1.01,
+            "settlement_price_source": "horizon_ohlcv",
+            "estimated_fee_pct": 99.0,
+            "estimated_spread_slippage_pct": 99.0,
+            "estimated_funding_pct": 99.0,
+        })
+
+    def favorable(_differences, *, contract_hash, comparison):
+        return {
+            "available": True,
+            "complete_batches": 40,
+            "mean_difference_pct": 1.0,
+            "ci95": [0.5, 1.5],
+            "p_value": 0.001,
+        }
+
+    def significant(results):
+        for result in results.values():
+            result["holm_adjusted_p"] = 0.001
+
+    monkeypatch.setattr(benchmark, "_paired_inference", favorable)
+    monkeypatch.setattr(benchmark, "_holm", significant)
+    analysis = benchmark.analyze_benchmark(window["id"], snapshot=(window, batches, outcomes))
+    components = analysis["costs"]["selected_4h_mean_components"]
+    assert all(value != 99.0 for value in components.values())
+    assert analysis["integrity"]["complete"] is False
+    assert analysis["family_winner"] == {"status": "no_supported_winner"}
+
+
+def test_finalize_rejects_changed_outcome_snapshot_and_removes_artifact(benchmark_db, monkeypatch):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(
+        scanner_run_id="finalize-race",
+        population=_population(),
+        allocated=_population()[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    original = repo.list_universe_discovery_outcomes
+    calls = 0
+
+    def changing(window_id):
+        nonlocal calls
+        calls += 1
+        rows = original(window_id)
+        if calls == 2:
+            rows[0] = {**rows[0], "status": "settled"}
+        return rows
+
+    monkeypatch.setattr(repo, "list_universe_discovery_outcomes", changing)
+    output = benchmark_db / "raced.json.gz"
+    with pytest.raises(RuntimeError, match="benchmark_finalize_race"):
+        benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
+    assert output.exists() is False
+    assert repo.get_universe_discovery_benchmark(window["id"])["status"] == "active"
