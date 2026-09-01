@@ -1,18 +1,16 @@
-"""Cross-process cycle lock for the Observation Worker (Issue #1072).
+"""Cross-process lock for one complete Observation cycle (Issues #1072, #1386).
 
 One systemd timer + one CLI command yields at most one Worker pass at any time.
-The same lock also provides a short non-mutating exclusion guard for exceptional
-Main rollback windows: it prevents a new Worker pass from starting while Main
-restores its own pre-update state, without rewriting the Worker's persisted
-source/pass signature.
+Main uses the same lock for its complete cycle and for exceptional rollback
+windows, without rewriting the Worker's persisted source/pass signature.
 
 ## Contract
 
 - ``worker_pass_lock()`` acquires the exclusive lock and writes PID,
   ``acquired_at`` and Worker source commit for audit.
 - ``worker_cycle_exclusion()`` acquires the exact same lock but does not alter
-  the signature file contents. It is for brief integrity-critical exclusion,
-  not normal Worker scheduling.
+  the signature file contents. Main holds it for each complete cycle and for
+  brief integrity-critical exclusion.
 - both are fail-fast on contention; neither waits behind another owner.
 """
 
@@ -21,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +34,8 @@ except ImportError:
     msvcrt = None
 
 logger = logging.getLogger("aletheia.observation_lab.worker_lock")
+
+_cycle_state = threading.local()
 
 
 class WorkerCycleLockError(RuntimeError):
@@ -101,21 +102,29 @@ def _release_exclusive(fd: int) -> None:
 
 
 @contextlib.contextmanager
-def worker_pass_lock(*, source_commit: str | None = None):
-    """Acquire the Observation Worker pass lock and persist its pass signature."""
+def _hold_cycle_lock(*, source_commit: str | None = None):
     lock_path = _lock_path()
+    depth = getattr(_cycle_state, "depth", 0)
+    if depth:
+        _cycle_state.depth = depth + 1
+        try:
+            yield lock_path
+        finally:
+            _cycle_state.depth -= 1
+        return
+
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     acquired = False
     try:
-        try:
-            _acquire_exclusive(fd, lock_path)
-            acquired = True
-        except WorkerCycleLockError:
-            raise
-        _write_lock_signature(fd, source_commit=source_commit)
+        _acquire_exclusive(fd, lock_path)
+        acquired = True
+        _cycle_state.depth = 1
+        if source_commit is not None:
+            _write_lock_signature(fd, source_commit=source_commit)
         yield lock_path
     finally:
+        _cycle_state.depth = 0
         if acquired:
             _release_exclusive(fd)
         try:
@@ -125,28 +134,17 @@ def worker_pass_lock(*, source_commit: str | None = None):
 
 
 @contextlib.contextmanager
-def worker_cycle_exclusion():
-    """Hold the Worker cycle lock without changing its persisted signature.
-
-    Intended for the exceptional Main rollback window only. The caller can read
-    the old signature while this guard is held and know that no new Worker pass
-    can start until the guarded operation completes.
-    """
-    lock_path = _lock_path()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-    acquired = False
-    try:
-        _acquire_exclusive(fd, lock_path)
-        acquired = True
+def worker_pass_lock(*, source_commit: str | None = None):
+    """Acquire the Observation Worker pass lock and persist its pass signature."""
+    with _hold_cycle_lock(source_commit=source_commit) as lock_path:
         yield lock_path
-    finally:
-        if acquired:
-            _release_exclusive(fd)
-        try:
-            os.close(fd)
-        except OSError:  # pragma: no cover
-            pass
+
+
+@contextlib.contextmanager
+def worker_cycle_exclusion():
+    """Hold the process-wide cycle lock; same-thread nesting is reentrant."""
+    with _hold_cycle_lock() as lock_path:
+        yield lock_path
 
 
 __all__ = [

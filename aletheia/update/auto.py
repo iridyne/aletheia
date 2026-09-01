@@ -491,6 +491,10 @@ def _install_source_dependencies() -> bool:
 
 
 def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, restore_static: bool) -> dict[str, Any]:
+    # Bind before reset_hard may replace the currently running source tree.
+    from aletheia.observation_lab.kernel import invalidate_active_for_restore
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
     try:
         reset = git_ops.reset_hard(old)
         if not reset.get("ok"):
@@ -499,9 +503,11 @@ def _restore_old_runtime(old: str, backup: Path, had_previous_static: bool, *, r
             return {"ok": False, "reason": "dependency_restore_failed"}
         if restore_static:
             _restore_frontend_build(had_previous_static)
-        restored = RestoreService().restore(backup, get_data_dir())
-        if not restored.success:
-            return {"ok": False, "reason": "data_restore_failed", "detail": "; ".join(restored.errors)}
+        with worker_cycle_exclusion():
+            restored = RestoreService().restore(backup, get_data_dir())
+            if not restored.success:
+                return {"ok": False, "reason": "data_restore_failed", "detail": "; ".join(restored.errors)}
+            invalidate_active_for_restore(joint_cut_proven=False)
         started = _gateway_command("start")
         if not started.get("ok"):
             return {"ok": False, "reason": started.get("reason", "old_gateway_restore_failed")}

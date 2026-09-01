@@ -8,9 +8,8 @@ worker fleet or per-window daemon.
 ## Design rules
 
 - **Register, don't invoke ad hoc.** All Lab work goes through a window
-  descriptor so a single runner pass can iterate everything. Filter-shadow
-  and UFC shadow-equivalence are the two windows shipped in Cluster 2;
-  future clusters plug in without touching the runner itself.
+  descriptor so one pass can iterate legacy Lab jobs and every durable
+  Observation Window without a second scheduler.
 - **Idempotent windows do not need persistent cursors.** Every callable
   registered here must be safe to re-invoke on restart with no state loss.
   Frozen-unit capture, UFC shadow-equivalence, and filter-shadow evaluation
@@ -181,12 +180,20 @@ def _pass_checkpoint() -> dict[str, Any]:
         return {"ok": False, "reason": f"checkpoint_error:{exc!r}"[:400]}
 
 
-def _register_default_windows() -> None:
-    """Register the two windows shipped in Cluster 2.
+def _durable_observation_windows() -> dict[str, Any]:
+    from aletheia.universe.discovery_benchmark import register_observation_handler
 
-    Deferred imports so a caller that only wants the runner primitive (e.g.
-    a plugin test) can import this module without pulling the counterfactual
-    subsystem.
+    register_observation_handler()
+    from aletheia.observation_lab.kernel import advance_windows
+
+    return advance_windows(limit=10)
+
+
+def _register_default_windows() -> None:
+    """Register the built-in Observation Lab passes.
+
+    Deferred imports keep the runner primitive independent from domain
+    subsystems until each pass executes.
     """
     def _filter_shadow_evaluate() -> dict[str, Any]:
         from aletheia.counterfactual.filter_experiments import (
@@ -205,6 +212,7 @@ def _register_default_windows() -> None:
         from aletheia.observation_lab.ufc_shadow import run_ufc_shadow_equivalence_pass
         return run_ufc_shadow_equivalence_pass()
 
+
     # Guard against double-registration on module reimport (test harnesses).
     existing = {w.name for w in _WINDOWS}
     if "filter_shadow_evaluate" not in existing:
@@ -218,6 +226,12 @@ def _register_default_windows() -> None:
             name="ufc_shadow_equivalence",
             kind="ufc_shadow_equivalence",
             fn=_ufc_shadow_equivalence,
+        ))
+    if "durable_observation_windows" not in existing:
+        register_window(LabWindow(
+            name="durable_observation_windows",
+            kind="observation_window",
+            fn=_durable_observation_windows,
         ))
 
 

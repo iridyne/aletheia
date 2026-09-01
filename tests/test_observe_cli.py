@@ -99,6 +99,65 @@ def test_observe_status_reports_frozen_count_and_control(runner: CliRunner) -> N
     assert payload["frozen_units"] == 10  # 5 passed + 5 rejected
 
 
+def test_observe_status_text_projects_durable_window_contract(runner: CliRunner) -> None:
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler, ObservationProgress, register_handler, start_window,
+    )
+
+    register_handler(ObservationHandler(
+        kind="cli-window",
+        version="v1",
+        normalize_spec=lambda spec: spec,
+        capture=None,
+        advance=lambda _window: ObservationProgress(summary={"ready": False}),
+        finalize=lambda _window: {},
+        retention_claims=lambda _window: (),
+    ), replace=True)
+    start_window(
+        observation_id="cli-durable-window",
+        kind="cli-window",
+        handler_version="v1",
+        slot_key="cli-slot",
+        authority_mode="observe_only",
+        spec={"contract": "v1"},
+        started_at="2026-08-17T12:00:00+00:00",
+        collect_until="2026-08-18T12:00:00+00:00",
+        finalize_not_before="2026-08-19T12:00:00+00:00",
+    )
+
+    result = runner.invoke(observe_app, ["status", "cli-durable-window"])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    for key in ("slot_key", "latest_summary", "handler_available"):
+        assert f"{key}=" in result.stdout
+
+
+
+def test_observe_status_resolves_unique_durable_prefix_and_rejects_ambiguity(runner: CliRunner) -> None:
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler, ObservationProgress, register_handler, start_window,
+    )
+
+    register_handler(ObservationHandler(
+        kind="cli-window", version="v1", normalize_spec=lambda spec: spec,
+        capture=None, advance=lambda _window: ObservationProgress(summary={}),
+        finalize=lambda _window: {}, retention_claims=lambda _window: (),
+    ), replace=True)
+
+    for suffix in ("alpha", "alpine"):
+        start_window(
+            observation_id=f"durable-{suffix}", kind="cli-window", handler_version="v1",
+            slot_key=f"cli-{suffix}", authority_mode="observe_only", spec={"suffix": suffix},
+            started_at="2026-08-17T12:00:00+00:00",
+            collect_until="2026-08-18T12:00:00+00:00",
+            finalize_not_before="2026-08-19T12:00:00+00:00",
+        )
+
+    unique = runner.invoke(observe_app, ["status", "durable-alph", "--json"])
+    assert unique.exit_code == 0
+    assert json.loads(unique.stdout)["observation_id"] == "durable-alpha"
+    ambiguous = runner.invoke(observe_app, ["status", "durable-al", "--json"])
+    assert ambiguous.exit_code == 2
+    assert "is ambiguous" in ambiguous.stderr
 def test_observe_sync_captures_and_evaluates(runner: CliRunner) -> None:
     from tests.test_filter_shadow_experiments import _seed_ranker_cohort
 

@@ -1441,18 +1441,14 @@ def init_scheduler() -> BackgroundScheduler | None:
     # job in that mode — the ownership contract is exclusive.
     from aletheia.observation_lab.execution_owner import is_main_owner as _obs_is_main_owner
     _observation_owned_by_main = _obs_is_main_owner()
-    if (
-        _observation_owned_by_main
-        and getattr(cfg, "controller", None)
-        and cfg.controller.shadow_enabled
-    ):
+    if _observation_owned_by_main:
         _scheduler.add_job(
             _guarded("filter_controller_observe", _run_filter_controller_observe), "interval",
             hours=max(1, int(cfg.controller.observe_interval_hours)),
             id="filter_controller_observe", misfire_grace_time=600, executor="io",
             next_run_time=datetime.now() + timedelta(minutes=2),
         )
-    elif not _observation_owned_by_main:
+    else:
         logger.info(
             "filter_controller_observe: skipped registration — "
             "observation.execution_owner=worker (sibling aletheia-observer owns cycle)"
@@ -2149,28 +2145,22 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
                         "(observation.execution_owner=worker)"
                     )
                 return True
-            if shadow_enabled:
-                interval_h = max(1, int(observe_interval_hours))
-                if existing is None:
-                    _scheduler.add_job(
-                        _guarded("filter_controller_observe", _run_filter_controller_observe),
-                        "interval", hours=interval_h,
-                        id="filter_controller_observe", misfire_grace_time=600, executor="io",
-                    )
-                    if _selectively_paused_jobs:
-                        _scheduler.pause_job("filter_controller_observe")
-                        _selectively_paused_jobs.add("filter_controller_observe")
-                    logger.info("Added filter_controller_observe job every %dh", interval_h)
-                else:
-                    _scheduler.reschedule_job(
-                        "filter_controller_observe", trigger="interval", hours=interval_h,
-                    )
-                    logger.info("Rescheduled filter_controller_observe to every %dh", interval_h)
+            interval_h = max(1, int(observe_interval_hours))
+            if existing is None:
+                _scheduler.add_job(
+                    _guarded("filter_controller_observe", _run_filter_controller_observe),
+                    "interval", hours=interval_h,
+                    id="filter_controller_observe", misfire_grace_time=600, executor="io",
+                )
+                if _selectively_paused_jobs:
+                    _scheduler.pause_job("filter_controller_observe")
+                    _selectively_paused_jobs.add("filter_controller_observe")
+                logger.info("Added filter_controller_observe job every %dh", interval_h)
             else:
-                if existing is not None:
-                    _scheduler.remove_job("filter_controller_observe")
-                    _selectively_paused_jobs.discard("filter_controller_observe")
-                    logger.info("Removed filter_controller_observe job")
+                _scheduler.reschedule_job(
+                    "filter_controller_observe", trigger="interval", hours=interval_h,
+                )
+                logger.info("Rescheduled filter_controller_observe to every %dh", interval_h)
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to reconcile filter_controller_observe (applies at next restart): %s", e)
@@ -3628,10 +3618,30 @@ def _run_filter_controller_observe():
         from aletheia.config.loader import load_config
         cfg = load_config()
         ctrl = getattr(cfg, "controller", None)
-        if not ctrl or not ctrl.shadow_enabled:
+        from aletheia.observation_lab.worker_lock import (
+            WorkerCycleLockError,
+            worker_cycle_exclusion,
+        )
+        try:
+            with worker_cycle_exclusion():
+                if ctrl and ctrl.shadow_enabled:
+                    from aletheia.analytics.filter_controller import run_controller_observe
+
+                    summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
+                else:
+                    from aletheia.observation_lab.runner import run_lab_windows
+
+                    summary = {
+                        "pass_status": "success",
+                        "recommendations_written": 0,
+                        "lab_windows": run_lab_windows(),
+                    }
+        except WorkerCycleLockError as lock_exc:
+            logger.info("filter_controller_observe deferred: %s", lock_exc)
+            _record_job_failure(
+                "filter_controller_observe", f"cycle_lock_contended: {lock_exc}"
+            )
             return
-        from aletheia.analytics.filter_controller import run_controller_observe
-        summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
         # Issue #1240: record failure for partial/failed evidence passes so that
         # systemd/health monitoring can distinguish a clean pass from one with
         # missing or mismatched primary evidence (no exception needed to trigger it).

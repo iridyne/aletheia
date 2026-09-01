@@ -80,7 +80,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
         "guard_promotion", "post_trade_reviewer", "risk_critic",
-        "universe_refresh", "pi_operator_loop",
+        "universe_refresh", "pi_operator_loop", "filter_controller_observe",
     }
     missing = required - job_ids
     assert not missing, f"critical scheduler jobs missing: {missing}"

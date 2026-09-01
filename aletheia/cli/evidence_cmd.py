@@ -67,11 +67,10 @@ def universe_discovery_abort(
     json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
 ):
     """Abort an active window without deleting its evidence."""
-    from aletheia.storage import repositories as repo
-    from aletheia.universe.discovery_benchmark import abort_benchmark
+    from aletheia.universe.discovery_benchmark import abort_benchmark, status_benchmark
 
-    target = window_id or str((repo.get_universe_discovery_benchmark() or {}).get("id") or "")
     try:
+        target = window_id or str(status_benchmark()["id"])
         result = abort_benchmark(target, reason=reason)
     except (KeyError, ValueError) as exc:
         typer.echo(str(exc), err=True)

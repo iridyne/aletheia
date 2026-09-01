@@ -145,3 +145,34 @@ def test_run_lab_windows_normalises_non_dict_return(clean_registry):
     summary = run_lab_windows()
 
     assert summary["results"]["scalar"] == {"status": "ok", "value": 7}
+def test_standalone_runner_bootstraps_builtin_universe_handler(clean_registry, monkeypatch):
+    from aletheia.observation_lab import kernel
+    from aletheia.observation_lab.runner import (
+        LabWindow,
+        _durable_observation_windows,
+        register_window,
+        run_lab_windows,
+    )
+
+    handlers = dict(kernel._HANDLERS)
+    kernel._HANDLERS.clear()
+    try:
+        monkeypatch.setattr(
+            kernel,
+            "advance_windows",
+            lambda *, limit: {"universe_registered": any(
+                kind == "universe_discovery" for kind, _version in kernel.registered_handlers()
+            )},
+        )
+        register_window(LabWindow(
+            name="durable_observation_windows",
+            kind="observation_window",
+            fn=_durable_observation_windows,
+        ))
+
+        summary = run_lab_windows()
+
+        assert summary["results"]["durable_observation_windows"] == {"universe_registered": True}
+    finally:
+        kernel._HANDLERS.clear()
+        kernel._HANDLERS.update(handlers)

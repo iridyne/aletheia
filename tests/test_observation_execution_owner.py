@@ -158,6 +158,57 @@ def test_reconcile_adds_job_when_main_owns_and_shadow_enabled(monkeypatch):
     assert add_calls[0]["id"] == "filter_controller_observe"
 
 
+def test_reconcile_keeps_main_cycle_when_shadow_disabled(monkeypatch):
+    import aletheia.agent_runtime.scheduler as scheduler_module
+
+    calls: list[str] = []
+
+    class _FakeScheduler:
+        def get_job(self, job_id):
+            return object()
+
+        def reschedule_job(self, job_id, **kwargs):
+            calls.append(f"reschedule:{job_id}")
+
+        def remove_job(self, job_id):
+            calls.append(f"remove:{job_id}")
+
+    monkeypatch.setattr(scheduler_module, "_scheduler", _FakeScheduler())
+    monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
+    with patch(
+        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        return_value="main",
+    ):
+        assert scheduler_module.reconcile_filter_controller(False, 6) is True
+
+    assert calls == ["reschedule:filter_controller_observe"]
+
+
+def test_main_owned_shadow_disabled_still_runs_durable_cycle(monkeypatch):
+    from types import SimpleNamespace
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(controller=SimpleNamespace(shadow_enabled=False, min_samples_gate=23)),
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe",
+        lambda **_kwargs: pytest.fail("shadow-disabled Main must not run controller diagnostics"),
+    )
+    monkeypatch.setattr(
+        "aletheia.observation_lab.runner.run_lab_windows",
+        lambda: calls.append("lab") or {"windows_run": 1},
+    )
+    with patch(
+        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        return_value="main",
+    ):
+        scheduler_module._run_filter_controller_observe()
+
+    assert calls == ["lab"]
 def test_run_filter_controller_observe_fails_closed_when_worker_owns(monkeypatch):
     """Main-side stray run must refuse with a typed reason when Worker owns."""
     import aletheia.agent_runtime.scheduler as scheduler_module
@@ -255,7 +306,9 @@ def test_worker_run_cli_fails_closed_when_main_owns(monkeypatch):
 
 
 def test_two_worker_passes_cannot_overlap(tmp_path, monkeypatch):
-    """The cross-process cycle lock forces the second attempt to fail fast."""
+    """A second thread cannot bypass the process-wide cycle lock."""
+    from threading import Event, Thread
+
     import aletheia.config.loader as loader
     from aletheia.observation_lab.db import reset_lab_db
     from aletheia.observation_lab.worker_lock import (
@@ -265,11 +318,42 @@ def test_two_worker_passes_cannot_overlap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
+    attempted = Event()
+    result: list[str] = []
+
+    def contend() -> None:
+        try:
+            with worker_pass_lock(source_commit="b" * 40):
+                result.append("entered")
+        except WorkerCycleLockError:
+            result.append("contended")
+        finally:
+            attempted.set()
 
     with worker_pass_lock(source_commit="a" * 40):
-        with pytest.raises(WorkerCycleLockError):
-            with worker_pass_lock(source_commit="b" * 40):
-                pytest.fail("second worker pass entered while first held the lock")
+        thread = Thread(target=contend)
+        thread.start()
+        assert attempted.wait(5), "second thread did not attempt the cycle lock"
+        thread.join(5)
+        assert not thread.is_alive()
+        assert result == ["contended"]
+
+    reset_lab_db()
+
+
+def test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread(
+    tmp_path, monkeypatch
+):
+    import aletheia.config.loader as loader
+    from aletheia.observation_lab.db import reset_lab_db
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+
+    with worker_cycle_exclusion():
+        with worker_cycle_exclusion():
+            pass
 
     reset_lab_db()
 
@@ -290,6 +374,151 @@ def test_worker_lock_releases_and_can_be_reacquired(tmp_path, monkeypatch):
     with worker_pass_lock(source_commit="b" * 40):
         pass
 
+    reset_lab_db()
+
+def test_worker_to_main_transition_serializes_complete_cycles(tmp_path, monkeypatch):
+    """A Main cycle cannot enter while an already-started Worker cycle runs."""
+    from threading import Event, Thread
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+    import aletheia.config.loader as loader
+    import aletheia.observation_lab.execution_owner as execution_owner
+    from aletheia.cli.observe_cmd import observe_app
+    from aletheia.observation_lab.db import reset_lab_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: SimpleNamespace(
+            controller=SimpleNamespace(shadow_enabled=True, min_samples_gate=7)
+        ),
+    )
+    owner = {"value": "worker"}
+    monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: owner["value"])
+    entered = Event()
+    release = Event()
+    active = 0
+    max_active = 0
+    calls: list[str] = []
+
+    def fake_runner(**_kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        calls.append(owner["value"])
+        try:
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(5), "timed out waiting to release Worker cycle"
+            return {"pass_status": "success"}
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe", fake_runner
+    )
+    failures: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "_record_job_failure",
+        lambda job, reason: failures.append((job, reason)),
+    )
+    reset_lab_db()
+
+    worker_result = {}
+    worker = Thread(
+        target=lambda: worker_result.setdefault(
+            "result", CliRunner().invoke(observe_app, ["run", "--quiet"])
+        )
+    )
+    worker.start()
+    assert entered.wait(5), "Worker cycle did not enter"
+
+    owner["value"] = "main"
+    scheduler_module._run_filter_controller_observe()
+    assert calls == ["worker"]
+    assert failures and "cycle_lock_contended" in failures[-1][1]
+
+    release.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert worker_result["result"].exit_code == 0
+
+    scheduler_module._run_filter_controller_observe()
+    assert calls == ["worker", "main"]
+    assert max_active == 1
+    reset_lab_db()
+
+
+def test_main_to_worker_transition_serializes_and_exception_releases_lock(
+    tmp_path, monkeypatch
+):
+    """Worker defers behind Main, then enters after Main raises and releases."""
+    from threading import Event, Thread
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+    import aletheia.config.loader as loader
+    import aletheia.observation_lab.execution_owner as execution_owner
+    from aletheia.cli.observe_cmd import observe_app
+    from aletheia.observation_lab.db import reset_lab_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: SimpleNamespace(
+            controller=SimpleNamespace(shadow_enabled=True, min_samples_gate=7)
+        ),
+    )
+    owner = {"value": "main"}
+    monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: owner["value"])
+    entered = Event()
+    release = Event()
+    calls: list[str] = []
+
+    def fake_runner(**_kwargs):
+        calls.append(owner["value"])
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5), "timed out waiting to release Main cycle"
+            raise RuntimeError("main cycle failed")
+        return {"pass_status": "success"}
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe", fake_runner
+    )
+    failures: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "_record_job_failure",
+        lambda job, reason: failures.append((job, reason)),
+    )
+    reset_lab_db()
+
+    main = Thread(target=scheduler_module._run_filter_controller_observe)
+    main.start()
+    assert entered.wait(5), "Main cycle did not enter"
+
+    owner["value"] = "worker"
+    contended = CliRunner().invoke(observe_app, ["run", "--quiet"])
+    assert contended.exit_code == 3
+    assert calls == ["main"]
+
+    release.set()
+    main.join(5)
+    assert not main.is_alive()
+    assert failures and failures[-1][1] == "main cycle failed"
+
+    after_release = CliRunner().invoke(observe_app, ["run", "--quiet"])
+    assert after_release.exit_code == 0
+    assert calls == ["main", "worker"]
     reset_lab_db()
 
 

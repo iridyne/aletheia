@@ -539,3 +539,42 @@ def test_auto_run_reports_failures_to_systemd(monkeypatch):
 
     assert result.exit_code == 1
     assert result.stdout.strip() == "global_hold"
+def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from aletheia.observation_lab import kernel, worker_lock
+    from aletheia.update import auto, git_ops
+
+    calls: list[str] = []
+
+    @contextmanager
+    def guard():
+        calls.append("lock-enter")
+        yield
+        calls.append("lock-exit")
+
+    monkeypatch.setattr(git_ops, "reset_hard", lambda old: {"ok": True})
+    monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
+    monkeypatch.setattr(auto, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        auto,
+        "RestoreService",
+        lambda: SimpleNamespace(
+            restore=lambda *_args: calls.append("restore") or SimpleNamespace(success=True),
+        ),
+    )
+    monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": True})
+    monkeypatch.setattr(auto, "_version_from_ref", lambda old: "1.0.0")
+    monkeypatch.setattr(auto, "_wait_for_runtime", lambda *_args: {"ok": True, "reason": "restored"})
+    monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", guard)
+    monkeypatch.setattr(
+        kernel,
+        "invalidate_active_for_restore",
+        lambda *, joint_cut_proven: calls.append(f"invalidate:{joint_cut_proven}") or 1,
+    )
+
+    result = auto._restore_old_runtime("old", tmp_path / "backup", False, restore_static=False)
+
+    assert result == {"ok": True, "reason": "restored"}
+    assert calls == ["lock-enter", "restore", "invalidate:False", "lock-exit"]

@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
 
 _local = threading.local()
+_WRITE_LOCK = threading.RLock()
+
 
 _LAB_SCHEMA_SQL = (
     "CREATE TABLE IF NOT EXISTS filter_shadow_frozen_units ("
@@ -147,6 +150,69 @@ _LAB_SCHEMA_SQL = (
     "CREATE TRIGGER IF NOT EXISTS trg_lab_exposures_no_delete "
     "BEFORE DELETE ON lab_exposures BEGIN "
     "SELECT RAISE(ABORT, 'lab_exposures is append-only'); END;"
+    "CREATE TABLE IF NOT EXISTS observation_windows ("
+    "observation_id TEXT NOT NULL,"
+    "kind TEXT NOT NULL,"
+    "handler_version TEXT NOT NULL,"
+    "generation INTEGER NOT NULL CHECK (generation > 0),"
+    "slot_key TEXT NOT NULL,"
+    "authority_mode TEXT NOT NULL CHECK (authority_mode IN ('observe_only','external_authority')),"
+    "status TEXT NOT NULL CHECK (status IN ('active','finalized','invalidated','aborted')),"
+    "spec_json TEXT NOT NULL,"
+    "spec_hash TEXT NOT NULL,"
+    "producer_commit TEXT,"
+    "started_at TEXT NOT NULL,"
+    "collect_until TEXT NOT NULL,"
+    "finalize_not_before TEXT NOT NULL,"
+    "last_advanced_at TEXT,"
+    "last_summary_json TEXT,"
+    "last_error TEXT,"
+    "terminal_at TEXT,"
+    "terminal_reason TEXT,"
+    "artifact_path TEXT,"
+    "artifact_sha256 TEXT,"
+    "PRIMARY KEY (observation_id, generation)"
+    ");"
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_observation_windows_active_slot "
+    "ON observation_windows(slot_key) WHERE status='active';"
+    "CREATE INDEX IF NOT EXISTS idx_observation_windows_fair "
+    "ON observation_windows(status, last_advanced_at, started_at, observation_id, generation);"
+    "CREATE TRIGGER IF NOT EXISTS trg_observation_windows_identity_immutable "
+    "BEFORE UPDATE ON observation_windows WHEN "
+    "OLD.observation_id IS NOT NEW.observation_id OR OLD.generation IS NOT NEW.generation OR "
+    "OLD.kind IS NOT NEW.kind OR OLD.handler_version IS NOT NEW.handler_version OR "
+    "OLD.slot_key IS NOT NEW.slot_key OR OLD.authority_mode IS NOT NEW.authority_mode OR "
+    "OLD.spec_json IS NOT NEW.spec_json OR OLD.spec_hash IS NOT NEW.spec_hash OR "
+    "OLD.producer_commit IS NOT NEW.producer_commit OR OLD.started_at IS NOT NEW.started_at OR "
+    "OLD.collect_until IS NOT NEW.collect_until OR "
+    "OLD.finalize_not_before IS NOT NEW.finalize_not_before BEGIN "
+    "SELECT RAISE(ABORT, 'observation_windows identity is immutable'); END;"
+    "CREATE TABLE IF NOT EXISTS observation_units ("
+    "unit_id TEXT PRIMARY KEY,"
+    "observation_id TEXT NOT NULL,"
+    "generation INTEGER NOT NULL,"
+    "spec_hash TEXT NOT NULL,"
+    "unit_key TEXT NOT NULL,"
+    "source_kind TEXT NOT NULL,"
+    "source_ref TEXT NOT NULL,"
+    "source_hash TEXT NOT NULL,"
+    "known_at TEXT NOT NULL,"
+    "captured_at TEXT NOT NULL,"
+    "producer_commit TEXT,"
+    "producer_runtime_session_id TEXT,"
+    "admission TEXT NOT NULL CHECK (admission IN ('admitted','unavailable','excluded')),"
+    "reason TEXT,"
+    "UNIQUE (observation_id, generation, unit_key),"
+    "FOREIGN KEY (observation_id, generation) REFERENCES observation_windows(observation_id, generation)"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_observation_units_window "
+    "ON observation_units(observation_id, generation, admission, known_at);"
+    "CREATE TRIGGER IF NOT EXISTS trg_observation_units_no_update "
+    "BEFORE UPDATE ON observation_units BEGIN "
+    "SELECT RAISE(ABORT, 'observation_units is append-only'); END;"
+    "CREATE TRIGGER IF NOT EXISTS trg_observation_units_no_delete "
+    "BEFORE DELETE ON observation_units BEGIN "
+    "SELECT RAISE(ABORT, 'observation_units is append-only'); END;"
 )
 
 
@@ -181,10 +247,30 @@ def get_lab_db() -> sqlite3.Connection:
         timeout=5.0,
     )
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_LAB_SCHEMA_SQL)
     _local.conn = conn
     _local.path = target
     return conn
+
+@contextmanager
+def lab_transaction(*, immediate: bool = False):
+    """Serialize Lab writes and preserve an existing caller transaction."""
+    db = get_lab_db()
+    with _WRITE_LOCK:
+        was_in_tx = db.in_transaction
+        if not was_in_tx:
+            db.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+        try:
+            yield db
+            if not was_in_tx:
+                db.commit()
+        except Exception:
+            if not was_in_tx:
+                db.rollback()
+            raise
 
 
 def close_lab_db() -> None:
