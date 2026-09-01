@@ -1869,13 +1869,18 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         paper-equity ledger exists; the configured cap and other risk checks
         continue to bound the order.
     """
+    return _portfolio_drawdown_assessment(execution_mode)[0]
+
+
+def _portfolio_drawdown_assessment(execution_mode: str, cfg=None) -> tuple[float, bool]:
+    """Return the Risk scale and whether its equity evidence is available."""
     try:
         # Local paper has no trustworthy equity history. Its own snapshots are
         # position notional, while exchange_account snapshots belong to a separate
         # account and may be stale or unrelated. Either source can fabricate a
         # drawdown and turn every proposal into a $0-cap rejection.
         if execution_mode == "paper_internal":
-            return 1.0
+            return 1.0, True
 
         # View-completeness gate (P0, 2026-07-02): for exchange-backed modes, if the
         # active broker is missing from the unified view (e.g. OKX API down), the
@@ -1883,14 +1888,18 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         # drawdown from that fabricates a false ~99% DD that zeroes the size cap.
         # Skip drawdown scaling (return 1.0, the $-notional caps still bound size).
         from aletheia.portfolio.exchange_sync import active_broker_view_complete
-        _complete, _ = active_broker_view_complete()
+        _complete, _ = (
+            active_broker_view_complete()
+            if cfg is None
+            else active_broker_view_complete(cfg)
+        )
         if not _complete:
-            return 1.0
+            return 1.0, False
 
         from aletheia.storage.repositories import list_portfolio_snapshots
         snapshots = list_portfolio_snapshots(limit=50)
         if len(snapshots) < 3:
-            return 1.0
+            return 1.0, False
 
         # Exchange-backed modes use real account equity, never per-mode position
         # notional. paper_internal returned above and cannot reach this branch.
@@ -1898,27 +1907,27 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
             s for s in snapshots if s.get("execution_mode") == "exchange_account"
         ]
         if len(mode_snapshots) < 3:
-            return 1.0
+            return 1.0, False
 
         values = [float(s.get("total_value_usdt") or 0) for s in mode_snapshots]
         peak = max(values)
         current = values[-1]
 
         if peak <= 0:
-            return 1.0
+            return 1.0, False
 
         drawdown_pct = (peak - current) / peak * 100.0
 
         if drawdown_pct <= 5.0:
-            return 1.0
+            return 1.0, True
         elif drawdown_pct <= 10.0:
-            return 1.0 - (drawdown_pct - 5.0) / 5.0 * 0.5
+            return 1.0 - (drawdown_pct - 5.0) / 5.0 * 0.5, True
         elif drawdown_pct <= 20.0:
-            return 0.5 - (drawdown_pct - 10.0) / 10.0 * 0.5
+            return 0.5 - (drawdown_pct - 10.0) / 10.0 * 0.5, True
         else:
-            return 0.0
+            return 0.0, True
     except Exception:
-        return 1.0
+        return 1.0, False
 
 
 def _current_account_exposure(
