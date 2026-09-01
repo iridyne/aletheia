@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v54"
+SCHEMA_VERSION = "aletheia-sqlite-v55"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3888,6 +3888,25 @@ _LEARNING_HYPOTHESIS_NOMINATIONS_CHECKSUM = hashlib.sha256(
     (
         _LEARNING_HYPOTHESIS_NOMINATIONS_SQL
         + "\nlearning_hypothesis_nominations_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_NOMINATION_IMMUTABILITY_SQL = """
+CREATE TRIGGER IF NOT EXISTS trg_learning_hypothesis_nominations_no_update
+BEFORE UPDATE ON learning_hypothesis_nominations
+BEGIN
+    SELECT RAISE(ABORT, 'Learning hypothesis nomination history is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_learning_hypothesis_nominations_no_delete
+BEFORE DELETE ON learning_hypothesis_nominations
+BEGIN
+    SELECT RAISE(ABORT, 'Learning hypothesis nomination history is retained');
+END;
+"""
+_LEARNING_NOMINATION_IMMUTABILITY_CHECKSUM = hashlib.sha256(
+    (
+        _LEARNING_NOMINATION_IMMUTABILITY_SQL
+        + "\nlearning_hypothesis_nomination_immutability_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -6066,6 +6085,12 @@ def _apply_universe_discovery_benchmark_v54(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_learning_nomination_immutability_v55(db: sqlite3.Connection) -> None:
+    """Enforce the existing append-only nomination lineage contract."""
+    db.executescript(_LEARNING_NOMINATION_IMMUTABILITY_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
     """Persist future fingerprint inputs without rewriting historical identity."""
 
@@ -6682,6 +6707,12 @@ _MIGRATIONS = (
         checksum=_UNIVERSE_DISCOVERY_BENCHMARK_CHECKSUM,
         schema_version="aletheia-sqlite-v54",
         apply=_apply_universe_discovery_benchmark_v54,
+    ),
+    MigrationStep(
+        migration_id="20260901_0054_learning_nomination_immutability_v55",
+        checksum=_LEARNING_NOMINATION_IMMUTABILITY_CHECKSUM,
+        schema_version="aletheia-sqlite-v55",
+        apply=_apply_learning_nomination_immutability_v55,
     ),
 )
 

@@ -154,3 +154,47 @@ def test_current_projection_is_read_only_and_zero_is_honest():
     }
     assert len(facts) == 1
     assert before == after
+
+
+def test_historical_projection_excludes_idle_retirement_after_cutoff():
+    from aletheia.learning.economic_knowledge import (
+        project_economic_knowledge_as_of,
+    )
+    from aletheia.learning.ledger import insert_lifecycle_event
+    from aletheia.learning.models import LearningLifecycleEvent
+
+    verdict = _verdict()
+    insert_lifecycle_event(LearningLifecycleEvent(
+        dedup_key="historical-idle-retirement",
+        hypothesis_id=verdict.hypothesis_id,
+        experiment_id=verdict.experiment_id,
+        from_stage="paper_10",
+        action="retire_idle",
+        reason="insufficient_data:idle_expired",
+        created_at="2999-01-01T00:00:00+00:00",
+    ))
+
+    assert len(project_economic_knowledge_as_of(
+        "2998-01-01T00:00:00+00:00",
+    )) == 1
+    assert project_economic_knowledge_as_of(
+        "3000-01-01T00:00:00+00:00",
+    ) == []
+def test_historical_projection_keeps_cutoff_cost_contract(monkeypatch):
+    from aletheia.learning import economic_knowledge
+
+    verdict = _verdict()
+    monkeypatch.setattr(
+        economic_knowledge, "COST_MODEL_VERSION", "future-cost-model-v999"
+    )
+
+    current = economic_knowledge.assess_economic_knowledge(verdict.verdict_id)
+    assert current.status == "not_qualified"
+    assert "cost_model_version_mismatch" in current.reasons
+    assert economic_knowledge.project_current_economic_knowledge() == []
+
+    historical = economic_knowledge.project_economic_knowledge_as_of(
+        "2998-01-01T00:00:00+00:00"
+    )
+    assert len(historical) == 1
+    assert historical[0].cost_model_version == COST_MODEL_VERSION

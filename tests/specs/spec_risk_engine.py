@@ -352,7 +352,7 @@ async def test_lesson_constraint_category_gate_is_risk_only():
         result = await route_automatic_block_recommendation(
             {"action": "block_symbol", "symbol": "BTC/USDT"},
             evidence=scoped_evidence, source_id="test-src",
-            research_evidence=_ready_research("test-src"),
+            research_evidence=_ready_research("test-src", symbol="BTC/USDT"),
         )
     assert result is not None and result.get("action") == "guard_shadow_candidate", (
         "block_symbol routed by dreaming_agent must become guard_shadow_candidate, not block_symbol"

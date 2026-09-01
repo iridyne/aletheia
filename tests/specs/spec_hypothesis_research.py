@@ -224,6 +224,51 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
 
 
 @spec_claim(SpecClaim(
+    "LE-B35", "learning_evolution", "§9.8 source/T0 identity", "L2b",
+    "Path-aware research binds every declared source to exactly one canonical T0 envelope.",
+    status="implemented",
+))
+def test_path_aware_research_rejects_equal_count_unrelated_t0_sources():
+    from aletheia.learning.hypothesis_research import _assemble_t0_envelope_context
+    from tests.specs.spec_learning_t0_foundation import _ranker_envelope
+
+    envelope = _ranker_envelope()
+    recorded, missing, outcomes, cases = _assemble_t0_envelope_context(
+        path_id="ranker_case_score",
+        consumer="paper ranker",
+        source_artifact_ids=["unrelated-source"],
+        envelopes=[envelope],
+    )
+    assert recorded == {}
+    assert outcomes == []
+    assert cases == []
+    assert "source_t0_identity_mismatch:decision-1" in missing
+    assert "source_t0_identity_mismatch:unrelated-source" in missing
+
+    recorded, missing, outcomes, cases = _assemble_t0_envelope_context(
+        path_id="ranker_case_score",
+        consumer="paper ranker",
+        source_artifact_ids=["decision-1"],
+        envelopes=[envelope],
+    )
+    assert recorded
+    assert not any(reason.startswith("source_t0_identity_mismatch:") for reason in missing)
+    assert outcomes == ["position-1"]
+    assert cases[0]["source_artifact_id"] == "decision-1"
+
+    recorded, missing, outcomes, cases = _assemble_t0_envelope_context(
+        path_id="ranker_case_score",
+        consumer="paper ranker",
+        source_artifact_ids=["decision-1"],
+        envelopes=[envelope, envelope.model_copy()],
+    )
+    assert recorded == {}
+    assert outcomes == []
+    assert cases == []
+    assert "source_t0_identity_mismatch:decision-1" in missing
+
+
+@spec_claim(SpecClaim(
     "LE-B34", "learning_evolution", "§9.8 path-aware causal research", "L2c",
     "A deterministic closed-trade replay rooted in Knowledge Markdown remains "
     "insufficient until a path-specific canonical T0 envelope exists; it creates "
@@ -253,7 +298,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             price=100.0,
             execution_mode="paper_internal",
             scanner_family="momentum",
-            opened_at="2026-08-16T00:00:00+00:00",
+            opened_at="2026-08-16T00:01:00+00:00",
         )
         opportunity_ids.append(opportunity_id)
         repo.update_opportunity(
@@ -295,8 +340,8 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             execution_mode="paper_internal",
             status="closed",
             source="native",
-            opened_at="2026-08-16T00:00:00+00:00",
-            closed_at="2026-08-16T04:00:00+00:00",
+            opened_at="2026-08-16T00:01:00+00:00",
+            closed_at="2026-08-16T04:01:00+00:00",
             close_reason="stop_loss",
             close_category="strategy",
             entry_price_source="local_fill",
@@ -350,7 +395,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         entry_price=100.0,
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
-        created_at="2026-08-16T00:00:00+00:00",
+        created_at="2026-08-16T00:00:30+00:00",
     ))
     insert_canonical_outcome_for_shadow(
         "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
@@ -369,7 +414,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             entry_price=100.0,
             outcome_candidate_key=f"opportunity:alternative-{rank}",
             was_selected=False,
-            created_at="2026-08-16T00:00:00+00:00",
+            created_at="2026-08-16T00:00:30+00:00",
         ))
         insert_canonical_outcome_for_shadow(
             f"causal-shadow-alt-{rank}", horizon="4h", net_return_pct=1.0,
@@ -447,6 +492,159 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     assert list_records("learning_experiments") == []
     assert list_records("learning_exposures") == []
     assert list_records("learning_contribution_verdicts") == []
+
+    from aletheia.analytics.filter_evidence import record_filter_decision
+
+    for index, source_opportunity_id in enumerate(opportunity_ids):
+        record_filter_decision(
+            candidate_key=f"opportunity:{source_opportunity_id}",
+            candidate_kind="opportunity",
+            filter_name="guard_candidate_block",
+            stage="paper_ranker",
+            decision="passed",
+            reason_code="no_active_guard_block",
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            run_id="canonical-ranker-run",
+            opportunity_id=source_opportunity_id,
+            universe_snapshot_id="canonical-universe",
+            universe_member_id=f"canonical-member-{index}",
+            venue="bitget",
+            direction="long",
+            scanner_family="momentum",
+            regime_tag="risk_off",
+            inputs={"candidate_score": 1.0, "active_guard_ids": []},
+            parameters={"guard_contract": "candidate-guard/v1"},
+            evaluated_at="2026-08-16T00:00:30+00:00",
+            outcome_candidate_key=f"opportunity:{source_opportunity_id}",
+            entry_price_usd=None if index == 0 else 100.0,
+            entry_spread_bps=None if index == 0 else 1.0,
+            funding_rate_at_entry=None if index == 0 else 0.001,
+            entry_ts=(
+                None if index == 0 else "2026-08-16T00:00:30+00:00"
+            ),
+            raise_on_error=True,
+        )
+
+    t0_envelopes = guard_routing._build_ranker_guard_t0_envelopes(case_ids)
+    assert len(t0_envelopes) == len(case_ids)
+    for envelope in t0_envelopes:
+        liquidity = next(
+            domain for domain in envelope.domains
+            if domain.domain == "liquidity_cost"
+        )
+        assert liquidity.state == "available"
+        assert liquidity.source_refs[0].startswith("filter_candidate_outcome:")
+        assert liquidity.source_hashes
+    from aletheia.storage.sqlite import get_db
+
+    original_liquidity = next(
+        domain for domain in t0_envelopes[1].domains
+        if domain.domain == "liquidity_cost"
+    )
+    assert "cost_model_version" not in original_liquidity.values
+    outcome_id = original_liquidity.source_refs[0].split(":", 1)[1]
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET cost_model_version=? WHERE id=?",
+        ("settlement-cost-model-v999", outcome_id),
+    )
+    rebuilt = guard_routing._build_ranker_guard_t0_envelopes([case_ids[1]])[0]
+    rebuilt_liquidity = next(
+        domain for domain in rebuilt.domains if domain.domain == "liquidity_cost"
+    )
+    assert "cost_model_version" not in rebuilt_liquidity.values
+    assert rebuilt_liquidity.source_hashes == original_liquidity.source_hashes
+    mismatched = t0_envelopes[0].model_copy(update={
+        "anchor_entity_id": t0_envelopes[1].anchor_entity_id,
+        "anchor_at": t0_envelopes[1].anchor_at,
+    })
+    recorded, missing, outcomes, cases = (
+        hypothesis_research._assemble_t0_envelope_context(
+            path_id="ranker_learned_guard",
+            consumer="paper ranker",
+            source_artifact_ids=[case_ids[0]],
+            envelopes=[mismatched],
+        )
+    )
+    assert recorded == {}
+    assert outcomes == []
+    assert cases == []
+    assert any(reason.startswith("source_t0_identity_mismatch:") for reason in missing)
+    scope_mismatch = await guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={
+            **evidence,
+            "factor_keys": [
+                "momentum:ETH/USDT:long:medium_confidence:not_late",
+            ],
+        },
+        source_id=case_ids[0],
+    )
+    assert scope_mismatch["reason"] == "research_scope_identity_mismatch"
+    assert review_calls == []
+
+    async def ready_review(*, user, **_kwargs):
+        payload = json.loads(user)
+        assert set(payload["recorded_t0_context"]) >= {
+            "candidate", "population", "features", "market_identity",
+            "regime", "liquidity_cost", "ordering_policy", "guard_manifest",
+        }
+        return {
+            "competing_explanations": [
+                "The loss cluster may reflect the recorded risk-off regime."
+            ],
+            "material_confounders_or_missing": [],
+            "smallest_falsification_test": (
+                "Prospectively compare the bounded guard with contemporaneous control."
+            ),
+            "decision": "ready",
+            "narrowed_candidate_explanation": None,
+            "material_context_keys": [],
+            "reasoning": "Canonical decision-time facts support a bounded Shadow test.",
+        }, None
+
+    monkeypatch.setattr(hypothesis_research, "llm_structured", ready_review)
+    wired = await guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence=evidence,
+        source_id=case_ids[0],
+    )
+    assert not wired.get("research_evidence", {}).get("missing_evidence"), wired
+    assert wired["action"] == "guard_shadow_candidate", wired
+    assert wired["research_status"] == "ready"
+    assert wired["hypothesis_status"] == "proposed"
+    assert list_records("learning_hypotheses")
+    record_filter_decision(
+        candidate_key=f"opportunity:{opportunity_id}",
+        candidate_kind="opportunity",
+        filter_name="guard_candidate_block",
+        stage="paper_ranker",
+        sequence_no=2,
+        decision="passed",
+        reason_code="retry_no_active_guard_block",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        run_id="later-ranker-retry",
+        opportunity_id=opportunity_id,
+        universe_snapshot_id="canonical-universe",
+        universe_member_id="canonical-member-0",
+        venue="bitget",
+        direction="long",
+        scanner_family="momentum",
+        regime_tag="risk_off",
+        inputs={"candidate_score": 1.0, "active_guard_ids": []},
+        parameters={"guard_contract": "candidate-guard/v1"},
+        evaluated_at="2026-08-16T00:00:40+00:00",
+        raise_on_error=True,
+    )
+    retry_envelope = guard_routing._build_ranker_guard_t0_envelopes(
+        [case_ids[0]],
+    )[0]
+    retry_liquidity = next(
+        domain for domain in retry_envelope.domains
+        if domain.domain == "liquidity_cost"
+    )
+    assert retry_liquidity.state == "unavailable"
 
     ufc = get_learning_path("universe_family_calibration")
     learned_guard = get_learning_path("ranker_learned_guard")

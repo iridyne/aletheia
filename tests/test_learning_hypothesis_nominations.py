@@ -1,6 +1,9 @@
 """Append-only nomination lineage around canonical Learning hypotheses."""
 
 import json
+import sqlite3
+
+import pytest
 
 from tests.specs.spec_learning_attribution import _ready_research
 
@@ -104,3 +107,28 @@ def test_rejected_attempt_is_retained_without_hypothesis_or_experiment():
     assert nomination.hypothesis_id is None
     assert json.loads(nomination.envelope_json)["research_evidence"]["research_status"] == "rejected"
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 0
+
+
+def test_nomination_history_rejects_update_and_delete():
+    from aletheia.learning.hypotheses import publish_hypothesis_nomination
+    from aletheia.storage.sqlite import get_db
+
+    nomination = publish_hypothesis_nomination(_envelope("bundle-immutable"))
+    db = get_db()
+    with pytest.raises(sqlite3.IntegrityError, match="history is immutable"):
+        db.execute(
+            "UPDATE learning_hypothesis_nominations SET research_status=? "
+            "WHERE nomination_id=?",
+            ("rejected", nomination.nomination_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="history is retained"):
+        db.execute(
+            "DELETE FROM learning_hypothesis_nominations WHERE nomination_id=?",
+            (nomination.nomination_id,),
+        )
+    row = db.execute(
+        "SELECT research_status FROM learning_hypothesis_nominations "
+        "WHERE nomination_id=?",
+        (nomination.nomination_id,),
+    ).fetchone()
+    assert row["research_status"] == nomination.research_status

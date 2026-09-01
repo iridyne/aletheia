@@ -8,7 +8,10 @@ from statistics import median
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aletheia.learning.economic_knowledge import project_current_economic_knowledge
+from aletheia.learning.economic_knowledge import (
+    project_current_economic_knowledge,
+    project_economic_knowledge_as_of,
+)
 
 
 class KnowledgeYieldSliceV1(BaseModel):
@@ -45,7 +48,7 @@ class KnowledgeYieldSliceV1(BaseModel):
     refrozen_hypothesis_n: int = Field(ge=0)
     median_days_to_evidence: float | None = Field(default=None, ge=0)
     estimated_generation_cost_usd: float | None = Field(default=None, ge=0)
-    operational_drag_ratio: float | None = Field(default=None, ge=0)
+    operational_drag_ratio: float | None = Field(default=None, ge=0, le=1)
     availability: str
     unavailable_reasons: list[str] = Field(default_factory=list)
 
@@ -75,12 +78,16 @@ def build_knowledge_yield_report(
     *, window_start: str, window_end: str, path_id: str | None = None,
 ) -> KnowledgeYieldReportV1:
     """Measure conversion by compatible contract identity; never pool unlike metrics."""
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
 
     start = _instant(window_start)
     end = _instant(window_end)
     if start is None or end is None or end <= start:
         raise ValueError("Knowledge Yield requires a valid increasing UTC window")
+    start_us = iso_instant_us(window_start)
+    end_us = iso_instant_us(window_end)
+    assert start_us is not None and end_us is not None
+    register_instant_us(get_db())
     experiments = get_db().execute(
         "SELECT e.experiment_id, e.created_at, e.ended_at, e.stage, "
         "e.status AS experiment_status, "
@@ -115,7 +122,7 @@ def build_knowledge_yield_report(
         else:
             generation_costs.append(float(cost))
     facts = project_current_economic_knowledge()
-    facts_by_experiment = {fact.experiment_id: fact for fact in facts}
+    interval_facts = project_economic_knowledge_as_of(window_end)
     from aletheia.learning.registry import get_learning_path
 
     grouped: dict[tuple[str, str, str, str, str], list[dict]] = {}
@@ -143,22 +150,31 @@ def build_knowledge_yield_report(
         experiment_ids = {str(member["experiment_id"]) for member in members}
         hypothesis_ids = {str(member["hypothesis_id"]) for member in members}
         qualified = [
-            fact for experiment_id, fact in facts_by_experiment.items()
-            if experiment_id in experiment_ids
+            fact for fact in interval_facts
+            if fact.experiment_id in experiment_ids
             and (evidenced := _instant(fact.window_end)) is not None
             and start <= evidenced < end
         ]
-        invalid_rows = get_db().execute(
-            f"SELECT COUNT(*) FROM learning_contribution_verdicts "
-            f"WHERE verdict='invalid' AND experiment_id IN "
-            f"({','.join('?' for _ in experiment_ids)})",
-            tuple(sorted(experiment_ids)),
-        ).fetchone()
-        invalid_n = int(invalid_rows[0]) if invalid_rows is not None else 0
-        refrozen_n = sum(
-            str(member["hypothesis_status"]) in {"refrozen", "idle_expired", "rejected"}
-            for member in members
-        )
+        invalid_verdict_rows = get_db().execute(
+            f"SELECT v.hypothesis_id FROM learning_contribution_verdicts v "
+            f"WHERE v.verdict='invalid' AND v.experiment_id IN "
+            f"({','.join('?' for _ in experiment_ids)}) "
+            f"AND aletheia_instant_us(v.created_at) >= ? "
+            f"AND aletheia_instant_us(v.created_at) < ?",
+            tuple(sorted(experiment_ids)) + (start_us, end_us),
+        ).fetchall()
+        invalid_n = len(invalid_verdict_rows)
+        invalid_hypothesis_ids: set[str] = {str(r[0]) for r in invalid_verdict_rows}
+        lifecycle_refreeze_rows = get_db().execute(
+            f"SELECT DISTINCT le.hypothesis_id FROM learning_lifecycle_events le "
+            f"WHERE le.action IN ('refreeze', 'invalidate') "
+            f"AND le.experiment_id IN ({','.join('?' for _ in experiment_ids)}) "
+            f"AND aletheia_instant_us(le.created_at) >= ? "
+            f"AND aletheia_instant_us(le.created_at) < ?",
+            tuple(sorted(experiment_ids)) + (start_us, end_us),
+        ).fetchall()
+        refrozen_hypothesis_ids: set[str] = {str(r[0]) for r in lifecycle_refreeze_rows}
+        refrozen_n = len(refrozen_hypothesis_ids)
         evidence_days: list[float] = []
         for fact in qualified:
             experiment = next(
@@ -172,8 +188,9 @@ def build_knowledge_yield_report(
 
         nomination_rows = get_db().execute(
             f"SELECT envelope_json, source_bundle_hash FROM learning_hypothesis_nominations "
-            f"WHERE hypothesis_id IN ({','.join('?' for _ in hypothesis_ids)})",
-            tuple(sorted(hypothesis_ids)),
+            f"WHERE hypothesis_id IN ({','.join('?' for _ in hypothesis_ids)}) "
+            f"AND aletheia_instant_us(created_at) < ?",
+            tuple(sorted(hypothesis_ids)) + (end_us,),
         ).fetchall()
         costs: list[float] = []
         missing_cost = False
@@ -193,18 +210,23 @@ def build_knowledge_yield_report(
                 envelope = json.loads(row["envelope_json"])
                 manifest = envelope["generation_manifest"]
                 draft = envelope["draft"]
-                research = envelope["research_evidence"]
                 value = manifest.get("estimated_cost_usd")
                 methods.add(str(manifest.get("method") or "unavailable"))
                 producers.add(str(manifest.get("producer") or "unavailable"))
                 producer_versions.add(str(manifest.get("producer_version") or "unavailable"))
                 parents.update(str(value) for value in manifest.get("parent_hypothesis_ids", []))
                 source_artifacts.update(str(value) for value in draft.get("source_artifact_ids", []))
-                root_outcomes.update(
-                    str(value)
-                    for value in research.get("observation", {}).get("outcome_ids", [])
-                )
-                research_status = str(research.get("research_status") or "unavailable")
+                try:
+                    from aletheia.learning.hypotheses import HypothesisResearchEvidenceV1
+                    evidence = HypothesisResearchEvidenceV1.model_validate(
+                        envelope["research_evidence"]
+                    )
+                    root_outcomes.update(str(v) for v in evidence.observation.outcome_identities)
+                    research_status = evidence.research_status
+                except Exception:
+                    research_status = str(
+                        envelope.get("research_evidence", {}).get("research_status") or "unavailable"
+                    )
                 research_counts[research_status] = research_counts.get(research_status, 0) + 1
                 compilable_n += draft.get("status") == "compilable"
                 advisory_n += draft.get("status") == "advisory_only"
@@ -220,8 +242,10 @@ def build_knowledge_yield_report(
         verdict_rows = get_db().execute(
             f"SELECT hypothesis_id, verdict, inference_role, harm_metrics_json "
             f"FROM learning_contribution_verdicts WHERE experiment_id IN "
-            f"({','.join('?' for _ in experiment_ids)})",
-            tuple(sorted(experiment_ids)),
+            f"({','.join('?' for _ in experiment_ids)}) "
+            f"AND aletheia_instant_us(created_at) >= ? "
+            f"AND aletheia_instant_us(created_at) < ?",
+            tuple(sorted(experiment_ids)) + (start_us, end_us),
         ).fetchall()
         real_intervention_hypotheses: set[str] = set()
         for verdict_row in verdict_rows:
@@ -241,6 +265,12 @@ def build_knowledge_yield_report(
 
         denominator = len(hypothesis_ids)
         qualified_n = len({fact.hypothesis_id for fact in qualified})
+        # Unique hypotheses affected by an invalid verdict or refreeze/invalidate lifecycle
+        # action within the window, intersected with real-intervention hypotheses.
+        affected_hypothesis_ids = (
+            (invalid_hypothesis_ids | refrozen_hypothesis_ids) & real_intervention_hypotheses
+        )
+        n_real = len(real_intervention_hypotheses)
         unavailable: list[str] = []
         exclusions: list[str] = []
         if missing_cost:
@@ -253,7 +283,6 @@ def build_knowledge_yield_report(
             exclusions.append("invalid_verdict")
         if refrozen_n:
             exclusions.append("refrozen_hypothesis")
-        drag_events = invalid_n + refrozen_n
         slices.append(KnowledgeYieldSliceV1(
             path_id=key[0],
             behavior_contract_version=key[1],
@@ -276,7 +305,7 @@ def build_knowledge_yield_report(
             shadow_admission_n=sum(
                 str(member["stage"]) == "shadow" for member in members
             ),
-            real_intervention_hypothesis_n=len(real_intervention_hypotheses),
+            real_intervention_hypothesis_n=n_real,
             confirmatory_outcome_n=confirmatory_n,
             redundancy_replay_ratio=(
                 1.0 - len(source_bundles) / len(nomination_rows)
@@ -296,7 +325,7 @@ def build_knowledge_yield_report(
             refrozen_hypothesis_n=refrozen_n,
             median_days_to_evidence=median(evidence_days) if evidence_days else None,
             estimated_generation_cost_usd=sum(costs) if costs and not missing_cost else None,
-            operational_drag_ratio=drag_events / denominator if denominator else None,
+            operational_drag_ratio=len(affected_hypothesis_ids) / n_real if n_real else None,
             availability="complete" if not unavailable else "partial",
             unavailable_reasons=unavailable,
         ))
@@ -346,6 +375,9 @@ def build_knowledge_yield_report(
 
 def _instant(value: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed

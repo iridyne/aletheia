@@ -33,7 +33,7 @@ class MetaEvolutionRecommendationV1(BaseModel):
     qualified_knowledge_n: int = Field(ge=0)
     posterior_mean_yield: float = Field(ge=0, le=1)
     conservative_yield_bound: float = Field(ge=0, le=1)
-    harm_refreeze_rate: float = Field(ge=0)
+    harm_refreeze_rate: float = Field(ge=0, le=1)
     rationale: list[str]
     advisory_only: Literal[True] = True
     may_launch_agent: Literal[False] = False
@@ -55,8 +55,9 @@ def recommend_meta_evolution(
         standard_error = sqrt(posterior * (1.0 - posterior) / (n + 3.0))
         conservative = max(0.0, posterior - 1.64 * standard_error)
         harm_rate = (
-            (item.invalid_verdict_n + item.refrozen_hypothesis_n) / n
-            if n else 0.0
+            item.operational_drag_ratio
+            if item.operational_drag_ratio is not None
+            else 0.0
         )
         reasons: list[str] = []
         if (

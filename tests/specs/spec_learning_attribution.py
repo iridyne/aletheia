@@ -10,7 +10,7 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
-def _ready_research(*source_ids: str) -> dict:
+def _ready_research(*source_ids: str, symbol: str = "BTCUSDT") -> dict:
     falsification = "Reject if prospective exact-scope treatment underperforms control."
     return {
         "observation": {
@@ -23,7 +23,19 @@ def _ready_research(*source_ids: str) -> dict:
         ),
         "competing_explanations": ["The recorded regime may explain the loss pattern."],
         "relevant_context": {
-            "recorded_at_t0": {"symbol": "BTC/USDT"},
+            "recorded_at_t0": {
+                "market_identity": [
+                    {
+                        "anchor_entity_id": f"filter_decision:{source_id}",
+                        "value": {
+                            "symbol": symbol,
+                            "scanner_family": "momentum",
+                            "direction": "long",
+                        },
+                    }
+                    for source_id in source_ids
+                ],
+            },
             "missing": ["t0_context_missing:catalyst_news"],
         },
         "falsification_condition": falsification,
@@ -328,6 +340,17 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert unavailable == {
         "action": "guard_shadow_unavailable", "reason": "invalid_block_scope",
     }
+    mismatched = await guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={
+            "factor_keys": [
+                "momentum:ETHUSDT:long:medium_confidence:not_late",
+            ],
+        },
+        source_id="case-mismatch",
+        research_evidence=_ready_research("case-mismatch"),
+    )
+    assert mismatched["reason"] == "research_scope_identity_mismatch"
     from pathlib import Path
     dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
     assert "route_automatic_block_recommendation" in dreaming_source

@@ -63,6 +63,15 @@ class EconomicKnowledgeAssessmentV1(BaseModel):
 
 def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
     """Qualify one consumed confirmatory verdict without writing projected truth."""
+    return _assess_economic_knowledge(verdict_id, require_current_cost_model=True)
+
+
+def _assess_economic_knowledge(
+    verdict_id: str,
+    *,
+    require_current_cost_model: bool,
+) -> EconomicKnowledgeAssessmentV1:
+    """Qualify one consumed confirmatory verdict without writing projected truth."""
     from aletheia.storage.sqlite import get_db
 
     row = get_db().execute(
@@ -136,7 +145,17 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
         reasons.append("metric_version_mismatch")
     if not data.get("inference_plan_hash") or not data.get("inference_cutoff_fingerprint"):
         reasons.append("fixed_look_identity_incomplete")
-    if not isinstance(metrics, dict) or metrics.get("expected_cost_model_version") != COST_MODEL_VERSION:
+    recorded_cost_model_version = (
+        metrics.get("expected_cost_model_version") if isinstance(metrics, dict) else None
+    )
+    if (
+        not isinstance(recorded_cost_model_version, str)
+        or not recorded_cost_model_version.strip()
+        or (
+            require_current_cost_model
+            and recorded_cost_model_version != COST_MODEL_VERSION
+        )
+    ):
         reasons.append("cost_model_version_mismatch")
     numeric = ("baseline", "observed", "delta", "confidence_low", "confidence_high")
     if any(data.get(key) is None for key in numeric):
@@ -152,6 +171,7 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
             status="not_qualified",
             reasons=list(dict.fromkeys(reasons)),
         )
+    assert isinstance(recorded_cost_model_version, str)
     fact = EconomicKnowledgeFactV1(
         knowledge_id=f"economic-knowledge:{verdict_id}",
         source_cohort=str(data["cohort_id"]),
@@ -171,7 +191,7 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
         target_horizon=str(data["target_horizon"]),
         outcome_contract_version=str(data["outcome_contract_version"]),
         metric_version=str(data["metric_version"]),
-        cost_model_version=COST_MODEL_VERSION,
+        cost_model_version=recorded_cost_model_version,
         unique_treatment_n=int(data["unique_treatment_n"]),
         actual_intervention_treatment_n=(
             actual_n if isinstance(actual_n, int) and not isinstance(actual_n, bool) else 0
@@ -195,41 +215,99 @@ def assess_economic_knowledge(verdict_id: str) -> EconomicKnowledgeAssessmentV1:
 
 def project_current_economic_knowledge() -> list[EconomicKnowledgeFactV1]:
     """Return all currently reproducible qualifications, or an honest empty list."""
-    from aletheia.storage.sqlite import get_db
+    return _project_economic_knowledge()
 
-    rows = get_db().execute(
+
+def project_economic_knowledge_as_of(as_of: str) -> list[EconomicKnowledgeFactV1]:
+    """Reproduce qualifications before one half-open historical cutoff."""
+    return _project_economic_knowledge(as_of=as_of)
+
+
+def _project_economic_knowledge(
+    *, as_of: str | None = None,
+) -> list[EconomicKnowledgeFactV1]:
+    from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
+
+    db = get_db()
+    register_instant_us(db)
+    as_of_us = iso_instant_us(as_of) if as_of is not None else None
+    if as_of is not None and as_of_us is None:
+        raise ValueError("Economic Knowledge cutoff must be a valid instant")
+    cutoff = (
+        "AND aletheia_instant_us(created_at) < ?"
+        if as_of_us is not None
+        else ""
+    )
+    rows = db.execute(
         "SELECT verdict_id FROM learning_contribution_verdicts "
         "WHERE verdict='positive' AND inference_role='confirmatory' "
-        "ORDER BY created_at, verdict_id"
+        f"{cutoff} ORDER BY created_at, verdict_id",
+        (as_of_us,) if as_of_us is not None else (),
     ).fetchall()
     facts: list[EconomicKnowledgeFactV1] = []
     for row in rows:
         verdict_id = str(row["verdict_id"])
-        assessment = assess_economic_knowledge(verdict_id)
+        if as_of_us is not None:
+            consumed_before_cutoff = db.execute(
+                "SELECT 1 FROM learning_inference_decisions "
+                "WHERE consumed_verdict_id=? AND status='consumed' "
+                "AND aletheia_instant_us(consumed_at) < ? LIMIT 1",
+                (verdict_id, as_of_us),
+            ).fetchone()
+            if consumed_before_cutoff is None:
+                continue
+        assessment = _assess_economic_knowledge(
+            verdict_id,
+            require_current_cost_model=as_of_us is None,
+        )
         if (
             assessment.fact is not None
-            and not current_disqualification_reasons(verdict_id)
+            and not current_disqualification_reasons(verdict_id, as_of=as_of)
         ):
             facts.append(assessment.fact)
     return facts
 
 
-def current_disqualification_reasons(verdict_id: str) -> list[str]:
-    """Return later canonical death/refreeze facts without rewriting history."""
-    from aletheia.storage.sqlite import get_db
+def current_disqualification_reasons(
+    verdict_id: str,
+    *,
+    as_of: str | None = None,
+) -> list[str]:
+    """Return canonical death/refreeze facts, optionally before an exclusive cutoff."""
+    from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
 
-    verdict = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    verdict = db.execute(
         "SELECT experiment_id, hypothesis_id, created_at "
         "FROM learning_contribution_verdicts WHERE verdict_id=?",
         (verdict_id,),
     ).fetchone()
     if verdict is None:
         return ["verdict_unavailable"]
+    verdict_us = iso_instant_us(verdict["created_at"])
+    as_of_us = iso_instant_us(as_of) if as_of is not None else None
+    if verdict_us is None:
+        return ["verdict_created_at_invalid"]
+    if as_of is not None and as_of_us is None:
+        return ["as_of_invalid"]
+    cutoff = (
+        "AND aletheia_instant_us(created_at) < ?"
+        if as_of_us is not None
+        else ""
+    )
+    params = (
+        (verdict["hypothesis_id"], verdict_us, as_of_us)
+        if as_of_us is not None
+        else (verdict["hypothesis_id"], verdict_us)
+    )
     reasons: list[str] = []
-    later = get_db().execute(
+    later = db.execute(
         "SELECT verdict, harm_metrics_json FROM learning_contribution_verdicts "
-        "WHERE hypothesis_id=? AND created_at>? ORDER BY created_at, verdict_id",
-        (verdict["hypothesis_id"], verdict["created_at"]),
+        "WHERE hypothesis_id=? "
+        "AND aletheia_instant_us(created_at)>? "
+        f"{cutoff} ORDER BY created_at, verdict_id",
+        params,
     ).fetchall()
     for row in later:
         if row["verdict"] in {"negative", "invalid"}:
@@ -240,21 +318,29 @@ def current_disqualification_reasons(verdict_id: str) -> list[str]:
             metrics = {}
         if isinstance(metrics, dict) and metrics.get("breached") is True:
             reasons.append("later_determinate_harm")
-    lifecycle = get_db().execute(
+    lifecycle = db.execute(
         "SELECT action FROM learning_lifecycle_events "
-        "WHERE hypothesis_id=? AND created_at>? ORDER BY created_at, event_id",
-        (verdict["hypothesis_id"], verdict["created_at"]),
+        "WHERE hypothesis_id=? "
+        "AND aletheia_instant_us(created_at)>? "
+        f"{cutoff} ORDER BY created_at, event_id",
+        params,
     ).fetchall()
-    if any(str(row["action"]) in {"refreeze", "idle_expired", "terminate"} for row in lifecycle):
+    if any(
+        str(row["action"]) in {
+            "refreeze", "retire_idle", "idle_expired", "terminate",
+        }
+        for row in lifecycle
+    ):
         reasons.append("later_lifecycle_refreeze")
-    hypothesis = get_db().execute(
-        "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
-        (verdict["hypothesis_id"],),
-    ).fetchone()
-    if hypothesis is None or str(hypothesis["status"]) in {
-        "refrozen", "idle_expired", "rejected",
-    }:
-        reasons.append("hypothesis_not_currently_qualified")
+    if as_of is None:
+        hypothesis = db.execute(
+            "SELECT status FROM learning_hypotheses WHERE hypothesis_id=?",
+            (verdict["hypothesis_id"],),
+        ).fetchone()
+        if hypothesis is None or str(hypothesis["status"]) in {
+            "refrozen", "idle_expired", "rejected",
+        }:
+            reasons.append("hypothesis_not_currently_qualified")
     return list(dict.fromkeys(reasons))
 
 

@@ -409,7 +409,9 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
 
     async def ready_research(**kwargs):
         observed_deadlines.append(kwargs.get("deadline"))
-        return _ready_research(*kwargs["source_artifact_ids"])
+        return _ready_research(
+            *kwargs["source_artifact_ids"], symbol="BTC/USDT",
+        )
 
     monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_recommendation)
     monkeypatch.setattr(guard_routing, "research_learning_hypothesis", ready_research)

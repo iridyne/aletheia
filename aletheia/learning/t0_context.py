@@ -122,6 +122,8 @@ def assess_t0_foundation(
     reasons: list[str] = []
     anchor = _instant(envelope.anchor_at)
     temporal_integrity = anchor is not None
+    if anchor is None:
+        reasons.append("invalid_anchor_at")
     provenance_integrity = bool(envelope.anchor_entity_id and envelope.root_causal_identity)
     if envelope.t0_anchor_kind in {"knowledge_item", "markdown", "trade_case_study"}:
         provenance_integrity = False
@@ -146,13 +148,20 @@ def assess_t0_foundation(
         reasons.append("reconstructed_partial")
     for domain in envelope.domains:
         observed = _instant(domain.source_observed_at)
-        if observed is not None and anchor is not None and observed > anchor:
-            temporal_integrity = False
-            reasons.append(f"future_observation:{domain.domain}")
         received = _instant(domain.received_at)
-        if received is not None and anchor is not None and received > anchor:
-            temporal_integrity = False
-            reasons.append(f"future_information:{domain.domain}")
+        if domain.state == "available":
+            if observed is None:
+                temporal_integrity = False
+                reasons.append(f"invalid_source_observed_at:{domain.domain}")
+            elif anchor is not None and observed > anchor:
+                temporal_integrity = False
+                reasons.append(f"future_observation:{domain.domain}")
+            if received is None:
+                temporal_integrity = False
+                reasons.append(f"invalid_received_at:{domain.domain}")
+            elif anchor is not None and received > anchor:
+                temporal_integrity = False
+                reasons.append(f"future_information:{domain.domain}")
         if domain.state == "integrity_conflict":
             provenance_integrity = False
             reasons.append(f"integrity_conflict:{domain.domain}")
@@ -243,6 +252,6 @@ def _instant(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
     return parsed.astimezone(timezone.utc)

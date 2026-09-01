@@ -49,6 +49,7 @@ def _recommend(item):
         (_slice(
             invalid_verdict_n=4,
             refrozen_hypothesis_n=1,
+            operational_drag_ratio=0.25,
         ), "RETIRE"),
         (_slice(), "DIFFERENT_TEST"),
         (_slice(
@@ -91,3 +92,20 @@ def test_recommendation_does_not_mutate_learning_ledgers():
         for table in tables
     }
     assert before == after
+
+
+def test_meta_uses_bounded_drag_ratio_directly():
+    recommendation = _recommend(_slice(operational_drag_ratio=1.0))
+    assert recommendation.research_action == "RETIRE"
+    assert recommendation.harm_refreeze_rate == 1.0
+
+
+def test_none_drag_ratio_treated_as_zero():
+    """#2543: zero real-intervention slice has None drag; meta must not error and holds."""
+    recommendation = _recommend(_slice(
+        real_intervention_hypothesis_n=0,
+        confirmatory_outcome_n=0,
+        operational_drag_ratio=None,
+    ))
+    assert recommendation.research_action == "HOLD_INSUFFICIENT_EVIDENCE"
+    assert recommendation.harm_refreeze_rate == 0.0

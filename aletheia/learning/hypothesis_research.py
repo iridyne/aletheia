@@ -96,6 +96,7 @@ async def research_learning_hypothesis(
         recorded, missing, outcome_ids, cases = _assemble_t0_envelope_context(
             path_id=path_id,
             consumer=consumer,
+            source_artifact_ids=artifact_ids,
             envelopes=list(t0_envelopes or []),
         )
     else:
@@ -255,17 +256,36 @@ def _assemble_t0_envelope_context(
     *,
     path_id: str,
     consumer: str,
+    source_artifact_ids: list[str],
     envelopes: list[T0ContextEnvelopeV1],
 ) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
     contract = get_t0_coverage_contract(path_id)
+    from aletheia.storage import repositories as repo
     if not envelopes:
         return {}, ["canonical_t0_envelope_unavailable"], [], []
-    recorded: dict[str, list[dict[str, Any]]] = {}
+    bindings: list[tuple[str, T0ContextEnvelopeV1]] = []
     missing: list[str] = []
+    for envelope in envelopes:
+        matching_sources = [
+            artifact_id
+            for artifact_id in source_artifact_ids
+            if _source_artifact_matches_t0(artifact_id, envelope)
+        ]
+        if len(matching_sources) != 1:
+            missing.append(f"source_t0_identity_mismatch:{envelope.anchor_entity_id}")
+            continue
+        bindings.append((matching_sources[0], envelope))
+    for artifact_id in source_artifact_ids:
+        if sum(source_id == artifact_id for source_id, _ in bindings) != 1:
+            missing.append(f"source_t0_identity_mismatch:{artifact_id}")
+    if missing:
+        return {}, list(dict.fromkeys(missing)), [], []
+
+    recorded: dict[str, list[dict[str, Any]]] = {}
     outcome_ids: list[str] = []
     cases: list[dict[str, Any]] = []
     roots: set[str] = set()
-    for envelope in envelopes:
+    for source_artifact_id, envelope in bindings:
         if envelope.path_id != path_id:
             missing.append(f"t0_path_mismatch:{envelope.anchor_entity_id}")
             continue
@@ -284,6 +304,7 @@ def _assemble_t0_envelope_context(
         if assessment.status != "eligible_for_hypothesis_research":
             missing.extend(assessment.reasons or ["t0_foundation_not_eligible"])
             continue
+        opportunity_id = ""
         for domain in envelope.domains:
             if domain.state not in {"available", "not_applicable"}:
                 continue
@@ -294,20 +315,32 @@ def _assemble_t0_envelope_context(
                 "value": _bounded(domain.values),
                 "source_refs": domain.source_refs,
             })
+            if domain.domain == "candidate":
+                opportunity_id = str(
+                    domain.values.get("opportunity_id")
+                    or str(domain.values.get("candidate_key") or "").removeprefix(
+                        "opportunity:"
+                    )
+                ).strip()
+        position_id = (
+            envelope.root_causal_identity.removeprefix("position:")
+            if envelope.root_causal_identity.startswith("position:")
+            else ""
+        )
+        opened_at = envelope.anchor_at
+        if position_id:
+            position = repo.get_position(position_id)
+            opened = _parse_aware_timestamp((position or {}).get("opened_at"))
+            if opened is None:
+                missing.append(f"position_opened_at_unavailable:{source_artifact_id}")
+                continue
+            opened_at = opened.isoformat()
         outcome_ids.append(envelope.root_causal_identity)
         cases.append({
-            "source_artifact_id": envelope.anchor_entity_id,
-            "position_id": (
-                envelope.root_causal_identity.removeprefix("position:")
-                if envelope.root_causal_identity.startswith("position:")
-                else ""
-            ),
-            "opportunity_id": (
-                envelope.anchor_entity_id
-                if envelope.t0_anchor_kind == "opportunity_generation"
-                else ""
-            ),
-            "opened_at": envelope.anchor_at,
+            "source_artifact_id": source_artifact_id,
+            "position_id": position_id,
+            "opportunity_id": opportunity_id,
+            "opened_at": opened_at,
         })
     return (
         {key: recorded[key] for key in sorted(recorded)},
@@ -315,6 +348,60 @@ def _assemble_t0_envelope_context(
         list(dict.fromkeys(outcome_ids)),
         cases,
     )
+
+def _source_artifact_matches_t0(
+    artifact_id: str,
+    envelope: T0ContextEnvelopeV1,
+) -> bool:
+    if artifact_id == envelope.anchor_entity_id:
+        return True
+    from aletheia.knowledge.document import read_knowledge_document
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    item = repo.get_knowledge_item(artifact_id)
+    if item is None or item.get("item_type") != "trade_case_study":
+        return False
+    document = read_knowledge_document(item)
+    if document.state in {"integrity_conflict", "unavailable"}:
+        return False
+    position_id = str(document.metadata.get("position_id") or "").strip()
+    position = repo.get_position(position_id) if position_id else None
+    opportunity_id = str((position or {}).get("opportunity_id") or "").strip()
+    if (
+        not position_id
+        or not opportunity_id
+        or envelope.root_causal_identity
+        not in {position_id, f"position:{position_id}"}
+        or envelope.t0_anchor_kind != "filter_decision"
+        or not envelope.anchor_entity_id.startswith("filter_decision:")
+    ):
+        return False
+    anchor_id = envelope.anchor_entity_id.removeprefix("filter_decision:")
+    anchor = get_db().execute(
+        "SELECT opportunity_id, evaluated_at, stage "
+        "FROM filter_decisions WHERE id=?",
+        (anchor_id,),
+    ).fetchone()
+    if (
+        anchor is None
+        or str(anchor["stage"] or "") != "paper_ranker"
+        or str(anchor["opportunity_id"] or "") != opportunity_id
+        or _parse_aware_timestamp(anchor["evaluated_at"])
+        != _parse_aware_timestamp(envelope.anchor_at)
+    ):
+        return False
+    candidate_opportunities = {
+        str(
+            domain.values.get("opportunity_id")
+            or str(domain.values.get("candidate_key") or "").removeprefix(
+                "opportunity:"
+            )
+        ).strip()
+        for domain in envelope.domains
+        if domain.domain == "candidate" and domain.state == "available"
+    }
+    return candidate_opportunities == {opportunity_id}
 
 
 def _assemble_exact_context(
@@ -582,6 +669,16 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_aware_timestamp(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
     return parsed.astimezone(timezone.utc)
 
 

@@ -315,3 +315,57 @@ def test_available_domain_requires_complete_provenance():
             **domain.model_dump()
             | {"source_class": "deterministic_derived", "calculation_version": None}
         )
+
+
+@spec_claim(SpecClaim(
+    "LT0-S15", _CONTRACT, "Parseable provenance time", "L2a",
+    "Available required and recommended facts need offset-aware observed and receive times.",
+    status="implemented",
+))
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("observed_at", "not-a-date", "invalid_source_observed_at"),
+        ("received_at", "not-a-date", "invalid_received_at"),
+        ("observed_at", "2025-12-31T23:59:00", "invalid_source_observed_at"),
+        ("received_at", "2026-01-01T00:00:00", "invalid_received_at"),
+    ],
+)
+@pytest.mark.parametrize("domain_name", ["candidate", "event_context"])
+def test_unprovable_available_domain_time_is_advisory(
+    field: str,
+    value: str,
+    reason: str,
+    domain_name: str,
+):
+    from aletheia.learning.t0_context import assess_t0_foundation
+
+    envelope = _ranker_envelope()
+    replacement = _domain(domain_name, **{field: value})
+    domains = [
+        replacement if domain.domain == domain_name else domain
+        for domain in envelope.domains
+    ]
+    if domain_name == "event_context":
+        domains.append(replacement)
+        envelope = envelope.model_copy(update={"recommended_domains": [domain_name]})
+    assessment = assess_t0_foundation(envelope.model_copy(update={"domains": domains}))
+    assert assessment.temporal_integrity is False
+    assert assessment.status == "advisory_only"
+    assert f"{reason}:{domain_name}" in assessment.reasons
+
+
+def test_offset_equivalent_boundary_times_remain_eligible():
+    from aletheia.learning.t0_context import assess_t0_foundation
+
+    domains = [
+        _domain(
+            name,
+            observed_at="2025-12-31T19:00:00-05:00",
+            received_at="2025-12-31T19:00:00-05:00",
+        )
+        for name in _ranker_envelope().required_domains
+    ]
+    assessment = assess_t0_foundation(_ranker_envelope(domains=domains))
+    assert assessment.temporal_integrity is True
+    assert assessment.status == "eligible_for_hypothesis_research"
