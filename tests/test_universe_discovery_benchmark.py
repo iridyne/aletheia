@@ -319,7 +319,7 @@ def test_price_quality_failure_is_terminal_but_not_settled(benchmark_db, monkeyp
                 "range_low": 99.0,
                 "price_source": "horizon_ohlcv",
                 "price_quality_ok": False,
-                "settlement_lag_sec": 0.0,
+                "settlement_lag_sec": 321.0,
             }
             for row in rows
         }
@@ -330,7 +330,9 @@ def test_price_quality_failure_is_terminal_but_not_settled(benchmark_db, monkeyp
     )
     asyncio.run(settle_due_filter_outcomes(max_rows=1))
     rows = repo.list_universe_discovery_outcomes(window["id"])
-    assert sum(row["status"] == "failed" for row in rows) == 1
+    failed = [row for row in rows if row["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["settlement_lag_sec"] == 321.0
     assert sum(row["status"] == "settled" for row in rows) == 0
 
 
@@ -568,3 +570,59 @@ def test_analysis_excludes_partial_family_batch_and_keeps_selected_asset_weights
     assert len(selected_values) == sum(
         row["horizon"] == "4h" and "production_selected" in json.loads(row["benchmark_cohorts"]) for row in outcomes
     )
+def test_matching_percentiles_are_tie_aware():
+    rows = _population(3)
+    rows[0]["spread_bps"] = rows[1]["spread_bps"] = 7.0
+    rows[2]["spread_bps"] = 9.0
+    ranks = benchmark._rank_values(rows, "spread_bps")
+    assert ranks[benchmark._identity(rows[0])] == ranks[benchmark._identity(rows[1])]
+    assert ranks[benchmark._identity(rows[1])] < ranks[benchmark._identity(rows[2])]
+
+
+def test_seeded_bootstrap_is_independent_of_batch_insertion_order(monkeypatch):
+    monkeypatch.setattr(benchmark, "MIN_INFERENCE_BATCHES", 2)
+    monkeypatch.setattr(benchmark, "BOOTSTRAP_DRAWS", 100)
+    first = benchmark._paired_inference({"batch-b": [2.0], "batch-a": [-1.0]}, contract_hash="contract", comparison="stable-order")
+    second = benchmark._paired_inference({"batch-a": [-1.0], "batch-b": [2.0]}, contract_hash="contract", comparison="stable-order")
+    assert first == second
+
+
+def test_stratified_summary_is_separated_by_cohort(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population()
+    benchmark.capture_completed_run(scanner_run_id="cohort-strata", population=population, allocated=population[:5], entry_ts=started_at, regime_tag="sideways")
+    strata = benchmark.analyze_benchmark(window["id"])["stratified_4h_summary"]
+    assert "production_selected" in strata["direction"]
+    assert "family:momentum" in strata["direction"]
+    selected_count = sum(item["intended"] for item in strata["direction"]["production_selected"].values())
+    family_count = sum(item["intended"] for item in strata["direction"]["family:momentum"].values())
+    assert selected_count == 5
+    assert family_count != selected_count
+
+
+def test_finalize_contract_drift_persists_invalidation(benchmark_db, monkeypatch):
+    window = benchmark.start_benchmark(now="2026-01-01T00:00:00+00:00", code_commit="commit-a")
+    original = benchmark.build_contract
+    def changed_contract(**kwargs):
+        contract = original(**kwargs)
+        contract["capture"]["days"] += 1
+        return contract
+    monkeypatch.setattr(benchmark, "build_contract", changed_contract)
+    with pytest.raises(ValueError, match="benchmark_frozen_contract_drift"):
+        benchmark.finalize_benchmark(window["id"], benchmark_db / "drift.json.gz", now="2026-01-16T06:00:00+00:00")
+    persisted = repo.get_universe_discovery_benchmark(window["id"])
+    assert persisted["status"] == "invalidated"
+    assert persisted["invalidation_reason"] == "frozen_contract_drift_at_finalization"
+
+
+def test_finalized_manifest_unions_capture_and_settlement_sessions(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    benchmark.capture_completed_run(scanner_run_id="runtime-sessions", population=_population(), allocated=_population()[:5], entry_ts=started_at, regime_tag="sideways")
+    outcome = repo.list_universe_discovery_outcomes(window["id"])[0]
+    repo.execute_write("UPDATE filter_candidate_outcomes SET producer_runtime_session_id=?, settlement_runtime_session_id=? WHERE id=?", ("capture-session", "settlement-session", outcome["id"]))
+    output = benchmark_db / "runtime-sessions.json.gz"
+    benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
+    package = json.loads(gzip.decompress(output.read_bytes()))
+    assert package["manifest"]["runtime_session_ids"] == ["capture-session", "settlement-session"]

@@ -10355,6 +10355,7 @@ def fail_filter_candidate_outcome(
     *,
     exit_price: float | None = None,
     settlement_price_source: str | None = None,
+    settlement_lag_sec: float | None = None,
 ) -> bool:
     """Record a terminal "not measurable" verdict for one canonical row.
 
@@ -10370,6 +10371,8 @@ def fail_filter_candidate_outcome(
         updates["exit_price_usd"] = exit_price
     if settlement_price_source is not None:
         updates["settlement_price_source"] = settlement_price_source
+    if settlement_lag_sec is not None:
+        updates["settlement_lag_sec"] = settlement_lag_sec
     try:
         from aletheia.agent_runtime.runtime_session import current_provenance
 

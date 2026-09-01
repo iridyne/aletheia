@@ -225,6 +225,7 @@ async def settle_due_filter_outcomes(
                 settled_at=now_iso,
                 exit_price=exit_price,
                 settlement_price_source=observation.get("price_source"),
+                settlement_lag_sec=observation.get("settlement_lag_sec"),
             )
             return _FAILED
         if not observation.get("price_quality_ok"):
@@ -233,6 +234,7 @@ async def settle_due_filter_outcomes(
                 settled_at=now_iso,
                 exit_price=exit_price,
                 settlement_price_source=observation.get("price_source"),
+                settlement_lag_sec=observation.get("settlement_lag_sec"),
             )
             return _FAILED
 

@@ -239,7 +239,17 @@ def _rank_values(
     ]
     present = sorted((value, _identity(row)) for row, value in values)
     denominator = max(1, len(present) - 1)
-    return {identity: index / denominator for index, (_, identity) in enumerate(present)}
+    ranks: dict[tuple[str, str, str, str], float] = {}
+    start = 0
+    while start < len(present):
+        end = start + 1
+        while end < len(present) and present[end][0] == present[start][0]:
+            end += 1
+        percentile = ((start + end - 1) / 2) / denominator
+        for _, identity in present[start:end]:
+            ranks[identity] = percentile
+        start = end
+    return ranks
 
 
 def _tertile(value: float | None) -> int | None:
@@ -581,7 +591,7 @@ def _paired_inference(
 ) -> dict[str, Any]:
     clusters = [
         [float(value)] if isinstance(value, (int, float)) else [float(item) for item in value]
-        for value in differences.values()
+        for _, value in sorted(differences.items())
     ]
     clusters = [cluster for cluster in clusters if cluster]
     if len(clusters) < MIN_INFERENCE_BATCHES:
@@ -815,18 +825,22 @@ def analyze_benchmark(
 
     symbols = Counter(str(row["symbol"]) for row in measurements if row["horizon"] == "4h")
     dates = Counter(str(row["entry_ts"])[:10] for row in measurements if row["horizon"] == "4h")
-    def grouped_4h(field: str) -> dict[str, dict[str, Any]]:
-        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    def grouped_4h(field: str) -> dict[str, dict[str, dict[str, Any]]]:
+        groups: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
         for row in measurements:
             if row["horizon"] == "4h":
-                groups[str(row.get(field) or "unavailable")].append(row)
+                for cohort in row["cohorts"]:
+                    groups[str(cohort)][str(row.get(field) or "unavailable")].append(row)
         return {
-            key: _summary(
-                [float(row["frozen_net_return_pct"]) for row in items if row["frozen_net_return_pct"] is not None],
-                len(items),
-                Counter(str(row["status"]) for row in items),
-            )
-            for key, items in sorted(groups.items())
+            cohort: {
+                key: _summary(
+                    [float(row["frozen_net_return_pct"]) for row in items if row["frozen_net_return_pct"] is not None],
+                    len(items),
+                    Counter(str(row["status"]) for row in items),
+                )
+                for key, items in sorted(strata.items())
+            }
+            for cohort, strata in sorted(groups.items())
         }
 
     selected_settled_4h = [
@@ -912,6 +926,9 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
         started_at=str(window["started_at"]),
     )
     if _hash(current_contract) != str(window["contract_hash"]):
+        repo.invalidate_universe_discovery_benchmark(
+            window_id, reason="frozen_contract_drift_at_finalization", at=at.isoformat()
+        )
         raise ValueError("benchmark_frozen_contract_drift")
     runtime_commit = _current_commit()
     if runtime_commit is None:
@@ -921,7 +938,12 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
     batches = repo.list_universe_discovery_batches(window_id)
     outcomes = repo.list_universe_discovery_outcomes(window_id)
     analysis = analyze_benchmark(window_id, snapshot=(window, batches, outcomes))
-    runtime_session_ids = sorted({str(row.get("producer_runtime_session_id")) for row in outcomes if row.get("producer_runtime_session_id")})
+    runtime_session_ids = sorted({
+        str(row[field])
+        for row in outcomes
+        for field in ("producer_runtime_session_id", "settlement_runtime_session_id")
+        if row.get(field)
+    })
     package = {
         "manifest": {
             "format": BENCHMARK_CONTRACT_VERSION,
