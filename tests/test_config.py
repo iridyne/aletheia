@@ -30,6 +30,12 @@ def test_default_config_has_correct_values():
     assert cfg.fast_trigger.mode == "shadow"
 
 
+@pytest.mark.parametrize("mode", ["blacklst", "off", "", "WHITELIST"])
+def test_risk_symbol_filter_mode_rejects_unknown_persisted_values(mode):
+    with pytest.raises(ValidationError, match="symbol_filter_mode"):
+        AletheiaConfig.model_validate({"risk": {"symbol_filter_mode": mode}})
+
+
 @pytest.mark.parametrize("value", [0, -1])
 def test_guard_min_matching_trades_requires_evidence(value):
     with pytest.raises(ValidationError):

@@ -152,7 +152,7 @@ def test_risk_rejects_when_daily_loss_limit_exceeded_proposal_archived(e2e_db, m
     cfg.risk.demo.capital.base_source = "custom"
     cfg.risk.demo.capital.base_usdt = 1000.0
     cfg.risk.demo.loss.max_daily_loss_pct = 2.0   # daily limit = $20
-    cfg.risk.symbol_filter_mode = "off"
+    cfg.risk.symbol_filter_mode = "blacklist"
     save_config(cfg)
 
     # Fix the account snapshot to show a $25 loss today — exceeds the $20 limit.
