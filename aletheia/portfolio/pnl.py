@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from aletheia.analytics.outcome_integrity import validated_funding_economics
+from aletheia.analytics.outcome_integrity import validated_fee, validated_funding_economics
 from aletheia.storage.models import PortfolioSnapshot
 
 logger = logging.getLogger("aletheia.pnl")
@@ -700,15 +700,13 @@ def close_position(
     # paper fills). Only fall back to re-deriving from the fee schedule when the field is
     # genuinely missing (NULL from pre-Sprint-B positions). Truthiness "or 0" had been
     # recomputing fees on legible zeros and inflating realized PnL.
-    entry_fee = row.get("entry_fee")
+    entry_fee = validated_fee(row.get("entry_fee"), field="entry_fee")
     if entry_fee is None and not private_exchange_fill:
         entry_fee = row["entry_price"] * row["quantity"] * fee_rate
     if actual_exit_fee is None:
         exit_fee = None if private_exchange_fill else exit_price * row["quantity"] * fee_rate
     else:
-        exit_fee = float(actual_exit_fee)
-        if not math.isfinite(exit_fee) or exit_fee < 0:
-            raise ValueError("actual_exit_fee must be a finite non-negative value")
+        exit_fee = validated_fee(actual_exit_fee, field="actual_exit_fee")
     # Spot has no funding leg. Futures funding is part of realized economics,
     # but only when it came from a durable broker/local ledger.  An unknown or
     # malformed funding value must not be guessed from current configuration:

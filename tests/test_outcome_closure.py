@@ -898,6 +898,52 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     ]) == 1
 
 
+@pytest.mark.parametrize("bad_fee", (-1.0, float("inf")), ids=("negative", "infinite"))
+def test_local_close_rejects_invalid_persisted_entry_fee(bad_fee):
+    from aletheia.portfolio.pnl import close_position
+
+    position = Position(
+        id="local-invalid-entry-fee",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+        entry_fee=0.0,
+    )
+    repo.insert_position(position)
+    repo.update_position(position.id, entry_fee=bad_fee)
+
+    with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
+        close_position(position.id, exit_price=110.0)
+
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "open"
+    assert repo.list_position_close_events(position_id=position.id) == []
+    assert not repo.has_paper_account_position_event("position_closed", position.id)
+
+
+@pytest.mark.parametrize("bad_fee", (-1.0, float("inf")), ids=("negative", "infinite"))
+def test_verified_close_rejects_invalid_persisted_entry_fee(bad_fee):
+    from aletheia.portfolio.outcome_closure import close_position_verified
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    repo.update_position(position.id, entry_fee=bad_fee)
+
+    with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
+        close_position_verified(position.id, _verified_result(position))
+
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "open"
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (position.id,),
+    ).fetchone()[0] == 0
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
 def test_verified_external_close_converges_with_unknown_entry_fee():
     """Verified disappearance closes lifecycle while withholding net economics."""
     from aletheia.portfolio.outcome_closure import close_position_from_verified_exit

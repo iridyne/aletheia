@@ -107,6 +107,19 @@ class AttributionReadError(RuntimeError):
     """The attribution chain could not be read, so absence is not proven."""
 
 
+def validated_fee(value: Any, *, field: str) -> float | None:
+    """Return a persisted fee only when it is finite and non-negative."""
+    if value is None:
+        return None
+    try:
+        fee = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{field} must be a finite non-negative value") from None
+    if not math.isfinite(fee) or fee < 0:
+        raise ValueError(f"{field} must be a finite non-negative value")
+    return fee
+
+
 def validated_funding_economics(
     *,
     market_type: Any,
