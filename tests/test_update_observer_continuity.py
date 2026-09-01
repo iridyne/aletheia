@@ -283,7 +283,7 @@ def test_compare_degraded_main_health_is_failure():
     assert "main_health_degraded" in result["failures"]
 
 
-def test_compare_initializing_main_health_is_unproven():
+def test_compare_initializing_main_health_is_warning_only():
     from aletheia.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
@@ -298,7 +298,8 @@ def test_compare_initializing_main_health_is_unproven():
     )
 
     assert result["failures"] == []
-    assert "main_health_not_verified" in result["proof_gaps"]
+    assert result["proof_gaps"] == []
+    assert "main_health_initializing" in result["warnings"]
 
 
 def test_no_restart_never_emits_verified_claim():
@@ -477,7 +478,7 @@ def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
     assert result["continuity_state"] == "failed"
 
 
-def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
+def test_wrapper_accepts_initializing_after_structural_proof(monkeypatch):
     from aletheia.update import applier, continuity
 
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
@@ -507,21 +508,16 @@ def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "rollback_applied_update",
-        lambda result: {"rolled_back": True, "actual_head": "old111"},
+        lambda result: (_ for _ in ()).throw(AssertionError("must not roll back warmup")),
     )
-    now = [0.0]
-    monkeypatch.setattr(continuity.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(continuity.time, "sleep", lambda value: now.__setitem__(0, now[0] + value))
 
     result = continuity.apply_update_with_continuity(restart=True)
 
-    assert result["applied"] is False
-    assert result["rolled_back"] is True
-    assert result["continuity_verified"] is False
-    assert result["continuity_state"] == "unproven"
-    assert result["reason"] == "observer_continuity_unproven"
-    assert result["continuity"]["comparison"]["failures"] == []
-    assert "target_postflight_projection_unavailable" in result["continuity"]["comparison"]["proof_gaps"]
+    assert result["applied"] is True
+    assert result["continuity_verified"] is True
+    assert result["continuity_state"] == "verified"
+    assert result["continuity"]["comparison"]["proof_gaps"] == []
+    assert "main_health_initializing" in result["continuity"]["comparison"]["warnings"]
 
 
 def test_wrapper_rolls_back_postflight_failure(monkeypatch):

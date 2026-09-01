@@ -78,7 +78,7 @@ def test_worker_runtime_owner_proof_unavailable_is_preflight_proof_gap():
     assert "observation_runtime_owner_proof_unavailable" in result["proof_gaps"]
 
 
-def test_postflight_wait_survives_initializing_then_healthy(monkeypatch):
+def test_postflight_initializing_target_captures_without_sleep(monkeypatch):
     from aletheia.update import continuity
 
     initializing = _minimal_snapshot()
@@ -88,23 +88,15 @@ def test_postflight_wait_survives_initializing_then_healthy(monkeypatch):
         current_commit="target-sha",
         health_status="initializing",
     )
-    healthy = _minimal_snapshot()
-    healthy["control"]["disk_sha"] = "target-sha"
-    healthy["gateway"].update(
-        boot_commit="target-sha",
-        current_commit="target-sha",
-        health_status="healthy",
-    )
-    gateways = iter([initializing["gateway"], healthy["gateway"]])
     sleeps: list[float] = []
-    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: next(gateways))
-    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: healthy)
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: initializing["gateway"])
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: initializing)
     monkeypatch.setattr(continuity.time, "sleep", lambda value: sleeps.append(value))
 
     result = continuity.capture_update_continuity_until_settled("target-sha", timeout_sec=4, poll_sec=2)
 
-    assert result["gateway"]["health_status"] == "healthy"
-    assert sleeps == [2.0]
+    assert result["gateway"]["health_status"] == "initializing"
+    assert sleeps == []
 
 
 def test_postflight_deadline_counts_wait_and_captures_once(monkeypatch):
@@ -125,7 +117,7 @@ def test_postflight_deadline_counts_wait_and_captures_once(monkeypatch):
             "available": True,
             "boot_commit": "target-sha",
             "current_commit": "target-sha",
-            "health_status": "initializing",
+            "health_status": None,
         }
 
     monkeypatch.setattr(continuity.time, "monotonic", monotonic)
