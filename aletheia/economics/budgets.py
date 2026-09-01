@@ -1,19 +1,17 @@
 """Budget declaration writers + would-block observation calculator.
 
-Phase 2B-1 (see docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md
-§4 Phase 2 and docs/research/tokenomics/phase2_design_decisions_2026-07-31.md).
+Current design history is recorded in ``docs/design/proposals/tokenomics_harness.md``
+and the dated research under ``docs/research/tokenomics/``.
 
-This module ships:
+This module provides:
 
 - `add_budget()`, `list_budgets()`, `set_budget_enabled()` — CLI-fed
   budget-policy writers. Model pricing is catalog-only and has no CLI writer.
 - `check_would_block()` — pure function computing which declared
-  budgets a hypothetical additional cost would breach. No side
-  effects. The hook that will call it lives in Phase 2B-2.
+  budgets a hypothetical additional cost would breach. No side effects.
 
-No behaviour change to any LLM caller until Phase 2B-2 wires
-`check_would_block` into `complete_with_fallback` and gates it on
-`EconomicsConfig.budgets_shadow_enabled`.
+Observe-only budget evidence and actual enforcement are separate responsibilities;
+this module only owns budget declarations and read-only budget calculations.
 """
 
 from __future__ import annotations
@@ -233,10 +231,10 @@ def check_would_block(
 ) -> list[dict[str, Any]]:
     """Return would-block observations for the given hypothetical call.
 
-    A pure read: no rows are written to any table. The caller (Phase 2B-2's
-    hook inside `complete_with_fallback`) serialises the returned list
-    into `runtime_cost_events.metadata_json.$.would_block` when the call
-    completes.
+    A pure read: no rows are written to any table. The shared inference path
+    serialises the returned list into
+    ``runtime_cost_events.metadata_json.$.would_block`` when observe-only
+    budget evidence is enabled.
 
     Callers should pass whichever identity fields are available:
 
