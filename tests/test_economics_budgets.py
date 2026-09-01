@@ -93,6 +93,13 @@ def test_add_budget_rejects_non_positive_cap():
         add_budget(scope="system", subject=None, usd_cap=-5.0, window="daily")
 
 
+@pytest.mark.parametrize("cap", [float("inf"), float("-inf"), float("nan")])
+def test_add_budget_rejects_non_finite_cap(cap):
+    with pytest.raises(ValueError, match="finite and positive"):
+        add_budget(scope="system", subject=None, usd_cap=cap, window="daily")
+    assert list_budgets() == []
+
+
 def test_add_budget_accepts_disabled_flag():
     row = add_budget(
         scope="system", subject=None, usd_cap=1.0, window="daily", enabled=False
@@ -278,6 +285,48 @@ def test_check_would_block_rejects_non_positive_estimate():
     assert check_would_block(estimated_cost_usd=-1.0) == []
 
 
+def test_legacy_infinite_cap_is_visible_and_blocks_without_invalid_json(monkeypatch):
+    from types import SimpleNamespace
+
+    import aletheia.agent_runtime.run_context as context
+    from aletheia.model_provider.base import ModelRequest
+    from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budget_if_configured
+
+    now = _now_iso()
+    ensure_economics_schema().execute(
+        """INSERT INTO economics_budgets (
+            id, scope, subject, usd_cap, window, enabled, source, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("budget_invalid", "system", None, float("inf"), "daily", 1, "test", now, now),
+    )
+
+    budgets = list_budgets(enabled_only=True)
+    assert budgets[0]["usd_cap"] is None
+    assert budgets[0]["invalid_reason"] == "budget_usd_cap_invalid"
+
+    observations = check_would_block(estimated_cost_usd=0.01)
+    assert observations == [
+        {
+            "policy_id": "budget_invalid",
+            "scope": "system",
+            "subject": None,
+            "window": "daily",
+            "usd_cap": None,
+            "reason_code": "budget_usd_cap_invalid",
+        }
+    ]
+    json.dumps({"budgets": budgets, "observations": observations}, allow_nan=False)
+
+    request = ModelRequest(messages=[{"role": "user", "content": "test"}])
+    setattr(request, "_aletheia_would_block_observations", observations)
+    monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": "research_worker"})
+    with pytest.raises(BudgetExceededError):
+        _enforce_budget_if_configured(
+            SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="hard_block")),
+            request,
+        )
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -306,6 +355,15 @@ def test_cli_budget_set_requires_subject_for_scoped_policy():
          "--window", "daily"],
     )
     assert result.exit_code != 0
+
+
+def test_cli_budget_set_rejects_infinite_cap():
+    result = runner.invoke(
+        app,
+        ["audit", "budget-set", "--scope", "system", "--usd-cap", "inf", "--window", "daily"],
+    )
+    assert result.exit_code != 0
+    assert list_budgets() == []
 
 
 def test_cli_budget_disable_and_enable():

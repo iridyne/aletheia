@@ -17,6 +17,7 @@ this module only owns budget declarations and read-only budget calculations.
 from __future__ import annotations
 
 import hashlib
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -35,6 +36,18 @@ def _budget_id(scope: str, subject: str | None, window: str) -> str:
     """Deterministic id keyed on the UNIQUE(scope, subject, window) triple."""
     payload = f"{scope}|{subject or ''}|{window}"
     return "budget_" + hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _budget_payload(row) -> dict[str, Any]:
+    payload = dict(row)
+    try:
+        cap = float(payload["usd_cap"])
+    except (KeyError, TypeError, ValueError):
+        cap = None
+    if cap is None or not math.isfinite(cap) or cap <= 0:
+        payload["usd_cap"] = None
+        payload["invalid_reason"] = "budget_usd_cap_invalid"
+    return payload
 
 
 def add_budget(
@@ -72,8 +85,8 @@ def add_budget(
         cap = float(usd_cap)
     except (TypeError, ValueError) as exc:
         raise ValueError("usd_cap must be numeric") from exc
-    if not (cap > 0):
-        raise ValueError("usd_cap must be positive")
+    if not math.isfinite(cap) or cap <= 0:
+        raise ValueError("usd_cap must be finite and positive")
 
     budget_id = _budget_id(scope, subject, window)
     now = _utcnow()
@@ -87,7 +100,7 @@ def add_budget(
     row = db.execute(
         "SELECT * FROM economics_budgets WHERE id=?", (budget_id,)
     ).fetchone()
-    return dict(row) if row else {}
+    return _budget_payload(row) if row else {}
 
 
 def list_budgets(
@@ -110,7 +123,7 @@ def list_budgets(
         f"ORDER BY scope, subject IS NULL, subject, window",
         tuple(params),
     ).fetchall()
-    return [dict(row) for row in rows]
+    return [_budget_payload(row) for row in rows]
 
 
 def remove_budget(*, budget_id: str) -> dict[str, Any] | None:
@@ -128,7 +141,7 @@ def remove_budget(*, budget_id: str) -> dict[str, Any] | None:
     ).fetchone()
     if row is None:
         return None
-    deleted = dict(row)
+    deleted = _budget_payload(row)
     db.execute("DELETE FROM economics_budgets WHERE id=?", (budget_id,))
     return deleted
 
@@ -146,7 +159,7 @@ def set_budget_enabled(*, budget_id: str, enabled: bool) -> dict[str, Any] | Non
     row = db.execute(
         "SELECT * FROM economics_budgets WHERE id=?", (budget_id,)
     ).fetchone()
-    return dict(row) if row else None
+    return _budget_payload(row) if row else None
 
 
 # ── Observation calculator (pure) ────────────────────────────────────────────
@@ -307,6 +320,19 @@ def check_would_block(
                 matched_subject = resolved_tier_provider
 
         if not applies:
+            continue
+
+        if budget.get("invalid_reason"):
+            observations.append(
+                {
+                    "policy_id": budget["id"],
+                    "scope": scope,
+                    "subject": matched_subject,
+                    "window": window,
+                    "usd_cap": None,
+                    "reason_code": budget["invalid_reason"],
+                }
+            )
             continue
 
         window_start = _window_start(window, now)
