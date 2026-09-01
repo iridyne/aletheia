@@ -2543,6 +2543,10 @@ def _run_reconciliation():
         mirror = get_event_store().reconcile_jsonl(limit=100)
         if mirror["attempted"]:
             logger.info("event JSONL mirror reconciliation: %s", mirror)
+        if mirror["failed"]:
+            _record_job_failure(
+                "reconciliation", f"event_jsonl_mirror_failed:{mirror['failed']}"
+            )
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
         _record_job_failure("reconciliation", str(e))
