@@ -387,6 +387,60 @@ def _current_price(
         return None
 
 
+def _shadow_time_window_sql(
+    *,
+    days: int | None,
+    since_iso: str | None,
+    until_iso: str | None,
+) -> tuple[str, list[object]]:
+    """Build the exact-instant predicate shared by shadow cohort readers."""
+    from aletheia.storage.sqlite import iso_instant_us
+
+    if (days is None) == (since_iso is None):
+        raise ValueError("requires exactly one of days= or since_iso=")
+
+    if since_iso is not None:
+        since_us = iso_instant_us(since_iso)
+        if since_us is None:
+            raise ValueError("invalid since_iso timestamp")
+        clauses = ["aletheia_instant_us(created_at) >= ?"]
+        params: list[object] = [since_us]
+        if until_iso is not None:
+            until_us = iso_instant_us(until_iso)
+            if until_us is None:
+                raise ValueError("invalid until_iso timestamp")
+            clauses.append("aletheia_instant_us(created_at) < ?")
+            params.append(until_us)
+        return " AND ".join(clauses), params
+
+    assert days is not None
+    return (
+        "aletheia_instant_us(created_at) >= "
+        "aletheia_instant_us(datetime('now', ?))",
+        [f"-{int(days)} days"],
+    )
+
+
+def _invalid_shadow_created_at_count(
+    connection,
+    *,
+    clauses: tuple[str, ...] = (),
+    params: tuple[object, ...] = (),
+) -> int:
+    """Count scoped measurement rows rejected by the timestamp authority gate."""
+    where = [
+        "net_pnl_pct IS NOT NULL",
+        "outcome_candidate_key IS NOT NULL",
+        *clauses,
+        "aletheia_instant_us(created_at) IS NULL",
+    ]
+    row = connection.execute(
+        "SELECT COUNT(*) FROM shadow_trades WHERE " + " AND ".join(where),
+        params,
+    ).fetchone()
+    return int(row[0] or 0)
+
+
 def list_deduped_shadows(
     *,
     days: int | None = None,
@@ -433,41 +487,47 @@ def list_deduped_shadows(
         columns: projection list. Every column must exist in ``shadow_trades``.
     """
     from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db, register_instant_us
 
-    if (days is None) == (since_iso is None):
-        raise ValueError(
-            "list_deduped_shadows requires exactly one of days= or since_iso="
-        )
+    connection = get_db()
+    register_instant_us(connection)
+    time_where, time_params = _shadow_time_window_sql(
+        days=days,
+        since_iso=since_iso,
+        until_iso=until_iso,
+    )
 
-    params: list[object] = []
-    time_clauses: list[str] = []
-    if since_iso is not None:
-        time_clauses.append("created_at >= ?")
-        params.append(since_iso)
-        if until_iso is not None:
-            time_clauses.append("created_at < ?")
-            params.append(until_iso)
-    else:
-        time_clauses.append("created_at >= datetime('now', ?)")
-        params.append(f"-{int(days)} days")
-
+    scope_clauses: list[str] = []
+    scope_params: list[object] = []
     symbol_clause = ""
     if symbols:
         placeholders = ",".join("?" for _ in symbols)
         symbol_clause = f"AND symbol IN ({placeholders})"
-        params.extend(symbols)
+        scope_clauses.append(f"symbol IN ({placeholders})")
+        scope_params.extend(symbols)
     epoch_clause = ""
     if policy_epoch_id:
         epoch_clause = "AND policy_epoch_id = ?"
-        params.append(policy_epoch_id)
+        scope_clauses.append("policy_epoch_id = ?")
+        scope_params.append(policy_epoch_id)
     family_clause = ""
     if scanner_family:
         family_clause = "AND scanner_family = ?"
-        params.append(scanner_family)
+        scope_clauses.append("scanner_family = ?")
+        scope_params.append(scanner_family)
+
+    invalid_count = _invalid_shadow_created_at_count(
+        connection,
+        clauses=tuple(scope_clauses),
+        params=tuple(scope_params),
+    )
+    if invalid_count:
+        logger.warning(
+            "shadow_cohort_invalid_created_at_excluded count=%d",
+            invalid_count,
+        )
 
     projection = ", ".join(columns)
-    time_where = " AND ".join(time_clauses)
     authority_where = valid_keyed_shadow_projection_sql()
     sql = f"""
         WITH resolved AS (
@@ -476,11 +536,12 @@ def list_deduped_shadows(
                 outcome_candidate_key,
                 ROW_NUMBER() OVER (
                     PARTITION BY outcome_candidate_key
-                    ORDER BY created_at DESC
+                    ORDER BY aletheia_instant_us(created_at) DESC
                 ) AS rn
             FROM shadow_trades
             WHERE net_pnl_pct IS NOT NULL
               AND outcome_candidate_key IS NOT NULL
+              AND aletheia_instant_us(created_at) IS NOT NULL
               AND {authority_where}
               AND {time_where}
               {symbol_clause}
@@ -491,7 +552,8 @@ def list_deduped_shadows(
         FROM resolved
         WHERE rn = 1
     """
-    return [dict(r) for r in get_db().execute(sql, params).fetchall()]
+    params = [*time_params, *scope_params]
+    return [dict(r) for r in connection.execute(sql, params).fetchall()]
 
 
 _SHADOW_RESULT_FIELDS = (
@@ -596,21 +658,21 @@ def _detect_window_epochs(
       "all_null" — no non-null epoch rows (pure legacy data).
     """
     from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db, register_instant_us
 
-    if (days is None) == (since_iso is None):
-        raise ValueError("requires exactly one of days= or since_iso=")
-
-    params: list[object] = []
-    if since_iso is not None:
-        time_clause = "created_at >= ?"
-        params.append(since_iso)
-        if until_iso is not None:
-            time_clause += " AND created_at < ?"
-            params.append(until_iso)
-    else:
-        time_clause = "created_at >= datetime('now', ?)"
-        params.append(f"-{int(days)} days")
+    connection = get_db()
+    register_instant_us(connection)
+    time_where, params = _shadow_time_window_sql(
+        days=days,
+        since_iso=since_iso,
+        until_iso=until_iso,
+    )
+    invalid_count = _invalid_shadow_created_at_count(connection)
+    if invalid_count:
+        logger.warning(
+            "shadow_cohort_invalid_created_at_excluded count=%d",
+            invalid_count,
+        )
 
     authority_where = valid_keyed_shadow_projection_sql()
     sql = f"""
@@ -621,10 +683,11 @@ def _detect_window_epochs(
         FROM shadow_trades
         WHERE net_pnl_pct IS NOT NULL
           AND outcome_candidate_key IS NOT NULL
+          AND aletheia_instant_us(created_at) IS NOT NULL
           AND {authority_where}
-          AND {time_clause}
+          AND {time_where}
     """
-    row = get_db().execute(sql, params).fetchone()
+    row = connection.execute(sql, params).fetchone()
     if not row:
         return None, "all_null"
     distinct = row["distinct_epochs"] or 0
