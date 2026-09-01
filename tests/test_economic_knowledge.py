@@ -52,6 +52,7 @@ def _verdict(
         min_market_days=7,
         primary_metric="utility-v6",
         status="active",
+        created_at="2026-08-02T00:00:00+00:00",
     )
     insert_experiment(experiment)
     verdict = LearningContributionVerdict(
@@ -84,6 +85,7 @@ def _verdict(
         authority_eligible=True,
         inference_plan_hash="a" * 64,
         inference_cutoff_fingerprint="b" * 64,
+        created_at="2026-08-08T00:00:00+00:00",
     )
     insert_record("learning_contribution_verdicts", verdict)
     insert_record("learning_inference_decisions", LearningInferenceDecision(

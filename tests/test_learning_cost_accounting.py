@@ -29,8 +29,8 @@ def test_nomination_manifest_cost_is_reported_without_fabricated_runtime_cost():
     assert admit_nomination_to_shadow(nomination.nomination_id, preflight) is not None
 
     report = build_knowledge_yield_report(
-        window_start="2026-08-01T00:00:00+00:00",
-        window_end="2026-09-01T00:00:00+00:00",
+        window_start="2000-01-01T00:00:00+00:00",
+        window_end="2999-01-01T00:00:00+00:00",
         path_id="ranker_case_score",
     )
     assert len(report.slices) == 1

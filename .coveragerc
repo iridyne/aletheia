@@ -11,7 +11,7 @@
 branch = True
 parallel = True
 # include= is used instead of source= because coverage.py ignores include when
-# source is set. That gives us file-level scoping: only these eight trust-
+# source is set. That gives us file-level scoping: only these ten trust-
 # boundary files are measured; everything else in the repo is invisible to
 # the report. That is intentional (see PR #986): the gate exists to catch
 # regressions on paths where a wrong answer misleads a decision, corrupts
@@ -21,6 +21,7 @@ include =
     */aletheia/analytics/profit_gradient_estimators.py
     */aletheia/analytics/profit_gradient_evidence.py
     */aletheia/analytics/position_replay.py
+    */aletheia/analytics/momentum_geometry_replay.py
     */aletheia/counterfactual/filter_replay.py
     */aletheia/economics/context_artifacts.py
     */aletheia/execution/reconciliation.py

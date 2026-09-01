@@ -35,6 +35,7 @@ def test_fifty_hypotheses_to_two_facts_yields_four_percent():
             min_samples_per_arm=50,
             min_market_days=7,
             primary_metric="utility-v6",
+            created_at="2026-08-02T00:00:00+00:00",
             status="registered",
         ))
 
@@ -93,6 +94,7 @@ def test_incompatible_metric_versions_are_separate_slices():
         hypothesis_id=hypothesis.hypothesis_id,
         stage="shadow",
         assignment_salt="legacy-salt",
+        created_at="2026-08-02T00:00:00+00:00",
         primary_metric="utility-v5",
         status="registered",
     ))
@@ -116,8 +118,8 @@ def test_rejected_attempt_without_hypothesis_remains_in_generation_yield():
     )
     assert nomination.hypothesis_id is None
     report = build_knowledge_yield_report(
-        window_start="2026-08-01T00:00:00+00:00",
-        window_end="2026-09-01T00:00:00+00:00",
+        window_start="2000-01-01T00:00:00+00:00",
+        window_end="2999-01-01T00:00:00+00:00",
     )
     assert report.slices == []
     assert report.generation_attempt_n == 1
