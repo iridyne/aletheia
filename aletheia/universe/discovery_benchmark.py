@@ -105,14 +105,16 @@ def _direction_tradable(item: Mapping[str, Any], direction: Any) -> bool:
 
 def _current_commit() -> str | None:
     from aletheia.agent_runtime.build_info import get_boot_commit
+    from aletheia.agent_runtime.runtime_session import (
+        current_external_gateway_session,
+    )
 
     commit = get_boot_commit()
     if commit:
         return commit
-    active = [row for row in repo.list_runtime_sessions(limit=20) if not row.get("ended_at")]
-    commits = {str(row.get("boot_commit") or "").strip() for row in active}
-    commits.discard("")
-    return next(iter(commits)) if len(commits) == 1 else None
+    session = current_external_gateway_session()
+    external_commit = str((session or {}).get("boot_commit") or "").strip()
+    return external_commit or None
 
 
 def _frozen_config(cfg) -> dict[str, Any]:

@@ -37,6 +37,57 @@ _current_session: dict | None = None
 # True only when the current session row has been verified as durably persisted in the DB.
 # Non-durable sessions must NOT stamp child rows with runtime_session_id.
 _session_durable: bool = False
+_RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
+
+
+def current_external_gateway_session(
+    open_sessions: list[dict] | None = None,
+) -> dict | None:
+    """Return the durable session verified against the managed Gateway tree.
+
+    This is the read-only authority for callers outside the Gateway process.
+    Stale open rows are never authority merely because they are open or recent.
+    """
+    try:
+        import psutil
+
+        from aletheia.gateway.pidfile import is_running, read_pid
+
+        pid = read_pid()
+        if not pid or not is_running():
+            return None
+        root = psutil.Process(pid)
+        process_starts = [
+            process.create_time()
+            for process in (root, *root.children(recursive=True))
+        ]
+        if open_sessions is None:
+            from aletheia.storage.sqlite import get_db
+
+            open_sessions = [
+                dict(row)
+                for row in get_db().execute(
+                    "SELECT * FROM runtime_sessions WHERE ended_at IS NULL"
+                ).fetchall()
+            ]
+    except Exception:
+        return None
+
+    matches: list[tuple[float, float, dict]] = []
+    for session in open_sessions:
+        try:
+            started = datetime.fromisoformat(
+                str(session.get("started_at") or "").replace("Z", "+00:00")
+            )
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            started_ts = started.timestamp()
+            delta = min(abs(started_ts - value) for value in process_starts)
+        except (TypeError, ValueError):
+            continue
+        if session.get("session_id") and delta <= _RUNTIME_SESSION_PROCESS_MATCH_SECONDS:
+            matches.append((delta, -started_ts, session))
+    return dict(min(matches, key=lambda match: match[:2])[2]) if matches else None
 
 
 def _sha(payload: object) -> str:

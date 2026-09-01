@@ -17,6 +17,7 @@ from aletheia.storage import sqlite as sqlite_store
 from aletheia.storage.migrations import apply_migrations
 from aletheia.storage.models import FilterCandidateOutcome
 from aletheia.universe import discovery_benchmark as benchmark
+_REAL_CURRENT_COMMIT = benchmark._current_commit
 
 
 @pytest.fixture
@@ -536,6 +537,120 @@ def test_active_benchmark_outcomes_preempt_older_backlog(benchmark_db, monkeypat
     assert ordinary.id in {row["id"] for row in pending}
 
 
+def _insert_open_runtime_session(*, session_id: str, commit: str, started_at: datetime) -> None:
+    from aletheia.storage.models import RuntimeSession
+
+    repo.insert_runtime_session(
+        RuntimeSession(
+            session_id=session_id,
+            boot_commit=commit,
+            started_at=started_at.isoformat(),
+        )
+    )
+
+
+def _mock_gateway_process(monkeypatch, *, started_at: datetime) -> None:
+    import psutil
+
+    from aletheia.gateway import pidfile
+
+    class Process:
+        def create_time(self):
+            return started_at.timestamp()
+
+        def children(self, *, recursive):
+            assert recursive is True
+            return []
+
+    monkeypatch.setattr(pidfile, "read_pid", lambda: 1234)
+    monkeypatch.setattr(pidfile, "is_running", lambda: True)
+    monkeypatch.setattr(psutil, "Process", lambda pid: Process())
+
+
+def test_cli_start_uses_verified_current_runtime_among_stale_open_sessions(
+    benchmark_db, monkeypatch
+):
+    from datetime import timedelta
+
+    from aletheia.agent_runtime import build_info
+    from aletheia.cli.evidence_cmd import evidence_app
+
+    current_started = datetime(2026, 9, 1, 6, 0, tzinfo=timezone.utc)
+    _insert_open_runtime_session(
+        session_id="current-session",
+        commit="current-commit",
+        started_at=current_started,
+    )
+    for index in range(34):
+        _insert_open_runtime_session(
+            session_id=f"stale-{index}",
+            commit=f"stale-commit-{index}",
+            started_at=current_started + timedelta(days=index + 1),
+        )
+    _mock_gateway_process(monkeypatch, started_at=current_started)
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: None)
+    monkeypatch.setattr(benchmark, "_current_commit", _REAL_CURRENT_COMMIT)
+
+    started = CliRunner().invoke(
+        evidence_app, ["universe-discovery", "start", "--json"]
+    )
+
+    assert started.exit_code == 0, started.output
+    payload = json.loads(started.output)
+    assert payload["code_commit"] == "current-commit"
+    from aletheia.observation_lab.db import get_lab_db
+
+    row = get_lab_db().execute(
+        "SELECT producer_commit FROM observation_windows WHERE observation_id=?",
+        (payload["id"],),
+    ).fetchone()
+    assert row["producer_commit"] == "current-commit"
+
+
+def test_cli_start_fails_closed_when_external_runtime_cannot_be_verified(
+    benchmark_db, monkeypatch
+):
+    from aletheia.agent_runtime import build_info
+    from aletheia.cli.evidence_cmd import evidence_app
+
+    stale_started = datetime(2026, 9, 2, 6, 0, tzinfo=timezone.utc)
+    _insert_open_runtime_session(
+        session_id="newest-stale",
+        commit="newest-stale-commit",
+        started_at=stale_started,
+    )
+    _mock_gateway_process(
+        monkeypatch,
+        started_at=datetime(2026, 9, 1, 6, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: None)
+    monkeypatch.setattr(benchmark, "_current_commit", _REAL_CURRENT_COMMIT)
+
+    started = CliRunner().invoke(
+        evidence_app, ["universe-discovery", "start", "--json"]
+    )
+
+    assert started.exit_code != 0
+    assert "runtime_boot_commit_unavailable" in started.output
+    from aletheia.observation_lab.db import get_lab_db
+
+    count = get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_windows"
+    ).fetchone()[0]
+    assert count == 0
+
+
+def test_current_commit_prefers_in_process_boot_identity(monkeypatch):
+    from aletheia.agent_runtime import build_info, runtime_session
+
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "gateway-boot-commit")
+    monkeypatch.setattr(
+        runtime_session,
+        "current_external_gateway_session",
+        lambda: pytest.fail("external identity must not be consulted"),
+    )
+
+    assert _REAL_CURRENT_COMMIT() == "gateway-boot-commit"
 def test_cli_start_status_and_abort(benchmark_db):
     from aletheia.cli.evidence_cmd import evidence_app
 
