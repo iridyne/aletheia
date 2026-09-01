@@ -343,6 +343,7 @@ def test_finalize_reports_unavailable_and_writes_hashed_package(benchmark_db):
 
 def test_finalize_marks_orphan_app_batch_integrity_unavailable(benchmark_db, monkeypatch):
     from aletheia.observation_lab import kernel
+    from aletheia.observation_lab.kernel import advance_windows
 
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
@@ -355,14 +356,15 @@ def test_finalize_marks_orphan_app_batch_integrity_unavailable(benchmark_db, mon
             allocated=_population()[:5], entry_ts=started_at,
         )
 
-    output = benchmark_db / "orphan-final.json.gz"
-    result = benchmark.finalize_benchmark(
-        window["id"], output, now="2026-01-16T06:00:00+00:00"
-    )
+    advanced = advance_windows(now="2026-01-16T06:00:00+00:00")
+    result = advanced["results"][f"{window['id']}:{window['generation']}"]
+    status = benchmark.status_benchmark(window["id"])
+    output = Path(status["artifact_path"])
     package = json.loads(gzip.decompress(output.read_bytes()))
+    analysis = package["domain_result"]["analysis"]
     assert result["status"] == "finalized"
-    assert result["analysis"]["conclusion"] == "unavailable"
-    assert "orphan_app_batch" in result["analysis"]["integrity"]["reasons"]
+    assert analysis["conclusion"] == "unavailable"
+    assert "orphan_app_batch" in analysis["integrity"]["reasons"]
     assert package["manifest"]["orphan_batch_count"] == 1
 
 def test_finalize_waits_for_frozen_outcome_contract_readiness(benchmark_db):

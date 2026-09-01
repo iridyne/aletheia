@@ -472,7 +472,7 @@ def _finalize_window(
         "handler_version": window["handler_version"],
         "spec_hash": window["spec_hash"],
         "evidence_cutoff": window["collect_until"],
-        "finalized_at": str(window["finalize_not_before"]),
+        "finalized_at": at.isoformat(),
         "producer_provenance": {
             "commits": sorted(
                 {row[0] for row in provenance_rows if row[0]}

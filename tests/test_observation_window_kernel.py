@@ -392,7 +392,7 @@ def test_finalize_recovers_verified_artifact_left_before_terminal_commit(tmp_pat
     assert finalized["status"] == "finalized"
     assert finalized["terminal_at"] == _utc(4).isoformat()
     artifact = json.loads(gzip.decompress(output.read_bytes()))
-    assert artifact["finalized_at"] == _utc(3).isoformat()
+    assert artifact["finalized_at"] == _utc(4).isoformat()
     assert artifact["domain_result"] == {"result": "reconciled"}
 
     foreign = kernel.start_window(
