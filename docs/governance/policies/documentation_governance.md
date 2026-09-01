@@ -84,8 +84,38 @@ is determined only by Product Capability Ground Truth.
 ## Change Contract and SDD depth
 
 A GitHub Issue is the default carrier for every change. It expresses why the
-change is necessary, what the current system state is, and how completion is
-verified. It must not duplicate or replace the canonical Contract.
+change is necessary, what the current system state is, what direct dependencies
+materially gate it, and how completion is verified. It must not duplicate or
+replace the canonical Contract.
+
+### Issue-body discipline
+
+An Issue is a **change contract, not a delivery roadmap**.
+
+A well-scoped Issue should normally contain only:
+
+- the concrete problem, violated invariant, or value;
+- current code/runtime/data evidence;
+- direct dependencies or activation conditions;
+- the approved behavior delta or target invariant;
+- hard non-goals / authority boundaries;
+- executable and, when required, runtime/economic verification;
+- a closure condition.
+
+Issue bodies must **not** maintain numbered implementation stages, a prescribed
+work order, a "current stage", or a future delivery sequence. If one change
+depends on another, state the dependency directly (`A requires B`) rather than
+turning the relationship into a roadmap.
+
+Future ideas remain deferred until they are independently actionable. Open a
+focused child Issue only when its concrete problem, evidence, authority and
+acceptance can stand on their own. Umbrella Issues may name related capabilities
+or possible follow-ups, but those lists do not imply execution order or active
+work.
+
+This rule also applies to closed Issues: once implementation is complete, keep
+the durable final contract/result and remove stale development sequencing that
+could cause a later Agent to restart obsolete work.
 
 Every change has an SDD depth, independent of the A/B/C task-routing
 classification:
