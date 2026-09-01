@@ -12,6 +12,7 @@ from typing import Any
 from aletheia.analytics.outcome_integrity import (
     OUTCOME_SEMANTICS_VERSION,
     outcome_write_eligibility,
+    validated_fee,
     validated_funding_economics,
 )
 from aletheia.data.symbols import to_canonical
@@ -322,6 +323,7 @@ def close_position_verified(
         if current.get("status") != "open":
             return _already_closed_result(position_id, current)
         _validate_verified_evidence(current, evidence)
+        entry_fee = validated_fee(current.get("entry_fee"), field="entry_fee")
         materialized_close_order_ids = (
             []
             if strategy_outcome
@@ -339,7 +341,6 @@ def close_position_verified(
         exit_fee = sum(
             float(fill.fee) for fill in evidence.fills if fill.fee is not None
         )
-        entry_fee = current.get("entry_fee")
         gross = _realized_pnl(
             str(current["direction"]),
             float(current["entry_price"]),
