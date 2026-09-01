@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
 from aletheia.trading.instruments import get_max_leverage
-from aletheia.trading.trigger_specs import require_compatible_trigger_spec
+from aletheia.trading.momentum_entry_geometry import (
+    MomentumEntryGeometryV2,
+    MomentumGeometryUnavailable,
+    compile_momentum_entry_geometry_v2,
+)
+from aletheia.trading.trigger_specs import (
+    require_compatible_trigger_spec,
+    require_registered_trigger_spec,
+)
 
 if TYPE_CHECKING:
     from aletheia.agent_shell.entry_planner import PlanIntent
@@ -20,6 +29,7 @@ _RISK_TIER_LEVERAGE_CAP = {"LOW": 2, "MEDIUM": 3}
 _RISK_TIER_MAX_RISK_PCT = {"LOW": 0.5, "MEDIUM": 1.0}
 _HORIZON_HOURS = {"INTRADAY": 4.0, "SWING": 24.0}
 _HORIZON_LIFETIME_MINUTES = {"INTRADAY": 60, "SWING": 240}
+_MOMENTUM_V2 = ("momentum-retrace-reclaim", "v2")
 
 
 def _number(value: Any, code: str, *, positive: bool = False) -> float:
@@ -62,9 +72,23 @@ def _require_trigger(
     entry_zone: tuple[float, float],
     stop_price: float,
     entry_price: float,
+    *,
+    geometry: MomentumEntryGeometryV2 | None = None,
 ):
     spec_id = str(intent.trigger_spec_id)
     spec_version = str(intent.trigger_spec_version)
+    if (spec_id, spec_version) == _MOMENTUM_V2:
+        if geometry is None:
+            raise _intent_error("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
+        try:
+            return require_registered_trigger_spec(
+                spec_id,
+                spec_version,
+                geometry.trigger_params(),
+            )
+        except ValueError as exc:
+            raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
+
     try:
         contract = require_compatible_trigger_spec(
             candidate_family,
@@ -98,8 +122,11 @@ def compile_entry_plan(
     feature: dict,
     intent: "PlanIntent",
     cfg,
+    *,
+    candles: Sequence[Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
 ) -> EntryPlan:
-    """Compile one validated PlanIntent using only current candidate and policy facts."""
+    """Compile deterministic plan facts; v2 requires an explicit causal candle snapshot."""
 
     from aletheia.agent_shell.entry_planner import PlanIntentError
 
@@ -137,25 +164,50 @@ def compile_entry_plan(
             raise PlanIntentError("COMPILER_HORIZON_INVALID")
 
         try:
-            entry_price = _number(candidate.get("entry_price_usd"), "candidate_price", positive=True)
+            candidate_price = _number(candidate.get("entry_price_usd"), "candidate_price", positive=True)
         except ValueError as exc:
             raise PlanIntentError("STALE_CANDIDATE_PRICE") from exc
 
-        atr_pct, vol_target_pct = _stop_reference(feature or {}, cfg)
-        stop_distance_pct = max(vol_target_pct, atr_pct) * SIDEWAYS_STOP_MULT
-        if not math.isfinite(stop_distance_pct) or stop_distance_pct <= 0:
-            raise PlanIntentError("NO_STOP_REFERENCE")
-        if direction == "long":
-            stop_price = entry_price * (1.0 - stop_distance_pct / 100.0)
-            target_price = entry_price + _RISK_REWARD_TARGET[intent.risk_tier] * (entry_price - stop_price)
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[intent.horizon])
+        geometry: MomentumEntryGeometryV2 | None = None
+        if execution_mode == "TRIGGERED" and (
+            str(intent.trigger_spec_id),
+            str(intent.trigger_spec_version),
+        ) == _MOMENTUM_V2:
+            if candles is None:
+                raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
+            try:
+                geometry = compile_momentum_entry_geometry_v2(
+                    candidate=candidate,
+                    feature=feature or {},
+                    candles=candles,
+                    direction=direction,
+                    minimum_risk_reward=_RISK_REWARD_TARGET[intent.risk_tier],
+                    source_cutoff_at=current,
+                    valid_until=expires,
+                )
+            except MomentumGeometryUnavailable as exc:
+                raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", str(exc)) from exc
+            entry_zone = geometry.entry_zone
+            stop_price = geometry.stop_price
+            target_price = geometry.target_price
         else:
-            stop_price = entry_price * (1.0 + stop_distance_pct / 100.0)
-            target_price = entry_price - _RISK_REWARD_TARGET[intent.risk_tier] * (stop_price - entry_price)
-        band_pct = 0.5 * vol_target_pct
-        entry_zone = (
-            entry_price * (1.0 - band_pct / 100.0),
-            entry_price * (1.0 + band_pct / 100.0),
-        )
+            atr_pct, vol_target_pct = _stop_reference(feature or {}, cfg)
+            stop_distance_pct = max(vol_target_pct, atr_pct) * SIDEWAYS_STOP_MULT
+            if not math.isfinite(stop_distance_pct) or stop_distance_pct <= 0:
+                raise PlanIntentError("NO_STOP_REFERENCE")
+            if direction == "long":
+                stop_price = candidate_price * (1.0 - stop_distance_pct / 100.0)
+                target_price = candidate_price + _RISK_REWARD_TARGET[intent.risk_tier] * (candidate_price - stop_price)
+            else:
+                stop_price = candidate_price * (1.0 + stop_distance_pct / 100.0)
+                target_price = candidate_price - _RISK_REWARD_TARGET[intent.risk_tier] * (stop_price - candidate_price)
+            band_pct = 0.5 * vol_target_pct
+            entry_zone = (
+                candidate_price * (1.0 - band_pct / 100.0),
+                candidate_price * (1.0 + band_pct / 100.0),
+            )
 
         execution_account_mode = str(cfg.exchange.paper_execution_mode)
         try:
@@ -223,15 +275,25 @@ def compile_entry_plan(
                 candidate_family=str(generation["candidate_family"]),
                 entry_zone=entry_zone,
                 stop_price=stop_price,
-                entry_price=entry_price,
+                entry_price=candidate_price,
+                geometry=geometry,
             )
             trigger_spec_id = intent.trigger_spec_id
             trigger_spec_version = intent.trigger_spec_version
             trigger_requirements = contract.data_requirements
             trigger_freshness_ms = contract.freshness_ms
 
-        current = datetime.now(timezone.utc)
-        expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[intent.horizon])
+        plan_entry_price = (
+            (entry_zone[0] + entry_zone[1]) / 2.0
+            if geometry is not None
+            else candidate_price
+        )
+        taker_worst_price = (
+            entry_zone[1] if direction == "long" else entry_zone[0]
+        ) if geometry is not None else (
+            candidate_price * (1.002 if direction == "long" else 0.998)
+        )
+        behavior_version = "entry-planner/momentum-geometry-v2" if geometry is not None else "entry-planner/v3"
         try:
             return EntryPlan(
                 planning_generation_id=generation["id"],
@@ -261,7 +323,7 @@ def compile_entry_plan(
                 order_tactic=order_tactic,
                 maker_required=maker,
                 time_in_force="POST_ONLY" if maker else "IOC",
-                limit_price=entry_price if maker else None,
+                limit_price=plan_entry_price if maker else None,
                 price_rule="EXACT_LIMIT" if maker else "OPPOSING_BBO",
                 bbo_reference=None if maker else ("ask" if direction == "long" else "bid"),
                 max_wait_sec=60 if maker else 0,
@@ -270,7 +332,7 @@ def compile_entry_plan(
                 partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
                 taker_fallback_allowed=False,
                 max_slippage_bps=None if maker else 20.0,
-                worst_price=(None if maker else entry_price * (1.002 if direction == "long" else 0.998)),
+                worst_price=None if maker else taker_worst_price,
                 max_notional=max_notional,
                 max_risk_pct=max_risk_pct,
                 max_leverage=max_leverage,
@@ -279,7 +341,7 @@ def compile_entry_plan(
                 risk_policy_id=str(policy.policy_id),
                 risk_policy_revision=int(policy.revision),
                 risk_policy_hash=resolved_policy.policy_hash,
-                behavior_version="entry-planner/v3",
+                behavior_version=behavior_version,
             )
         except ValueError as exc:
             raise PlanIntentError(f"COMPILER_GEOMETRY_UNSATISFIABLE:{str(exc)[:100]}") from exc

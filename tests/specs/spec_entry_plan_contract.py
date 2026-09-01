@@ -174,9 +174,12 @@ def test_plan_intent_and_trigger_registry_expose_complete_authority():
         "horizon": "NONE",
     }
     assert [(spec.spec_id, spec.version) for spec in compatible_trigger_specs("momentum")] == [
-        ("momentum-retrace-reclaim", "v1")
+        ("momentum-retrace-reclaim", "v1"),
     ]
+    from aletheia.trading.trigger_specs import registered_trigger_specs
     assert compatible_trigger_specs("value") == ()
+    v2 = next(spec for spec in registered_trigger_specs() if spec.version == "v2")
+    assert v2.planner_visible is False
 
 
 @spec_claim(

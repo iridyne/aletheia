@@ -16,6 +16,15 @@ from aletheia.trading.entry_plan import (
 from aletheia.trading.instruments import instrument_market_to_db_market
 
 
+_SHADOW_ONLY_TRIGGER = ("momentum-retrace-reclaim", "v2")
+
+
+def _trigger_identity(plan: EntryPlan) -> tuple[str, str] | None:
+    if plan.trigger_spec_id is None or plan.trigger_spec_version is None:
+        return None
+    return str(plan.trigger_spec_id), str(plan.trigger_spec_version)
+
+
 def _instant(raw: str) -> datetime:
     parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -30,9 +39,12 @@ def build_entry_plan_order_intent(
     ask: float,
     observed_at: str,
     source_observed_at: str,
+    trigger_evidence: dict | None = None,
     now: datetime | None = None,
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
+    if _trigger_identity(plan) == _SHADOW_ONLY_TRIGGER:
+        raise ValueError("entry_plan_trigger_spec_shadow_only")
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if _instant(plan.expires_at) <= current:
@@ -92,9 +104,11 @@ def build_entry_plan_order_intent(
                 "planning_generation_id": plan.planning_generation_id,
                 "market_received_at": observed_at,
                 "market_source_at": source_observed_at,
+                **({"entry_trigger": dict(trigger_evidence)} if trigger_evidence is not None else {}),
             },
             sort_keys=True,
             separators=(",", ":"),
+            default=str,
         ),
         entry_plan_id=plan.plan_id,
         order_tactic=plan.order_tactic,
@@ -113,6 +127,7 @@ def execute_entry_plan(
     ask: float,
     observed_at: str,
     source_observed_at: str,
+    trigger_evidence: dict | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Idempotently submit one approved plan through the existing Gateway."""
@@ -124,6 +139,8 @@ def execute_entry_plan(
     if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
         raise ValueError("entry_plan_hash_mismatch")
     plan = EntryPlan.model_validate_json(payload)
+    if _trigger_identity(plan) == _SHADOW_ONLY_TRIGGER:
+        raise ValueError("entry_plan_trigger_spec_shadow_only")
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 
@@ -139,6 +156,7 @@ def execute_entry_plan(
         ask=ask,
         observed_at=observed_at,
         source_observed_at=source_observed_at,
+        trigger_evidence=trigger_evidence,
         now=now,
     )
     if plan.execution_mode == "TRIGGERED" and row["status"] == "waiting":
