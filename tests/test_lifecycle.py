@@ -126,6 +126,7 @@ def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_
         service_control, "stop",
         lambda **_kwargs: {
             "ok": False,
+            "runtime_stopped": False,
             "platform": "task_scheduler",
             "reason": "access_denied",
         },
@@ -140,6 +141,24 @@ def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_
     assert "stop blocked by task_scheduler: access_denied" in capsys.readouterr().err.lower()
 
 
+def test_do_stop_accepts_successful_managed_runtime_stop(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "_auto_stop_tunnel", lambda: None)
+    monkeypatch.setattr(
+        service_control,
+        "stop",
+        lambda **_kwargs: {"ok": True, "runtime_stopped": True},
+    )
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda _port, _host: False)
+
+    lifecycle.do_stop()
+
+    assert "cleanup failed" not in capsys.readouterr().err.lower()
 def test_do_stop_reports_transient_cleanup_failure_after_runtime_stop(
     tmp_path,
     monkeypatch,
