@@ -119,16 +119,15 @@ _OKX_SYMBOLS_TTL = 14400  # 4h
 _symbols_lock = threading.Lock()
 
 
-def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset | None:
+def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset:
     """Return cached OKX demo symbols for the given market_type, loading lazily.
 
     market_type "usdt_futures" / "perp" → swap frozenset
     market_type "spot"                  → spot frozenset
 
-    Returns None only when the initial load fails (fail-open: allow the order through).
-    Returns an empty frozenset when load succeeded but the venue has no products of
-    the requested market_type — a loaded absence is a known unavailable result, not
-    an unknown one, and must not be treated as fail-open.
+    Refresh failures propagate so an unavailable whitelist fails closed before order
+    submission. An empty frozenset means the venue loaded successfully but has no
+    products of the requested market type.
     """
     global _okx_demo_symbols, _okx_demo_symbols_loaded_at
     key = "spot" if market_type == "spot" else "swap"
@@ -137,7 +136,7 @@ def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset | None:
     # Cache missing or stale — trigger a synchronous refresh
     refresh_okx_demo_symbols()
     if _okx_demo_symbols is None:
-        return None  # refresh failed, fail-open
+        raise RuntimeError("okx_demo_symbol_refresh_unavailable")
     return _okx_demo_symbols.get(key, frozenset())
 
 
@@ -154,17 +153,15 @@ def refresh_okx_demo_symbols() -> int:
         return await fetch_venue_capabilities("okx_demo")
 
     with _symbols_lock:
-        try:
-            result = _run_coro(_load())
-            _okx_demo_symbols = result
-            _okx_demo_symbols_loaded_at = time.time()
-            total = len(result.get("swap", frozenset())) + len(result.get("spot", frozenset()))
-            logger.info("OKX demo symbols refreshed: %d swap + %d spot",
-                        len(result.get("swap", frozenset())), len(result.get("spot", frozenset())))
-            return total
-        except Exception as e:
-            logger.warning("Failed to refresh OKX demo symbols: %s", type(e).__name__)
-            return 0
+        result = _run_coro(_load())
+        if not isinstance(result, dict):
+            raise RuntimeError("okx_demo_symbol_refresh_unavailable")
+        _okx_demo_symbols = result
+        _okx_demo_symbols_loaded_at = time.time()
+        total = len(result.get("swap", frozenset())) + len(result.get("spot", frozenset()))
+        logger.info("OKX demo symbols refreshed: %d swap + %d spot",
+                    len(result.get("swap", frozenset())), len(result.get("spot", frozenset())))
+        return total
 
 
 # ---------------------------------------------------------------------------
