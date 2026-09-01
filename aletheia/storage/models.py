@@ -367,6 +367,8 @@ class FilterDecisionBatch(BaseModel):
     filter_version: str
     code_commit: str | None = None
     evaluated_at: str = Field(default_factory=_utcnow)
+    benchmark_window_id: str | None = None
+    benchmark_batch_id: str | None = None
 
 
 class FilterCandidateOutcome(BaseModel):
@@ -416,6 +418,37 @@ class FilterCandidateOutcome(BaseModel):
     rsi_15m_at_entry: float | None = None
     return_24h_at_entry: float | None = None
     direction_exhaustion_signal: bool | None = None
+    benchmark_window_id: str | None = None
+    benchmark_batch_id: str | None = None
+    benchmark_cohorts: str = "[]"
+    benchmark_cost_snapshot: str | None = None
+    benchmark_path_facts: str | None = None
+
+
+class UniverseDiscoveryBenchmark(BaseModel):
+    """Frozen, read-only prospective Universe discovery measurement window."""
+
+    id: str = Field(default_factory=new_id)
+    status: Literal["active", "finalized", "invalidated", "aborted"] = "active"
+    contract_json: str
+    contract_hash: str
+    code_commit: str
+    started_at: str = Field(default_factory=_utcnow)
+    capture_ends_at: str
+    finalize_not_before: str
+    created_at: str = Field(default_factory=_utcnow)
+    invalidated_at: str | None = None
+    invalidation_reason: str | None = None
+    aborted_at: str | None = None
+    abort_reason: str | None = None
+    finalized_at: str | None = None
+    summary_json: str | None = None
+    artifact_path: str | None = None
+    artifact_sha256: str | None = None
+    artifact_size: int | None = None
+    capture_count: int = 0
+    last_capture_at: str | None = None
+    promotion_eligible: bool = False
 
 
 class TradeProposal(_Provenanced):

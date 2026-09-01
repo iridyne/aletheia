@@ -611,6 +611,38 @@ def _register_experiment_candidate_outcomes(
         return 0
 
 
+def _capture_universe_discovery_nonfatal(
+    *,
+    scanner_run_id: str,
+    population: list[dict],
+    allocated: list[dict],
+    entry_ts: str,
+    regime_tag: str | None,
+    cfg,
+) -> None:
+    """Observe one completed run without affecting Universe publication."""
+    try:
+        from aletheia.universe.discovery_benchmark import capture_completed_run
+
+        result = capture_completed_run(
+            scanner_run_id=scanner_run_id,
+            population=population,
+            allocated=allocated,
+            entry_ts=entry_ts,
+            regime_tag=regime_tag,
+            cfg=cfg,
+        )
+        if result.get("accepted") and not result.get("idempotent"):
+            logger.info(
+                "Universe Discovery Benchmark captured run=%s batch=%s outcomes=%s",
+                scanner_run_id,
+                result.get("batch_id"),
+                result.get("outcomes_inserted"),
+            )
+    except Exception as exc:
+        logger.warning("Universe Discovery Benchmark capture failed (non-fatal): %s", exc)
+
+
 def _active_paper_learning_identity(path_id: str) -> tuple[bool, dict | None]:
     """Return one canonical admitted Paper identity, failing closed otherwise."""
     try:
@@ -1087,6 +1119,14 @@ class UniverseService:
                         completed_at=datetime.now(timezone.utc).isoformat(),
                         snapshot_id=prev_snapshot_id,
                     )
+                _capture_universe_discovery_nonfatal(
+                    scanner_run_id=run.id,
+                    population=unique_scored,
+                    allocated=allocated,
+                    entry_ts=entry_ts,
+                    regime_tag=regime_tag_for_fp,
+                    cfg=cfg,
+                )
                 logger.info(
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
                     prev_snapshot_id,
@@ -1234,6 +1274,14 @@ class UniverseService:
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     snapshot_id=snap.id,
                 )
+            _capture_universe_discovery_nonfatal(
+                scanner_run_id=run.id,
+                population=unique_scored,
+                allocated=allocated,
+                entry_ts=entry_ts,
+                regime_tag=global_regime_tag,
+                cfg=cfg,
+            )
 
             # Selection is evidence only after the snapshot and Candidate/Setup handoff
             # commit. A failed publication must not look like an applied paper arm.

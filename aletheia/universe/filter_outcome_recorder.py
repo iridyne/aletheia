@@ -134,12 +134,17 @@ async def settle_due_filter_outcomes(
     # economics, experiment assignment, or scorer authority.
     twin_shadow_keys = repo.list_open_universe_twin_outcome_candidate_keys()
     current_behavior_keys |= twin_shadow_keys
-    priority_pending, priority_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
+    benchmark_pending = repo.list_pending_universe_discovery_outcomes(
+        now_iso,
+        limit=max_rows,
+    )
+    learning_pending, priority_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
         now_iso,
         current_behavior_keys,
-        limit=max_rows,
+        limit=max(0, max_rows - len(benchmark_pending)),
         deadline=prologue_deadline,
     )
+    priority_pending = benchmark_pending + learning_pending
     all_priority_keys = repo.list_open_learning_outcome_candidate_keys(
         learning_path_ids,
     ) | twin_shadow_keys
@@ -206,6 +211,7 @@ async def settle_due_filter_outcomes(
         if price is None or float(price) <= 0:
             repo.fail_filter_candidate_outcome(row["id"], settled_at=now_iso)
             return _FAILED
+        assert observation is not None
 
         entry = float(row["entry_price_usd"])
         exit_price = float(price)
@@ -219,6 +225,16 @@ async def settle_due_filter_outcomes(
                 settled_at=now_iso,
                 exit_price=exit_price,
                 settlement_price_source=observation.get("price_source"),
+                settlement_lag_sec=observation.get("settlement_lag_sec"),
+            )
+            return _FAILED
+        if not observation.get("price_quality_ok"):
+            repo.fail_filter_candidate_outcome(
+                row["id"],
+                settled_at=now_iso,
+                exit_price=exit_price,
+                settlement_price_source=observation.get("price_source"),
+                settlement_lag_sec=observation.get("settlement_lag_sec"),
             )
             return _FAILED
 
@@ -242,7 +258,7 @@ async def settle_due_filter_outcomes(
             slippage_bps=cfg.trading.slippage_bps,
             range_high=observation.get("range_high"),
             range_low=observation.get("range_low"),
-            price_quality_ok=bool(observation.get("price_quality_ok")),
+            price_quality_ok=True,
         )
         won = repo.settle_filter_candidate_outcome(
             row["id"],

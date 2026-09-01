@@ -249,3 +249,84 @@ delete artifacts or silently redefine the cohort.
 
 Historical experiment plans, dates, tags, and backlogs are evidence only. They do
 not create a current experiment or authorize a deployment.
+## 9. Universe Discovery Benchmark (#2556)
+
+The Universe Discovery Benchmark is a read-only, prospective measurement window.
+It does not change Universe scoring, winner selection, allocation, Risk,
+Execution Gateway, Paper, Live, or promotion authority. Every result carries
+promotion_eligible=false; a positive result can only motivate a separately
+reviewed proposal.
+
+### 9.1 Frozen contract
+
+Before the first accepted sample, the runtime records a canonical contract and
+SHA-256 hash containing the benchmark, baseline-integrity, scanner, allocator,
+outcome/economics versions, exact boot commit, relevant Universe/Exchange config,
+fee/slippage/fallback-spread values, cohort and matching rules, horizons,
+cadence, completeness gates, stopping rule, statistical methods, and conclusion
+rules. A changed commit or frozen field invalidates the active window; runtime
+sessions on the same commit remain separately attributable and are all reported.
+
+The population is the completed scanner run's unique_scored after the existing
+asset filters and spot/perpetual de-duplication—the same population seen by the
+allocator. T0 is that run's entry_ts and its captured last_price; future prices
+are never backfilled. A window accepts at most one completed run per four hours
+for fourteen days (at most 84 batches), never stops early on returns, then waits
+through the 24-hour horizon plus a fixed six-hour grace. It cannot finalize
+before start + 15d + 6h. Inference requires at least 60 batches across at least
+10 UTC dates; otherwise the package is still emitted with unavailable.
+
+### 9.2 Cohorts and outcomes
+
+All cohorts come from the same full batch population, with stable identity tie
+break (venue, market_type, symbol, asset_id):
+
+1. production_selected: allocator-selected items with exact consumable venue,
+   execution_eligible=true, valid T0, and a tradable direction. Allocated but
+   ineligible items remain explicit unavailable evidence.
+2. matched_non_selected: non-selected items with the same venue, market, and
+   direction; exact volume/spread/ATR terciles; nearest no-replacement match by
+   L1 percentile distance over volume, spread, ATR, and absolute 4h return.
+   There is no cross-venue or relaxed fallback.
+3. Each lossless #2601 family (momentum, mean_reversion, volatility,
+   derivatives, event shown as Market Shock / Event Proxy, and short_bias)
+   contributes eligible top-K items using its own score and direction. These are
+   observational family cohorts, not production winners.
+4. simple_momentum is the pure trailing-4h continuation baseline: score
+   abs(return_4h), perpetual direction from return sign, and spot long only for
+   positive return.
+
+An asset/direction may belong to multiple cohorts but receives one shared outcome
+key. The complete population fact, cohort membership, exact identity, T0 facts,
+family evidence, production rank/eligibility, match status, commit, and contract
+hash are retained. Cohort members receive 15m/1h/4h/24h outcomes; only 4h is
+confirmatory and all other horizons are descriptive.
+
+Batch facts and outcome intents are written atomically and idempotently. Outcome
+economics are recomputed from settled entry/exit/path facts with the window's
+frozen cost model, not the settlement-time configuration. Reports include counts,
+coverage, net-return distribution, win rate, MFE/MAE, adverse p10/CVaR10,
+settlement lag/source, direction/regime/market slices, and symbol/date
+concentration (maximum share, HHI, and unique counts). Missing facts remain
+unavailable; they are never converted to zero or healthy evidence.
+
+### 9.3 Inference and terminal conclusions
+
+Selected versus matched control uses asset-level paired differences with 10,000
+capture-batch cluster-bootstrap replicates and 10,000 paired sign-flip replicates.
+It requires outcome coverage at least 80%, matching coverage at least 70%, and at
+least 40 complete paired batches. Family comparison computes per-batch top-K 4h
+means for the six families plus simple_momentum, compares all 21 pairs with the
+same paired procedures, and applies Holm correction; each comparison requires 40
+complete batches.
+
+useful requires complete integrity, positive selected-control 95% CI lower bound,
+p < 0.05, and positive selected 4h mean net. not_useful requires complete
+integrity and either a negative lift CI upper bound or a negative selected
+mean-net CI upper bound. Otherwise complete evidence is neutral; identity,
+window, coverage, matching, or contract failure is unavailable. The family label
+is supported_best only when one family has positive 4h mean net and beats every
+other family and the simple baseline after Holm correction; otherwise the report
+is descriptive and says no_supported_winner. Negative, neutral, and unavailable
+are valid final outcomes; the window cannot be rewritten by changing its horizon,
+population, or stopping date.

@@ -234,9 +234,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 54)
+        f"aletheia-sqlite-v{version}" for version in range(2, 55)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v53"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v54"
     connection.close()
 
 
@@ -634,7 +634,17 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
         CREATE TABLE opportunities (id TEXT PRIMARY KEY);
         CREATE TABLE pi_decisions (id TEXT PRIMARY KEY);
-        CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY);
+        CREATE TABLE filter_decision_batches (
+            id TEXT PRIMARY KEY,
+            evaluated_at TEXT
+        );
+        CREATE TABLE filter_candidate_outcomes (
+            id TEXT PRIMARY KEY,
+            outcome_candidate_key TEXT,
+            horizon TEXT,
+            status TEXT,
+            due_at TEXT
+        );
         CREATE TABLE market_ohlcv (
             exchange TEXT, symbol TEXT, market_type TEXT, timeframe TEXT, ts INTEGER,
             PRIMARY KEY(exchange, symbol, market_type, timeframe, ts)
@@ -691,8 +701,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260830_0052_broker_funding_settlement_cursor_v53",
-        "aletheia-sqlite-v53",
+        "20260901_0053_universe_discovery_benchmark_v54",
+        "aletheia-sqlite-v54",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")

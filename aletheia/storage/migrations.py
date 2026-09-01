@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v53"
+SCHEMA_VERSION = "aletheia-sqlite-v54"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -5331,6 +5331,55 @@ CREATE TABLE IF NOT EXISTS broker_funding_settlement_cursor (
     updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL)
 );
 """
+_UNIVERSE_DISCOVERY_BENCHMARK_COLUMNS = (
+    ("benchmark_window_id", "filter_decision_batches", "TEXT"),
+    ("benchmark_batch_id", "filter_decision_batches", "TEXT"),
+    ("benchmark_window_id", "filter_candidate_outcomes", "TEXT"),
+    ("benchmark_batch_id", "filter_candidate_outcomes", "TEXT"),
+    ("benchmark_cohorts", "filter_candidate_outcomes", "TEXT NOT NULL DEFAULT '[]'"),
+    ("benchmark_cost_snapshot", "filter_candidate_outcomes", "TEXT"),
+    ("benchmark_path_facts", "filter_candidate_outcomes", "TEXT"),
+)
+_UNIVERSE_DISCOVERY_BENCHMARK_SQL = """
+CREATE TABLE IF NOT EXISTS universe_discovery_benchmarks (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'finalized', 'invalidated', 'aborted')),
+    contract_json TEXT NOT NULL,
+    contract_hash TEXT NOT NULL,
+    code_commit TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    capture_ends_at TEXT NOT NULL,
+    finalize_not_before TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    invalidated_at TEXT,
+    invalidation_reason TEXT,
+    aborted_at TEXT,
+    abort_reason TEXT,
+    finalized_at TEXT,
+    summary_json TEXT,
+    artifact_path TEXT,
+    artifact_sha256 TEXT,
+    artifact_size INTEGER,
+    capture_count INTEGER NOT NULL DEFAULT 0,
+    last_capture_at TEXT,
+    promotion_eligible INTEGER NOT NULL DEFAULT 0 CHECK (promotion_eligible = 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_universe_discovery_benchmark_active
+    ON universe_discovery_benchmarks(status) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_universe_discovery_benchmark_status_started
+    ON universe_discovery_benchmarks(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_universe_discovery_benchmark_outcomes_pending
+    ON filter_candidate_outcomes(benchmark_window_id, due_at, id)
+    WHERE benchmark_window_id IS NOT NULL AND status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_universe_discovery_benchmark_batches
+    ON filter_decision_batches(benchmark_window_id, evaluated_at, id)
+    WHERE benchmark_window_id IS NOT NULL;
+"""
+_UNIVERSE_DISCOVERY_BENCHMARK_CHECKSUM = hashlib.sha256(
+    (repr(_UNIVERSE_DISCOVERY_BENCHMARK_COLUMNS) + _UNIVERSE_DISCOVERY_BENCHMARK_SQL
+     + "\\nuniverse_discovery_benchmark_v1\\nPRAGMA optimize").encode("utf-8")
+).hexdigest()
 _BROKER_FUNDING_SETTLEMENT_CURSOR_CHECKSUM = hashlib.sha256(
     (
         _BROKER_FUNDING_SETTLEMENT_CURSOR_SQL
@@ -5444,6 +5493,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260830_0051_funding_audit_outbox_v52": (
         "durable JSONL mirror state for opt-in funding settlement audits"
+    ),
+    "20260901_0053_universe_discovery_benchmark_v54": (
+        "read-only prospective Universe discovery benchmark window and evidence storage"
     ),
 }
 
@@ -5995,6 +6047,22 @@ def _apply_funding_audit_outbox_v52(db: sqlite3.Connection) -> None:
 def _apply_broker_funding_settlement_cursor_v53(db: sqlite3.Connection) -> None:
     """Persist only the scheduling keyset for exchange funding recovery."""
     db.executescript(_BROKER_FUNDING_SETTLEMENT_CURSOR_SQL)
+    db.execute("PRAGMA optimize")
+def _apply_universe_discovery_benchmark_v54(db: sqlite3.Connection) -> None:
+    """Add the bounded read-only Universe discovery benchmark ledger."""
+
+    existing_by_table: dict[str, set[str]] = {}
+    for _column, table, _column_type in _UNIVERSE_DISCOVERY_BENCHMARK_COLUMNS:
+        if table not in existing_by_table:
+            existing_by_table[table] = {
+                str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+    for column, table, column_type in _UNIVERSE_DISCOVERY_BENCHMARK_COLUMNS:
+        existing = existing_by_table[table]
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+            existing.add(column)
+    db.executescript(_UNIVERSE_DISCOVERY_BENCHMARK_SQL)
     db.execute("PRAGMA optimize")
 
 
@@ -6608,6 +6676,12 @@ _MIGRATIONS = (
         checksum=_BROKER_FUNDING_SETTLEMENT_CURSOR_CHECKSUM,
         schema_version="aletheia-sqlite-v53",
         apply=_apply_broker_funding_settlement_cursor_v53,
+    ),
+    MigrationStep(
+        migration_id="20260901_0053_universe_discovery_benchmark_v54",
+        checksum=_UNIVERSE_DISCOVERY_BENCHMARK_CHECKSUM,
+        schema_version="aletheia-sqlite-v54",
+        apply=_apply_universe_discovery_benchmark_v54,
     ),
 )
 
