@@ -1540,6 +1540,8 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
 
     if proposal.market_type not in _NATIVE_MARKET_TYPES:
         violations.append("invalid_market_type")
+    if proposal.market_type == "spot" and proposal.leverage not in (None, 1):
+        violations.append("invalid_spot_leverage")
     if proposal.direction not in _NATIVE_DIRECTIONS:
         violations.append("invalid_direction")
     if proposal.order_type not in _NATIVE_ORDER_TYPES:

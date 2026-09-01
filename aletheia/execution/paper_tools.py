@@ -21,6 +21,8 @@ def _validate_paper_proposal(proposal: TradeProposal) -> None:
         )
     if proposal.execution_mode == "paper_internal" and proposal.order_type != "market":
         raise ValueError("paper_internal_market_only")
+    if proposal.market_type == "spot" and proposal.leverage not in (None, 1):
+        raise ValueError("spot leverage must be 1")
     if proposal.leverage is not None and proposal.leverage < 1:
         raise ValueError(f"leverage must be >= 1, got {proposal.leverage}")
 
