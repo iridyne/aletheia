@@ -177,6 +177,34 @@ async def test_async_provider_configuration_check_runs_off_event_loop(tmp_path, 
     clear_cache()
 
 
+@pytest.mark.anyio
+async def test_router_binds_exact_profile_identity(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    cfg = load_config()
+    for name in ("profile-a", "profile-b"):
+        cfg.models.providers[name] = ProviderConfig(
+            type="openai_compatible",
+            base_url="http://localhost:8000/v1",
+            model="shared-model",
+            enabled=True,
+        )
+    save_config(cfg)
+
+    sync_provider = get_provider("profile-a")
+    assert sync_provider._aletheia_provider_name == "profile-a"
+
+    clear_cache()
+    async_provider = await get_provider_async("profile-b")
+    assert async_provider._aletheia_provider_name == "profile-b"
+    clear_cache()
+
+
 def test_cached_provider_is_revalidated_when_config_becomes_unconfigured(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.config.loader import load_config, save_config
