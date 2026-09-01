@@ -1015,7 +1015,12 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import SerenityResearchRun
 
-    boundary = _serenity_schedule_boundary(now)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    future_limit = current + timedelta(minutes=5)
+    boundary = _serenity_schedule_boundary(current)
     local_date = boundary.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
     batch_key = f"serenity:scheduled:{local_date}"
 
@@ -1023,8 +1028,11 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     latest_at = _parse_scheduler_timestamp(
         (latest or {}).get("finished_at") or (latest or {}).get("created_at")
     )
-    if latest_at is not None and latest_at >= boundary:
+    if latest_at is not None and boundary <= latest_at <= future_limit:
         return {"status": "fresh", "run_id": latest["id"], "batch_key": batch_key}
+    latest_in_future = latest_at is not None and latest_at > future_limit
+    if latest_in_future:
+        logger.warning("Serenity latest successful run has a future timestamp: %s", latest_at)
 
     attempted = repo.get_serenity_research_run_by_idempotency_key(batch_key)
     if attempted is not None:
@@ -1043,6 +1051,8 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
         mode="standard",
         status="queued",
         idempotency_key=batch_key,
+        metadata=json.dumps({"schedule_reason": "invalid_future_success"})
+        if latest_in_future else "{}",
     )
     repo.insert_serenity_research_run(run)
     try:

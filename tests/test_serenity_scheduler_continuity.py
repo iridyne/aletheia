@@ -1,6 +1,6 @@
 """Durable daily scheduling for the Serenity research pipeline."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -58,6 +58,46 @@ def test_success_after_boundary_suppresses_catchup(monkeypatch):
     assert result["status"] == "fresh"
     assert enqueued == []
     assert len(repo.list_serenity_research_runs(limit=10)) == 1
+
+
+def test_future_success_is_not_fresh_or_healthy(monkeypatch):
+    import aletheia.agents.research_worker as worker
+    import aletheia.config.loader as loader
+    from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
+    from aletheia.config.schema import SerenityConfig
+    from aletheia.diagnostics.doctor import Report, _probe_serenity_pipeline
+
+    now = datetime.now(timezone.utc)
+    repo.insert_serenity_research_run(SerenityResearchRun(
+        trigger_type="manual",
+        status="completed",
+        finished_at=(now.replace(microsecond=0) + timedelta(days=1)).isoformat(),
+    ))
+    enqueued: list[str] = []
+    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+
+    first = _enqueue_serenity_research_if_due(now)
+    second = _enqueue_serenity_research_if_due(now)
+
+    assert first["status"] == "enqueued"
+    assert second["status"] == "already_attempted"
+    assert len(enqueued) == 1
+    assert repo.get_serenity_research_run(first["run_id"])["metadata"] == (
+        '{"schedule_reason": "invalid_future_success"}'
+    )
+
+    load_config = loader.load_config
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: load_config().model_copy(update={"serenity": SerenityConfig(enabled=True)}),
+    )
+    report = Report()
+    _probe_serenity_pipeline(report)
+
+    check = next(item for item in report.checks if item.name == "data.serenity_pipeline")
+    assert check.severity == "warn"
+    assert "future" in check.detail
 
 
 def test_unrelated_active_run_suppresses_scheduled_batch(monkeypatch):
