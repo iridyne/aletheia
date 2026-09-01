@@ -1546,6 +1546,58 @@ def test_bitget_candle_updates_use_envelope_sequence_not_bar_open_time():
 
 
 @pytest.mark.asyncio
+async def test_bitget_malformed_time_or_sequence_does_not_terminate_stream():
+    import aiohttp
+
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import (
+        BitgetFastMarketStream,
+        parse_bitget_message,
+    )
+
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+    arg = {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BTCUSDT"}
+    malformed = [
+        {"arg": arg, "ts": "bad", "data": [{"bidPr": "100", "askPr": "101"}]},
+        {"arg": arg, "ts": "1", "data": [{"ts": "bad", "bidPr": "100", "askPr": "101"}]},
+        {"arg": arg, "ts": "1", "data": [{"seq": "bad", "bidPr": "100", "askPr": "101"}]},
+        {"arg": arg, "ts": "1", "data": [{"seqId": True, "bidPr": "100", "askPr": "101"}]},
+        {
+            "arg": {**arg, "channel": "candle1m"},
+            "ts": "1",
+            "data": [["bad", "99", "101", "98", "100", "5"]],
+        },
+    ]
+    for payload in malformed:
+        assert parse_bitget_message(payload, {instrument}, received_timestamp_ms=2) == []
+
+    valid = {"arg": arg, "ts": "2", "data": [{"bidPr": "100", "askPr": "101"}]}
+
+    class _Ws:
+        closed = False
+
+        def __aiter__(self):
+            async def messages():
+                for payload in (malformed[0], valid):
+                    yield aiohttp.WSMessage(
+                        type=aiohttp.WSMsgType.TEXT,
+                        data=json.dumps(payload),
+                        extra=None,
+                    )
+
+            return messages()
+
+    stream = BitgetFastMarketStream()
+    stream._ws = _Ws()
+    stream._instruments = {instrument}
+
+    events = [event async for event in stream.events()]
+
+    assert [event.event_type for event in events] == ["quote"]
+    assert events[0].exchange_timestamp_ms == 2
+
+
+@pytest.mark.asyncio
 async def test_bitget_ping_loop_uses_public_text_ping(monkeypatch):
     from aletheia.universe.fast_stream import BitgetFastMarketStream
 
