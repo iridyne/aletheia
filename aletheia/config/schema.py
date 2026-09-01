@@ -1026,7 +1026,7 @@ class RiskConfig(BaseModel):
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 200
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
-    symbol_filter_mode: str = "blacklist"
+    symbol_filter_mode: Literal["whitelist", "blacklist"] = "blacklist"
     symbol_list: list[str] = Field(default_factory=list)
     allowed_exchange: str = "paper_internal"
     allow_short_demo: bool = True
