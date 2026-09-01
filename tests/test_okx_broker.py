@@ -63,14 +63,19 @@ class TestLazyExchangeInit:
 class TestSymbolFilter:
     """O(1) symbol filter tests — market-type-aware."""
 
-    def test_filter_none_means_fail_open(self):
-        """When cache is None (never loaded), filter allows everything."""
-        from aletheia.execution.okx_broker import _get_demo_symbols
-        with patch("aletheia.execution.okx_broker.refresh_okx_demo_symbols", return_value=0):
-            import aletheia.execution.okx_broker as mod
-            mod._okx_demo_symbols = None
-            result = _get_demo_symbols("usdt_futures")
-            assert result is None or isinstance(result, frozenset)
+    def test_initial_refresh_failure_fails_closed(self):
+        """An unavailable demo whitelist must stop pre-order validation."""
+        import aletheia.execution.okx_broker as mod
+
+        with patch(
+            "aletheia.execution.okx_broker._run_coro",
+            side_effect=closing_coro_runner(RuntimeError("market load unavailable")),
+        ):
+            with pytest.raises(RuntimeError, match="market load unavailable"):
+                mod._get_demo_symbols("usdt_futures")
+
+        assert mod._okx_demo_symbols is None
+        assert mod._okx_demo_symbols_loaded_at == 0.0
 
     def test_filter_with_populated_set_blocks_unsupported(self):
         """Symbols not in swap frozenset are blocked for perp orders."""
@@ -118,6 +123,35 @@ class TestSymbolFilter:
 
         assert count == 5  # 3 swap + 2 spot
         assert mod._okx_demo_symbols == fake_result
+
+    def test_empty_refresh_is_known_loaded_absence(self):
+        import aletheia.execution.okx_broker as mod
+
+        with patch(
+            "aletheia.execution.okx_broker._run_coro",
+            side_effect=closing_coro_runner({}),
+        ):
+            assert mod.refresh_okx_demo_symbols() == 0
+
+        assert mod._get_demo_symbols("usdt_futures") == frozenset()
+        assert mod._get_demo_symbols("spot") == frozenset()
+
+    def test_scheduler_records_refresh_failure(self, monkeypatch):
+        from aletheia.agent_runtime import scheduler
+
+        failures = []
+        monkeypatch.setattr(
+            scheduler,
+            "_record_job_failure",
+            lambda job_id, error: failures.append((job_id, error)),
+        )
+        with patch(
+            "aletheia.execution.okx_broker._run_coro",
+            side_effect=closing_coro_runner(RuntimeError("market load unavailable")),
+        ):
+            scheduler._run_okx_demo_symbols()
+
+        assert failures == [("okx_demo_symbols", "market load unavailable")]
 
 
 class TestPaperToolsIntegration:
