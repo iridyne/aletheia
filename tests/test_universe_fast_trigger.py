@@ -1439,6 +1439,89 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
     assert all(generation == 1 for generation, _sequence in observed)
 
 
+@pytest.mark.asyncio
+async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import FastMarketEvent, FastStreamHealth
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+    plan = SimpleNamespace(
+        plan_id="resting-maker",
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        invalidation_price=90.0,
+        execution_mode="RESTING_MAKER",
+        order_tactic="POST_ONLY_LIMIT",
+    )
+    execute_calls = 0
+
+    class Stream:
+        connect_calls = 0
+
+        async def connect(self):
+            self.connect_calls += 1
+
+        async def set_instruments(self, _instruments):
+            pass
+
+        def health(self):
+            return FastStreamHealth(connected=True, subscriptions_confirmed=True)
+
+        async def close(self):
+            pass
+
+        async def _events(self):
+            for sequence in (1, 2):
+                yield FastMarketEvent(
+                    event_type="quote",
+                    instrument=instrument,
+                    exchange_timestamp_ms=sequence,
+                    received_timestamp_ms=sequence,
+                    sequence=sequence,
+                    bid=100.0,
+                    ask=100.1,
+                )
+            watch._stop_event.set()
+
+        def events(self):
+            return self._events()
+
+    stream = Stream()
+
+    def reject_cross(*_args, **_kwargs):
+        nonlocal execute_calls
+        execute_calls += 1
+        raise ValueError("post_only_would_cross_bbo")
+
+    monkeypatch.setattr(watch, "_stop_event", asyncio.Event())
+    monkeypatch.setattr(watch, "_configured_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(watch, "_load_watchers", lambda _cfg: asyncio.sleep(0, result=({}, {})))
+    monkeypatch.setattr(
+        watch,
+        "_load_entry_plan_watchers",
+        lambda _cfg: asyncio.sleep(0, result=({plan.plan_id: plan}, {})),
+    )
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _id: {"status": "waiting"})
+    monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
+    monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution.execute_entry_plan", reject_cross)
+
+    await asyncio.wait_for(watch._watch_loop(cfg), timeout=1.0)
+
+    assert execute_calls == 2
+    assert stream.connect_calls == 1
+
+
 def test_authorization_refuses_non_2r_target_and_cross_venue(tmp_path, monkeypatch):
     _prepare(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig

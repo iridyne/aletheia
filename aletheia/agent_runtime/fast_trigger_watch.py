@@ -898,18 +898,22 @@ async def _watch_loop(cfg) -> None:
                         if plan.execution_mode == "RESTING_MAKER" and row["status"] == "waiting":
                             from aletheia.execution.entry_plan_execution import execute_entry_plan
 
-                            await asyncio.to_thread(
-                                execute_entry_plan,
-                                plan_id,
-                                bid=float(event.bid),
-                                ask=float(event.ask),
-                                observed_at=datetime.fromtimestamp(
-                                    event.received_timestamp_ms / 1000, tz=timezone.utc
-                                ).isoformat(),
-                                source_observed_at=datetime.fromtimestamp(
-                                    event.exchange_timestamp_ms / 1000, tz=timezone.utc
-                                ).isoformat(),
-                            )
+                            try:
+                                await asyncio.to_thread(
+                                    execute_entry_plan,
+                                    plan_id,
+                                    bid=float(event.bid),
+                                    ask=float(event.ask),
+                                    observed_at=datetime.fromtimestamp(
+                                        event.received_timestamp_ms / 1000, tz=timezone.utc
+                                    ).isoformat(),
+                                    source_observed_at=datetime.fromtimestamp(
+                                        event.exchange_timestamp_ms / 1000, tz=timezone.utc
+                                    ).isoformat(),
+                                )
+                            except ValueError as exc:
+                                if str(exc) != "post_only_would_cross_bbo":
+                                    raise
                         elif row["status"] in {"triggered", "risk_reserved"}:
                             from aletheia.execution.entry_plan_execution import execute_entry_plan
 
