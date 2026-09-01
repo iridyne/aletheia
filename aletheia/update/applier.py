@@ -20,8 +20,15 @@ from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops, target_fresh
 
 _SECRET_PREFIXES = (
-    "BITGET_", "OKX_", "BINANCE_", "OPENAI_", "ANTHROPIC_", "LLM_",
-    "TELEGRAM_BOT_TOKEN", "COINALYZE_", "FRED_",
+    "BITGET_",
+    "OKX_",
+    "BINANCE_",
+    "OPENAI_",
+    "ANTHROPIC_",
+    "LLM_",
+    "TELEGRAM_BOT_TOKEN",
+    "COINALYZE_",
+    "FRED_",
 )
 
 logger = logging.getLogger("aletheia.update.applier")
@@ -29,6 +36,7 @@ logger = logging.getLogger("aletheia.update.applier")
 
 def _packaged_module():
     from aletheia.update import packaged_commands
+
     return packaged_commands
 
 
@@ -37,10 +45,7 @@ def _is_packaged() -> bool:
 
 
 def _safe_env() -> dict:
-    return {
-        key: value for key, value in os.environ.items()
-        if not key.startswith(_SECRET_PREFIXES)
-    }
+    return {key: value for key, value in os.environ.items() if not key.startswith(_SECRET_PREFIXES)}
 
 
 def update_progress() -> dict:
@@ -100,14 +105,16 @@ def check_for_update() -> dict:
         return changed
 
     mutate_config(_record_check)
-    write_audit({
-        "actor": "human",
-        "source": "api",
-        "event_type": "update_checked",
-        "entity_type": "system_update",
-        "entity_id": cur,
-        "message": f"Update check on {branch}: behind={behind}",
-    })
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "update_checked",
+            "entity_type": "system_update",
+            "entity_id": cur,
+            "message": f"Update check on {branch}: behind={behind}",
+        }
+    )
     return {
         "ok": True,
         "mode": "development",
@@ -126,6 +133,7 @@ def _is_managed_venv() -> bool:
         return Path(sys.prefix).resolve() == venv.resolve()
     except Exception:
         return False
+
 
 def _reinstall_deps() -> dict:
     # #1206: enforce uv.lock — only uv sync --locked is authoritative; no pip fallback
@@ -154,10 +162,7 @@ _DASHBOARD_FRONTEND_TREE = ".aletheia-frontend-tree"
 
 
 def _frontend_deps_changed(changed_files: list[str]) -> bool:
-    return any(
-        path in {"frontend/package.json", "frontend/package-lock.json"}
-        for path in changed_files
-    )
+    return any(path in {"frontend/package.json", "frontend/package-lock.json"} for path in changed_files)
 
 
 def _dashboard_build_required(frontend_tree: str) -> bool:
@@ -238,9 +243,7 @@ def _build_frontend(frontend_tree: str) -> dict:
             "detail": validated.get("detail") or validated.get("reason"),
         }
     try:
-        (_STAGED_DASHBOARD_STATIC / _DASHBOARD_FRONTEND_TREE).write_text(
-            frontend_tree + "\n"
-        )
+        (_STAGED_DASHBOARD_STATIC / _DASHBOARD_FRONTEND_TREE).write_text(frontend_tree + "\n")
     except OSError as exc:
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
         return {
@@ -329,17 +332,19 @@ def _record_metadata_failure(commit: str, result: dict | None) -> None:
     fields = _metadata_fields(result)
     if fields["metadata_persisted"]:
         return
-    write_audit({
-        "actor": "system",
-        "source": "updater",
-        "event_type": "update_metadata_persist_failed",
-        "entity_type": "system_update",
-        "entity_id": commit or "unknown",
-        "message": (
-            "Source state changed successfully, but target-loaded update metadata "
-            f"could not be persisted: {fields['metadata_error']}"
-        ),
-    })
+    write_audit(
+        {
+            "actor": "system",
+            "source": "updater",
+            "event_type": "update_metadata_persist_failed",
+            "entity_type": "system_update",
+            "entity_id": commit or "unknown",
+            "message": (
+                "Source state changed successfully, but target-loaded update metadata "
+                f"could not be persisted: {fields['metadata_error']}"
+            ),
+        }
+    )
 
 
 def _rollback_update(
@@ -362,12 +367,18 @@ def _rollback_update(
         actual_head = git_ops.current_commit() or ""
         metadata = _persist_current_commit_fresh(actual_head)
         _record_metadata_failure(actual_head, metadata)
-        write_audit({
-            "actor": "human", "source": "api", "event_type": "update_rollback_failed",
-            "entity_type": "system_update", "entity_id": new,
-            "before": {"commit": old}, "after": {"commit": actual_head},
-            "message": f"Rollback FAILED: {rollback.get('reason')}; on-disk HEAD is {actual_head}",
-        })
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "update_rollback_failed",
+                "entity_type": "system_update",
+                "entity_id": new,
+                "before": {"commit": old},
+                "after": {"commit": actual_head},
+                "message": f"Rollback FAILED: {rollback.get('reason')}; on-disk HEAD is {actual_head}",
+            }
+        )
         return {
             "applied": False,
             "rolled_back": False,
@@ -382,12 +393,18 @@ def _rollback_update(
         }
     metadata = _persist_current_commit_fresh(old)
     _record_metadata_failure(old, metadata)
-    write_audit({
-        "actor": "human", "source": "api", "event_type": "update_rolled_back",
-        "entity_type": "system_update", "entity_id": old,
-        "before": {"commit": new}, "after": {"commit": old},
-        "message": f"Update rolled back: {failure_reason}: {failure_detail or ''}",
-    })
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "update_rolled_back",
+            "entity_type": "system_update",
+            "entity_id": old,
+            "before": {"commit": new},
+            "after": {"commit": old},
+            "message": f"Update rolled back: {failure_reason}: {failure_detail or ''}",
+        }
+    )
     return {
         "applied": False,
         "rolled_back": True,
@@ -396,6 +413,67 @@ def _rollback_update(
         "old_commit": old,
         "attempted_commit": new,
         "message": f"Update rolled back: {failure_reason}. No restart needed.",
+        **_metadata_fields(metadata),
+    }
+
+
+def rollback_applied_update(result: dict) -> dict:
+    """Restore a successfully activated non-schema source update and restart it."""
+    old = str(result.get("old_commit") or "")
+    new = str(result.get("new_commit") or "")
+    if not old or not new or result.get("schema_changed"):
+        return {"rolled_back": False, "reason": "rollback_context_unavailable"}
+
+    rollback = git_ops.reset_hard(old)
+    if not rollback.get("ok"):
+        return {
+            "rolled_back": False,
+            "reason": "rollback_failed",
+            "actual_head": git_ops.current_commit() or "",
+        }
+
+    recovery_errors: list[str] = []
+    if result.get("python_deps_changed") and not _reinstall_deps().get("ok"):
+        recovery_errors.append("python_dependency_restore_failed")
+    if result.get("frontend_deps_changed") and not _install_frontend_deps().get("ok"):
+        recovery_errors.append("frontend_dependency_restore_failed")
+    if result.get("frontend_changed"):
+        old_tree = git_ops.tree_hash(old, "frontend")
+        build = _build_frontend(old_tree)
+        if build.get("ok"):
+            _activate_frontend_build()
+            shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
+        else:
+            recovery_errors.append("frontend_restore_failed")
+
+    metadata = _persist_current_commit_fresh(old)
+    _record_metadata_failure(old, metadata)
+    if metadata.get("ok") is not True:
+        recovery_errors.append("metadata_restore_failed")
+    restarted = _restart_gateway()
+    if not restarted.get("ok"):
+        recovery_errors.append("gateway_recovery_failed")
+    actual_head = git_ops.current_commit() or ""
+    rolled_back = actual_head == old and not recovery_errors
+    write_audit(
+        {
+            "actor": "human",
+            "source": "cli",
+            "event_type": ("update_postflight_rolled_back" if rolled_back else "update_postflight_rollback_failed"),
+            "entity_type": "system_update",
+            "entity_id": old,
+            "before": {"commit": new},
+            "after": {"commit": actual_head},
+            "message": "Postflight rollback " + ("succeeded" if rolled_back else "failed"),
+            "recovery_errors": recovery_errors,
+        }
+    )
+    return {
+        "rolled_back": rolled_back,
+        "reason": None if rolled_back else "rollback_recovery_failed",
+        "actual_head": actual_head,
+        "recovery_started": bool(restarted.get("ok")),
+        "recovery_errors": recovery_errors,
         **_metadata_fields(metadata),
     }
 
@@ -413,14 +491,16 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 "reason": getattr(exc, "reason", "packaged_update_request_failed"),
                 "message": str(exc),
             }
-        write_audit({
-            "actor": "human",
-            "source": "api",
-            "event_type": "packaged_update_requested",
-            "entity_type": "system_update",
-            "entity_id": str(result.get("operation_id") or "unknown"),
-            "message": result.get("message") or "Packaged update requested",
-        })
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "packaged_update_requested",
+                "entity_type": "system_update",
+                "entity_id": str(result.get("operation_id") or "unknown"),
+                "message": result.get("message") or "Packaged update requested",
+            }
+        )
         return {"mode": "packaged", **result}
 
     # This object is PRE-PULL ONLY. It is used for eligibility and branch
@@ -436,11 +516,16 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     branch = cfg.update.branch
 
     if git_ops.is_worktree_dirty():
-        write_audit({
-            "actor": "human", "source": "api", "event_type": "update_blocked",
-            "entity_type": "system_update", "entity_id": git_ops.current_commit(),
-            "message": "Update blocked: uncommitted local changes in source worktree",
-        })
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "update_blocked",
+                "entity_type": "system_update",
+                "entity_id": git_ops.current_commit(),
+                "message": "Update blocked: uncommitted local changes in source worktree",
+            }
+        )
         return {
             "applied": False,
             "reason": "dirty_worktree",
@@ -450,21 +535,25 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
 
     current_branch = git_ops.current_branch()
     if current_branch != branch:
-        write_audit({
-            "actor": "human", "source": "api", "event_type": "update_blocked",
-            "entity_type": "system_update", "entity_id": git_ops.current_commit(),
-            "message": (
-                "Update blocked: source checkout branch "
-                f"{current_branch or 'detached'} does not match configured branch {branch}"
-            ),
-        })
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "update_blocked",
+                "entity_type": "system_update",
+                "entity_id": git_ops.current_commit(),
+                "message": (
+                    "Update blocked: source checkout branch "
+                    f"{current_branch or 'detached'} does not match configured branch {branch}"
+                ),
+            }
+        )
         return {
             "applied": False,
             "reason": "wrong_branch",
             "mode": "development",
             "message": (
-                f"Refusing to update from {current_branch or 'detached'}; "
-                f"use the configured {branch} source checkout."
+                f"Refusing to update from {current_branch or 'detached'}; use the configured {branch} source checkout."
             ),
         }
 
@@ -473,11 +562,16 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     old = git_ops.current_commit()
     pulled = git_ops.pull(branch)
     if not pulled.get("ok"):
-        write_audit({
-            "actor": "human", "source": "api", "event_type": "update_failed",
-            "entity_type": "system_update", "entity_id": old,
-            "message": f"Update failed: {pulled.get('reason')}",
-        })
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "update_failed",
+                "entity_type": "system_update",
+                "entity_id": old,
+                "message": f"Update failed: {pulled.get('reason')}",
+            }
+        )
         return {
             "applied": False,
             "reason": pulled.get("reason", "pull_failed"),
@@ -491,7 +585,18 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     changed_files = git_ops.changed_files(old, new)
     python_deps_changed = bool({"pyproject.toml", "uv.lock"}.intersection(changed_files))
     frontend_deps_changed = _frontend_deps_changed(changed_files)
+    frontend_changed = any(path.startswith("frontend/") for path in changed_files)
     deps_reinstalled = False
+
+    if "aletheia/storage/migrations.py" in changed_files:
+        return _rollback_update(
+            old,
+            new,
+            python_deps_changed=False,
+            frontend_deps_changed=False,
+            restart=False,
+            failure_reason="schema_update_requires_transactional_deployer",
+        )
 
     if python_deps_changed:
         if progress:
@@ -499,8 +604,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         install = _reinstall_deps()
         if not install.get("ok"):
             return _rollback_update(
-                old, new, python_deps_changed=False, frontend_deps_changed=frontend_deps_changed,
-                restart=restart, failure_reason=install.get("reason", "python_dependency_install_failed"),
+                old,
+                new,
+                python_deps_changed=False,
+                frontend_deps_changed=frontend_deps_changed,
+                restart=restart,
+                failure_reason=install.get("reason", "python_dependency_install_failed"),
             )
         deps_reinstalled = True
     if restart and frontend_deps_changed:
@@ -509,8 +618,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         install = _install_frontend_deps()
         if not install.get("ok"):
             return _rollback_update(
-                old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=False,
-                restart=restart, failure_reason=install["reason"],
+                old,
+                new,
+                python_deps_changed=python_deps_changed,
+                frontend_deps_changed=False,
+                restart=restart,
+                failure_reason=install["reason"],
             )
     frontend_tree = git_ops.tree_hash(new, "frontend") if restart else ""
     dashboard_build_required = restart and _dashboard_build_required(frontend_tree)
@@ -520,8 +633,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         build = _build_frontend(frontend_tree)
         if not build.get("ok"):
             return _rollback_update(
-                old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=frontend_deps_changed,
-                restart=restart, failure_reason=build["reason"],
+                old,
+                new,
+                python_deps_changed=python_deps_changed,
+                frontend_deps_changed=frontend_deps_changed,
+                restart=restart,
+                failure_reason=build["reason"],
             )
 
     if progress:
@@ -529,7 +646,8 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     smoke = run_smoke_check()
     if not smoke.get("ok"):
         return _rollback_update(
-            old, new,
+            old,
+            new,
             python_deps_changed=python_deps_changed,
             frontend_deps_changed=frontend_deps_changed,
             restart=restart,
@@ -547,33 +665,6 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             progress("Restarting gateway")
         restarted = _restart_gateway()
         if not restarted.get("ok"):
-            if "aletheia/storage/migrations.py" in changed_files:
-                metadata = _persist_current_commit_fresh(new)
-                _record_metadata_failure(new, metadata)
-                write_audit({
-                    "actor": "human", "source": "api",
-                    "event_type": "update_restart_failed_after_schema_change",
-                    "entity_type": "system_update", "entity_id": new,
-                    "before": {"commit": old}, "after": {"commit": new},
-                    "message": (
-                        "Gateway restart failed after a schema-bearing update; "
-                        "new code was retained because database migrations are not reversible"
-                    ),
-                })
-                return {
-                    "applied": False,
-                    "rolled_back": False,
-                    "reason": "gateway_restart_failed_after_schema_change",
-                    "mode": "development",
-                    "old_commit": old,
-                    "attempted_commit": new,
-                    "restart_error": restarted.get("reason"),
-                    "message": (
-                        "New code retained; gateway restart failed after schema change. "
-                        f"Detail: {restarted.get('detail', 'none')}"
-                    ),
-                    **_metadata_fields(metadata),
-                }
             if frontend_built:
                 _restore_frontend_build(had_previous_static)
             rollback = git_ops.reset_hard(old)
@@ -621,21 +712,22 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             if source_changed
             else "Source already up to date; no source restart was requested."
         )
-    write_audit({
-        "actor": "human", "source": "api", "event_type": "update_applied",
-        "entity_type": "system_update", "entity_id": new,
-        "before": {"commit": old}, "after": {"commit": new},
-        "message": (
-            (
-                f"Updated {old[:8]} -> {new[:8]}"
-                if source_changed
-                else f"Source already at {new[:8]}"
-            )
-            + " "
-            f"(deps_reinstalled={deps_reinstalled}, frontend_built={frontend_built}, restart={restart}, "
-            f"metadata_persisted={metadata.get('ok') is True})"
-        ),
-    })
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "update_applied",
+            "entity_type": "system_update",
+            "entity_id": new,
+            "before": {"commit": old},
+            "after": {"commit": new},
+            "message": (
+                (f"Updated {old[:8]} -> {new[:8]}" if source_changed else f"Source already at {new[:8]}") + " "
+                f"(deps_reinstalled={deps_reinstalled}, frontend_built={frontend_built}, restart={restart}, "
+                f"metadata_persisted={metadata.get('ok') is True})"
+            ),
+        }
+    )
     return {
         "applied": True,
         "mode": "development",
@@ -644,6 +736,10 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         "source_changed": source_changed,
         "deps_reinstalled": deps_reinstalled,
         "frontend_built": frontend_built,
+        "python_deps_changed": python_deps_changed,
+        "frontend_deps_changed": frontend_deps_changed,
+        "frontend_changed": frontend_changed,
+        "schema_changed": False,
         "restart_requested": restart,
         "restart_completed": restart,
         "restart_required": not restart,

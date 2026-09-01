@@ -1,10 +1,4 @@
-"""Observer-aware continuity verification for source updates (Issue #1135).
-
-The continuity layer is observational except for audit events. It reuses the
-existing control/Observation projections, distinguishes structural failure from
-missing proof, and never turns normal Observation business progress into a
-deployment gate.
-"""
+"""Minimal Observer continuity proof for source updates (Issue #1135)."""
 
 from __future__ import annotations
 
@@ -21,7 +15,7 @@ import urllib.request
 
 from aletheia.files.jsonl import write_audit
 
-_SCHEMA_VERSION = "update_observer_continuity/v1"
+_SCHEMA_VERSION = "update_observer_continuity/v2"
 _VALID_OWNERS = {"main", "worker"}
 _FRESH_CAPTURE_PREFIX = "ALETHEIA_CONTINUITY_SNAPSHOT="
 _POSTFLIGHT_SETTLE_TIMEOUT_SEC = 120.0
@@ -36,7 +30,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _gateway_status() -> dict[str, Any]:
+def _gateway_status(*, timeout_sec: float = 2.0) -> dict[str, Any]:
     """Read the running Gateway status contract without invoking another CLI."""
     try:
         from aletheia.config.loader import load_config
@@ -46,11 +40,9 @@ def _gateway_status() -> dict[str, Any]:
         except TypeError:  # compatibility with older/custom loaders
             cfg = load_config()
         url = f"http://127.0.0.1:{cfg.app.dashboard_port}/api/status"
-        request = urllib.request.Request(
-            url, headers={"User-Agent": "aletheia-update-continuity"}
-        )
+        request = urllib.request.Request(url, headers={"User-Agent": "aletheia-update-continuity"})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=2) as response:
+        with opener.open(request, timeout=max(0.001, min(2.0, float(timeout_sec)))) as response:
             payload = json.loads(response.read().decode("utf-8"))
         execution = payload.get("observation_execution")
         execution = execution if isinstance(execution, dict) else {}
@@ -147,57 +139,70 @@ def _observation_ids() -> dict[str, Any]:
 
 
 def capture_update_continuity() -> dict[str, Any]:
-    """Capture one Main + Observation read-only deployment snapshot."""
+    """Capture only the structural evidence needed by the update boundary."""
     try:
-        from aletheia.cli.control_cmd import build_control_status
+        from aletheia.update import git_ops
 
-        control = build_control_status()
-        control_available = True
-        control_error = None
+        disk_sha = git_ops.current_commit() or None
     except Exception as exc:
-        control = {}
-        control_available = False
+        disk_sha = None
         control_error = type(exc).__name__
+    else:
+        control_error = None
 
     try:
-        from aletheia.cli.observe_cmd import _collect_overview
+        from aletheia.cli.control_cmd import _data_root_identity
 
-        overview = _collect_overview(equivalence_limit=5)
-        overview_available = True
-        overview_error = None
+        data_root = _data_root_identity()
     except Exception as exc:
-        overview = {}
-        overview_available = False
-        overview_error = type(exc).__name__
+        data_root = {
+            "available": False,
+            "identity": None,
+            "unavailable_reason": "data_root_read_failed",
+            "error": type(exc).__name__,
+        }
 
     try:
+        from aletheia.config.loader import read_only_config
         from aletheia.observation_lab.execution_owner import get_execution_owner
 
-        owner = get_execution_owner()
+        with read_only_config():
+            owner = get_execution_owner()
     except Exception:
         owner = "unavailable"
 
-    runtime = control.get("runtime") if isinstance(control, dict) else None
-    runtime = runtime if isinstance(runtime, dict) else {}
-    data_root = runtime.get("data_root")
-    data_root = data_root if isinstance(data_root, dict) else {}
-    sha = control.get("sha") if isinstance(control, dict) else None
-    sha = sha if isinstance(sha, dict) else {}
+    identities: dict[str, Any]
+    manifest_generations: dict[str, int] = {}
+    checkpoint: dict[str, Any] = {}
+    observation_available = False
+    observation_error = None
+    try:
+        from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
+        from aletheia.observation_lab.db import readonly_lab_db
+        from aletheia.observation_lab.manifest import load_active_manifests
+        from aletheia.storage.sqlite import readonly_db
 
-    manifests = overview.get("manifests") if isinstance(overview, dict) else None
-    manifests = manifests if isinstance(manifests, dict) else {}
-    active = manifests.get("active") if isinstance(manifests, dict) else None
-    active = active if isinstance(active, list) else []
-    manifest_generations = {
-        str(item.get("observation_id")): int(item.get("generation"))
-        for item in active
-        if isinstance(item, dict)
-        and item.get("observation_id") is not None
-        and item.get("generation") is not None
-    }
-
-    checkpoint = overview.get("checkpoint") if isinstance(overview, dict) else None
-    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+        with readonly_db(), readonly_lab_db():
+            identities = _observation_ids()
+            manifest_generations = {str(item.observation_id): int(item.generation) for item in load_active_manifests()}
+            verified = verify_joint_checkpoint()
+            checkpoint = {
+                "verified": {
+                    "ok": verified.ok,
+                    "reason": verified.reason,
+                    "current_fingerprint": verified.current_fingerprint,
+                }
+            }
+        observation_available = identities.get("available") is True
+    except Exception as exc:
+        identities = {
+            "available": False,
+            "unavailable_reason": "observation_identity_read_failed",
+            "error": type(exc).__name__,
+            "ids": [],
+            "total": None,
+        }
+        observation_error = type(exc).__name__
 
     return {
         "schema_version": _SCHEMA_VERSION,
@@ -205,11 +210,10 @@ def capture_update_continuity() -> dict[str, Any]:
         "capture_available": True,
         "capture_source": "in_process",
         "control": {
-            "available": control_available,
+            "available": disk_sha is not None and data_root.get("available") is True,
             "error": control_error,
-            "schema_version": control.get("schema_version") if isinstance(control, dict) else None,
-            "disk_sha": sha.get("disk_head"),
-            "running_sha": sha.get("deployed_head"),
+            "disk_sha": disk_sha,
+            "running_sha": None,
             "data_root": data_root,
         },
         "gateway": _gateway_status(),
@@ -217,13 +221,12 @@ def capture_update_continuity() -> dict[str, Any]:
             "owner": owner,
             "exclusive_owner_contract": owner in _VALID_OWNERS,
             "worker": _worker_signature(),
-            "overview_available": overview_available,
-            "overview_error": overview_error,
-            "identities": _observation_ids(),
+            # v1 compatibility: now means only continuity evidence was readable.
+            "overview_available": observation_available,
+            "overview_error": observation_error,
+            "identities": identities,
             "manifest_generations": manifest_generations,
             "checkpoint": checkpoint,
-            "experiments": overview.get("experiments") if isinstance(overview, dict) else None,
-            "ufc_equivalence": overview.get("ufc_equivalence") if isinstance(overview, dict) else None,
         },
     }
 
@@ -242,7 +245,7 @@ def _unavailable_fresh_snapshot(reason: str, *, detail: str | None = None) -> di
     }
 
 
-def capture_update_continuity_fresh() -> dict[str, Any]:
+def capture_update_continuity_fresh(*, timeout_sec: float = 20.0) -> dict[str, Any]:
     """Capture postflight from a fresh interpreter loaded from the target checkout."""
     from aletheia.config.loader import _PROJECT_ROOT
 
@@ -259,13 +262,13 @@ def capture_update_continuity_fresh() -> dict[str, Any]:
             cwd=str(_PROJECT_ROOT),
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=max(0.001, float(timeout_sec)),
             env=os.environ.copy(),
         )
+    except subprocess.TimeoutExpired:
+        return _unavailable_fresh_snapshot("target_postflight_projection_unavailable", detail="TimeoutExpired")
     except Exception as exc:
-        return _unavailable_fresh_snapshot(
-            "target_postflight_process_failed", detail=type(exc).__name__
-        )
+        return _unavailable_fresh_snapshot("target_postflight_process_failed", detail=type(exc).__name__)
     if result.returncode != 0:
         return _unavailable_fresh_snapshot(
             "target_postflight_process_failed",
@@ -489,7 +492,7 @@ def describe_failure_code(code: str) -> str:
         return _CODE_HINTS[code][0]
     for prefix, (desc, _) in _CODE_HINTS.items():
         if ":" in prefix and code.startswith(prefix.split(":")[0] + ":"):
-            suffix = code[len(prefix.split(":")[0]) + 1:]
+            suffix = code[len(prefix.split(":")[0]) + 1 :]
             return f"{desc}: {suffix}"
     return code
 
@@ -524,9 +527,7 @@ def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
     elif owner == "worker":
         proof_gaps.append("observation_runtime_owner_proof_unavailable")
 
-    checkpoint_kind, checkpoint_reason = _checkpoint_preflight_verdict(
-        observation.get("checkpoint") or {}
-    )
+    checkpoint_kind, checkpoint_reason = _checkpoint_preflight_verdict(observation.get("checkpoint") or {})
     if checkpoint_kind == "failure" and checkpoint_reason:
         failures.append(checkpoint_reason)
     elif checkpoint_kind == "warning" and checkpoint_reason:
@@ -577,7 +578,34 @@ def compare_update_continuity(
     proof_gaps: list[str] = []
 
     if after.get("capture_available") is False:
-        failures.append("target_postflight_projection_unavailable")
+        gateway = after.get("gateway") or {}
+        before_health = (before.get("gateway") or {}).get("health_status")
+        if expected_target and restart:
+            boot = gateway.get("boot_commit")
+            current = gateway.get("current_commit")
+            if boot and boot != expected_target:
+                failures.append("boot_commit_mismatch")
+            if current and current != expected_target:
+                failures.append("current_commit_mismatch")
+        if gateway.get("health_status") == "degraded" and before_health != "degraded":
+            failures.append("main_health_degraded")
+        return {
+            "ok": False,
+            "structural_ok": not failures,
+            "continuity_verified": False,
+            "failures": sorted(set(failures)),
+            "proof_gaps": ["target_postflight_projection_unavailable"],
+            "warnings": [],
+            "owner": None,
+            "worker_sha_before": None,
+            "worker_sha_after": None,
+            "data_root_unchanged": False,
+            "main_health_status": gateway.get("health_status"),
+            "main_health_issues": gateway.get("health_issues") or [],
+            "main_observation_cycle_registered": None,
+            "observation_execution_exclusive": None,
+            "postflight_capture_source": after.get("capture_source"),
+        }
 
     before_obs = before.get("observation") or {}
     after_obs = after.get("observation") or {}
@@ -592,10 +620,7 @@ def compare_update_continuity(
     runtime_owner = _runtime_owner_proof(after)
     if runtime_owner.get("available"):
         runtime_configured_owner = runtime_owner.get("owner")
-        if (
-            runtime_configured_owner in _VALID_OWNERS
-            and runtime_configured_owner != after_obs.get("owner")
-        ):
+        if runtime_configured_owner in _VALID_OWNERS and runtime_configured_owner != after_obs.get("owner"):
             failures.append("observation_runtime_owner_mismatch")
         if runtime_owner.get("exclusive") is False:
             failures.append("duplicate_observation_cycle_owner")
@@ -613,12 +638,8 @@ def compare_update_continuity(
 
     before_worker = before_obs.get("worker") or {}
     after_worker = after_obs.get("worker") or {}
-    before_worker_sha = (
-        before_worker.get("source_commit") if before_worker.get("available") else None
-    )
-    after_worker_sha = (
-        after_worker.get("source_commit") if after_worker.get("available") else None
-    )
+    before_worker_sha = before_worker.get("source_commit") if before_worker.get("available") else None
+    after_worker_sha = after_worker.get("source_commit") if after_worker.get("available") else None
     if before_obs.get("owner") == "worker":
         if before_worker_sha and not after_worker_sha:
             failures.append("worker_identity_lost")
@@ -702,11 +723,7 @@ def compare_update_continuity(
     # #1208: continuity_verified when both identities are strictly confirmed
     _boot = gateway.get("boot_commit")
     _current = gateway.get("current_commit")
-    continuity_verified = bool(
-        expected_target and restart
-        and _boot == expected_target
-        and _current == expected_target
-    )
+    continuity_verified = bool(expected_target and restart and _boot == expected_target and _current == expected_target)
     return {
         "ok": not failures and not proof_gaps,
         "structural_ok": not failures,
@@ -744,7 +761,7 @@ def _postflight_settled(snapshot: dict[str, Any], target: str) -> bool:
     gateway = snapshot.get("gateway") or {}
     if not gateway.get("available"):
         return False
-    if target not in {gateway.get("boot_commit"), gateway.get("current_commit")}:
+    if gateway.get("boot_commit") != target or gateway.get("current_commit") != target:
         return False
     return gateway.get("health_status") in {"healthy", "degraded"}
 
@@ -755,40 +772,104 @@ def capture_update_continuity_until_settled(
     timeout_sec: float = _POSTFLIGHT_SETTLE_TIMEOUT_SEC,
     poll_sec: float = _POSTFLIGHT_POLL_SEC,
 ) -> dict[str, Any]:
-    """Wait through expected post-restart health warmup using target-loaded code.
-
-    Market Observer's first scheduled pass is intentionally delayed after boot,
-    while `/api/status` health is cached for a few seconds. Four one-second
-    retries therefore cannot prove a normal fresh runtime. This bounded poll
-    keeps the update transaction synchronous but gives the existing health
-    contract its real startup window.
-    """
+    """Wait for Gateway readiness, then capture target structural evidence once."""
+    started = time.monotonic()
+    deadline = started + max(0.0, float(timeout_sec))
     poll = max(0.1, float(poll_sec))
-    attempts = max(1, int(max(0.0, float(timeout_sec)) / poll) + 1)
-    after = capture_update_continuity_fresh()
-    for attempt in range(attempts):
-        if _postflight_settled(after, target):
+    gateway_started = time.monotonic()
+    if deadline <= gateway_started:
+        gateway = {"available": False, "health_status": None}
+    else:
+        gateway = _gateway_status(timeout_sec=deadline - gateway_started)
+    while not _postflight_settled({"gateway": gateway}, target):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             break
-        if attempt + 1 >= attempts:
+        time.sleep(min(poll, remaining))
+        if deadline - time.monotonic() <= 0:
             break
-        time.sleep(poll)
-        after = capture_update_continuity_fresh()
+        gateway = _gateway_status(timeout_sec=max(0.001, deadline - time.monotonic()))
+    gateway_done = time.monotonic()
+
+    remaining = deadline - gateway_done
+    if not _postflight_settled({"gateway": gateway}, target) or remaining <= 0:
+        after = _unavailable_fresh_snapshot(
+            "target_postflight_projection_unavailable",
+            detail="gateway_readiness_deadline_exhausted",
+        )
+        after["gateway"] = gateway
+        target_capture_ms = 0
+        last_stage = "gateway_wait"
+    else:
+        capture_started = time.monotonic()
+        after = capture_update_continuity_fresh(timeout_sec=min(20.0, remaining))
+        if after.get("capture_available") is False:
+            after["gateway"] = gateway
+        target_capture_ms = round((time.monotonic() - capture_started) * 1000)
+        last_stage = "target_capture"
+    after["timings_ms"] = {
+        "gateway_wait": round((gateway_done - gateway_started) * 1000),
+        "target_capture": target_capture_ms,
+        "total": round((time.monotonic() - started) * 1000),
+    }
+    after["deadline_sec"] = float(timeout_sec)
+    after["last_stage"] = last_stage
     return after
 
 
 def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
-    if progress:
-        progress("Running preflight checks")
+    total_started = time.monotonic()
+    phase_name: str | None = None
+    phase_started = total_started
+    phase_started_at = _now()
+    phase_timings_ms: dict[str, int] = {}
+    phase_timeline: list[dict[str, Any]] = []
+
+    def mark_phase(message: str) -> None:
+        nonlocal phase_name, phase_started, phase_started_at
+        now = time.monotonic()
+        if phase_name is not None:
+            duration = round((now - phase_started) * 1000)
+            phase_timings_ms[phase_name] = duration
+            phase_timeline.append({"phase": phase_name, "started_at": phase_started_at, "duration_ms": duration})
+        phase_name = message
+        phase_started = now
+        phase_started_at = _now()
+        if progress:
+            progress(message)
+
+    def finish_phase() -> None:
+        nonlocal phase_name
+        if phase_name is None:
+            return
+        now = time.monotonic()
+        duration = round((now - phase_started) * 1000)
+        phase_timings_ms[phase_name] = duration
+        phase_timeline.append({"phase": phase_name, "started_at": phase_started_at, "duration_ms": duration})
+        phase_name = None
+
+    mark_phase("Running preflight checks")
+    preflight_started = time.monotonic()
     before = capture_update_continuity()
     preflight = evaluate_preflight(before)
+    preflight_capture_ms = round((time.monotonic() - preflight_started) * 1000)
     if not preflight["ok"]:
+        finish_phase()
+        timings_ms = {
+            "preflight_capture": preflight_capture_ms,
+            "gateway_wait": 0,
+            "target_capture": 0,
+            "comparison": 0,
+            "total": round((time.monotonic() - total_started) * 1000),
+            "phases": phase_timings_ms,
+        }
         old = (before.get("control") or {}).get("disk_sha") or "unknown"
         _record(
             "update_observer_preflight_failed",
             old,
             "Source update blocked by Observer structural preflight",
-            continuity={"preflight": preflight, "before": before},
+            continuity={"preflight": preflight, "before": before, "timings_ms": timings_ms},
         )
         failures = preflight["failures"]
         message, fix_hint = _preflight_failure_message(failures)
@@ -800,18 +881,36 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             "fix_hint": fix_hint,
             "continuity_verified": False,
             "continuity_state": "failed",
-            "continuity": {"preflight": preflight, "before": before},
+            "continuity": {
+                "preflight": preflight,
+                "before": before,
+                "timings_ms": timings_ms,
+                "phase_timeline": phase_timeline,
+            },
         }
 
     from aletheia.update.applier import apply_update
 
-    result = apply_update(restart=restart, progress=progress)
+    result = apply_update(restart=restart, progress=mark_phase)
     if not result.get("applied"):
+        finish_phase()
         return {
             **result,
             "continuity_verified": None,
             "continuity_state": "not_run",
-            "continuity": {"preflight": preflight, "before": before},
+            "continuity": {
+                "preflight": preflight,
+                "before": before,
+                "timings_ms": {
+                    "preflight_capture": preflight_capture_ms,
+                    "gateway_wait": 0,
+                    "target_capture": 0,
+                    "comparison": 0,
+                    "total": round((time.monotonic() - total_started) * 1000),
+                    "phases": phase_timings_ms,
+                },
+                "phase_timeline": phase_timeline,
+            },
         }
 
     # Re-anchor the observation checkpoint immediately after migrations run so
@@ -822,6 +921,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             compute_joint_checkpoint,
             save_joint_checkpoint,
         )
+
         save_joint_checkpoint(compute_joint_checkpoint())
     except Exception:
         pass  # non-fatal: postflight captures current state regardless
@@ -831,19 +931,14 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     # `current_commit` can already reflect a newer disk checkout while the
     # running process is still on its older boot commit.
     runtime_old_commit = (
-        before_gateway.get("boot_commit")
-        or before_control.get("running_sha")
-        or before_gateway.get("current_commit")
+        before_gateway.get("boot_commit") or before_control.get("running_sha") or before_gateway.get("current_commit")
     )
     result = {**result, "runtime_old_commit": runtime_old_commit}
 
     target = result.get("new_commit")
-    expected_target = (
-        str(target) if result.get("mode") == "development" and target else None
-    )
+    expected_target = str(target) if result.get("mode") == "development" and target else None
 
-    if progress:
-        progress("Verifying continuity")
+    mark_phase("Verifying continuity")
     if expected_target and restart:
         after = capture_update_continuity_until_settled(expected_target)
     elif expected_target:
@@ -851,26 +946,30 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     else:
         after = capture_update_continuity()
 
+    comparison_started = time.monotonic()
     comparison = compare_update_continuity(
         before,
         after,
         expected_target=expected_target,
         restart=restart,
     )
+    comparison_ms = round((time.monotonic() - comparison_started) * 1000)
+    finish_phase()
+    after_timings = after.get("timings_ms") or {}
+    timings_ms = {
+        "preflight_capture": preflight_capture_ms,
+        "gateway_wait": int(after_timings.get("gateway_wait") or 0),
+        "target_capture": int(after_timings.get("target_capture") or 0),
+        "comparison": comparison_ms,
+        "total": round((time.monotonic() - total_started) * 1000),
+        "phases": phase_timings_ms,
+    }
 
-    metadata_proof_gaps = (
-        ["update_metadata_persist_unverified"]
-        if result.get("metadata_persisted") is False
-        else []
-    )
+    metadata_proof_gaps = ["update_metadata_persist_unverified"] if result.get("metadata_persisted") is False else []
     # A verified postflight cannot erase evidence that was already missing
     # before mutation, nor can it ignore target-side metadata persistence loss.
     combined_proof_gaps = sorted(
-        set(
-            (preflight.get("proof_gaps") or [])
-            + (comparison.get("proof_gaps") or [])
-            + metadata_proof_gaps
-        )
+        set((preflight.get("proof_gaps") or []) + (comparison.get("proof_gaps") or []) + metadata_proof_gaps)
     )
     comparison["proof_gaps"] = combined_proof_gaps
     comparison["ok"] = not comparison["failures"] and not combined_proof_gaps
@@ -880,9 +979,21 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         "before": before,
         "after": after,
         "comparison": comparison,
+        "timings_ms": timings_ms,
+        "phase_timeline": phase_timeline,
     }
 
     if comparison["failures"]:
+        recovery = None
+        if restart and result.get("mode") == "development":
+            from aletheia.update.applier import rollback_applied_update
+
+            mark_phase("Rolling back failed update")
+            recovery = rollback_applied_update(result)
+            finish_phase()
+            timings_ms["phases"] = phase_timings_ms
+            timings_ms["total"] = round((time.monotonic() - total_started) * 1000)
+            continuity["recovery"] = recovery
         _record(
             "update_observer_postflight_failed",
             str(target or "unknown"),
@@ -891,9 +1002,18 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         )
         return {
             **result,
+            "applied": False if recovery else result.get("applied"),
+            "rolled_back": recovery.get("rolled_back") if recovery else False,
             "reason": "observer_continuity_failed",
             "message": (
-                "Update was applied, but Observer continuity verification failed: "
+                "Observer continuity verification failed"
+                + (
+                    " and the previous runtime was restored: "
+                    if recovery and recovery.get("rolled_back")
+                    else " and rollback could not be proven: "
+                    if recovery
+                    else ": "
+                )
                 + ", ".join(comparison["failures"])
             ),
             "continuity_verified": False,
@@ -902,10 +1022,18 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         }
 
     if combined_proof_gaps:
-        only_restart_pending = set(combined_proof_gaps) == {
-            "main_restart_required_for_full_verification"
-        }
+        only_restart_pending = set(combined_proof_gaps) == {"main_restart_required_for_full_verification"}
         state = "pending_restart" if only_restart_pending else "unproven"
+        recovery = None
+        if restart and not only_restart_pending and result.get("mode") == "development":
+            from aletheia.update.applier import rollback_applied_update
+
+            mark_phase("Rolling back unproven update")
+            recovery = rollback_applied_update(result)
+            finish_phase()
+            timings_ms["phases"] = phase_timings_ms
+            timings_ms["total"] = round((time.monotonic() - total_started) * 1000)
+            continuity["recovery"] = recovery
         _record(
             "update_observer_postflight_unproven",
             str(target or "unknown"),
@@ -914,13 +1042,21 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         )
         return {
             **result,
+            "applied": False if recovery else result.get("applied"),
+            "rolled_back": recovery.get("rolled_back") if recovery else False,
             "reason": (
                 "restart_required_for_continuity_verification"
                 if only_restart_pending
                 else "observer_continuity_unproven"
             ),
             "message": (
-                "Update was applied, but continuity is not proven: "
+                (
+                    "Continuity is not proven and the previous runtime was restored: "
+                    if recovery and recovery.get("rolled_back")
+                    else "Continuity is not proven and rollback could not be proven: "
+                    if recovery
+                    else "Update was applied, but continuity is not proven: "
+                )
                 + ", ".join(combined_proof_gaps)
             ),
             "continuity_verified": False,
@@ -934,9 +1070,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         "Source update and Observer continuity verification succeeded",
         continuity={
             "comparison": comparison,
-            "warnings": sorted(
-                set((preflight.get("warnings") or []) + (comparison.get("warnings") or []))
-            ),
+            "warnings": sorted(set((preflight.get("warnings") or []) + (comparison.get("warnings") or []))),
         },
     )
     return {

@@ -2,7 +2,7 @@
 
 Issue #1135 extends source-checkout deployment with read-only Observation continuity checks around the existing mutation transactions.
 
-The interactive mutation path remains `aletheia.update.applier.apply_update()` behind `aletheia update`. The Fedora release-tag path remains the existing `aletheia update auto run` transaction. Neither path updates the Observer checkout. Both reuse the same `build_control_status()` / `_collect_overview()` projections plus the Observation ownership and Worker lock-signature contracts.
+The interactive mutation path remains `aletheia.update.applier.apply_update()` behind `aletheia update`. The Fedora release-tag path remains the existing `aletheia update auto run` transaction. Neither path updates the Observer checkout. Update continuity uses a narrow structural snapshot; it does not run the full control or Observation overview projections.
 
 ## Worker-owned deployment boundary
 
@@ -11,7 +11,7 @@ When `observation.execution_owner=worker`, source deployment must prove before M
 - the configured owner is structurally valid;
 - the live Main scheduler does not own the Observation cycle;
 - the shared data-root identity is readable;
-- Observation overview / durable identities are readable;
+- the durable Observation identities needed by continuity are readable;
 - the persisted Worker source identity and pass timestamp are available for unattended auto deployment.
 
 The interactive command may proceed with missing non-failure evidence but must finish as `unproven`; a later healthy postflight cannot erase a preflight proof gap. The unattended Fedora auto path is stricter: a Worker-owned deployment does not enter Main source/data mutation while required proof is incomplete.
@@ -44,13 +44,13 @@ After the source switch:
 - `update.current_commit` is persisted by target-loaded `mutate_config`, which acquires the config writer permit and reloads the latest durable config before changing that one field;
 - the pre-pull `AletheiaConfig` object is never whole-saved after the source switch.
 
-This prevents a schema-changing target release from being followed by a stale pre-pull config serialization that overwrites target migrations or unrelated concurrent settings. If target-side commit metadata cannot be persisted, the source update remains applied, but continuity is `unproven` and no verified claim is emitted.
+This prevents a schema-changing target release from being followed by a stale pre-pull config serialization that overwrites target migrations or unrelated concurrent settings. The source updater refuses migration-bearing changes before loading target code; those releases require the existing transactional deployer because an in-place database migration cannot provide a truthful source-only rollback. If target-side commit metadata cannot be persisted after a non-schema restart, continuity is `unproven` and the updater attempts to restore the previous source, environment, metadata, and Gateway.
 
 ## Post-restart health proof
 
-The interactive source transaction polls target-loaded postflight projections for up to 120 seconds. This covers the existing five-second health cache and the normal scheduler startup warmup (including the delayed first Market Observer pass) instead of assuming health must settle within four seconds.
+The interactive source transaction polls only `/api/status` until the target boot/current commits and a settled health state are visible, then runs one target-loaded structural capture. HTTP waits, sleeps, and the fresh capture share one wall-clock deadline: 120 seconds interactively and 10 seconds for auto-update Observer postflight. The fresh capture uses the smaller of 20 seconds and the remaining deadline.
 
-A health state that is still `initializing` at the end of the bounded window remains `unproven`; it is never relabeled healthy. A directly observed `degraded` state is a structural failure.
+A health state that is still `initializing`, or target evidence that cannot be captured before the deadline, remains `unproven`; it is never relabeled healthy or expanded into inferred owner/data-root/Worker failures. A directly observed new `degraded` state is a structural failure. When a restarted non-schema source update is failed or unproven, the updater attempts one rollback to the previous source and restarts the Gateway; it reports success only when the old HEAD, metadata, dependency/frontend restoration, and Gateway recovery are all proven.
 
 ## Fedora release-tag auto deployment
 
@@ -74,7 +74,7 @@ Normal Observation business progress is not a Main deployment gate. The followin
 
 ## Diagnostic surfaces
 
-The independent commands remain authoritative diagnostics:
+Deployment proof and diagnostic projection are separate boundaries. Update continuity proves only target commit, data-root identity, Observation owner/exclusivity, Worker signature, durable Observation IDs, manifest generations, and the joint checkpoint. The independent commands remain authoritative for full diagnosis and are not run automatically after an update failure:
 
 ```bash
 uv run aletheia control status --json
@@ -85,6 +85,12 @@ The interactive source update remains:
 
 ```bash
 uv run aletheia update
+```
+
+Use `-v` to print the bounded phase timings and total elapsed time:
+
+```bash
+uv run aletheia update -v
 ```
 
 The existing unattended Fedora Paper release path remains:

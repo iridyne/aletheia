@@ -10,26 +10,26 @@ import typer
 
 from aletheia.update.continuity import describe_failure_code as _desc
 
-_BRA  = "⣾⣽⣻⢿⡿⣟⣯⣷"
-_R    = "\033[0m"
+_BRA = "⣾⣽⣻⢿⡿⣟⣯⣷"
+_R = "\033[0m"
 _BOLD = "\033[1m"
-_DIM  = "\033[2m"
-_RED  = "\033[31m"
-_GRN  = "\033[32m"
-_CYN  = "\033[36m"
-_WH   = "\033[97m"
+_DIM = "\033[2m"
+_RED = "\033[31m"
+_GRN = "\033[32m"
+_CYN = "\033[36m"
+_WH = "\033[97m"
 
 
 class _Spinner:
     """2-line Braille spinner for the source-checkout update path."""
 
     def __init__(self):
-        self._phase  = ""
+        self._phase = ""
         self._detail = ""
-        self._drawn  = False
-        self._i      = 0
-        self._lock   = threading.Lock()
-        self._stop   = threading.Event()
+        self._drawn = False
+        self._i = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._spin, daemon=True)
 
     def __enter__(self):
@@ -50,9 +50,9 @@ class _Spinner:
         with self._lock:
             if self._phase:
                 self._mark_done()
-            self._phase  = message
+            self._phase = message
             self._detail = ""
-            self._drawn  = False
+            self._drawn = False
 
     def _erase(self) -> None:
         if not self._drawn:
@@ -66,7 +66,7 @@ class _Spinner:
         self._erase()
         sys.stdout.write(f"  {_GRN}{_BOLD}✓{_R}  {_DIM}{self._phase}{_R}\n")
         sys.stdout.flush()
-        self._phase  = ""
+        self._phase = ""
         self._detail = ""
 
     def _draw(self) -> None:
@@ -110,6 +110,7 @@ def _tty_error(code: str, phase: str, detail: str, fix: str = "") -> None:
     sys.stdout.write("\n")
     sys.stdout.flush()
 
+
 update_app = typer.Typer(
     no_args_is_help=False,
     invoke_without_command=True,
@@ -135,15 +136,21 @@ def update(
         "--restart/--no-restart",
         help="Rebuild dashboard assets and restart a source runtime after verification.",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print bounded per-phase update timings.",
+    ),
 ) -> None:
     """Install the latest verified update for this runtime."""
 
     if ctx.invoked_subcommand is not None:
         return
-    _run_update(restart=restart)
+    _run_update(restart=restart, verbose=verbose)
 
 
-def _run_update(*, restart: bool) -> None:
+def _run_update(*, restart: bool, verbose: bool = False) -> None:
     if _is_packaged():
         if not restart:
             typer.echo(
@@ -184,6 +191,14 @@ def _run_update(*, restart: bool) -> None:
         last_phase = ""
         result = apply_update_with_continuity(restart=restart)
 
+    continuity = result.get("continuity") or {}
+    timings = continuity.get("timings_ms") or {}
+    if verbose:
+        typer.echo("Update phase timings:")
+        for phase, duration in (timings.get("phases") or {}).items():
+            typer.echo(f"  {phase}: {int(duration)} ms")
+        typer.echo(f"  Total: {int(timings.get('total') or 0)} ms")
+
     if not result.get("applied"):
         if spinner:
             if last_phase:
@@ -201,7 +216,8 @@ def _run_update(*, restart: bool) -> None:
         raise typer.Exit(1)
 
     continuity_state = result.get("continuity_state")
-    comparison = (result.get("continuity") or {}).get("comparison") or {}
+    comparison = continuity.get("comparison") or {}
+    after = continuity.get("after") or {}
     old_commit = str(result.get("old_commit") or "")
     new_commit = str(result.get("new_commit") or "")
     source_changed = result.get("source_changed")
@@ -209,9 +225,7 @@ def _run_update(*, restart: bool) -> None:
         source_changed = old_commit != new_commit
     runtime_old_commit = str(result.get("runtime_old_commit") or "")
     display_old_commit = runtime_old_commit if restart and runtime_old_commit else old_commit
-    display_changed = bool(
-        new_commit and display_old_commit and display_old_commit != new_commit
-    )
+    display_changed = bool(new_commit and display_old_commit and display_old_commit != new_commit)
     source_label = (new_commit or display_old_commit or "unknown")[:8]
 
     # Only directly observed structural breakage is a failed deployment. Missing
@@ -234,11 +248,13 @@ def _run_update(*, restart: bool) -> None:
             for item in failures:
                 typer.echo(f"  ✗ {_desc(str(item))}", err=True)
         typer.echo(
-            (
-                "  Source update remains applied;"
-                if source_changed
-                else "  Source checkout is unchanged;"
-            )
+            f"  deadline={after.get('deadline_sec', 'n/a')}s "
+            f"stage={after.get('last_stage', 'comparison')} "
+            f"reason={after.get('capture_error') or result.get('reason')}",
+            err=True,
+        )
+        typer.echo(
+            ("  Source update remains applied;" if source_changed else "  Source checkout is unchanged;")
             + " inspect `aletheia control status --json` "
             "and `aletheia observe overview --json` before further mutation.",
             err=True,
@@ -250,14 +266,10 @@ def _run_update(*, restart: bool) -> None:
 
     if display_changed:
         typer.echo(
-            f"Updated {display_old_commit[:8]} -> {new_commit[:8]} "
-            f"(deps reinstalled: {result['deps_reinstalled']})."
+            f"Updated {display_old_commit[:8]} -> {new_commit[:8]} (deps reinstalled: {result['deps_reinstalled']})."
         )
     else:
-        typer.echo(
-            f"Already up to date at {source_label} "
-            f"(deps reinstalled: {result['deps_reinstalled']})."
-        )
+        typer.echo(f"Already up to date at {source_label} (deps reinstalled: {result['deps_reinstalled']}).")
     if restart:
         typer.echo("Gateway restarted and readiness verified.")
     else:
@@ -277,6 +289,12 @@ def _run_update(*, restart: bool) -> None:
         if proof_gaps:
             for item in proof_gaps:
                 typer.echo(f"  · {_desc(str(item))}", err=True)
+        typer.echo(
+            f"  deadline={after.get('deadline_sec', 'n/a')}s "
+            f"stage={after.get('last_stage', 'comparison')} "
+            f"reason={after.get('capture_error') or result.get('reason')}",
+            err=True,
+        )
         if not pending_restart:
             raise typer.Exit(2)
         return
@@ -291,6 +309,7 @@ def _run_update(*, restart: bool) -> None:
             f"data_root_unchanged={comparison.get('data_root_unchanged')}, "
             f"main_health={comparison.get('main_health_status')}."
         )
+        typer.echo(f"Continuity verification completed in {int(timings.get('total') or 0)} ms.")
         warnings = comparison.get("warnings") or []
         if warnings:
             typer.echo(f"Observer warnings: {', '.join(str(item) for item in warnings)}")
