@@ -144,6 +144,8 @@ describe('Entry Workbench', () => {
     const html = await renderWorkbenchError()
     expect(html).toContain('Entry Workbench is unavailable')
     expect(html).toContain('Current Candidates is unavailable')
+    expect(html).toContain('Candidate stage counts unavailable')
+    expect(html).not.toContain('Planning: pending 0')
     expect(html).not.toContain('No active Entry Plans')
   })
 

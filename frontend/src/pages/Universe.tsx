@@ -274,14 +274,14 @@ export default function Universe() {
 
     <section className="entry-workbench-summary" aria-label="Entry summary">
       <MetricTile label="Current Candidates" value={currentCandidates?.length ?? '—'} context={universeStatus === 'active' && data?.universe.snapshot ? `snapshot ${data.universe.snapshot.id.slice(0, 8)}` : statusLabel} />
-      <MetricTile label="Planning Eligible" value={currentCandidates?.filter(row => row.execution_eligible).length ?? '—'} context={`${stageCounts.no_generation} without generation`} />
+      <MetricTile label="Planning Eligible" value={currentCandidates?.filter(row => row.execution_eligible).length ?? '—'} context={currentCandidates ? `${stageCounts.no_generation} without generation` : 'Candidate projection unavailable'} />
       <MetricTile label="Blocked" value={currentCandidates?.filter(row => !row.execution_eligible).length ?? '—'} context="persisted Candidate risk evidence" tone={currentCandidates?.some(row => !row.execution_eligible) ? 'warning' : 'neutral'} />
       <MetricTile label="Active Entry Plans" value={summary?.active_entry_plans ?? '—'} context="waiting through partially filled" />
     </section>
 
     <Card className="entry-workbench-notice">
-      Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Entry Plans: active {stageCounts.active}, terminal {stageCounts.terminal}. {' '}
-      {operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
+      {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Entry Plans: active {stageCounts.active}, terminal {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
+      {operatorStatus.isPending ? 'Checking planning health…' : operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
     </Card>
 
     {workbenchUnavailable ? <Card role="alert">Entry Workbench is unavailable. Summary counts and rows are not inferred.</Card> : null}
