@@ -121,6 +121,14 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Open exact execution')
   })
 
+  it('keeps a no-generation Candidate on the Current Candidates tab in its drawer', () => {
+    const html = renderWorkbench(workbench, '/universe?tab=current&candidate_id=candidate-1')
+    expect(html).toContain('Candidate is visible independently of planning')
+    expect(html).toContain('Planning Generation')
+    expect(html).toContain('Not created')
+    expect(html).toContain('Momentum')
+  })
+
   it('distinguishes fallback instruments from Candidate attention', () => {
     const html = renderWorkbench({
       ...workbench,

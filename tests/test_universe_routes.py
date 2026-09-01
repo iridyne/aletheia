@@ -252,7 +252,7 @@ def test_current_candidate_repository_left_joins_optional_planning_facts():
     snapshot = UniverseSnapshot(id="snapshot-1", expires_at="2099-01-01T00:00:00+00:00")
     candidate = UniverseMember(
         id="candidate-1", snapshot_id=snapshot.id, asset_id=asset.id,
-        venue=asset.venue, market_type=asset.market_type, symbol=asset.symbol,
+        venue=None, market_type=asset.market_type, symbol=asset.symbol,
         rank=1, total_score=90, scanner_family="momentum",
         expires_at="2099-01-01T00:00:00+00:00",
         execution_eligible=False,

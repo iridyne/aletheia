@@ -201,7 +201,12 @@ export default function Universe() {
     setSearch(params)
   }
   const openCandidate = (candidate: CandidateAttention) => openCandidateId(candidate.last_candidate_id)
-  const openCurrentCandidate = (candidate: CandidateWorkbenchRow) => openCandidateId(candidate.id)
+  const openCurrentCandidate = (candidate: CandidateWorkbenchRow) => {
+    const params = new URLSearchParams(search)
+    params.set('tab', 'current')
+    params.set('candidate_id', candidate.id)
+    setSearch(params)
+  }
   const closeDrawer = () => {
     const params = new URLSearchParams(search)
     params.delete('plan_id')
@@ -280,7 +285,8 @@ export default function Universe() {
     </section>
 
     <Card className="entry-workbench-notice">
-      {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Entry Plans: active {stageCounts.active}, terminal {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
+      {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Current-Snapshot terminal Entry Plans: {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
+      Active Entry Plans: {plans == null ? 'not available' : plans.length}. {' '}
       {operatorStatus.isPending ? 'Checking planning health…' : operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
     </Card>
 
@@ -362,9 +368,9 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
     queryFn: () => api.getCandidate(candidateId),
   })
   const attention = candidate ?? detail.data?.attention
-  return <DetailDrawer open title={`${candidate?.symbol ?? currentCandidate?.symbol ?? 'Candidate'} attention`} onClose={onClose}>
+  return <DetailDrawer open title={`${candidate?.symbol ?? currentCandidate?.symbol ?? 'Candidate'} Candidate`} onClose={onClose}>
     {detail.isError ? <p>Candidate detail is unavailable.</p> : <>
-      <DrawerSection label="Attention">
+      {attention ? <DrawerSection label="Attention">
         <DrawerField label="Candidate ID" value={candidateId} mono />
         <DrawerField label="Started" value={fmtTimestamp(attention?.attention_started_at)} />
         <DrawerField label="Last requalified" value={fmtTimestamp(attention?.last_requalified_at)} />
@@ -372,9 +378,12 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <DrawerField label="Hard deadline" value={fmtTimestamp(attention?.hard_expires_at)} />
         <DrawerField label="Planning" value={attention?.status ? humanize(attention.status) : '—'} />
         <DrawerField label="Terminal reason" value={attention?.attention_terminal_reason ? humanize(attention.attention_terminal_reason) : attention?.attention_status === 'active' ? 'Active' : '—'} />
-      </DrawerSection>
+      </DrawerSection> : <DrawerSection label="Planning">
+        <DrawerField label="Planning Generation" value="Not created" />
+        <DrawerField label="Status" value="Candidate is visible independently of planning" />
+      </DrawerSection>}
       <DrawerSection label="Candidate evidence">
-        <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason)}`} />
+        <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family ?? currentCandidate?.scanner_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason ?? currentCandidate?.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />
         <DrawerField label="Score" value={detail.data?.member.total_score} />
         <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />

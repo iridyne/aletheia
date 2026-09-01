@@ -9184,10 +9184,13 @@ def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
     """Project every Candidate in one exact Snapshot with optional planning facts."""
 
     return [
-        dict(row)
+        {
+            **dict(row),
+            "venue": row["venue"] or row["registry_venue"],
+        }
         for row in get_db()
         .execute(
-            "SELECT um.*, ur.venue, ur.market_type, "
+            "SELECT um.*, ur.venue AS registry_venue, "
             "pg.id AS planning_generation_id, pg.status AS planning_status, "
             "pg.result_kind, pg.result_json AS planning_result_json, "
             "pg.attempt_count, pg.attention_status, pg.soft_expires_at, "
