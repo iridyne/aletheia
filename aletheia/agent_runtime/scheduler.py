@@ -1967,16 +1967,41 @@ def reschedule_universe_refresh(interval_min: int) -> bool:
         return False
     try:
         with _SCHEDULER_JOB_LOCK:
-            if _scheduler.get_job("universe_refresh") is None:
-                return False
-            _scheduler.reschedule_job(
+            if not _reschedule_job_preserving_pause(
                 "universe_refresh", trigger="interval", minutes=interval_min,
-            )
+            ):
+                return False
         logger.info("Rescheduled universe_refresh to every %d min", interval_min)
         return True
     except Exception as e:  # noqa: BLE001 — config is already saved; never 500 the save
         logger.warning("Failed to reschedule universe_refresh (applies at next restart): %s", e)
         return False
+
+
+def _reschedule_job_preserving_pause(job_id: str, *, trigger: str, **kwargs) -> bool:
+    """Replace one trigger without reviving a layered-paused job."""
+
+    if _scheduler is None:
+        return False
+    job = _scheduler.get_job(job_id)
+    if job is None:
+        return False
+    missing = object()
+    next_run_time = getattr(job, "next_run_time", missing)
+    if next_run_time is not None and job_id not in _selectively_paused_jobs:
+        _scheduler.reschedule_job(job_id, trigger=trigger, **kwargs)
+        return True
+    trigger_kwargs = dict(kwargs)
+    if trigger == "interval":
+        if _scheduler.timezone is not None:
+            trigger_kwargs.setdefault("timezone", _scheduler.timezone)
+        replacement = IntervalTrigger(**trigger_kwargs)
+    elif trigger == "cron":
+        replacement = CronTrigger(**trigger_kwargs)
+    else:
+        raise ValueError(f"unsupported scheduler trigger: {trigger}")
+    _scheduler.modify_job(job_id, trigger=replacement, next_run_time=None)
+    return True
 
 
 def reschedule_learning_jobs(interval_min: int) -> bool:
@@ -2157,7 +2182,7 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
                     _selectively_paused_jobs.add("filter_controller_observe")
                 logger.info("Added filter_controller_observe job every %dh", interval_h)
             else:
-                _scheduler.reschedule_job(
+                _reschedule_job_preserving_pause(
                     "filter_controller_observe", trigger="interval", hours=interval_h,
                 )
                 logger.info("Rescheduled filter_controller_observe to every %dh", interval_h)
@@ -2176,12 +2201,11 @@ def reschedule_telegram_summary(hour_cst: int) -> bool:
         return False
     try:
         with _SCHEDULER_JOB_LOCK:
-            if _scheduler.get_job("daily_summary") is None:
-                return False
-            _scheduler.reschedule_job(
+            if not _reschedule_job_preserving_pause(
                 "daily_summary", trigger="cron",
                 hour=int(hour_cst), minute=0, timezone="Asia/Shanghai",
-            )
+            ):
+                return False
         logger.info("Rescheduled daily_summary to %02d:00 CST", hour_cst)
         return True
     except Exception as e:  # noqa: BLE001
