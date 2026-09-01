@@ -180,10 +180,13 @@ def _pass_checkpoint() -> dict[str, Any]:
         return {"ok": False, "reason": f"checkpoint_error:{exc!r}"[:400]}
 
 
-def _durable_observation_windows() -> dict[str, Any]:
+def register_builtin_handlers() -> None:
+    """Register every built-in durable Observation Window handler."""
     from aletheia.universe.discovery_benchmark import register_observation_handler
 
     register_observation_handler()
+def _durable_observation_windows() -> dict[str, Any]:
+    register_builtin_handlers()
     from aletheia.observation_lab.kernel import advance_windows
 
     return advance_windows(limit=10)
