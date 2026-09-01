@@ -388,6 +388,10 @@ def _materialize_triggered(state: dict) -> dict:
     position = repo.get_position(state["position_id"])
     if trigger is None or position is None:
         raise RuntimeError("triggered protection evidence is incomplete")
+    trigger_venue = str(trigger.get("venue") or "").lower()
+    state_venue = str(state.get("venue") or "").lower()
+    if not trigger_venue or trigger_venue != state_venue:
+        raise RuntimeError("triggered protection venue is inconsistent")
     plan, _ = repo.get_position_exit_plan_for_bar(
         state["position_id"],
         bar_open_ms=int(trigger["bar_open_ms"]),
@@ -403,6 +407,7 @@ def _materialize_triggered(state: dict) -> dict:
         result = close_position_routed(
             state["position_id"],
             expected_reason,
+            paper_mark_venue=state_venue,
             decision_actor="system",
             decision_source="protective_barrier_1m",
         )

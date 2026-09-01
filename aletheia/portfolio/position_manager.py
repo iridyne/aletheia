@@ -236,6 +236,7 @@ def close_position_routed(
     reason: str,
     fallback_exit_price: float | None = None,
     *,
+    paper_mark_venue: str | None = None,
     allow_live: bool = False,
     decision_reasoning: str | None = None,
     decision_actor: str = "system",
@@ -269,6 +270,8 @@ def close_position_routed(
 
     row = _select_one("positions", position_id)
     mode = (row or {}).get("execution_mode")
+    if paper_mark_venue is not None and mode != "paper_internal":
+        raise ValueError("paper_mark_venue is only valid for paper_internal closes")
     if mode and mode.endswith("_live_limited") and not allow_live:
         raise RuntimeError(
             f"refusing to autonomously close live position {position_id} "
@@ -317,7 +320,10 @@ def close_position_routed(
         # the close Order/Fill with Position and cash settlement.
         if row is None:
             raise ValueError(f"position not found: {position_id}")
-        mark_price = _fresh_local_paper_mark(row)
+        mark_price = _fresh_local_paper_mark(
+            row,
+            configured_data_venue=paper_mark_venue,
+        )
         result = _close_local_paper_with_authorized_mark(
             position_id,
             mark_price,

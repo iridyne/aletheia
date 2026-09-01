@@ -408,6 +408,31 @@ def test_long_wick_stop_records_trigger_and_closes_at_fresh_mark(tmp_path, monke
     assert repo.get_position(position.id)["close_reason"] == "stop_loss"
 
 
+def test_protective_close_uses_activation_venue_after_config_change(
+    tmp_path, monkeypatch,
+):
+    import aletheia.portfolio.position_manager as position_manager
+    from aletheia.config.loader import load_config, save_config
+
+    position, cursor = _protected_position(tmp_path, monkeypatch)
+    frozen_venue = repo.get_position_protection_state(position.id)["venue"]
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "okx" if frozen_venue != "okx" else "binance"
+    save_config(cfg)
+    seen_venues = []
+    monkeypatch.setattr(
+        position_manager,
+        "get_fresh_price_for_protective_close",
+        lambda *_args, **kwargs: seen_venues.append(kwargs["venue"]) or 99.5,
+    )
+    _bar(cursor, high=101.0, low=97.0, exchange=frozen_venue)
+
+    summary = evaluate_due_position_protection()
+
+    assert summary["closed"] == 1
+    assert seen_venues == [frozen_venue]
+
+
 def test_same_bar_stop_and_target_is_stop_first(tmp_path, monkeypatch):
     position, cursor = _protected_position(tmp_path, monkeypatch)
     _bar(cursor, high=111.0, low=97.0)
