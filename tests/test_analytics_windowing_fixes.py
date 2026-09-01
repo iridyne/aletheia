@@ -134,6 +134,50 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
         )
 
 
+def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from aletheia.analytics import outcome_integrity
+    from aletheia.server.routes.analytics import get_equity_curve
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    before = (cutoff - timedelta(minutes=30)).astimezone(
+        timezone(timedelta(hours=8))
+    ).isoformat()
+    after = (cutoff + timedelta(minutes=30)).astimezone(
+        timezone(-timedelta(hours=4))
+    ).isoformat()
+    rows = [
+        {"closed_at": before, "realized_pnl": 1.0},
+        {"closed_at": after, "realized_pnl": 2.0},
+    ]
+    monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **kwargs: rows)
+    monkeypatch.setattr(
+        outcome_integrity,
+        "assess_reportable_outcome",
+        lambda row: SimpleNamespace(eligible=True),
+    )
+    monkeypatch.setattr(
+        outcome_integrity,
+        "build_outcome_cohort_summary",
+        lambda **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            app=SimpleNamespace(equity_curve_mode="full_cumulative"),
+            exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        ),
+    )
+
+    result = get_equity_curve(execution_mode="paper_internal", days=7)
+
+    assert [point["time"] for point in result["raw_recorded_points"]] == [after]
+    assert [point["time"] for point in result["genuine_points"]] == [after]
+
+
 # ---------------------------------------------------------------------------
 # #158 — unknown-bucket avg_pnl_pct is real, not ~0
 # ---------------------------------------------------------------------------
