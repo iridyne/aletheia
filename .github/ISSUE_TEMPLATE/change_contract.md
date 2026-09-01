@@ -8,6 +8,18 @@ assignees: ""
 <!--
 Read docs/governance/policies/documentation_governance.md before filling this out.
 
+An Issue is a change contract, not a delivery roadmap. Keep the body focused on:
+- the concrete problem or value;
+- current facts/evidence;
+- direct dependencies or activation conditions;
+- approved behavior delta;
+- hard scope boundaries;
+- verification / closure.
+
+Do not maintain numbered implementation stages, a prescribed work order, a "current stage",
+or a future delivery sequence in the Issue body. If A depends on B, state that dependency
+directly. Open a focused child only when future work becomes independently actionable.
+
 D0: implementation conformance repair — Contract Delta is NONE. Reference the existing Contract.
 D1: externally observable behavior change — state ADDED / MODIFIED / REMOVED deltas.
 D2: substantial design change — requires accepted docs/design/proposals/ Proposal first.
@@ -17,13 +29,21 @@ Delete sections that do not apply. For D0, delete the Contract Delta subsections
 
 ## Why
 
-<!-- Describe the problem, violated invariant, or value. Do not describe the solution. -->
+<!-- Describe the problem, violated invariant, or value. Do not describe a multi-stage delivery plan. -->
 
 ## Current Facts / Evidence
 
 <!--
 What current code path, failing test, log, DB/runtime observation, or Contract demonstrates
 the problem? Do not substitute inference for evidence.
+-->
+
+## Dependencies / Activation Conditions
+
+<!--
+List only direct prerequisites or conditions that materially gate this change.
+Do not turn dependencies into a numbered roadmap or future-work sequence.
+Delete this section when there are no material dependencies.
 -->
 
 ## SDD Depth
