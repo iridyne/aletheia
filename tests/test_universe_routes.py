@@ -179,6 +179,7 @@ def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabl
              side_effect=RuntimeError("db unavailable"),
          ), \
          patch("aletheia.server.routes.universe.repo.list_active_entry_plans", return_value=[]), \
+         patch("aletheia.server.routes.universe.repo.list_current_candidate_workbench", return_value=[]), \
          patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
         response = client.get("/api/universe/workbench")
 
@@ -192,6 +193,7 @@ def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabl
     }
     assert body["universe"]["status"] == "no_active_snapshot"
     assert body["candidate_attention"] == []
+    assert body["current_candidates"] == []
 
 
 def test_workbench_disabled_overrides_old_snapshot_without_fabricating_candidates(
@@ -207,6 +209,7 @@ def test_workbench_disabled_overrides_old_snapshot_without_fabricating_candidate
          patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=old_snapshot), \
          patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
          patch("aletheia.server.routes.universe._active_entry_plan_projections", return_value=plans), \
+         patch("aletheia.server.routes.universe.repo.list_current_candidate_workbench", return_value=[]), \
          patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
         response = client.get("/api/universe/workbench")
 
@@ -216,6 +219,56 @@ def test_workbench_disabled_overrides_old_snapshot_without_fabricating_candidate
     assert body["universe"]["fallback_instruments"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
     assert body["candidate_attention"] == []
     assert body["entry_plans"] == plans
+
+
+def test_workbench_projects_snapshot_candidates_without_planning_generation(client, enabled_cfg):
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    snapshot = {"id": "snapshot-1", "status": "active", "expires_at": future}
+    rows = [{
+        "id": "candidate-1", "snapshot_id": "snapshot-1", "venue": "binance",
+        "market_type": "perp", "symbol": "BTC/USDT", "rank": 1,
+        "execution_eligible": 0, "risk_flags": '["fast_market_data_venue_unavailable"]',
+        "planning_generation_id": None, "planning_status": None,
+        "entry_plan_id": None, "entry_plan_status": None,
+    }]
+    with patch("aletheia.server.routes.universe.load_config", return_value=enabled_cfg), \
+         patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=snapshot), \
+         patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
+         patch("aletheia.server.routes.universe._active_entry_plan_projections", return_value=[]), \
+         patch("aletheia.server.routes.universe.repo.list_current_candidate_workbench", return_value=rows), \
+         patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
+        body = client.get("/api/universe/workbench").json()
+
+    assert body["current_candidates"] == rows
+    assert body["candidate_attention"] == []
+    assert body["availability"]["current_candidates"]["available"] is True
+
+
+def test_current_candidate_repository_left_joins_optional_planning_facts():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseAsset, UniverseMember, UniverseSnapshot
+
+    asset = UniverseAsset(id="asset-1", venue="binance", market_type="perp", symbol="BTC/USDT")
+    snapshot = UniverseSnapshot(id="snapshot-1", expires_at="2099-01-01T00:00:00+00:00")
+    candidate = UniverseMember(
+        id="candidate-1", snapshot_id=snapshot.id, asset_id=asset.id,
+        venue=asset.venue, market_type=asset.market_type, symbol=asset.symbol,
+        rank=1, total_score=90, scanner_family="momentum",
+        expires_at="2099-01-01T00:00:00+00:00",
+        execution_eligible=False,
+        risk_flags='["fast_market_data_venue_unavailable"]',
+    )
+    repo.insert_universe_asset(asset)
+    repo.insert_universe_snapshot(snapshot)
+    repo.insert_universe_member(candidate)
+
+    [row] = repo.list_current_candidate_workbench(snapshot.id)
+
+    assert row["id"] == candidate.id
+    assert row["venue"] == "binance"
+    assert row["planning_generation_id"] is None
+    assert row["entry_plan_id"] is None
+    assert row["risk_flags"] == '["fast_market_data_venue_unavailable"]'
 
 
 def test_candidate_alias_and_exact_trade_plan_filter(client, monkeypatch):

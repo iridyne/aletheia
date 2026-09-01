@@ -26,6 +26,7 @@ const workbench: EntryWorkbenchResponse = {
   availability: {
     summary: { available: true, stale: false },
     entry_plans: { available: true, stale: false },
+    current_candidates: { available: true, stale: false },
     candidate_attention: { available: true, stale: false },
   },
   universe: {
@@ -58,6 +59,16 @@ const workbench: EntryWorkbenchResponse = {
       position: { id: 'position-1', status: 'open', quantity: 0.5, entry_price: 100 },
     },
   }],
+  current_candidates: [{
+    id: 'candidate-1', snapshot_id: 'snapshot-1234', asset_id: 'asset-1', venue: 'binance',
+    symbol: 'BTC/USDT', market_type: 'perp', rank: 1, total_score: 88,
+    scanner_family: 'momentum', scanner_direction: 'long', inclusion_reason: '["ranked"]',
+    risk_flags: '[]', execution_eligible: 1, expires_at: '2026-08-28T01:00:00Z',
+    planning_generation_id: null, planning_status: null, result_kind: null,
+    planning_result_json: null, attempt_count: null, attention_status: null,
+    soft_expires_at: null, hard_expires_at: null, attention_terminal_reason: null,
+    entry_plan_id: null, entry_plan_status: null, entry_plan_terminal_reason: null,
+  }],
   candidate_attention: [],
 }
 
@@ -72,32 +83,30 @@ async function renderWorkbenchError(cached?: EntryWorkbenchResponse) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: cached ? 0 : Infinity, retry: false } } })
   if (cached) client.setQueryData(['entry-workbench'], cached)
   vi.spyOn(api, 'getEntryWorkbench').mockRejectedValue(new Error('workbench unavailable'))
+  vi.spyOn(api, 'getOperatorStatus').mockRejectedValue(new Error('operator unavailable'))
   const node = document.createElement('div')
   document.body.appendChild(node)
   root = createRoot(node)
   act(() => root!.render(<MemoryRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>))
   await act(async () => {
-    await vi.waitFor(() => expect(node.textContent).not.toContain('Loading Entry Plans'))
+    await vi.waitFor(() => expect(node.textContent).not.toContain('Loading Current Candidates'))
   })
   return node.textContent ?? ''
 }
 
 describe('Entry Workbench', () => {
-  it('defaults to the direct Entry Plan ledger and one canonical summary row', () => {
+  it('defaults to Current Candidates independently of the Planning Queue', () => {
     const html = renderWorkbench()
     expect(html).toContain('Entry Workbench')
     expect(html).toContain('Active Entry Plans')
-    expect(html).toContain('Needs Planning')
-    expect(html).toContain('Expiring Soon')
-    expect(html).toContain('AVAXUSDT')
+    expect(html).toContain('Planning Eligible')
+    expect(html).toContain('Blocked')
+    expect(html).toContain('BTCUSDT')
+    expect(html).toContain('No Planning Generation yet')
+    expect(html).toContain('Current Candidates')
     expect(html).toContain('Entry Plans')
-    expect(html).toContain('Candidates')
+    expect(html).toContain('Planning Queue')
     expect(html).toContain('Planning History')
-    expect(html).toContain('Exact instrument')
-    expect(html).toContain('Limit 100.00')
-    expect(html).toContain('Not required')
-    expect(html).toContain('Stop / Target / R:R')
-    expect(html).toContain('Post-Only limit')
     expect(html).not.toContain('Manual Review')
   })
 
@@ -134,13 +143,13 @@ describe('Entry Workbench', () => {
   it('renders an initial whole-workbench failure as unavailable, never empty', async () => {
     const html = await renderWorkbenchError()
     expect(html).toContain('Entry Workbench is unavailable')
-    expect(html).toContain('Entry Plans is unavailable')
+    expect(html).toContain('Current Candidates is unavailable')
     expect(html).not.toContain('No active Entry Plans')
   })
 
   it('keeps cached facts visible after a refetch failure', async () => {
     const html = await renderWorkbenchError(workbench)
-    expect(html).toContain('AVAXUSDT')
+    expect(html).toContain('BTCUSDT')
     expect(html).not.toContain('Entry Workbench is unavailable')
   })
 })

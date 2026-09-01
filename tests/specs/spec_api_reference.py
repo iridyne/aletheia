@@ -65,6 +65,29 @@ def test_workbench_universe_state_is_config_first_and_stale_aware():
     assert 'if status != "active" else []' in source
 
 
+@spec_claim(
+    SpecClaim(
+        "API-S13",
+        "api_reference",
+        "§Universe current Candidate projection",
+        "L2a",
+        "Workbench projects current Snapshot members independently of optional "
+        "Planning Generation and Entry Plan facts, with separate availability.",
+        status="implemented",
+    ),
+)
+def test_workbench_current_candidates_are_snapshot_backed_and_optional_joined():
+    route = (_ROUTES / "universe.py").read_text(encoding="utf-8")
+    repository = (_ROOT / "aletheia" / "storage" / "repositories.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"current_candidates": None' in route
+    assert '"current_candidates": lambda:' in route
+    assert "FROM universe_members um" in repository
+    assert "LEFT JOIN candidate_planning_generations pg" in repository
+    assert "LEFT JOIN entry_plans ep" in repository
+
+
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
 # ---------------------------------------------------------------------------
