@@ -40,6 +40,7 @@
 |---|---|---|---|---|
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
 | 微观结构/盘口 | MicrostructureCollector | `orderbook_snapshots` | market_observer→tradability→LLM；universe/features 选币；inspect/doctor 诊断 | ✅ CCXT 三列档位与 contractSize 深度已修复；按 venue+symbol+market_type 精确路由；超过 15 分钟整行退出决策 |
+| Binance public fast-market quote/trade/Kline/depth（DU-S28） | `BinanceFastMarketStream`（Spot + USD-M 公共 WebSocket；Spot depth 使用 REST snapshot 连续桥接） | 不持久化原始报文；仅 watcher 内存滚动状态 | Fast Monitoring → exact-instrument TriggerSpec 判断 | ✅ 不读取凭证/账户流，不进入 LLM、Risk、订单路由或跨 venue fallback；缺 ACK、snapshot、连续性或有效值时 unavailable |
 | 历史 K 线 | CCXTProvider / history_downloader / ohlcv_active_backfill | `market_ohlcv` + `ohlcv_backfill_state` | 图表、回测、trade path、shadow/alpha 分析、覆盖诊断 | ✅ 按 venue+symbol+market_type+timeframe+ts 隔离；动态活动成员由独立有界任务补齐，持久化失败退避且不阻塞 Universe 刷新；旧不明 venue 诚实标记 |
 | 资金费率(主交易所) | DerivativesCollector + bounded public history backfill | `funding_rate_snapshots` | market_observer→leverage→LLM；context_builder；universe/features；`paper_internal` futures 开仓预检与逐结算 `local_simulation`（所有 open local futures 持续采集，并按结算前真实 entry Fill 名义额分段）；paper funding settler 的 `historical_ledger` 延迟恢复与只读 reconciliation/Doctor | ✅ 精确 venue；canonical UTC whole-second identity 只合并 <1s 表示偏差，历史 settled rate 优先且冲突 fail closed；live/history 证据不完整、入场身份/数量不闭合或 Fill 卡在结算边界时保持 unavailable；公开历史不冒充 broker ledger |
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ 精确 venue；超过 15 分钟连同变化率/LSR 整行退出决策 |
@@ -113,6 +114,7 @@
 | DU-S24 | L2a | xStock 上市状态源在 §3 登记；实现经 provider factory 精确查询责任 venue，单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-S25 | L2a | LLM 逻辑调用、物理 attempt 与 context manifest 三层数据已登记并以 logical_call_id 关联；持久化契约不含 prompt/response/source body |
 | DU-S27 | L2a | LiteLLM 公共模型/原生工具价格目录生成不可变、事件时点解析的快照；Gateway startup 单飞 refresh，且没有前端或人工价格 writer；cache/reasoning/web-search 的已观察计数必须有对应费率，Usage 只读计算且历史账本不回写 |
+| DU-S28 | L2a | Binance Spot/USD-M 公共 fast-market facts 仅进入 Fast Monitoring 内存消费者；不持久化、不读取凭证、不进入订单路由，Spot depth 未完成 snapshot/diff 连续桥接时 unavailable |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |

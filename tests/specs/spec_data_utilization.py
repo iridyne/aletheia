@@ -49,6 +49,26 @@ _CONTRACT = "data_utilization_contract"
 
 @spec_claim(
     SpecClaim(
+        "DU-S28",
+        _CONTRACT,
+        "§3 Binance public fast-market facts",
+        "L2a",
+        "Binance Spot and USD-M public fast-market facts feed only Fast Monitoring memory and never credentials, persistence, or order routing.",
+        status="implemented",
+    ),
+)
+def test_binance_public_fast_market_facts_are_registered_to_fast_monitoring_only():
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    stream = (_ROOT / "aletheia" / "universe" / "fast_stream.py").read_text(encoding="utf-8")
+
+    assert "DU-S28" in doc and "Binance public fast-market" in doc
+    assert "class BinanceFastMarketStream" in stream
+    assert "_BINANCE_SPOT_DEPTH" in stream and "@depth@100ms" in stream
+    assert "不持久化" in doc and "不读取凭证" in doc and "不进入订单路由" in doc
+
+
+@spec_claim(
+    SpecClaim(
         "DU-S27",
         _CONTRACT,
         "§3 LiteLLM public model and native-tool pricing reference",

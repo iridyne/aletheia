@@ -775,7 +775,7 @@ def test_frame_to_gateway_p95_is_within_local_budget(tmp_path, monkeypatch):
     assert p95 <= 250.0
 
 
-def test_default_local_paper_uses_bitget_public_fast_stream():
+def test_local_paper_uses_configured_public_fast_stream():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_execution
     from aletheia.universe.fast_stream import (
@@ -788,10 +788,10 @@ def test_default_local_paper_uses_bitget_public_fast_stream():
     cfg.exchange.paper_execution_mode = "paper_internal"
     cfg.market_data.ccxt_exchange = "binance"
 
-    assert fast_market_data_venue_for_config(cfg) == "bitget"
+    assert fast_market_data_venue_for_config(cfg) == "binance"
     assert validate_fast_trigger_execution(cfg) is None
     cfg.fast_trigger.mode = "off"
-    assert fast_market_data_unavailability_reason(cfg, "bitget") == "FAST_TRIGGER_DISABLED"
+    assert fast_market_data_unavailability_reason(cfg, "binance") == "FAST_TRIGGER_DISABLED"
 
 
 def test_fast_trigger_refuses_observe_permission():
@@ -808,6 +808,9 @@ def test_fast_trigger_refuses_observe_permission():
     observe_identity = _watch_config_identity(cfg)
     cfg.agent.permission_mode = "Paper"
     assert _watch_config_identity(cfg) != observe_identity
+    paper_identity = _watch_config_identity(cfg)
+    cfg.market_data.ccxt_exchange = "bitget"
+    assert _watch_config_identity(cfg) != paper_identity
 
 
 @pytest.mark.asyncio
@@ -891,10 +894,10 @@ def test_materialization_rechecks_permission_before_gateway(tmp_path, monkeypatc
     assert repo.get_universe_setup(setup.id)["state"] == "refused"
 
 
-def test_local_paper_selects_bitget_public_data_adapter():
+def test_local_paper_selects_configured_public_data_adapter():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_stream import (
-        BitgetFastMarketStream,
+        BinanceFastMarketStream,
         fast_market_data_venue_for_config,
         fast_market_stream_for_config,
     )
@@ -906,8 +909,117 @@ def test_local_paper_selects_bitget_public_data_adapter():
 
     stream = fast_market_stream_for_config(cfg)
 
+    assert fast_market_data_venue_for_config(cfg) == "binance"
+    assert isinstance(stream, BinanceFastMarketStream)
+
+    cfg.market_data.ccxt_exchange = "bitget"
     assert fast_market_data_venue_for_config(cfg) == "bitget"
-    assert isinstance(stream, BitgetFastMarketStream)
+    from aletheia.universe.fast_stream import BitgetFastMarketStream
+
+    assert isinstance(fast_market_stream_for_config(cfg), BitgetFastMarketStream)
+
+
+def test_local_paper_unsupported_market_data_venue_fails_closed():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.fast_stream import (
+        fast_market_data_unavailability_reason,
+        fast_market_stream_for_config,
+    )
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.market_data.ccxt_exchange = "okx"
+
+    assert fast_market_data_unavailability_reason(cfg, "okx") == "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
+    with pytest.raises(RuntimeError, match="fast_trigger_stream_unavailable:okx"):
+        fast_market_stream_for_config(cfg)
+
+
+def test_external_execution_mode_keeps_execution_venue_authority():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.fast_stream import fast_market_data_venue_for_config
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.market_data.ccxt_exchange = "binance"
+
+    assert fast_market_data_venue_for_config(cfg) == "bitget"
+
+
+def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_visible(tmp_path, monkeypatch):
+    _prepare(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+    from aletheia.universe.service import _ensure_planning_generations
+
+    now = datetime.now(timezone.utc)
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "shadow"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.market_data.ccxt_exchange = "binance"
+    snapshot = UniverseSnapshot(
+        id="binance-planning-snapshot",
+        exchange="binance",
+        market_type="spot",
+        status="active",
+        expires_at=(now + timedelta(hours=1)).isoformat(),
+        universe_size=2,
+    )
+    repo.insert_universe_snapshot(snapshot)
+    binance = UniverseMember(
+        id="binance-planning-candidate",
+        snapshot_id=snapshot.id,
+        asset_id="binance-asset",
+        venue="binance",
+        symbol="BTC/USDT",
+        market_type="spot",
+        rank=1,
+        total_score=90,
+        scanner_family="momentum",
+        scanner_direction="long",
+        execution_eligible=fast_market_data_unavailability_reason(cfg, "binance") is None,
+        expires_at=snapshot.expires_at,
+    )
+    unsupported = UniverseMember(
+        id="unsupported-visible-candidate",
+        snapshot_id=snapshot.id,
+        asset_id="unsupported-asset",
+        venue="okx",
+        symbol="ETH/USDT",
+        market_type="spot",
+        rank=2,
+        total_score=80,
+        scanner_family="momentum",
+        scanner_direction="long",
+        execution_eligible=fast_market_data_unavailability_reason(cfg, "okx") is None,
+        risk_flags='["fast_market_data_venue_unavailable"]',
+        expires_at=snapshot.expires_at,
+    )
+    repo.insert_universe_member(binance)
+    repo.insert_universe_member(unsupported)
+
+    selected, _created, count = _ensure_planning_generations(
+        [binance, unsupported],
+        soft_lease_sec=300,
+        max_attention_age_sec=300,
+        now=now,
+    )
+
+    assert count == 1 and len(selected) == 1
+    assert repo.get_candidate_planning_generation(next(iter(selected)))["last_candidate_id"] == binance.id
+    assert (
+        repo.get_db()
+        .execute(
+            "SELECT COUNT(*) FROM candidate_planning_generations WHERE last_candidate_id=?",
+            (unsupported.id,),
+        )
+        .fetchone()[0]
+        == 0
+    )
+    assert repo.get_universe_member(unsupported.id)["risk_flags"] == '["fast_market_data_venue_unavailable"]'
 
 
 def test_concurrent_trigger_frames_materialize_once(tmp_path, monkeypatch):
@@ -1545,6 +1657,134 @@ def test_bitget_candle_updates_use_envelope_sequence_not_bar_open_time():
     assert first.sequence < second.sequence
 
 
+def test_binance_spot_and_perp_messages_are_normalized():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import parse_binance_message
+
+    spot = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+    perp = InstrumentId.from_parts("binance", "ETH/USDT", "perp")
+    instruments = {spot, perp}
+
+    quote = parse_binance_message(
+        {"e": "24hrTicker", "E": 10, "s": "BTCUSDT", "b": "100", "a": "101"},
+        instruments,
+        market_type="spot",
+        received_timestamp_ms=20,
+        sequence=1,
+    )
+    trade = parse_binance_message(
+        {"e": "aggTrade", "E": 11, "s": "ETHUSDT", "p": "200", "q": "2", "m": True},
+        instruments,
+        market_type="perp",
+        received_timestamp_ms=21,
+        sequence=2,
+    )
+    candle = parse_binance_message(
+        {"e": "kline", "E": 12, "s": "ETHUSDT", "k": {"o": "1", "h": "3", "l": "1", "c": "2", "v": "4"}},
+        instruments,
+        market_type="perp",
+        sequence=3,
+    )
+
+    assert quote is not None and (quote.instrument, quote.bid, quote.ask) == (spot, 100, 101)
+    assert trade is not None and (trade.instrument, trade.side) == (perp, "sell")
+    assert candle is not None and candle.candle == (1, 3, 1, 2, 4)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"e": "24hrTicker", "E": 1, "s": "BTCUSDT", "b": "nan", "a": "2"},
+        {"e": "24hrTicker", "E": 1, "s": "BTCUSDT", "b": "3", "a": "2"},
+        {"e": "aggTrade", "E": 1, "s": "BTCUSDT", "p": "1", "q": "0", "m": False},
+        {"e": "24hrTicker", "E": 1, "s": "UNKNOWN", "b": "1", "a": "2"},
+    ],
+)
+def test_binance_parser_rejects_invalid_or_unknown_facts(payload):
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import parse_binance_message
+
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+    assert parse_binance_message(payload, {instrument}, market_type="spot") is None
+
+
+def test_binance_spot_book_bridges_snapshot_and_applies_deletes():
+    from aletheia.universe.fast_stream import _SpotBook
+
+    book = _SpotBook()
+    assert book.add({"U": 101, "u": 102, "b": [["100", "2"]], "a": [["102", "0"]]}) is False
+    assert book.install_snapshot(
+        {"lastUpdateId": 100, "bids": [["99", "1"]], "asks": [["101", "1"], ["102", "1"]]}
+    ) is True
+
+    assert book.synced is True
+    assert book.top5() == (((100.0, 2.0), (99.0, 1.0)), ((101.0, 1.0),))
+    assert book.add({"U": 103, "u": 103, "b": [["100", "0"]], "a": [["103", "2"]]}) is True
+    assert book.top5() == (((99.0, 1.0),), ((101.0, 1.0), (103.0, 2.0)))
+
+
+def test_binance_spot_book_sequence_gap_resets_before_publish():
+    from aletheia.universe.fast_stream import _SpotBook
+
+    book = _SpotBook()
+    book.add({"U": 11, "u": 11, "b": [["10", "1"]], "a": [["12", "1"]]})
+    assert book.install_snapshot({"lastUpdateId": 10, "bids": [["9", "1"]], "asks": [["13", "1"]]})
+
+    assert book.add({"U": 13, "u": 13, "b": [], "a": []}) is False
+    assert book.synced is False
+    assert book.top5() is None
+
+
+def test_binance_spot_book_rejects_snapshot_that_cannot_bridge_first_event():
+    from aletheia.universe.fast_stream import _SpotBook
+
+    book = _SpotBook()
+    book.add({"U": 15, "u": 15, "b": [["10", "1"]], "a": [["12", "1"]]})
+
+    assert book.install_snapshot({"lastUpdateId": 10, "bids": [["9", "1"]], "asks": [["13", "1"]]}) is False
+    assert book.last_update_id is None
+    assert book.synced is False
+    assert book.buffer[0]["U"] == 15
+
+
+@pytest.mark.asyncio
+async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
+
+    class _Ws:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+    spot = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+    perp = InstrumentId.from_parts("binance", "ETH/USDT", "perp")
+    stream = BinanceFastMarketStream()
+    stream._sockets = {"spot": _Ws(), "perp": _Ws()}
+
+    async def _no_snapshot(_instrument):
+        return None
+
+    stream._load_spot_snapshot = _no_snapshot
+    await stream.set_instruments({spot, perp})
+
+    assert len(stream._sockets["spot"].sent[0]["params"]) == 4
+    assert len(stream._sockets["perp"].sent[0]["params"]) == 4
+    assert stream.health().subscriptions_confirmed is False
+    stream._pending_acks.clear()
+    stream._refresh_confirmation()
+    assert stream.health().subscriptions_confirmed is False
+    book = _SpotBook()
+    book.synced = True
+    stream._books[spot] = book
+    stream._refresh_confirmation()
+    assert stream.health().subscriptions_confirmed is True
+
+    await asyncio.gather(*stream._snapshot_tasks)
+
+
 @pytest.mark.asyncio
 async def test_bitget_malformed_time_or_sequence_does_not_terminate_stream():
     import aiohttp
@@ -1710,7 +1950,7 @@ def test_momentum_emitter_persists_setup_not_opportunity(tmp_path, monkeypatch):
     assert get_db().execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("mode", ["okx_demo", "binance_testnet", "bitget_live_limited"])
+@pytest.mark.parametrize("mode", ["okx_demo", "bitget_live_limited"])
 def test_execute_mode_refuses_unavailable_or_live_stream(mode):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_execution
@@ -1723,6 +1963,17 @@ def test_execute_mode_refuses_unavailable_or_live_stream(mode):
         "fast_trigger_live_forbidden" if "live" in mode else f"fast_trigger_stream_unavailable:{mode.split('_')[0]}"
     )
     assert reason == expected
+
+
+def test_binance_testnet_execution_uses_public_binance_stream():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.fast_trigger import validate_fast_trigger_execution
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.mode = "execute"
+    cfg.exchange.paper_execution_mode = "binance_testnet"
+
+    assert validate_fast_trigger_execution(cfg) is None
 
 
 @pytest.mark.asyncio

@@ -22,8 +22,10 @@ Unknown future external modes fall back to `exchange.name` until explicitly adde
 
 ## State model
 
-- `local_paper`: no external execution exchange. Any public market-data source is
-  allowed without a divergence warning.
+- `local_paper`: no external execution exchange. The normalized
+  `market_data.ccxt_exchange` is both slow and fast public market-data authority
+  without a divergence warning. Fast Monitoring supports Bitget and Binance;
+  any other venue remains visible but fails closed without substitution.
 - `aligned`: execution and `market_data.ccxt_exchange` are the same exchange.
 - `diverged`: external execution and market data use different exchanges.
 
