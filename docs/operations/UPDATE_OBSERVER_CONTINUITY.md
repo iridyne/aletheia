@@ -52,6 +52,8 @@ The interactive source transaction polls only `/api/status` until the target boo
 
 An `initializing` health state means the Gateway is serving the exact target but fresh-session business probes are still warming up; continuity preserves it as a warning and never relabels it healthy. Target evidence that cannot be captured before the deadline remains `unproven` and is never expanded into inferred owner/data-root/Worker failures. A directly observed new `degraded` state is a structural failure. When a restarted non-schema source update is failed or unproven, the updater attempts one rollback to the previous source and restarts the Gateway; it reports success only when the old HEAD, metadata, dependency/frontend restoration, and Gateway recovery are all proven.
 
+On a persistent systemd runtime, a start job may be reported as canceled while the configured recovery policy is already starting the service. The updater gives that error only a five-second `/api/ready` recovery check; success there merely continues to continuity, where exact boot/current commit proof is still mandatory. An unavailable front door follows the normal rollback path.
+
 ## Fedora release-tag auto deployment
 
 The existing `aletheia update auto run` path keeps its pinned-tag, candidate-preflight, Gateway and rollback mechanics. In Worker-owned mode it now adds the same Observer structural before/after comparison.

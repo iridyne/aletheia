@@ -12,6 +12,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
 from datetime import datetime, timezone
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
@@ -291,12 +293,35 @@ def _restart_gateway() -> dict:
         # exit 1 (or other non-zero): genuine failure — preflight blocked, port conflict,
         # spawn died. exit 2 means do_start returned False (slow start: alive but readiness
         # not confirmed within the 15s deadline) — gateway is up, not a rollback condition.
+        if _gateway_ready_after_restart_error():
+            return {"ok": True, "restart_warning": "service_start_result_recovered"}
         return {
             "ok": False,
             "reason": "gateway_restart_failed",
             "detail": (result.stderr or result.stdout).strip()[-500:],
         }
     return {"ok": True}
+
+
+def _gateway_ready_after_restart_error(*, timeout_sec: float = 5.0) -> bool:
+    """Accept a canceled systemd start only after the front door recovers."""
+    try:
+        from aletheia.gateway.network import local_frontdoor_host
+
+        deadline = time.monotonic() + timeout_sec
+        cfg = load_config()
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        url = f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}/api/ready"
+    except Exception:
+        return False
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            with opener.open(url, timeout=min(1.0, remaining)) as response:
+                if response.status == 200:
+                    return True
+        except Exception:
+            time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+    return False
 
 
 def run_smoke_check() -> dict:

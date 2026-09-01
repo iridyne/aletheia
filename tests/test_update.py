@@ -822,6 +822,55 @@ def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
     assert applier._restart_gateway()["ok"] is True
 
 
+def test_restart_gateway_accepts_recovered_systemd_start(monkeypatch):
+    from aletheia.update import applier
+
+    monkeypatch.setattr(
+        applier.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _FakeProc(returncode=1, stderr="start job canceled"),
+    )
+    monkeypatch.setattr(applier, "_gateway_ready_after_restart_error", lambda: True)
+
+    assert applier._restart_gateway() == {
+        "ok": True,
+        "restart_warning": "service_start_result_recovered",
+    }
+
+
+def test_restart_gateway_rejects_unrecovered_start_error(monkeypatch):
+    from aletheia.update import applier
+
+    monkeypatch.setattr(
+        applier.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _FakeProc(returncode=1, stderr="start failed"),
+    )
+    monkeypatch.setattr(applier, "_gateway_ready_after_restart_error", lambda: False)
+
+    result = applier._restart_gateway()
+
+    assert result["ok"] is False
+    assert result["reason"] == "gateway_restart_failed"
+
+
+def test_gateway_restart_error_probe_has_bounded_deadline(monkeypatch):
+    from aletheia.update import applier
+
+    now = [0.0]
+
+    class FailingOpener:
+        def open(self, *_args, **_kwargs):
+            raise OSError("not ready")
+
+    monkeypatch.setattr(applier.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(applier.time, "sleep", lambda value: now.__setitem__(0, now[0] + value))
+    monkeypatch.setattr(applier.urllib.request, "build_opener", lambda *_args: FailingOpener())
+
+    assert applier._gateway_ready_after_restart_error(timeout_sec=1.0) is False
+    assert now[0] == pytest.approx(1.0)
+
+
 def test_restart_gateway_succeeds_with_persistent_owner_and_unmanaged_transient(
     monkeypatch,
 ):
