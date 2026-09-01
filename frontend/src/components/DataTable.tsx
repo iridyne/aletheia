@@ -170,7 +170,13 @@ export function DataTable<T>({
               key={row.id}
               className={onRowClick ? 'clickable' : undefined}
               onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-              onKeyDown={onRowClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row.original) } } : undefined}
+              onKeyDown={onRowClick ? (e) => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onRowClick(row.original)
+                }
+              } : undefined}
               tabIndex={onRowClick ? 0 : undefined}
             >
               {row.getVisibleCells().map(cell => (
