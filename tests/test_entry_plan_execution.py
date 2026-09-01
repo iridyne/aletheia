@@ -58,6 +58,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         max_requotes=0,
         partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
         max_slippage_bps=None if maker else 10,
+        worst_price=None if maker else 101.2,
         max_notional=100,
         max_risk_pct=0.25,
         max_leverage=2,
