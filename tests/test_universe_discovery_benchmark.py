@@ -190,10 +190,12 @@ def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
 ):
     from aletheia.observation_lab import kernel
     from aletheia.observation_lab.db import get_lab_db
+    from aletheia.agent_runtime import runtime_session
 
     started_at = "2026-01-01T00:00:00+00:00"
     window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
     real_capture_event = kernel.capture_event
+    monkeypatch.setattr(runtime_session, "current_provenance", lambda: {})
     monkeypatch.setattr(
         kernel, "capture_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("lab append failed"))
     )
@@ -205,6 +207,10 @@ def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
         )
 
     monkeypatch.setattr(kernel, "capture_event", real_capture_event)
+    monkeypatch.setattr(
+        runtime_session, "current_provenance",
+        lambda: {"runtime_session_id": "retry-session"},
+    )
     changed = [{**row, "asset_id": f"changed-{index}"} for index, row in enumerate(original)]
     result = benchmark.capture_completed_run(
         scanner_run_id="canonical-retry", population=changed,
@@ -224,6 +230,13 @@ def test_app_batch_retry_reconciles_units_from_persisted_canonical_batch(
         f"{result['batch_id']}:{'|'.join(benchmark._identity(item))}" for item in persisted
     }
     assert not any("changed-" in key for key in keys)
+    sessions = {
+        row[0] for row in get_lab_db().execute(
+            "SELECT producer_runtime_session_id FROM observation_units WHERE observation_id=?",
+            (window["id"],),
+        ).fetchall()
+    }
+    assert sessions == {None}
 
 
 def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, monkeypatch):

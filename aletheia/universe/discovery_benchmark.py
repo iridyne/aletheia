@@ -600,6 +600,12 @@ def capture_completed_run(
         persisted_population = decode_filter_decision_batch(str(persisted_batch["candidate_facts"]))
         if len(persisted_population) != int(persisted_batch["candidate_count"]):
             raise RuntimeError("persisted_benchmark_batch_population_mismatch")
+        persisted_sessions = {
+            str(row["producer_runtime_session_id"])
+            for row in repo.list_universe_discovery_outcomes(str(window["id"]))
+            if str(row["benchmark_batch_id"]) == str(result["batch_id"])
+            and row.get("producer_runtime_session_id")
+        }
         capture_event(
             str(window["id"]), int(window["generation"]), str(window["contract_hash"]),
             {"batch_id": result["batch_id"], "known_at": persisted_batch["evaluated_at"],
@@ -607,8 +613,7 @@ def capture_completed_run(
             producer_commit=str(persisted_commit or persisted_batch["code_commit"]),
             producer_runtime_session_id=(
                 str(persisted_session) if persisted_session else (
-                    str(outcomes[0].get("producer_runtime_session_id"))
-                    if outcomes and outcomes[0].get("producer_runtime_session_id") else None
+                    next(iter(persisted_sessions)) if len(persisted_sessions) == 1 else None
                 )
             ),
         )
