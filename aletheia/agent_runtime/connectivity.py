@@ -458,7 +458,15 @@ async def _exchange_auto_resume_loop(
         await asyncio.sleep(interval_sec)
 
         from aletheia.config.loader import load_config
-        cfg = load_config()
+        try:
+            cfg = load_config()
+        except Exception as exc:
+            logger.warning(
+                "exchange_auto_resume: config read failed (%s), retry in %ds",
+                type(exc).__name__,
+                interval_sec,
+            )
+            continue
 
         if pause_generation is None:
             pause_generation = cfg.runtime.connectivity_pause_generation

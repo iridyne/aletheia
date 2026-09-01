@@ -245,6 +245,34 @@ async def test_probe_exception_does_not_kill_loop(tmp_path, monkeypatch):
     assert load_config().runtime.paused is False
 
 
+@pytest.mark.asyncio
+async def test_config_read_exception_does_not_kill_loop(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _save_paused_cfg()
+    _bounded_sleep(monkeypatch, max_iters=5)
+    calls = _patch_probe(monkeypatch, [True])
+
+    import aletheia.agent_runtime.auto_resume as auto_resume
+    from aletheia.config.loader import load_config
+
+    reads = 0
+
+    def flaky_load_config():
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise OSError("temporary config read failure")
+        return load_config()
+
+    monkeypatch.setattr(auto_resume, "load_config", flaky_load_config)
+
+    await auto_resume._auto_resume_loop(interval_sec=1)
+
+    assert reads >= 2
+    assert calls["n"] == 1
+    assert load_config().runtime.paused is False
+
+
 # ---------------------------------------------------------------------------
 # Task management: real dedup behavior (not mock wiring)
 # ---------------------------------------------------------------------------
