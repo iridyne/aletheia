@@ -784,6 +784,35 @@ def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch)
     assert feedback_runs == ["ran"]
 
 
+def test_reconciliation_records_event_jsonl_mirror_failure(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    failures = []
+    monkeypatch.setattr(
+        "aletheia.execution.reconciliation.reconcile",
+        lambda: {"errors": []},
+    )
+    monkeypatch.setattr(
+        "aletheia.storage.event_store.get_event_store",
+        lambda: SimpleNamespace(
+            reconcile_jsonl=lambda *, limit: {
+                "attempted": 2,
+                "mirrored": 1,
+                "failed": 1,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_record_job_failure",
+        lambda *args: failures.append(args),
+    )
+
+    scheduler._run_reconciliation()
+
+    assert failures == [("reconciliation", "event_jsonl_mirror_failed:1")]
+
+
 def test_async_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):
     """An unresponsive loop cannot build an unbounded scheduler queue."""
     from aletheia.agent_runtime import scheduler
