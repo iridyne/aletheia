@@ -41,6 +41,13 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
 
 _cache: dict[str, ModelProvider] = {}
 
+
+def _cache_provider(name: str, provider: ModelProvider) -> ModelProvider:
+    setattr(provider, "_aletheia_provider_name", name)
+    _cache[name] = provider
+    return provider
+
+
 _MODEL_DIRECTORY_TTL_SEC = 15 * 60
 _model_directory_cache: dict[str, tuple[float, list[dict]]] = {}
 _model_directory_inflight: dict[str, Future[list[dict]]] = {}
@@ -512,8 +519,7 @@ def get_provider(name: str | None = None) -> ModelProvider:
     else:
         raise ValueError(f"Unknown provider type: {ptype}")
 
-    _cache[name] = provider
-    return provider
+    return _cache_provider(name, provider)
 
 
 async def get_provider_async(name: str | None = None) -> ModelProvider:
@@ -572,8 +578,7 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
                         fresh_provider = AnthropicNativeProvider(
                             model=pcfg.model, api_key=ak, oauth_token=fresh_token
                         )
-                    _cache[name] = fresh_provider
-                    return fresh_provider
+                    return _cache_provider(name, fresh_provider)
                 # Refresh returned no token
                 if hard_expired:
                     _cache.pop(name, None)
@@ -644,8 +649,7 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
     else:
         raise ValueError(f"Unknown provider type: {ptype}")
 
-    _cache[name] = provider
-    return provider
+    return _cache_provider(name, provider)
 
 
 def invalidate_model_directory(name: str | None = None) -> None:
