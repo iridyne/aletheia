@@ -158,6 +158,57 @@ def test_reconcile_adds_job_when_main_owns_and_shadow_enabled(monkeypatch):
     assert add_calls[0]["id"] == "filter_controller_observe"
 
 
+def test_reconcile_keeps_main_cycle_when_shadow_disabled(monkeypatch):
+    import aletheia.agent_runtime.scheduler as scheduler_module
+
+    calls: list[str] = []
+
+    class _FakeScheduler:
+        def get_job(self, job_id):
+            return object()
+
+        def reschedule_job(self, job_id, **kwargs):
+            calls.append(f"reschedule:{job_id}")
+
+        def remove_job(self, job_id):
+            calls.append(f"remove:{job_id}")
+
+    monkeypatch.setattr(scheduler_module, "_scheduler", _FakeScheduler())
+    monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
+    with patch(
+        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        return_value="main",
+    ):
+        assert scheduler_module.reconcile_filter_controller(False, 6) is True
+
+    assert calls == ["reschedule:filter_controller_observe"]
+
+
+def test_main_owned_shadow_disabled_still_runs_durable_cycle(monkeypatch):
+    from types import SimpleNamespace
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(controller=SimpleNamespace(shadow_enabled=False, min_samples_gate=23)),
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_controller.run_controller_observe",
+        lambda **_kwargs: pytest.fail("shadow-disabled Main must not run controller diagnostics"),
+    )
+    monkeypatch.setattr(
+        "aletheia.observation_lab.runner.run_lab_windows",
+        lambda: calls.append("lab") or {"windows_run": 1},
+    )
+    with patch(
+        "aletheia.observation_lab.execution_owner.get_execution_owner",
+        return_value="main",
+    ):
+        scheduler_module._run_filter_controller_observe()
+
+    assert calls == ["lab"]
 def test_run_filter_controller_observe_fails_closed_when_worker_owns(monkeypatch):
     """Main-side stray run must refuse with a typed reason when Worker owns."""
     import aletheia.agent_runtime.scheduler as scheduler_module
@@ -255,7 +306,9 @@ def test_worker_run_cli_fails_closed_when_main_owns(monkeypatch):
 
 
 def test_two_worker_passes_cannot_overlap(tmp_path, monkeypatch):
-    """The cross-process cycle lock forces the second attempt to fail fast."""
+    """A second thread cannot bypass the process-wide cycle lock."""
+    from threading import Event, Thread
+
     import aletheia.config.loader as loader
     from aletheia.observation_lab.db import reset_lab_db
     from aletheia.observation_lab.worker_lock import (
@@ -265,11 +318,42 @@ def test_two_worker_passes_cannot_overlap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     reset_lab_db()
+    attempted = Event()
+    result: list[str] = []
+
+    def contend() -> None:
+        try:
+            with worker_pass_lock(source_commit="b" * 40):
+                result.append("entered")
+        except WorkerCycleLockError:
+            result.append("contended")
+        finally:
+            attempted.set()
 
     with worker_pass_lock(source_commit="a" * 40):
-        with pytest.raises(WorkerCycleLockError):
-            with worker_pass_lock(source_commit="b" * 40):
-                pytest.fail("second worker pass entered while first held the lock")
+        thread = Thread(target=contend)
+        thread.start()
+        assert attempted.wait(5), "second thread did not attempt the cycle lock"
+        thread.join(5)
+        assert not thread.is_alive()
+        assert result == ["contended"]
+
+    reset_lab_db()
+
+
+def test_worker_cycle_exclusion_is_reentrant_only_in_the_holding_thread(
+    tmp_path, monkeypatch
+):
+    import aletheia.config.loader as loader
+    from aletheia.observation_lab.db import reset_lab_db
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+
+    with worker_cycle_exclusion():
+        with worker_cycle_exclusion():
+            pass
 
     reset_lab_db()
 

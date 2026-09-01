@@ -104,3 +104,42 @@ def test_rollback_data_preparation_rejects_missing_checkpoint(monkeypatch, tmp_p
     with pytest.raises(packaged.PackagedUpdateError) as caught:
         packaged_commands.prepare_activation_data()
     assert caught.value.reason == "rollback_checkpoint_unavailable"
+def test_restore_invalidates_unproven_observation_continuity_under_cycle_lock(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from aletheia.observation_lab import kernel, worker_lock
+
+    calls: list[str] = []
+
+    @contextmanager
+    def guard():
+        calls.append("lock-enter")
+        yield
+        calls.append("lock-exit")
+
+    result = SimpleNamespace(
+        success=True,
+        errors=[],
+        to_dict=lambda: {"success": True, "files_restored": 2},
+    )
+    monkeypatch.setattr(packaged, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        packaged,
+        "RestoreService",
+        lambda: SimpleNamespace(restore=lambda *_args: calls.append("restore") or result),
+    )
+    monkeypatch.setattr(packaged, "validate_current_data", lambda: calls.append("validate"))
+    monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", guard)
+    monkeypatch.setattr(
+        kernel,
+        "invalidate_active_for_restore",
+        lambda *, joint_cut_proven: calls.append(f"invalidate:{joint_cut_proven}") or 3,
+    )
+
+    restored = packaged.restore_update_backup(tmp_path / "backup.tar.gz")
+
+    assert calls == [
+        "lock-enter", "restore", "validate", "invalidate:False", "lock-exit",
+    ]
+    assert restored["observation_windows_invalidated"] == 3

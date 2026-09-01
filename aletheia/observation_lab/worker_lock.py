@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +34,8 @@ except ImportError:
     msvcrt = None
 
 logger = logging.getLogger("aletheia.observation_lab.worker_lock")
+
+_cycle_state = threading.local()
 
 
 class WorkerCycleLockError(RuntimeError):
@@ -99,21 +102,29 @@ def _release_exclusive(fd: int) -> None:
 
 
 @contextlib.contextmanager
-def worker_pass_lock(*, source_commit: str | None = None):
-    """Acquire the Observation Worker pass lock and persist its pass signature."""
+def _hold_cycle_lock(*, source_commit: str | None = None):
     lock_path = _lock_path()
+    depth = getattr(_cycle_state, "depth", 0)
+    if depth:
+        _cycle_state.depth = depth + 1
+        try:
+            yield lock_path
+        finally:
+            _cycle_state.depth -= 1
+        return
+
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     acquired = False
     try:
-        try:
-            _acquire_exclusive(fd, lock_path)
-            acquired = True
-        except WorkerCycleLockError:
-            raise
-        _write_lock_signature(fd, source_commit=source_commit)
+        _acquire_exclusive(fd, lock_path)
+        acquired = True
+        _cycle_state.depth = 1
+        if source_commit is not None:
+            _write_lock_signature(fd, source_commit=source_commit)
         yield lock_path
     finally:
+        _cycle_state.depth = 0
         if acquired:
             _release_exclusive(fd)
         try:
@@ -123,27 +134,17 @@ def worker_pass_lock(*, source_commit: str | None = None):
 
 
 @contextlib.contextmanager
-def worker_cycle_exclusion():
-    """Hold the Worker cycle lock without changing its persisted signature.
-
-    Main holds this around a complete Observation cycle or an exceptional
-    rollback window. No Worker pass can start until the guarded operation ends.
-    """
-    lock_path = _lock_path()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-    acquired = False
-    try:
-        _acquire_exclusive(fd, lock_path)
-        acquired = True
+def worker_pass_lock(*, source_commit: str | None = None):
+    """Acquire the Observation Worker pass lock and persist its pass signature."""
+    with _hold_cycle_lock(source_commit=source_commit) as lock_path:
         yield lock_path
-    finally:
-        if acquired:
-            _release_exclusive(fd)
-        try:
-            os.close(fd)
-        except OSError:  # pragma: no cover
-            pass
+
+
+@contextlib.contextmanager
+def worker_cycle_exclusion():
+    """Hold the process-wide cycle lock; same-thread nesting is reentrant."""
+    with _hold_cycle_lock() as lock_path:
+        yield lock_path
 
 
 __all__ = [

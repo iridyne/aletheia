@@ -880,12 +880,16 @@ def validate_current_data() -> dict[str, Any]:
 
 def restore_update_backup(archive_path: Path) -> dict[str, Any]:
     """Restore a verified update backup while the gateway is stopped."""
+    from aletheia.observation_lab.kernel import invalidate_active_for_restore
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
 
     data_dir = get_data_dir()
-    for suffix in ("-wal", "-shm"):
-        (data_dir / f"app.db{suffix}").unlink(missing_ok=True)
-    result = RestoreService().restore(archive_path, data_dir)
-    if not result.success:
-        raise PackagedUpdateError("update_backup_restore_failed", "; ".join(result.errors))
-    validate_current_data()
-    return result.to_dict()
+    with worker_cycle_exclusion():
+        for suffix in ("-wal", "-shm"):
+            (data_dir / f"app.db{suffix}").unlink(missing_ok=True)
+        result = RestoreService().restore(archive_path, data_dir)
+        if not result.success:
+            raise PackagedUpdateError("update_backup_restore_failed", "; ".join(result.errors))
+        validate_current_data()
+        invalidated = invalidate_active_for_restore(joint_cut_proven=False)
+    return {**result.to_dict(), "observation_windows_invalidated": invalidated}

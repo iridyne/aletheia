@@ -7,8 +7,10 @@ import hashlib
 import io
 import json
 import math
+import os
 import random
 import statistics
+import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -52,11 +54,16 @@ _SLOT_KEY = "universe-discovery"
 _VALID_DIRECTIONS = frozenset({"long", "short"})
 _PERP_MARKETS = frozenset({"perp", "swap", "futures", "usdt_futures"})
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 def _utc(value: str | datetime | None = None) -> datetime:
     if value is None:
-        return datetime.now(timezone.utc)
-    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return _now()
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+        str(value).replace("Z", "+00:00")
+    )
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -186,7 +193,7 @@ def _as_benchmark_window(window: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def start_benchmark(*, now: str | datetime | None = None, code_commit: str | None = None, cfg=None) -> dict[str, Any]:
-    from aletheia.observation_lab.kernel import start_window
+    from aletheia.observation_lab.kernel import invalidate_window, start_window
 
     cfg = cfg or load_config()
     if not cfg.universe.enabled:
@@ -196,16 +203,10 @@ def start_benchmark(*, now: str | datetime | None = None, code_commit: str | Non
         raise ValueError("runtime_boot_commit_unavailable")
     started = _utc(now)
     legacy = repo.get_universe_discovery_benchmark()
-    if legacy is not None:
-        repo.invalidate_universe_discovery_benchmark(
-            str(legacy["id"]),
-            reason="superseded_by_observation_window_kernel",
-            at=started.isoformat(),
-        )
     window_id = hashlib.sha256(
         f"universe-discovery|{started.isoformat()}".encode("utf-8")
     ).hexdigest()[:24]
-    return _as_benchmark_window(start_window(
+    window = start_window(
         observation_id=window_id,
         kind="universe_discovery",
         handler_version=_HANDLER_VERSION,
@@ -216,7 +217,21 @@ def start_benchmark(*, now: str | datetime | None = None, code_commit: str | Non
         collect_until=started + timedelta(days=CAPTURE_DAYS),
         finalize_not_before=started + FINALIZE_DELAY,
         producer_commit=commit,
-    ))
+    )
+    if legacy is not None:
+        try:
+            invalidated = repo.invalidate_universe_discovery_benchmark(
+                str(legacy["id"]),
+                reason="superseded_by_observation_window_kernel",
+                at=started.isoformat(),
+            )
+        except Exception:
+            invalidate_window(window_id, int(window["generation"]), reason="legacy_cutover_failed")
+            raise
+        if not invalidated:
+            invalidate_window(window_id, int(window["generation"]), reason="legacy_cutover_failed")
+            raise RuntimeError("legacy_benchmark_cutover_failed")
+    return _as_benchmark_window(window)
 
 
 def abort_benchmark(window_id: str, *, reason: str, now: str | datetime | None = None) -> dict[str, Any]:
@@ -569,10 +584,18 @@ def capture_completed_run(
         cadence_sec=CADENCE_SEC, max_batches=MAX_BATCHES, window_snapshot=window,
     )
     if result.get("accepted"):
+        persisted_commit = result.pop("_producer_commit", None)
+        persisted_session = result.pop("_producer_runtime_session_id", None)
         capture_event(
             str(window["id"]), int(window["generation"]), str(window["contract_hash"]),
             {"batch_id": result["batch_id"], "known_at": entry_ts, "population": population},
-            producer_commit=producer_commit,
+            producer_commit=str(persisted_commit or producer_commit),
+            producer_runtime_session_id=(
+                str(persisted_session) if persisted_session else (
+                    str(outcomes[0].get("producer_runtime_session_id"))
+                    if outcomes and outcomes[0].get("producer_runtime_session_id") else None
+                )
+            ),
         )
     return result
 
@@ -1001,7 +1024,7 @@ def _handler_advance(window: dict[str, Any]):
     )
 
 
-def _handler_finalize(window: dict[str, Any], _path: Path) -> dict[str, Any]:
+def _handler_finalize(window: dict[str, Any]) -> dict[str, Any]:
     benchmark_window = _as_benchmark_window(window)
     window_id = str(benchmark_window["id"])
     batches, outcomes, _ = _admitted_snapshot(window)
@@ -1040,9 +1063,22 @@ def _handler_finalize(window: dict[str, Any], _path: Path) -> dict[str, Any]:
         "outcomes": outcomes,
         "analysis": analysis,
     }
+def _retention_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    from aletheia.observation_lab.db import get_lab_db
+
+    row = get_lab_db().execute(
+        "SELECT MIN(known_at) FROM observation_units WHERE observation_id=? AND generation=?",
+        (window["observation_id"], window["generation"]),
+    ).fetchone()
+    earliest = str(row[0]) if row and row[0] else str(window["started_at"])
+    return (
+        {"domain": "filter_decision_batches", "earliest_at": earliest},
+        {"domain": "filter_candidate_outcomes", "earliest_at": earliest},
+    )
 
 
-def _register_observation_handler() -> None:
+
+def register_observation_handler() -> None:
     from aletheia.observation_lab.kernel import (
         ObservationHandler,
         register_handler,
@@ -1058,10 +1094,7 @@ def _register_observation_handler() -> None:
             capture=_handler_capture,
             advance=_handler_advance,
             finalize=_handler_finalize,
-            retention_claims=lambda window: (
-                {"domain": "filter_decision_batches", "earliest_at": window["started_at"]},
-                {"domain": "filter_candidate_outcomes", "earliest_at": window["started_at"]},
-            ),
+            retention_claims=_retention_claims,
         ))
 
 
@@ -1080,13 +1113,36 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
         if str(exc) == "window_finalize_not_due":
             raise ValueError("benchmark_finalize_not_due") from exc
         raise
+    canonical = Path(str(finalized["artifact_path"])).expanduser().resolve()
+    artifact = canonical.read_bytes()
+    digest = hashlib.sha256(artifact).hexdigest()
+    if digest != str(finalized["artifact_sha256"]):
+        raise RuntimeError("benchmark_artifact_hash_mismatch")
+    requested = Path(output).expanduser().resolve()
+    if requested != canonical:
+        requested.parent.mkdir(parents=True, exist_ok=True)
+        staged = requested.with_name(f".{requested.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            staged.write_bytes(artifact)
+            if hashlib.sha256(staged.read_bytes()).hexdigest() != digest:
+                raise RuntimeError("benchmark_artifact_copy_verification_failed")
+            if requested.exists():
+                if hashlib.sha256(requested.read_bytes()).hexdigest() != digest:
+                    raise FileExistsError(requested)
+                staged.unlink(missing_ok=True)
+            else:
+                os.replace(staged, requested)
+        except Exception:
+            staged.unlink(missing_ok=True)
+            raise
+    package = json.loads(gzip.decompress(artifact))
     return {
-        **status_benchmark(window_id, now=now),
-        "analysis": _handler_finalize(finalized, Path(output))["analysis"],
+        **finalized,
+        "analysis": package["domain_result"]["analysis"],
     }
 
 
-_register_observation_handler()
+register_observation_handler()
 
 __all__ = [
     "BENCHMARK_CONTRACT_VERSION",
@@ -1097,5 +1153,6 @@ __all__ = [
     "capture_completed_run",
     "finalize_benchmark",
     "start_benchmark",
+    "register_observation_handler",
     "status_benchmark",
 ]

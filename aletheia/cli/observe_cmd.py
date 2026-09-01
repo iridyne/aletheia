@@ -68,14 +68,31 @@ def observation_status(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Show a durable Observation Window, falling back to legacy Shadow status."""
+    from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.kernel import status_window
     from aletheia.observation_lab.units import count_frozen_units
     from aletheia.storage import repositories as repo
 
+    durable = None
     try:
         durable = status_window(observation_id, generation) if generation else status_window(observation_id)
     except KeyError:
-        durable = None
+        rows = get_lab_db().execute(
+            "SELECT DISTINCT observation_id FROM observation_windows "
+            "WHERE substr(observation_id, 1, ?) = ? ORDER BY observation_id",
+            (len(observation_id), observation_id),
+        ).fetchall()
+        if len(rows) > 1:
+            typer.echo(
+                f"prefix {observation_id!r} is ambiguous - "
+                f"matches {[str(row[0]) for row in rows]}", err=True,
+            )
+            raise typer.Exit(code=2)
+        if rows:
+            durable = (
+                status_window(str(rows[0][0]), generation)
+                if generation else status_window(str(rows[0][0]))
+            )
     if durable is not None:
         if json_output:
             typer.echo(json.dumps(durable, indent=2, default=str))

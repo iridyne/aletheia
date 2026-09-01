@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, ValidationError
@@ -338,17 +338,21 @@ def _benchmark_outcome_write_allowed(window_id: str) -> bool:
 
 def _update_pending(table: str, id_val: str, data: dict) -> bool:
     sets = ", ".join(f"{k} = ?" for k in data.keys())
+    terminal_guard = ""
+    params: list = [*data.values(), id_val]
     if table == "filter_candidate_outcomes":
         row = get_db().execute(
             "SELECT benchmark_window_id FROM filter_candidate_outcomes WHERE id=?", (id_val,)
         ).fetchone()
-        if row and row["benchmark_window_id"] and not _benchmark_outcome_write_allowed(
-            str(row["benchmark_window_id"])
-        ):
-            return False
+        if row and row["benchmark_window_id"]:
+            terminal_guard = (
+                " AND (NOT EXISTS (SELECT 1 FROM universe_discovery_benchmarks WHERE id=?) "
+                "OR EXISTS (SELECT 1 FROM universe_discovery_benchmarks WHERE id=? AND status='active'))"
+            )
+            params.extend([row["benchmark_window_id"], row["benchmark_window_id"]])
     result = execute_write(
-        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'",
-        [*data.values(), id_val],
+        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'{terminal_guard}",
+        params,
     )
     return bool(result.rowcount == 1)
 
@@ -9613,44 +9617,56 @@ def _settle_outcome_with_exact_venue(
     *,
     kind: str,
 ) -> bool:
-    with transaction(immediate=True):
-        row = _select_one(table, outcome_id)
-        if row is None or str(row.get("status") or "").lower() != "pending":
+    guard = nullcontext()
+    initial = _select_one(table, outcome_id)
+    window_id = (
+        str(initial.get("benchmark_window_id"))
+        if table == "filter_candidate_outcomes" and initial and initial.get("benchmark_window_id")
+        else None
+    )
+    if window_id:
+        from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+        guard = worker_cycle_exclusion()
+    with guard:
+        if window_id and not _benchmark_outcome_write_allowed(window_id):
             return False
-        venue = row.get("venue")
-        if not isinstance(venue, str) or not venue.strip():
-            raise ValueError(f"{kind} outcome requires a nonblank venue")
-        candidate = {**row, **updates}
-        if candidate.get("net_return_pct") is not None:
-            from aletheia.analytics.outcome_semantics import (
-                valid_settlement_price_provenance,
-            )
+        with transaction(immediate=True):
+            row = _select_one(table, outcome_id)
+            if row is None or str(row.get("status") or "").lower() != "pending":
+                return False
+            venue = row.get("venue")
+            if not isinstance(venue, str) or not venue.strip():
+                raise ValueError(f"{kind} outcome requires a nonblank venue")
+            candidate = {**row, **updates}
+            if candidate.get("net_return_pct") is not None:
+                from aletheia.analytics.outcome_semantics import (
+                    valid_settlement_price_provenance,
+                )
 
-            if (
-                "settlement_price_source" not in updates
-                or "settlement_lag_sec" not in updates
-                or not valid_settlement_price_provenance(candidate)
-            ):
-                raise ValueError(f"{kind} outcome requires decision-grade price provenance")
-        if table == "filter_candidate_outcomes":
-            try:
-                from aletheia.agent_runtime.runtime_session import current_provenance
+                if (
+                    "settlement_price_source" not in updates
+                    or "settlement_lag_sec" not in updates
+                    or not valid_settlement_price_provenance(candidate)
+                ):
+                    raise ValueError(f"{kind} outcome requires decision-grade price provenance")
+            if table == "filter_candidate_outcomes":
+                try:
+                    from aletheia.agent_runtime.runtime_session import current_provenance
 
-                provenance = current_provenance()
-            except Exception:
-                provenance = {}
-            updates = {
-                **updates,
-                "settlement_runtime_session_id": provenance.get("runtime_session_id"),
-                "settlement_producer_commit": provenance.get("producer_commit"),
-                "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
-            }
-        won = _update_pending(table, outcome_id, updates)
-        if won and table == "filter_candidate_outcomes" and row.get("horizon") == "24h":
-            # The canonical outcome and its decision-grade shadow projection share
-            # this existing transaction; a stale worker cannot split the pair.
-            settle_linked_shadow_outcomes(str(row.get("outcome_candidate_key") or ""))
-        return won
+                    provenance = current_provenance()
+                except Exception:
+                    provenance = {}
+                updates = {
+                    **updates,
+                    "settlement_runtime_session_id": provenance.get("runtime_session_id"),
+                    "settlement_producer_commit": provenance.get("producer_commit"),
+                    "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
+                }
+            won = _update_pending(table, outcome_id, updates)
+            if won and table == "filter_candidate_outcomes" and row.get("horizon") == "24h":
+                settle_linked_shadow_outcomes(str(row.get("outcome_candidate_key") or ""))
+            return won
 
 
 def insert_forward_outcome(outcome) -> None:
@@ -10002,11 +10018,19 @@ def capture_universe_discovery_batch(
         if str(window["status"]) != "active":
             return {"accepted": False, "reason": f"window_{window['status']}", "batch_id": batch_id}
         existing = get_db().execute(
-            "SELECT id FROM filter_decision_batches WHERE benchmark_window_id=? AND benchmark_batch_id=?",
+            "SELECT b.id, b.code_commit, ("
+            "SELECT o.producer_runtime_session_id FROM filter_candidate_outcomes o "
+            "WHERE o.benchmark_window_id=b.benchmark_window_id AND o.benchmark_batch_id=b.benchmark_batch_id "
+            "AND o.producer_runtime_session_id IS NOT NULL LIMIT 1) AS producer_runtime_session_id "
+            "FROM filter_decision_batches b WHERE b.benchmark_window_id=? AND b.benchmark_batch_id=?",
             (window_id, batch_id),
         ).fetchone()
         if existing:
-            return {"accepted": True, "idempotent": True, "reason": "already_captured", "batch_id": batch_id}
+            return {
+                "accepted": True, "idempotent": True, "reason": "already_captured",
+                "batch_id": batch_id, "_producer_commit": existing["code_commit"],
+                "_producer_runtime_session_id": existing["producer_runtime_session_id"],
+            }
         capture_count = get_db().execute(
             "SELECT COUNT(*) FROM filter_decision_batches WHERE benchmark_window_id=?",
             (window_id,),
@@ -10425,21 +10449,12 @@ def fail_filter_candidate_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    try:
-        from aletheia.agent_runtime.runtime_session import current_provenance
-
-        provenance = current_provenance()
-    except Exception:
-        provenance = {}
-    updates.update(
-        {
-            "settlement_runtime_session_id": provenance.get("runtime_session_id"),
-            "settlement_producer_commit": provenance.get("producer_commit"),
-            "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
-        }
+    return _settle_outcome_with_exact_venue(
+        "filter_candidate_outcomes",
+        outcome_id,
+        updates,
+        kind="filter",
     )
-    with transaction(immediate=True):
-        return _update_pending("filter_candidate_outcomes", outcome_id, updates)
 
 
 def settle_linked_shadow_outcomes(

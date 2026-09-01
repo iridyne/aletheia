@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -198,7 +200,7 @@ def test_terminal_capture_race_leaves_orphan_out_of_domain_cohort(benchmark_db, 
     assert batches == []
     assert outcomes == []
     assert orphan_count == 1
-    domain = benchmark._handler_finalize(terminal, benchmark_db / "unused")
+    domain = benchmark._handler_finalize(terminal)
     assert domain["population_batches"] == []
     assert domain["outcomes"] == []
 def test_runtime_commit_change_is_capture_provenance_not_causal_identity(
@@ -316,9 +318,7 @@ def test_migrated_handler_matches_legacy_evaluator_on_same_frozen_batches(benchm
     legacy_payload = benchmark.analyze_benchmark(
         window["id"], snapshot=(frozen_window, batches, outcomes)
     )
-    migrated_payload = benchmark._handler_finalize(
-        frozen_window, benchmark_db / "unused"
-    )["analysis"]
+    migrated_payload = benchmark._handler_finalize(frozen_window)["analysis"]
 
     assert migrated_payload == legacy_payload
 
@@ -630,6 +630,35 @@ def test_finalize_uses_durable_start_provenance_when_runtime_commit_is_unavailab
     package = json.loads(gzip.decompress(output.read_bytes()))
     assert result["status"] == "finalized"
     assert package["manifest"]["producer_commits"] == ["commit-a"]
+def test_cli_finalize_copies_runner_canonical_artifact_without_reanalysis(benchmark_db, monkeypatch):
+    from aletheia.cli.evidence_cmd import evidence_app
+    from aletheia.observation_lab.kernel import advance_windows
+
+    window = benchmark.start_benchmark(
+        now="2026-01-01T00:00:00+00:00", code_commit="commit-a"
+    )
+    advanced = advance_windows(now="2026-01-16T06:00:00+00:00")
+    assert advanced["results"][f"{window['id']}:{window['generation']}"]["status"] == "finalized"
+    canonical_status = benchmark.status_benchmark(window["id"])
+    canonical = Path(canonical_status["artifact_path"])
+    monkeypatch.setattr(
+        benchmark, "analyze_benchmark",
+        lambda *_args, **_kwargs: pytest.fail("idempotent finalize must not re-analyze"),
+    )
+    requested = benchmark_db / "operator-requested.json.gz"
+    cli = CliRunner().invoke(
+        evidence_app,
+        [
+            "universe-discovery", "finalize", "--id", window["id"],
+            "--output", str(requested), "--json",
+        ],
+    )
+    assert cli.exit_code == 0, cli.output
+    result = json.loads(cli.output)
+
+    assert result["status"] == "finalized"
+    assert requested.read_bytes() == canonical.read_bytes()
+    assert hashlib.sha256(requested.read_bytes()).hexdigest() == result["artifact_sha256"]
 
 
 def test_inactive_benchmark_rows_leave_general_settlement_queue(benchmark_db):
@@ -793,3 +822,104 @@ def test_finalized_manifest_unions_capture_and_settlement_sessions(benchmark_db)
     benchmark.finalize_benchmark(window["id"], output, now="2026-01-16T06:00:00+00:00")
     package = json.loads(gzip.decompress(output.read_bytes()))
     assert package["manifest"]["runtime_session_ids"] == ["capture-session", "settlement-session"]
+
+
+def test_legacy_cutover_failure_compensates_new_window(benchmark_db, monkeypatch):
+    legacy = repo.insert_universe_discovery_benchmark({
+        "id": "legacy-cutover-failure", "status": "active",
+        "contract_json": "{}", "contract_hash": "a" * 64,
+        "code_commit": "legacy", "started_at": "2025-12-01T00:00:00+00:00",
+        "capture_ends_at": "2025-12-15T00:00:00+00:00",
+        "finalize_not_before": "2025-12-16T06:00:00+00:00",
+        "created_at": "2025-12-01T00:00:00+00:00",
+    })
+    monkeypatch.setattr(repo, "invalidate_universe_discovery_benchmark", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(RuntimeError, match="legacy_benchmark_cutover_failed"):
+        benchmark.start_benchmark(now="2026-01-01T00:00:00+00:00", code_commit="new")
+
+    assert repo.get_universe_discovery_benchmark(legacy["id"])["status"] == "active"
+    from aletheia.observation_lab.db import get_lab_db
+    generic = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE slot_key='universe-discovery'"
+    ).fetchone())
+    assert generic["status"] == "invalidated"
+    assert generic["terminal_reason"] == "legacy_cutover_failed"
+
+
+def test_idempotent_capture_uses_persisted_provenance_and_evidence_time(benchmark_db, monkeypatch):
+    from aletheia.agent_runtime import runtime_session
+    from aletheia.observation_lab.db import get_lab_db
+
+    started_at = "2026-01-01T00:00:00+00:00"
+    known_at = "2026-01-01T04:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="start")
+    monkeypatch.setattr(runtime_session, "current_provenance", lambda: {"runtime_session_id": "original-session"})
+    monkeypatch.setattr(benchmark, "_current_commit", lambda: "original-commit")
+    batch, outcomes = benchmark.build_capture(
+        window=window, scanner_run_id="retry-provenance", population=_population(),
+        allocated=[], entry_ts=known_at, regime_tag=None, producer_commit="original-commit",
+    )
+    first = repo.capture_universe_discovery_batch(
+        window["id"], batch, outcomes, captured_at=known_at,
+        cadence_sec=benchmark.CADENCE_SEC, max_batches=benchmark.MAX_BATCHES,
+        window_snapshot=window,
+    )
+    monkeypatch.setattr(runtime_session, "current_provenance", lambda: {"runtime_session_id": "retry-session"})
+    monkeypatch.setattr(benchmark, "_current_commit", lambda: "retry-commit")
+
+    second = benchmark.capture_completed_run(
+        scanner_run_id="retry-provenance", population=_population(), allocated=[],
+        entry_ts=known_at, regime_tag=None,
+    )
+
+    assert second == {"accepted": True, "idempotent": True, "reason": "already_captured", "batch_id": first["batch_id"]}
+    units = get_lab_db().execute(
+        "SELECT DISTINCT producer_commit,producer_runtime_session_id,known_at FROM observation_units"
+    ).fetchall()
+    assert {tuple(row) for row in units} == {("original-commit", "original-session", known_at)}
+    assert {claim["earliest_at"] for claim in benchmark._retention_claims(
+        benchmark.status_benchmark(window["id"])
+    )} == {known_at}
+
+
+@pytest.mark.asyncio
+async def test_independent_scheduler_settler_obeys_observation_cycle_lock(benchmark_db, monkeypatch):
+    from threading import Event, Thread
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.observation_lab.worker_lock import (
+        WorkerCycleLockError, worker_cycle_exclusion,
+    )
+    from aletheia.universe import outcome_recorder
+
+    window = benchmark.start_benchmark(now="2026-01-01T00:00:00+00:00", code_commit="a")
+    benchmark.capture_completed_run(
+        scanner_run_id="scheduler-lock", population=_population(), allocated=[],
+        entry_ts="2026-01-01T00:00:00+00:00", regime_tag=None,
+    )
+    outcome = repo.list_universe_discovery_outcomes(window["id"])[0]
+    acquired = Event()
+    release = Event()
+
+    def holder():
+        with worker_cycle_exclusion():
+            acquired.set()
+            assert release.wait(2)
+
+    thread = Thread(target=holder)
+    thread.start()
+    assert acquired.wait(2)
+
+    async def settle_due():
+        return int(repo.fail_filter_candidate_outcome(
+            outcome["id"], "2026-01-01T01:00:00+00:00"
+        ))
+
+    monkeypatch.setattr(outcome_recorder, "settle_due", settle_due)
+    with pytest.raises(WorkerCycleLockError):
+        await scheduler._async_settle_outcomes()
+    release.set()
+    thread.join(2)
+    await scheduler._async_settle_outcomes()
+    assert repo._select_one("filter_candidate_outcomes", outcome["id"])["status"] == "failed"

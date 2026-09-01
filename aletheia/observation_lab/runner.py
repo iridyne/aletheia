@@ -180,6 +180,15 @@ def _pass_checkpoint() -> dict[str, Any]:
         return {"ok": False, "reason": f"checkpoint_error:{exc!r}"[:400]}
 
 
+def _durable_observation_windows() -> dict[str, Any]:
+    from aletheia.universe.discovery_benchmark import register_observation_handler
+
+    register_observation_handler()
+    from aletheia.observation_lab.kernel import advance_windows
+
+    return advance_windows(limit=10)
+
+
 def _register_default_windows() -> None:
     """Register the built-in Observation Lab passes.
 
@@ -203,10 +212,6 @@ def _register_default_windows() -> None:
         from aletheia.observation_lab.ufc_shadow import run_ufc_shadow_equivalence_pass
         return run_ufc_shadow_equivalence_pass()
 
-    def _durable_observation_windows() -> dict[str, Any]:
-        from aletheia.observation_lab.kernel import advance_windows
-
-        return advance_windows(limit=10)
 
     # Guard against double-registration on module reimport (test harnesses).
     existing = {w.name for w in _WINDOWS}

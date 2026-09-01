@@ -87,7 +87,7 @@ def test_event_captured_universe_shape_keeps_complete_cohort_and_commit_is_prove
             normalize_spec=normalize,
             capture=capture,
             advance=lambda _window: ObservationProgress(summary={}),
-            finalize=lambda _window, _path: {"shape": "universe"},
+            finalize=lambda _window: {"shape": "universe"},
             retention_claims=lambda window: (
                 {"domain": "filter_decision_batches", "earliest_at": window["started_at"]},
             ),
@@ -138,11 +138,30 @@ def test_event_captured_universe_shape_keeps_complete_cohort_and_commit_is_prove
         first["observation_id"], first["generation"], first["spec_hash"], event,
         producer_commit="c" * 40, producer_runtime_session_id="runtime-3",
     )
+    conflicting_event = {
+        **event,
+        "population": [{**row, "source_hash": "f" * 64} for row in event["population"]],
+    }
+    with pytest.raises(ValueError, match="unit_identity_conflict"):
+        capture_event(
+            first["observation_id"], first["generation"], first["spec_hash"],
+            conflicting_event,
+        )
+    distinct_event = {
+        **event,
+        "batch_id": "batch-2",
+        "known_at": (_utc() + timedelta(hours=8)).isoformat(),
+    }
+    distinct = capture_event(
+        first["observation_id"], first["generation"], first["spec_hash"], distinct_event,
+        producer_commit="d" * 40, producer_runtime_session_id="runtime-4",
+    )
     status = status_window(first["observation_id"], first["generation"])
 
     assert captured["inserted"] == 3
     assert repeated["inserted"] == 0
-    assert status["unit_counts"] == {"admitted": 3}
+    assert distinct["inserted"] == 3
+    assert status["unit_counts"] == {"admitted": 6}
     claims = active_retention_claims()
     assert claims == {
         "available": True,
@@ -171,6 +190,7 @@ def test_event_captured_universe_shape_keeps_complete_cohort_and_commit_is_prove
     assert superseded["terminal_reason"] == f"superseded_by_generation:{replacement['generation']}"
     assert invalidate_active_for_restore(joint_cut_proven=False) == 1
     restored = status_window(replacement["observation_id"], replacement["generation"])
+    assert restored["status"] == "invalidated"
     assert restored["terminal_reason"] == "restore_continuity_unproven"
     reset_lab_db()
 
@@ -190,7 +210,7 @@ def test_missing_handler_fails_closed_for_runner_status_and_retention(tmp_path, 
         normalize_spec=lambda spec: spec,
         capture=None,
         advance=lambda _window: kernel.ObservationProgress(summary={}, can_finalize=False),
-        finalize=lambda _window, _path: {},
+        finalize=lambda _window: {},
         retention_claims=lambda window: (
             {"domain": "source_rows", "earliest_at": window["started_at"]},
         ),
@@ -243,7 +263,7 @@ def test_runner_checkpoint_mismatch_is_diagnostic_only(tmp_path, monkeypatch):
     register_handler(ObservationHandler(
         kind="restore-window", version="v1", normalize_spec=lambda spec: spec,
         capture=None, advance=lambda _window: ObservationProgress(summary={}),
-        finalize=lambda _window, _path: {}, retention_claims=lambda _window: (),
+        finalize=lambda _window: {}, retention_claims=lambda _window: (),
     ), replace=True)
     window = start_window(
         observation_id="restore-window", kind="restore-window", handler_version="v1",
@@ -282,7 +302,7 @@ def test_explicit_unproven_restore_invalidates_active_windows(tmp_path, monkeypa
     register_handler(ObservationHandler(
         kind="restore-contract", version="v1", normalize_spec=lambda spec: spec,
         capture=None, advance=lambda _window: ObservationProgress(summary={}),
-        finalize=lambda _window, _path: {}, retention_claims=lambda _window: (),
+        finalize=lambda _window: {}, retention_claims=lambda _window: (),
     ), replace=True)
     window = start_window(
         observation_id="restore-contract", kind="restore-contract", handler_version="v1",
@@ -291,8 +311,6 @@ def test_explicit_unproven_restore_invalidates_active_windows(tmp_path, monkeypa
         finalize_not_before=_utc(3),
     )
 
-    assert invalidate_active_for_restore(joint_cut_proven=True) == 0
-    assert status_window(window["observation_id"], window["generation"])["status"] == "active"
     assert invalidate_active_for_restore(joint_cut_proven=False) == 1
     status = status_window(window["observation_id"], window["generation"])
     assert status["status"] == "invalidated"
@@ -362,7 +380,7 @@ def test_real_smc_shape_uses_causal_v1_unavailable_no_trigger_and_external_autho
             ),
         )
 
-    def finalize(_window, _path):
+    def finalize(_window):
         return {
             "denominator": len(observed),
             "paired_coverage": sum(row["verdict"] != "unavailable" for row in observed),
@@ -447,3 +465,104 @@ def test_real_smc_shape_uses_causal_v1_unavailable_no_trigger_and_external_autho
     assert rotated["authority_mode"] == "external_authority"
     assert "learning:experiment-7" in rotated["spec_json"]
     reset_lab_db()
+
+def test_finalize_capture_interleavings_are_fail_closed_without_io_transaction(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from threading import Event, Thread, current_thread
+
+    import aletheia.config.loader as loader
+    import aletheia.observation_lab.kernel as kernel
+    from aletheia.observation_lab.db import reset_lab_db
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+    finalizing = Event()
+    continue_finalize = Event()
+
+    def capture(_window, event):
+        return kernel.ObservationProgress(summary={}, units=({
+            "unit_key": event["key"], "source_kind": "race",
+            "source_ref": event["key"], "source_hash": "a" * 64,
+            "known_at": event["known_at"], "admission": "admitted",
+        },))
+
+    def finalize(_window):
+        finalizing.set()
+        assert continue_finalize.wait(2)
+        return {"ok": True}
+
+    kernel.register_handler(kernel.ObservationHandler(
+        kind="race-window", version="v1", normalize_spec=lambda spec: spec,
+        capture=capture, advance=lambda _window: kernel.ObservationProgress(summary={}, can_finalize=True),
+        finalize=finalize, retention_claims=lambda _window: (),
+    ), replace=True)
+    window = kernel.start_window(
+        observation_id="race-before-terminal", kind="race-window", handler_version="v1",
+        slot_key="race-1", authority_mode="observe_only", spec={"v": 1},
+        started_at=_utc(), collect_until=_utc(2), finalize_not_before=_utc(2),
+    )
+    failures = []
+    thread = Thread(
+        name="finalize-before-capture",
+        target=lambda: _record_exception(
+            failures, lambda: kernel.finalize_window(
+                window["observation_id"], window["generation"], now=_utc(2),
+                output=tmp_path / "race-before.json",
+            )
+        ),
+    )
+    thread.start()
+    assert finalizing.wait(2)
+    kernel.capture_event(
+        window["observation_id"], window["generation"], window["spec_hash"],
+        {"key": "captured-first", "known_at": _utc().isoformat()},
+    )
+    continue_finalize.set()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert len(failures) == 1 and str(failures[0]) == "window_finalize_race"
+    assert kernel.status_window(window["observation_id"], window["generation"])["status"] == "active"
+
+    finalizing.clear()
+    continue_finalize.set()
+    terminal_committed = Event()
+    real_transaction = kernel.lab_transaction
+
+    @contextmanager
+    def observed_transaction(*args, **kwargs):
+        with real_transaction(*args, **kwargs) as db:
+            yield db
+        if current_thread().name == "finalize-before-late-capture":
+            terminal_committed.set()
+
+    monkeypatch.setattr(kernel, "lab_transaction", observed_transaction)
+    second = kernel.start_window(
+        observation_id="race-after-terminal", kind="race-window", handler_version="v1",
+        slot_key="race-2", authority_mode="observe_only", spec={"v": 1},
+        started_at=_utc(), collect_until=_utc(2), finalize_not_before=_utc(2),
+    )
+    completed = []
+    thread = Thread(
+        name="finalize-before-late-capture",
+        target=lambda: completed.append(kernel.finalize_window(
+            second["observation_id"], second["generation"], now=_utc(2),
+            output=tmp_path / "race-after.json",
+        )),
+    )
+    thread.start()
+    assert terminal_committed.wait(2)
+    with pytest.raises(ValueError, match="window_finalized"):
+        kernel.capture_event(
+            second["observation_id"], second["generation"], second["spec_hash"],
+            {"key": "captured-late", "known_at": _utc().isoformat()},
+        )
+    thread.join(2)
+    assert completed[0]["status"] == "finalized"
+    reset_lab_db()
+
+
+def _record_exception(errors, action):
+    try:
+        action()
+    except Exception as exc:
+        errors.append(exc)

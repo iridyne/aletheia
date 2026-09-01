@@ -31,13 +31,16 @@ class ObservationHandler:
     normalize_spec: Callable[[dict[str, Any]], dict[str, Any]]
     capture: Callable[[dict[str, Any], dict[str, Any]], ObservationProgress] | None
     advance: Callable[[dict[str, Any]], ObservationProgress]
-    finalize: Callable[[dict[str, Any], Path], dict[str, Any]]
+    finalize: Callable[[dict[str, Any]], dict[str, Any]]
     retention_claims: Callable[[dict[str, Any]], tuple[dict[str, Any], ...]]
 
 
 _HANDLERS: dict[tuple[str, str], ObservationHandler] = {}
 _VALID_AUTHORITY = frozenset({"observe_only", "external_authority"})
 _VALID_ADMISSION = frozenset({"admitted", "unavailable", "excluded"})
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _json(value: object) -> str:
@@ -52,7 +55,7 @@ def _hash(value: object) -> str:
 
 def _utc(value: str | datetime | None = None) -> datetime:
     if value is None:
-        return datetime.now(timezone.utc)
+        return _now()
     try:
         parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
             str(value).replace("Z", "+00:00")
@@ -298,7 +301,9 @@ def capture_event(
         collect_end = _utc(str(current["collect_until"]))
         for raw in progress.units:
             unit = dict(raw)
-            known_at = _utc(unit.get("known_at"))
+            if not unit.get("known_at"):
+                raise ValueError("observation_unit_known_at_required")
+            known_at = _utc(unit["known_at"])
             if not started <= known_at < collect_end:
                 raise ValueError("unit_outside_half_open_interval")
             admission = str(unit.get("admission") or "")
@@ -310,13 +315,9 @@ def capture_event(
             source_hash = str(unit.get("source_hash") or "")
             if not all((unit_key, source_kind, source_ref, source_hash)):
                 raise ValueError("incomplete_observation_unit_identity")
-            existing = db.execute(
-                "SELECT * FROM observation_units WHERE observation_id=? AND generation=? "
-                "AND unit_key=?",
-                (observation_id, int(generation), unit_key),
-            ).fetchone()
             identity = (
                 spec_hash,
+                unit_key,
                 source_kind,
                 source_ref,
                 source_hash,
@@ -324,22 +325,28 @@ def capture_event(
                 admission,
                 unit.get("reason"),
             )
+            unit_id = _hash({
+                "observation_id": observation_id,
+                "generation": int(generation),
+                "unit_key": unit_key,
+            })
+            existing = db.execute(
+                "SELECT * FROM observation_units WHERE unit_id=?",
+                (unit_id,),
+            ).fetchone()
             if existing is not None:
                 stored = dict(existing)
                 stored_identity = tuple(
                     stored[key]
                     for key in (
-                        "spec_hash", "source_kind", "source_ref", "source_hash",
-                        "known_at", "admission", "reason",
+                        "spec_hash", "unit_key", "source_kind", "source_ref",
+                        "source_hash", "known_at", "admission", "reason",
                     )
                 )
                 if stored_identity != identity:
                     raise ValueError("unit_identity_conflict")
                 idempotent += 1
                 continue
-            unit_id = hashlib.sha256(
-                f"{observation_id}|{generation}|{unit_key}".encode("utf-8")
-            ).hexdigest()
             db.execute(
                 "INSERT INTO observation_units (unit_id,observation_id,generation,spec_hash,"
                 "unit_key,source_kind,source_ref,source_hash,known_at,captured_at,producer_commit,"
@@ -389,15 +396,21 @@ def _terminalize(observation_id: str, generation: int, status: str, reason: str)
 
 
 def abort_window(observation_id: str, generation: int, *, reason: str) -> dict[str, Any]:
-    if not _terminalize(observation_id, generation, "aborted", reason):
-        raise ValueError(f"window_{_row(observation_id, generation)['status']}")
-    return status_window(observation_id, generation)
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        if not _terminalize(observation_id, generation, "aborted", reason):
+            raise ValueError(f"window_{_row(observation_id, generation)['status']}")
+        return status_window(observation_id, generation)
 
 
 def invalidate_window(observation_id: str, generation: int, *, reason: str) -> dict[str, Any]:
-    if not _terminalize(observation_id, generation, "invalidated", reason):
-        raise ValueError(f"window_{_row(observation_id, generation)['status']}")
-    return status_window(observation_id, generation)
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        if not _terminalize(observation_id, generation, "invalidated", reason):
+            raise ValueError(f"window_{_row(observation_id, generation)['status']}")
+        return status_window(observation_id, generation)
 
 
 def _artifact_bytes(payload: dict[str, Any], *, compressed: bool) -> bytes:
@@ -405,7 +418,7 @@ def _artifact_bytes(payload: dict[str, Any], *, compressed: bool) -> bytes:
     return gzip.compress(raw, mtime=0) if compressed else raw
 
 
-def finalize_window(
+def _finalize_window(
     observation_id: str,
     generation: int,
     *,
@@ -433,12 +446,20 @@ def finalize_window(
     path = Path(output) if output is not None else (
         lab_db_path().parent
         / "artifacts"
-        / f"{observation_id}-g{generation}.json"
+        / f"{observation_id}-g{generation}.json.gz"
     )
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     staged = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    domain_result = handler.finalize(window, staged)
+    unit_ids = tuple(
+        row[0]
+        for row in get_lab_db().execute(
+            "SELECT unit_id FROM observation_units WHERE observation_id=? AND generation=? "
+            "ORDER BY unit_id",
+            (observation_id, int(generation)),
+        ).fetchall()
+    )
+    domain_result = handler.finalize(window)
     provenance_rows = get_lab_db().execute(
         "SELECT DISTINCT producer_commit, producer_runtime_session_id FROM observation_units "
         "WHERE observation_id=? AND generation=?",
@@ -485,7 +506,20 @@ def finalize_window(
                 "WHERE observation_id=? AND generation=?",
                 (observation_id, int(generation)),
             ).fetchone()
-            if current is None or current["status"] != "active" or current["spec_hash"] != window["spec_hash"]:
+            current_unit_ids = tuple(
+                row[0]
+                for row in db.execute(
+                    "SELECT unit_id FROM observation_units WHERE observation_id=? AND generation=? "
+                    "ORDER BY unit_id",
+                    (observation_id, int(generation)),
+                ).fetchall()
+            )
+            if (
+                current is None
+                or current["status"] != "active"
+                or current["spec_hash"] != window["spec_hash"]
+                or current_unit_ids != unit_ids
+            ):
                 raise RuntimeError("window_finalize_race")
             db.execute(
                 "UPDATE observation_windows SET status='finalized',terminal_at=?,terminal_reason=?,"
@@ -508,6 +542,22 @@ def finalize_window(
             path.unlink(missing_ok=True)
         raise
     return status_window(observation_id, generation, now=at)
+
+
+def finalize_window(
+    observation_id: str,
+    generation: int,
+    *,
+    now: str | datetime | None = None,
+    output: str | Path | None = None,
+    progress: ObservationProgress | None = None,
+) -> dict[str, Any]:
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        return _finalize_window(
+            observation_id, generation, now=now, output=output, progress=progress
+        )
 
 
 def advance_windows(*, limit: int = 10, now: str | datetime | None = None) -> dict[str, Any]:
@@ -598,16 +648,20 @@ def active_retention_claims() -> dict[str, Any]:
 
 
 def invalidate_active_for_restore(*, joint_cut_proven: bool) -> int:
-    """Checkpoint is diagnostic-only; unproven root replacement breaks continuity."""
-    if joint_cut_proven:
-        return 0
-    with lab_transaction(immediate=True) as db:
-        result = db.execute(
-            "UPDATE observation_windows SET status='invalidated',terminal_at=?,terminal_reason=? "
-            "WHERE status='active'",
-            (_utc().isoformat(), "restore_continuity_unproven"),
-        )
-    return max(0, result.rowcount)
+    """Invalidate active windows after a restore whose joint cut is unproven."""
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        with lab_transaction(immediate=True) as db:
+            result = db.execute(
+                "UPDATE observation_windows SET status='invalidated',terminal_at=?,terminal_reason=? "
+                "WHERE status='active'",
+                (
+                    _utc().isoformat(),
+                    "restore_joint_cut_proven" if joint_cut_proven else "restore_continuity_unproven",
+                ),
+            )
+        return max(0, result.rowcount)
 
 
 __all__ = [
