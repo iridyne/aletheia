@@ -94,6 +94,23 @@ def test_account_info_fields():
     assert a.asset_breakdown == []
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    ("equity_usdt", "available_usdt", "frozen_usdt", "unrealized_pnl"),
+)
+def test_account_info_rejects_non_finite_money(field_name):
+    values = {
+        "equity_usdt": 1000.0,
+        "available_usdt": 800.0,
+        "frozen_usdt": 200.0,
+        "unrealized_pnl": 50.0,
+    }
+    values[field_name] = float("inf")
+
+    with pytest.raises(ValueError, match="account money fields must be finite"):
+        AccountInfo(**values)
+
+
 def test_broker_position_defaults():
     p = BrokerPosition(
         symbol="BTC/USDT", side="long", quantity=0.1,

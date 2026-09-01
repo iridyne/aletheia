@@ -28,6 +28,26 @@ class AccountInfo:
     unrealized_pnl: float
     asset_breakdown: list[dict] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        values = (
+            self.equity_usdt,
+            self.available_usdt,
+            self.frozen_usdt,
+            self.unrealized_pnl,
+            *(
+                item.get(key)
+                for item in self.asset_breakdown
+                for key in ("usdt_value", "pct")
+                if item.get(key) is not None
+            ),
+        )
+        try:
+            finite = all(math.isfinite(float(value)) for value in values)
+        except (TypeError, ValueError):
+            finite = False
+        if not finite:
+            raise ValueError("account money fields must be finite")
+
 
 @dataclass
 class BrokerPosition:

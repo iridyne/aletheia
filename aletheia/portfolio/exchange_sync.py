@@ -39,6 +39,10 @@ _KEY_PREFIX = "exchange_account_state"
 _DEFAULT_MAX_AGE_SEC = 600
 
 
+def _reject_non_finite_json(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
 @dataclass
 class AssetBreakdown:
     coin: str
@@ -81,7 +85,7 @@ def _store(state: ExchangeAccountState) -> None:
         "fetched_at": state.fetched_at,
         "asset_breakdown": state.asset_breakdown or [],
         "positions": state.positions or [],
-    })
+    }, allow_nan=False)
     execute_write(
         "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
@@ -97,8 +101,8 @@ def _read_raw(mode: str) -> Optional[dict]:
     if row is None:
         return None
     try:
-        return json.loads(row["value"])
-    except (json.JSONDecodeError, TypeError):
+        return json.loads(row["value"], parse_constant=_reject_non_finite_json)
+    except (ValueError, TypeError):
         return None
 
 
@@ -609,7 +613,7 @@ def _store_unified(payload: dict) -> None:
     import json
 
     key = f"{_KEY_PREFIX}.unified"
-    data = json.dumps(payload)
+    data = json.dumps(payload, allow_nan=False)
     execute_write(
         "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
