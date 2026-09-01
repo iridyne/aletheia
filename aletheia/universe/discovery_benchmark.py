@@ -345,11 +345,15 @@ def _cohort_memberships(
         identity = _identity(item)
         ret = _finite(item.get("return_4h"))
         price = _finite(item.get("last_price"))
-        if ret is None or ret == 0 or price is None or price <= 0:
+        if (
+            ret is None
+            or ret <= 0
+            or price is None
+            or price <= 0
+            or _market(item.get("market_type")) != "spot"
+        ):
             continue
-        direction = "long" if ret > 0 else "short"
-        if _direction_tradable(item, direction):
-            momentum.append((abs(ret), identity, direction))
+        momentum.append((ret, identity, "long"))
     momentum.sort(key=lambda row: (-row[0], row[1]))
     for rank, (_, identity, direction) in enumerate(momentum[: min(max_candidates, len(momentum))], 1):
         memberships[(identity, direction)].add("simple_momentum")
