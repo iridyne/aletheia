@@ -38,6 +38,7 @@ HORIZONS = ("15m", "1h", "4h", "24h")
 CAPTURE_DAYS = 14
 CADENCE_SEC = 4 * 60 * 60
 MAX_BATCHES = CAPTURE_DAYS * 24 * 60 * 60 // CADENCE_SEC
+MAX_CONTINUITY_GAP_SEC = 2 * CADENCE_SEC
 FINALIZE_DELAY = timedelta(days=CAPTURE_DAYS + 1, hours=6)
 MIN_BATCHES = 60
 MIN_DATES = 10
@@ -155,6 +156,7 @@ def build_contract(*, code_commit: str, started_at: str, cfg=None) -> dict[str, 
             "minimum_batches": MIN_BATCHES,
             "minimum_utc_dates": MIN_DATES,
             "finalize_delay_sec": int(FINALIZE_DELAY.total_seconds()),
+            "maximum_continuity_gap_sec": MAX_CONTINUITY_GAP_SEC,
             "early_stopping": False,
         },
         "statistics": {
@@ -227,11 +229,15 @@ def status_benchmark(window_id: str | None = None, *, now: str | datetime | None
     }
 
 
-def _rank_values(rows: Sequence[Mapping[str, Any]], field: str, reverse: bool = False) -> dict[tuple[str, str, str, str], float]:
-    values = [(row, _finite(row.get(field))) for row in rows]
-    present = sorted((value, _identity(row)) for row, value in values if value is not None)
-    if reverse:
-        present.reverse()
+def _rank_values(
+    rows: Sequence[Mapping[str, Any]], field: str, *, absolute: bool = False
+) -> dict[tuple[str, str, str, str], float]:
+    values = [
+        (row, abs(value) if absolute else value)
+        for row in rows
+        if (value := _finite(row.get(field))) is not None
+    ]
+    present = sorted((value, _identity(row)) for row, value in values)
     denominator = max(1, len(present) - 1)
     return {identity: index / denominator for index, (_, identity) in enumerate(present)}
 
@@ -248,9 +254,12 @@ def _cohort_memberships(
     audits: dict[tuple[str, str, str, str], dict[str, Any]],
     *,
     max_candidates: int,
-) -> tuple[dict[tuple[tuple[str, str, str, str], str], set[str]], dict[tuple[str, str, str, str], dict[str, Any]]]:
+) -> tuple[
+    dict[tuple[tuple[str, str, str, str], str], set[str]],
+    dict[tuple[tuple[str, str, str, str], str], dict[str, Any]],
+]:
     memberships: dict[tuple[tuple[str, str, str, str], str], set[str]] = defaultdict(set)
-    annotations: dict[tuple[str, str, str, str], dict[str, Any]] = defaultdict(dict)
+    annotations: dict[tuple[tuple[str, str, str, str], str], dict[str, Any]] = defaultdict(dict)
     by_identity = {_identity(item): item for item in population}
     allocated_identities = {_identity(item) for item in allocated}
 
@@ -259,12 +268,13 @@ def _cohort_memberships(
         identity = _identity(raw)
         item = by_identity.get(identity, dict(raw))
         direction = str(raw.get("scanner_direction") or raw.get("direction") or "").lower()
-        annotations[identity]["production_rank"] = rank
+        note = annotations[(identity, direction)]
+        note["production_rank"] = rank
         if raw.get("execution_eligible", True) and _finite(raw.get("last_price")) not in (None, 0.0) and _direction_tradable(item, direction):
             selected.append((identity, direction))
             memberships[(identity, direction)].add("production_selected")
         else:
-            annotations[identity]["production_unavailable_reason"] = "identity_price_direction_or_execution_unavailable"
+            note["production_unavailable_reason"] = "identity_price_direction_or_execution_unavailable"
 
     for family in FAMILIES:
         eligible: list[tuple[float, tuple[str, str, str, str], str]] = []
@@ -279,7 +289,7 @@ def _cohort_memberships(
         for rank, (_, identity, direction) in enumerate(eligible[: min(max_candidates, len(eligible))], 1):
             label = f"family:{family}"
             memberships[(identity, direction)].add(label)
-            annotations[identity].setdefault("family_ranks", {})[family] = rank
+            annotations[(identity, direction)].setdefault("family_ranks", {})[family] = rank
 
     momentum: list[tuple[float, tuple[str, str, str, str], str]] = []
     for item in population:
@@ -294,11 +304,14 @@ def _cohort_memberships(
     momentum.sort(key=lambda row: (-row[0], row[1]))
     for rank, (_, identity, direction) in enumerate(momentum[: min(max_candidates, len(momentum))], 1):
         memberships[(identity, direction)].add("simple_momentum")
-        annotations[identity]["simple_momentum_rank"] = rank
+        annotations[(identity, direction)]["simple_momentum_rank"] = rank
 
     non_selected = [item for item in population if _identity(item) not in allocated_identities]
     rank_fields = ("quote_volume_24h", "spread_bps", "atr_pct", "return_4h")
-    ranks = {field: _rank_values(population, field) for field in rank_fields}
+    ranks = {
+        field: _rank_values(population, field, absolute=field == "return_4h")
+        for field in rank_fields
+    }
     available = {_identity(item): item for item in non_selected}
     used: set[tuple[str, str, str, str]] = set()
     for selected_identity, direction in sorted(selected):
@@ -324,16 +337,18 @@ def _cohort_memberships(
             )
             candidates.append((distance, identity))
         if not candidates:
-            annotations[selected_identity]["match_unavailable"] = True
+            annotations[(selected_identity, direction)]["match_unavailable"] = True
             continue
         _, control_identity = min(candidates, key=lambda row: (row[0], row[1]))
         used.add(control_identity)
         pair_id = hashlib.sha256(f"{selected_identity}|{control_identity}|{direction}".encode()).hexdigest()[:16]
         memberships[(control_identity, direction)].add("matched_non_selected")
-        annotations[selected_identity]["matched_pair_id"] = pair_id
-        annotations[selected_identity]["matched_pair_role"] = "selected"
-        annotations[control_identity]["matched_pair_id"] = pair_id
-        annotations[control_identity]["matched_pair_role"] = "control"
+        annotations[(selected_identity, direction)].update(
+            matched_pair_id=pair_id, matched_pair_role="selected"
+        )
+        annotations[(control_identity, direction)].update(
+            matched_pair_id=pair_id, matched_pair_role="control"
+        )
 
     return memberships, annotations
 
@@ -385,7 +400,11 @@ def build_capture(
             "authority": audits[identity]["authority"],
             "family_evidence": audits[identity]["family_evidence"],
             "cohorts": sorted({label for (member_identity, _), labels in memberships.items() if member_identity == identity for label in labels}),
-            **annotations.get(identity, {}),
+            "direction_annotations": {
+                direction: note
+                for (member_identity, direction), note in sorted(annotations.items())
+                if member_identity == identity
+            },
         })
     contract_hash = str(window["contract_hash"])
     parameter_snapshot = _json({"contract_hash": contract_hash, "scanner_run_id": scanner_run_id})
@@ -445,7 +464,7 @@ def build_capture(
             "asset_id": item.get("asset_id"),
             "feature_snapshot_id": item.get("feature_snapshot_id"),
             "scanner_run_id": scanner_run_id,
-            **annotations.get(identity, {}),
+            **annotations.get((identity, direction), {}),
         }
         for row in rows:
             data = row.model_dump()
@@ -551,12 +570,16 @@ def _paired_inference(differences: Mapping[str, float], *, contract_hash: str, c
 
 
 def _holm(results: dict[str, dict[str, Any]]) -> None:
+    """Apply the preregistered Holm correction across all 21 comparisons."""
     available = sorted(
         ((float(value["p_value"]), key) for key, value in results.items() if value.get("available")),
         key=lambda row: (row[0], row[1]),
     )
     running = 0.0
-    total = len(available)
+    total = len(results)
+    for value in results.values():
+        value["holm_family_size"] = total
+        value["holm_adjusted_p"] = None
     for index, (p_value, key) in enumerate(available):
         running = max(running, min(1.0, p_value * (total - index)))
         results[key]["holm_adjusted_p"] = running
@@ -645,7 +668,18 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
             comparisons[key] = _paired_inference(differences, contract_hash=str(window["contract_hash"]), comparison=key)
     _holm(comparisons)
 
-    batch_dates = {str(batch.get("evaluated_at") or "")[:10] for batch in batches if batch.get("evaluated_at")}
+    batch_times = sorted(
+        _utc(str(batch["evaluated_at"]))
+        for batch in batches
+        if batch.get("evaluated_at")
+    )
+    continuity_points = [_utc(window["started_at"]), *batch_times, _utc(window["capture_ends_at"])]
+    continuity_gaps = [
+        max(0.0, (right - left).total_seconds())
+        for left, right in zip(continuity_points, continuity_points[1:])
+    ]
+    max_continuity_gap_sec = max(continuity_gaps, default=0.0)
+    batch_dates = {timestamp.date().isoformat() for timestamp in batch_times}
     selected_4h = summaries.get("production_selected", {}).get("4h", {})
     intended_selected = int(selected_4h.get("intended") or 0)
     matched_intended = int(summaries.get("matched_non_selected", {}).get("4h", {}).get("intended") or 0)
@@ -654,6 +688,8 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
         integrity_reasons.append("insufficient_capture_batches")
     if len(batch_dates) < MIN_DATES:
         integrity_reasons.append("insufficient_utc_dates")
+    if max_continuity_gap_sec > MAX_CONTINUITY_GAP_SEC:
+        integrity_reasons.append("material_capture_continuity_gap")
     if (selected_4h.get("coverage") or 0.0) < MIN_OUTCOME_COVERAGE:
         integrity_reasons.append("insufficient_selected_outcome_coverage")
     if intended_selected == 0 or matched_intended / intended_selected < MIN_MATCH_COVERAGE:
@@ -703,6 +739,44 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
 
     symbols = Counter(str(row["symbol"]) for row in measurements if row["horizon"] == "4h")
     dates = Counter(str(row["entry_ts"])[:10] for row in measurements if row["horizon"] == "4h")
+    def grouped_4h(field: str) -> dict[str, dict[str, Any]]:
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in measurements:
+            if row["horizon"] == "4h":
+                groups[str(row.get(field) or "unavailable")].append(row)
+        return {
+            key: _summary(
+                [float(row["frozen_net_return_pct"]) for row in items if row["frozen_net_return_pct"] is not None],
+                len(items),
+                Counter(str(row["status"]) for row in items),
+            )
+            for key, items in sorted(groups.items())
+        }
+
+    selected_settled_4h = [
+        row for row in measurements
+        if row["horizon"] == "4h"
+        and "production_selected" in row["cohorts"]
+        and row["frozen_net_return_pct"] is not None
+    ]
+    cost_components = {
+        field: (statistics.fmean(values) if values else None)
+        for field in ("estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct")
+        if (values := [float(value) for row in selected_settled_4h if (value := _finite(row.get(field))) is not None]) is not None
+    }
+    source_counts = Counter(str(row.get("settlement_price_source") or "unavailable") for row in measurements)
+    settlement_lags = [value for row in measurements if (value := _finite(row.get("settlement_lag_sec"))) is not None]
+    settlement_report = {
+        "status_counts": dict(sorted(Counter(str(row["status"]) for row in measurements).items())),
+        "price_source_counts": dict(sorted(source_counts.items())),
+        "lag_sec": {
+            "count": len(settlement_lags),
+            "p50": _percentile(settlement_lags, 0.50),
+            "p95": _percentile(settlement_lags, 0.95),
+            "max": max(settlement_lags) if settlement_lags else None,
+        },
+    }
+
     def concentration(counts: Counter[str]) -> dict[str, Any]:
         total = sum(counts.values())
         shares = [count / total for count in counts.values()] if total else []
@@ -712,7 +786,19 @@ def analyze_benchmark(window_id: str) -> dict[str, Any]:
         "contract_hash": window["contract_hash"],
         "batch_count": len(batches),
         "utc_date_count": len(batch_dates),
+        "capture_continuity": {
+            "maximum_allowed_gap_sec": MAX_CONTINUITY_GAP_SEC,
+            "maximum_observed_gap_sec": max_continuity_gap_sec,
+            "material_gap_detected": max_continuity_gap_sec > MAX_CONTINUITY_GAP_SEC,
+        },
         "cohort_horizon_summary": summaries,
+        "stratified_4h_summary": {
+            "direction": grouped_4h("direction"),
+            "market_type": grouped_4h("market_type"),
+            "regime_tag": grouped_4h("regime_tag"),
+        },
+        "settlement": settlement_report,
+        "costs": {"assumptions": costs, "selected_4h_mean_components": cost_components},
         "selected_vs_matched": selected_control,
         "family_comparisons": comparisons,
         "family_4h_means": family_means,
@@ -741,6 +827,17 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
     at = _utc(now)
     if at < _utc(window["finalize_not_before"]):
         raise ValueError("benchmark_finalize_not_due")
+    current_contract = build_contract(
+        code_commit=str(window["code_commit"]),
+        started_at=str(window["started_at"]),
+    )
+    if _hash(current_contract) != str(window["contract_hash"]):
+        raise ValueError("benchmark_frozen_contract_drift")
+    from aletheia.agent_runtime.build_info import get_boot_commit
+
+    boot_commit = get_boot_commit()
+    if boot_commit and boot_commit != str(window["code_commit"]):
+        raise ValueError("benchmark_runtime_commit_drift")
     batches = repo.list_universe_discovery_batches(window_id)
     outcomes = repo.list_universe_discovery_outcomes(window_id)
     analysis = analyze_benchmark(window_id)
@@ -769,6 +866,10 @@ def finalize_benchmark(window_id: str, output: str | Path, *, now: str | datetim
         target.write(artifact)
     digest = hashlib.sha256(artifact).hexdigest()
     summary_json = _json({"analysis": analysis, "artifact_sha256": digest, "artifact_size": len(artifact)})
+    current_window = repo.get_universe_discovery_benchmark(window_id)
+    frozen_fields = ("status", "contract_json", "contract_hash", "code_commit", "started_at")
+    if current_window is None or any(current_window.get(key) != window.get(key) for key in frozen_fields):
+        raise RuntimeError("benchmark_finalize_race")
     if not repo.finalize_universe_discovery_benchmark(
         window_id,
         finalized_at=at.isoformat(),

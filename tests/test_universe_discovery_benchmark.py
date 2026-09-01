@@ -242,3 +242,104 @@ def test_service_capture_failure_is_nonfatal(monkeypatch, caplog):
         cfg=None,
     )
     assert "capture failed (non-fatal)" in caplog.text
+
+
+def test_directional_annotations_and_absolute_return_ranks(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population()
+    benchmark.capture_completed_run(
+        scanner_run_id="directional-annotations",
+        population=population,
+        allocated=population[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    facts = decode_filter_decision_batch(
+        repo.list_universe_discovery_batches(window["id"])[0]["candidate_facts"]
+    )
+    assert all(isinstance(fact["direction_annotations"], dict) for fact in facts)
+    for row in repo.list_universe_discovery_outcomes(window["id"]):
+        path = json.loads(row["benchmark_path_facts"])
+        if path.get("matched_pair_id"):
+            assert path["matched_pair_role"] in {"selected", "control"}
+
+    ranks = benchmark._rank_values(
+        [
+            {"venue": "okx", "market_type": "perp", "symbol": "A/USDT", "asset_id": "a", "return_4h": -9.0},
+            {"venue": "okx", "market_type": "perp", "symbol": "B/USDT", "asset_id": "b", "return_4h": 2.0},
+        ],
+        "return_4h",
+        absolute=True,
+    )
+    assert ranks[("okx", "perp", "A/USDT", "a")] > ranks[("okx", "perp", "B/USDT", "b")]
+
+
+def test_holm_uses_frozen_twenty_one_hypothesis_family():
+    results = {
+        f"comparison-{index}": (
+            {"available": True, "p_value": 0.01} if index == 0
+            else {"available": False, "reason": "insufficient_complete_batches"}
+        )
+        for index in range(21)
+    }
+    benchmark._holm(results)
+    assert results["comparison-0"]["holm_adjusted_p"] == pytest.approx(0.21)
+    assert {result["holm_family_size"] for result in results.values()} == {21}
+    assert results["comparison-1"]["holm_adjusted_p"] is None
+
+
+def test_price_quality_failure_is_terminal_but_not_settled(benchmark_db, monkeypatch):
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population()
+    benchmark.capture_completed_run(
+        scanner_run_id="bad-price-quality",
+        population=population,
+        allocated=population[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+
+    async def observations(rows, *, now):
+        return {
+            row["id"]: {
+                "exit_price": 101.0,
+                "range_high": 102.0,
+                "range_low": 99.0,
+                "price_source": "horizon_ohlcv",
+                "price_quality_ok": False,
+                "settlement_lag_sec": 0.0,
+            }
+            for row in rows
+        }
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        observations,
+    )
+    asyncio.run(settle_due_filter_outcomes(max_rows=1))
+    rows = repo.list_universe_discovery_outcomes(window["id"])
+    assert sum(row["status"] == "failed" for row in rows) == 1
+    assert sum(row["status"] == "settled" for row in rows) == 0
+
+
+def test_analysis_reports_gaps_strata_costs_and_settlement(benchmark_db):
+    started_at = "2026-01-01T00:00:00+00:00"
+    window = benchmark.start_benchmark(now=started_at, code_commit="commit-a")
+    population = _population()
+    benchmark.capture_completed_run(
+        scanner_run_id="report-contract",
+        population=population,
+        allocated=population[:5],
+        entry_ts=started_at,
+        regime_tag="sideways",
+    )
+    analysis = benchmark.analyze_benchmark(window["id"])
+    assert analysis["capture_continuity"]["material_gap_detected"] is True
+    assert "material_capture_continuity_gap" in analysis["integrity"]["reasons"]
+    assert set(analysis["stratified_4h_summary"]) == {"direction", "market_type", "regime_tag"}
+    assert set(analysis["costs"]) == {"assumptions", "selected_4h_mean_components"}
+    assert set(analysis["settlement"]) == {"status_counts", "price_source_counts", "lag_sec"}

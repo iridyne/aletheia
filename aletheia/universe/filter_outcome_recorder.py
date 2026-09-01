@@ -211,6 +211,7 @@ async def settle_due_filter_outcomes(
         if price is None or float(price) <= 0:
             repo.fail_filter_candidate_outcome(row["id"], settled_at=now_iso)
             return _FAILED
+        assert observation is not None
 
         entry = float(row["entry_price_usd"])
         exit_price = float(price)
@@ -219,6 +220,14 @@ async def settle_due_filter_outcomes(
             # A real verdict on a real observation: record what was seen and
             # rejected, so this row is not mistaken for one that was never
             # measured at all (see repo.fail_filter_candidate_outcome).
+            repo.fail_filter_candidate_outcome(
+                row["id"],
+                settled_at=now_iso,
+                exit_price=exit_price,
+                settlement_price_source=observation.get("price_source"),
+            )
+            return _FAILED
+        if not observation.get("price_quality_ok"):
             repo.fail_filter_candidate_outcome(
                 row["id"],
                 settled_at=now_iso,
@@ -247,7 +256,7 @@ async def settle_due_filter_outcomes(
             slippage_bps=cfg.trading.slippage_bps,
             range_high=observation.get("range_high"),
             range_low=observation.get("range_low"),
-            price_quality_ok=bool(observation.get("price_quality_ok")),
+            price_quality_ok=True,
         )
         won = repo.settle_filter_candidate_outcome(
             row["id"],
