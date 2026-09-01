@@ -21,6 +21,11 @@ not rewritten.
 A Candidate is execution-eligible only when the configured Fast Monitoring path
 can consume its exact physical `(venue, symbol, market_type)` stream for the
 selected execution mode. No configured venue may be silently substituted.
+For `paper_internal`, normalized `market_data.ccxt_exchange` is the public
+fast-data authority: Bitget and Binance are supported. Binance uses public Spot
+and USD-M quote, aggregate trade, one-minute Kline, and depth streams; Spot depth
+is unavailable until its REST snapshot and diff stream form a continuous local
+book. External execution modes retain their execution venue as the authority.
 
 An unmonitorable Candidate remains visible in Universe and Workbench, but is
 persisted with `execution_eligible=false` and the
@@ -164,7 +169,7 @@ unchanged. Fast Monitoring uses the same v2 state machine and forwards a trigger
 only after this authority check.
 ## Non-goals
 
-This Contract does not add an exchange, market-data adapter, database table,
+This Contract does not add an execution exchange, database table,
 migration, provider type, frontend page, reprice/taker fallback, second Risk
 Engine, second scheduler, or autonomous live authority. It does not tune
 scanner economics, ranking, Risk limits, or trigger economics.

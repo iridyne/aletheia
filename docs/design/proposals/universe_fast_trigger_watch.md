@@ -52,7 +52,7 @@ Goals:
 - keep the trigger hot path deterministic and free of LLM/provider calls;
 - fail closed on unavailable adapters, stale or unordered data, expired or
   changed setups, and uncertain submission;
-- start with a generic stream contract and a Bitget public-stream adapter.
+- retain the generic stream contract and public Bitget/Binance adapters.
 
 Non-goals:
 
@@ -96,9 +96,10 @@ than mutating the old generation.
 always carries exact instrument identity, exchange and receive timestamps, and
 a channel sequence identity.
 
-The first adapter uses Bitget's unauthenticated public WebSocket and subscribes
-to ticker, public trades, books5, and candle1m for at most ten ranked armed
-setups. Other configured venues return
+The compatibility adapter supports unauthenticated Bitget and Binance public
+streams. Binance combines Spot and USD-M quote, aggregate trade, Kline, and
+depth facts; Spot depth remains unavailable until snapshot/diff continuity is
+proved. Other configured venues return
 `fast_trigger_stream_unavailable:<venue>`; cross-venue substitution is
 forbidden.
 
@@ -126,7 +127,7 @@ TradeProposal. Risk and broker I/O occur only after commit through
 
 `fast_trigger.mode` is `off`, `shadow`, or `execute`; the shipped default is
 `shadow`, which observes and prewarms without Gateway order authority. In
-`paper_internal`, `execute` defaults to the Bitget public fast-data venue for trigger evidence,
+`paper_internal`, `execute` follows `market_data.ccxt_exchange` for exact-venue trigger evidence,
 then uses the local paper account and local paper broker; it never submits an exchange order. For
 exchange-backed execution, the first executable mode is `bitget_demo` only;
 Live modes are always refused. Shadow persists the same trigger facts but does

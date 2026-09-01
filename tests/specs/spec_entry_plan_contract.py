@@ -120,8 +120,11 @@ def test_exact_venue_capability_is_one_shared_executable_invariant():
 
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.market_data.ccxt_exchange = "binance"
+    assert fast_market_data_unavailability_reason(cfg, "binance") is None
+    assert fast_market_data_unavailability_reason(cfg, "bitget") == "FAST_MARKET_DATA_VENUE_MISMATCH"
+    cfg.market_data.ccxt_exchange = "bitget"
     assert fast_market_data_unavailability_reason(cfg, "bitget") is None
-    assert fast_market_data_unavailability_reason(cfg, "binance") == "FAST_MARKET_DATA_VENUE_MISMATCH"
 
 
 @spec_claim(

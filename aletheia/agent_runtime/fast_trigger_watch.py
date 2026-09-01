@@ -267,6 +267,7 @@ def _watch_config_identity(cfg) -> tuple[object, ...]:
         cfg.fast_trigger.trigger_behavior_version,
         cfg.agent.permission_mode,
         cfg.exchange.paper_execution_mode,
+        str(cfg.market_data.ccxt_exchange or "").strip().lower(),
         cfg.runtime.paused,
         cfg.runtime.kill_switch_active,
     )
