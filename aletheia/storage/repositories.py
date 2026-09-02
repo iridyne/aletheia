@@ -6953,6 +6953,8 @@ def _prune_filter_candidate_outcomes_batches(
     cutoff: str,
     retention_days: int,
     protected_refs: tuple[str, ...] = (),
+    configured_candidate_epoch: str | None = None,
+    candidate_policy_available: bool = True,
     batch_size: int = 5_000,
 ) -> int:
     db = get_db()
@@ -6964,11 +6966,43 @@ def _prune_filter_candidate_outcomes_batches(
         pending_rows: list = []
         pending_by_horizon: dict[str, int] = {}
         with transaction():
+            candidate_clause = (
+                "AND (COALESCE(scanner_family, '') <> 'candidate_selection_utility' "
+                "OR outcome_candidate_key NOT IN ("
+                "SELECT j.value FROM universe_twin_shadow_records r "
+                "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
+                "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
+                "WHERE b.record_version='candidate-selection-utility-record/v1' "
+                "AND (b.policy_epoch_id IN ("
+                "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
+                "UNION SELECT ? WHERE ? IS NOT NULL) OR b.captured_at <= ("
+                "SELECT MAX(json_extract(policy_json, '$.estimator_training_cutoff')) "
+                "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
+                "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
+                "UNION SELECT ? WHERE ? IS NOT NULL))))) "
+                if candidate_policy_available else
+                "AND COALESCE(scanner_family, '') <> 'candidate_selection_utility' "
+            )
+            params: tuple[object, ...] = (
+                (
+                    cutoff,
+                    scan_after,
+                    configured_candidate_epoch, configured_candidate_epoch,
+                    configured_candidate_epoch, configured_candidate_epoch,
+                    size,
+                )
+                if candidate_policy_available else (cutoff, scan_after, size)
+            )
             scanned_rows = db.execute(
                 "SELECT rowid, id, horizon, status, outcome_candidate_key "
-                "FROM filter_candidate_outcomes WHERE entry_ts < ? AND rowid > ? "
+                "FROM filter_candidate_outcomes "
+                f"WHERE entry_ts < ? AND rowid > ? {candidate_clause} "
                 "ORDER BY rowid LIMIT ?",
-                (cutoff, scan_after, size),
+                params,
             ).fetchall()
             if scanned_rows:
                 scan_after = int(scanned_rows[-1][0])
@@ -7159,6 +7193,24 @@ class ExperimentStateReadError(Exception):
 _AUTO_EXPERIMENT_FLOOR = object()
 
 
+def _candidate_selection_retention_state() -> tuple[bool, str | None]:
+    """Return whether policy state is readable and its configured target epoch."""
+
+    try:
+        from aletheia.config.loader import load_config
+
+        universe = load_config(persist_migrations=False).universe
+    except Exception:
+        return False, None
+    epoch = (
+        str(universe.candidate_selection_policy_epoch)
+        if universe.candidate_selection_policy == "candidate_selection_utility_v1"
+        and universe.candidate_selection_policy_epoch
+        else None
+    )
+    return True, epoch
+
+
 def min_open_experiment_exposure_at() -> str | None:
     """Return the earliest durable exposure of an active open experiment.
 
@@ -7344,6 +7396,9 @@ def prune_filter_candidate_outcomes(
                 value for value in (min_experiment_started_at, observation_floor) if value
             )
         cutoff = _effective_cutoff(days, min_experiment_started_at)
+    candidate_policy_available, configured_candidate_epoch = (
+        _candidate_selection_retention_state()
+    )
 
     # A row still 'pending' at the cutoff was never measured, and deleting it
     # leaves nothing behind that says so: every coverage aggregation matches
@@ -7360,6 +7415,8 @@ def prune_filter_candidate_outcomes(
         cutoff=cutoff,
         retention_days=days,
         protected_refs=protected_refs,
+        configured_candidate_epoch=configured_candidate_epoch,
+        candidate_policy_available=candidate_policy_available,
     )
 
 
@@ -12584,12 +12641,35 @@ def prune_universe_twin_shadow_evidence(
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
+    candidate_policy_available, configured_candidate_epoch = (
+        _candidate_selection_retention_state()
+    )
     with transaction(immediate=True):
         deleted = 0
-        run_rows = db.execute(
-            "SELECT scanner_run_id FROM universe_twin_shadow_batches WHERE captured_at < ?",
-            (cutoff,),
-        ).fetchall()
+        if candidate_policy_available:
+            run_rows = db.execute(
+                "WITH protected_epochs(policy_epoch_id) AS ("
+                "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
+                "UNION SELECT ? WHERE ? IS NOT NULL), "
+                "training(cutoff) AS (SELECT MAX(json_extract(policy_json, "
+                "'$.estimator_training_cutoff')) FROM universe_twin_shadow_batches "
+                "WHERE policy_epoch_id IN protected_epochs) "
+                "SELECT scanner_run_id FROM universe_twin_shadow_batches, training "
+                "WHERE captured_at < ? AND ("
+                "record_version <> 'candidate-selection-utility-record/v1' OR "
+                "(COALESCE(policy_epoch_id, '') NOT IN protected_epochs "
+                "AND (training.cutoff IS NULL OR captured_at > training.cutoff)))",
+                (configured_candidate_epoch, configured_candidate_epoch, cutoff),
+            ).fetchall()
+        else:
+            run_rows = db.execute(
+                "SELECT scanner_run_id FROM universe_twin_shadow_batches "
+                "WHERE captured_at < ? "
+                "AND record_version <> 'candidate-selection-utility-record/v1'",
+                (cutoff,),
+            ).fetchall()
         run_ids = [str(row[0]) for row in run_rows]
         if run_ids:
             placeholders = ", ".join("?" for _ in run_ids)

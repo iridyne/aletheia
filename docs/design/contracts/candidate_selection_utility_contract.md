@@ -52,7 +52,9 @@ duplicated economics.
 When estimator support first becomes available, the path freezes its training
 cutoff, complete eligible training-dataset fingerprint, and selection settings
 including the exact Fast Monitoring mode, venue, and paper execution route
-into a new behavior/policy identity. Per-cell source fingerprints remain in
+plus the configured execution fee and slippage assumptions into a new
+behavior/policy identity. Changing either cost assumption starts a distinct
+epoch. Per-cell source fingerprints remain in
 each estimate for audit but do not make the epoch depend on the current
 Candidate composition. Later outcomes cannot change that estimator.
 Qualification consumes only post-cutoff
@@ -70,18 +72,31 @@ leaves its cluster incomplete. Negative,
 neutral, insufficient, unavailable, and invalid are valid
 terminal/reporting states and grant no authority.
 
+The admitted epoch, its frozen training denominator, and their canonical
+outcomes are retained for fixed-look replay rather than entering the generic
+30-day Twin/outcome prune. If configured policy state is unreadable, Candidate
+evidence pruning fails closed.
+At a frozen cutoff, a row settled later remains a pending denominator row with
+no post-cutoff settlement fields; it cannot disappear or borrow future facts.
+
 `uv run aletheia evidence candidate-selection status --json` is read-only. A
 positive report sets `qualification_eligible=true` and
 `promotion_eligible=true`, but `owner_admission_required` remains true: evidence
 does not mutate authority. The generic Universe configuration endpoint cannot
 change the protected policy fields. The owner admission endpoint accepts only
 the exact positive epoch, refuses an overlapping Paper Universe-calibration
-authority, and persists an audit event. Admission and rollback configure the
-policy for the next successful Universe refresh; they do not relabel the active
-snapshot or its Planning Generations. The runtime re-evaluates
+authority, and persists an audit event. The same exclusion applies in reverse:
+Universe-family Learning admission and later Paper progression refuse to run
+while target Candidate authority is configured. Admission and rollback
+configure the policy for the next successful Universe refresh; they do not
+relabel the active snapshot or its Planning Generations. The runtime re-evaluates
 that same qualification before every target publication. Missing, stale,
 negative, neutral, insufficient, or invalid evidence fails closed and preserves
 the previous active snapshot.
+
+An active target snapshot may intentionally contain no members when every row
+is below-floor or unavailable. Reads preserve that empty Candidate set and do
+not replace it with legacy static fallback rows.
 
 An authoritative refresh writes the target selection evidence, canonical 4h
 outcomes, Candidate rows, Planning Generation handoffs, and scanner completion

@@ -320,6 +320,40 @@ def test_twin_retention_deletes_children_before_batches_on_fixed_window() -> Non
     assert repo.list_universe_twin_shadow_records("run-1") == []
 
 
+def test_candidate_selection_fixed_look_evidence_is_not_pruned() -> None:
+    from aletheia.universe.candidate_selection_shadow import (
+        build_candidate_selection_shadow_bundle,
+    )
+
+    old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    feature = _feature()
+    legacy = [{
+        **feature,
+        "scanner_family": "momentum",
+        "scanner_direction": "long",
+        "total_score": 50.0,
+    }]
+    bundle = build_candidate_selection_shadow_bundle(
+        [feature], scanner_run_id="candidate-selection-retained", captured_at=old,
+        universe_config=UniverseConfig(max_candidates=1), legacy_scored=legacy,
+        legacy_allocated=legacy,
+        action_route_reasons={("feature-1", "binance", "perp", "BTC/USDT"): None},
+        historical_outcomes=(),
+    )
+    repo.insert_universe_twin_shadow_bundle(
+        bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
+    )
+    repo.get_db().execute(
+        "UPDATE universe_twin_shadow_batches SET policy_epoch_id='admitted-epoch', "
+        "promotion_eligible=1 WHERE scanner_run_id='candidate-selection-retained'"
+    )
+    repo.get_db().commit()
+
+    assert repo.prune_universe_twin_shadow_evidence(days=30) == 0
+    assert repo.get_universe_twin_shadow_batch("candidate-selection-retained") is not None
+    assert repo.list_universe_twin_shadow_records("candidate-selection-retained")
+
+
 def test_task5_payload_does_not_invent_experiment_identity() -> None:
     bundle = _bundle()
     blockers = json.loads(bundle.batch.blocking_reasons_json)

@@ -698,16 +698,55 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
     assert deleted2 == 0, (
         "clean_window_cutoff must preserve rows an open experiment still needs"
     )
-
-    db = get_db()
     remaining = {
         r[0]
-        for r in db.execute(
+        for r in get_db().execute(
             "SELECT outcome_candidate_key FROM filter_candidate_outcomes"
         ).fetchall()
     }
     assert remaining == {"k-100d", "k-60d", "k-10d"}
 
+
+def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
+    from aletheia.storage.repositories import prune_filter_candidate_outcomes
+
+    _seed_filter_candidate_outcome(key="candidate-selection-retained", entry_ts=_iso(100))
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET scanner_family='candidate_selection_utility' "
+        "WHERE outcome_candidate_key='candidate-selection-retained'"
+    )
+    db.execute(
+        "INSERT INTO universe_twin_shadow_batches "
+        "(scanner_run_id, record_version, authority_behavior_version, "
+        "shadow_behavior_version, allocation_replay_contract, policy_epoch_id, "
+        "feature_source_fingerprint, metric_version, allocator_random_state_json, "
+        "policy_json, allocation_context_json, candidate_count, promotion_eligible, "
+        "blocking_reasons_json, batch_hash, captured_at) VALUES "
+        "('candidate-retention-run', 'candidate-selection-utility-record/v1', "
+        "'legacy', 'target', 'replay', 'admitted-epoch', 'features', 'metric', "
+        "'null', '{}', '{}', 1, 1, '[]', 'batch-hash', ?)",
+        (_iso(100),),
+    )
+    db.execute(
+        "INSERT INTO universe_twin_shadow_records "
+        "(id, scanner_run_id, candidate_key, candidate_index, symbol, market_type, "
+        "authority_total_score, shadow_authority_applied, promotion_eligible, "
+        "shadow_valid, compact_output_json, input_json, record_hash, captured_at) "
+        "VALUES ('candidate-retention-record', 'candidate-retention-run', 'candidate', "
+        "0, 'BTC/USDT', 'perp', 1, 1, 1, 1, ?, '{}', 'record-hash', ?)",
+        (
+            '{"outcome_candidate_keys":{"long":"candidate-selection-retained"}}',
+            _iso(100),
+        ),
+    )
+    db.commit()
+
+    assert prune_filter_candidate_outcomes(days=30) == 0
+    assert db.execute(
+        "SELECT 1 FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='candidate-selection-retained'"
+    ).fetchone()
 
 def test_dropping_unmeasured_filter_outcomes_is_recorded_in_the_audit_chain():
     """Evidence deleted before it was ever measured must not vanish silently.

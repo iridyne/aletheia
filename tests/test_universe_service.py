@@ -165,6 +165,26 @@ def test_fallback_when_snapshot_empty(svc, enabled_cfg):
     assert members[0]["scanner_family"] == "core"
 
 
+def test_target_snapshot_empty_is_intentional_no_fill(svc, enabled_cfg):
+    enabled_cfg.universe = UniverseConfig(
+        enabled=True,
+        fallback_symbols=["BTC/USDT"],
+        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy_epoch="candidate-selection-utility:epoch",
+    )
+    snap = {
+        "id": "snap-target-empty",
+        "status": "active",
+        "policy_id": "candidate-selection-utility:epoch",
+    }
+    with (
+        patch("aletheia.universe.service.load_config", return_value=enabled_cfg),
+        patch("aletheia.universe.service.repo.get_active_universe_snapshot", return_value=snap),
+        patch("aletheia.universe.service.repo.list_universe_members", return_value=[]),
+    ):
+        assert svc.get_current_universe() == []
+
+
 def test_returns_active_members(svc, enabled_cfg):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mock_members = [

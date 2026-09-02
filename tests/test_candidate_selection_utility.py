@@ -417,6 +417,48 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator():
     assert load_candidate_selection_outcomes()
 
 
+def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.candidate_selection_shadow import (
+        build_candidate_selection_shadow_bundle,
+        load_candidate_selection_outcomes,
+    )
+
+    population = [_feature(index, return_24h=5.0 + index) for index in range(20)]
+    legacy = [
+        {**feature, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0}
+        for feature in population
+    ]
+    bundle = build_candidate_selection_shadow_bundle(
+        population, scanner_run_id="candidate-selection-late-settlement",
+        captured_at="2026-09-02T00:00:00+00:00",
+        universe_config=UniverseConfig(max_candidates=3), legacy_scored=legacy,
+        legacy_allocated=legacy,
+        action_route_reasons={
+            (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
+            for item in population
+        },
+        historical_outcomes=(),
+    )
+    repo.insert_universe_twin_shadow_bundle(
+        bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
+    )
+    key = load_candidate_selection_outcomes()[0]["outcome_candidate_key"]
+    repo.get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
+        "net_return_pct=4.0, mae_pct=-2.0, cost_model_version='v1' "
+        "WHERE outcome_candidate_key=?",
+        ("2026-09-03T00:00:00+00:00", key),
+    )
+    repo.get_db().commit()
+
+    frozen = load_candidate_selection_outcomes(settled_through="2026-09-02T12:00:00+00:00")
+    assert frozen[0]["status"] == "pending"
+    assert frozen[0]["settled_at"] is None
+    assert frozen[0]["net_return_pct"] is None
+    assert frozen[0]["mae_pct"] is None
+
+
 def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
     import json
 
@@ -565,6 +607,21 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
         "candidate_selection_policy_epoch",
         "candidate_selection_utility_pct",
     } <= columns
+
+
+def test_candidate_selection_epoch_identity_includes_execution_cost_assumptions():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity,
+    )
+
+    cfg = AletheiaConfig()
+    before = candidate_selection_policy_identity(cfg)
+    cfg.trading.execution_fee_pct += 0.01
+    cfg.trading.slippage_bps += 1.0
+    after = candidate_selection_policy_identity(cfg)
+
+    assert before["cost_assumptions"] != after["cost_assumptions"]
 
 
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():

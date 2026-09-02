@@ -556,6 +556,12 @@ def _promotion_gate_reason(
             else load_config(persist_migrations=False)
         )
         learning = cfg.learning
+        from aletheia.universe.candidate_selection_authority import (
+            learning_candidate_selection_overlap_block_reason,
+        )
+        overlap_reason = learning_candidate_selection_overlap_block_reason(path_id, cfg)
+        if overlap_reason is not None:
+            return overlap_reason
     except Exception:
         return "learning_config_unavailable"
     if not bool(cfg.agent.autonomous_learning):

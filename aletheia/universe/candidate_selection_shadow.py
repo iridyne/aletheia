@@ -417,8 +417,20 @@ def load_candidate_selection_outcomes(
             if settled_through:
                 settled_at = parse_utc_instant(base.get("settled_at"))
                 cutoff = parse_utc_instant(settled_through)
-                if settled_at is None or cutoff is None or settled_at > cutoff:
-                    continue
+                if cutoff is None:
+                    raise ValueError("candidate_selection_training_cutoff_invalid")
+                if settled_at is not None and settled_at > cutoff:
+                    for field in (
+                        "settled_at", "exit_price_usd", "gross_return_pct",
+                        "directional_return_pct", "estimated_fee_pct",
+                        "estimated_spread_slippage_pct", "estimated_funding_pct",
+                        "net_return_pct", "min_tradable_edge_pct", "mfe_pct",
+                        "mae_pct", "settlement_price_source", "settlement_lag_sec",
+                        "cost_model_version", "settlement_runtime_session_id",
+                        "settlement_producer_commit", "settlement_behavior_fingerprint",
+                    ):
+                        base[field] = None
+                    base["status"] = "pending"
             for labels in labels_by_key.get(str(row["outcome_candidate_key"]), ()):
                 result.append({**base, **labels})
     return result

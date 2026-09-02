@@ -889,6 +889,11 @@ class UniverseService:
 
         members = repo.list_universe_members(snap["id"], limit=limit or 50)
         if not members:
+            if (
+                cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
+                and snap.get("policy_id") == cfg.universe.candidate_selection_policy_epoch
+            ):
+                return []
             logger.warning("Active snapshot has no members; falling back to static pool")
             return self._fallback_as_members(cfg)
 
@@ -906,6 +911,11 @@ class UniverseService:
             result.append(m_out)
 
         if not result:
+            if (
+                cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
+                and snap.get("policy_id") == cfg.universe.candidate_selection_policy_epoch
+            ):
+                return []
             logger.warning("All universe members expired; falling back to static pool")
             return self._fallback_as_members(cfg)
 

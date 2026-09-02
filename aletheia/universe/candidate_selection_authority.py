@@ -31,7 +31,29 @@ def candidate_selection_policy_identity(cfg: object) -> dict[str, object]:
             "monitoring_venue": fast_market_data_venue_for_config(cfg),
             "paper_execution_mode": cfg.exchange.paper_execution_mode,
         }
+    if hasattr(cfg, "trading"):
+        identity["cost_assumptions"] = {
+            "execution_fee_pct": cfg.trading.execution_fee_pct,
+            "slippage_bps": cfg.trading.slippage_bps,
+        }
     return identity
+
+
+def learning_candidate_selection_overlap_block_reason(
+    path_id: str,
+    cfg: object,
+) -> str | None:
+    """Block Universe-family Learning authority while Candidate target owns ranking."""
+
+    if path_id != "universe_family_calibration":
+        return None
+    try:
+        policy = cfg.universe.candidate_selection_policy
+    except (AttributeError, TypeError):
+        return "candidate_selection_policy_evidence_unavailable"
+    if policy == TARGET_CANDIDATE_POLICY:
+        return "learning_overlapping_candidate_selection_authority"
+    return None
 
 
 def candidate_selection_overlap_block_reason() -> str | None:
@@ -79,6 +101,7 @@ __all__ = [
     "LEGACY_CANDIDATE_POLICY",
     "TARGET_CANDIDATE_POLICY",
     "candidate_selection_policy_identity",
+    "learning_candidate_selection_overlap_block_reason",
     "candidate_selection_overlap_block_reason",
     "candidate_selection_authority_block_reason",
 ]
