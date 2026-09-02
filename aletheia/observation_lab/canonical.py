@@ -1644,6 +1644,136 @@ def revoke_manifest(
     return _lab_write(db, _write)
 
 
+def apply_evaluation_safety_disposition(
+    *,
+    observation_id: str,
+    generation: int,
+    evaluation_id: str,
+    verdict: str,
+    reason: str,
+    actor: str = "observation_evaluator",
+    db: sqlite3.Connection | None = None,
+) -> str | None:
+    """Withdraw a generation after a persisted negative or invalid evaluation.
+
+    The evaluator owns this Lab transaction; Main/Risk/Execution are not
+    consulted.  A safety disposition is idempotent and atomically records the
+    lifecycle event plus revocations for every Paper Manifest on the
+    generation.  Insufficient/neutral/positive evidence remains non-terminal.
+    """
+    if verdict not in {"negative", "invalid"}:
+        return None
+    _text(observation_id, "observation_id")
+    if int(generation) <= 0:
+        raise ValueError("generation_must_be_positive")
+    _text(evaluation_id, "evaluation_id")
+    reason = _text(reason, "reason")[:400]
+    actor = _text(actor, "actor")
+    action = "auto_withdraw" if verdict == "negative" else "auto_invalidate"
+    dedup_key = f"observation-safety:{evaluation_id}:{action}"
+    now = _now()
+
+    def _write(connection: sqlite3.Connection) -> str | None:
+        evaluation = connection.execute(
+            "SELECT observation_id, generation, verdict FROM observation_evaluations "
+            "WHERE evaluation_id=?",
+            (evaluation_id,),
+        ).fetchone()
+        if evaluation is None or any(
+            evaluation[field] != expected
+            for field, expected in {
+                "observation_id": observation_id,
+                "generation": int(generation),
+                "verdict": verdict,
+            }.items()
+        ):
+            raise ValueError("evaluation_safety_identity_unavailable")
+        existing = connection.execute(
+            "SELECT * FROM observation_lifecycle_events WHERE dedup_key=?",
+            (dedup_key,),
+        ).fetchone()
+        if existing is not None:
+            if any(existing[name] != value for name, value in {
+                "observation_id": observation_id,
+                "generation": int(generation),
+                "from_status": "active",
+                "to_status": "invalidated",
+                "action": action,
+                "reason": reason,
+                "actor": actor,
+                "source_receipt_id": evaluation_id,
+                "audit_identity": f"observation-safety:{evaluation_id}",
+            }.items()):
+                raise sqlite3.IntegrityError("observation_safety_identity_conflict")
+            return str(existing[0])
+        root = connection.execute(
+            "SELECT status FROM observation_windows WHERE observation_id=? AND generation=?",
+            (observation_id, int(generation)),
+        ).fetchone()
+        if root is None:
+            raise ValueError("observation_generation_root_unavailable")
+        if str(root[0]) != "active":
+            # An owner action or restore may already have withdrawn this
+            # generation. Do not manufacture a second terminal transition.
+            return None
+        event_id = _append_lifecycle_event(
+            connection,
+            observation_id=observation_id,
+            generation=int(generation),
+            from_status="active",
+            to_status="invalidated",
+            action=action,
+            reason=reason,
+            actor=actor,
+            source_receipt_id=evaluation_id,
+            dedup_key=dedup_key,
+            audit_identity=f"observation-safety:{evaluation_id}",
+            created_at=now,
+        )
+        manifests = connection.execute(
+            "SELECT manifest_id, manifest_hash FROM execution_manifests "
+            "WHERE observation_id=? AND generation=? AND effect_mode='paper_treatment'",
+            (observation_id, int(generation)),
+        ).fetchall()
+        for manifest in manifests:
+            connection.execute(
+                "INSERT OR IGNORE INTO manifest_revocations "
+                "(revocation_id, manifest_id, manifest_hash, observation_id, generation, "
+                "revoked_at, reason, lifecycle_event_id, source_action_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    uuid.uuid4().hex,
+                    manifest[0],
+                    manifest[1],
+                    observation_id,
+                    int(generation),
+                    now,
+                    reason,
+                    event_id,
+                    evaluation_id,
+                    now,
+                ),
+            )
+            enqueue_lab_audit(
+                event_type="manifest_revoked",
+                payload={
+                    "manifest_id": manifest[0],
+                    "manifest_hash": manifest[1],
+                    "action": action,
+                    "reason": reason,
+                    "actor": actor,
+                    "source_evaluation_id": evaluation_id,
+                },
+                dedup_key=f"observation-safety-manifest:{evaluation_id}:{manifest[1]}",
+                observation_id=observation_id,
+                generation=int(generation),
+                db=connection,
+            )
+        return event_id
+
+    return _lab_write(db, _write)
+
+
 def publish_manifest_with_lifecycle(
     manifest: ExecutionManifest,
     *,
@@ -4491,6 +4621,7 @@ __all__ = [
     "ObservationTreatmentDecision",
     "TreatmentAdapter",
     "append_delivery_receipt",
+    "apply_evaluation_safety_disposition",
     "append_lifecycle_event",
     "build_authority_cutover_proof",
     "compact_finalized_generations",

@@ -755,6 +755,18 @@ def advance_windows(*, limit: int = 10, now: str | datetime | None = None) -> di
                 )
                 results[key] = {"status": "invalidated", "reason": progress.invalidation_reason}
                 continue
+            safety_action = (
+                progress.summary.get("evaluation", {}).get("safety_action")
+                if isinstance(progress.summary, dict)
+                and isinstance(progress.summary.get("evaluation"), dict)
+                else None
+            )
+            if safety_action:
+                # The canonical evaluator already committed the Lab lifecycle
+                # transition and Manifest revocations atomically.  Do not run
+                # the generic kernel invalidation a second time.
+                results[key] = {"status": "invalidated", "safety_action": safety_action}
+                continue
             with lab_transaction(immediate=True) as db:
                 db.execute(
                     "UPDATE observation_windows SET last_advanced_at=?,last_summary_json=?,last_error=NULL "

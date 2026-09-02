@@ -707,6 +707,24 @@ def _evaluate_observation(
         })
     verdicts = {str(row["verdict"]) for row in evaluation_rows}
     overall_verdict = next(iter(verdicts)) if len(verdicts) == 1 else "invalid"
+    safety_row = next(
+        (row for row in evaluation_rows if row["verdict"] == "invalid"),
+        None,
+    ) or next(
+        (row for row in evaluation_rows if row["verdict"] == "negative"),
+        None,
+    )
+    safety_action = None
+    if safety_row is not None:
+        from aletheia.observation_lab.canonical import apply_evaluation_safety_disposition
+
+        safety_action = apply_evaluation_safety_disposition(
+            observation_id=observation_id,
+            generation=generation,
+            evaluation_id=str(safety_row["evaluation_id"]),
+            verdict=str(safety_row["verdict"]),
+            reason=str(safety_row.get("reason") or "evaluation_safety_disposition"),
+        )
     return {
         "available": True,
         "observation_id": observation_id,
@@ -722,6 +740,7 @@ def _evaluate_observation(
             else "multiple_cohort_identities"
         ),
         "exposure_fingerprint": exposure_fingerprint,
+        "safety_action": safety_action,
     }
 
 

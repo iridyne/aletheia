@@ -238,3 +238,138 @@ def test_confirmatory_evaluation_requires_declared_authority_alpha():
         "generation": 1,
         "evaluation_kind": "confirmatory",
     }
+
+
+def test_negative_evaluation_atomically_withdraws_active_generation():
+    from aletheia.observation_lab.canonical import (
+        apply_evaluation_safety_disposition,
+        register_observation_spec,
+    )
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
+    from aletheia.observation_lab.evaluator import evaluate_observation
+    from aletheia.storage.sqlite import get_db
+
+    reset_lab_db()
+    root = register_observation_spec(
+        {
+            "observation_id": "lab-evaluator-negative-withdrawal",
+            "path_id": "universe_family_calibration",
+            "filter_name": "test-filter",
+            "stage": "paper_10",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "4h",
+            "control": {"value": 1.0},
+            "treatment": {"value": 2.0},
+            "behavior_policy_epoch_ref": "epoch-lab",
+            "gates": {"min_samples_per_arm": 1, "min_market_days": 0},
+        },
+    )
+    contract = dict(get_lab_db().execute(
+        "SELECT * FROM observation_generation_contracts WHERE observation_id=? AND generation=1",
+        (root["observation_id"],),
+    ).fetchone())
+    manifest = build_manifest(
+        observation_id=root["observation_id"],
+        generation=1,
+        spec_hash=root["spec_hash"],
+        treatment_adapter_id="learning.numeric:universe_family_calibration",
+        treatment_adapter_version="v1",
+        assignment_policy=contract["assignment_policy"],
+        assignment_salt=contract["assignment_salt"],
+        assignment_unit_key_template=contract["assignment_unit_key_template"],
+        allocation_pct=contract["allocation_pct"],
+        control_payload={"value": 1.0},
+        treatment_payload={"value": 2.0},
+        eligible_population={"path_id": "universe_family_calibration"},
+        behavior_contract_hash=contract["behavior_contract_hash"],
+        interference_key="universe",
+        composability_contract="exclusive",
+        effective_from=contract["started_at"],
+        deterministic_baseline={"value": 1.0},
+        unavailable_fallback="baseline",
+        owner_admission_ref="owner:admit",
+        effect_mode="paper_treatment",
+    )
+    publish_manifest(manifest)
+
+    _outcome(get_db(), "withdrawal-control", net=0.0)
+    _outcome(get_db(), "withdrawal-treatment", net=-1.0)
+    common = {
+        "observation_id": root["observation_id"],
+        "generation": 1,
+        "manifest_id": manifest.manifest_id,
+        "manifest_hash": manifest.manifest_hash,
+        "applied": 1,
+        "baseline_payload_hash": "baseline",
+        "applied_payload_hash": "baseline",
+        "baseline_payload_json": json.dumps({"value": 1.0}),
+        "applied_payload_json": json.dumps({"value": 1.0}),
+        "outcome_source": "fixed_horizon_candidate",
+        "behavior_contract_hash": contract["behavior_contract_hash"],
+        "behavior_policy_epoch_ref": "epoch-lab",
+        "active_manifest_snapshot_json": json.dumps([manifest.manifest_hash]),
+        "authority_source": "lab",
+        "authority_epoch": "lab:test",
+        "runtime_session_id": "session:test",
+        "producer_commit": "commit:test",
+        "exposed_at": "2026-08-01T12:00:00+00:00",
+        "imported_at": "2026-08-01T12:01:00+00:00",
+    }
+    lab = get_lab_db()
+    for receipt, assignment, candidate, changed in (
+        ("withdrawal-receipt-control", "control", "withdrawal-control", 0),
+        ("withdrawal-receipt-treatment", "treatment", "withdrawal-treatment", 1),
+    ):
+        row = {
+            **common,
+            "exposure_id": receipt,
+            "source_receipt_id": receipt,
+            "receipt_sequence": 1 if assignment == "control" else 2,
+            "assignment_unit_key": candidate,
+            "candidate_key": candidate,
+            "assignment": assignment,
+            "behavior_changed": changed,
+            "applied_payload_hash": "treatment" if changed else "baseline",
+            "applied_payload_json": json.dumps(
+                {"value": 2.0 if changed else 1.0}
+            ),
+            "outcome_candidate_key": candidate,
+            "resolution_reason": f"applied:{assignment}",
+        }
+        columns = ", ".join(row)
+        placeholders = ", ".join("?" for _ in row)
+        lab.execute(
+            f"INSERT INTO observation_exposures ({columns}) VALUES ({placeholders})",
+            tuple(row.values()),
+        )
+
+    evaluated = evaluate_observation(root["observation_id"], 1)
+    assert evaluated["available"] is True
+    assert evaluated["verdict"] == "negative"
+    evaluation_id = evaluated["evaluations"][0]["evaluation_id"]
+    event_id = evaluated["safety_action"]
+    assert event_id
+
+    assert tuple(lab.execute(
+        "SELECT status, terminal_reason FROM observation_windows "
+        "WHERE observation_id=? AND generation=1",
+        (root["observation_id"],),
+    ).fetchone()) == ("invalidated", "treatment cost-aware mean trails control")
+    assert tuple(lab.execute(
+        "SELECT action, to_status, source_receipt_id FROM observation_lifecycle_events "
+        "WHERE event_id=?",
+        (event_id,),
+    ).fetchone()) == ("auto_withdraw", "invalidated", evaluation_id)
+    assert lab.execute(
+        "SELECT manifest_hash, source_action_id FROM manifest_revocations "
+        "WHERE manifest_id=?",
+        (manifest.manifest_id,),
+    ).fetchone()[0:2] == (manifest.manifest_hash, evaluation_id)
+    assert apply_evaluation_safety_disposition(
+        observation_id=root["observation_id"], generation=1,
+        evaluation_id=evaluation_id, verdict="negative",
+        reason="treatment cost-aware mean trails control",
+    ) == event_id

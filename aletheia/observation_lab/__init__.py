@@ -80,6 +80,7 @@ from aletheia.observation_lab.canonical import (  # noqa: F401
     ObservationTreatmentDecision,
     TreatmentAdapter,
     append_delivery_receipt,
+    apply_evaluation_safety_disposition,
     append_lifecycle_event,
     build_authority_cutover_proof,
     compact_finalized_generations,
