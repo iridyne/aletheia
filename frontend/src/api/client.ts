@@ -2042,10 +2042,6 @@ export const api = {
 		post<{ old: boolean; new: boolean }>("/settings/bypass-distress-gate", {
 			enabled,
 		}),
-	setAiEntryHypothesis: (enabled: boolean) =>
-		post<{ old: boolean; new: boolean; activated_at: string | null }>("/settings/ai-entry-hypothesis", {
-			enabled,
-		}),
 	setExchangeMarkets: (body: {
 		spot: boolean;
 		usdt_futures: boolean;

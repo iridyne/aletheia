@@ -113,7 +113,7 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
     generation = {
         "id": "g1", "last_candidate_id": "c1", "venue": "bitget", "symbol": "BTC/USDT",
         "market_type": "perp", "candidate_family": "momentum", "direction": "long",
-        "planner_contract_version": "entry-planner/v3", "activation_identity": instant(1),
+        "planner_contract_version": "entry-planner/v3",
     }
     candidate = {
         "id": "c1", "snapshot_id": "s1", "asset_id": "asset-btc", "venue": "bitget",

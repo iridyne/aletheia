@@ -879,7 +879,6 @@ _PROTECTED_PATHS = {
     "/api/settings/permission-mode",
     "/api/settings/learning",
     "/api/settings/autonomous-learning",
-    "/api/settings/ai-entry-hypothesis",
     "/api/settings/trading-mandate",
     "/api/gateway/restart",
     "/api/gateway/stop",

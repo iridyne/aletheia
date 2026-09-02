@@ -95,11 +95,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Bypass distress gate'),
   })
-  const aiEntryMut = useMutation({
-    mutationFn: (enabled: boolean) => api.setAiEntryHypothesis(enabled),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
-    onError: onSaveError('AI Entry hypothesis'),
-  })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
@@ -135,7 +130,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
   const bypassDistressGate = !!agent.bypass_distress_gate
-  const aiEntryEnabled = !!agent.ai_entry_hypothesis_enabled
   const schedulerEnabled = runtime.scheduler_enabled !== false
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
   const piDaemon = (settings?.pi_daemon ?? {}) as any
@@ -225,9 +219,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         </Row>
         <Row label="Bypass distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the System Operator prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
           <Toggle checked={bypassDistressGate} persistence="immediate" onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
-        </Row>
-        <Row label="AI Entry hypothesis" hint={`Forward-only Planner V3 for new Momentum snapshots in Paper mode. Activation: ${agent.ai_entry_hypothesis_activated_at || 'not active'}`}>
-          <Toggle checked={aiEntryEnabled} persistence="immediate" onChange={v => aiEntryMut.mutate(v)} disabled={aiEntryMut.isPending} />
         </Row>
         <Collapsible title="Paper Learning Experiments">
           <p className="hint mb-2">Measured Paper Learning capability defaults on. A Shadow experiment still has no influence until explicit owner admission, and Learning never affects live trading.</p>

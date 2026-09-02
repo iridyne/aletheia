@@ -173,17 +173,7 @@ def test_bound_planner_input_prevents_candidate_retargeting():
         )
 
 
-def test_ai_entry_activation_is_forward_only_and_reenable_rotates_identity():
-    from aletheia.config.loader import load_config, save_config
-
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.live.state = "live_disabled"
-    cfg.agent.permission_mode = "Paper"
-    cfg.agent.ai_entry_hypothesis_enabled = True
-    cfg.agent.ai_entry_hypothesis_activated_at = datetime(2026, 9, 2, 1, tzinfo=timezone.utc)
-    save_config(cfg)
-
+def test_momentum_defaults_to_v3_without_activation_identity():
     old_snapshot = UniverseSnapshot(
         created_at="2026-09-02T00:59:59+00:00", expires_at="2099-01-01T00:00:00+00:00"
     )
@@ -195,24 +185,16 @@ def test_ai_entry_activation_is_forward_only_and_reenable_rotates_identity():
         expires_at="2099-01-01T00:00:00+00:00",
     )
     repo.insert_candidate(old)
-    legacy, _ = repo.ensure_candidate_planning_generation(old.id)
+    momentum, _ = repo.ensure_candidate_planning_generation(old.id)
+    assert momentum["planner_contract_version"] == "entry-planner/v3"
+    assert momentum["activation_identity"] is None
+
+    non_momentum = _candidate(
+        asset_id="asset-breakout", symbol="BREAKOUT/USDT", scanner_family="breakout"
+    )
+    legacy, _ = repo.ensure_candidate_planning_generation(non_momentum.id)
     assert legacy["planner_contract_version"] == "entry-planner/v2"
     assert legacy["activation_identity"] is None
-
-    current = _candidate(asset_id="asset-new", symbol="NEW/USDT")
-    v3, _ = repo.ensure_candidate_planning_generation(current.id)
-    assert v3["planner_contract_version"] == "entry-planner/v3"
-    first_activation = v3["activation_identity"]
-
-    cfg.agent.ai_entry_hypothesis_enabled = False
-    save_config(cfg)
-    cfg.agent.ai_entry_hypothesis_enabled = True
-    cfg.agent.ai_entry_hypothesis_activated_at = datetime(2026, 9, 2, 2, tzinfo=timezone.utc)
-    save_config(cfg)
-    newer = _candidate(rank=2, asset_id="asset-new", symbol="NEW/USDT")
-    rotated, created = repo.ensure_candidate_planning_generation(newer.id)
-    assert created and rotated["id"] != v3["id"]
-    assert rotated["activation_identity"] != first_activation
 
 
 @pytest.mark.parametrize("terminal_status", ["unavailable", "no_plan", "planned"])
@@ -240,7 +222,7 @@ def test_planner_contract_upgrade_supersedes_each_durable_result_once(terminal_s
     old = repo.get_candidate_planning_generation(generation["id"])
     assert created is True and created_again is False
     assert same["id"] == current["id"]
-    assert current["planner_contract_version"] == "entry-planner/v2"
+    assert current["planner_contract_version"] == "entry-planner/v3"
     assert old["is_current"] == 0
     assert old["attention_terminal_reason"] == "planning_contract_superseded"
     assert old["result_json"] == original_result
@@ -254,7 +236,7 @@ def test_planner_contract_upgrade_supersedes_each_durable_result_once(terminal_s
     )
     [current_projection] = repo.list_current_candidate_workbench(refreshed.snapshot_id)
     history = {row["id"]: row for row in repo.list_planning_history()}
-    assert current_projection["planner_contract_version"] == "entry-planner/v2"
+    assert current_projection["planner_contract_version"] == "entry-planner/v3"
     assert history[generation["id"]]["planner_contract_version"] == "entry-planner/v1"
     assert history[generation["id"]]["attention_terminal_reason"] == (
         "planning_contract_superseded"
@@ -488,7 +470,7 @@ def test_completed_refresh_terminal_reasons_require_exact_eligibility_evidence()
 
 
 def test_no_plan_is_durable_until_new_generation():
-    candidate = _candidate()
+    candidate = _candidate(scanner_family="breakout")
     repo.ensure_candidate_planning_generation(candidate.id)
     calls = 0
 
@@ -501,7 +483,7 @@ def test_no_plan_is_durable_until_new_generation():
     assert asyncio.run(plan_next_candidate(planner))["status"] == "idle"
     assert calls == 1
 
-    replacement = _candidate(regime="sideways")
+    replacement = _candidate(regime="sideways", scanner_family="breakout")
     next_generation, created = repo.ensure_candidate_planning_generation(replacement.id)
     assert created is True
     assert next_generation["id"] != candidate.id
@@ -510,7 +492,7 @@ def test_no_plan_is_durable_until_new_generation():
 
 
 def test_plan_intent_no_plan_persists_reason_code(monkeypatch):
-    candidate = _candidate()
+    candidate = _candidate(scanner_family="breakout")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
 
     def unexpected_defer(*_args, **_kwargs):
@@ -533,6 +515,11 @@ def test_entry_planner_persists_plan_for_paper_internal():
 
     candidate = _candidate()
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    # Exercise the still-supported historical Planner V2/Entry Plan V1 path.
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET planner_contract_version='entry-planner/v2' WHERE id=?",
+        (generation["id"],),
+    )
     db = repo.get_db()
     db.execute(
         "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?, ?, ?, ?)",
@@ -748,11 +735,8 @@ def test_ai_entry_v3_frozen_lineage_reaches_attributed_proposal(monkeypatch):
     from aletheia.universe.fast_stream import FastMarketEvent
     from aletheia.universe.fast_trigger import TriggerPolicy
 
-    activation = datetime.now(timezone.utc) - timedelta(seconds=1)
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
-    cfg.agent.ai_entry_hypothesis_enabled = True
-    cfg.agent.ai_entry_hypothesis_activated_at = activation
     cfg.exchange.paper_execution_mode = "paper_internal"
     cfg.live.state = "live_disabled"
     save_config(cfg)
@@ -774,7 +758,7 @@ def test_ai_entry_v3_frozen_lineage_reaches_attributed_proposal(monkeypatch):
     context = EntryAnalysisContextV1(
         analysis_cutoff_at=datetime.now(timezone.utc).isoformat(),
         instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
-        planning_generation={"id": generation["id"], "planner_contract_version": "entry-planner/v3", "activation_identity": generation["activation_identity"], "candidate_id": candidate.id, "candidate_family": "momentum"},
+        planning_generation={"id": generation["id"], "planner_contract_version": "entry-planner/v3", "candidate_id": candidate.id, "candidate_family": "momentum"},
         candidate={"candidate_price": 100, "fact_refs": [f"candidate:{candidate.id}"]},
         candle_windows={"4h": {"availability": "unavailable", "bars": []}, "1h": {"availability": "unavailable", "bars": []}, "15m": {"availability": "available", "bars": [{} for _ in range(96)]}},
         market_structure={"15m": {"atr14": 2.0, "break_tolerance": 0.1}, "fact_refs": []},
@@ -983,7 +967,7 @@ def test_unsupported_candidate_family_trigger_terminalizes_once():
 
 
 def test_missing_trigger_identity_terminalizes_after_one_physical_call(monkeypatch):
-    candidate = _candidate()
+    candidate = _candidate(scanner_family="breakout")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     calls = 0
 
@@ -1111,7 +1095,7 @@ def test_system_operator_canonicalizes_no_plan_execution_noise(monkeypatch):
 
 
 def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch):
-    candidate = _candidate()
+    candidate = _candidate(scanner_family="breakout")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
 
     async def empty_structured(*_args, **_kwargs):
@@ -1127,7 +1111,7 @@ def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch)
 
 
 def test_planner_schema_invalid_records_planner_schema_invalid_reason(monkeypatch):
-    candidate = _candidate()
+    candidate = _candidate(scanner_family="breakout")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
 
     async def invalid_structured(*_args, **_kwargs):
@@ -1193,6 +1177,7 @@ def test_entry_planner_batch_claims_rank_order_before_parallel_planning(monkeypa
             rank=rank,
             asset_id=f"asset-{rank}",
             symbol=f"RANK{rank}/USDT",
+            scanner_family="breakout",
         )
         for rank in (4, 1, 3, 2)
     ]
@@ -1258,7 +1243,7 @@ def test_ineligible_candidate_cannot_complete_claimed_entry_plan():
 
 
 def test_local_broker_backpressure_does_not_consume_attempt():
-    candidate = _candidate()
+    candidate = _candidate(scanner_family="breakout")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
 
     async def refused(_context):

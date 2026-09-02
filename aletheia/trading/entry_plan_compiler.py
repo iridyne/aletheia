@@ -473,7 +473,6 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     if (
         context_generation.get("id") != generation.get("id")
         or context_generation.get("planner_contract_version") != "entry-planner/v3"
-        or context_generation.get("activation_identity") != generation.get("activation_identity")
         or instrument.get("venue") != generation.get("venue")
         or instrument.get("symbol") != generation.get("symbol")
         or instrument.get("market_type") != generation.get("market_type")

@@ -8716,35 +8716,22 @@ def ensure_candidate_planning_generation(
 
     from aletheia.storage.models import AI_ENTRY_PLANNER_CONTRACT_VERSION
     from aletheia.trading.entry_plan import candidate_planning_identity
-    from aletheia.config.loader import load_config
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not 300 <= int(soft_lease_sec) <= int(max_attention_age_sec) <= 86_400:
         raise ValueError("candidate_attention_bounds_invalid")
     timestamp = current_time.isoformat()
-    # Config is filesystem-backed. Resolve it before taking the SQLite write lock.
-    agent = load_config(persist_migrations=False).agent
     with transaction(immediate=True):
         candidate = get_candidate(candidate_id)
         if candidate is None:
             raise ValueError("candidate_not_found")
         if not bool(candidate.get("execution_eligible")):
             raise ValueError("candidate_execution_ineligible")
-        planner_contract_version = PLANNER_CONTRACT_VERSION
-        activation_identity = None
-        if str(candidate.get("scanner_family") or "") == "momentum":
-            activated_at = agent.ai_entry_hypothesis_activated_at
-            snapshot = get_db().execute(
-                "SELECT created_at FROM universe_snapshots WHERE id=?",
-                (candidate.get("snapshot_id"),),
-            ).fetchone()
-            if agent.ai_entry_hypothesis_enabled and activated_at is not None and snapshot is not None:
-                snapshot_at = datetime.fromisoformat(str(snapshot["created_at"]).replace("Z", "+00:00"))
-                if snapshot_at.tzinfo is None:
-                    snapshot_at = snapshot_at.replace(tzinfo=timezone.utc)
-                if snapshot_at.astimezone(timezone.utc) >= activated_at.astimezone(timezone.utc):
-                    planner_contract_version = AI_ENTRY_PLANNER_CONTRACT_VERSION
-                    activation_identity = activated_at.astimezone(timezone.utc).isoformat()
+        planner_contract_version = (
+            AI_ENTRY_PLANNER_CONTRACT_VERSION
+            if str(candidate.get("scanner_family") or "") == "momentum"
+            else PLANNER_CONTRACT_VERSION
+        )
         planning_key, planning_identity = candidate_planning_identity(candidate)
         existing_row = (
             get_db()
@@ -8769,7 +8756,6 @@ def ensure_candidate_planning_generation(
             and not eligibility_recovered
             and existing["planning_identity"] == planning_identity
             and existing["planner_contract_version"] == planner_contract_version
-            and existing.get("activation_identity") == activation_identity
         ):
             execute_write(
                 "UPDATE candidate_planning_generations SET "
@@ -8789,10 +8775,7 @@ def ensure_candidate_planning_generation(
             if eligibility_recovered
             else "planning_contract_superseded"
             if existing is not None
-            and (
-                existing["planner_contract_version"] != planner_contract_version
-                or existing.get("activation_identity") != activation_identity
-            )
+            and existing["planner_contract_version"] != planner_contract_version
             else "incompatible_planning_generation"
         )
         if existing is not None:
@@ -8832,7 +8815,6 @@ def ensure_candidate_planning_generation(
             hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
             attention_max_age_sec=int(max_attention_age_sec),
             planner_contract_version=planner_contract_version,
-            activation_identity=activation_identity,
         )
         data = _stamp_provenance(generation.model_dump())
         _insert("candidate_planning_generations", data)
@@ -9145,8 +9127,6 @@ def complete_candidate_planning_with_plan(
                 != fingerprint(frozen_context.model_dump(mode="json"))
                 or plan.analysis_context_fingerprint
                 != frozen_context.context_fingerprint
-                or row["activation_identity"]
-                != frozen_context.planning_generation.get("activation_identity")
             ):
                 raise ValueError("entry_plan_frozen_context_mismatch")
         if (
