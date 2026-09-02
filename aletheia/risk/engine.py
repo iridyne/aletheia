@@ -1909,6 +1909,20 @@ def _portfolio_drawdown_assessment(execution_mode: str, cfg=None) -> tuple[float
         if len(mode_snapshots) < 3:
             return 1.0, False
 
+        from aletheia.agent_runtime.scheduler import (
+            PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS,
+        )
+        latest_at = datetime.fromisoformat(
+            str(mode_snapshots[-1].get("snapshot_at") or "").replace("Z", "+00:00")
+        )
+        if latest_at.tzinfo is None:
+            return 1.0, False
+        age_seconds = (
+            datetime.now(timezone.utc) - latest_at.astimezone(timezone.utc)
+        ).total_seconds()
+        if not 0 <= age_seconds <= PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS:
+            return 1.0, False
+
         values = [float(s.get("total_value_usdt") or 0) for s in mode_snapshots]
         peak = max(values)
         current = values[-1]

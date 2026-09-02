@@ -748,17 +748,20 @@ def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
               "_portfolio_drawdown_scale returns correct piecewise values"),
 )
 def test_drawdown_scale_piecewise(monkeypatch):
+    from datetime import datetime, timezone
+
     from aletheia.risk.engine import _portfolio_drawdown_scale
 
     def _mock_snapshots(limit=50):
         peak = 1000.0
         current_pct = _mock_snapshots._dd_pct
         current = peak * (1 - current_pct / 100)
+        snapshot_at = datetime.now(timezone.utc).isoformat()
         return [
-            {"total_value_usdt": peak, "execution_mode": "exchange_account"},
-            {"total_value_usdt": peak, "execution_mode": "exchange_account"},
-            {"total_value_usdt": peak, "execution_mode": "exchange_account"},
-            {"total_value_usdt": current, "execution_mode": "exchange_account"},
+            {"total_value_usdt": peak, "execution_mode": "exchange_account", "snapshot_at": snapshot_at},
+            {"total_value_usdt": peak, "execution_mode": "exchange_account", "snapshot_at": snapshot_at},
+            {"total_value_usdt": peak, "execution_mode": "exchange_account", "snapshot_at": snapshot_at},
+            {"total_value_usdt": current, "execution_mode": "exchange_account", "snapshot_at": snapshot_at},
         ]
 
     monkeypatch.setattr(
