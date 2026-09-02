@@ -1,5 +1,6 @@
 """Focused regressions for Universe feature collection."""
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -8,6 +9,118 @@ import pytest
 class _Exchange:
     def __init__(self, markets):
         self.markets = markets
+
+
+@pytest.mark.asyncio
+async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
+    monkeypatch,
+):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data import ccxt_provider
+    from aletheia.universe import features
+
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.market_data.ccxt_fallback = "okx"
+    cfg.universe.min_volume_24h_usdt = 0
+    assets = [
+        {
+            "id": "spot-eth",
+            "symbol": "ETH/USDT",
+            "venue": "bitget",
+            "market_type": "spot",
+        },
+        {
+            "id": "perp-sol",
+            "symbol": "SOL/USDT",
+            "venue": "bitget",
+            "market_type": "perp",
+        },
+    ]
+    calls = []
+    barrier = asyncio.Event()
+    arrivals = 0
+
+    class Exchange:
+        id = "bitget"
+
+        def __init__(self):
+            self.options = {}
+            self.markets = {
+                "BTC/USDT": {},
+                "ETH/USDT": {},
+                "SOL/USDT:USDT": {"contract": True, "contractSize": 1},
+            }
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_tickers(self, symbols):
+            calls.append(("tickers", tuple(symbols), self.options.get("defaultType")))
+            return {
+                symbol: {"last": 100.0, "quoteVolume": 1_000_000.0}
+                for symbol in symbols
+            }
+
+        async def fetch_ohlcv(self, symbol, timeframe, limit):
+            nonlocal arrivals
+            if timeframe == "feature":
+                arrivals += 1
+                if arrivals == 2:
+                    barrier.set()
+                await asyncio.wait_for(barrier.wait(), timeout=1)
+                await asyncio.sleep(0)
+            mode = self.options.get("defaultType")
+            calls.append(("ohlcv", symbol, timeframe, mode))
+            if timeframe == "1h":
+                return [[index, 1, 1, 1, 100 + index, 1] for index in range(limit)]
+            return [{"physical_market_type": mode}]
+
+    class Provider:
+        instances = []
+
+        def __init__(self, *, exchange, fallback_exchange):
+            assert (exchange, fallback_exchange) == ("bitget", "okx")
+            self.exchange = Exchange()
+            self.closed = False
+            self.instances.append(self)
+
+        def _ensure_primary(self):
+            return self.exchange
+
+        async def close(self):
+            self.closed = True
+
+    async def fetch_single(exchange, asset, *_args, **_kwargs):
+        symbol = (
+            f"{asset['symbol']}:USDT"
+            if asset["market_type"] == "perp"
+            else asset["symbol"]
+        )
+        physical = await exchange.fetch_ohlcv(symbol, "feature", 1)
+        return {
+            "asset_id": asset["id"],
+            "market_type": asset["market_type"],
+            "physical_market_type": physical[0]["physical_market_type"],
+        }
+
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
+    monkeypatch.setattr(features, "_fetch_single_feature", fetch_single)
+    monkeypatch.setattr(
+        features,
+        "instrument_background_from_metadata",
+        lambda _value: {"asset_class": "crypto", "product_kind": "crypto_spot"},
+    )
+
+    collected = await features.collect_features(assets, cfg)
+
+    assert len(Provider.instances) == 2
+    assert all(provider.closed for provider in Provider.instances)
+    assert {row["market_type"]: row["physical_market_type"] for row in collected} == {
+        "spot": "spot",
+        "perp": "swap",
+    }
+    assert ("ohlcv", "BTC/USDT", "1h", "spot") in calls
 
 
 def test_quote_volume_prefers_exchange_quote_volume():
