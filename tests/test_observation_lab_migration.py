@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from aletheia.learning.ledger import insert_experiment, insert_exposure, insert_hypothesis
 from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 
@@ -165,3 +167,54 @@ def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
     assert nomination["disposition"] == "rejected"
     assert nomination["rejection_reason"] == "retired_strategy_engine"
     assert "retired-experiment" in nomination["snapshot_json"]
+
+
+def test_lab_cutover_refuses_unimported_legacy_rows():
+    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
+    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+    from aletheia.observation_lab.canonical import set_authority_source
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="cutover-block-hypothesis",
+        fingerprint="cutover-block-fingerprint",
+        cohort_id="cutover-block-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="test",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    insert_experiment(LearningExperiment(
+        experiment_id="cutover-block-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        stage="shadow",
+        assignment_salt="cutover-block-salt",
+        started_at="2026-01-01T00:00:00+00:00",
+    ))
+
+    with pytest.raises(RuntimeError, match="authority_cutover_legacy_import_checkpoint_missing"):
+        set_authority_source("lab", actor="test", reason="must import first")
+
+
+def test_explicit_lab_retirement_drops_legacy_runtime_and_restores_foreign_keys():
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.storage.migrations import (
+        _LEGACY_EXPERIMENT_DROP_ORDER,
+        retire_legacy_experiment_tables,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    set_authority_source("lab", actor="test", reason="empty schema cutover")
+    db = get_db()
+    db.execute("PRAGMA foreign_keys=ON")
+    result = retire_legacy_experiment_tables()
+    assert result["available"] is True
+    assert result["dropped"]
+    assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    for table in _LEGACY_EXPERIMENT_DROP_ORDER:
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None

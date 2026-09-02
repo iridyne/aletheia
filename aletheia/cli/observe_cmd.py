@@ -740,19 +740,18 @@ def migrate_learning_ledger(
     if retire_legacy_schema and not apply_migration:
         typer.echo("--retire-legacy-schema requires --apply", err=True)
         raise typer.Exit(code=1)
-    payload = (
-        apply_legacy_learning_migration(archive_root=str(archive_root) if archive_root else None)
-        if apply_migration
-        else plan_legacy_learning_migration()
-    )
-    if retire_legacy_schema and payload.get("available", False):
-        from aletheia.storage.migrations import retire_legacy_experiment_tables
-
-        try:
-            payload["legacy_schema_retirement"] = retire_legacy_experiment_tables()
-        except Exception as exc:
-            typer.echo(f"legacy schema retirement refused: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
+    try:
+        payload = (
+            apply_legacy_learning_migration(
+                archive_root=str(archive_root) if archive_root else None,
+                retire_legacy_schema=retire_legacy_schema,
+            )
+            if apply_migration
+            else plan_legacy_learning_migration()
+        )
+    except Exception as exc:
+        typer.echo(f"legacy migration refused: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     if json_output:
         typer.echo(json.dumps(payload, indent=2, default=str))
         return

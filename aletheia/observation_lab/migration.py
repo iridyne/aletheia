@@ -627,8 +627,17 @@ def apply_legacy_learning_migration(
         "idempotent": True,
     }
     if retire_legacy_schema:
+        from aletheia.observation_lab.canonical import set_authority_source
         from aletheia.storage.migrations import retire_legacy_experiment_tables
 
+        # The explicit retirement flag is the cutover command: import first,
+        # then select Lab authority only after the deterministic checkpoint is
+        # durable, and finally remove the legacy runtime tables.
+        set_authority_source(
+            "lab",
+            actor="migration",
+            reason="legacy_import_and_schema_retirement",
+        )
         result["legacy_schema_retirement"] = retire_legacy_experiment_tables()
     return result
 

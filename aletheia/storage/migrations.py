@@ -4247,26 +4247,32 @@ def retire_legacy_experiment_tables(
             raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
 
     owns_transaction = not connection.in_transaction
-    if owns_transaction:
-        connection.execute("BEGIN IMMEDIATE")
+    if not owns_transaction:
+        raise MigrationStateError("legacy_experiment_retirement_requires_transaction_boundary")
+    foreign_keys_enabled = bool(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled:
+        # SQLite ignores PRAGMA foreign_keys while a transaction is active.
+        # Turn it off before beginning the one explicit DDL transaction, then
+        # restore the connection setting after commit/rollback.
+        connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("BEGIN IMMEDIATE")
     try:
         # Foreign-key references are all within the drop set.  Disabling FK
         # checks for this one explicit DDL transaction avoids ordering hazards
         # while preserving FK enforcement for every subsequent runtime write.
-        connection.execute("PRAGMA foreign_keys=OFF")
         dropped: list[str] = []
         for table in _LEGACY_EXPERIMENT_DROP_ORDER:
             if not existing[table]:
                 continue
             connection.execute(f'DROP TABLE "{table}"')
             dropped.append(table)
-        connection.execute("PRAGMA foreign_keys=ON")
-        if owns_transaction:
-            connection.commit()
+        connection.commit()
     except Exception:
-        if owns_transaction:
-            connection.rollback()
+        connection.rollback()
         raise
+    finally:
+        if foreign_keys_enabled:
+            connection.execute("PRAGMA foreign_keys=ON")
     return {"available": True, "dropped": dropped, "row_counts": counts}
 
 
@@ -7457,6 +7463,9 @@ def _apply_production_migrations(
 ) -> bool:
     _validate_migration_registry()
     db = get_db()
+    fresh_install = db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+    ).fetchone()[0] == 0
     acquire_write_lock(timeout=_MIGRATION_LOCK_TIMEOUT_SEC)
     try:
         _ensure_migration_ledger(db)
@@ -7531,7 +7540,25 @@ def _apply_production_migrations(
                 migration.checksum[:12],
                 duration_ms,
             )
+        fresh_lab_install = fresh_install and db.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+            "AND name IN ('observation_delivery_outbox', 'observation_authority_state')"
+        ).fetchone()[0] == 2
+        if fresh_lab_install:
+            # A new installation has no legacy evidence to preserve.  Start
+            # directly on the canonical Lab authority and remove the temporary
+            # compatibility tables created by the historical baseline DDL.
+            from aletheia.observation_lab.canonical import set_authority_source
+
+            set_authority_source(
+                "lab",
+                actor="schema_migration",
+                reason="fresh_install_lab_authority",
+                db=db,
+            )
         if retire_legacy_experiment_schema:
+            retire_legacy_experiment_tables(db)
+        elif fresh_lab_install:
             retire_legacy_experiment_tables(db)
         return bool(pending)
     finally:

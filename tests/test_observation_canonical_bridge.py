@@ -89,6 +89,57 @@ def test_lab_v2_schema_and_authority_start_legacy():
     assert get_authority_source().source == "legacy"
 
 
+def test_bridge_health_reports_only_current_unrevoked_manifests():
+    from aletheia.observation_lab.canonical import (
+        observation_bridge_health,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.manifest import publish_manifest
+    from aletheia.observation_lab.db import get_lab_db
+
+    set_authority_source("lab", actor="owner", reason="bridge-health-test")
+    lab = get_lab_db()
+    for observation_id in ("obs-health-active", "obs-health-expired", "obs-health-revoked"):
+        lab.execute(
+            "INSERT INTO observation_windows "
+            "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+            "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+            "VALUES (?, 'filter_shadow', 'canonical-v1', 1, ?, 'observe_only', 'active', '{}', ?, "
+            "'2020-01-01T00:00:00+00:00', '9999-12-31T00:00:00+00:00', "
+            "'9999-12-31T00:00:00+00:00')",
+            (observation_id, f"slot:{observation_id}", f"spec:{observation_id}"),
+        )
+    publish_manifest(_manifest(observation_id="obs-health-active", spec_hash="spec:obs-health-active"))
+    publish_manifest(_manifest(
+        observation_id="obs-health-expired",
+        spec_hash="spec:obs-health-expired",
+        effective_from="2020-01-01T00:00:00+00:00",
+        effective_until="2021-01-01T00:00:00+00:00",
+    ))
+    revoked = _manifest(
+        observation_id="obs-health-revoked",
+        spec_hash="spec:obs-health-revoked",
+    )
+    publish_manifest(revoked)
+    lab.execute(
+        "INSERT INTO manifest_revocations "
+        "(revocation_id, manifest_id, manifest_hash, observation_id, generation, revoked_at, reason, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "health-revocation", revoked.manifest_id, revoked.manifest_hash,
+            revoked.observation_id, revoked.generation,
+            "2020-01-02T00:00:00+00:00", "test", "2020-01-02T00:00:00+00:00",
+        ),
+    )
+
+    health = observation_bridge_health()
+
+    assert health["available"] is True
+    assert health["active_manifest_count"] == 1
+    assert health["active_revocation_count"] == 1
+    assert health["manifest_contracts"] == ["execution-manifest/v2"]
+
+
 def test_missing_authority_row_fails_closed():
     from aletheia.observation_lab.canonical import get_authority_source
     from aletheia.storage.sqlite import get_db
@@ -103,6 +154,7 @@ def test_missing_authority_row_fails_closed():
 def test_lab_authority_resolves_and_imports_one_receipt():
     from aletheia.observation_lab.canonical import (
         import_delivery_receipts,
+        prune_observation_delivery_outbox,
         register_treatment_adapter,
         register_observation_spec,
         resolve_observation_treatment,
@@ -158,6 +210,73 @@ def test_lab_authority_resolves_and_imports_one_receipt():
     # At-least-once retry is exactly-once at the Lab ledger.
     assert import_delivery_receipts()["processed"] == 0
     assert get_lab_db().execute("SELECT COUNT(*) FROM observation_exposures").fetchone()[0] == 1
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", decision.receipt_id),
+    )
+    assert prune_observation_delivery_outbox(keep_acknowledged=0)["deleted"] == 1
+
+
+def test_lab_outbox_prune_stays_unavailable_without_import_proof():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        prune_observation_delivery_outbox,
+        set_authority_source,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    set_authority_source("lab", actor="owner", reason="prune-proof-test")
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="capture-prune-proof",
+        candidate_key="candidate-prune-proof",
+        assignment="unassigned",
+        resolution_reason="adapter_unavailable",
+        authority_source="lab",
+    )
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", receipt_id),
+    )
+
+    result = prune_observation_delivery_outbox(keep_acknowledged=0)
+
+    assert result == {
+        "available": False,
+        "reason": "replay_proof_unavailable",
+        "deleted": 0,
+        "authority_source": "lab",
+    }
+
+
+def test_identityless_capture_receipt_is_imported_as_non_authorizing_lab_audit():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        import_delivery_receipts,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+
+    set_authority_source("lab", actor="owner", reason="capture-import-test")
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="capture-without-generation",
+        candidate_key="candidate-capture",
+        assignment="unassigned",
+        resolution_reason="adapter_unavailable",
+        authority_source="lab",
+    )
+    assert import_delivery_receipts()["processed"] == 1
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE source_receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] == 0
+    audit = get_lab_db().execute(
+        "SELECT payload_json FROM lab_audit_outbox WHERE dedup_key=?",
+        (f"observation-receipt-capture:{receipt_id}",),
+    ).fetchone()
+    assert audit is not None
+    assert receipt_id in audit[0]
 
 
 def test_legacy_assignment_namespace_and_denominator_are_bitwise_compatible():

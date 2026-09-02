@@ -7213,6 +7213,7 @@ def _active_observation_claim_refs(domain: str) -> tuple[str, ...]:
             aliases = {domain}
             if domain.endswith("outcomes"):
                 aliases.update({"outcome", "outcomes"})
+            aliases = tuple(sorted(aliases))
             placeholders = ",".join("?" for _ in aliases)
             rows = lab.execute(
                 "SELECT source_ref FROM observation_retention_claims WHERE status='active' "

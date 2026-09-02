@@ -1929,6 +1929,10 @@ def resolve_observation_treatment(
                     manifest for manifest in manifests
                     if manifest.treatment_adapter_id == adapter_id
                 ]
+                active_relevant_manifests = [
+                    manifest for manifest in active_manifests
+                    if manifest.treatment_adapter_id == adapter_id
+                ]
                 inactive_manifest = next(
                     (
                         manifest for manifest in relevant_manifests
@@ -1965,8 +1969,19 @@ def resolve_observation_treatment(
                             revoked.add(str(row[0]))
                     except (TypeError, ValueError, OverflowError) as exc:
                         raise ValueError("manifest_revocation_timestamp_unavailable") from exc
+                active_unrevoked_manifests = [
+                    manifest for manifest in active_manifests
+                    if manifest.manifest_hash not in revoked
+                ]
+                active_relevant_unrevoked_manifests = [
+                    manifest for manifest in active_relevant_manifests
+                    if manifest.manifest_hash not in revoked
+                ]
                 revoked_manifest = next(
-                    (manifest for manifest in relevant_manifests if manifest.manifest_hash in revoked),
+                    (
+                        manifest for manifest in active_relevant_manifests
+                        if manifest.manifest_hash in revoked
+                    ),
                     None,
                 )
                 snapshot_args = {
@@ -1974,14 +1989,14 @@ def resolve_observation_treatment(
                     "manifest_set_fingerprint": snapshot_fingerprint,
                     "revocation_snapshot_fingerprint": revocation_fingerprint,
                 }
-                if inactive_manifest is not None:
+                if not active_relevant_unrevoked_manifests and inactive_manifest is not None:
                     result = _decision(
                         baseline_value,
                         reason="observation_generation_not_active",
                         manifest=inactive_manifest,
                         **snapshot_args,
                     )
-                elif revoked_manifest is not None:
+                elif not active_relevant_unrevoked_manifests and revoked_manifest is not None:
                     result = _decision(
                         baseline_value,
                         reason="manifest_revoked",
@@ -1990,7 +2005,7 @@ def resolve_observation_treatment(
                     )
                 else:
                     incompatible = [
-                        m for m in active_manifests
+                        m for m in active_unrevoked_manifests
                         if m.treatment_adapter_id == adapter_id
                         and m.treatment_adapter_version != adapter.adapter_version
                     ]
@@ -2003,7 +2018,7 @@ def resolve_observation_treatment(
                         )
                     else:
                         eligible = []
-                        for manifest in active_manifests:
+                        for manifest in active_unrevoked_manifests:
                             if manifest.treatment_adapter_id != adapter_id:
                                 continue
                             try:
@@ -2027,7 +2042,7 @@ def resolve_observation_treatment(
                             else:
                                 from aletheia.observation_lab.conflict import resolve_manifest_conflict
 
-                                conflict = resolve_manifest_conflict(active_manifests)
+                                conflict = resolve_manifest_conflict(active_unrevoked_manifests)
                                 if conflict.outcome.startswith("undeclared_conflict"):
                                     result = _decision(
                                         baseline_value,
@@ -2943,7 +2958,7 @@ def prune_observation_delivery_outbox(
     try:
         db = get_db()
         rows = db.execute(
-            "SELECT sequence, acknowledged_at FROM observation_delivery_outbox "
+            "SELECT sequence, receipt_id, acknowledged_at FROM observation_delivery_outbox "
             "WHERE acknowledged_at IS NOT NULL ORDER BY sequence DESC",
         ).fetchall()
         cutoff = datetime.now(timezone.utc) - timedelta(
@@ -2953,7 +2968,7 @@ def prune_observation_delivery_outbox(
         for row in rows[keep:]:
             try:
                 acknowledged_at = datetime.fromisoformat(
-                    str(row[1]).replace("Z", "+00:00")
+                    str(row[2]).replace("Z", "+00:00")
                 )
                 if acknowledged_at.tzinfo is None or acknowledged_at > cutoff:
                     continue
@@ -2994,9 +3009,12 @@ def prune_observation_delivery_outbox(
                     retry = json.loads(cursor[1] or "[]")
                     valid_checkpoint = (
                         isinstance(checkpoint, dict)
+                        and checkpoint.get("source_name") == "main"
                         and isinstance(retry, list)
                         and isinstance(cursor[3], str)
                         and _hash(checkpoint) == cursor[3]
+                        and isinstance(checkpoint.get("receipt_chain_fingerprint"), str)
+                        and len(checkpoint["receipt_chain_fingerprint"]) == 64
                         and int(checkpoint.get("contiguous_sequence", -1)) >= int(cursor[0])
                         and not any(int(item) in sequences for item in retry)
                         and all(int(sequence) <= int(checkpoint["contiguous_sequence"]) for sequence in sequences)
@@ -3004,6 +3022,65 @@ def prune_observation_delivery_outbox(
                 except (TypeError, ValueError, json.JSONDecodeError):
                     valid_checkpoint = False
                 if not valid_checkpoint:
+                    return {
+                        "available": False,
+                        "reason": "replay_proof_unavailable",
+                        "deleted": 0,
+                        "authority_source": authority.source,
+                    }
+                # Check the exact source identities in canonical Lab evidence,
+                # including compact archives after hot-row eviction.  A cursor
+                # hash by itself cannot prove that the rows being deleted were
+                # actually imported.
+                receipt_ids = {str(row[1]) for row in rows if int(row[0]) in sequences}
+                covered_receipts = {
+                    str(row[0])
+                    for row in lab.execute(
+                        "SELECT source_receipt_id FROM observation_exposures "
+                        "WHERE source_receipt_id IS NOT NULL"
+                    ).fetchall()
+                }
+                covered_receipts.update(
+                    str(row[0])
+                    for row in lab.execute(
+                        "SELECT source_receipt_id FROM observation_lifecycle_events "
+                        "WHERE source_receipt_id IS NOT NULL"
+                    ).fetchall()
+                )
+                for audit in lab.execute(
+                    "SELECT payload_json FROM lab_audit_outbox"
+                ).fetchall():
+                    try:
+                        payload = json.loads(audit[0] or "{}")
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    if isinstance(payload, dict) and payload.get("source_receipt_id"):
+                        covered_receipts.add(str(payload["source_receipt_id"]))
+                import gzip
+                from pathlib import Path
+
+                for archive in lab.execute(
+                    "SELECT archive_path, archive_sha256, replay_fingerprint "
+                    "FROM observation_archives"
+                ).fetchall():
+                    try:
+                        data = Path(str(archive[0])).read_bytes()
+                        if hashlib.sha256(data).hexdigest() != str(archive[1]):
+                            continue
+                        payload = json.loads(gzip.decompress(data))
+                        replay = payload.get("replay_fingerprint")
+                        candidate = dict(payload)
+                        candidate.pop("replay_fingerprint", None)
+                        if replay != str(archive[2]) or replay != _hash(candidate):
+                            continue
+                        archive_rows = payload.get("rows") or {}
+                        for key in ("exposures", "lifecycle_events"):
+                            for item in archive_rows.get(key) or ():
+                                if isinstance(item, dict) and item.get("source_receipt_id"):
+                                    covered_receipts.add(str(item["source_receipt_id"]))
+                    except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                if not receipt_ids.issubset(covered_receipts):
                     return {
                         "available": False,
                         "reason": "replay_proof_unavailable",
@@ -3185,7 +3262,8 @@ def observation_bridge_health() -> dict[str, Any]:
                     "storage": {"app_db": app_files, "lab_db": lab_files},
                 }
             cursor = lab.execute(
-                "SELECT contiguous_sequence, retry_sequences_json FROM observation_import_cursors WHERE source_name='main'"
+                "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json "
+                "FROM observation_import_cursors WHERE source_name='main'"
             ).fetchone()
             health = lab.execute(
                 "SELECT status, input_watermark, backlog_count, last_started_at, last_succeeded_at, "
@@ -3193,18 +3271,49 @@ def observation_bridge_health() -> dict[str, Any]:
                 "WHERE job_id='delivery_importer'"
             ).fetchone()
             manifest_rows = lab.execute(
-                "SELECT manifest_hash, manifest_contract_version, effect_mode, created_at "
-                "FROM execution_manifests ORDER BY created_at DESC"
+                "SELECT manifest_hash, manifest_contract_version, effect_mode, created_at, "
+                "effective_from, effective_until, observation_windows.status "
+                "FROM execution_manifests LEFT JOIN observation_windows "
+                "ON observation_windows.observation_id=execution_manifests.observation_id "
+                "AND observation_windows.generation=execution_manifests.generation "
+                "ORDER BY execution_manifests.created_at DESC"
             ).fetchall()
             revocation_rows = lab.execute(
                 "SELECT manifest_hash, revoked_at, reason FROM manifest_revocations "
                 "ORDER BY manifest_hash, revoked_at"
             ).fetchall()
+            snapshot_now = datetime.now(timezone.utc)
+            active_rows = []
+            for row in manifest_rows:
+                start = datetime.fromisoformat(str(row[4]).replace("Z", "+00:00"))
+                end = (
+                    datetime.fromisoformat(str(row[5]).replace("Z", "+00:00"))
+                    if row[5] is not None else None
+                )
+                if (
+                    start.tzinfo is None
+                    or start.utcoffset() != timedelta(0)
+                    or (end is not None and (end.tzinfo is None or end.utcoffset() != timedelta(0)))
+                    or (row[6] is not None and str(row[6]) != "active")
+                ):
+                    raise ValueError("manifest_interval_timezone_unavailable")
+                if start <= snapshot_now and (end is None or end > snapshot_now):
+                    active_rows.append(row)
+            effective_revocations = []
+            revoked_hashes = set()
+            for row in revocation_rows:
+                revoked_at = datetime.fromisoformat(str(row[1]).replace("Z", "+00:00"))
+                if revoked_at.tzinfo is None or revoked_at.utcoffset() != timedelta(0):
+                    raise ValueError("manifest_revocation_timezone_unavailable")
+                if revoked_at <= snapshot_now:
+                    effective_revocations.append(row)
+                    revoked_hashes.add(str(row[0]))
+            active_rows = [row for row in active_rows if str(row[0]) not in revoked_hashes]
             manifest_snapshot = _hash({
-                "manifests": [tuple(row) for row in manifest_rows],
-                "revocations": [tuple(row) for row in revocation_rows],
+                "manifests": [tuple(row) for row in active_rows],
+                "revocations": [tuple(row) for row in effective_revocations],
             })
-            latest_manifest_at = manifest_rows[0][3] if manifest_rows else None
+            latest_manifest_at = active_rows[0][3] if active_rows else None
             claims = lab.execute(
                 "SELECT COUNT(*) FROM observation_retention_claims WHERE status='active'"
             ).fetchone()[0]
@@ -3241,6 +3350,20 @@ def observation_bridge_health() -> dict[str, Any]:
             except (TypeError, ValueError, OSError):
                 latest_manifest_age = None
             retry_sequences = json.loads(cursor[1]) if cursor else None
+            proven_missing = None
+            if cursor and cursor[2]:
+                try:
+                    checkpoint = json.loads(cursor[2])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    checkpoint = None
+                candidate_missing = (
+                    checkpoint.get("proven_missing_committed_receipts")
+                    if isinstance(checkpoint, dict) else None
+                )
+                if isinstance(candidate_missing, list) and all(
+                    isinstance(item, int) and item >= 0 for item in candidate_missing
+                ):
+                    proven_missing = candidate_missing
             return {
                 "available": True,
                 "authority_source": authority.source,
@@ -3253,17 +3376,17 @@ def observation_bridge_health() -> dict[str, Any]:
                 "outbox_application_counts": application_counts,
                 "lab_imported_watermark": int(cursor[0]) if cursor else None,
                 "lab_import_retry_sequences": retry_sequences,
-                "proven_missing_committed_receipts": retry_sequences,
+                "proven_missing_committed_receipts": proven_missing,
                 "imported_exposure_count": int(imported_exposures or 0),
                 "importer_health": dict(health) if health else None,
                 "job_health": jobs,
                 "manifest_snapshot_fingerprint": manifest_snapshot,
                 "latest_manifest_at": latest_manifest_at,
                 "latest_manifest_age_seconds": latest_manifest_age,
-                "manifest_contracts": sorted({str(row[1]) for row in manifest_rows}),
-                "manifest_effect_modes": sorted({str(row[2]) for row in manifest_rows}),
-                "active_manifest_count": len(manifest_rows),
-                "active_revocation_count": len(revocation_rows),
+                "manifest_contracts": sorted({str(row[1]) for row in active_rows}),
+                "manifest_effect_modes": sorted({str(row[2]) for row in active_rows}),
+                "active_manifest_count": len(active_rows),
+                "active_revocation_count": len(effective_revocations),
                 "active_retention_claim_count": int(claims or 0),
                 "archive_count": int(archives or 0),
                 "result_count": int(results or 0),
