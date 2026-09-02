@@ -118,6 +118,45 @@ def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path
     assert verify_generation_archive(archive[0])["available"] is True
 
 
+def test_explicit_retirement_requires_import_proof_and_drops_legacy_tables():
+    from aletheia.observation_lab.canonical import get_authority_source
+    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="retire-hypothesis",
+        fingerprint="retire-fingerprint",
+        cohort_id="retire-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="legacy",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    insert_experiment(LearningExperiment(
+        experiment_id="retire-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment_salt="retire-salt",
+        started_at="2026-01-01T00:00:00+00:00",
+    ))
+
+    result = apply_legacy_learning_migration(
+        retire_legacy_schema=True,
+        rollback_backup_identity="backup:retire-test",
+    )
+
+    assert result["legacy_schema_retirement"]["available"] is True
+    assert get_authority_source().source == "lab"
+    db = get_db()
+    for table in ("learning_experiments", "learning_exposures", "filter_shadow_experiments"):
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None
+
+
 def test_legacy_exposure_import_preserves_explicit_manifest_effect_identity():
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.migration import apply_legacy_learning_migration
