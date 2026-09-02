@@ -1560,7 +1560,7 @@ class ObservationOwnerActionRequest(SettingsRequest):
 
     action: Literal[
         "withdraw", "refreeze", "invalidate", "revoke",
-        "admit", "close", "promote", "hold", "finalize",
+        "admit", "close", "promote", "hold", "finalize", "adopt",
     ]
     reason: str
     confirm: Literal[True]

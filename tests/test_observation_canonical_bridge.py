@@ -1034,6 +1034,33 @@ def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
         "SELECT 1 FROM lab_audit_outbox WHERE dedup_key=?",
         (f"observation-lifecycle:manifest-publish:{manifest.manifest_hash}",),
     ).fetchone() is not None
+    adoption_receipt = record_owner_action(
+        action="adopt",
+        actor="owner",
+        reason="owner adopted paper treatment as baseline",
+        observation_id=root["observation_id"],
+        generation=2,
+        manifest_id=manifest.manifest_id,
+        manifest_hash=manifest.manifest_hash,
+        expected_manifest_hash=manifest.manifest_hash,
+        dedup_key="paper-publication:adopt",
+    )
+    assert import_delivery_receipts()["processed"] == 1
+    adopted = lab.execute(
+        "SELECT status FROM observation_windows WHERE observation_id=? AND generation=2",
+        (root["observation_id"],),
+    ).fetchone()
+    assert adopted["status"] == "invalidated"
+    lifecycle = lab.execute(
+        "SELECT action, to_status FROM observation_lifecycle_events "
+        "WHERE source_receipt_id=?",
+        (adoption_receipt,),
+    ).fetchone()
+    assert tuple(lifecycle) == ("adopt", "superseded")
+    assert lab.execute(
+        "SELECT 1 FROM manifest_revocations WHERE source_action_id=?",
+        (adoption_receipt,),
+    ).fetchone() is not None
 
 
 def test_main_delivery_outbox_is_append_only_until_acknowledged():

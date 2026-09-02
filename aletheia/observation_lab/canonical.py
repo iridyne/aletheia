@@ -32,7 +32,7 @@ from aletheia.config.loader import get_data_dir
 
 _log = logging.getLogger("aletheia.observation_lab.canonical")
 _SUPPORTED_MANIFEST_VERSIONS = frozenset({"execution-manifest/v1", "execution-manifest/v2"})
-_SAFETY_ACTIONS = frozenset({"withdraw", "refreeze", "invalidate", "revoke"})
+_SAFETY_ACTIONS = frozenset({"withdraw", "refreeze", "invalidate", "revoke", "adopt"})
 _OWNER_ACTIONS = _SAFETY_ACTIONS | frozenset({"admit", "close", "promote", "hold", "finalize"})
 _OUTBOX_CAPACITY = 10_000
 
@@ -1350,6 +1350,9 @@ def _append_lifecycle_event(
         "finalized": "finalized",
         "invalidated": "invalidated",
         "aborted": "aborted",
+        # The compact root schema keeps terminal storage finite; semantic
+        # supersession remains explicit in the append-only lifecycle event.
+        "superseded": "invalidated",
     }.get(to_status)
     if terminal_status is not None:
         connection.execute(
@@ -3290,6 +3293,32 @@ def _apply_owner_action(
         "withdraw": "invalidated", "invalidate": "invalidated", "revoke": "invalidated",
         "close": "aborted", "finalize": "finalized",
     }.get(action, "active")
+    if action == "adopt":
+        if not str(current_stage).startswith("paper_"):
+            raise ValueError("owner_action_adopt_requires_paper_stage")
+        if not row["manifest_id"] or not row["manifest_hash"]:
+            raise ValueError("owner_action_adoption_manifest_required")
+        manifest = connection.execute(
+            "SELECT observation_id, generation, manifest_hash, effect_mode "
+            "FROM execution_manifests WHERE manifest_id=?",
+            (row["manifest_id"],),
+        ).fetchone()
+        if manifest is None or any(
+            manifest[field] != expected
+            for field, expected in {
+                "observation_id": observation_id,
+                "generation": generation,
+                "manifest_hash": row["manifest_hash"],
+            }.items()
+        ):
+            raise ValueError("owner_action_adoption_manifest_unavailable")
+        if str(manifest["effect_mode"]) != "paper_treatment":
+            raise ValueError("owner_action_adoption_manifest_not_behavioral")
+        # ``observation_windows`` deliberately keeps a compact invalidated
+        # root rather than adding a second mutable status vocabulary.  The
+        # lifecycle event below records the stronger semantic ``superseded``
+        # disposition and preserves the adoption decision immutably.
+        terminal_status = "invalidated"
     if action == "finalize":
         # A forced terminal action must not manufacture a finalized result.
         # If no immutable evaluation/result exists yet, preserve the evidence
@@ -3306,7 +3335,7 @@ def _apply_owner_action(
         connection,
         observation_id=observation_id,
         generation=generation,
-        to_status=terminal_status,
+        to_status="superseded" if action == "adopt" else terminal_status,
         action=action,
         reason=reason,
         actor=actor,
