@@ -121,6 +121,9 @@ def _normalise_source_cutoff(
 
     if "main_import_contiguous_sequence" not in payload:
         raise ValueError("source_cutoff_watermark_required")
+    source_name = payload.get("source_name", "main")
+    if source_name != "main":
+        raise ValueError("source_cutoff_source_invalid")
     sequence = payload["main_import_contiguous_sequence"]
     if sequence is not None and (
         isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0
