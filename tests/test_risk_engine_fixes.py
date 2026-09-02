@@ -171,6 +171,17 @@ def test_paper_internal_drawdown_ignores_external_account_snapshots(monkeypatch)
     assert scale == 1.0
 
 
+def test_paper_internal_drawdown_evidence_is_unavailable():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import _portfolio_drawdown_assessment
+    from aletheia.trading.sizing_policy import assess_persona_distress
+
+    cfg = AletheiaConfig()
+
+    assert _portfolio_drawdown_assessment("paper_internal", cfg) == (1.0, False)
+    assert assess_persona_distress(cfg) == "unavailable"
+
+
 def test_paper_internal_drawdown_ignores_local_notional_collapse(monkeypatch):
     """A closed local paper position is not an account-equity drawdown."""
     from aletheia.risk.engine import _portfolio_drawdown_scale
