@@ -193,8 +193,8 @@ def _source_rows(
     if started_at is None:
         raise ValueError("observation_started_at_unavailable")
     # Imported terminal generations may intentionally have an empty interval
-    # (started_at == collect_until); only contradictory ordering is invalid.
-    if started_at > collect_until:
+    # (started_at == collect_until); an active generation may not.
+    if started_at >= collect_until and str(root.get("status") or "active") == "active":
         raise ValueError("observation_interval_unavailable")
     as_of = _parse_time(as_of_at)
     if as_of is None:
