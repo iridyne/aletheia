@@ -64,4 +64,16 @@ describe('risk field contracts', () => {
     expect(() => readPolicyPath(policy, 'capital.typo' as RiskPolicyPath)).toThrow('Unsupported risk policy path')
     expect(() => writePolicyPath(policy, 'loss.typo' as RiskPolicyPath, 1)).toThrow('Unsupported risk policy path')
   })
+
+  it('does not advertise zero for positive-only safety thresholds', () => {
+    const positiveOnly = new Set([
+      'margin.min_entry_liquidation_buffer_pct',
+      'margin.runtime_liquidation_buffer_pct',
+      'exits.catastrophic_stop_pct',
+      'exits.catastrophic_stop_pct_serenity',
+    ])
+    for (const field of RISK_POLICY_NUM_FIELDS) {
+      if (positiveOnly.has(field.key)) expect(field.min).toBeGreaterThan(0)
+    }
+  })
 })

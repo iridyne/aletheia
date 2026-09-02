@@ -31,6 +31,14 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 `require_risk_check_for_all_orders`、live unlock、permission、credentials 和
 运行时 brake 不属于可复制 policy。
 
+Risk Policy 的 schema/domain validator 是所有入口的唯一数值权威。持久化 nested
+policy、flat legacy migration、局部 Settings 更新、整体替换、复制与 reset 均须在
+生成 hash 或成为 Risk authority 前拒绝非有限数、空 identity、非正 revision 及字段级
+结构非法值；Live policy 还必须应用同一套 mode-aware safety ceilings。拒绝不得改变
+配置、policy hash/revision 或写入成功 audit。`demo.capital.max_total_exposure_pct=0`
+与 `max_per_symbol_entries=0` 保留其明确的 disable 语义；Demo 超出 Live ceiling 的合法
+容量值仍可存在，但复制到 Live 时必须失败。
+
 ---
 
 ## 2. 检查关卡(代码实际 20 个主关卡，另含本地纸面入场子关与 6b)

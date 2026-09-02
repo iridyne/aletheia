@@ -1375,6 +1375,21 @@ async def test_demo_risk_config_has_no_application_level_upper_caps(client):
 
 
 @pytest.mark.anyio
+async def test_legacy_risk_update_rejects_nonfinite_without_mutating_policy(client):
+    before = (await client.get("/api/settings/risk-policies")).json()["demo"]
+
+    response = await client.post(
+        "/api/settings/risk",
+        content='{"max_account_leverage_demo":NaN}',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    after = (await client.get("/api/settings/risk-policies")).json()["demo"]
+    assert after == before
+
+
+@pytest.mark.anyio
 async def test_risk_policy_copy_is_revision_guarded_and_preserves_live_identity(client):
     policies = (await client.get("/api/settings/risk-policies")).json()
     demo = policies["demo"]
@@ -1488,6 +1503,21 @@ async def test_live_policy_write_enforces_safety_ceilings(client):
     after = (await client.get("/api/settings/risk-policies")).json()
     assert after["live"]["revision"] == rev
 
+    policy = {k: v for k, v in live.items() if k != "policy_hash"}
+    policy["eligibility"] = None
+    missing_gate = await client.put(
+        "/api/settings/risk-policies/live",
+        json={
+            "policy": policy,
+            "expected_revision": rev,
+            "confirm_target_replacement": True,
+            "reason": "missing live eligibility gate",
+        },
+    )
+    assert missing_gate.status_code == 400
+    unchanged = (await client.get("/api/settings/risk-policies")).json()
+    assert unchanged["live"]["revision"] == rev
+
 
 @pytest.mark.anyio
 async def test_live_policy_write_accepts_exact_boundary_values(client):
@@ -1573,6 +1603,11 @@ async def test_demo_policy_write_allows_values_above_live_ceilings(client):
     }
     high_demo["positions"] = {"max_open_positions": 200, "allow_short": True}
     high_demo["loss"] = {"max_daily_loss_pct": 20.0, "max_single_trade_risk_pct": 20.0}
+    high_demo["eligibility"] = {
+        **demo["eligibility"],
+        "family_min_samples": 7,
+        "min_regime_confidence_to_enter": 0.75,
+    }
     resp = await client.put(
         "/api/settings/risk-policies/demo",
         json={
@@ -1583,6 +1618,7 @@ async def test_demo_policy_write_allows_values_above_live_ceilings(client):
         },
     )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["demo"]["eligibility"] == high_demo["eligibility"]
 
 
 @pytest.mark.anyio
