@@ -37,6 +37,7 @@ from aletheia.learning.models import LearningExperiment, LearningExposure, Learn
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
 from aletheia.learning.registry import get_learning_path
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+from aletheia.observation_lab.canonical import NumericTreatmentAdapter as _ObservationNumericAdapter
 
 # Hypothesis statuses that forbid opening a *new* experiment. They are durable
 # terminal decisions on the hypothesis, not merely on one experiment row.
@@ -56,41 +57,6 @@ class InfluenceDecision:
     hypothesis_id: str | None = None
     experiment_id: str | None = None
     exposure_id: str | None = None
-
-
-@dataclass(frozen=True)
-class _ObservationNumericAdapter:
-    """Small built-in adapter for legacy numeric call sites after cutover.
-
-    The adapter carries no Experiment state.  Lab supplies the immutable
-    payload; Main only converts the bounded payload back to the caller's
-    numeric value.
-    """
-
-    adapter_id: str
-    adapter_version: str = "v1"
-    behavior_dimension: str = "numeric"
-    requires_outcome_seed: bool = False
-
-    def assignment_unit_key(self, context: dict) -> str:
-        return str(context.get("assignment_key") or context.get("candidate_key") or "unassigned")
-
-    def eligible(self, manifest, context: dict) -> bool:
-        population = manifest.eligible_population or {}
-        expected_path = population.get("path_id")
-        return expected_path is None or expected_path == context.get("path_id")
-
-    def deterministic_baseline(self, context: dict) -> dict:
-        return dict(context["baseline"])
-
-    def apply_payload(self, baseline: dict, payload: dict, context: dict) -> dict:
-        value = payload.get("value")
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-            raise ValueError("numeric_observation_payload_unavailable")
-        return {"value": float(value)}
-
-    def build_outcome_seed(self, context: dict):
-        return context.get("outcome_seed")
 
 
 def _resolve_numeric_via_observation_lab(

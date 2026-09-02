@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -798,6 +799,46 @@ class TreatmentAdapter(Protocol):
     ) -> dict[str, Any]: ...
 
     def build_outcome_seed(self, context: dict[str, Any]) -> Any: ...
+
+
+@dataclass(frozen=True)
+class NumericTreatmentAdapter:
+    """Built-in bounded numeric adapter for legacy Main call sites.
+
+    The adapter carries no Experiment state. Lab supplies the immutable
+    payload; Main only converts that payload back to the caller's numeric
+    value.
+    """
+
+    adapter_id: str
+    adapter_version: str = "v1"
+    behavior_dimension: str = "numeric"
+    requires_outcome_seed: bool = False
+
+    def assignment_unit_key(self, context: dict[str, Any]) -> str:
+        return str(context.get("assignment_key") or context.get("candidate_key") or "unassigned")
+
+    def eligible(self, manifest: ExecutionManifest, context: dict[str, Any]) -> bool:
+        population = manifest.eligible_population or {}
+        expected_path = population.get("path_id")
+        return expected_path is None or expected_path == context.get("path_id")
+
+    def deterministic_baseline(self, context: dict[str, Any]) -> dict[str, Any]:
+        return dict(context["baseline"])
+
+    def apply_payload(
+        self,
+        baseline: dict[str, Any],
+        payload: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        value = payload.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError("numeric_observation_payload_unavailable")
+        return {"value": float(value)}
+
+    def build_outcome_seed(self, context: dict[str, Any]) -> Any:
+        return context.get("outcome_seed")
 
 
 _ADAPTERS: dict[tuple[str, str], TreatmentAdapter] = {}
@@ -4422,6 +4463,7 @@ def observation_bridge_health() -> dict[str, Any]:
 
 __all__ = [
     "AuthoritySource",
+    "NumericTreatmentAdapter",
     "ObservationTreatmentDecision",
     "TreatmentAdapter",
     "append_delivery_receipt",

@@ -234,3 +234,12 @@ def test_no_new_legacy_experiment_writer():
         discovered=_discover_legacy_writers(sources),
         allowed=_WRITER_ALLOWLIST,
     )
+
+
+@spec_claim(SpecClaim(
+    "OEO-S04", _CONTRACT, "Lab runtime independence", "L2a",
+    "The canonical Lab runner must not import the legacy Learning Experiment runtime.",
+))
+def test_lab_runner_does_not_import_legacy_experiment_runtime():
+    source = (_SRC / "observation_lab" / "runner.py").read_text(encoding="utf-8")
+    assert "aletheia.learning.experiments" not in source

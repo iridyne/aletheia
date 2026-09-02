@@ -229,7 +229,7 @@ def register_builtin_handlers() -> None:
         register_treatment_adapter,
         registered_treatment_adapters,
     )
-    from aletheia.learning.experiments import _ObservationNumericAdapter
+    from aletheia.observation_lab.canonical import NumericTreatmentAdapter
 
     register_observation_handler()
 
@@ -282,7 +282,7 @@ def register_builtin_handlers() -> None:
     ):
         key = (f"learning.numeric:{path_id}", "v1")
         if key not in registered_treatment_adapters():
-            register_treatment_adapter(_ObservationNumericAdapter(
+            register_treatment_adapter(NumericTreatmentAdapter(
                 adapter_id=key[0],
                 adapter_version=key[1],
                 behavior_dimension=path_id,
