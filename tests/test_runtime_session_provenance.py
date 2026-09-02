@@ -686,6 +686,66 @@ def test_external_gateway_session_rejects_nearby_prior_process(tmp_path, monkeyp
     ]) is None
 
 
+def test_external_gateway_session_rejects_session_a_when_session_b_persist_fails(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    import time
+
+    import psutil
+
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.gateway import frontdoor_route, pidfile
+    from aletheia.storage import repositories as repo
+
+    generation = {"backend_pid": 101, "started_at": time.time() - 1}
+
+    class _Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def create_time(self):
+            return generation["started_at"]
+
+        def children(self, recursive=False):
+            assert recursive is True
+            return [_Process(generation["backend_pid"])]
+
+    monkeypatch.setattr(psutil, "Process", _Process)
+    monkeypatch.setattr(rs.os, "getpid", lambda: generation["backend_pid"])
+
+    session_a = rs.start_runtime_session()
+    assert session_a["durable"] is True
+
+    # Backend A crashes without closing its recent durable session.
+    rs._current_session = None
+    rs._session_durable = False
+    generation.update(backend_pid=202, started_at=time.time())
+
+    def fail_session_b_write(_session):
+        raise RuntimeError("session B write failed")
+
+    monkeypatch.setattr(repo, "insert_runtime_session", fail_session_b_write)
+    session_b = rs.start_runtime_session()
+    assert session_b["durable"] is False
+
+    binding = json.loads(
+        (tmp_path / "runtime-session-binding.json").read_text(encoding="utf-8")
+    )
+    assert binding == {
+        "version": 1,
+        "session_id": None,
+        "backend_pid": 202,
+        "process_started_at": generation["started_at"],
+    }
+
+    monkeypatch.setattr(frontdoor_route, "read_frontdoor_route", lambda: {"backend_pid": 202})
+    monkeypatch.setattr(pidfile, "read_pid", lambda: 999)
+    monkeypatch.setattr(pidfile, "is_running", lambda: True)
+
+    assert rs.current_external_gateway_session([session_a]) is None
+
+
 def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
     """Doctor must surface stale open sessions from prior crashes."""
     setup_env(tmp_path, monkeypatch)
