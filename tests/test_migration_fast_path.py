@@ -75,6 +75,39 @@ def test_production_migrations_persist_stable_ledger_and_apply_once(tmp_path, mo
     reopened.close()
 
 
+@pytest.mark.real_db
+def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monkeypatch):
+    """A fresh production migration starts on Lab authority without legacy engines."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.migrations as migrations
+    import aletheia.storage.sqlite as sqlite_store
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    loader._dirs_ensured_for = None
+    loader._invalidate_config_cache()
+    sqlite_store.reset_db()
+    try:
+        assert migrations.run_migrations() is True
+        db = sqlite_store.get_db()
+        authority = db.execute(
+            "SELECT authority_source FROM observation_authority_state "
+            "WHERE state_key='experiment_authority'"
+        ).fetchone()[0]
+        assert authority == "lab"
+        legacy_tables = {
+            str(row[0])
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert not legacy_tables.intersection(migrations._LEGACY_EXPERIMENT_TABLES)
+    finally:
+        sqlite_store.reset_db()
+
+
 def test_production_migrations_emit_storage_owned_progress(tmp_path, monkeypatch):
     import aletheia.storage.migrations as migrations
 
