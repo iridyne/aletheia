@@ -10,11 +10,13 @@ from typing import Literal, Mapping, Sequence
 
 from aletheia.analytics.temporal import parse_utc_instant
 from aletheia.universe.candidate_eligibility import canonical_fingerprint
+from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
 ECONOMIC_UTILITY_VERSION = "universe-economic-utility/v1"
 ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v1"
+CANDIDATE_SELECTION_OUTCOME_VERSION = "candidate-selection-utility-outcome/v1"
 _SHRINKAGE_K = 50
 _TAIL_HARM_FLOOR_PCT = -15.0
 
@@ -85,6 +87,7 @@ def estimate_economic_utility(
     strength_percentile: float,
     outcomes: Sequence[Mapping[str, object]],
     source_cutoff_at: str,
+    cost_assumptions: Mapping[str, object] | None = None,
 ) -> EconomicUtilityEstimateV1:
     if not math.isfinite(strength_percentile) or not 0 <= strength_percentile <= 1:
         raise ValueError("strength_percentile_out_of_range")
@@ -92,6 +95,15 @@ def estimate_economic_utility(
     cutoff = parse_utc_instant(source_cutoff_at)
     if cutoff is None:
         raise ValueError("source_cutoff_at_invalid")
+    try:
+        expected_costs = {
+            key: float((cost_assumptions or {})[key])
+            for key in ("execution_fee_pct", "slippage_bps", "fallback_spread_bps")
+        }
+    except (KeyError, TypeError, ValueError):
+        expected_costs = None
+    if expected_costs is not None and any(not math.isfinite(value) for value in expected_costs.values()):
+        expected_costs = None
     parent_by_identity: dict[str, Mapping[str, object]] = {}
     identity_invalid = False
     for row in outcomes:
@@ -103,6 +115,9 @@ def estimate_economic_utility(
             and str(row.get("venue") or "") == venue
             and str(row.get("market_type") or "spot") == market_type
             and row.get("horizon") == "4h"
+            and row.get("mechanism_behavior_version") == OPPORTUNITY_EVIDENCE_VERSION
+            and row.get("outcome_contract_version") == CANDIDATE_SELECTION_OUTCOME_VERSION
+            and row.get("cost_assumptions") == expected_costs
             and entry is not None and entry <= cutoff
             and (
                 row.get("status") != "settled"
@@ -118,6 +133,9 @@ def estimate_economic_utility(
                 "scanner_run_id", "status", "entry_ts", "settled_at", "symbol",
                 "net_return_pct", "mae_pct", "cost_model_version",
                 "min_tradable_edge_pct", "strength_quintile",
+                "mechanism_behavior_version", "outcome_contract_version",
+                "cost_assumptions", "estimated_fee_pct",
+                "estimated_spread_slippage_pct", "estimated_funding_pct",
             )
             if previous is not None and any(previous.get(key) != row.get(key) for key in comparable):
                 identity_invalid = True
@@ -205,6 +223,9 @@ def estimate_economic_utility(
         "horizon": "4h",
         "strength_quintile": quintile,
         "cost_model_version": COST_MODEL_VERSION,
+        "mechanism_behavior_version": OPPORTUNITY_EVIDENCE_VERSION,
+        "outcome_contract_version": CANDIDATE_SELECTION_OUTCOME_VERSION,
+        "cost_assumptions": expected_costs,
     }
     source_material = sorted([
         {
@@ -212,6 +233,14 @@ def estimate_economic_utility(
             "scanner_run_id": row.get("scanner_run_id"),
             "net_return_pct": row.get("net_return_pct"),
             "mae_pct": row.get("mae_pct"),
+            "estimated_fee_pct": row.get("estimated_fee_pct"),
+            "estimated_spread_slippage_pct": row.get("estimated_spread_slippage_pct"),
+            "estimated_funding_pct": row.get("estimated_funding_pct"),
+            "min_tradable_edge_pct": row.get("min_tradable_edge_pct"),
+            "cost_model_version": row.get("cost_model_version"),
+            "mechanism_behavior_version": row.get("mechanism_behavior_version"),
+            "outcome_contract_version": row.get("outcome_contract_version"),
+            "cost_assumptions": row.get("cost_assumptions"),
             "settled_at": row.get("settled_at"),
         }
         for row in complete
@@ -254,6 +283,7 @@ def estimate_economic_utility(
 
 
 __all__ = [
-    "ECONOMIC_ESTIMATOR_VERSION", "ECONOMIC_UTILITY_VERSION", "EconomicUtilityEstimateV1",
+    "CANDIDATE_SELECTION_OUTCOME_VERSION", "ECONOMIC_ESTIMATOR_VERSION",
+    "ECONOMIC_UTILITY_VERSION", "EconomicUtilityEstimateV1",
     "TailEvidenceV1", "estimate_economic_utility",
 ]

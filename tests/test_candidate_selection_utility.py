@@ -206,6 +206,16 @@ def _outcomes(count: int = 60):
             "mae_pct": -0.5,
             "cost_model_version": "v1",
             "min_tradable_edge_pct": 0.05,
+            "estimated_fee_pct": 0.1,
+            "estimated_spread_slippage_pct": 0.1,
+            "estimated_funding_pct": 0.0,
+            "mechanism_behavior_version": "universe-opportunity-evidence/v1",
+            "outcome_contract_version": "candidate-selection-utility-outcome/v1",
+            "cost_assumptions": {
+                "execution_fee_pct": 0.06,
+                "slippage_bps": 5.0,
+                "fallback_spread_bps": 25.0,
+            },
         })
     return rows
 
@@ -213,6 +223,7 @@ def _outcomes(count: int = 60):
 def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
     from aletheia.universe.economic_utility import estimate_economic_utility
 
+    cost_assumptions = _outcomes()[0]["cost_assumptions"]
     estimate = estimate_economic_utility(
         candidate_key="candidate-economic",
         mechanism_id="continuation",
@@ -222,6 +233,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=_outcomes(),
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert estimate.estimate_status == "available"
     assert estimate.strength_quintile == 5
@@ -239,6 +251,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=list(reversed(_outcomes())),
         source_cutoff_at="2026-09-02T00:00:00Z",
+        cost_assumptions=cost_assumptions,
     )
     assert reordered.source_outcome_fingerprint == estimate.source_outcome_fingerprint
 
@@ -266,6 +279,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=[*_outcomes(), future, wrong_cost_version],
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert frozen.expected_net_return_pct == estimate.expected_net_return_pct
     assert frozen.source_outcome_fingerprint == estimate.source_outcome_fingerprint
@@ -283,6 +297,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=[*_outcomes(), *other_venue],
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert exact_venue.expected_net_return_pct == estimate.expected_net_return_pct
     assert exact_venue.source_outcome_fingerprint == estimate.source_outcome_fingerprint
@@ -296,8 +311,44 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=[*_outcomes(), *_outcomes()],
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert exact_duplicates.expected_net_return_pct == estimate.expected_net_return_pct
+    wrong_behavior = {
+        **_outcomes()[0],
+        "outcome_candidate_key": "candidate-selection-utility:v1:wrong-behavior:long",
+        "scanner_run_id": "wrong-behavior-run",
+        "mechanism_behavior_version": "universe-opportunity-evidence/v0",
+        "net_return_pct": 99.0,
+    }
+    exact_behavior = estimate_economic_utility(
+        candidate_key="candidate-economic",
+        mechanism_id="continuation",
+        direction="long",
+        venue="okx",
+        market_type="spot",
+        strength_percentile=0.9,
+        outcomes=[*_outcomes(), wrong_behavior],
+        source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
+    )
+    assert exact_behavior.source_outcome_fingerprint == estimate.source_outcome_fingerprint
+
+    changed_cost_evidence = [dict(row) for row in _outcomes()]
+    changed_cost_evidence[0]["estimated_fee_pct"] = 0.2
+    cost_restatement = estimate_economic_utility(
+        candidate_key="candidate-economic",
+        mechanism_id="continuation",
+        direction="long",
+        venue="okx",
+        market_type="spot",
+        strength_percentile=0.9,
+        outcomes=changed_cost_evidence,
+        source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
+    )
+    assert cost_restatement.source_outcome_fingerprint != estimate.source_outcome_fingerprint
+
     conflicting = [dict(row) for row in _outcomes()]
     conflicting[0]["net_return_pct"] = 99.0
     conflict = estimate_economic_utility(
@@ -309,6 +360,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=[*_outcomes(), conflicting[0]],
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert conflict.estimate_status == "unavailable"
     assert conflict.economic_utility_pct is None
@@ -324,6 +376,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=missing_tail,
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert unavailable_tail.estimate_status == "unavailable"
     assert unavailable_tail.tail_evidence.status == "unavailable"
@@ -339,6 +392,7 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         strength_percentile=0.9,
         outcomes=catastrophic,
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
     )
     assert harmful_tail.tail_evidence.status == "harm"
     assert harmful_tail.economic_utility_pct is None
@@ -365,6 +419,7 @@ def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed()
         venue="okx",
         market_type="spot", strength_percentile=0.9, outcomes=_outcomes(),
         source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=_outcomes()[0]["cost_assumptions"],
     )
     decision = build_candidate_selection_utility(
         hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(long,),
@@ -423,7 +478,15 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator():
     payload = json.loads(stored[0]["compact_output_json"])
     assert payload["candidate_selection"]["version"] == "candidate-selection-utility/v1"
     assert payload["evidence_contract"]["shadow_authority_applied"] is False
-    assert load_candidate_selection_outcomes()
+    loaded = load_candidate_selection_outcomes()
+    assert loaded
+    assert {
+        row["mechanism_behavior_version"] for row in loaded
+    } == {"universe-opportunity-evidence/v1"}
+    assert {
+        row["outcome_contract_version"] for row in loaded
+    } == {"candidate-selection-utility-outcome/v1"}
+    assert all(row["cost_assumptions"] for row in loaded)
 
 
 def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
@@ -631,11 +694,19 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
         {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0 + index}
         for index, item in enumerate(population)
     ]
+    universe_config = UniverseConfig(max_candidates=3)
+    selection_policy = {
+        **candidate_selection_policy_identity(universe_config),
+        "cost_assumptions": {
+            "execution_fee_pct": 0.06,
+            "slippage_bps": 5.0,
+        },
+    }
     kwargs = {
         "population": population,
         "scanner_run_id": "candidate-selection-authority-run",
         "captured_at": "2026-09-02T00:00:00+00:00",
-        "universe_config": UniverseConfig(max_candidates=3),
+        "universe_config": universe_config,
         "legacy_scored": legacy_scored,
         "legacy_allocated": legacy_scored[-3:],
         "action_route_reasons": {
@@ -643,16 +714,11 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
             for item in population
         },
         "historical_outcomes": _outcomes(),
+        "selection_policy": selection_policy,
     }
     shadow = build_candidate_selection_shadow_bundle(**kwargs)
     assert shadow.batch.policy_epoch_id
-    cost_bound = build_candidate_selection_shadow_bundle(
-        **kwargs,
-        selection_policy={
-            "cost_assumptions": {"execution_fee_pct": 0.06, "slippage_bps": 5.0},
-        },
-    )
-    cost_snapshot = json.loads(cost_bound.evidence[0].compact_output_json)[
+    cost_snapshot = json.loads(shadow.evidence[0].compact_output_json)[
         "evidence_contract"
     ]["cost_assumptions"]
     assert cost_snapshot == {
@@ -660,9 +726,15 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
         "fallback_spread_bps": kwargs["universe_config"].max_spread_bps,
         "slippage_bps": 5.0,
     }
-    changed_policy = build_candidate_selection_shadow_bundle(
-        **{**kwargs, "universe_config": UniverseConfig(max_candidates=4)},
-    )
+    changed_config = UniverseConfig(max_candidates=4)
+    changed_policy = build_candidate_selection_shadow_bundle(**{
+        **kwargs,
+        "universe_config": changed_config,
+        "selection_policy": {
+            **candidate_selection_policy_identity(changed_config),
+            "cost_assumptions": selection_policy["cost_assumptions"],
+        },
+    })
     assert changed_policy.batch.policy_epoch_id != shadow.batch.policy_epoch_id
     with pytest.raises(ValueError, match="qualification_invalid"):
         build_candidate_selection_shadow_bundle(**kwargs, authority_applied=True)
@@ -674,9 +746,7 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
             "verdict": "positive",
             "promotion_eligible": True,
             "policy_epoch_id": shadow.batch.policy_epoch_id,
-            "selection_policy": candidate_selection_policy_identity(
-                kwargs["universe_config"]
-            ),
+            "selection_policy": kwargs["selection_policy"],
             "blocking_reasons": [],
             "invalid_reasons": [],
         },

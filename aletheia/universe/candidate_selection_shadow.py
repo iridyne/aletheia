@@ -15,7 +15,10 @@ from aletheia.universe.candidate_selection_utility import (
     select_admitted_candidates,
 )
 from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
-from aletheia.universe.economic_utility import estimate_economic_utility
+from aletheia.universe.economic_utility import (
+    CANDIDATE_SELECTION_OUTCOME_VERSION,
+    estimate_economic_utility,
+)
 from aletheia.universe.opportunity_evidence import (
     annotate_within_run_percentiles,
     build_opportunity_evidence,
@@ -26,7 +29,6 @@ from aletheia.universe.twin_persistence import TwinShadowBundle
 
 CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v1"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v1"
-CANDIDATE_SELECTION_OUTCOME_VERSION = "candidate-selection-utility-outcome/v1"
 _MAX_OUTPUT_BYTES = 32 * 1024
 
 
@@ -72,13 +74,15 @@ def _training_outcome_fingerprint(
         "outcome_candidate_key", "scanner_run_id", "mechanism_id", "direction",
         "venue", "market_type", "strength_quintile", "horizon", "status", "entry_ts",
         "settled_at", "symbol", "net_return_pct", "mae_pct", "cost_model_version",
-        "min_tradable_edge_pct",
+        "min_tradable_edge_pct", "estimated_fee_pct",
+        "estimated_spread_slippage_pct", "estimated_funding_pct",
+        "mechanism_behavior_version", "outcome_contract_version", "cost_assumptions",
     )
     material = []
     for row in outcomes:
         entry = parse_utc_instant(row.get("entry_ts"))
         settled = parse_utc_instant(row.get("settled_at"))
-        if entry is None or entry > cutoff or (settled is not None and settled > cutoff):
+        if entry is None or entry >= cutoff or (settled is not None and settled > cutoff):
             continue
         material.append({field: row.get(field) for field in fields})
     material.sort(key=lambda row: (
@@ -155,6 +159,7 @@ def build_candidate_selection_shadow_bundle(
                     strength_percentile=mechanism.within_run_percentile,
                     outcomes=historical_outcomes,
                     source_cutoff_at=captured_at,
+                    cost_assumptions=cost_assumptions,
                 ))
         decision = build_candidate_selection_utility(
             hard_gate=gate,
@@ -411,6 +416,7 @@ def load_candidate_selection_outcomes(
             decision = payload["candidate_selection"]
             mechanisms = decision["opportunity_evidence"]["mechanisms"]
             keys = payload["outcome_candidate_keys"]
+            contract = payload["evidence_contract"]
         except (KeyError, TypeError, ValueError):
             continue
         for mechanism in mechanisms:
@@ -422,6 +428,9 @@ def load_candidate_selection_outcomes(
                     "scanner_run_id": row["scanner_run_id"],
                     "mechanism_id": mechanism["mechanism_id"],
                     "strength_quintile": min(5, int(float(percentile) * 5) + 1),
+                    "mechanism_behavior_version": decision["opportunity_evidence"]["version"],
+                    "outcome_contract_version": contract["outcome_contract_version"],
+                    "cost_assumptions": contract["cost_assumptions"],
                 })
     if not labels_by_key:
         return []
