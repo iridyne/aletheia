@@ -297,7 +297,7 @@ export interface components {
         };
         /**
          * FastTriggerConfig
-         * @description Bounded Momentum trigger; the safe default observes without executing.
+         * @description Deterministic trigger capability plus legacy Setup rollout compatibility.
          */
         FastTriggerConfig: {
             /**
@@ -305,6 +305,11 @@ export interface components {
              * @default 60
              */
             authorization_ttl_minutes: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
             /**
              * Max Setups
              * @default 10
@@ -2126,10 +2131,35 @@ export interface components {
             /** Tunnel Id */
             tunnel_id: string;
         };
+        /** SettingsWebhookDeliveryResponse */
+        SettingsWebhookDeliveryResponse: {
+            /** Attempted At */
+            attempted_at: string;
+            /** Entity Id */
+            entity_id: string | null;
+            /** Entity Type */
+            entity_type: string | null;
+            /** Error Class */
+            error_class: string | null;
+            /** Event Type */
+            event_type: string;
+            /** Http Status */
+            http_status: number | null;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Receiver Host */
+            receiver_host: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "delivered" | "failed";
+        };
         /** SettingsWebhookResponse */
         SettingsWebhookResponse: {
             /** Enabled */
             enabled: boolean;
+            last_delivery: components["schemas"]["SettingsWebhookDeliveryResponse"] | null;
             /** Notify Alerts */
             notify_alerts: boolean;
             /** Notify Daily Summary */
@@ -2264,6 +2294,11 @@ export interface components {
              * @default false
              */
             persona_pyramid_enabled: boolean;
+            /**
+             * Persona Rollout Generation
+             * @default 0
+             */
+            persona_rollout_generation: number;
             /**
              * Persona Sizing Enabled
              * @default false

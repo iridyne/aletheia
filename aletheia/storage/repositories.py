@@ -616,6 +616,16 @@ def list_audit_events(
     return _select_all("audit_events", limit=limit)
 
 
+def latest_mirrored_webhook_delivery_event() -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM audit_events WHERE event_type='webhook_delivery' "
+        "AND jsonl_mirror_status='mirrored' AND json_valid(after_state) "
+        "ORDER BY json_extract(after_state, '$.attempted_at') DESC, "
+        "timestamp DESC, id DESC LIMIT 1"
+    ).fetchone()
+    return dict(row) if row else None
+
+
 # --- Agent Runs ---
 
 

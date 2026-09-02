@@ -10,12 +10,14 @@ import hashlib
 import logging
 import os
 import platform
+import sqlite3
 import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("aletheia.notifications")
 
@@ -179,23 +181,127 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
         logger.warning("Telegram notification failed (non-critical): %s", e)
 
 
-def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
-    """POST JSON payload to configured webhook URL. Never raises."""
+def _record_webhook_outcome(outcome: dict) -> None:
+    try:
+        import json
+
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.models import AuditEvent
+
+        event = AuditEvent(
+            actor="system",
+            source="webhook_delivery",
+            event_type="webhook_delivery",
+            entity_type=outcome.get("entity_type") or "notification",
+            entity_id=outcome.get("entity_id") or outcome["event_type"],
+            after_state=json.dumps(outcome, ensure_ascii=False),
+            message=(
+                f"Webhook delivery {outcome['status']} "
+                f"for {outcome['receiver_host']}"
+            ),
+        )
+        with repo.transaction(immediate=True):
+            repo.insert_audit_event_outbox(event)
+        repo.reconcile_audit_event_outbox(("webhook_delivery",))
+    except Exception as exc:
+        logger.warning(
+            "Webhook delivery audit persistence failed: %s",
+            type(exc).__name__,
+        )
+    if outcome["status"] == "failed":
+        try:
+            from aletheia.files.jsonl import write_error
+
+            write_error({
+                **outcome,
+                "source": "webhook_delivery",
+                "event_type": "webhook_delivery_failed",
+            })
+        except Exception:
+            pass
+
+
+def webhook_delivery_status() -> dict | None:
+    """Return the newest validated delivery attempt for read-only projections."""
+    try:
+        import json
+
+        from aletheia.storage import repositories as repo
+
+        repo.reconcile_audit_event_outbox(("webhook_delivery",))
+        row = repo.latest_mirrored_webhook_delivery_event()
+        if not row:
+            return None
+        outcome = json.loads(row.get("after_state") or "null")
+        if not isinstance(outcome, dict) or outcome.get("status") not in {"delivered", "failed"}:
+            return None
+        receiver_host = outcome.get("receiver_host")
+        if (
+            not isinstance(receiver_host, str)
+            or not receiver_host
+            or len(receiver_host) > 253
+            or any(char in receiver_host for char in "/?#@")
+        ):
+            return None
+        attempted_at = datetime.fromisoformat(str(outcome["attempted_at"]))
+        if attempted_at.tzinfo is None:
+            return None
+        return {
+            "status": outcome["status"],
+            "attempted_at": attempted_at.isoformat(),
+            "receiver_host": receiver_host,
+            "event_type": str(outcome["event_type"]),
+            "entity_type": str(outcome["entity_type"]) if outcome.get("entity_type") else None,
+            "entity_id": str(outcome["entity_id"]) if outcome.get("entity_id") else None,
+            "http_status": outcome.get("http_status") if isinstance(outcome.get("http_status"), int) else None,
+            "error_class": str(outcome["error_class"]) if outcome.get("error_class") else None,
+            "latency_ms": max(0, int(outcome["latency_ms"])),
+        }
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        OSError,
+        RuntimeError,
+        sqlite3.Error,
+    ):
+        return None
+
+
+def _send_webhook(
+    payload: dict,
+    *,
+    event_type: str = "alert",
+    source: str = "system",
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> dict:
+    """POST JSON payload and return a sanitized delivery outcome. Never raises."""
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
-        if not cfg.webhook.enabled or not cfg.webhook.url:
-            return
+    except Exception:
+        return {"status": "not_attempted", "reason": "config_unavailable"}
+    if not cfg.webhook.enabled or not cfg.webhook.url:
+        return {"status": "not_attempted", "reason": "disabled"}
+    if event_type in ("alert", "operator_notification") and not cfg.webhook.notify_alerts:
+        return {"status": "not_attempted", "reason": "category_suppressed"}
+    if event_type == "trade_fill" and not cfg.webhook.notify_trade_fills:
+        return {"status": "not_attempted", "reason": "category_suppressed"}
+    if event_type == "daily_summary" and not cfg.webhook.notify_daily_summary:
+        return {"status": "not_attempted", "reason": "category_suppressed"}
+
+    attempted_at = datetime.now(timezone.utc).isoformat()
+    started_at = time.monotonic()
+    receiver_host = (urlsplit(cfg.webhook.url).hostname or "unavailable")[:253]
+    http_status: int | None = None
+    error_class: str | None = None
+    try:
         # Issue #406: honour the per-category delivery toggles.
         # alert / operator_notification → notify_alerts
         # trade_fill → notify_trade_fills
         # daily_summary → notify_daily_summary
-        if event_type in ("alert", "operator_notification") and not cfg.webhook.notify_alerts:
-            return
-        if event_type == "trade_fill" and not cfg.webhook.notify_trade_fills:
-            return
-        if event_type == "daily_summary" and not cfg.webhook.notify_daily_summary:
-            return
         import hashlib
         import hmac
         import json
@@ -216,9 +322,32 @@ def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
         # Route through the managed proxy (aletheia.net) rather than a raw urlopen,
         # so the outbound webhook honours the configured proxy / enforce policy.
         from aletheia.net import build_urllib_opener
-        build_urllib_opener().open(req, timeout=timeout)
+        response = build_urllib_opener().open(req, timeout=timeout)
+        status = getattr(response, "status", None)
+        if isinstance(status, int) and 100 <= status <= 599:
+            http_status = status
     except Exception as e:
-        logger.debug("Webhook notification failed (non-critical): %s", e)
+        error_class = type(e).__name__[:120]
+        status = getattr(e, "code", None)
+        if isinstance(status, int) and 100 <= status <= 599:
+            http_status = status
+
+    outcome = {
+        "status": "failed" if error_class else "delivered",
+        "attempted_at": attempted_at,
+        "receiver_host": receiver_host,
+        "event_type": event_type,
+        "producer_source": source[:120],
+        "entity_type": entity_type[:120] if entity_type else None,
+        "entity_id": entity_id[:200] if entity_id else None,
+        "http_status": http_status,
+        "error_class": error_class,
+        "latency_ms": max(0, round((time.monotonic() - started_at) * 1000)),
+    }
+    _record_webhook_outcome(outcome)
+    if error_class:
+        logger.warning("Webhook delivery failed for %s: %s", receiver_host, error_class)
+    return outcome
 
 
 def notify_operator(
@@ -288,7 +417,7 @@ def notify_operator(
         "message": clean_message,
         "level": level,
         "source": source,
-    }, event_type="alert")
+    }, event_type="alert", source=source, entity_type=entity_type, entity_id=entity_id)
 
 
 def notify_trade_fill(
@@ -345,7 +474,7 @@ def notify_trade_fill(
             "execution_mode": execution_mode,
             "stop_price": stop_price,
             "take_profit_price": take_profit_price,
-        }, event_type="trade_fill")
+        }, event_type="trade_fill", source="execution_gateway", entity_type="position", entity_id=position_id)
 
 
 def notify_daily_summary() -> None:
@@ -396,6 +525,7 @@ def notify_daily_summary() -> None:
                 "open_positions": open_count,
                 "total_value_usdt": total,
                 "realized_pnl_complete": realized_complete,
-            }, event_type="daily_summary")
+            }, event_type="daily_summary", source="portfolio", entity_type="daily_summary",
+                entity_id=datetime.now(timezone.utc).date().isoformat())
     except Exception as e:
         logger.warning("notify_daily_summary failed: %s", e)

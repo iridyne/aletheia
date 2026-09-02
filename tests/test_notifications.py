@@ -3,6 +3,8 @@ import sqlite3
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from urllib.error import HTTPError
 
 import pytest
 
@@ -198,6 +200,191 @@ def test_webhook_respects_notify_daily_summary_false(tmp_path, monkeypatch):
     )
 
     notifications._send_webhook({"realized_pnl": 10.0}, event_type="daily_summary")
+
+
+def test_webhook_success_records_sanitized_delivery_outcome(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.files.jsonl import read_jsonl
+    from aletheia import notifications
+
+    cfg = load_config()
+    cfg.webhook.url = "https://receiver.example/path-secret?query-secret"
+    cfg.webhook.secret = "hmac-secret"
+    cfg.webhook.enabled = True
+    save_config(cfg)
+
+    class Response:
+        status = 204
+
+    class Opener:
+        def open(self, request, *, timeout):
+            return Response()
+
+    import aletheia.net as net
+    monkeypatch.setattr(net, "build_urllib_opener", lambda: Opener())
+
+    outcome = notifications._send_webhook(
+        {"title": "safe"},
+        event_type="alert",
+        source="health",
+        entity_type="gateway",
+        entity_id="gateway",
+    )
+
+    assert outcome["status"] == "delivered"
+    assert outcome["receiver_host"] == "receiver.example"
+    assert outcome["http_status"] == 204
+    delivery = [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "webhook_delivery"][-1]
+    serialized = json.dumps(delivery)
+    assert "path-secret" not in serialized
+    assert "query-secret" not in serialized
+    assert "hmac-secret" not in serialized
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        HTTPError("https://receiver.example/path-secret", 500, "body-secret", {}, None),
+        TimeoutError("timeout-secret"),
+        OSError("dns-secret"),
+    ],
+)
+def test_webhook_failure_records_only_bounded_safe_fields(tmp_path, monkeypatch, caplog, error):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.files.jsonl import read_jsonl
+    from aletheia import notifications
+
+    cfg = load_config()
+    cfg.webhook.url = "https://receiver.example/path-secret?query-secret"
+    cfg.webhook.secret = "hmac-secret"
+    cfg.webhook.enabled = True
+    save_config(cfg)
+
+    class Opener:
+        def open(self, request, *, timeout):
+            raise error
+
+    import aletheia.net as net
+    monkeypatch.setattr(net, "build_urllib_opener", lambda: Opener())
+
+    outcome = notifications._send_webhook(
+        {"message": "payload-secret"},
+        event_type="alert",
+        source="health",
+        entity_type="gateway",
+        entity_id="gateway",
+    )
+
+    assert outcome["status"] == "failed"
+    assert outcome["error_class"] == type(error).__name__
+    records = read_jsonl("audit.jsonl") + read_jsonl("errors.jsonl")
+    serialized = json.dumps(records) + caplog.text
+    for secret in ("path-secret", "query-secret", "hmac-secret", "payload-secret", "body-secret", "timeout-secret", "dns-secret"):
+        assert secret not in serialized
+    error_record = [
+        record
+        for record in read_jsonl("errors.jsonl")
+        if record.get("event_type") == "webhook_delivery_failed"
+    ][-1]
+    assert error_record["source"] == "webhook_delivery"
+    assert error_record["producer_source"] == "health"
+
+
+def test_webhook_status_uses_attempt_time_not_insert_order(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import notifications
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    def outcome(attempted_at, entity_id):
+        return {
+            "status": "delivered",
+            "attempted_at": attempted_at,
+            "receiver_host": "receiver.example",
+            "event_type": "alert",
+            "producer_source": "health",
+            "entity_type": "gateway",
+            "entity_id": entity_id,
+            "http_status": 204,
+            "error_class": None,
+            "latency_ms": 1,
+        }
+
+    with repo.transaction(immediate=True):
+        for attempted_at, entity_id in (
+            ("2026-09-02T08:01:00+00:00", "newer"),
+            ("2026-09-02T08:00:00+00:00", "older-finished-last"),
+        ):
+            event = AuditEvent(
+                actor="system",
+                source="webhook_delivery",
+                event_type="webhook_delivery",
+                after_state=json.dumps(outcome(attempted_at, entity_id)),
+            )
+            repo.insert_audit_event(event)
+            repo.get_db().execute(
+                "UPDATE audit_events SET jsonl_mirror_status='mirrored' WHERE id=?",
+                (event.id,),
+            )
+    monkeypatch.setattr(
+        repo, "reconcile_audit_event_outbox", lambda *_args, **_kwargs: True
+    )
+
+    assert notifications.webhook_delivery_status()["entity_id"] == "newer"
+
+
+def test_webhook_status_waits_for_audit_mirror_and_retries(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import notifications
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.files import jsonl
+
+    cfg = load_config()
+    cfg.webhook.url = "https://receiver.example/hook"
+    cfg.webhook.enabled = True
+    save_config(cfg)
+
+    class Response:
+        status = 204
+
+    class Opener:
+        def open(self, request, *, timeout):
+            return Response()
+
+    import aletheia.net as net
+    monkeypatch.setattr(net, "build_urllib_opener", lambda: Opener())
+    monkeypatch.setattr(jsonl, "write_audits_deduplicated", lambda *_args, **_kwargs: set())
+
+    notifications._send_webhook({"title": "safe"}, event_type="alert")
+    assert notifications.webhook_delivery_status() is None
+
+    monkeypatch.setattr(
+        jsonl,
+        "write_audits_deduplicated",
+        lambda events, **_kwargs: {event["id"] for event in events},
+    )
+    assert notifications.webhook_delivery_status()["status"] == "delivered"
+
+
+def test_webhook_disabled_and_suppressed_are_not_attempted(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.files.jsonl import read_jsonl
+    from aletheia import notifications
+
+    disabled = notifications._send_webhook({"title": "disabled"}, event_type="alert")
+    assert disabled == {"status": "not_attempted", "reason": "disabled"}
+
+    cfg = load_config()
+    cfg.webhook.url = "https://receiver.example/hook"
+    cfg.webhook.enabled = True
+    cfg.webhook.notify_alerts = False
+    save_config(cfg)
+    suppressed = notifications._send_webhook({"title": "suppressed"}, event_type="alert")
+    assert suppressed == {"status": "not_attempted", "reason": "category_suppressed"}
+    assert not [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "webhook_delivery"]
 
 
 @pytest.mark.parametrize(
@@ -446,13 +633,18 @@ def test_daily_summary_webhook_preserves_incomplete_mode_scoped_realized_pnl(
     monkeypatch.setattr(
         notifications,
         "_send_webhook",
-        lambda payload, *, event_type: delivered.append((payload, event_type)),
+        lambda payload, **kwargs: delivered.append((payload, kwargs)),
     )
 
     notifications.notify_daily_summary()
 
-    [(payload, event_type)] = delivered
-    assert event_type == "daily_summary"
+    [(payload, delivery_context)] = delivered
+    assert delivery_context == {
+        "event_type": "daily_summary",
+        "source": "portfolio",
+        "entity_type": "daily_summary",
+        "entity_id": datetime.now(timezone.utc).date().isoformat(),
+    }
     assert payload["realized_pnl"] is None
     assert payload["realized_pnl_complete"] is False
     assert payload["unrealized_pnl"] == -5.0
