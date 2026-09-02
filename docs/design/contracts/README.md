@@ -22,7 +22,7 @@ Use [template.md](template.md) for new Contracts. Contract changes and their
 executable claims must remain aligned, but claim conformance does not determine
 Product Support.
 
-The [Observation Experiment Ownership V2 Contract](observation_experiment_ownership_v2.md) freezes the serial #2737 migration boundary: Learning owns pre-registration research, Observation Lab owns registered Experiments, and Main owns production facts plus the bounded delivery proof. Until its authority-cutover gate is explicitly satisfied, legacy Experiment authority remains active.
+The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) freezes the current Phase 1 legacy-coupling inventory and serial migration boundary. Its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future target; until the explicit authority-cutover gate is satisfied, legacy Experiment authority remains active.
 
 Current framework-wide contracts include the
 [LLM Inference Harness Contract](llm_inference_harness_contract.md), which owns
