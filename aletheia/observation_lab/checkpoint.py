@@ -130,22 +130,31 @@ def _read_app_outbox_state() -> tuple[int, int, str]:
     return watermark, pending, fingerprint
 
 
-def _active_manifest_hashes(now: str | None = None) -> tuple[str, ...]:
-    """Sorted, deduplicated hash tuple for every currently-effective manifest."""
+def _active_manifest_hashes(
+    now: str | None = None,
+    *,
+    db: sqlite3.Connection | None = None,
+) -> tuple[str, ...]:
+    """Sorted, deduplicated hashes read through one Lab snapshot."""
     from aletheia.observation_lab.manifest import load_active_manifests
 
-    manifests = load_active_manifests(now=now)
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _active_manifest_hashes(now, db=connection)
+    manifests = load_active_manifests(now=now, db=db)
     return tuple(sorted({m.manifest_hash for m in manifests}))
 
 
-def _lab_schema_state() -> tuple[str, int]:
-    with _lab_read_snapshot() as db:
-        rows = db.execute(
-            "SELECT migration_id FROM lab_schema_migrations ORDER BY rowid DESC"
-        ).fetchall()
-        if not rows:
-            return ("<empty>", 0)
-        return str(rows[0][0]), len(rows)
+def _lab_schema_state(*, db: sqlite3.Connection | None = None) -> tuple[str, int]:
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _lab_schema_state(db=connection)
+    rows = db.execute(
+        "SELECT migration_id FROM lab_schema_migrations ORDER BY rowid DESC"
+    ).fetchall()
+    if not rows:
+        return ("<empty>", 0)
+    return str(rows[0][0]), len(rows)
 
 
 @contextmanager
@@ -167,59 +176,67 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-def _lab_state_fingerprint() -> str:
+def _lab_state_fingerprint(*, db: sqlite3.Connection | None = None) -> str:
     """Hash every Lab table except the checkpoint ledger itself.
 
     The checkpoint row is intentionally excluded from this digest because it
     records the digest. The separate ledger digest below covers prior rows in
     a stable way, so saving a quiet checkpoint does not create self-drift.
     """
-    with _lab_read_snapshot() as db:
-        tables = db.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%' AND name <> 'joint_checkpoints' "
-            "ORDER BY name"
-        ).fetchall()
-        material: list[Any] = []
-        for table in tables:
-            name = str(table["name"])
-            if name in _CHECKPOINT_EXCLUDED_TABLES:
-                continue
-            columns = [
-                str(row["name"])
-                for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
-            ]
-            selected_columns = _CHECKPOINT_TABLE_COLUMNS.get(name, tuple(columns))
-            if not selected_columns:
-                continue
-            if any(column not in columns for column in selected_columns):
-                raise RuntimeError(f"checkpoint_lab_schema_unavailable:{name}")
-            rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
-            encoded_rows = sorted(
-                [
-                    [_json_value(row[column]) for column in selected_columns]
-                    for row in rows
-                ],
-                key=_canonical_json,
-            )
-            material.append({
-                "name": name,
-                "sql": table["sql"],
-                "columns": list(selected_columns),
-                "rows": encoded_rows,
-            })
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _lab_state_fingerprint(db=connection)
+    tables = db.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%' AND name <> 'joint_checkpoints' "
+        "ORDER BY name"
+    ).fetchall()
+    material: list[Any] = []
+    for table in tables:
+        name = str(table["name"])
+        if name in _CHECKPOINT_EXCLUDED_TABLES:
+            continue
+        columns = [
+            str(row["name"])
+            for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
+        ]
+        selected_columns = _CHECKPOINT_TABLE_COLUMNS.get(name, tuple(columns))
+        if not selected_columns:
+            continue
+        if any(column not in columns for column in selected_columns):
+            raise RuntimeError(f"checkpoint_lab_schema_unavailable:{name}")
+        rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
+        encoded_rows = sorted(
+            [
+                [_json_value(row[column]) for column in selected_columns]
+                for row in rows
+            ],
+            key=_canonical_json,
+        )
+        material.append({
+            "name": name,
+            "sql": table["sql"],
+            "columns": list(selected_columns),
+            "rows": encoded_rows,
+        })
     return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
 
 
-def _checkpoint_ledger_fingerprint(lab_state_fingerprint: str) -> str:
+def _checkpoint_ledger_fingerprint(
+    lab_state_fingerprint: str,
+    *,
+    db: sqlite3.Connection | None = None,
+) -> str:
     """Hash historical checkpoint rows while excluding the current state rows."""
-    with _lab_read_snapshot() as db:
-        rows = db.execute(
-            "SELECT checkpoint_id, app_migration_head, app_migration_count, "
-            "active_manifest_hashes, active_manifest_count, lab_schema_head, "
-            "lab_schema_count, lab_state_fingerprint, checkpoint_ledger_fingerprint, "
-            "joint_fingerprint FROM joint_checkpoints ORDER BY rowid"
-        ).fetchall()
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _checkpoint_ledger_fingerprint(lab_state_fingerprint, db=connection)
+    rows = db.execute(
+        "SELECT checkpoint_id, app_migration_head, app_migration_count, "
+        "active_manifest_hashes, active_manifest_count, lab_schema_head, "
+        "lab_schema_count, lab_state_fingerprint, checkpoint_ledger_fingerprint, "
+        "joint_fingerprint FROM joint_checkpoints ORDER BY rowid"
+    ).fetchall()
     material = [
         {
             "checkpoint_id": row["checkpoint_id"],
@@ -286,11 +303,15 @@ def compute_joint_checkpoint(
         get_lab_db()
     head, count = _read_app_migration_state()
     outbox_watermark, outbox_pending, outbox_fingerprint = _read_app_outbox_state()
-    with _lab_read_snapshot():
-        hashes = _active_manifest_hashes()
-        lab_head, lab_count = _lab_schema_state()
-        lab_state = _lab_state_fingerprint()
-        ledger_state = _checkpoint_ledger_fingerprint(lab_state)
+    with _lab_read_snapshot() as lab:
+        # Keep every Lab-derived component on the same physical read
+        # transaction.  A manifest publish/revocation or lifecycle write that
+        # races this digest must land wholly before or after the checkpoint;
+        # nested connections would otherwise create a mixed cut.
+        hashes = _active_manifest_hashes(db=lab)
+        lab_head, lab_count = _lab_schema_state(db=lab)
+        lab_state = _lab_state_fingerprint(db=lab)
+        ledger_state = _checkpoint_ledger_fingerprint(lab_state, db=lab)
     fingerprint = _fingerprint(
         app_migration_head=head,
         app_migration_count=count,
