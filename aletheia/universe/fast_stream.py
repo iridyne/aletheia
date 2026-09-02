@@ -408,8 +408,12 @@ def parse_binance_message(
             return FastMarketEvent(event_type="trade", price=price, size=size, side=side, **common)
     elif event_name == "kline" and isinstance(message.get("k"), dict):
         row = message["k"]
+        bar_open = _nonnegative_int(row.get("t"))
+        if bar_open is None or bar_open <= 0:
+            return None
         values = tuple(_finite(row.get(key), nonnegative=(key == "v"), positive=(key != "v")) for key in "ohlcv")
         if all(value is not None for value in values):
+            common["exchange_timestamp_ms"] = bar_open
             return FastMarketEvent(event_type="candle", candle=values, **common)
     elif event_name == "depthUpdate" and market_type == "perp":
         levels = _binance_levels(message)
