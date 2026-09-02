@@ -82,6 +82,15 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             "candidate_selection_policy": "candidate_selection_utility_v1",
             "candidate_selection_policy_epoch": "candidate-selection-utility:test",
         })
+        from aletheia.storage.models import AuditEvent
+
+        repo.insert_audit_event(AuditEvent(
+            actor="human",
+            source="dashboard",
+            event_type="candidate_selection_authority_admitted",
+            entity_type="universe_config",
+            entity_id=cfg.universe.candidate_selection_policy_epoch,
+        ))
 
     feature = {
         "asset_id": "asset-emission-retry",

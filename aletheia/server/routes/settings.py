@@ -2879,7 +2879,9 @@ def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
             "candidate_selection_policy_epoch": qualification_epoch,
         })
         admission_block_reason = candidate_selection_authority_block_reason(
-            cfg.model_copy(update={"universe": proposed}), qualification,
+            cfg.model_copy(update={"universe": proposed}),
+            qualification,
+            require_admission_record=False,
         )
     admission_block_reason = overlap_block_reason or admission_block_reason
     if configured_target:
@@ -2990,13 +2992,52 @@ def update_universe_config(req: UniverseConfigUpdate):
             value = cleaned
         normalized_updates[field] = value
 
-    try:
-        replacement = UniverseConfig.model_validate({**old, **normalized_updates})
-    except ValidationError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    cfg.universe = replacement
+    persisted: dict[str, Any] = {}
 
-    save_config(cfg)
+    def apply_update(latest) -> bool:
+        latest_old = latest.universe.model_dump(mode="json")
+        latest_changed_identity_fields = sorted(
+            field for field in identity_fields
+            if field in normalized_updates
+            and normalized_updates[field] != latest_old.get(field)
+        )
+        if (
+            latest.universe.candidate_selection_policy
+            == "candidate_selection_utility_v1"
+            and latest_changed_identity_fields
+        ):
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "candidate_selection_policy_identity_frozen",
+                    "message": "Restore legacy selection before changing frozen Candidate policy inputs.",
+                    "fields": latest_changed_identity_fields,
+                },
+            )
+        latest_soft = int(normalized_updates.get("entry_ttl_sec", latest_old["entry_ttl_sec"]))
+        latest_hard = int(normalized_updates.get(
+            "candidate_max_continuous_age_sec",
+            latest_old["candidate_max_continuous_age_sec"],
+        ))
+        if latest_hard < latest_soft:
+            raise HTTPException(
+                400,
+                "candidate_max_continuous_age_sec must be >= entry_ttl_sec",
+            )
+        try:
+            replacement = UniverseConfig.model_validate({
+                **latest_old,
+                **normalized_updates,
+            })
+        except ValidationError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        latest.universe = replacement
+        persisted.update({"cfg": latest, "old": latest_old})
+        return bool(normalized_updates)
+
+    mutate_config(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
 
     # IntervalTrigger is immutable once added — a saved refresh_interval_min only
     # takes effect at the next gateway restart unless the live job is rescheduled.
@@ -3061,31 +3102,57 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
             "candidate_selection_policy_epoch": req.expected_policy_epoch,
         })
         block_reason = candidate_selection_authority_block_reason(
-            cfg.model_copy(update={"universe": proposed}), qualification,
+            cfg.model_copy(update={"universe": proposed}),
+            qualification,
+            require_admission_record=False,
         )
         if block_reason is not None:
             raise HTTPException(409, block_reason)
-        before = cfg.universe.model_dump(mode="json")
-        cfg.universe = proposed
-        save_config(cfg)
-        try:
+        admitted: dict[str, Any] = {}
+
+        def apply_admission(latest) -> bool:
+            latest_overlap = candidate_selection_overlap_block_reason()
+            if latest_overlap is not None:
+                raise HTTPException(409, latest_overlap)
+            latest_qualification = evaluate_candidate_selection_policy()
+            if str(latest_qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+                raise HTTPException(409, "candidate_selection_policy_epoch_changed")
+            latest_before = latest.universe.model_dump(mode="json")
+            latest_proposed = UniverseConfig.model_validate({
+                **latest_before,
+                "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+                "candidate_selection_policy_epoch": req.expected_policy_epoch,
+            })
+            latest_block_reason = candidate_selection_authority_block_reason(
+                latest.model_copy(update={"universe": latest_proposed}),
+                latest_qualification,
+                require_admission_record=False,
+            )
+            if latest_block_reason is not None:
+                raise HTTPException(409, latest_block_reason)
             event = AuditEvent(
                 actor="human",
                 source="dashboard",
                 event_type="candidate_selection_authority_admitted",
                 entity_type="universe_config",
                 entity_id=req.expected_policy_epoch,
-                before_state=json.dumps(before, sort_keys=True),
-                after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
+                before_state=json.dumps(latest_before, sort_keys=True),
+                after_state=json.dumps(latest_proposed.model_dump(mode="json"), sort_keys=True),
                 message=f"Candidate Selection Utility admitted: {req.reason}",
             )
             if not repo.insert_audit_event_once(event):
                 raise RuntimeError("candidate_selection_admission_audit_identity_conflict")
             if not write_audit(event.model_dump(), mirror_db=False):
                 raise OSError("candidate_selection_admission_audit_chain_unavailable")
+            latest.universe = latest_proposed
+            admitted["cfg"] = latest
+            return True
+
+        try:
+            mutate_config(apply_admission)
+        except HTTPException:
+            raise
         except Exception as exc:
-            cfg.universe = UniverseConfig.model_validate(before)
-            save_config(cfg)
             raise HTTPException(
                 500,
                 detail={
@@ -3093,6 +3160,7 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
                     "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
                 },
             ) from exc
+        cfg = admitted["cfg"]
     return _candidate_selection_status(cfg)
 
 
@@ -3114,7 +3182,7 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
         })
         save_config(cfg)
         try:
-            write_audit({
+            audit_written = write_audit({
                 "actor": "human",
                 "source": "dashboard",
                 "event_type": "candidate_selection_authority_rolled_back",
@@ -3123,6 +3191,8 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
                 "after": cfg.universe.model_dump(mode="json"),
                 "message": f"Candidate Selection Utility rolled back: {req.reason}",
             })
+            if not audit_written:
+                raise OSError("candidate_selection_rollback_audit_chain_unavailable")
         except Exception as exc:
             cfg.universe = UniverseConfig.model_validate(before)
             save_config(cfg)

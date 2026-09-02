@@ -545,7 +545,10 @@ def candidate_selection_frozen_family_spread_control(
             continue
         if frozen != expected or any(not math.isfinite(value) for value in normalized.values()):
             continue
-        if not isinstance(source, dict):
+        if not isinstance(source, dict) or not all(
+            isinstance(source.get(field), str) and bool(source[field])
+            for field in ("source_cutoff_at", "source_fingerprint")
+        ):
             continue
         return dict(sorted(normalized.items())), source
     return None

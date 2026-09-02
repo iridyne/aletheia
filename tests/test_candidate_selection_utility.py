@@ -855,6 +855,26 @@ def test_candidate_selection_epoch_identity_includes_cost_route_and_legacy_contr
     )
 
 
+def test_candidate_selection_bundle_rejects_unavailable_adaptive_control():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.service import _build_candidate_selection_bundle
+
+    with pytest.raises(
+        ValueError,
+        match="candidate_selection_family_spread_evidence_unavailable",
+    ):
+        _build_candidate_selection_bundle(
+            population=[],
+            legacy_scored=[],
+            legacy_allocated=[],
+            scanner_run_id="adaptive-source-unavailable",
+            captured_at="2026-09-02T00:00:00+00:00",
+            cfg=AletheiaConfig(),
+            family_spread_tolerances={},
+            family_spread_evidence={},
+        )
+
+
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     import json
     from datetime import datetime, timedelta, timezone

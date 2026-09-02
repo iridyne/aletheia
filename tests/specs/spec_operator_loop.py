@@ -1026,7 +1026,7 @@ def test_regime_scoring_no_cliff():
 @spec_claim(
     SpecClaim(
         "OL-C11", "operator_layer", "§scanner_weight_persistence", "L2a",
-        "_action_adjust_scanner_weight MUST persist weight to config via save_config so "
+        "_action_adjust_scanner_weight MUST persist weight via mutate_config so "
         "adjustments survive restarts. UniverseConfig MUST have scanner_weights field.",
         status="implemented",
     ),
@@ -1052,8 +1052,8 @@ def test_scanner_weight_persistence():
             fn_body_src = ast.unparse(node)
             break
     assert fn_body_src, "_action_adjust_scanner_weight not found in operator_loop.py"
-    assert "save_config" in fn_body_src, (
-        "_action_adjust_scanner_weight does not call save_config — "
+    assert "mutate_config" in fn_body_src, (
+        "_action_adjust_scanner_weight does not call mutate_config — "
         "scanner weight adjustments are in-memory only and will be lost on restart (CR-PI-01)"
     )
     assert "scanner_weights" in fn_body_src, (
@@ -1073,10 +1073,11 @@ def test_scanner_weight_adjustment_respects_candidate_policy_freeze(monkeypatch)
         "candidate_selection_policy_epoch": "candidate-selection-utility:frozen",
     })
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
-    monkeypatch.setattr(
-        "aletheia.config.loader.save_config",
-        lambda _cfg: pytest.fail("frozen scanner weight must not be saved"),
-    )
+    def apply_to_frozen(mutator):
+        assert mutator(cfg) is False
+        return False
+
+    monkeypatch.setattr("aletheia.config.loader.mutate_config", apply_to_frozen)
 
     result = operator_loop._action_adjust_scanner_weight(OperatorAction(
         action_type="adjust_scanner_weight",

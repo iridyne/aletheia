@@ -930,9 +930,24 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     # A config write is the claimed effect. Do not consume the action budget or
     # report success until the value can be read back from the durable config.
     try:
-        from aletheia.config.loader import load_config, save_config
-        cfg = load_config()
-        if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
+        from aletheia.config.loader import load_config, mutate_config
+
+        mutation: dict[str, object] = {}
+
+        def apply_weight(cfg) -> bool:
+            if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
+                mutation["frozen"] = True
+                return False
+            weights = dict(cfg.universe.scanner_weights)
+            current = float(weights.get(family, 1.0))
+            new_value = round(max(0.1, min(3.0, current + delta)), 3)
+            weights[family] = new_value
+            cfg.universe.scanner_weights = weights
+            mutation.update({"current": current, "new_value": new_value})
+            return True
+
+        mutate_config(apply_weight)
+        if mutation.get("frozen"):
             return {
                 "action": "adjust_scanner_weight",
                 "status": "skipped",
@@ -940,12 +955,8 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
                 "delta": delta,
                 "reason": "candidate_selection_policy_identity_frozen",
             }
-        weights = dict(cfg.universe.scanner_weights)
-        current = float(weights.get(family, 1.0))
-        new_value = round(max(0.1, min(3.0, current + delta)), 3)
-        weights[family] = new_value
-        cfg.universe.scanner_weights = weights
-        save_config(cfg)
+        current = float(mutation["current"])
+        new_value = float(mutation["new_value"])
 
         persisted = load_config()
         persisted_value = float(persisted.universe.scanner_weights.get(family))

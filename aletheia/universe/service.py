@@ -333,6 +333,13 @@ def _build_candidate_selection_bundle(
         candidate_selection_policy_identity,
     )
 
+    if family_spread_evidence is not None and not all(
+        isinstance(family_spread_evidence.get(field), str)
+        and bool(family_spread_evidence[field])
+        for field in ("source_cutoff_at", "source_fingerprint")
+    ):
+        raise ValueError("candidate_selection_family_spread_evidence_unavailable")
+
     action_routes = {
         (
             str(item.get("feature_snapshot_id") or ""),
@@ -468,6 +475,10 @@ def _assert_candidate_selection_publication_authority(
     if (
         current.universe.candidate_selection_policy != "candidate_selection_utility_v1"
         or current.universe.candidate_selection_policy_epoch != expected_policy_id
+        or not repo.has_audit_event(
+            event_type="candidate_selection_authority_admitted",
+            entity_id=expected_policy_id,
+        )
         or candidate_selection_policy_identity(
             current,
             family_spread_tolerances=(

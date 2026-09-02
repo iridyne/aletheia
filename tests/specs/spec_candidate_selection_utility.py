@@ -114,9 +114,16 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
         "blocking_reasons": [],
         "invalid_reasons": [],
     }
-    assert candidate_selection_authority_block_reason(target, positive) is None
     assert candidate_selection_authority_block_reason(
-        target, {**positive, "verdict": "neutral"},
+        target, positive,
+    ) == "candidate_selection_admission_record_missing"
+    assert candidate_selection_authority_block_reason(
+        target, positive, require_admission_record=False,
+    ) is None
+    assert candidate_selection_authority_block_reason(
+        target,
+        {**positive, "verdict": "neutral"},
+        require_admission_record=False,
     ) == "candidate_selection_qualification_not_positive"
     monkeypatch.setattr(
         "aletheia.learning.ledger.list_open_experiments",

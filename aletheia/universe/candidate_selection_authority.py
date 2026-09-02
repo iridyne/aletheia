@@ -125,6 +125,8 @@ def candidate_selection_overlap_block_reason() -> str | None:
 def candidate_selection_authority_block_reason(
     cfg: object,
     qualification: Mapping[str, object],
+    *,
+    require_admission_record: bool = True,
 ) -> str | None:
     """Return why configured target authority cannot run; legacy is always valid."""
 
@@ -136,6 +138,18 @@ def candidate_selection_authority_block_reason(
     expected_epoch = str(universe.candidate_selection_policy_epoch or "")
     if not expected_epoch:
         return "candidate_selection_policy_epoch_missing"
+    if require_admission_record:
+        try:
+            from aletheia.storage import repositories as repo
+
+            admitted = repo.has_audit_event(
+                event_type="candidate_selection_authority_admitted",
+                entity_id=expected_epoch,
+            )
+        except Exception:
+            return "candidate_selection_admission_evidence_unavailable"
+        if not admitted:
+            return "candidate_selection_admission_record_missing"
     if qualification.get("verdict") != "positive":
         return "candidate_selection_qualification_not_positive"
     if qualification.get("promotion_eligible") is not True:

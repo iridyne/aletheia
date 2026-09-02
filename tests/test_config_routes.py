@@ -817,6 +817,34 @@ async def test_candidate_selection_admission_rechecks_overlap_under_writer_permi
 
     assert response.status_code == 409
     assert response.json()["detail"] == "candidate_selection_overlapping_learning_authority"
+
+
+@pytest.mark.anyio
+async def test_universe_policy_inputs_recheck_latest_config_under_writer_permit(
+    client, monkeypatch,
+):
+    from aletheia.config.loader import load_config
+    from aletheia.config.schema import UniverseConfig
+    from aletheia.server.routes import settings
+
+    latest = load_config()
+    latest.universe = UniverseConfig.model_validate({
+        **latest.universe.model_dump(mode="json"),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "candidate-selection-utility:concurrent",
+    })
+
+    def apply_after_concurrent_admission(mutator):
+        return mutator(latest)
+
+    monkeypatch.setattr(settings, "mutate_config", apply_after_concurrent_admission)
+    response = await client.post(
+        "/api/settings/universe",
+        json={"explore_ratio": 0.25},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "candidate_selection_policy_identity_frozen"
     assert load_config().universe.candidate_selection_policy == "legacy_total_score_v1"
 
 
@@ -870,7 +898,7 @@ async def test_candidate_selection_admission_restores_legacy_when_audit_fails(
     )
     monkeypatch.setattr(
         "aletheia.files.jsonl.write_audit",
-        lambda _record: (_ for _ in ()).throw(OSError("audit unavailable")),
+        lambda _record, **_kwargs: False,
     )
     response = await client.post(
         "/api/settings/universe/candidate-selection/admit",
@@ -914,7 +942,7 @@ async def test_candidate_selection_rollback_restores_target_when_audit_fails(
     save_config(cfg)
     monkeypatch.setattr(
         "aletheia.files.jsonl.write_audit",
-        lambda _record: (_ for _ in ()).throw(OSError("audit unavailable")),
+        lambda _record: False,
     )
 
     response = await client.post(
