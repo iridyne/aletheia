@@ -1143,6 +1143,7 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
     from aletheia.update import applier, auto, git_ops
 
     _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: False)
     calls = []
     backups = iter([tmp_path / "preflight.tar", tmp_path / "activation.tar"])
 
