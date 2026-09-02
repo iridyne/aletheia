@@ -1648,6 +1648,8 @@ class UniverseMember(BaseModel):
 
 Candidate = UniverseMember
 
+PLANNER_CONTRACT_VERSION = "entry-planner/v2"
+
 
 class CandidatePlanningGeneration(_Provenanced):
     """Durable ownership/result state for one thesis-level planning generation."""
@@ -1656,6 +1658,7 @@ class CandidatePlanningGeneration(_Provenanced):
     planning_key: str = Field(min_length=64, max_length=64)
     planning_identity: str = Field(min_length=64, max_length=64)
     identity_version: Literal["candidate-planning/v1"] = "candidate-planning/v1"
+    planner_contract_version: Literal["entry-planner/v2"] = PLANNER_CONTRACT_VERSION
     candidate_id: str
     last_candidate_id: str
     venue: str

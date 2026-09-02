@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v55"
+SCHEMA_VERSION = "aletheia-sqlite-v56"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3908,6 +3908,14 @@ _LEARNING_NOMINATION_IMMUTABILITY_CHECKSUM = hashlib.sha256(
         _LEARNING_NOMINATION_IMMUTABILITY_SQL
         + "\nlearning_hypothesis_nomination_immutability_v1"
     ).encode("utf-8")
+).hexdigest()
+
+_PLANNER_CONTRACT_VERSION_COLUMN = (
+    "planner_contract_version TEXT NOT NULL DEFAULT 'entry-planner/v1' "
+    "CHECK(planner_contract_version IN ('entry-planner/v1','entry-planner/v2'))"
+)
+_PLANNER_CONTRACT_VERSION_CHECKSUM = hashlib.sha256(
+    (_PLANNER_CONTRACT_VERSION_COLUMN + "\nplanner_contract_version_v2").encode("utf-8")
 ).hexdigest()
 
 _KNOWLEDGE_DOCUMENT_COLUMNS = (
@@ -6091,6 +6099,20 @@ def _apply_learning_nomination_immutability_v55(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_planner_contract_version_v56(db: sqlite3.Connection) -> None:
+    """Mark historical generations v1; new code explicitly writes v2."""
+
+    existing = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(candidate_planning_generations)").fetchall()
+    }
+    if "planner_contract_version" not in existing:
+        db.execute(
+            "ALTER TABLE candidate_planning_generations ADD COLUMN "
+            + _PLANNER_CONTRACT_VERSION_COLUMN
+        )
+
+
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
     """Persist future fingerprint inputs without rewriting historical identity."""
 
@@ -6713,6 +6735,12 @@ _MIGRATIONS = (
         checksum=_LEARNING_NOMINATION_IMMUTABILITY_CHECKSUM,
         schema_version="aletheia-sqlite-v55",
         apply=_apply_learning_nomination_immutability_v55,
+    ),
+    MigrationStep(
+        migration_id="20260902_0055_planner_contract_version_v56",
+        checksum=_PLANNER_CONTRACT_VERSION_CHECKSUM,
+        schema_version="aletheia-sqlite-v56",
+        apply=_apply_planner_contract_version_v56,
     ),
 )
 

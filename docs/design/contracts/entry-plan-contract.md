@@ -16,6 +16,19 @@ approval authority and Gateway is the only order/cancel authority.
 `ENTRY_PLAN_VERSION` remains `entry-plan/v1`. Existing immutable plan JSON is
 not rewritten.
 
+## Planner contract epoch
+
+`planner_contract_version` is an explicit, manually maintained semantic epoch
+for PlanIntent validation, deterministic compilation, and planning outcome
+meaning. It is not a commit, release, or Universe Snapshot version. A current
+generation is reusable only when both its thesis identity and Planner contract
+version match.
+
+On an epoch mismatch, the old generation is retained as non-current with
+`planning_contract_superseded`. Its active Entry Plan is fail-closed invalidated;
+terminal plans remain terminal. An execution-eligible Candidate receives one new
+generation for the current epoch, and subsequent Snapshot churn reuses it.
+
 ## Exact-venue execution eligibility
 
 A Candidate is execution-eligible only when the configured Fast Monitoring path
@@ -75,6 +88,10 @@ three.
 Provider timeout, empty content, invalid JSON, and schema failure retain the
 bounded `planning_unavailable` retry policy. Model economic refusal remains a
 terminal `NO_PLAN` with an allowed economic reason.
+
+Deterministic compiler validation failure is terminal after one model attempt
+and persists `ENTRY_PLAN_COMPILE_INVALID:<bounded-code>`. Unexpected internal
+exceptions retain bounded unavailable retry and full internal traceback logging.
 
 ## Deterministic tactic compilation
 

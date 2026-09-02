@@ -913,6 +913,7 @@ export interface CandidateAttention {
   market_type: 'spot' | 'perp'
   candidate_family: string
   direction: 'long' | 'short'
+  planner_contract_version: string
   status: string
   attempt_count: number
   attention_status: 'active' | 'terminal'
@@ -951,6 +952,7 @@ export interface CandidateWorkbenchRow {
   execution_eligible: number
   expires_at: string
   planning_generation_id: string | null
+  planner_contract_version: string | null
   planning_status: string | null
   result_kind: string | null
   planning_result_json: string | null
