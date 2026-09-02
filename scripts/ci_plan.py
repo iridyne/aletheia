@@ -594,7 +594,10 @@ def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
             ],
         })
     if required.get("frontend"):
-        checks.append({"name": "frontend tests", "command": ["npm", "test"], "working_directory": "frontend"})
+        checks.extend([
+            {"name": "frontend tests", "command": ["npm", "test"], "working_directory": "frontend"},
+            {"name": "frontend build", "command": ["npm", "run", "build"], "working_directory": "frontend"},
+        ])
     if required.get("operator"):
         checks.append({"name": "operator tests", "command": ["npm", "test"], "working_directory": "operator-shell"})
     if required.get("native"):
