@@ -47,7 +47,14 @@ jobs:
       - name: Run Python regression suite serially
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-manual-full-${{ github.run_id }}-${{ github.run_attempt }}
-        run: uv run pytest tests/ -q --tb=short --timeout=120
+        run: |
+          mapfile -t test_files < <(
+            find tests -type f \( -name 'test_*.py' -o -name 'spec_*.py' \) -print | sort
+          )
+          batch_size=40
+          for ((offset = 0; offset < ${#test_files[@]}; offset += batch_size)); do
+            uv run pytest "${test_files[@]:offset:batch_size}" -q --tb=short --timeout=120
+          done
 
       - name: Test and build dashboard
         working-directory: frontend
