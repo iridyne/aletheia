@@ -1,18 +1,18 @@
 # Observation Experiment Ownership V2 Migration Contract
 
-## Purpose and current status
+## Purpose and authority
 
-This Contract governs the currently active Phase 1 migration boundary for Issue
+This Contract records the durable migration boundary established for Issue
 #2737. The accepted future design is
 [Observation Experiment Ownership V2](../proposals/observation_experiment_ownership_v2.md).
 
-The target design is not current runtime behavior. Until the explicit Phase 8
-authority cutover, the legacy Main/Learning Experiment resolver and its
-`app.db` ledger remain authoritative. Observation Lab owns only the behavior
-already guaranteed by
-[Observation Lab v1](observation_lab_contract.md). Phase 1 changes documentation
-and CI architecture constraints only; it does not change Runtime, schema,
-treatment, scheduler, retention, or trading behavior.
+The target design is not current runtime behavior. Until an explicit authority
+cutover is implemented and verified, the legacy Main/Learning Experiment
+resolver and its `app.db` ledger remain authoritative. Observation Lab owns
+only the behavior already guaranteed by
+[Observation Lab v1](observation_lab_contract.md). Merging documentation and
+architecture constraints does not change Runtime, schema, treatment, scheduler,
+retention, trading behavior, or authority.
 
 ## Current ownership
 
@@ -63,9 +63,9 @@ baseline.
 
 ## Current migration invariants
 
-- Phases execute serially under #2737; only the current phase may implement.
-- Phase 1 does not authorize Lab schema, outbox, importer, TreatmentAdapter,
-  lifecycle, retention, archive, or authority-cutover implementation.
+- This boundary does not itself authorize Lab schema, outbox, importer,
+  TreatmentAdapter, lifecycle, retention, archive, or authority-cutover
+  implementation; each requires its separately reviewed implementation gate.
 - Existing Universe production fact, outcome seed, and legacy Exposure
   atomicity remains unchanged.
 - Observation Lab grants no Risk, Gateway, credential, signer, order, Position,
@@ -98,7 +98,6 @@ Executable SpecClaims must prove that:
    positives;
 4. no allowlist can remain stale after coupling is removed.
 
-Rollback removes only the Phase 1 documentation and architecture tests. It does
-not migrate or rewrite durable state. The next phase remains locked until this
-phase merges, all review findings are resolved, and its done-when proof is
-recorded on #2737.
+Rolling back this documentation-and-test boundary does not migrate or rewrite
+durable state. Phase sequencing, active work, merge status, review evidence, and
+done-when tracking remain exclusively in #2737 rather than in this Contract.
