@@ -441,12 +441,11 @@ def compute_total_score(
                 suppress_shadow_if_paper_active=True,
                 exposed_at=outcome_entry_ts,
                 outcome_seeds=outcome_seeds,
-                # This treatment path is outcome-bearing whenever an exact
-                # candidate identity exists.  Tying the gate to the candidate
-                # identity (rather than ``bool(outcome_seeds)``) keeps a
-                # malformed/missing seed fail-closed instead of authorizing an
-                # unmeasurable score change.
-                require_outcome_seed=bool(candidate_key and outcome_candidate_key),
+                # Preserve the legacy caller contract: a seed is required only
+                # when this producer actually constructed one.  The Lab seam
+                # independently requires an exact seed for outcome-bearing
+                # manifests, so malformed Lab input still fails closed.
+                require_outcome_seed=bool(outcome_seeds),
                 deferred_exposure_writes=deferred_exposure_writes,
             )
             opportunity = influence.value

@@ -166,7 +166,7 @@ def _resolve_numeric_via_observation_lab(
                 adapter_id=adapter_id,
                 adapter_version=adapter_version,
                 behavior_dimension=path_id,
-                requires_outcome_seed=require_outcome_seed,
+                requires_outcome_seed=bool(require_outcome_seed or outcome_candidate_key),
             ),
             replace=True,
         )
