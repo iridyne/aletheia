@@ -39,6 +39,7 @@ def _candidate(
     direction: str = "long",
     scanner_family: str = "momentum",
     venue: str = "bitget",
+    market_type: str = "perp",
 ):
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_snapshot(snapshot)
@@ -47,7 +48,7 @@ def _candidate(
         asset_id=asset_id,
         venue=venue,
         symbol=symbol,
-        market_type="perp",
+        market_type=market_type,
         rank=rank,
         total_score=90 - rank,
         scanner_family=scanner_family,
@@ -772,6 +773,36 @@ def test_legacy_venue_mismatch_consumes_no_model_call():
     assert result["model_invoked"] is False
     assert calls == 0
     assert json.loads(stored["result_json"])["reason_code"].startswith("EXECUTION_VENUE_UNAVAILABLE:")
+
+
+def test_binance_testnet_spot_candidate_consumes_no_model_call():
+    from aletheia.config.loader import load_config
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+
+    candidate = _candidate(venue="binance", market_type="spot")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    calls = 0
+
+    async def planner(_context):
+        nonlocal calls
+        calls += 1
+        return _no_plan_intent()
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "binance_testnet"
+    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+
+    assert result["status"] == "no_plan"
+    assert result["model_invoked"] is False
+    assert calls == 0
+    assert json.loads(stored["result_json"])["reason_code"].startswith(
+        "EXECUTION_VENUE_UNAVAILABLE:"
+    )
+    assert fast_market_data_unavailability_reason(cfg, "binance", "perp") is None
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.market_data.ccxt_exchange = "binance"
+    assert fast_market_data_unavailability_reason(cfg, "binance", "spot") is None
 
 
 def test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt(monkeypatch):

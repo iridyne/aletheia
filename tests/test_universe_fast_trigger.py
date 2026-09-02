@@ -1194,6 +1194,7 @@ async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
         max_wait_sec=30,
         expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         venue="bitget",
+        market_type="perp",
     )
     cancellations = []
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])

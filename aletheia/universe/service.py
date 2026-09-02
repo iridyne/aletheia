@@ -969,13 +969,17 @@ class UniverseService:
                 cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
             )
-            # Exact-venue invariant: Candidates whose physical venue cannot be
+            # Exact-instrument invariant: Candidates whose physical instrument cannot be
             # consumed by the configured Fast Monitoring engine are kept in the
             # universe for visibility but marked execution-ineligible so the Entry
             # Planner never receives planning authority for them.  The risk flag
             # is appended once (de-duplicated) so the fingerprint captures it.
             for item in allocated:
-                venue_reason = fast_market_data_unavailability_reason(cfg, str(item.get("venue") or ""))
+                venue_reason = fast_market_data_unavailability_reason(
+                    cfg,
+                    str(item.get("venue") or ""),
+                    str(item.get("market_type") or ""),
+                )
                 if venue_reason is not None:
                     item["execution_eligible"] = False
                     flags = item.get("risk_flags") or []
@@ -997,7 +1001,12 @@ class UniverseService:
                 )
                 for item in unique_scored
                 if _execution_eligible(item)
-                and fast_market_data_unavailability_reason(cfg, str(item.get("venue") or "")) is None
+                and fast_market_data_unavailability_reason(
+                    cfg,
+                    str(item.get("venue") or ""),
+                    str(item.get("market_type") or ""),
+                )
+                is None
             }
 
             now = datetime.now(timezone.utc)

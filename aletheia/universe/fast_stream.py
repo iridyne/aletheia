@@ -838,10 +838,14 @@ def fast_market_stream_available_for_config(cfg) -> bool:
     return any(execution_venue_for_mode(mode) == venue for mode in _FAST_STREAM_ADAPTERS)
 
 
-def fast_market_data_unavailability_reason(cfg, venue: str) -> str | None:
-    """Return a stable token if the exact candidate venue cannot be monitored; None if consumable.
+def fast_market_data_unavailability_reason(
+    cfg,
+    venue: str,
+    market_type: str | None = None,
+) -> str | None:
+    """Return a stable token if the exact candidate instrument cannot be monitored.
 
-    Used as a shared exact-venue invariant across Universe allocation, Entry Planner
+    Used as a shared exact-instrument invariant across Universe allocation, Entry Planner
     admission, and Fast Trigger Watch validation. Returning a token (not None) means
     no Fast Monitoring engine exists for the candidate's physical venue.
 
@@ -850,7 +854,7 @@ def fast_market_data_unavailability_reason(cfg, venue: str) -> str | None:
     - ``FAST_MARKET_DATA_VENUE_MISMATCH``: candidate venue differs from the
       configured fast-monitoring venue.
     - ``FAST_MARKET_DATA_STREAM_UNAVAILABLE``: no adapter covers the configured
-      monitoring venue at all.
+      monitoring venue or exact execution market.
     """
     if cfg.fast_trigger.mode == "off":
         return "FAST_TRIGGER_DISABLED"
@@ -858,6 +862,12 @@ def fast_market_data_unavailability_reason(cfg, venue: str) -> str | None:
     if str(venue or "").lower() != configured_venue:
         return "FAST_MARKET_DATA_VENUE_MISMATCH"
     if not any(execution_venue_for_mode(mode) == configured_venue for mode in _FAST_STREAM_ADAPTERS):
+        return "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
+    if (
+        cfg.exchange.paper_execution_mode == "binance_testnet"
+        and market_type is not None
+        and str(market_type).lower() not in {"perp", "futures", "swap", "usdt_futures"}
+    ):
         return "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
     return None
 
