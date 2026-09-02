@@ -75,6 +75,22 @@ _WRITER_ALLOWLIST = frozenset({
     "aletheia/universe/service.py",
 })
 
+_TREATMENT_CALLER_ALLOWLIST = frozenset({
+    "aletheia/agents/paper_trader_ranker.py",
+    "aletheia/analytics/factor_feedback.py",
+    "aletheia/knowledge/guards.py",
+    "aletheia/learning/economic_knowledge.py",
+    "aletheia/learning/experiments.py",
+    "aletheia/learning/prompt_bundles.py",
+    "aletheia/risk/engine.py",
+    "aletheia/trading/entry_plan_compiler.py",
+    "aletheia/trading/sizing_policy.py",
+    "aletheia/universe/allocator.py",
+})
+
+_TREATMENT_APIS = ("apply_numeric_treatment", "apply_boolean_treatment")
+
+
 _SQL_WRITE = re.compile(
     r"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)"
     r"\s+[\"'`\[]?(?P<table>"
@@ -117,6 +133,24 @@ def test_legacy_experiment_reference_inventory_cannot_grow():
 
 @spec_claim(SpecClaim(
     "OEO-S02", _CONTRACT, "§3 current legacy ownership inventory and freeze", "L2a",
+    "Phase 1 enumerates every legacy apply_numeric_treatment/apply_boolean_treatment reference and rejects new callers.",
+))
+def test_legacy_treatment_caller_inventory_cannot_grow():
+    discovered = {
+        path
+        for path, source in _production_sources().items()
+        if any(api in source for api in _TREATMENT_APIS)
+    }
+    unexpected = discovered - _TREATMENT_CALLER_ALLOWLIST
+    assert not unexpected, (
+        "NEW LEGACY TREATMENT CALLER(S): "
+        f"{sorted(unexpected)}. Register an ObservationHandler/TreatmentAdapter "
+        "under #2737 instead of growing the legacy apply_* surface."
+    )
+
+
+@spec_claim(SpecClaim(
+    "OEO-S03", _CONTRACT, "§3 current legacy ownership inventory and freeze", "L2a",
     "No production module outside the temporary writer allowlist may add a legacy Experiment-table write.",
 ))
 def test_no_new_legacy_experiment_writer():
@@ -137,7 +171,7 @@ def test_no_new_legacy_experiment_writer():
 def test_legacy_experiment_allowlists_only_name_existing_production_modules():
     missing = {
         path
-        for path in _REFERENCE_ALLOWLIST | _WRITER_ALLOWLIST
+        for path in _REFERENCE_ALLOWLIST | _WRITER_ALLOWLIST | _TREATMENT_CALLER_ALLOWLIST
         if not (_ROOT / path).is_file()
     }
     assert not missing, f"STALE LEGACY EXPERIMENT INVENTORY: {sorted(missing)}"
