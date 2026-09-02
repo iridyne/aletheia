@@ -11,6 +11,8 @@
 > They remain Proposals; current guarantees are only the implemented slices explicitly adopted
 > below.
 
+> Issue #2737 migration boundary: [Observation Experiment Ownership V2](observation_experiment_ownership_v2.md) preserves Learning ownership of research, lessons, knowledge, and pre-registration nominations, but makes Observation Lab the target owner of every registered Experiment and Generation. Until the explicit Phase 8 cutover, the legacy Experiment ledger and resolver described below remain implemented authority. After cutover, this file must retain only continuous-Learning/domain responsibilities and honest compatibility projections; `LearningPath` capability flags cannot remain an independent Experiment authority.
+
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into
 machine-readable knowledge that can be reused by future market evaluation,
