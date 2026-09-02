@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import {
   CollapsibleSection as Collapsible,
@@ -386,10 +386,89 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       </Collapsible>
       )}
       <p className="hint">
-        When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
-        and keeps the top {maxCandidates} as Candidates. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
+        {universe?.candidate_selection_policy === 'candidate_selection_utility_v1'
+          ? `When enabled, the Universe Generator scans observable instruments every ${refreshMin} min, applies the exact Hard Gate and admits only actionable, above-floor 4h cost-after Utility up to the ${maxCandidates}-Candidate ceiling. It does not fill empty slots.`
+          : `When enabled, the legacy selector scans all exchange USDT pairs every ${refreshMin} min, scores momentum/mean-reversion/volatility/derivatives, and keeps the top ${maxCandidates} as Candidates. Explore ratio (${(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.`}
+        {' '}
         Interval and TTL changes take effect after gateway restart.
       </p>
+    </div>
+  )
+}
+
+function CandidateSelectionAuthorityCard({ qc }: Pick<SettingsDirtyProps, 'qc'>) {
+  const confirm = useConfirm()
+  const [reason, setReason] = useState('')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const status = useQuery({
+    queryKey: ['candidate-selection-authority'],
+    queryFn: api.getCandidateSelectionStatus,
+  })
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['settings'] })
+    qc.invalidateQueries({ queryKey: ['candidate-selection-authority'] })
+  }
+  const admit = useMutation({
+    mutationFn: (epoch: string) => api.admitCandidateSelection(epoch, reason.trim()),
+    onSuccess: () => { setMsg({ ok: true, text: 'Candidate Selection Utility admitted' }); setReason(''); refresh() },
+    onError: (error: any) => setMsg({ ok: false, text: error.message }),
+  })
+  const rollback = useMutation({
+    mutationFn: () => api.rollbackCandidateSelection(reason.trim()),
+    onSuccess: () => { setMsg({ ok: true, text: 'Legacy Candidate selection restored' }); setReason(''); refresh() },
+    onError: (error: any) => setMsg({ ok: false, text: error.message }),
+  })
+  const qualification = status.data?.qualification
+  const epoch = qualification?.policy_epoch_id
+  const reasonValid = reason.trim().length >= 8
+  const canAdmit = status.data?.configured_policy === 'legacy_total_score_v1'
+    && qualification?.verdict === 'positive'
+    && qualification.promotion_eligible
+    && !!epoch
+  const displayBlockReason = status.data?.configured_policy === 'legacy_total_score_v1'
+    ? status.data?.admission_block_reason
+    : status.data?.authority_block_reason
+
+  return (
+    <div className="card mb-0 mt-3">
+      <div className="section-label">Candidate Selection Authority</div>
+      {status.isError ? <p className="hint">Qualification evidence is unavailable.</p> : status.isPending ? <p className="hint">Loading qualification…</p> : <>
+        <p className="hint">
+          Active policy: <span className="mono">{humanize(status.data?.configured_policy)}</span>. Qualification: {humanize(qualification?.verdict)}.
+          {' '}Fixed look: {qualification?.fixed_look_cluster_n ?? 0} clusters, {qualification?.consecutive_eligible_utc_days ?? 0} UTC days, {fmtNum((qualification?.full_arm_outcome_coverage ?? 0) * 100)}% outcome coverage.
+        </p>
+        {displayBlockReason && <p className="hint">Authority block: <span className="mono">{humanize(displayBlockReason)}</span></p>}
+        <label className="settings-form-field">
+          <span className="settings-form-label">Owner reason</span>
+          <input aria-label="Candidate selection authority reason" value={reason} onChange={event => { setReason(event.target.value); setMsg(null) }} placeholder="At least 8 characters" />
+        </label>
+        <div className="settings-action-row">
+          {status.data?.configured_policy === 'legacy_total_score_v1' ? <button
+            disabled={!canAdmit || !reasonValid || admit.isPending}
+            onClick={async () => {
+              if (!epoch || !(await confirm({
+                title: 'Admit Candidate Selection Utility?',
+                description: `This exact qualified epoch (${epoch}) will become Candidate authority. Risk and execution gates remain unchanged.`,
+                confirmLabel: 'Admit exact epoch',
+                variant: 'warning',
+              }))) return
+              admit.mutate(epoch)
+            }}
+          >{admit.isPending ? 'Admitting…' : 'Admit qualified epoch'}</button> : <button
+            disabled={!reasonValid || rollback.isPending}
+            onClick={async () => {
+              if (!(await confirm({
+                title: 'Restore legacy Candidate selection?',
+                description: 'Future Universe refreshes will use legacy total score. Existing evidence remains immutable.',
+                confirmLabel: 'Restore legacy',
+                variant: 'danger',
+              }))) return
+              rollback.mutate()
+            }}
+          >{rollback.isPending ? 'Rolling back…' : 'Restore legacy policy'}</button>}
+        </div>
+      </>}
+      <SaveMsg msg={msg} />
     </div>
   )
 }
@@ -480,6 +559,7 @@ export function RiskTab({ settings, qc, onDirty }: SettingsDirtyProps) {
     <div>
       <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
         <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+        <CandidateSelectionAuthorityCard qc={qc} />
         <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 

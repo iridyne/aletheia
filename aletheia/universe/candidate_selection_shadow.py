@@ -14,6 +14,7 @@ from aletheia.universe.candidate_selection_utility import (
     build_candidate_selection_utility,
     select_admitted_candidates,
 )
+from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
 from aletheia.universe.economic_utility import estimate_economic_utility
 from aletheia.universe.opportunity_evidence import (
     annotate_within_run_percentiles,
@@ -23,10 +24,10 @@ from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
 from aletheia.universe.twin_persistence import TwinShadowBundle
 
 
-CANDIDATE_SELECTION_SHADOW_RECORD_VERSION = "candidate-selection-utility-shadow-record/v1"
+CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v1"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v1"
 CANDIDATE_SELECTION_OUTCOME_VERSION = "candidate-selection-utility-outcome/v1"
-_MAX_OUTPUT_BYTES = 8 * 1024
+_MAX_OUTPUT_BYTES = 32 * 1024
 
 
 def _json(value: object) -> str:
@@ -59,6 +60,35 @@ def _safe_feature(feature: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _training_outcome_fingerprint(
+    outcomes: Sequence[Mapping[str, object]],
+    *,
+    cutoff_at: str,
+) -> str:
+    cutoff = parse_utc_instant(cutoff_at)
+    if cutoff is None:
+        raise ValueError("candidate_selection_training_cutoff_invalid")
+    fields = (
+        "outcome_candidate_key", "scanner_run_id", "mechanism_id", "direction",
+        "venue", "market_type", "strength_quintile", "horizon", "status", "entry_ts",
+        "settled_at", "symbol", "net_return_pct", "mae_pct", "cost_model_version",
+        "min_tradable_edge_pct",
+    )
+    material = []
+    for row in outcomes:
+        entry = parse_utc_instant(row.get("entry_ts"))
+        settled = parse_utc_instant(row.get("settled_at"))
+        if entry is None or entry > cutoff or (settled is not None and settled > cutoff):
+            continue
+        material.append({field: row.get(field) for field in fields})
+    material.sort(key=lambda row: (
+        str(row["outcome_candidate_key"]),
+        str(row["mechanism_id"]),
+        str(row["strength_quintile"]),
+    ))
+    return canonical_fingerprint(material)
+
+
 def build_candidate_selection_shadow_bundle(
     population: Sequence[Mapping[str, object]],
     *,
@@ -70,8 +100,11 @@ def build_candidate_selection_shadow_bundle(
     action_route_reasons: Mapping[tuple[str, str, str, str], str | None],
     historical_outcomes: Sequence[Mapping[str, object]],
     estimator_training_cutoff: str | None = None,
+    selection_policy: Mapping[str, object] | None = None,
+    authority_applied: bool = False,
+    qualification_evidence: Mapping[str, object] | None = None,
 ) -> TwinShadowBundle:
-    """Build one same-T0 full-denominator Shadow batch with no authority effect."""
+    """Build one same-T0 full-denominator comparison and optional authority record."""
 
     scored = {_identity(item): item for item in legacy_scored}
     selected = {_identity(item) for item in legacy_allocated}
@@ -110,6 +143,7 @@ def build_candidate_selection_shadow_bundle(
                     candidate_key=gate.candidate_key,
                     mechanism_id=mechanism.mechanism_id,
                     direction=mechanism.direction,
+                    venue=str(evidence.instrument["venue"]),
                     market_type=str(evidence.instrument["market_type"]),
                     strength_percentile=mechanism.within_run_percentile,
                     outcomes=historical_outcomes,
@@ -135,15 +169,16 @@ def build_candidate_selection_shadow_bundle(
         )
     }
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
-        if gate.status != "eligible":
+        legacy_direction = decision.legacy_control.get("primary_direction")
+        legacy_selected = decision.legacy_control.get("authority_selected") is True
+        if gate.status != "eligible" and not (legacy_selected and legacy_direction in {"long", "short"}):
             continue
-        legacy = scored.get(_identity(feature), {})
         directions = {
             item.direction for item in evidence.mechanisms
-            if item.applicability == "applicable" and item.direction in {"long", "short"}
+            if gate.status == "eligible"
+            and item.applicability == "applicable" and item.direction in {"long", "short"}
         }
-        legacy_direction = legacy.get("scanner_direction") or legacy.get("direction")
-        if legacy_direction in {"long", "short"}:
+        if legacy_selected and legacy_direction in {"long", "short"}:
             directions.add(str(legacy_direction))
         for direction in directions:
             price = feature.get("last_price") or feature.get("price")
@@ -184,12 +219,23 @@ def build_candidate_selection_shadow_bundle(
         if available_source_fingerprints and estimator_training_cutoff
         else captured_at if available_source_fingerprints else None
     )
+    training_outcome_fingerprint = (
+        _training_outcome_fingerprint(
+            historical_outcomes,
+            cutoff_at=effective_training_cutoff,
+        )
+        if effective_training_cutoff is not None else None
+    )
+    frozen_selection_policy = dict(
+        selection_policy or candidate_selection_policy_identity(universe_config)
+    )
     behavior_contract_hash = canonical_fingerprint({
         "version": CANDIDATE_SELECTION_UTILITY_VERSION,
-        "record_version": CANDIDATE_SELECTION_SHADOW_RECORD_VERSION,
+        "record_version": CANDIDATE_SELECTION_RECORD_VERSION,
         "outcome_version": CANDIDATE_SELECTION_OUTCOME_VERSION,
         "training_cutoff": effective_training_cutoff,
-        "source_outcome_fingerprints": available_source_fingerprints,
+        "training_outcome_fingerprint": training_outcome_fingerprint,
+        "selection_policy": frozen_selection_policy,
     })
     policy_epoch_id = (
         f"candidate-selection-utility:{behavior_contract_hash[:24]}"
@@ -199,6 +245,22 @@ def build_candidate_selection_shadow_bundle(
         f"candidate-selection-utility-shadow:{behavior_contract_hash[:24]}"
         if available_source_fingerprints else None
     )
+    qualified = bool(
+        authority_applied
+        and qualification_evidence
+        and qualification_evidence.get("verdict") == "positive"
+        and qualification_evidence.get("promotion_eligible") is True
+        and qualification_evidence.get("policy_epoch_id") == policy_epoch_id
+        and qualification_evidence.get("selection_policy")
+        == frozen_selection_policy
+        and not qualification_evidence.get("blocking_reasons")
+        and not qualification_evidence.get("invalid_reasons")
+    )
+    if authority_applied and not qualified:
+        raise ValueError("candidate_selection_authority_qualification_invalid")
+    blocking_reasons = [] if authority_applied else [
+        "prospective_qualification_not_complete", "owner_admission_required",
+    ]
 
     evidence_rows = []
     for index, (feature, decision) in enumerate(zip(population, decisions, strict=True)):
@@ -208,18 +270,19 @@ def build_candidate_selection_shadow_bundle(
             if (key := _outcome_key(decision.candidate_key, direction)) in outcomes_by_key
         }
         material = {
-            "record_version": CANDIDATE_SELECTION_SHADOW_RECORD_VERSION,
+            "record_version": CANDIDATE_SELECTION_RECORD_VERSION,
             "candidate_selection": decision.as_dict(),
             "target_selected": decision.candidate_key in target_selected_keys,
             "outcome_candidate_keys": outcome_keys,
             "evidence_contract": {
-                "shadow_authority_applied": False,
-                "promotion_eligible": False,
-                "blocking_reasons": ["prospective_qualification_not_complete", "owner_admission_required"],
+                "shadow_authority_applied": authority_applied,
+                "promotion_eligible": qualified,
+                "blocking_reasons": blocking_reasons,
                 "outcome_contract_version": CANDIDATE_SELECTION_OUTCOME_VERSION,
                 "behavior_contract_hash": behavior_contract_hash,
                 "policy_epoch_id": policy_epoch_id,
                 "estimator_training_cutoff": effective_training_cutoff,
+                "training_outcome_fingerprint": training_outcome_fingerprint,
                 "source_outcome_fingerprints": available_source_fingerprints,
             },
         }
@@ -229,7 +292,7 @@ def build_candidate_selection_shadow_bundle(
         feature_id, _venue, market_type, symbol = _identity(feature)
         input_json = _json(_safe_feature(feature))
         evidence_rows.append(UniverseTwinShadowEvidence(
-            id=canonical_fingerprint({"record_version": CANDIDATE_SELECTION_SHADOW_RECORD_VERSION, "candidate_key": decision.candidate_key})[:24],
+            id=canonical_fingerprint({"record_version": CANDIDATE_SELECTION_RECORD_VERSION, "candidate_key": decision.candidate_key})[:24],
             scanner_run_id=scanner_run_id,
             candidate_key=decision.candidate_key,
             candidate_index=index,
@@ -247,9 +310,9 @@ def build_candidate_selection_shadow_bundle(
             authority_total_score=float(decision.legacy_control.get("total_score") or 0.0),
             fine_filter_passed=bool(scored.get(_identity(feature))),
             authority_selected=bool(decision.legacy_control.get("authority_selected")),
-            assigned_policy_selected=None,
-            shadow_authority_applied=False,
-            promotion_eligible=False,
+            assigned_policy_selected=(decision.candidate_key in target_selected_keys) if authority_applied else None,
+            shadow_authority_applied=authority_applied,
+            promotion_eligible=qualified,
             shadow_valid=decision.hard_gate.status == "eligible",
             shadow_pessimistic_selected=decision.candidate_key in target_selected_keys,
             compact_output_json=compact,
@@ -259,14 +322,14 @@ def build_candidate_selection_shadow_bundle(
         ))
     batch_material = {
         "scanner_run_id": scanner_run_id,
-        "record_version": CANDIDATE_SELECTION_SHADOW_RECORD_VERSION,
+        "record_version": CANDIDATE_SELECTION_RECORD_VERSION,
         "candidate_keys": [item.candidate_key for item in evidence_rows],
         "record_hashes": [item.record_hash for item in evidence_rows],
         "outcome_keys": sorted(outcomes_by_key),
     }
     batch = UniverseTwinShadowBatch(
         scanner_run_id=scanner_run_id,
-        record_version=CANDIDATE_SELECTION_SHADOW_RECORD_VERSION,
+        record_version=CANDIDATE_SELECTION_RECORD_VERSION,
         authority_behavior_version=UNIVERSE_SCORER_BEHAVIOR_VERSION,
         shadow_behavior_version=CANDIDATE_SELECTION_UTILITY_VERSION,
         allocation_replay_contract="candidate-selection-utility-allocation/v1",
@@ -282,13 +345,21 @@ def build_candidate_selection_shadow_bundle(
         allocator_random_state_json="null",
         policy_json=_json({
             "universe": universe_config.model_dump(mode="json"),
+            "selection_policy": frozen_selection_policy,
             "estimator_training_cutoff": effective_training_cutoff,
+            "training_outcome_fingerprint": training_outcome_fingerprint,
             "source_outcome_fingerprints": available_source_fingerprints,
         }),
-        allocation_context_json=_json({"same_t0_population": True, "legacy_rollback": True}),
+        allocation_context_json=_json({
+            "same_t0_population": True,
+            "legacy_rollback": True,
+            "authority_policy": (
+                "candidate_selection_utility_v1" if authority_applied else "legacy_total_score_v1"
+            ),
+        }),
         candidate_count=len(evidence_rows),
-        promotion_eligible=False,
-        blocking_reasons_json=_json(["prospective_qualification_not_complete", "owner_admission_required"]),
+        promotion_eligible=qualified,
+        blocking_reasons_json=_json(blocking_reasons),
         batch_hash=canonical_fingerprint(batch_material),
         captured_at=captured_at,
     )
@@ -309,7 +380,7 @@ def load_candidate_selection_outcomes(
         "SELECT r.scanner_run_id, r.compact_output_json FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
         "WHERE b.record_version=? ORDER BY b.captured_at DESC, r.candidate_index LIMIT ?",
-        (CANDIDATE_SELECTION_SHADOW_RECORD_VERSION, int(limit_batches) * 1000),
+        (CANDIDATE_SELECTION_RECORD_VERSION, int(limit_batches) * 1000),
     ).fetchall()
     labels_by_key: dict[str, list[dict[str, object]]] = {}
     for row in records:
@@ -353,17 +424,23 @@ def load_candidate_selection_outcomes(
     return result
 
 
-def candidate_selection_training_cutoff() -> str | None:
-    """Return the first frozen estimator cutoff for the current V1 behavior."""
+def candidate_selection_training_cutoff(*, policy_epoch_id: str | None = None) -> str | None:
+    """Return the first frozen estimator cutoff, optionally for one policy epoch."""
 
     from aletheia.storage import repositories as repo
 
+    epoch_clause = " AND b.policy_epoch_id=?" if policy_epoch_id is not None else ""
+    params: tuple[object, ...] = (
+        (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id)
+        if policy_epoch_id is not None else (CANDIDATE_SELECTION_RECORD_VERSION,)
+    )
     rows = repo.get_db().execute(
         "SELECT b.captured_at, r.compact_output_json FROM universe_twin_shadow_batches b "
         "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
         "WHERE b.record_version=? AND b.policy_epoch_id IS NOT NULL "
+        f"{epoch_clause} "
         "ORDER BY b.captured_at, r.candidate_index",
-        (CANDIDATE_SELECTION_SHADOW_RECORD_VERSION,),
+        params,
     ).fetchall()
     for row in rows:
         try:
@@ -376,7 +453,100 @@ def candidate_selection_training_cutoff() -> str | None:
     return None
 
 
+def target_candidates_from_bundle(
+    bundle: TwinShadowBundle,
+    scored_population: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Project admitted target rows onto existing Candidate carrier fields."""
+
+    by_identity = {_identity(item): item for item in scored_population}
+    selected: list[dict[str, object]] = []
+    for row in bundle.evidence:
+        try:
+            payload = json.loads(row.compact_output_json)
+            if payload.get("target_selected") is not True:
+                continue
+            decision = payload["candidate_selection"]
+            gate = decision["hard_gate"]
+            instrument = gate["instrument"]
+            identity = (
+                str(row.feature_snapshot_id or ""),
+                str(instrument["venue"]),
+                str(instrument["market_type"]),
+                str(instrument["symbol"]),
+            )
+            source = by_identity[identity]
+            mechanism = next(
+                item for item in decision["opportunity_evidence"]["mechanisms"]
+                if item["mechanism_id"] == decision["primary_mechanism"]
+            )
+            family_reason = next(
+                reason for reason in mechanism["reason_codes"]
+                if str(reason).startswith("projected_from:")
+            )
+            family = str(family_reason).split(":", 1)[1]
+            utility = float(decision["economic_utility_pct"])
+        except (KeyError, StopIteration, TypeError, ValueError) as exc:
+            raise ValueError("candidate_selection_target_projection_invalid") from exc
+        raw_reasons = source.get("reasons")
+        source_reasons = list(raw_reasons) if isinstance(raw_reasons, (list, tuple)) else []
+        projected = dict(source)
+        projected.update({
+            "scanner_family": family,
+            "scanner_direction": decision["primary_direction"],
+            "candidate_selection_utility_pct": utility,
+            "candidate_selection_policy": "candidate_selection_utility_v1",
+            "candidate_selection_policy_epoch": bundle.batch.policy_epoch_id,
+            "reasons": source_reasons + [
+                f"candidate_selection_utility:{utility:.6f}",
+                f"primary_mechanism:{decision['primary_mechanism']}",
+            ],
+        })
+        selected.append(projected)
+    selected.sort(key=lambda item: (
+        -float(item["candidate_selection_utility_pct"]),
+        str(item.get("symbol") or ""),
+        str(item.get("venue") or ""),
+        str(item.get("market_type") or ""),
+    ))
+    return selected
+
+
+def target_admitted_identity_keys(
+    bundle: TwinShadowBundle,
+) -> set[tuple[str, str, str, str, str]]:
+    """Return every above-floor target identity before the capacity ceiling."""
+
+    identities = set()
+    for row in bundle.evidence:
+        try:
+            decision = json.loads(row.compact_output_json)["candidate_selection"]
+            if decision["admission_status"] != "admitted":
+                continue
+            instrument = decision["hard_gate"]["instrument"]
+            mechanism = next(
+                item for item in decision["opportunity_evidence"]["mechanisms"]
+                if item["mechanism_id"] == decision["primary_mechanism"]
+            )
+            family = next(
+                str(reason).split(":", 1)[1] for reason in mechanism["reason_codes"]
+                if str(reason).startswith("projected_from:")
+            )
+            identities.add((
+                str(instrument["venue"]),
+                str(instrument["symbol"]),
+                str(instrument["market_type"]),
+                family,
+                str(decision["primary_direction"]),
+            ))
+        except (KeyError, StopIteration, TypeError, ValueError) as exc:
+            raise ValueError("candidate_selection_admitted_identity_invalid") from exc
+    return identities
+
+
 __all__ = [
-    "CANDIDATE_SELECTION_SHADOW_RECORD_VERSION", "build_candidate_selection_shadow_bundle",
+    "CANDIDATE_SELECTION_RECORD_VERSION", "build_candidate_selection_shadow_bundle",
     "candidate_selection_training_cutoff", "load_candidate_selection_outcomes",
+    "target_candidates_from_bundle",
+    "target_admitted_identity_keys",
 ]

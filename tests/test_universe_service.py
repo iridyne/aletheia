@@ -143,6 +143,8 @@ def test_fallback_when_disabled(svc, disabled_cfg):
     assert members[0]["symbol"] == "BTC/USDT"
     assert members[0]["scanner_family"] == "core"
     assert members[0]["snapshot_id"] is None
+    assert members[0]["candidate_selection_policy"] == "legacy_total_score_v1"
+    assert members[0]["candidate_selection_utility_pct"] is None
 
 
 def test_fallback_when_no_snapshot(svc, enabled_cfg):
@@ -422,6 +424,7 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
             "status": "complete",
             "asset_class": "equity",
         },
+        "candidate_selection_utility_pct": 1.25,
     }
 
     for field, value in variants.items():

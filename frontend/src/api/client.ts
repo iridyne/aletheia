@@ -31,6 +31,26 @@ export interface SoftwareUpdateStatus {
 	branch?: string;
 }
 
+export interface CandidateSelectionStatus {
+	configured_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
+	configured_policy_epoch: string | null;
+	authority_enabled: boolean;
+	authority_block_reason: string | null;
+	admission_block_reason: string | null;
+	evaluation_available: boolean;
+	evaluation_error: string | null;
+	qualification: {
+		verdict: "insufficient_data" | "positive" | "neutral" | "negative" | "invalid" | "unavailable";
+		promotion_eligible: boolean;
+		policy_epoch_id: string | null;
+		fixed_look_cluster_n?: number;
+		consecutive_eligible_utc_days?: number;
+		full_arm_outcome_coverage?: number;
+		blocking_reasons?: string[];
+		invalid_reasons?: string[];
+	};
+}
+
 function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
 		const normalized = token.trim();
@@ -2830,6 +2850,19 @@ export const api = {
 			family_quota_by_regime: Record<string, Record<string, number>>;
 		}>,
 	) => post<any>("/settings/universe", body),
+	getCandidateSelectionStatus: () =>
+		fetchJson<CandidateSelectionStatus>("/settings/universe/candidate-selection"),
+	admitCandidateSelection: (expectedPolicyEpoch: string, reason: string) =>
+		post<CandidateSelectionStatus>("/settings/universe/candidate-selection/admit", {
+			expected_policy_epoch: expectedPolicyEpoch,
+			reason,
+			confirm_admission: true,
+		}),
+	rollbackCandidateSelection: (reason: string) =>
+		post<CandidateSelectionStatus>("/settings/universe/candidate-selection/rollback", {
+			reason,
+			confirm_rollback: true,
+		}),
 	updateFastTriggerConfig: (
 		body: Partial<{
 			mode: "off" | "shadow" | "execute";

@@ -2000,6 +2000,11 @@ _ADDITIVE_COLUMNS = [
     ("atr_pct", "universe_members", "REAL"),
     # Phase 2A+.12: persist all-family scores dict for ensemble analysis
     ("all_scores", "universe_members", "TEXT DEFAULT '{}'"),
+    # #2729: additive authority identity and comparable economic selection unit.
+    # Historical rows remain explicitly legacy with unavailable Utility.
+    ("candidate_selection_policy", "universe_members", "TEXT NOT NULL DEFAULT 'legacy_total_score_v1'"),
+    ("candidate_selection_policy_epoch", "universe_members", "TEXT"),
+    ("candidate_selection_utility_pct", "universe_members", "REAL"),
     ("entry_market_summary", "positions", "TEXT"),
     # LLM structured observations preserved from market_observer output
     ("key_observations", "opportunities", "TEXT NOT NULL DEFAULT ''"),

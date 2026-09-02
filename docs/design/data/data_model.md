@@ -268,11 +268,11 @@ Opportunity rows and not an executable queue.
 | `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` | asset_id, ts, 15m RSI/ATR/return/range-in-ATR, 1h RSI/ATR/returns, 4h RSI/ATR/BB width/volume ratio, bb_squeeze, derivatives fields |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
-| `universe_members` | Candidate assets in a universe snapshot; legacy physical name | snapshot_id, symbol, market_type, rank, score, scanner_direction |
+| `universe_members` | Candidate assets in a universe snapshot; legacy physical name | snapshot_id, symbol, market_type, rank, total_score (legacy compatibility), candidate_selection_policy, candidate_selection_policy_epoch, candidate_selection_utility_pct, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
-| `universe_twin_shadow_batches` | Non-authoritative prospective continuous-score comparison, sampled at most once per 55min | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, scanner-run assignment arm/propensity/coefficient, control/treatment policy, 4h outcome contract, allocator replay state, blockers, batch_hash |
-| `universe_twin_shadow_records` | Compact complete-batch step/point/pessimistic comparison and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, all three selections, assignment identity, assigned-policy selection, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
+| `universe_twin_shadow_batches` | Versioned prospective comparison evidence; Candidate Selection Utility reuses it for Shadow and atomic admitted-authority records | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, 4h outcome contract, blockers, promotion/authority state, batch_hash |
+| `universe_twin_shadow_records` | Compact complete-population alternate-policy evidence and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, legacy/target/assigned selections, authority state, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
 
 ### G-bis. Opportunity Filter Evidence (6 tables)
 

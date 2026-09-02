@@ -87,18 +87,42 @@ def test_economic_utility_contract_is_frozen_and_cost_after():
 
 @spec_claim(SpecClaim(
     "CSU-S04", _CONTRACT, "CandidateSelectionUtilityV1", "L2a",
-    "Candidate Selection Utility stays Shadow-only until prospective qualification and explicit owner admission.",
+    "Target authority requires a positive exact policy epoch and explicit owner admission; legacy remains the default and rollback.",
     status="implemented",
 ))
-def test_target_policy_has_no_current_authority_path():
+def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
     from aletheia.learning.registry import get_learning_path
-    from aletheia.universe.candidate_selection_evaluation import (
-        evaluate_candidate_selection_policy,
+    from aletheia.universe.candidate_selection_authority import (
+        TARGET_CANDIDATE_POLICY,
+        candidate_selection_authority_block_reason,
+        candidate_selection_overlap_block_reason,
+        candidate_selection_policy_identity,
     )
 
     path = get_learning_path("candidate_selection_utility")
+    assert path.is_learning_treatment is False
     assert path.paper_authority_supported is False
-    report = evaluate_candidate_selection_policy()
-    assert report["authority"] == "shadow_only"
-    assert report["promotion_eligible"] is False
-    assert report["owner_admission_required"] is True
+    target = UniverseConfig(
+        candidate_selection_policy=TARGET_CANDIDATE_POLICY,
+        candidate_selection_policy_epoch="candidate-selection-utility:qualified",
+    )
+    positive = {
+        "verdict": "positive",
+        "promotion_eligible": True,
+        "policy_epoch_id": target.candidate_selection_policy_epoch,
+        "selection_policy": candidate_selection_policy_identity(target),
+        "blocking_reasons": [],
+        "invalid_reasons": [],
+    }
+    assert candidate_selection_authority_block_reason(target, positive) is None
+    assert candidate_selection_authority_block_reason(
+        target, {**positive, "verdict": "neutral"},
+    ) == "candidate_selection_qualification_not_positive"
+    monkeypatch.setattr(
+        "aletheia.learning.ledger.list_open_experiments",
+        lambda **_kwargs: [{"stage": "paper_10"}],
+    )
+    assert (
+        candidate_selection_overlap_block_reason()
+        == "candidate_selection_overlapping_learning_authority"
+    )

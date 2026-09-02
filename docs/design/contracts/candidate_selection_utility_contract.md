@@ -3,10 +3,10 @@
 Authority: GitHub Issue #2729 and the accepted
 `docs/design/proposals/universe_continuous_scoring_safety.md` proposal.
 
-Status: implemented as non-authoritative Shadow. The current
-`universe-step-v3` / `total_score` selector remains production Candidate
-authority until this contract's prospective qualification is positive and an
-authenticated owner explicitly admits the exact frozen policy epoch.
+Status: implemented with legacy authority by default. Candidate Selection
+Utility records non-authoritative Shadow evidence until its prospective fixed
+look is positive and an owner explicitly admits that exact frozen policy epoch
+through the protected Settings boundary.
 
 ## Boundary
 
@@ -27,8 +27,9 @@ The V1 chain is:
    with volatility/regime/shock as context. Mechanism strengths are ordinal,
    same-run percentiles require 20 comparable rows, and raw evidence is never
    duplicated or summed across mechanisms.
-3. `universe-economic-utility/v1` compares mechanisms only in 4h cost-after
-   percentage points. It uses selected and dropped canonical outcomes, one
+3. `universe-economic-utility/v1` compares mechanisms only within the same
+   exact venue, market type, and direction in 4h cost-after percentage points.
+   It uses selected and dropped canonical outcomes, one
    economic observation per instrument/direction occurrence, scanner-run
    cluster inference, `K=50` parent shrinkage, one cluster-SE uncertainty
    penalty, explicit minimum support, and fail-closed tail status.
@@ -49,21 +50,43 @@ mechanism cohort labels to that shared outcome, so several labels cannot become
 duplicated economics.
 
 When estimator support first becomes available, the path freezes its training
-cutoff and source fingerprints into a new behavior/policy identity. Later
-outcomes cannot change that estimator. Qualification consumes only post-cutoff
-clusters and uses the first outcome-independent fixed look with at least 50
-complete clusters, seven consecutive UTC dates, 80% full-arm coverage, positive
+cutoff, complete eligible training-dataset fingerprint, and selection settings
+including the exact Fast Monitoring mode, venue, and paper execution route
+into a new behavior/policy identity. Per-cell source fingerprints remain in
+each estimate for audit but do not make the epoch depend on the current
+Candidate composition. Later outcomes cannot change that estimator.
+Qualification consumes only post-cutoff
+clusters from the latest frozen policy epoch and uses the first
+outcome-independent fixed look whose earliest T0-ordered exposure prefix contains
+at least 50 clusters and seven consecutive UTC dates. That prefix must then have
+at least 50 complete clusters, 80% full-arm coverage, positive
 paired capacity-normalized net Utility, a positive one-sided 95% lower bound,
 and preregistered loss-rate, MAE p95, CVaR5, cost, concentration, and catastrophic
-tail gates. Negative, neutral, insufficient, unavailable, and invalid are valid
+tail gates. A later cluster cannot replace an incomplete cluster in that frozen
+prefix. The look's coverage and exclusions freeze at that same stopping
+cluster, so later pending outcomes cannot rewrite its verdict. A selected-arm
+outcome without finite MAE or fee, spread/slippage, and funding cost evidence
+leaves its cluster incomplete. Negative,
+neutral, insufficient, unavailable, and invalid are valid
 terminal/reporting states and grant no authority.
 
 `uv run aletheia evidence candidate-selection status --json` is read-only. A
-positive report sets only `qualification_eligible=true`; it deliberately keeps
-`promotion_eligible=false` and `owner_admission_required=true`. Until the owner
-admission boundary is implemented and exercised for the exact policy epoch,
-the legacy selector remains the only authority and rollback requires no history
-rewrite.
+positive report sets `qualification_eligible=true` and
+`promotion_eligible=true`, but `owner_admission_required` remains true: evidence
+does not mutate authority. The generic Universe configuration endpoint cannot
+change the protected policy fields. The owner admission endpoint accepts only
+the exact positive epoch, refuses an overlapping Paper Universe-calibration
+authority, persists an audit event, and the runtime re-evaluates
+that same qualification before every target publication. Missing, stale,
+negative, neutral, insufficient, or invalid evidence fails closed and preserves
+the previous active snapshot.
+
+An authoritative refresh writes the target selection evidence, canonical 4h
+outcomes, Candidate rows, Planning Generation handoffs, and scanner completion
+in one SQLite publication transaction. Candidate rows expose the target Utility
+separately and retain `total_score` only as named legacy compatibility evidence.
+An explicit audited rollback restores `legacy_total_score_v1` without deleting
+or relabeling historical evidence.
 
 ## Isolation
 

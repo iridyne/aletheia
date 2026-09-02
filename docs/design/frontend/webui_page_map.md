@@ -15,7 +15,7 @@ dated design documents and archive; they are not active page authority.
 | `/charts` | Markets | Instrument data and exact Entry Plan overlay when linked |
 | `/risk` | Risk & Controls | Risk state, limits, kill switch |
 | `/learning` | Learning | Learning evidence and governance |
-| `/settings` | Settings | Configuration, including Universe and Candidate attention bounds |
+| `/settings` | Settings | Configuration, including Universe/Candidate attention bounds and protected Candidate Selection qualification/admission/rollback |
 | `/usage` | Usage | Runtime/model usage observability |
 | `/prediction-markets` | Prediction Markets | Prediction observer facts |
 | `/serenity-lens` | Serenity Lens | Long-horizon research |

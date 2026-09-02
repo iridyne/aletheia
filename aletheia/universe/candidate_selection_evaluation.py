@@ -12,7 +12,7 @@ from typing import Any
 from aletheia.learning.outcomes import assess_candidate_outcome
 from aletheia.storage import repositories as repo
 from aletheia.universe.candidate_selection_shadow import (
-    CANDIDATE_SELECTION_SHADOW_RECORD_VERSION,
+    CANDIDATE_SELECTION_RECORD_VERSION,
     candidate_selection_training_cutoff,
 )
 
@@ -84,14 +84,25 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     """Evaluate the first outcome-independent fixed look; never admit authority."""
 
     now = as_of_at or datetime.now(timezone.utc).isoformat()
-    training_cutoff = candidate_selection_training_cutoff()
+    latest = repo.get_db().execute(
+        "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+        "WHERE record_version=? AND policy_epoch_id IS NOT NULL "
+        "ORDER BY captured_at DESC, scanner_run_id DESC LIMIT 1",
+        (CANDIDATE_SELECTION_RECORD_VERSION,),
+    ).fetchone()
+    policy_epoch_id = str(latest["policy_epoch_id"]) if latest else None
+    training_cutoff = (
+        candidate_selection_training_cutoff(policy_epoch_id=policy_epoch_id)
+        if policy_epoch_id else None
+    )
     report: dict[str, Any] = {
         "version": CANDIDATE_SELECTION_QUALIFICATION_VERSION,
         "authority": "shadow_only",
         "promotion_eligible": False,
         "owner_admission_required": True,
         "training_cutoff": training_cutoff,
-        "policy_epoch_id": None,
+        "policy_epoch_id": policy_epoch_id,
+        "selection_policy": None,
         "expected_cluster_n": 0,
         "complete_cluster_n": 0,
         "fixed_look_cluster_n": 0,
@@ -114,8 +125,8 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     batches = [
         dict(row) for row in repo.get_db().execute(
             "SELECT * FROM universe_twin_shadow_batches WHERE record_version=? "
-            "AND policy_epoch_id IS NOT NULL AND captured_at>=? ORDER BY captured_at, scanner_run_id",
-            (CANDIDATE_SELECTION_SHADOW_RECORD_VERSION, training_cutoff),
+            "AND policy_epoch_id=? AND captured_at>=? ORDER BY captured_at, scanner_run_id",
+            (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff),
         ).fetchall()
     ]
     report["expected_cluster_n"] = len(batches)
@@ -123,12 +134,24 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         report["blocking_reasons"] = ["no_post_freeze_clusters"]
         return report
     first = batches[0]
-    report["policy_epoch_id"] = first.get("policy_epoch_id")
     identity_fields = (
         "policy_epoch_id", "behavior_contract_hash", "shadow_behavior_version",
         "primary_horizon", "outcome_contract_version", "metric_version",
     )
     invalid: set[str] = set()
+    try:
+        from aletheia.config.schema import UniverseConfig
+        from aletheia.universe.candidate_selection_authority import (
+            candidate_selection_policy_identity,
+        )
+
+        frozen_policy = json.loads(str(first["policy_json"]))
+        report["selection_policy"] = frozen_policy.get("selection_policy")
+        if report["selection_policy"] is None:
+            frozen_config = UniverseConfig.model_validate(frozen_policy["universe"])
+            report["selection_policy"] = candidate_selection_policy_identity(frozen_config)
+    except (KeyError, TypeError, ValueError):
+        invalid.add("selection_policy_identity_invalid")
     parsed = []
     all_keys: set[str] = set()
     for batch in batches:
@@ -159,9 +182,7 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             records.append((decision, keys, payload.get("target_selected") is True))
         parsed.append((batch, records))
     outcomes = _rows_for_keys(all_keys)
-    exclusion_counts: Counter[str] = Counter()
     clusters = []
-    expected_outcome_n = complete_outcome_n = 0
     for batch, records in parsed:
         captured = _parse_time(batch.get("captured_at"))
         if captured is None:
@@ -176,6 +197,8 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         target_symbols: list[str] = []
         legacy_symbols: list[str] = []
         cluster_complete = True
+        cluster_expected_outcome_n = cluster_complete_outcome_n = 0
+        cluster_exclusions: Counter[str] = Counter()
         try:
             capacity = int(json.loads(str(batch["policy_json"]))["universe"]["max_candidates"])
         except (KeyError, TypeError, ValueError):
@@ -185,13 +208,13 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             continue
         for decision, keys, target_selected in records:
             for key in keys.values():
-                expected_outcome_n += 1
+                cluster_expected_outcome_n += 1
                 row = outcomes.get(str(key))
                 assessment = assess_candidate_outcome(row, as_of_at=now) if row else None
                 if assessment and assessment.eligible:
-                    complete_outcome_n += 1
+                    cluster_complete_outcome_n += 1
                 else:
-                    exclusion_counts[assessment.reason if assessment else "missing_outcome"] += 1
+                    cluster_exclusions[assessment.reason if assessment else "missing_outcome"] += 1
             legacy = decision.get("legacy_control") or {}
             target_direction = decision.get("primary_direction")
             legacy_direction = legacy.get("primary_direction")
@@ -208,37 +231,63 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
                 if not assessment or not assessment.eligible or assessment.net_return_pct is None:
                     cluster_complete = False
                     continue
-                values.append(float(assessment.net_return_pct))
-                if isinstance(row.get("mae_pct"), (int, float)) and math.isfinite(float(row["mae_pct"])):
-                    maes.append(abs(float(row["mae_pct"])))
-                cost = sum(
-                    float(row.get(field) or 0.0)
-                    for field in ("estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct")
+                mae = row.get("mae_pct")
+                cost_fields = (
+                    row.get("estimated_fee_pct"),
+                    row.get("estimated_spread_slippage_pct"),
+                    row.get("estimated_funding_pct"),
                 )
+                if (
+                    not isinstance(mae, (int, float))
+                    or not math.isfinite(float(mae))
+                    or any(
+                        not isinstance(value, (int, float)) or not math.isfinite(float(value))
+                        for value in cost_fields
+                    )
+                ):
+                    cluster_complete = False
+                    continue
+                values.append(float(assessment.net_return_pct))
+                maes.append(abs(float(mae)))
+                cost = sum(float(value) for value in cost_fields)
                 costs.append(cost)
                 symbols.append(str(row.get("symbol") or ""))
-        if cluster_complete:
-            clusters.append({
-                "captured_at": captured,
-                "target": sum(target_values) / capacity,
-                "legacy": sum(legacy_values) / capacity,
-                "target_values": target_values,
-                "legacy_values": legacy_values,
-                "target_mae": target_mae,
-                "legacy_mae": legacy_mae,
-                "target_costs": target_costs,
-                "legacy_costs": legacy_costs,
-                "target_symbols": target_symbols,
-                "legacy_symbols": legacy_symbols,
-            })
-    coverage = complete_outcome_n / expected_outcome_n if expected_outcome_n else 0.0
+        clusters.append({
+            "captured_at": captured,
+            "complete": cluster_complete,
+            "expected_outcome_n": cluster_expected_outcome_n,
+            "complete_outcome_n": cluster_complete_outcome_n,
+            "exclusion_counts": cluster_exclusions,
+            "target": sum(target_values) / capacity,
+            "legacy": sum(legacy_values) / capacity,
+            "target_values": target_values,
+            "legacy_values": legacy_values,
+            "target_mae": target_mae,
+            "legacy_mae": legacy_mae,
+            "target_costs": target_costs,
+            "legacy_costs": legacy_costs,
+            "target_symbols": target_symbols,
+            "legacy_symbols": legacy_symbols,
+        })
     fixed_look = []
+    fixed_look_population = []
     days: set[date] = set()
     for cluster in clusters:
-        fixed_look.append(cluster)
+        fixed_look_population.append(cluster)
         days.add(cluster["captured_at"].date())
-        if len(fixed_look) >= _MIN_COMPLETE_CLUSTERS and _longest_days(days) >= _MIN_CONSECUTIVE_DAYS:
+        if cluster["complete"]:
+            fixed_look.append(cluster)
+        if (
+            len(fixed_look_population) >= _MIN_COMPLETE_CLUSTERS
+            and _longest_days(days) >= _MIN_CONSECUTIVE_DAYS
+        ):
             break
+    expected_outcome_n = sum(cluster["expected_outcome_n"] for cluster in fixed_look_population)
+    complete_outcome_n = sum(cluster["complete_outcome_n"] for cluster in fixed_look_population)
+    coverage = complete_outcome_n / expected_outcome_n if expected_outcome_n else 0.0
+    exclusion_counts: Counter[str] = Counter()
+    for cluster in fixed_look_population:
+        exclusion_counts.update(cluster["exclusion_counts"])
     blockers = set()
     if coverage < _MIN_FULL_ARM_COVERAGE:
         blockers.add("full_arm_outcome_coverage_below_0_80")
@@ -297,7 +346,7 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     else:
         verdict = "neutral"
     report.update(
-        complete_cluster_n=len(clusters),
+        complete_cluster_n=sum(cluster["complete"] for cluster in clusters),
         fixed_look_cluster_n=len(fixed_look),
         consecutive_eligible_utc_days=consecutive_days,
         full_arm_outcome_coverage=coverage,
@@ -322,6 +371,7 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         outcome_exclusion_counts=dict(sorted(exclusion_counts.items())),
         verdict=verdict,
         qualification_eligible=verdict == "positive",
+        promotion_eligible=verdict == "positive",
     )
     return report
 

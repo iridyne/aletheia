@@ -49,6 +49,8 @@ const universe: UniverseCurrentResponse = {
   members: [{
     id: 'btc-member', snapshot_id: 'snapshot', asset_id: 'btc', symbol: 'BTC/USDT', rank: 1,
     total_score: 90, opportunity_score: 90, tradability_score: 90, liquidity_score: 90,
+    candidate_selection_policy: 'legacy_total_score_v1', candidate_selection_policy_epoch: null,
+    candidate_selection_utility_pct: null,
     estimated_cost: 1, crowding_risk: 1, late_entry_penalty: 1, scanner_family: 'momentum',
     quote_volume_24h: 1, spread_bps: 1, ttl_sec: 3600, expires_at: '2026-08-13T01:00:00Z',
     inclusion_reason: '[]', risk_flags: '[]', execution_eligible: 1,

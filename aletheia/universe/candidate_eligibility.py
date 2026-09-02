@@ -9,6 +9,7 @@ import math
 from numbers import Real
 from typing import Literal, Mapping
 
+from aletheia.analytics.temporal import parse_utc_instant
 from aletheia.config.schema import UniverseConfig
 
 
@@ -123,7 +124,15 @@ def evaluate_hard_gate(
         "source_timestamp": feature.get("feature_snapshot_ts"),
         "source": feature.get("feature_source"),
     }
-    provenance_available = all(provenance.values())
+    source_time = parse_utc_instant(provenance["source_timestamp"])
+    evaluation_time = parse_utc_instant(evaluated_at)
+    provenance_available = bool(
+        provenance["feature_snapshot_id"]
+        and provenance["source"] == "universe_feature_snapshot/v1"
+        and source_time is not None
+        and evaluation_time is not None
+        and source_time <= evaluation_time
+    )
     checks.append(HardGateCheckV1(
         "provenance", "passed" if provenance_available else "unavailable", provenance,
         reason_code="source_provenance_available" if provenance_available else "source_provenance_unavailable",

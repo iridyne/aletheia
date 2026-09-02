@@ -52,6 +52,7 @@ class EconomicUtilityEstimateV1:
     candidate_key: str
     mechanism_id: str
     direction: Literal["long", "short"]
+    venue: str
     market_type: str
     strength_percentile: float
     strength_quintile: int
@@ -79,6 +80,7 @@ def estimate_economic_utility(
     candidate_key: str,
     mechanism_id: str,
     direction: Literal["long", "short"],
+    venue: str,
     market_type: str,
     strength_percentile: float,
     outcomes: Sequence[Mapping[str, object]],
@@ -90,13 +92,15 @@ def estimate_economic_utility(
     cutoff = parse_utc_instant(source_cutoff_at)
     if cutoff is None:
         raise ValueError("source_cutoff_at_invalid")
-    parent_rows = []
+    parent_by_identity: dict[str, Mapping[str, object]] = {}
+    identity_invalid = False
     for row in outcomes:
         entry = parse_utc_instant(row.get("entry_ts"))
         settled = parse_utc_instant(row.get("settled_at"))
         if (
             row.get("mechanism_id") == mechanism_id
             and row.get("direction") == direction
+            and str(row.get("venue") or "") == venue
             and str(row.get("market_type") or "spot") == market_type
             and row.get("horizon") == "4h"
             and entry is not None and entry <= cutoff
@@ -105,7 +109,21 @@ def estimate_economic_utility(
                 or (settled is not None and settled <= cutoff)
             )
         ):
-            parent_rows.append(row)
+            identity = str(row.get("outcome_candidate_key") or "")
+            if not identity:
+                identity_invalid = True
+                continue
+            previous = parent_by_identity.get(identity)
+            comparable = (
+                "scanner_run_id", "status", "entry_ts", "settled_at", "symbol",
+                "net_return_pct", "mae_pct", "cost_model_version",
+                "min_tradable_edge_pct", "strength_quintile",
+            )
+            if previous is not None and any(previous.get(key) != row.get(key) for key in comparable):
+                identity_invalid = True
+                continue
+            parent_by_identity.setdefault(identity, row)
+    parent_rows = list(parent_by_identity.values())
     complete = [
         row for row in parent_rows
         if row.get("status") == "settled"
@@ -141,9 +159,11 @@ def estimate_economic_utility(
     child_supported = len(child_clusters) >= 20
     status: Literal["available", "diagnostic_parent_only", "unavailable"]
     status = "available" if parent_supported and child_supported else "diagnostic_parent_only" if parent_supported else "unavailable"
+    if identity_invalid:
+        status = "unavailable"
     net_values = [float(row["net_return_pct"]) for row in child_rows]
     mae_values = [abs(float(value)) for row in child_rows if (value := _finite(row.get("mae_pct"))) is not None]
-    if net_values:
+    if net_values and len(mae_values) == len(child_rows):
         worst_count = max(1, math.ceil(len(net_values) * 0.05))
         minimum = min(net_values)
         tail = TailEvidenceV1(
@@ -154,6 +174,8 @@ def estimate_economic_utility(
         )
     else:
         tail = TailEvidenceV1(None, None, None, "unavailable")
+    if status == "available" and tail.status == "unavailable":
+        status = "unavailable"
     expected = standard_error = utility = None
     if status == "available":
         parent_mean = mean(parent_clusters)
@@ -167,7 +189,7 @@ def estimate_economic_utility(
             expected = None
         else:
             utility = expected - standard_error
-            if tail.status == "harm":
+            if tail.status != "clear":
                 utility = None
     edge_values = {_finite(row.get("min_tradable_edge_pct")) for row in complete}
     edge_values.discard(None)
@@ -178,6 +200,7 @@ def estimate_economic_utility(
         "version": ECONOMIC_UTILITY_VERSION,
         "mechanism_id": mechanism_id,
         "direction": direction,
+        "venue": venue,
         "market_type": market_type,
         "horizon": "4h",
         "strength_quintile": quintile,
@@ -209,6 +232,7 @@ def estimate_economic_utility(
         candidate_key,
         mechanism_id,
         direction,
+        venue,
         market_type,
         strength_percentile,
         quintile,

@@ -311,6 +311,58 @@ async def _persist_relative_rank_shadow_nonfatal(*args, **kwargs) -> int:
     return await _persist_twin_shadow_nonfatal(*args, **kwargs)
 
 
+def _build_candidate_selection_bundle(
+    *,
+    population: list[dict],
+    legacy_scored: list[dict],
+    legacy_allocated: list[dict],
+    scanner_run_id: str,
+    captured_at: str,
+    cfg,
+    authority_applied: bool = False,
+    qualification_evidence: dict | None = None,
+):
+    from aletheia.universe.candidate_selection_shadow import (
+        build_candidate_selection_shadow_bundle,
+        candidate_selection_training_cutoff,
+        load_candidate_selection_outcomes,
+    )
+    from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity,
+    )
+
+    action_routes = {
+        (
+            str(item.get("feature_snapshot_id") or ""),
+            str(item.get("venue") or ""),
+            str(item.get("market_type") or "spot"),
+            str(item.get("symbol") or ""),
+        ): fast_market_data_unavailability_reason(
+            cfg,
+            str(item.get("venue") or ""),
+            str(item.get("market_type") or "spot"),
+        )
+        for item in population
+    }
+    training_cutoff = candidate_selection_training_cutoff()
+    return build_candidate_selection_shadow_bundle(
+        population,
+        scanner_run_id=scanner_run_id,
+        captured_at=captured_at,
+        universe_config=cfg.universe,
+        legacy_scored=legacy_scored,
+        legacy_allocated=legacy_allocated,
+        action_route_reasons=action_routes,
+        historical_outcomes=load_candidate_selection_outcomes(
+            settled_through=training_cutoff,
+        ),
+        estimator_training_cutoff=training_cutoff,
+        selection_policy=candidate_selection_policy_identity(cfg),
+        authority_applied=authority_applied,
+        qualification_evidence=qualification_evidence,
+    )
+
+
 async def _persist_candidate_selection_shadow_nonfatal(
     *,
     population: list[dict],
@@ -323,38 +375,13 @@ async def _persist_candidate_selection_shadow_nonfatal(
     """Persist #2729 full-denominator evidence without joining authority failure."""
 
     def build_and_persist() -> int:
-        from aletheia.universe.candidate_selection_shadow import (
-            build_candidate_selection_shadow_bundle,
-            candidate_selection_training_cutoff,
-            load_candidate_selection_outcomes,
-        )
-
-        action_routes = {
-            (
-                str(item.get("feature_snapshot_id") or ""),
-                str(item.get("venue") or ""),
-                str(item.get("market_type") or "spot"),
-                str(item.get("symbol") or ""),
-            ): fast_market_data_unavailability_reason(
-                cfg,
-                str(item.get("venue") or ""),
-                str(item.get("market_type") or "spot"),
-            )
-            for item in population
-        }
-        training_cutoff = candidate_selection_training_cutoff()
-        bundle = build_candidate_selection_shadow_bundle(
-            population,
+        bundle = _build_candidate_selection_bundle(
+            population=population,
             scanner_run_id=scanner_run_id,
             captured_at=captured_at,
-            universe_config=cfg.universe,
             legacy_scored=legacy_scored,
             legacy_allocated=legacy_allocated,
-            action_route_reasons=action_routes,
-            historical_outcomes=load_candidate_selection_outcomes(
-                settled_through=training_cutoff,
-            ),
-            estimator_training_cutoff=training_cutoff,
+            cfg=cfg,
         )
         return repo.insert_universe_twin_shadow_bundle(
             bundle.batch,
@@ -483,8 +510,8 @@ def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
 
     The fingerprint covers every persisted member field that can change the
     downstream candidate's identity, eligibility, TTL, evidence seed, or guard
-    treatment. Numeric ranking scores remain excluded because small score jitter
-    alone does not change those semantics.
+    treatment. Legacy score jitter remains excluded; target Utility is included
+    because it is named, persisted owner evidence rather than compatibility rank.
     """
 
     def _risk_flags(value) -> tuple[str, ...]:
@@ -516,6 +543,9 @@ def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
                 int(rank),
                 str(item.get("scanner_family") or ""),
                 str(item.get("scanner_direction") or item.get("direction") or ""),
+                str(item.get("candidate_selection_policy") or "legacy_total_score_v1"),
+                str(item.get("candidate_selection_policy_epoch") or ""),
+                item.get("candidate_selection_utility_pct"),
                 bool(item.get("execution_eligible", True)),
                 int(item.get("ttl_sec") or 0),
                 _risk_flags(item.get("risk_flags")),
@@ -1085,7 +1115,7 @@ class UniverseService:
             # Deduplicate before quota allocation so the discarded instrument does
             # not consume a family/explore slot that is never refilled.
             unique_scored = _dedupe_by_symbol_preferred_market(scored, cfg)
-            allocated = allocate_universe(
+            legacy_allocated = allocate_universe(
                 unique_scored,
                 cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
@@ -1095,7 +1125,10 @@ class UniverseService:
             # universe for visibility but marked execution-ineligible so the Entry
             # Planner never receives planning authority for them.  The risk flag
             # is appended once (de-duplicated) so the fingerprint captures it.
-            for item in allocated:
+            for item in legacy_allocated:
+                item["candidate_selection_policy"] = "legacy_total_score_v1"
+                item["candidate_selection_policy_epoch"] = None
+                item["candidate_selection_utility_pct"] = None
                 venue_reason = fast_market_data_unavailability_reason(
                     cfg,
                     str(item.get("venue") or ""),
@@ -1112,26 +1145,75 @@ class UniverseService:
                     if "fast_market_data_venue_unavailable" not in flags:
                         flags = list(flags) + ["fast_market_data_venue_unavailable"]
                     item["risk_flags"] = flags
-            eligible_attention_identities = {
-                (
-                    str(item.get("venue") or ""),
-                    str(item.get("symbol") or ""),
-                    str(item.get("market_type", "spot")),
-                    str(item.get("scanner_family") or ""),
-                    str(item.get("scanner_direction") or _infer_direction(item.get("scanner_family"), item) or ""),
-                )
-                for item in unique_scored
-                if _execution_eligible(item)
-                and fast_market_data_unavailability_reason(
-                    cfg,
-                    str(item.get("venue") or ""),
-                    str(item.get("market_type") or ""),
-                )
-                is None
-            }
-
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
+            allocated = legacy_allocated
+            candidate_selection_authority_bundle = None
+            if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
+                from aletheia.universe.candidate_selection_authority import (
+                    candidate_selection_authority_block_reason,
+                    candidate_selection_overlap_block_reason,
+                )
+                from aletheia.universe.candidate_selection_evaluation import (
+                    evaluate_candidate_selection_policy,
+                )
+                from aletheia.universe.candidate_selection_shadow import (
+                    target_admitted_identity_keys,
+                    target_candidates_from_bundle,
+                )
+
+                overlap_block_reason = candidate_selection_overlap_block_reason()
+                if overlap_block_reason is not None:
+                    raise RuntimeError(overlap_block_reason)
+                qualification = evaluate_candidate_selection_policy(as_of_at=entry_ts)
+                block_reason = candidate_selection_authority_block_reason(cfg, qualification)
+                if block_reason is not None:
+                    raise RuntimeError(block_reason)
+                candidate_selection_authority_bundle = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        _build_candidate_selection_bundle,
+                        population=features_list,
+                        legacy_scored=unique_scored,
+                        legacy_allocated=legacy_allocated,
+                        scanner_run_id=run.id,
+                        captured_at=entry_ts,
+                        cfg=cfg,
+                        authority_applied=True,
+                        qualification_evidence=qualification,
+                    ),
+                    timeout=_TWIN_SHADOW_TIMEOUT_SEC,
+                )
+                if (
+                    candidate_selection_authority_bundle.batch.policy_epoch_id
+                    != cfg.universe.candidate_selection_policy_epoch
+                ):
+                    raise RuntimeError("candidate_selection_runtime_policy_epoch_mismatch")
+                allocated = target_candidates_from_bundle(
+                    candidate_selection_authority_bundle,
+                    pre_scored,
+                )
+                eligible_attention_identities = target_admitted_identity_keys(
+                    candidate_selection_authority_bundle,
+                )
+            else:
+                eligible_attention_identities = {
+                    (
+                        str(item.get("venue") or ""),
+                        str(item.get("symbol") or ""),
+                        str(item.get("market_type", "spot")),
+                        str(item.get("scanner_family") or ""),
+                        str(item.get("scanner_direction") or _infer_direction(item.get("scanner_family"), item) or ""),
+                    )
+                    for item in unique_scored
+                    if _execution_eligible(item)
+                    and fast_market_data_unavailability_reason(
+                        cfg,
+                        str(item.get("venue") or ""),
+                        str(item.get("market_type") or ""),
+                    )
+                    is None
+                }
+
             snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
             expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
             regime_tag_for_fp = current_regime.state if current_regime else None
@@ -1240,6 +1322,13 @@ class UniverseService:
                         now=now,
                     )
                     repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
+                    if candidate_selection_authority_bundle is not None:
+                        repo.insert_universe_twin_shadow_bundle(
+                            candidate_selection_authority_bundle.batch,
+                            candidate_selection_authority_bundle.evidence,
+                            outcomes=candidate_selection_authority_bundle.outcomes,
+                            min_interval_sec=0,
+                        )
                     repo.update_universe_scanner_run(
                         run.id,
                         status="completed",
@@ -1251,14 +1340,15 @@ class UniverseService:
                         "Registered %d experiment candidate outcome row(s) across full arms",
                         len(experiment_outcomes),
                     )
-                await _persist_candidate_selection_shadow_nonfatal(
-                    population=features_list,
-                    legacy_scored=unique_scored,
-                    legacy_allocated=allocated,
-                    scanner_run_id=run.id,
-                    captured_at=entry_ts,
-                    cfg=cfg,
-                )
+                if candidate_selection_authority_bundle is None:
+                    await _persist_candidate_selection_shadow_nonfatal(
+                        population=features_list,
+                        legacy_scored=unique_scored,
+                        legacy_allocated=legacy_allocated,
+                        scanner_run_id=run.id,
+                        captured_at=entry_ts,
+                        cfg=cfg,
+                    )
                 _capture_universe_discovery_nonfatal(
                     scanner_run_id=run.id,
                     population=unique_scored,
@@ -1277,6 +1367,11 @@ class UniverseService:
 
             snap = UniverseSnapshot(
                 market_type=market_type,
+                policy_id=(
+                    cfg.universe.candidate_selection_policy_epoch
+                    if candidate_selection_authority_bundle is not None
+                    else "legacy_total_score_v1"
+                ),
                 expires_at=expires_at,
                 summary=json.dumps(
                     {
@@ -1285,6 +1380,8 @@ class UniverseService:
                         "selected": len(allocated),
                         "member_fingerprint": new_fp,
                         "information_policy_epoch": POLICY_EPOCH_LABEL,
+                        "candidate_selection_policy": cfg.universe.candidate_selection_policy,
+                        "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
                     }
                 ),
             )
@@ -1328,6 +1425,15 @@ class UniverseService:
                     execution_eligible=item.get("execution_eligible", True),
                     entry_price_usd=entry_price,
                     learning_candidate_key=item.get("learning_candidate_key"),
+                    candidate_selection_policy=item.get(
+                        "candidate_selection_policy", "legacy_total_score_v1",
+                    ),
+                    candidate_selection_policy_epoch=item.get(
+                        "candidate_selection_policy_epoch",
+                    ),
+                    candidate_selection_utility_pct=item.get(
+                        "candidate_selection_utility_pct",
+                    ),
                 )
                 member_models.append(member)
                 inserted_members.append(
@@ -1344,6 +1450,15 @@ class UniverseService:
                         "spread_bps": item.get("spread_bps"),
                         "funding_rate": item.get("funding_rate"),
                         "total_score": item["total_score"],
+                        "candidate_selection_policy": item.get(
+                            "candidate_selection_policy", "legacy_total_score_v1",
+                        ),
+                        "candidate_selection_policy_epoch": item.get(
+                            "candidate_selection_policy_epoch",
+                        ),
+                        "candidate_selection_utility_pct": item.get(
+                            "candidate_selection_utility_pct",
+                        ),
                         "learning_candidate_key": item.get("learning_candidate_key"),
                         "learning_exposure_id": item.get("learning_exposure_id"),
                         "instrument_background": item.get("instrument_background"),
@@ -1392,6 +1507,13 @@ class UniverseService:
                 # Register forward outcome tracking for all members with valid prices
                 repo.insert_forward_outcomes_batch(pending_outcomes)
                 repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
+                if candidate_selection_authority_bundle is not None:
+                    repo.insert_universe_twin_shadow_bundle(
+                        candidate_selection_authority_bundle.batch,
+                        candidate_selection_authority_bundle.evidence,
+                        outcomes=candidate_selection_authority_bundle.outcomes,
+                        min_interval_sec=0,
+                    )
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
@@ -1418,14 +1540,15 @@ class UniverseService:
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     snapshot_id=snap.id,
                 )
-            await _persist_candidate_selection_shadow_nonfatal(
-                population=features_list,
-                legacy_scored=unique_scored,
-                legacy_allocated=allocated,
-                scanner_run_id=run.id,
-                captured_at=entry_ts,
-                cfg=cfg,
-            )
+            if candidate_selection_authority_bundle is None:
+                await _persist_candidate_selection_shadow_nonfatal(
+                    population=features_list,
+                    legacy_scored=unique_scored,
+                    legacy_allocated=legacy_allocated,
+                    scanner_run_id=run.id,
+                    captured_at=entry_ts,
+                    cfg=cfg,
+                )
             _capture_universe_discovery_nonfatal(
                 scanner_run_id=run.id,
                 population=unique_scored,
@@ -1492,6 +1615,9 @@ class UniverseService:
                 "symbol": sym,
                 "scanner_family": "core",
                 "total_score": 100.0,
+                "candidate_selection_policy": "legacy_total_score_v1",
+                "candidate_selection_policy_epoch": None,
+                "candidate_selection_utility_pct": None,
                 "snapshot_id": None,
                 "id": None,
                 "asset_id": None,

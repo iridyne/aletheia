@@ -2804,6 +2804,97 @@ class UniverseConfigUpdate(SettingsRequest):
     family_quota_by_regime: Optional[dict[str, dict[str, float]]] = None
 
 
+class CandidateSelectionAdmissionRequest(SettingsRequest):
+    expected_policy_epoch: str
+    reason: str
+    confirm_admission: Literal[True]
+
+    @field_validator("expected_policy_epoch")
+    @classmethod
+    def _non_empty_epoch(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("expected_policy_epoch must not be empty")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def _bounded_reason(cls, value: str) -> str:
+        normalized = " ".join(str(value).split())
+        if len(normalized) < 8:
+            raise ValueError("reason must be at least 8 characters")
+        return normalized[:200]
+
+
+class CandidateSelectionRollbackRequest(SettingsRequest):
+    reason: str
+    confirm_rollback: Literal[True]
+
+    @field_validator("reason")
+    @classmethod
+    def _bounded_reason(cls, value: str) -> str:
+        normalized = " ".join(str(value).split())
+        if len(normalized) < 8:
+            raise ValueError("reason must be at least 8 characters")
+        return normalized[:200]
+
+
+def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
+    from aletheia.universe.candidate_selection_authority import (
+        TARGET_CANDIDATE_POLICY,
+        candidate_selection_authority_block_reason,
+        candidate_selection_overlap_block_reason,
+    )
+    from aletheia.universe.candidate_selection_evaluation import (
+        evaluate_candidate_selection_policy,
+    )
+
+    try:
+        qualification = evaluate_candidate_selection_policy()
+        evaluation_available = True
+        evaluation_error = None
+    except Exception as exc:
+        qualification = {
+            "verdict": "unavailable",
+            "promotion_eligible": False,
+            "policy_epoch_id": None,
+            "blocking_reasons": ["qualification_read_unavailable"],
+            "invalid_reasons": [],
+        }
+        evaluation_available = False
+        evaluation_error = type(exc).__name__
+    block_reason = candidate_selection_authority_block_reason(cfg, qualification)
+    configured_target = cfg.universe.candidate_selection_policy == TARGET_CANDIDATE_POLICY
+    overlap_block_reason = candidate_selection_overlap_block_reason()
+    qualification_epoch = str(qualification.get("policy_epoch_id") or "")
+    if configured_target:
+        admission_block_reason = block_reason
+    elif not qualification_epoch:
+        admission_block_reason = "candidate_selection_qualification_not_positive"
+    else:
+        proposed = UniverseConfig.model_validate({
+            **cfg.universe.model_dump(mode="json"),
+            "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+            "candidate_selection_policy_epoch": qualification_epoch,
+        })
+        admission_block_reason = candidate_selection_authority_block_reason(
+            cfg.model_copy(update={"universe": proposed}), qualification,
+        )
+    admission_block_reason = overlap_block_reason or admission_block_reason
+    if configured_target:
+        block_reason = overlap_block_reason or block_reason
+    return {
+        "configured_policy": cfg.universe.candidate_selection_policy,
+        "configured_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
+        "authority_enabled": configured_target and block_reason is None,
+        "authority_block_reason": block_reason,
+        "admission_block_reason": admission_block_reason,
+        "evaluation_available": evaluation_available,
+        "evaluation_error": evaluation_error,
+        "qualification": qualification,
+    }
+
+
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "refresh_interval_min": (1, 60),
     "max_candidates": (5, 100),
@@ -2824,6 +2915,26 @@ def update_universe_config(req: UniverseConfigUpdate):
     cfg = load_config()
     old = cfg.universe.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
+    identity_fields = {
+        "max_candidates", "min_volume_24h_usdt", "max_spread_bps",
+        "min_depth_10bps_usd", "blacklist",
+    }
+    changed_identity_fields = sorted(
+        field for field in identity_fields
+        if field in updates and updates[field] != old.get(field)
+    )
+    if (
+        cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
+        and changed_identity_fields
+    ):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "candidate_selection_policy_identity_frozen",
+                "message": "Restore legacy selection before changing frozen Candidate policy inputs.",
+                "fields": changed_identity_fields,
+            },
+        )
     next_soft = int(updates.get("entry_ttl_sec", old["entry_ttl_sec"]))
     next_hard = int(
         updates.get(
@@ -2900,6 +3011,106 @@ def update_universe_config(req: UniverseConfigUpdate):
     if normalized_updates:
         _notify_ranker_config_change()
     return {"updated": normalized_updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
+
+
+@router.get("/universe/candidate-selection")
+def get_candidate_selection_status():
+    """Read the configured authority and its exact prospective qualification."""
+
+    return _candidate_selection_status(load_config())
+
+
+@router.post("/universe/candidate-selection/admit")
+def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
+    """Owner-only positive-qualification transition to target Candidate authority."""
+
+    from aletheia.universe.candidate_selection_authority import (
+        TARGET_CANDIDATE_POLICY,
+        candidate_selection_authority_block_reason,
+        candidate_selection_overlap_block_reason,
+    )
+    from aletheia.universe.candidate_selection_evaluation import (
+        evaluate_candidate_selection_policy,
+    )
+
+    cfg = load_config()
+    overlap_block_reason = candidate_selection_overlap_block_reason()
+    if overlap_block_reason is not None:
+        raise HTTPException(409, overlap_block_reason)
+    try:
+        qualification = evaluate_candidate_selection_policy()
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            detail={
+                "code": "candidate_selection_qualification_unavailable",
+                "message": "Candidate Selection qualification evidence is unavailable.",
+            },
+        ) from exc
+    if str(qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+        raise HTTPException(409, "candidate_selection_policy_epoch_changed")
+    proposed = UniverseConfig.model_validate({
+        **cfg.universe.model_dump(mode="json"),
+        "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+        "candidate_selection_policy_epoch": req.expected_policy_epoch,
+    })
+    block_reason = candidate_selection_authority_block_reason(
+        cfg.model_copy(update={"universe": proposed}), qualification,
+    )
+    if block_reason is not None:
+        raise HTTPException(409, block_reason)
+    before = cfg.universe.model_dump(mode="json")
+    cfg.universe = proposed
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    try:
+        write_audit({
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "candidate_selection_authority_admitted",
+            "entity_type": "universe_config",
+            "before": before,
+            "after": proposed.model_dump(mode="json"),
+            "message": f"Candidate Selection Utility admitted: {req.reason}",
+        })
+    except Exception as exc:
+        cfg.universe = UniverseConfig.model_validate(before)
+        save_config(cfg)
+        raise HTTPException(
+            500,
+            detail={
+                "code": "candidate_selection_admission_audit_failed",
+                "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
+            },
+        ) from exc
+    return _candidate_selection_status(cfg)
+
+
+@router.post("/universe/candidate-selection/rollback")
+def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
+    """Explicitly restore legacy Candidate authority without rewriting evidence."""
+
+    from aletheia.universe.candidate_selection_authority import LEGACY_CANDIDATE_POLICY
+
+    cfg = load_config()
+    before = cfg.universe.model_dump(mode="json")
+    cfg.universe = UniverseConfig.model_validate({
+        **before,
+        "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
+        "candidate_selection_policy_epoch": None,
+    })
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "candidate_selection_authority_rolled_back",
+        "entity_type": "universe_config",
+        "before": before,
+        "after": cfg.universe.model_dump(mode="json"),
+        "message": f"Candidate Selection Utility rolled back: {req.reason}",
+    })
+    return _candidate_selection_status(cfg)
 
 
 # ---------------------------------------------------------------------------

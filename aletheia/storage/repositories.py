@@ -8066,12 +8066,20 @@ def _validate_universe_twin_prospective_bundle(
 ) -> None:
     """Reject partial or internally inconsistent prospective identities."""
 
-    if batch.record_version == "candidate-selection-utility-shadow-record/v1":
-        if batch.promotion_eligible or any(item.promotion_eligible for item in evidence):
-            raise ValueError("candidate_selection_shadow_promotion_not_allowed")
-        if any(item.shadow_authority_applied for item in evidence):
-            raise ValueError("candidate_selection_shadow_authority_not_allowed")
+    if batch.record_version == "candidate-selection-utility-record/v1":
+        authority_applied = bool(batch.promotion_eligible)
+        try:
+            batch_blockers = json.loads(batch.blocking_reasons_json)
+        except (TypeError, ValueError):
+            raise ValueError("candidate_selection_blocking_reasons_invalid") from None
+        if not isinstance(batch_blockers, list) or bool(batch_blockers) == authority_applied:
+            raise ValueError("candidate_selection_authority_blocking_state_invalid")
+        if any(item.shadow_authority_applied != authority_applied for item in evidence):
+            raise ValueError("candidate_selection_authority_state_mixed")
+        if any(item.promotion_eligible != authority_applied for item in evidence):
+            raise ValueError("candidate_selection_record_promotion_state_invalid")
         expected_keys: set[str] = set()
+        expected_allocations: dict[str, bool] = {}
         for item in evidence:
             for field in (
                 "experiment_id", "policy_epoch_id", "behavior_contract_hash",
@@ -8083,13 +8091,34 @@ def _validate_universe_twin_prospective_bundle(
                 payload = json.loads(item.compact_output_json)
                 keys = payload["outcome_candidate_keys"]
                 contract = payload["evidence_contract"]
+                target_selected = payload["target_selected"]
+                primary_direction = payload["candidate_selection"]["primary_direction"]
             except (KeyError, TypeError, ValueError):
                 raise ValueError("candidate_selection_shadow_contract_invalid") from None
+            if not isinstance(target_selected, bool):
+                raise ValueError("candidate_selection_target_selection_invalid")
+            if item.shadow_pessimistic_selected is not target_selected:
+                raise ValueError("candidate_selection_target_selection_mismatch")
+            expected_assigned = target_selected if authority_applied else None
+            if item.assigned_policy_selected is not expected_assigned:
+                raise ValueError("candidate_selection_assigned_selection_mismatch")
             if contract.get("outcome_contract_version") != "candidate-selection-utility-outcome/v1":
                 raise ValueError("candidate_selection_shadow_outcome_contract_invalid")
+            if contract.get("behavior_contract_hash") != batch.behavior_contract_hash:
+                raise ValueError("candidate_selection_behavior_contract_mismatch")
+            if contract.get("policy_epoch_id") != batch.policy_epoch_id:
+                raise ValueError("candidate_selection_policy_epoch_mismatch")
+            if contract.get("shadow_authority_applied") is not authority_applied:
+                raise ValueError("candidate_selection_authority_contract_mismatch")
+            if contract.get("promotion_eligible") is not authority_applied:
+                raise ValueError("candidate_selection_promotion_contract_mismatch")
             if not isinstance(keys, dict) or set(keys) - {"long", "short"}:
                 raise ValueError("candidate_selection_shadow_outcome_keys_invalid")
             expected_keys.update(str(value) for value in keys.values())
+            for direction, value in keys.items():
+                expected_allocations[str(value)] = bool(
+                    target_selected and direction == primary_direction
+                )
         actual_keys = {str(row.get("outcome_candidate_key") or "") for row in outcome_rows}
         if actual_keys != expected_keys or "" in actual_keys:
             raise ValueError("candidate_selection_shadow_full_denominator_mismatch")
@@ -8100,6 +8129,12 @@ def _validate_universe_twin_prospective_bundle(
             for row in outcome_rows
         ):
             raise ValueError("candidate_selection_shadow_outcome_identity_invalid")
+        if any(
+            bool(row.get("allocation_selected"))
+            != expected_allocations[str(row.get("outcome_candidate_key") or "")]
+            for row in outcome_rows
+        ):
+            raise ValueError("candidate_selection_target_outcome_allocation_mismatch")
         return
 
     prospective_markers = (
@@ -8204,7 +8239,7 @@ def insert_universe_twin_shadow_bundle(
     _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
     if (
         batch.experiment_id is not None
-        and batch.record_version != "candidate-selection-utility-shadow-record/v1"
+        and batch.record_version != "candidate-selection-utility-record/v1"
     ):
         outcome_by_key = {str(row["outcome_candidate_key"]): row for row in outcome_rows}
         if len(outcome_by_key) != len(outcome_rows):
@@ -9380,7 +9415,9 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
         .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
-            "um.execution_eligible, um.expires_at AS candidate_expires_at "
+            "um.execution_eligible, um.expires_at AS candidate_expires_at, "
+            "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
+            "um.candidate_selection_utility_pct "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
@@ -9405,6 +9442,8 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
             "um.execution_eligible, um.expires_at AS candidate_expires_at, "
+            "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
+            "um.candidate_selection_utility_pct, "
             "ep.id AS active_entry_plan_id, ep.status AS active_entry_plan_status "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "

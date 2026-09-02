@@ -62,6 +62,8 @@ const workbench: EntryWorkbenchResponse = {
   current_candidates: [{
     id: 'candidate-1', snapshot_id: 'snapshot-1234', asset_id: 'asset-1', venue: 'binance',
     symbol: 'BTC/USDT', market_type: 'perp', rank: 1, total_score: 88,
+    candidate_selection_policy: 'legacy_total_score_v1', candidate_selection_policy_epoch: null,
+    candidate_selection_utility_pct: null,
     scanner_family: 'momentum', scanner_direction: 'long', inclusion_reason: '["ranked"]',
     risk_flags: '[]', execution_eligible: 1, expires_at: '2026-08-28T01:00:00Z',
     planning_generation_id: null, planning_status: null, result_kind: null,
@@ -109,6 +111,20 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Planning Queue')
     expect(html).toContain('Planning History')
     expect(html).not.toContain('Manual Review')
+  })
+
+  it('labels target utility without reinterpreting the legacy score', () => {
+    const html = renderWorkbench({
+      ...workbench,
+      current_candidates: workbench.current_candidates?.map(candidate => ({
+        ...candidate,
+        candidate_selection_policy: 'candidate_selection_utility_v1',
+        candidate_selection_policy_epoch: 'candidate-selection-utility:test',
+        candidate_selection_utility_pct: 1.25,
+      })) ?? [],
+    })
+    expect(html).toContain('Utility 1.25%')
+    expect(html).not.toContain('Legacy score 88')
   })
 
   it('exposes all six progressive Plan sections and exact downstream lineage', () => {
