@@ -295,8 +295,9 @@ def test_http_feed_downloads_and_installs_verified_runtime(monkeypatch, tmp_path
             def __init__(self, *_args, **_kwargs):
                 pass
 
-            def create_backup(self, *, label: str):
+            def create_backup(self, *, label: str, profile: str = "online"):
                 assert label.startswith("pre_update_")
+                assert profile == "online"
                 return backup
 
         monkeypatch.setattr(packaged, "BackupService", FakeBackupService)
@@ -411,8 +412,9 @@ def test_stage_writes_switch_request_only_after_backup_and_preflight(monkeypatch
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def create_backup(self, *, label: str):
+        def create_backup(self, *, label: str, profile: str = "online"):
             assert label.startswith("pre_update_")
+            assert profile == "online"
             return backup
 
     def successful_preflight(candidate_root: Path, **kwargs):
@@ -445,7 +447,7 @@ def test_preflight_failure_never_creates_switch_request(monkeypatch, tmp_path):
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def create_backup(self, *, label: str):
+        def create_backup(self, *, label: str, profile: str = "online"):
             return backup
 
     def failed_preflight(*_args, **_kwargs):
@@ -477,6 +479,7 @@ def test_manual_rollback_requires_recent_committed_backup(monkeypatch, tmp_path)
         "current_release": "0.5.1+abc123",
         "previous_release": "0.5.0+old",
         "backup_path": str(backup),
+        "backup_profile": "authoritative",
         "updated_at": f"unix:{time.time()}",
     }
     (host / "update-state.json").write_text(json.dumps(committed_state), encoding="utf-8")

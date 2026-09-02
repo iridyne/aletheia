@@ -56,7 +56,12 @@ class RestoreService:
         shutil.copy2(archive_path, snap_path)
         return snap_path
 
-    def dry_run(self, archive_path: Path, target_dir: Path) -> RestoreResult:
+    def dry_run(
+        self,
+        archive_path: Path,
+        target_dir: Path,
+        require_recovery_checkpoint: bool = False,
+    ) -> RestoreResult:
         """Preview restore without making changes."""
         result = RestoreResult()
         result.target_dir = str(target_dir)
@@ -68,6 +73,12 @@ class RestoreService:
                 result.errors = [
                     f"Verification failed: {e}" for e in verify.errors + verify.mismatches
                 ]
+                return result
+            if require_recovery_checkpoint and not verify.recovery_eligible:
+                result.errors.append(
+                    "Restore requires an authoritative recovery checkpoint; "
+                    f"archive profile is {verify.profile or 'unknown'}"
+                )
                 return result
 
             with tempfile.TemporaryDirectory() as tmp:
@@ -86,7 +97,12 @@ class RestoreService:
         finally:
             snap.unlink(missing_ok=True)
 
-    def restore(self, archive_path: Path, target_dir: Path) -> RestoreResult:
+    def restore(
+        self,
+        archive_path: Path,
+        target_dir: Path,
+        require_recovery_checkpoint: bool = False,
+    ) -> RestoreResult:
         """Restore backup to target directory.
 
         #285: verifies and extracts the same private snapshot of the archive.
@@ -102,6 +118,12 @@ class RestoreService:
                 result.errors = [
                     f"Verification failed: {e}" for e in verify.errors + verify.mismatches
                 ]
+                return result
+            if require_recovery_checkpoint and not verify.recovery_eligible:
+                result.errors.append(
+                    "Restore requires an authoritative recovery checkpoint; "
+                    f"archive profile is {verify.profile or 'unknown'}"
+                )
                 return result
 
             with tempfile.TemporaryDirectory() as tmp:

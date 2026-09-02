@@ -241,6 +241,8 @@ def prepare_activation_data() -> dict[str, Any]:
     request = packaged._read_json(request_path)  # noqa: SLF001
     action = request.get("action")
     if action == "rollback":
+        if request.get("backup_profile") != "authoritative":
+            raise PackagedUpdateError("rollback_checkpoint_profile_unproven")
         backup_value = request.get("backup_path")
         backup = Path(backup_value) if isinstance(backup_value, str) else None
         if backup is None or not backup.is_absolute() or not backup.is_file():
@@ -249,6 +251,32 @@ def prepare_activation_data() -> dict[str, Any]:
         return {"ok": True, "action": "rollback", "restored": restored}
     if action != "activate":
         raise PackagedUpdateError("update_action_invalid", repr(action))
+
+    if request.get("backup_profile") not in {"online", "authoritative"}:
+        raise PackagedUpdateError("update_backup_profile_unproven")
+
+    # The staging snapshot was intentionally created while the old Gateway was
+    # serving writes and is therefore non-recovery. The tray calls this command
+    # only after quiescing/stopping that runtime; publish the authoritative
+    # checkpoint before migrations so Rust can refresh the rollback request.
+    backup_value = request.get("backup_path")
+    backup = Path(backup_value) if isinstance(backup_value, str) else None
+    checkpoint_valid = False
+    if request.get("backup_profile") == "authoritative" and backup is not None and backup.is_file():
+        from aletheia.backup.verify import verify_backup
+
+        checked = verify_backup(backup)
+        checkpoint_valid = checked.valid and checked.recovery_eligible
+    if not checkpoint_valid:
+        from aletheia.backup.service import BackupService
+
+        authoritative = BackupService(packaged.get_data_dir()).create_backup(
+            label=f"pre_update_authoritative_{str(request.get('operation_id') or '')[:12]}",
+            profile="authoritative",
+        )
+        request["backup_path"] = str(authoritative)
+        request["backup_profile"] = "authoritative"
+        packaged._atomic_json(request_path, request)  # noqa: SLF001
     return {"ok": True, "action": "activate", "validation": packaged.validate_current_data()}
 
 
@@ -274,6 +302,7 @@ def request_rollback() -> dict[str, Any]:
         or backup is None
         or not backup.is_absolute()
         or not backup.is_file()
+        or state.get("backup_profile") != "authoritative"
     ):
         return {"accepted": False, "reason": "rollback_checkpoint_unavailable"}
     if committed_at is None or time.time() - committed_at > _MANUAL_ROLLBACK_WINDOW_SEC:

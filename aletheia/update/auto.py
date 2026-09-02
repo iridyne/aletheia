@@ -646,7 +646,9 @@ def run() -> dict[str, Any]:
         observer_postflight: dict[str, Any] | None = None
         try:
             state = _write_state(state, phase="preflight", status="running", target_tag=tag, target_sha=target)
-            preflight_backup = BackupService(get_data_dir()).create_backup(label=f"auto_preflight_{tag[1:]}")
+            preflight_backup = BackupService(get_data_dir()).create_backup(
+                label=f"auto_preflight_{tag[1:]}", profile="online"
+            )
             worktree = _candidate_preflight(target, preflight_backup)
             _sync_candidate_dependencies(worktree)
             dependencies_synced = True
@@ -659,7 +661,9 @@ def run() -> dict[str, Any]:
             if not stopped_result.get("ok"):
                 raise AutoUpdateError(stopped_result.get("reason", "gateway_stop_failed"), stopped_result.get("detail", ""))
             stopped = True
-            final_backup = BackupService(get_data_dir()).create_backup(label=f"auto_activate_{tag[1:]}")
+            final_backup = BackupService(get_data_dir()).create_backup(
+                label=f"auto_activate_{tag[1:]}", profile="authoritative"
+            )
 
             state = _write_state(state, phase="activating", status="running")
             merged = git_ops.merge_fast_forward(target)

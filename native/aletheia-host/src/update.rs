@@ -21,6 +21,8 @@ pub struct UpdateRequest {
     pub previous_release: String,
     pub backup_path: Option<String>,
     #[serde(default)]
+    pub backup_profile: Option<String>,
+    #[serde(default)]
     pub was_paused: bool,
     #[serde(default = "default_health_soak")]
     pub health_soak_sec: u64,
@@ -101,6 +103,7 @@ fn write_state(
             "previous_release": selection.and_then(|value| value.previous),
             "target_release": request.candidate_release,
             "backup_path": request.backup_path,
+            "backup_profile": request.backup_profile,
             "message": message,
             "error": error,
             "resume_warning": resume_warning,
@@ -139,6 +142,15 @@ pub fn read_pending_request(paths: &HostPaths) -> Result<UpdateRequest> {
     resolve_release(paths, &request.previous_release)?;
     if request.action == "rollback" && request.backup_path.is_none() {
         bail!("rollback requires the pre-update backup recorded by the committed update");
+    }
+    if request.action == "rollback" && request.backup_profile.as_deref() != Some("authoritative") {
+        bail!("rollback requires an authoritative recovery checkpoint");
+    }
+    if request.action == "activate"
+        && request.backup_profile.as_deref() != Some("online")
+        && request.backup_profile.as_deref() != Some("authoritative")
+    {
+        bail!("activation backup profile is missing or unsupported");
     }
     if let Some(path) = &request.backup_path {
         let backup = Path::new(path);
@@ -268,6 +280,9 @@ fn recover_previous(
         Some(failure),
         None,
     );
+    if request.backup_profile.as_deref() != Some("authoritative") {
+        bail!("automatic rollback requires an authoritative recovery checkpoint");
+    }
     stop_release(paths, &request.candidate_release);
     activate_release(paths, &request.previous_release)?;
     if let Some(backup_path) = &request.backup_path {
@@ -305,7 +320,7 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
     if !has_pending_request(paths) {
         return Ok(None);
     }
-    let request = read_pending_request(paths)?;
+    let mut request = read_pending_request(paths)?;
     let current = read_selection(paths)?;
     if current.current != request.previous_release && current.current != request.candidate_release {
         bail!(
@@ -348,6 +363,14 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
             None,
         )?;
         validate_real_data(paths, &request.candidate_release)?;
+        // The candidate-side activation hook replaces the live staging snapshot
+        // with a quiesced authoritative checkpoint. Re-read the request so any
+        // rollback uses that exact path rather than the earlier online archive.
+        let refreshed = read_pending_request(paths)?;
+        if refreshed.operation_id != request.operation_id {
+            bail!("activation changed the pending update operation identity");
+        }
+        request = refreshed;
 
         write_state(
             paths,
@@ -405,7 +428,11 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
         Ok(result) => Ok(Some(result)),
         Err(error) => {
             let failure = format!("{error:#}");
-            match recover_previous(paths, &request, &failure) {
+            let rollback_request = read_pending_request(paths)
+                .ok()
+                .filter(|candidate| candidate.operation_id == request.operation_id)
+                .unwrap_or_else(|| request.clone());
+            match recover_previous(paths, &rollback_request, &failure) {
                 Ok(result) => Ok(Some(result)),
                 Err(rollback_error) => {
                     let detail = format!(
