@@ -156,29 +156,32 @@ def ensure_paper_account() -> None:
 
 
 def get_paper_account(event_limit: int = 20) -> dict:
+    from aletheia.storage.sqlite import read_snapshot
+
     ensure_paper_account()
-    positions = _open_local_positions()
-    cash = repo.get_paper_account_cash_balance()
-    reserved = _reserved_margin_usdt(positions)
-    unrealized = sum(float(position.get("unrealized_pnl") or 0.0) for position in positions)
-    unsettled = _unsettled_local_closes()
-    economics_complete = not unsettled
-    return {
-        "cash_balance_usdt": round(cash, 8),
-        "reserved_margin_usdt": reserved,
-        # The current cash balance is authoritative even when a futures close has
-        # unsettled funding economics.  Only the *future* funding-cost delta is
-        # unknown; the ledger cash reflects what is actually in the account today.
-        # economics_complete=False is a monitoring signal — it must not zero out
-        # the spendable balance and trigger false account_equity_unavailable rejects
-        # in the Risk engine (#316).
-        "available_balance_usdt": round(max(0.0, cash - reserved), 8),
-        "equity_usdt": round(cash + unrealized, 8),
-        "economics_complete": economics_complete,
-        "unsettled_closed_positions_count": len(unsettled),
-        "open_positions_count": len(positions),
-        "events": repo.list_paper_account_events(limit=event_limit),
-    }
+    with read_snapshot():
+        positions = _open_local_positions()
+        cash = repo.get_paper_account_cash_balance()
+        reserved = _reserved_margin_usdt(positions)
+        unrealized = sum(float(position.get("unrealized_pnl") or 0.0) for position in positions)
+        unsettled = _unsettled_local_closes()
+        economics_complete = not unsettled
+        return {
+            "cash_balance_usdt": round(cash, 8),
+            "reserved_margin_usdt": reserved,
+            # The current cash balance is authoritative even when a futures close has
+            # unsettled funding economics.  Only the *future* funding-cost delta is
+            # unknown; the ledger cash reflects what is actually in the account today.
+            # economics_complete=False is a monitoring signal — it must not zero out
+            # the spendable balance and trigger false account_equity_unavailable rejects
+            # in the Risk engine (#316).
+            "available_balance_usdt": round(max(0.0, cash - reserved), 8),
+            "equity_usdt": round(cash + unrealized, 8),
+            "economics_complete": economics_complete,
+            "unsettled_closed_positions_count": len(unsettled),
+            "open_positions_count": len(positions),
+            "events": repo.list_paper_account_events(limit=event_limit),
+        }
 
 
 def adjust_cash(amount_usdt: float, *, note: str = "", actor: str = "human",

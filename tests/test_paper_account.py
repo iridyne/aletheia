@@ -564,6 +564,198 @@ def test_account_write_does_not_invert_lock_order_with_risk_transaction(
     ] == pytest.approx(201.0)
 
 
+def test_account_read_cannot_mix_open_position_with_settled_close(
+    tmp_path, monkeypatch
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import paper_account
+    from aletheia.portfolio.pnl import close_position
+    from aletheia.storage.sqlite import close_db
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        unrealized_pnl=10.0,
+        execution_mode="paper_internal",
+        entry_fee=0.0,
+    )
+    repo.insert_position(position)
+    paper_account.get_paper_account(event_limit=0)
+    captured_open = threading.Event()
+    release_reader = threading.Event()
+    original_open = paper_account._open_local_positions
+
+    def paused_open_positions():
+        rows = original_open()
+        captured_open.set()
+        assert release_reader.wait(timeout=3)
+        return rows
+
+    monkeypatch.setattr(paper_account, "_open_local_positions", paused_open_positions)
+
+    def read_account():
+        close_db()
+        try:
+            return paper_account.get_paper_account(event_limit=0)
+        finally:
+            close_db()
+
+    def close_account_position():
+        close_db()
+        try:
+            return close_position(position.id, exit_price=110.0, reason="manual")
+        finally:
+            close_db()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        read_future = pool.submit(read_account)
+        assert captured_open.wait(timeout=3)
+        close_future = pool.submit(close_account_position)
+        try:
+            close_future.result(timeout=3)
+        finally:
+            release_reader.set()
+        account = read_future.result(timeout=3)
+
+    assert (
+        account["cash_balance_usdt"],
+        account["open_positions_count"],
+        account["reserved_margin_usdt"],
+        account["equity_usdt"],
+    ) == pytest.approx((200.0, 1, 100.0, 210.0))
+
+
+def test_account_read_cannot_omit_new_position_but_include_its_event(
+    tmp_path, monkeypatch
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import paper_account
+    from aletheia.storage.sqlite import close_db
+
+    paper_account.get_paper_account()
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=100.0,
+        execution_mode="paper_internal",
+    )
+    captured_open = threading.Event()
+    release_reader = threading.Event()
+    original_open = paper_account._open_local_positions
+
+    def paused_open_positions():
+        rows = original_open()
+        captured_open.set()
+        assert release_reader.wait(timeout=3)
+        return rows
+
+    monkeypatch.setattr(paper_account, "_open_local_positions", paused_open_positions)
+
+    def read_account():
+        close_db()
+        try:
+            return paper_account.get_paper_account()
+        finally:
+            close_db()
+
+    def open_account_position():
+        close_db()
+        try:
+            with repo.transaction(immediate=True):
+                repo.insert_position(position)
+                paper_account.record_position_opened(position.id)
+        finally:
+            close_db()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        read_future = pool.submit(read_account)
+        assert captured_open.wait(timeout=3)
+        open_future = pool.submit(open_account_position)
+        try:
+            open_future.result(timeout=3)
+        finally:
+            release_reader.set()
+        account = read_future.result(timeout=3)
+
+    assert account["open_positions_count"] == 0
+    assert account["reserved_margin_usdt"] == 0
+    assert not any(event["position_id"] == position.id for event in account["events"])
+
+
+def test_portfolio_read_cannot_count_one_close_as_open_and_realized(
+    tmp_path, monkeypatch
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import pnl
+    from aletheia.portfolio.paper_account import get_paper_account
+    from aletheia.storage.sqlite import close_db
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        unrealized_pnl=10.0,
+        execution_mode="paper_internal",
+        entry_fee=0.0,
+    )
+    repo.insert_position(position)
+    get_paper_account(event_limit=0)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 110.0,
+    )
+    captured_open = threading.Event()
+    release_reader = threading.Event()
+    original_mark = pnl.mark_positions_to_market
+
+    def paused_mark_positions(*, persist=False):
+        rows = original_mark(persist=persist)
+        captured_open.set()
+        assert release_reader.wait(timeout=3)
+        return rows
+
+    monkeypatch.setattr(pnl, "mark_positions_to_market", paused_mark_positions)
+
+    def read_portfolio():
+        close_db()
+        try:
+            return pnl.compute_portfolio(execution_mode="paper_internal")
+        finally:
+            close_db()
+
+    def close_account_position():
+        close_db()
+        try:
+            return pnl.close_position(position.id, exit_price=110.0, reason="manual")
+        finally:
+            close_db()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        read_future = pool.submit(read_portfolio)
+        assert captured_open.wait(timeout=3)
+        close_future = pool.submit(close_account_position)
+        try:
+            close_future.result(timeout=3)
+        finally:
+            release_reader.set()
+        portfolio = read_future.result(timeout=3)
+
+    assert portfolio["positions_count"] == 1
+    assert portfolio["today_realized_pnl"] == 0
+    assert portfolio["today_pnl_by_symbol"] == {}
+    assert portfolio["total_value_usdt"] == pytest.approx(210.0)
+
+
 @pytest.mark.anyio
 async def test_local_account_routes_are_human_audited_and_reject_external_mode(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)

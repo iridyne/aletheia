@@ -653,6 +653,26 @@ def db_path() -> Path:
 
 
 @contextmanager
+def read_snapshot():
+    """Pin one read-only SQLite snapshot without taking the writer permit."""
+
+    db = get_db()
+    if db.in_transaction:
+        yield db
+        return
+    raw_execute = sqlite3.Connection.execute
+    query_only = bool(raw_execute(db, "PRAGMA query_only").fetchone()[0])
+    raw_execute(db, "PRAGMA query_only=ON")
+    raw_execute(db, "BEGIN")
+    try:
+        yield db
+    finally:
+        sqlite3.Connection.rollback(db)
+        if not query_only:
+            raw_execute(db, "PRAGMA query_only=OFF")
+
+
+@contextmanager
 def readonly_db(*, allow_missing: bool = False):
     """Open the effective database without creation or write-oriented PRAGMAs.
 
