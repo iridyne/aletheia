@@ -23,6 +23,7 @@ _MIN_MEAN_REWARD_PCT = 0.0
 ROLLOUT_STATUSES = frozenset(
     {"frozen", "observing", "eligible", "unlocked", "refrozen", "completed"}
 )
+_pending_refreeze_reason: str | None = None
 
 
 def _now(now: datetime | None = None) -> str:
@@ -524,8 +525,9 @@ def start_persona_rollout(cfg=None, *, reason: str = "operator_enabled_progressi
 
 def invalidate_persona_rollouts(
     *, reason: str = "progressive_rollout_disabled", now: datetime | None = None
-) -> int:
+) -> int | None:
     """End every open rollout so a later re-enable starts a fresh cohort."""
+    global _pending_refreeze_reason
     now_iso = _now(now)
     try:
         with _transaction():
@@ -566,10 +568,12 @@ def invalidate_persona_rollouts(
                     reason=reason,
                     before=before,
                 )
+        _pending_refreeze_reason = None
         return len(rows)
     except Exception as exc:
+        _pending_refreeze_reason = reason
         logger.warning("persona rollout invalidation failed: %s", exc)
-        return 0
+        return None
 
 
 def _ladder(cfg) -> list[str]:
@@ -580,6 +584,8 @@ def _ladder(cfg) -> list[str]:
 def rollout_runtime_safe(cfg) -> bool:
     """Return whether dynamic Persona authority may be used right now."""
     try:
+        if _pending_refreeze_reason is not None:
+            return False
         agent = getattr(cfg, "agent", None)
         if agent is not None and not bool(getattr(agent, "autonomous_learning", True)):
             return False
@@ -1096,10 +1102,18 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
 
     def _refreeze_all(reason: str, *, report_without_rollout: bool = False) -> dict[str, Any]:
         count = invalidate_persona_rollouts(reason=reason, now=now)
+        if count is None:
+            return {
+                "action": "hold",
+                "reason": reason,
+                "refreeze_status": "persistence_failed",
+            }
         if count or report_without_rollout:
             return {"action": "refrozen", "reason": reason, "rollouts_refrozen": count}
         return {"action": "hold", "reason": reason}
 
+    if _pending_refreeze_reason is not None:
+        return _refreeze_all(_pending_refreeze_reason, report_without_rollout=True)
     if bool(getattr(runtime, "kill_switch_active", False)):
         return _refreeze_all("account_distress", report_without_rollout=True)
     from aletheia.trading.sizing_policy import assess_persona_distress
