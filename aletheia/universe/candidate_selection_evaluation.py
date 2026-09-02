@@ -247,16 +247,22 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             for key in keys.values():
                 cluster_expected_outcome_n += 1
                 row = outcomes.get(str(key))
-                provenance_reason = _runtime_provenance_reason(row) if row else None
+                assessment = assess_candidate_outcome(row, as_of_at=now) if row else None
+                settlement_visible = not (
+                    assessment and assessment.reason == "settlement_after_as_of"
+                )
+                provenance_reason = (
+                    _runtime_provenance_reason(row)
+                    if row and settlement_visible else None
+                )
                 if provenance_reason:
                     cluster_invalid.add(provenance_reason)
                     cluster_exclusions[provenance_reason] += 1
                     cluster_complete = False
                     continue
-                if row and row.get("status") == "settled":
+                if row and row.get("status") == "settled" and settlement_visible:
                     cluster_commits.add(str(row["producer_commit"]))
                     cluster_behaviors.add(str(row["producer_behavior_fingerprint"]))
-                assessment = assess_candidate_outcome(row, as_of_at=now) if row else None
                 if assessment and assessment.eligible:
                     cluster_complete_outcome_n += 1
                 else:

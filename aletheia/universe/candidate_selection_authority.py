@@ -12,7 +12,12 @@ TARGET_CANDIDATE_POLICY = "candidate_selection_utility_v1"
 _PAPER_STAGES = frozenset({"paper_10", "paper_25", "paper_50", "paper_active"})
 
 
-def candidate_selection_policy_identity(cfg: object) -> dict[str, object]:
+def candidate_selection_policy_identity(
+    cfg: object,
+    *,
+    family_spread_tolerances: Mapping[str, object] | None = None,
+    family_spread_evidence: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     universe = getattr(cfg, "universe", cfg)
     if not isinstance(universe, UniverseConfig):
         raise TypeError("candidate_selection_universe_config_required")
@@ -39,6 +44,19 @@ def candidate_selection_policy_identity(cfg: object) -> dict[str, object]:
                 str(family): float(weight)
                 for family, weight in sorted(universe.scanner_weights.items())
             },
+            **(
+                {
+                    "family_spread_tolerances": {
+                        str(family): float(tolerance)
+                        for family, tolerance in sorted(family_spread_tolerances.items())
+                    }
+                }
+                if family_spread_tolerances is not None else {}
+            ),
+            **(
+                {"family_spread_tolerance_source": dict(family_spread_evidence)}
+                if family_spread_evidence is not None else {}
+            ),
         },
     }
     if all(hasattr(cfg, field) for field in ("fast_trigger", "exchange", "market_data")):
@@ -124,7 +142,23 @@ def candidate_selection_authority_block_reason(
         return "candidate_selection_promotion_not_eligible"
     if str(qualification.get("policy_epoch_id") or "") != expected_epoch:
         return "candidate_selection_policy_epoch_mismatch"
-    if qualification.get("selection_policy") != candidate_selection_policy_identity(cfg):
+    qualification_policy = qualification.get("selection_policy")
+    frozen_tolerances = None
+    frozen_tolerance_source = None
+    if isinstance(qualification_policy, Mapping):
+        legacy_control = qualification_policy.get("legacy_control")
+        if isinstance(legacy_control, Mapping):
+            value = legacy_control.get("family_spread_tolerances")
+            if isinstance(value, Mapping):
+                frozen_tolerances = value
+            value = legacy_control.get("family_spread_tolerance_source")
+            if isinstance(value, Mapping):
+                frozen_tolerance_source = value
+    if qualification_policy != candidate_selection_policy_identity(
+        cfg,
+        family_spread_tolerances=frozen_tolerances,
+        family_spread_evidence=frozen_tolerance_source,
+    ):
         return "candidate_selection_policy_identity_mismatch"
     if qualification.get("blocking_reasons") or qualification.get("invalid_reasons"):
         return "candidate_selection_qualification_invalid"

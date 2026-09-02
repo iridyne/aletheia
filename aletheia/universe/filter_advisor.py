@@ -17,6 +17,7 @@ These feed into apply_fine_tradability_filters() and the operator system assessm
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
@@ -48,7 +49,11 @@ def _calibration_key(family: str, direction: str | None, market_type: str | None
     return f"{family}:{direction or 'unknown'}:{market_type or 'spot'}"
 
 
-def get_family_spread_tolerances(max_step: float = 0.20) -> dict[str, float]:
+def get_family_spread_tolerances(
+    max_step: float = 0.20,
+    *,
+    evidence_out: dict[str, str] | None = None,
+) -> dict[str, float]:
     """Compute per-family spread tolerance multipliers.
 
     A multiplier > 1.0 means the family retains positive net expectancy even at
@@ -59,17 +64,39 @@ def get_family_spread_tolerances(max_step: float = 0.20) -> dict[str, float]:
     Empty dict if data is unavailable.
     """
     from aletheia.storage import repositories as repo
+    from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
 
     try:
+        cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+        source_cutoff_at = datetime.now(timezone.utc).isoformat()
         spread_rows = repo.family_spread_tolerance_stats(
             cost_model_version=COST_MODEL_VERSION,
+            cutoff=cutoff,
+            settled_through=source_cutoff_at,
         )
         pressure_rows = repo.filter_pressure_stats(
             cost_model_version=COST_MODEL_VERSION,
+            cutoff=cutoff,
+            settled_through=source_cutoff_at,
         )
     except Exception as exc:
         logger.warning("filter_advisor: data fetch failed: %s", exc)
         return {}
+
+    if evidence_out is not None:
+        evidence_out.update({
+            "source_cutoff_at": source_cutoff_at,
+            "source_window_start_at": cutoff,
+            "source_fingerprint": canonical_fingerprint({
+                "cost_model_version": COST_MODEL_VERSION,
+                "max_step": max_step,
+                "spread_rows": spread_rows,
+                "pressure_rows": pressure_rows,
+                "source_cutoff_at": source_cutoff_at,
+                "source_window_start_at": cutoff,
+            }),
+        })
 
     # Index pressure data for secondary signal lookup
     pressure_index: dict[str, dict] = {}

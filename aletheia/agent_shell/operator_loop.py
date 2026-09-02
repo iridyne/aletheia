@@ -932,6 +932,14 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     try:
         from aletheia.config.loader import load_config, save_config
         cfg = load_config()
+        if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
+            return {
+                "action": "adjust_scanner_weight",
+                "status": "skipped",
+                "family": family,
+                "delta": delta,
+                "reason": "candidate_selection_policy_identity_frozen",
+            }
         weights = dict(cfg.universe.scanner_weights)
         current = float(weights.get(family, 1.0))
         new_value = round(max(0.1, min(3.0, current + delta)), 3)

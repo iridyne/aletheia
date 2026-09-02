@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Mapping, Sequence
 
 from aletheia.analytics.temporal import parse_utc_instant
@@ -517,6 +518,39 @@ def candidate_selection_training_cutoff(
     return None
 
 
+def candidate_selection_frozen_family_spread_control(
+    selection_policy: Mapping[str, object],
+) -> tuple[dict[str, float], dict[str, object]] | None:
+    """Replay the first persisted adaptive filter state for this policy."""
+
+    from aletheia.storage import repositories as repo
+
+    expected = json.loads(_json(selection_policy))
+    for row in repo.get_db().execute(
+        "SELECT policy_json FROM universe_twin_shadow_batches "
+        "WHERE record_version=? AND policy_epoch_id IS NOT NULL "
+        "ORDER BY captured_at, scanner_run_id",
+        (CANDIDATE_SELECTION_RECORD_VERSION,),
+    ).fetchall():
+        try:
+            frozen = json.loads(row["policy_json"])["selection_policy"]
+            control = frozen["legacy_control"]
+            tolerances = control.pop("family_spread_tolerances")
+            source = control.pop("family_spread_tolerance_source")
+            normalized = {
+                str(family): float(tolerance)
+                for family, tolerance in tolerances.items()
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+        if frozen != expected or any(not math.isfinite(value) for value in normalized.values()):
+            continue
+        if not isinstance(source, dict):
+            continue
+        return dict(sorted(normalized.items())), source
+    return None
+
+
 def target_candidates_from_bundle(
     bundle: TwinShadowBundle,
     scored_population: Sequence[Mapping[str, object]],
@@ -610,7 +644,9 @@ def target_admitted_identity_keys(
 
 __all__ = [
     "CANDIDATE_SELECTION_RECORD_VERSION", "build_candidate_selection_shadow_bundle",
-    "candidate_selection_training_cutoff", "load_candidate_selection_outcomes",
+    "candidate_selection_training_cutoff",
+    "candidate_selection_frozen_family_spread_control",
+    "load_candidate_selection_outcomes",
     "target_candidates_from_bundle",
     "target_admitted_identity_keys",
 ]

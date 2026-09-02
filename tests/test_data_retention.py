@@ -708,7 +708,9 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
 
 
 def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
+    from aletheia.storage import repositories as repo
     from aletheia.storage.repositories import prune_filter_candidate_outcomes
+    from aletheia.storage.models import AuditEvent
 
     _seed_filter_candidate_outcome(key="candidate-selection-retained", entry_ts=_iso(100))
     db = get_db()
@@ -725,7 +727,7 @@ def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
         "blocking_reasons_json, batch_hash, captured_at) VALUES "
         "('candidate-retention-run', 'candidate-selection-utility-record/v1', "
         "'legacy', 'target', 'replay', 'admitted-epoch', 'features', 'metric', "
-        "'null', '{}', '{}', 1, 1, '[]', 'batch-hash', ?)",
+        "'null', '{}', '{}', 1, 0, '[]', 'batch-hash', ?)",
         (_iso(100),),
     )
     db.execute(
@@ -740,6 +742,13 @@ def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
             _iso(100),
         ),
     )
+    repo.insert_audit_event(AuditEvent(
+        actor="human",
+        source="dashboard",
+        event_type="candidate_selection_authority_admitted",
+        entity_type="universe_config",
+        entity_id="admitted-epoch",
+    ))
     db.commit()
 
     assert prune_filter_candidate_outcomes(days=30) == 0

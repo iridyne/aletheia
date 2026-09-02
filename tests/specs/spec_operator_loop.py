@@ -1061,6 +1061,34 @@ def test_scanner_weight_persistence():
     )
 
 
+def test_scanner_weight_adjustment_respects_candidate_policy_freeze(monkeypatch):
+    from aletheia.agent_shell import operator_loop
+    from aletheia.agent_shell.operator_loop import OperatorAction
+    from aletheia.config.schema import AletheiaConfig, UniverseConfig
+
+    cfg = AletheiaConfig()
+    cfg.universe = UniverseConfig.model_validate({
+        **cfg.universe.model_dump(mode="json"),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "candidate-selection-utility:frozen",
+    })
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.config.loader.save_config",
+        lambda _cfg: pytest.fail("frozen scanner weight must not be saved"),
+    )
+
+    result = operator_loop._action_adjust_scanner_weight(OperatorAction(
+        action_type="adjust_scanner_weight",
+        level=1,
+        params={"family": "momentum", "delta": 0.1},
+        reason="adaptive calibration",
+    ))
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "candidate_selection_policy_identity_frozen"
+
+
 @spec_claim(
     SpecClaim(
         "OL-C12", "operator_layer", "§retired recommendation path", "L2a",

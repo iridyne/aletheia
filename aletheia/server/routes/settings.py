@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+import json
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -2917,7 +2918,8 @@ def update_universe_config(req: UniverseConfigUpdate):
     updates = req.model_dump(exclude_none=True)
     identity_fields = {
         "max_candidates", "min_volume_24h_usdt", "max_spread_bps",
-        "min_depth_10bps_usd", "blacklist",
+        "min_depth_10bps_usd", "blacklist", "explore_ratio", "family_quota",
+        "family_quota_by_regime", "scanner_weights",
     }
     changed_identity_fields = sorted(
         field for field in identity_fields
@@ -3033,6 +3035,7 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
         evaluate_candidate_selection_policy,
     )
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
     from aletheia.files.jsonl import write_audit
 
     with repo.transaction(immediate=True):
@@ -3066,15 +3069,20 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
         cfg.universe = proposed
         save_config(cfg)
         try:
-            write_audit({
-                "actor": "human",
-                "source": "dashboard",
-                "event_type": "candidate_selection_authority_admitted",
-                "entity_type": "universe_config",
-                "before": before,
-                "after": proposed.model_dump(mode="json"),
-                "message": f"Candidate Selection Utility admitted: {req.reason}",
-            })
+            event = AuditEvent(
+                actor="human",
+                source="dashboard",
+                event_type="candidate_selection_authority_admitted",
+                entity_type="universe_config",
+                entity_id=req.expected_policy_epoch,
+                before_state=json.dumps(before, sort_keys=True),
+                after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
+                message=f"Candidate Selection Utility admitted: {req.reason}",
+            )
+            if not repo.insert_audit_event_once(event):
+                raise RuntimeError("candidate_selection_admission_audit_identity_conflict")
+            if not write_audit(event.model_dump(), mirror_db=False):
+                raise OSError("candidate_selection_admission_audit_chain_unavailable")
         except Exception as exc:
             cfg.universe = UniverseConfig.model_validate(before)
             save_config(cfg)

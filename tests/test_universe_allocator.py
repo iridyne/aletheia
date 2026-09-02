@@ -567,11 +567,12 @@ def test_filter_advisor_reads_only_current_cost_model(monkeypatch):
 
     assert get_family_spread_tolerances() == {}
     assert get_family_filter_pressure_summary() == []
-    assert calls == [
-        ("spread", {"cost_model_version": COST_MODEL_VERSION}),
-        ("pressure", {"cost_model_version": COST_MODEL_VERSION}),
-        ("pressure", {"cost_model_version": COST_MODEL_VERSION}),
-    ]
+    assert [name for name, _kwargs in calls] == ["spread", "pressure", "pressure"]
+    assert all(kwargs["cost_model_version"] == COST_MODEL_VERSION for _, kwargs in calls)
+    assert "cutoff" in calls[0][1]
+    assert calls[1][1]["cutoff"] == calls[0][1]["cutoff"]
+    assert calls[1][1]["settled_through"] == calls[0][1]["settled_through"]
+    assert "cutoff" not in calls[2][1]
 
 
 def test_get_family_multipliers_insufficient_samples(monkeypatch):

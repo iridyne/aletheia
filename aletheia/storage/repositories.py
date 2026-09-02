@@ -6977,13 +6977,21 @@ def _prune_filter_candidate_outcomes_batches(
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
                 "WHERE record_version='candidate-selection-utility-record/v1' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
-                "UNION SELECT ? WHERE ? IS NOT NULL) OR b.captured_at <= ("
+                "UNION SELECT ? WHERE ? IS NOT NULL "
+                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted') OR b.captured_at <= ("
                 "SELECT MAX(json_extract(policy_json, '$.estimator_training_cutoff')) "
                 "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
                 "WHERE record_version='candidate-selection-utility-record/v1' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
-                "UNION SELECT ? WHERE ? IS NOT NULL))))) "
+                "UNION SELECT ? WHERE ? IS NOT NULL "
+                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted'))))) "
                 if candidate_policy_available else
                 "AND COALESCE(scanner_family, '') <> 'candidate_selection_utility' "
             )
@@ -11173,7 +11181,12 @@ def _calibration_source_lineage(
     return result
 
 
-def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
+def filter_pressure_stats(
+    *,
+    cost_model_version: str,
+    cutoff: str | None = None,
+    settled_through: str | None = None,
+) -> list[dict]:
     """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
 
     These rows come from risk/PI filter stages that run after scanner assignment, so
@@ -11183,7 +11196,8 @@ def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
     from aletheia.analytics.learning_window import clean_window_cutoff
 
     db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    cutoff = cutoff or clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
@@ -11201,15 +11215,24 @@ def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
+        f"{settled_clause}"
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
         "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cost_model_version, cutoff),
+        (
+            (cost_model_version, cutoff, settled_through)
+            if settled_through is not None else (cost_model_version, cutoff)
+        ),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
+def family_spread_tolerance_stats(
+    *,
+    cost_model_version: str,
+    cutoff: str | None = None,
+    settled_through: str | None = None,
+) -> list[dict]:
     """Per-family spread sensitivity from settled universe forward outcomes.
 
     Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
@@ -11219,7 +11242,8 @@ def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
     from aletheia.analytics.learning_window import clean_window_cutoff
 
     db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    cutoff = cutoff or clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
@@ -11239,10 +11263,14 @@ def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
+        f"{settled_clause}"
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
         "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cost_model_version, cutoff),
+        (
+            (cost_model_version, cutoff, settled_through)
+            if settled_through is not None else (cost_model_version, cutoff)
+        ),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -12677,7 +12705,11 @@ def prune_universe_twin_shadow_evidence(
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
                 "WHERE record_version='candidate-selection-utility-record/v1' "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
-                "UNION SELECT ? WHERE ? IS NOT NULL), "
+                "UNION SELECT ? WHERE ? IS NOT NULL "
+                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted'), "
                 "training(cutoff) AS (SELECT MAX(json_extract(policy_json, "
                 "'$.estimator_training_cutoff')) FROM universe_twin_shadow_batches "
                 "WHERE policy_epoch_id IN protected_epochs) "

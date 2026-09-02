@@ -701,6 +701,7 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     )
     from aletheia.universe.candidate_selection_shadow import (
         build_candidate_selection_shadow_bundle,
+        candidate_selection_frozen_family_spread_control,
         candidate_selection_training_cutoff,
         target_candidates_from_bundle,
     )
@@ -712,7 +713,14 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     ]
     universe_config = UniverseConfig(max_candidates=3)
     selection_policy = {
-        **candidate_selection_policy_identity(universe_config),
+        **candidate_selection_policy_identity(
+            universe_config,
+            family_spread_tolerances={"momentum": 1.15},
+            family_spread_evidence={
+                "source_cutoff_at": "2026-09-01T00:00:00+00:00",
+                "source_fingerprint": "spread-source",
+            },
+        ),
         "cost_assumptions": {
             "execution_fee_pct": 0.06,
             "slippage_bps": 5.0,
@@ -780,6 +788,18 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     assert candidate_selection_training_cutoff(
         selection_policy=selection_policy,
     ) == kwargs["captured_at"]
+    assert candidate_selection_frozen_family_spread_control(
+        {
+            **candidate_selection_policy_identity(universe_config),
+            "cost_assumptions": selection_policy["cost_assumptions"],
+        },
+    ) == (
+        {"momentum": 1.15},
+        {
+            "source_cutoff_at": "2026-09-01T00:00:00+00:00",
+            "source_fingerprint": "spread-source",
+        },
+    )
     changed_cost_policy = {
         **selection_policy,
         "cost_assumptions": {
@@ -825,6 +845,14 @@ def test_candidate_selection_epoch_identity_includes_cost_route_and_legacy_contr
     after = candidate_selection_policy_identity(cfg)
 
     assert before["legacy_control"] != after["legacy_control"]
+
+    assert candidate_selection_policy_identity(
+        cfg,
+        family_spread_tolerances={"momentum": 1.0},
+    ) != candidate_selection_policy_identity(
+        cfg,
+        family_spread_tolerances={"momentum": 1.1},
+    )
 
 
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
@@ -1069,9 +1097,29 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     assert still_incomplete["fixed_look_cluster_n"] == 49
 
     repo.get_db().execute(
-        "UPDATE filter_candidate_outcomes SET mae_pct=-0.4 "
+        "UPDATE filter_candidate_outcomes SET settled_at=?, "
+        "producer_commit='unattested-future-commit' "
         "WHERE outcome_candidate_key=?",
-        ("candidate-selection-utility:v1:fixed-look-00:0:long",),
+        (
+            (start + timedelta(days=20)).isoformat(),
+            "candidate-selection-utility:v1:fixed-look-00:0:long",
+        ),
+    )
+    before_settlement = evaluate_candidate_selection_policy(
+        as_of_at=(start + timedelta(days=10)).isoformat(),
+    )
+    assert before_settlement["verdict"] == "insufficient_data"
+    assert "runtime_provenance_unattested" not in before_settlement["invalid_reasons"]
+    assert before_settlement["outcome_exclusion_counts"]["settlement_after_as_of"] == 1
+
+    repo.get_db().execute(
+        "UPDATE filter_candidate_outcomes SET settled_at=?, producer_commit=?, mae_pct=-0.4 "
+        "WHERE outcome_candidate_key=?",
+        (
+            outcomes[0].settled_at,
+            outcomes[0].producer_commit,
+            "candidate-selection-utility:v1:fixed-look-00:0:long",
+        ),
     )
 
     report = evaluate_candidate_selection_policy(

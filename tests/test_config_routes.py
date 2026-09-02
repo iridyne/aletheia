@@ -693,8 +693,9 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     )
     assert route_restored.status_code == 200
 
-    def audit_under_writer_permit(_record):
+    def audit_under_writer_permit(_record, **_kwargs):
         assert repo.get_db().in_transaction
+        return True
 
     with patch(
         "aletheia.files.jsonl.write_audit",
@@ -720,6 +721,42 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     assert frozen.status_code == 409
     assert frozen.json()["detail"]["code"] == "candidate_selection_policy_identity_frozen"
     assert load_config().universe.max_candidates == original_max_candidates
+
+    for update in (
+        {"explore_ratio": 0.25},
+        {"family_quota": {"momentum": 1.0}},
+        {"family_quota_by_regime": {"bull": {"momentum": 1.0}}},
+    ):
+        frozen_control = await client.post("/api/settings/universe", json=update)
+        assert frozen_control.status_code == 409
+        assert frozen_control.json()["detail"]["fields"] == list(update)
+
+    from aletheia.universe.service import (
+        _assert_candidate_selection_publication_authority,
+    )
+
+    _assert_candidate_selection_publication_authority(
+        epoch,
+        qualification["selection_policy"],
+    )
+    changed_during_refresh = await client.post(
+        "/api/settings/fast-trigger",
+        json={"mode": "off"},
+    )
+    assert changed_during_refresh.status_code == 200
+    with pytest.raises(
+        RuntimeError,
+        match="candidate_selection_authority_changed_before_publication",
+    ):
+        _assert_candidate_selection_publication_authority(
+            epoch,
+            qualification["selection_policy"],
+        )
+    restored_route = await client.post(
+        "/api/settings/fast-trigger",
+        json={"mode": "shadow"},
+    )
+    assert restored_route.status_code == 200
 
     with patch(
         "aletheia.files.jsonl.write_audit",
@@ -855,7 +892,10 @@ async def test_candidate_selection_admission_restores_legacy_when_audit_fails(
         RuntimeError,
         match="candidate_selection_authority_changed_before_publication",
     ):
-        _assert_candidate_selection_publication_authority(epoch)
+        _assert_candidate_selection_publication_authority(
+            epoch,
+            qualification["selection_policy"],
+        )
 
 
 @pytest.mark.anyio

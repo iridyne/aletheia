@@ -319,6 +319,8 @@ def _build_candidate_selection_bundle(
     scanner_run_id: str,
     captured_at: str,
     cfg,
+    family_spread_tolerances: dict[str, float] | None = None,
+    family_spread_evidence: dict[str, object] | None = None,
     authority_applied: bool = False,
     qualification_evidence: dict | None = None,
 ):
@@ -344,7 +346,11 @@ def _build_candidate_selection_bundle(
         )
         for item in population
     }
-    selection_policy = candidate_selection_policy_identity(cfg)
+    selection_policy = candidate_selection_policy_identity(
+        cfg,
+        family_spread_tolerances=family_spread_tolerances,
+        family_spread_evidence=family_spread_evidence,
+    )
     training_cutoff = candidate_selection_training_cutoff(
         selection_policy=selection_policy,
     )
@@ -374,6 +380,8 @@ async def _persist_candidate_selection_shadow_nonfatal(
     scanner_run_id: str,
     captured_at: str,
     cfg,
+    family_spread_tolerances: dict[str, float] | None = None,
+    family_spread_evidence: dict[str, object] | None = None,
 ) -> int:
     """Persist #2729 full-denominator evidence without joining authority failure."""
 
@@ -385,6 +393,8 @@ async def _persist_candidate_selection_shadow_nonfatal(
             legacy_scored=legacy_scored,
             legacy_allocated=legacy_allocated,
             cfg=cfg,
+            family_spread_tolerances=family_spread_tolerances,
+            family_spread_evidence=family_spread_evidence,
         )
         return repo.insert_universe_twin_shadow_bundle(
             bundle.batch,
@@ -435,13 +445,39 @@ def _atomic_universe_publication():
         _record_publication_duration(started)
 
 
-def _assert_candidate_selection_publication_authority(expected_policy_id: str) -> None:
+def _assert_candidate_selection_publication_authority(
+    expected_policy_id: str,
+    expected_selection_policy: dict[str, object],
+) -> None:
     """Revalidate target authority while holding the publication writer permit."""
 
     current = load_config()
+    from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity,
+    )
+
+    legacy_control = expected_selection_policy.get("legacy_control")
+    frozen_tolerances = (
+        legacy_control.get("family_spread_tolerances")
+        if isinstance(legacy_control, dict) else None
+    )
+    frozen_tolerance_source = (
+        legacy_control.get("family_spread_tolerance_source")
+        if isinstance(legacy_control, dict) else None
+    )
     if (
         current.universe.candidate_selection_policy != "candidate_selection_utility_v1"
         or current.universe.candidate_selection_policy_epoch != expected_policy_id
+        or candidate_selection_policy_identity(
+            current,
+            family_spread_tolerances=(
+                frozen_tolerances if isinstance(frozen_tolerances, dict) else None
+            ),
+            family_spread_evidence=(
+                frozen_tolerance_source
+                if isinstance(frozen_tolerance_source, dict) else None
+            ),
+        ) != expected_selection_policy
     ):
         raise RuntimeError("candidate_selection_authority_changed_before_publication")
 
@@ -1100,10 +1136,27 @@ class UniverseService:
             # Load per-family spread tolerances from filter_advisor (empty until data
             # accumulates; defaults to 1.0 = no change from standard 2× threshold).
             try:
-                family_tolerances = get_family_spread_tolerances()
+                from aletheia.universe.candidate_selection_authority import (
+                    candidate_selection_policy_identity,
+                )
+                from aletheia.universe.candidate_selection_shadow import (
+                    candidate_selection_frozen_family_spread_control,
+                )
+
+                frozen_spread_control = candidate_selection_frozen_family_spread_control(
+                    candidate_selection_policy_identity(cfg),
+                )
+                if frozen_spread_control is None:
+                    family_spread_evidence = {}
+                    family_tolerances = get_family_spread_tolerances(
+                        evidence_out=family_spread_evidence,
+                    )
+                else:
+                    family_tolerances, family_spread_evidence = frozen_spread_control
             except Exception as _e:
                 logger.debug("filter_advisor tolerance fetch failed (non-fatal): %s", _e)
                 family_tolerances = {}
+                family_spread_evidence = {}
 
             # Scan all coarsely-filtered candidates to get family + direction assignments.
             pre_scored = []
@@ -1203,6 +1256,8 @@ class UniverseService:
                         scanner_run_id=run.id,
                         captured_at=entry_ts,
                         cfg=cfg,
+                        family_spread_tolerances=family_tolerances,
+                        family_spread_evidence=family_spread_evidence,
                         authority_applied=True,
                         qualification_evidence=qualification,
                     ),
@@ -1329,7 +1384,10 @@ class UniverseService:
                 )
                 with _atomic_universe_publication():
                     if candidate_selection_authority_bundle is not None:
-                        _assert_candidate_selection_publication_authority(snapshot_policy_id)
+                        _assert_candidate_selection_publication_authority(
+                            snapshot_policy_id,
+                            qualification["selection_policy"],
+                        )
                     if candidate_selection_authority_bundle is not None:
                         refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
                             prev_snapshot_id,
@@ -1398,6 +1456,8 @@ class UniverseService:
                         scanner_run_id=run.id,
                         captured_at=entry_ts,
                         cfg=cfg,
+                        family_spread_tolerances=family_tolerances,
+                        family_spread_evidence=family_spread_evidence,
                     )
                 _capture_universe_discovery_nonfatal(
                     scanner_run_id=run.id,
@@ -1524,7 +1584,10 @@ class UniverseService:
             # healthy snapshot is the final write in this publication unit.
             with _atomic_universe_publication():
                 if candidate_selection_authority_bundle is not None:
-                    _assert_candidate_selection_publication_authority(snapshot_policy_id)
+                    _assert_candidate_selection_publication_authority(
+                        snapshot_policy_id,
+                        qualification["selection_policy"],
+                    )
                 _persist_attempt_learning_exposures(deferred_exposure_writes)
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)
@@ -1596,6 +1659,8 @@ class UniverseService:
                     scanner_run_id=run.id,
                     captured_at=entry_ts,
                     cfg=cfg,
+                    family_spread_tolerances=family_tolerances,
+                    family_spread_evidence=family_spread_evidence,
                 )
             _capture_universe_discovery_nonfatal(
                 scanner_run_id=run.id,
