@@ -240,6 +240,7 @@ async def test_real_universe_refresh_keeps_unmonitorable_candidate_ineligible(e2
     cfg.risk.symbol_filter_mode = "whitelist"
     cfg.agent.permission_mode = "Paper"
     cfg.agent.autonomous_learning = False
+    cfg.fast_trigger.mode = "off"
     cfg.universe.enabled = True
     cfg.universe.max_candidates = 1
     cfg.universe.explore_ratio = 0.0
@@ -346,6 +347,7 @@ async def test_stock_linked_perp_stays_ineligible_without_exact_monitoring_venue
     cfg.risk.symbol_filter_mode = "whitelist"
     cfg.agent.permission_mode = "Paper"
     cfg.agent.autonomous_learning = False
+    cfg.fast_trigger.mode = "off"
     cfg.universe.enabled = True
     cfg.universe.max_candidates = 1
     cfg.universe.explore_ratio = 0.0

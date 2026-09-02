@@ -25,6 +25,7 @@ Claim prefix: PL-ADOPT
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -1293,11 +1294,12 @@ def test_drawdown_scale_skips_on_incomplete_view(tmp_path, monkeypatch):
     # exchange_account snapshots that WOULD read as a ~99% drawdown (peak 89000 →
     # current 167). Explicit increasing created_at so the NEWEST (current, values[-1]
     # in the chronological window) is the 167 low — deterministic, not timestamp-tied.
+    snapshot_base = datetime.now(timezone.utc) - timedelta(seconds=3)
     for i, v in enumerate((89000.0, 89000.0, 167.0)):
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
             total_value_usdt=v, unrealized_pnl=0.0, realized_pnl=0.0,
             positions_count=0, execution_mode="exchange_account",
-            snapshot_at=f"2026-07-02T00:0{i}:00+00:00",
+            snapshot_at=(snapshot_base + timedelta(seconds=i)).isoformat(),
         ))
 
     from aletheia.risk import engine
