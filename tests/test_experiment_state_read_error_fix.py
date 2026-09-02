@@ -148,3 +148,92 @@ def test_db_error_must_not_return_none():
             repo.min_open_experiment_exposure_at()
 
 
+def _run_cleanup_with_guard_spies(tmp_path, monkeypatch, floor_result):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+    from tests.test_retention import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    calls = {name: [] for name in (
+        "prune_universe_forward_outcomes",
+        "prune_filter_decisions",
+        "prune_filter_candidate_outcomes",
+        "prune_universe_snapshots",
+    )}
+    floor_reads = []
+
+    def read_floor():
+        floor_reads.append(True)
+        if isinstance(floor_result, Exception):
+            raise floor_result
+        return floor_result
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(repo, "min_open_experiment_exposure_at", read_floor)
+    for name in calls:
+        monkeypatch.setattr(
+            repo,
+            name,
+            lambda _days, *, min_experiment_started_at, _name=name: (
+                calls[_name].append(min_experiment_started_at) or 0
+            ),
+        )
+    scheduler._run_cleanup()
+    return calls, floor_reads
+
+
+@pytest.mark.parametrize("floor", [None, "2026-01-01T00:00:00+00:00"])
+def test_scheduler_passes_known_experiment_floor_to_all_guarded_prunes(
+    tmp_path, monkeypatch, floor
+):
+    calls, floor_reads = _run_cleanup_with_guard_spies(tmp_path, monkeypatch, floor)
+
+    assert floor_reads == [True]
+    assert calls == {name: [floor] for name in calls}
+
+
+def test_scheduler_unavailable_floor_skips_guarded_prunes_and_continues(
+    tmp_path, monkeypatch
+):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.infra import events
+    from tests.test_retention import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    floor_reads = []
+    guarded_calls = []
+    later_calls = []
+    emitted = []
+
+    def fail_floor_read():
+        floor_reads.append(True)
+        raise repo.ExperimentStateReadError("unavailable")
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(repo, "min_open_experiment_exposure_at", fail_floor_read)
+    for name in (
+        "prune_universe_forward_outcomes",
+        "prune_filter_decisions",
+        "prune_filter_candidate_outcomes",
+        "prune_universe_snapshots",
+    ):
+        monkeypatch.setattr(
+            repo,
+            name,
+            lambda *_args, _name=name, **_kwargs: guarded_calls.append(_name) or 0,
+        )
+    monkeypatch.setattr(
+        repo,
+        "prune_agent_shell_heartbeats",
+        lambda _days: later_calls.append("agent_shell_heartbeats") or 0,
+    )
+    monkeypatch.setattr(events, "emit_infra_event", lambda **event: emitted.append(event))
+
+    scheduler._run_cleanup()
+
+    assert floor_reads == [True]
+    assert guarded_calls == []
+    assert later_calls == ["agent_shell_heartbeats"]
+    assert any(event["code"] == "cleanup_experiment_state_read_failed" for event in emitted)
+

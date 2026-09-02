@@ -265,6 +265,123 @@ def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path
     ).fetchone() is not None
 
 
+def _seed_experiment_guarded_retention_rows(conn):
+    from aletheia.storage.models import FilterCandidateOutcome
+
+    repo.insert_filter_candidate_outcomes_batch([FilterCandidateOutcome(
+        id="guarded-filter-outcome",
+        outcome_candidate_key="guarded-candidate",
+        venue="okx",
+        symbol="BTC/USDT",
+        direction="long",
+        horizon="24h",
+        entry_price_usd=100.0,
+        entry_ts=_old(60),
+        due_at=_old(59),
+    )])
+    conn.execute(
+        "INSERT INTO universe_registry (id, venue, symbol, market_type) VALUES (?,?,?,?)",
+        ("guarded-asset", "test", "BTC/USDT", "perp"),
+    )
+    conn.execute(
+        "INSERT INTO universe_snapshots (id, created_at, market_type, status) "
+        "VALUES (?,?,?,?)",
+        ("guarded-snapshot", _old(60), "crypto", "expired"),
+    )
+    conn.execute(
+        "INSERT INTO universe_members "
+        "(id, snapshot_id, asset_id, symbol, rank, total_score, expires_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "guarded-member", "guarded-snapshot", "guarded-asset", "BTC/USDT",
+            1, 1.0, _old(59),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO universe_forward_outcomes "
+        "(id, member_id, snapshot_id, symbol, horizon, entry_price_usd, entry_ts, due_at, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "guarded-universe-outcome", "guarded-member", "guarded-snapshot",
+            "BTC/USDT", "1d", 1.0, _old(60), _old(59), "settled",
+        ),
+    )
+    conn.commit()
+
+
+def test_explicit_no_experiment_floor_prunes_real_rows_without_reread(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    _seed_experiment_guarded_retention_rows(conn)
+    monkeypatch.setattr(
+        repo,
+        "min_open_experiment_exposure_at",
+        lambda: pytest.fail("explicit None must not re-read experiment state"),
+    )
+    monkeypatch.setattr(repo, "_observation_retention_floor", lambda _domain: None)
+
+    assert repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=None) == 1
+    assert repo.prune_universe_forward_outcomes(30, min_experiment_started_at=None) == 1
+    assert repo.prune_universe_snapshots(30, min_experiment_started_at=None) == 1
+    assert conn.execute("SELECT 1 FROM universe_members").fetchone() is None
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_explicit_experiment_floor_protects_real_rows_without_reread(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    _seed_experiment_guarded_retention_rows(conn)
+    monkeypatch.setattr(
+        repo,
+        "min_open_experiment_exposure_at",
+        lambda: pytest.fail("explicit floor must not re-read experiment state"),
+    )
+    monkeypatch.setattr(repo, "_observation_retention_floor", lambda _domain: None)
+    floor = _old(70)
+
+    assert repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=floor) == 0
+    assert repo.prune_universe_forward_outcomes(30, min_experiment_started_at=floor) == 0
+    assert repo.prune_universe_members(30, min_experiment_started_at=floor) == 0
+    assert repo.prune_universe_snapshots(30, min_experiment_started_at=floor) == 0
+    assert conn.execute("SELECT 1 FROM filter_candidate_outcomes").fetchone() is not None
+    assert conn.execute("SELECT 1 FROM universe_forward_outcomes").fetchone() is not None
+    assert conn.execute("SELECT 1 FROM universe_members").fetchone() is not None
+    assert conn.execute("SELECT 1 FROM universe_snapshots").fetchone() is not None
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_filter_outcomes_combine_learning_and_observation_floors_fail_closed(
+    tmp_path, monkeypatch
+):
+    conn = setup_env(tmp_path, monkeypatch)
+    _seed_experiment_guarded_retention_rows(conn)
+    monkeypatch.setattr(repo, "_observation_retention_floor", lambda _domain: _old(90))
+
+    assert repo.prune_filter_candidate_outcomes(
+        30,
+        min_experiment_started_at=_old(70),
+    ) == 0
+
+    def fail_observation_floor(_domain):
+        raise repo.ExperimentStateReadError("unavailable")
+
+    monkeypatch.setattr(repo, "_observation_retention_floor", fail_observation_floor)
+    with pytest.raises(repo.ExperimentStateReadError, match="unavailable"):
+        repo.prune_filter_candidate_outcomes(30, min_experiment_started_at=None)
+    assert conn.execute("SELECT 1 FROM filter_candidate_outcomes").fetchone() is not None
+
+
+def test_omitted_experiment_floor_still_reads_repository_state(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    reads = []
+    monkeypatch.setattr(
+        repo,
+        "min_open_experiment_exposure_at",
+        lambda: reads.append(True) or None,
+    )
+
+    assert repo.prune_filter_decisions(30) == 0
+    assert reads == [True]
+
+
 def test_prune_filter_evidence_keeps_recent_rows(tmp_path, monkeypatch):
     from aletheia.storage.models import (
         FilterCandidateOutcome,
