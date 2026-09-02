@@ -1,5 +1,6 @@
 """Tests for proxy fallback transport in aletheia.net."""
 import asyncio
+import os
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import httpx
@@ -207,6 +208,22 @@ class TestInvalidateProxyCache:
             invalidate_proxy_cache()
 
         assert _proxy_reachable_cache["http://test:1234"][0] is False
+
+
+def test_apply_proxy_env_preserves_lowercase_deployment_override(monkeypatch):
+    from aletheia.net import apply_proxy_env
+
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    deployment_proxy = "http://deployment-proxy.test:7897"
+    monkeypatch.setenv("https_proxy", deployment_proxy)
+
+    with patch("aletheia.net._proxy_url", return_value="http://configured-proxy.test:7890"):
+        apply_proxy_env()
+
+    assert os.environ["https_proxy"] == deployment_proxy
+    assert "HTTP_PROXY" not in os.environ
+    assert "HTTPS_PROXY" not in os.environ
 
 
 class TestRetryingTransport:
