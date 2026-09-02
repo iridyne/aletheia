@@ -1063,7 +1063,7 @@ class TelegramConfig(BaseModel):
 
 
 class WebhookConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(validate_assignment=True, hide_input_in_errors=True)
 
     enabled: bool = False
     url: str = ""
