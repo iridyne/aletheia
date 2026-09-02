@@ -922,6 +922,7 @@ class UniverseService:
         from aletheia.universe.allocator import (
             allocate_universe,
             compute_total_score,
+            decorate_universe_candidates,
             get_family_multipliers,
         )
         from aletheia.universe.features import collect_features
@@ -1192,6 +1193,7 @@ class UniverseService:
                     candidate_selection_authority_bundle,
                     pre_scored,
                 )
+                decorate_universe_candidates(allocated, cfg.universe)
                 eligible_attention_identities = target_admitted_identity_keys(
                     candidate_selection_authority_bundle,
                 )

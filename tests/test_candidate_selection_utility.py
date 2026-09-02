@@ -405,6 +405,11 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator():
     assert repo.insert_universe_twin_shadow_bundle(
         bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
     ) == 20
+    priority_keys = repo.list_open_universe_twin_outcome_candidate_keys()
+    assert {
+        f"{outcome.outcome_candidate_key}:{outcome.horizon}"
+        for outcome in bundle.outcomes
+    } <= priority_keys
     stored = repo.list_universe_twin_shadow_records("candidate-selection-run")
     payload = json.loads(stored[0]["compact_output_json"])
     assert payload["candidate_selection"]["version"] == "candidate-selection-utility/v1"

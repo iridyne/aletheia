@@ -76,7 +76,9 @@ positive report sets `qualification_eligible=true` and
 does not mutate authority. The generic Universe configuration endpoint cannot
 change the protected policy fields. The owner admission endpoint accepts only
 the exact positive epoch, refuses an overlapping Paper Universe-calibration
-authority, persists an audit event, and the runtime re-evaluates
+authority, and persists an audit event. Admission and rollback configure the
+policy for the next successful Universe refresh; they do not relabel the active
+snapshot or its Planning Generations. The runtime re-evaluates
 that same qualification before every target publication. Missing, stale,
 negative, neutral, insufficient, or invalid evidence fails closed and preserves
 the previous active snapshot.

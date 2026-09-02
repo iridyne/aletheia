@@ -410,12 +410,12 @@ function CandidateSelectionAuthorityCard({ qc }: Pick<SettingsDirtyProps, 'qc'>)
   }
   const admit = useMutation({
     mutationFn: (epoch: string) => api.admitCandidateSelection(epoch, reason.trim()),
-    onSuccess: () => { setMsg({ ok: true, text: 'Candidate Selection Utility admitted' }); setReason(''); refresh() },
+    onSuccess: () => { setMsg({ ok: true, text: 'Target policy configured; the active snapshot changes after a successful refresh' }); setReason(''); refresh() },
     onError: (error: any) => setMsg({ ok: false, text: error.message }),
   })
   const rollback = useMutation({
     mutationFn: () => api.rollbackCandidateSelection(reason.trim()),
-    onSuccess: () => { setMsg({ ok: true, text: 'Legacy Candidate selection restored' }); setReason(''); refresh() },
+    onSuccess: () => { setMsg({ ok: true, text: 'Legacy policy configured; the active snapshot changes after a successful refresh' }); setReason(''); refresh() },
     onError: (error: any) => setMsg({ ok: false, text: error.message }),
   })
   const qualification = status.data?.qualification
@@ -434,7 +434,7 @@ function CandidateSelectionAuthorityCard({ qc }: Pick<SettingsDirtyProps, 'qc'>)
       <div className="section-label">Candidate Selection Authority</div>
       {status.isError ? <p className="hint">Qualification evidence is unavailable.</p> : status.isPending ? <p className="hint">Loading qualification…</p> : <>
         <p className="hint">
-          Active policy: <span className="mono">{humanize(status.data?.configured_policy)}</span>. Qualification: {humanize(qualification?.verdict)}.
+          Configured policy: <span className="mono">{humanize(status.data?.configured_policy)}</span>. Qualification: {humanize(qualification?.verdict)}.
           {' '}Fixed look: {qualification?.fixed_look_cluster_n ?? 0} clusters, {qualification?.consecutive_eligible_utc_days ?? 0} UTC days, {fmtNum((qualification?.full_arm_outcome_coverage ?? 0) * 100)}% outcome coverage.
         </p>
         {displayBlockReason && <p className="hint">Authority block: <span className="mono">{humanize(displayBlockReason)}</span></p>}
@@ -448,7 +448,7 @@ function CandidateSelectionAuthorityCard({ qc }: Pick<SettingsDirtyProps, 'qc'>)
             onClick={async () => {
               if (!epoch || !(await confirm({
                 title: 'Admit Candidate Selection Utility?',
-                description: `This exact qualified epoch (${epoch}) will become Candidate authority. Risk and execution gates remain unchanged.`,
+                description: `This exact qualified epoch (${epoch}) will be authorized for the next successful Candidate refresh. Risk and execution gates remain unchanged.`,
                 confirmLabel: 'Admit exact epoch',
                 variant: 'warning',
               }))) return

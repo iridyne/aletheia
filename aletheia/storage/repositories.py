@@ -10603,7 +10603,12 @@ def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
             "AND b.policy_epoch_id IS NOT NULL "
             "AND o.status='pending' "
             "AND r.outcome_candidate_key IS NOT NULL "
-            "AND r.primary_horizon IS NOT NULL"
+            "AND r.primary_horizon IS NOT NULL "
+            "UNION "
+            "SELECT DISTINCT o.outcome_candidate_key, o.horizon AS primary_horizon "
+            "FROM filter_candidate_outcomes o "
+            "WHERE o.status='pending' "
+            "AND o.scanner_family='candidate_selection_utility'"
         )
         .fetchall()
     )

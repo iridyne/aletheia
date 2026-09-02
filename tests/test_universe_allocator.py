@@ -10,6 +10,7 @@ from aletheia.universe.allocator import (
     compute_direction_exhaustion_signal,
     compute_late_entry_penalty,
     compute_total_score,
+    decorate_universe_candidates,
     get_family_multipliers,
 )
 
@@ -189,6 +190,16 @@ def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatc
 
     assert seen == [("BTC/USDT", "perp", "okx")]
     assert result[0]["execution_eligible"] is False
+
+
+def test_target_selection_uses_shared_execution_and_risk_decoration(cfg, monkeypatch):
+    item = _scored_item("TARGET/USDT", "momentum", 80, venue="okx")
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.has_fresh_market_snapshot",
+        lambda *_args, **_kwargs: False,
+    )
+
+    assert decorate_universe_candidates([item], cfg)[0]["execution_eligible"] is False
 
 
 def test_late_entry_penalty_extreme_return():

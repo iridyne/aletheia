@@ -56,6 +56,8 @@ describe('RiskTab', () => {
     expect(SRC).toContain('<CandidateSelectionAuthorityCard qc={qc} />')
     expect(SRC).toContain('Admit qualified epoch')
     expect(SRC).toContain('Restore legacy policy')
+    expect(SRC).toContain('Configured policy:')
+    expect(SRC).not.toContain('Active policy:')
     expect(SRC).toContain('<EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(html).toContain('Empty — all symbols are tradable.')
     expect(html).toContain('Max daily loss')

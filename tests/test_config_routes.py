@@ -796,6 +796,40 @@ async def test_candidate_selection_admission_restores_legacy_when_audit_fails(
 
 
 @pytest.mark.anyio
+async def test_candidate_selection_rollback_restores_target_when_audit_fails(
+    client, monkeypatch,
+):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import UniverseConfig
+
+    cfg = load_config()
+    cfg.universe = UniverseConfig.model_validate({
+        **cfg.universe.model_dump(mode="json"),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
+    })
+    save_config(cfg)
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audit",
+        lambda _record: (_ for _ in ()).throw(OSError("audit unavailable")),
+    )
+
+    response = await client.post(
+        "/api/settings/universe/candidate-selection/rollback",
+        json={
+            "reason": "owner requested rollback",
+            "confirm_rollback": True,
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "candidate_selection_rollback_audit_failed"
+    restored = load_config().universe
+    assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
+    assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
+
+
+@pytest.mark.anyio
 async def test_fast_trigger_settings_are_visible_bounded_and_persisted(client):
     resp = await client.get("/api/settings")
     assert resp.status_code == 200
