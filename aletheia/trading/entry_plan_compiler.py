@@ -412,7 +412,7 @@ def compile_entry_plan(
         raise PlanIntentError("COMPILER_INTERNAL", type(exc).__name__) from exc
 
 
-def compile_ai_entry_plan(generation, candidate, feature, context, hypothesis, cfg) -> EntryPlan:
+def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
     from aletheia.agent_shell.entry_planner import PlanIntent, PlanIntentError
     from aletheia.trading.entry_analysis import canonical_json, fingerprint
@@ -435,6 +435,10 @@ def compile_ai_entry_plan(generation, candidate, feature, context, hypothesis, c
     anchors = {item.anchor_id: item for item in context.anchors}
     primary = anchors[hypothesis.primary_anchor_ref]
     invalidation = anchors[hypothesis.invalidation_anchor_ref]
+    if primary.directional_role not in {"entry_candidate", "both"}:
+        raise PlanIntentError("PRIMARY_ANCHOR_ROLE_INVALID")
+    if invalidation.directional_role not in {"invalidation_candidate", "both"}:
+        raise PlanIntentError("INVALIDATION_ANCHOR_ROLE_INVALID")
     direction = generation["direction"]
     if (direction == "long" and invalidation.price >= primary.price) or (
         direction == "short" and invalidation.price <= primary.price
@@ -464,6 +468,33 @@ def compile_ai_entry_plan(generation, candidate, feature, context, hypothesis, c
     )
     if target <= 0:
         raise PlanIntentError("COMPILER_GEOMETRY_UNSATISFIABLE")
+    context_generation = context.planning_generation
+    instrument = context.instrument
+    if (
+        context_generation.get("id") != generation.get("id")
+        or context_generation.get("planner_contract_version") != "entry-planner/v3"
+        or context_generation.get("activation_identity") != generation.get("activation_identity")
+        or instrument.get("venue") != generation.get("venue")
+        or instrument.get("symbol") != generation.get("symbol")
+        or instrument.get("market_type") != generation.get("market_type")
+        or instrument.get("direction") != generation.get("direction")
+    ):
+        raise PlanIntentError("FROZEN_CONTEXT_IDENTITY_MISMATCH")
+    frozen_generation = {
+        **generation,
+        "last_candidate_id": context_generation["candidate_id"],
+        "candidate_family": context_generation["candidate_family"],
+    }
+    quant_values = context.quant_context.get("values") or {}
+    frozen_candidate = {
+        "id": context_generation["candidate_id"],
+        "entry_price_usd": context.candidate["candidate_price"],
+        "learning_candidate_key": None,
+    }
+    frozen_feature = {
+        "atr_pct": quant_values.get("atr_pct")
+        or (atr / float(context.candidate["candidate_price"]) * 100.0),
+    }
     geometry_material = {
         "entry_zone": zone,
         "invalidation_price": invalidation.price,
@@ -496,13 +527,17 @@ def compile_ai_entry_plan(generation, candidate, feature, context, hypothesis, c
         trigger_spec_id=None, trigger_spec_version=None,
         risk_tier=hypothesis.risk_tier, horizon=hypothesis.horizon,
     )
-    base = compile_entry_plan(generation, candidate, feature, synthetic, cfg)
+    base = compile_entry_plan(frozen_generation, frozen_candidate, frozen_feature, synthetic, cfg)
     old_entry = base.entry_zone[1] if direction == "long" else base.entry_zone[0]
     old_fraction = abs(old_entry - base.stop_price) / old_entry
     new_fraction = abs(worst_entry - stop) / worst_entry
     bounded_notional = min(base.max_notional, base.max_notional * old_fraction / new_fraction)
-    maker = synthetic.order_tactic == "POST_ONLY_LIMIT"
-    maker = hypothesis.execution_urgency == "PASSIVE"
+    if hypothesis.execution_urgency == "PASSIVE":
+        maker = True
+    elif hypothesis.execution_urgency == "BOUNDED_URGENT":
+        maker = False
+    else:
+        raise PlanIntentError("EXECUTION_URGENCY_INVALID")
     bid, ask = float(context.execution_context["bid"]), float(context.execution_context["ask"])
     limit_price = primary.price if maker else None
     if maker and ((direction == "long" and primary.price >= ask) or (direction == "short" and primary.price <= bid)):

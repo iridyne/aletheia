@@ -59,6 +59,8 @@ class MomentumTriggerEngineV2:
         geometry_version: str,
         geometry_fingerprint: str,
         policy: TriggerPolicy,
+        trigger_spec_id: str = TRIGGER_SPEC_ID,
+        trigger_spec_version: str = TRIGGER_SPEC_VERSION,
     ) -> None:
         if direction not in {"long", "short"}:
             raise ValueError("momentum_trigger_direction_invalid")
@@ -80,6 +82,13 @@ class MomentumTriggerEngineV2:
             raise ValueError("momentum_trigger_geometry_fingerprint_invalid")
         self.geometry_version = geometry_version
         self.geometry_fingerprint = geometry_fingerprint
+        if (trigger_spec_id, trigger_spec_version) not in {
+            (TRIGGER_SPEC_ID, TRIGGER_SPEC_VERSION),
+            ("anchor-retrace-reclaim", "v1"),
+        }:
+            raise ValueError("momentum_trigger_spec_identity_invalid")
+        self.trigger_spec_id = trigger_spec_id
+        self.trigger_spec_version = trigger_spec_version
         self.policy = policy
         self.state: State = "armed"
         self.state_path: list[State] = ["armed"]
@@ -299,8 +308,8 @@ class MomentumTriggerEngineV2:
             depth_sequence=depth.sequence,
             entry_price=entry,
             entry_trigger={
-                "trigger_spec_id": TRIGGER_SPEC_ID,
-                "trigger_spec_version": TRIGGER_SPEC_VERSION,
+                "trigger_spec_id": self.trigger_spec_id,
+                "trigger_spec_version": self.trigger_spec_version,
                 "geometry_version": self.geometry_version,
                 "geometry_fingerprint": self.geometry_fingerprint,
                 "breakout_level": self.breakout_level,

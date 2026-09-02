@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v59"
+SCHEMA_VERSION = "aletheia-sqlite-v60"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3983,6 +3983,26 @@ CREATE TRIGGER trg_entry_plan_no_delete BEFORE DELETE ON entry_plans
 BEGIN SELECT RAISE(ABORT,'Entry Plan history is retained'); END;
 """
 _AI_ENTRY_V57_CHECKSUM = hashlib.sha256((_AI_ENTRY_V57_SQL + "\nai_entry_v57").encode()).hexdigest()
+_AI_ENTRY_V57_INTEGRITY_SQL = """
+CREATE TRIGGER IF NOT EXISTS trg_candidate_planner_input_immutable
+BEFORE UPDATE OF planner_input_json,planner_input_hash ON candidate_planning_generations
+WHEN OLD.planner_input_hash IS NOT NULL AND (
+    NEW.planner_input_json IS NOT OLD.planner_input_json
+    OR NEW.planner_input_hash IS NOT OLD.planner_input_hash
+)
+BEGIN SELECT RAISE(ABORT,'Planner input is immutable after binding'); END;
+CREATE TRIGGER IF NOT EXISTS trg_candidate_planner_activation_immutable
+BEFORE UPDATE OF activation_identity ON candidate_planning_generations
+WHEN NEW.activation_identity IS NOT OLD.activation_identity
+BEGIN SELECT RAISE(ABORT,'Planner activation identity is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS trg_candidate_planner_bound_candidate_immutable
+BEFORE UPDATE OF last_candidate_id ON candidate_planning_generations
+WHEN OLD.planner_input_hash IS NOT NULL AND NEW.last_candidate_id IS NOT OLD.last_candidate_id
+BEGIN SELECT RAISE(ABORT,'Bound planner Candidate is immutable'); END;
+"""
+_AI_ENTRY_V57_INTEGRITY_CHECKSUM = hashlib.sha256(
+    (_AI_ENTRY_V57_INTEGRITY_SQL + "\nai_entry_v57_complete_schema_integrity_v1").encode()
+).hexdigest()
 
 _PAPER_FUNDING_REVIVAL_CURSOR_SQL = """
 CREATE TABLE IF NOT EXISTS paper_funding_revival_cursor (
@@ -5622,6 +5642,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260902_0058_derivatives_source_time_v59": (
         "provider source and local acquisition time for primary derivatives"
     ),
+    "20260902_0059_ai_entry_v57_integrity_v60": (
+        "verify and transactionally repair the complete AI Entry v57 schema"
+    ),
 }
 
 
@@ -6213,20 +6236,111 @@ def _apply_planner_contract_version_v56(db: sqlite3.Connection) -> None:
 
 def _apply_ai_entry_v57(db: sqlite3.Connection) -> None:
     """Add immutable Planner V3 input identity and Entry Plan V2 compatibility."""
-    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(candidate_planning_generations)")}
-    if "planner_input_json" in columns:
+    required_generation_columns = {"planner_input_json", "planner_input_hash", "activation_identity"}
+    generation_columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(candidate_planning_generations)")
+    }
+    entry_sql_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='entry_plans'"
+    ).fetchone()
+    entry_sql = str(entry_sql_row[0] or "") if entry_sql_row is not None else ""
+    required_objects = {
+        "idx_candidate_planning_current", "idx_candidate_planning_work",
+        "idx_candidate_attention_active_deadline", "idx_candidate_planning_history",
+        "idx_candidate_planning_candidate", "idx_candidate_planning_last_candidate",
+        "idx_entry_plans_watch", "idx_entry_plans_active_key",
+        "trg_entry_plan_facts_immutable", "trg_entry_plan_no_delete",
+    }
+    existing_objects = {
+        str(row[0])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE name IN (%s)"
+            % ",".join("?" for _ in required_objects),
+            tuple(required_objects),
+        )
+    }
+    if (
+        required_generation_columns.issubset(generation_columns)
+        and "'entry-plan/v1','entry-plan/v2'" in "".join(entry_sql.split())
+        and required_objects.issubset(existing_objects)
+        and not db.execute("PRAGMA foreign_key_check").fetchall()
+    ):
         return
+
+    def execute_script(script: str) -> None:
+        statement = ""
+        for line in script.splitlines():
+            statement += line + "\n"
+            if sqlite3.complete_statement(statement):
+                db.execute(statement)
+                statement = ""
+        if statement.strip():
+            raise MigrationStateError("ai_entry_v57_incomplete_sql")
+
+    candidate_marker = (
+        "INSERT INTO candidate_planning_generations_v57\n"
+        "SELECT *, NULL, NULL, NULL FROM candidate_planning_generations;"
+    )
+    entry_marker = "INSERT INTO entry_plans_v57 SELECT * FROM entry_plans;"
+    candidate_ddl, remainder = _AI_ENTRY_V57_SQL.split(candidate_marker, 1)
+    entry_ddl, final_ddl = remainder.split(entry_marker, 1)
     # Legacy fixtures and production databases may retain unrelated dormant
     # triggers whose historical table projection no longer parses during ALTER.
     db.execute("PRAGMA writable_schema=ON")
     try:
-        db.executescript(_AI_ENTRY_V57_SQL)
-    finally:
-        db.execute("PRAGMA writable_schema=OFF")
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DROP TABLE IF EXISTS entry_plans_v57")
+        db.execute("DROP TABLE IF EXISTS candidate_planning_generations_v57")
+        execute_script(candidate_ddl)
+        target_columns = [
+            str(row[1]) for row in db.execute("PRAGMA table_info(candidate_planning_generations_v57)")
+        ]
+        source_columns = generation_columns
+        projection = [f'"{name}"' if name in source_columns else "NULL" for name in target_columns]
+        quoted = ",".join(f'"{name}"' for name in target_columns)
+        db.execute(
+            f"INSERT INTO candidate_planning_generations_v57 ({quoted}) "
+            f"SELECT {','.join(projection)} FROM candidate_planning_generations"
+        )
+        execute_script(entry_ddl)
+        entry_columns = [str(row[1]) for row in db.execute("PRAGMA table_info(entry_plans_v57)")]
+        quoted_entry = ",".join(f'"{name}"' for name in entry_columns)
+        db.execute(
+            f"INSERT INTO entry_plans_v57 ({quoted_entry}) "
+            f"SELECT {quoted_entry} FROM entry_plans"
+        )
+        execute_script(final_ddl)
         schema_version = int(db.execute("PRAGMA schema_version").fetchone()[0])
         db.execute(f"PRAGMA schema_version={schema_version + 1}")
-    if db.execute("PRAGMA foreign_key_check").fetchall():
-        raise MigrationStateError("ai_entry_v57_foreign_key_violation")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("ai_entry_v57_foreign_key_violation")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.execute("PRAGMA writable_schema=OFF")
+
+
+def _apply_ai_entry_v57_integrity_v60(db: sqlite3.Connection) -> None:
+    """Repair an incomplete recorded v57 and enforce one-way input binding."""
+
+    _apply_ai_entry_v57(db)
+    db.executescript(_AI_ENTRY_V57_INTEGRITY_SQL)
+    required = {
+        "trg_candidate_planner_input_immutable",
+        "trg_candidate_planner_activation_immutable",
+        "trg_candidate_planner_bound_candidate_immutable",
+    }
+    existing = {
+        str(row[0])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN (?,?,?)",
+            tuple(required),
+        )
+    }
+    if existing != required or db.execute("PRAGMA foreign_key_check").fetchall():
+        raise MigrationStateError("ai_entry_v57_integrity_unproven")
 
 
 def _apply_paper_funding_revival_cursor_v58(db: sqlite3.Connection) -> None:
@@ -6898,6 +7012,12 @@ _MIGRATIONS = (
         checksum=_DERIVATIVES_SOURCE_TIME_CHECKSUM,
         schema_version="aletheia-sqlite-v59",
         apply=_apply_derivatives_source_time_v59,
+    ),
+    MigrationStep(
+        migration_id="20260902_0059_ai_entry_v57_integrity_v60",
+        checksum=_AI_ENTRY_V57_INTEGRITY_CHECKSUM,
+        schema_version="aletheia-sqlite-v60",
+        apply=_apply_ai_entry_v57_integrity_v60,
     ),
 )
 

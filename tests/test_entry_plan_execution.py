@@ -120,6 +120,79 @@ def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
         )
 
 
+def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monkeypatch):
+    from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
+    from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
+
+    activation = datetime(2026, 9, 2, tzinfo=timezone.utc)
+    context = EntryAnalysisContextV1(
+        analysis_cutoff_at=activation.isoformat(),
+        instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
+        planning_generation={"id": "g-v3", "planner_contract_version": "entry-planner/v3", "activation_identity": activation.isoformat(), "candidate_id": "c1", "candidate_family": "momentum"},
+        candidate={"fact_refs": ["candidate:c1"]},
+        candle_windows={tf: {"availability": "unavailable", "bars": []} for tf in ("4h", "1h", "15m")},
+        market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
+        portfolio_context={"availability": "available", "fact_refs": []},
+        execution_context={"availability": "available", "fact_refs": []}, anchors=(),
+        entry_profiles=(), learning_context={"availability": "unavailable"},
+    )
+    generation = {
+        "id": "g-v3", "planner_contract_version": "entry-planner/v3",
+        "activation_identity": activation.isoformat(),
+        "planner_input_json": context.model_dump_json(),
+        "planner_input_hash": fingerprint(context.model_dump(mode="json")),
+    }
+    plan = SimpleNamespace(
+        version="entry-plan/v2", planning_generation_id="g-v3", candidate_id="c1",
+        analysis_context_fingerprint=context.context_fingerprint,
+        venue="bitget", symbol="BTC/USDT", market_type="perp", direction="long",
+        required_permission="Paper", execution_account_mode="paper_internal",
+    )
+    cfg = SimpleNamespace(
+        agent=SimpleNamespace(ai_entry_hypothesis_enabled=True, ai_entry_hypothesis_activated_at=activation, permission_mode="Paper"),
+        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        live=SimpleNamespace(state="live_disabled"),
+    )
+    monkeypatch.setattr(repo, "get_candidate_planning_generation", lambda _id: generation)
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_kwargs: cfg)
+    _require_ai_entry_authority(plan)
+
+    cfg.agent.permission_mode = "Manual"
+    with pytest.raises(ValueError, match="ai_entry_activation_gate_closed"):
+        _require_ai_entry_authority(plan)
+    cfg.agent.permission_mode = "Paper"
+    generation["planner_input_hash"] = "0" * 64
+    with pytest.raises(ValueError, match="ai_entry_context_identity_mismatch"):
+        _require_ai_entry_authority(plan)
+
+
+def test_ai_entry_trigger_identity_must_match_plan(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority",
+        lambda _plan: None,
+    )
+    plan = _plan().model_copy(update={
+        "version": "entry-plan/v2",
+        "trigger_spec_id": "anchor-retrace-reclaim",
+        "trigger_spec_version": "v1",
+        "trigger_params": {**_plan().trigger_params, "geometry_fingerprint": "a" * 64},
+    })
+    now = datetime.now(timezone.utc).isoformat()
+    with pytest.raises(ValueError, match="ai_entry_trigger_evidence_required"):
+        build_entry_plan_order_intent(
+            plan, bid=100, ask=100.05, observed_at=now, source_observed_at=now,
+        )
+    with pytest.raises(ValueError, match="ai_entry_trigger_identity_mismatch"):
+        build_entry_plan_order_intent(
+            plan, bid=100, ask=100.05, observed_at=now, source_observed_at=now,
+            trigger_evidence={
+                "trigger_spec_id": "momentum-retrace-reclaim",
+                "trigger_spec_version": "v2",
+                "geometry_fingerprint": "a" * 64,
+            },
+        )
+
+
 def test_urgent_entry_uses_exact_opposing_bbo_ioc():
     plan = _plan()
     received_at = datetime.now(timezone.utc).isoformat()

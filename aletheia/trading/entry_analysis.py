@@ -101,7 +101,12 @@ class EntryAnalysisContextV1(BaseModel):
             window = self.candle_windows.get(timeframe)
             if not isinstance(window, dict):
                 raise ValueError(f"candle_window_{timeframe}_missing")
-            if len(window.get("bars") or ()) > limit:
+            bars = window.get("bars") or ()
+            if window.get("availability") == "available" and len(bars) != limit:
+                raise ValueError(f"candle_window_{timeframe}_incomplete")
+            if window.get("availability") == "unavailable" and bars:
+                raise ValueError(f"candle_window_{timeframe}_unavailable_with_bars")
+            if len(bars) > limit:
                 raise ValueError(f"candle_window_{timeframe}_too_large")
         if len(self.anchors) > 12:
             raise ValueError("anchor_registry_too_large")
@@ -163,6 +168,12 @@ class EntryHypothesisV1(BaseModel):
             return self
         if self.reason_code != "OK":
             raise ValueError("entry_plan_reason_must_be_ok")
+        thesis = self.thesis.strip()
+        scenario = self.scenario.strip()
+        if not thesis or not scenario:
+            raise ValueError("entry_thesis_scenario_required")
+        object.__setattr__(self, "thesis", thesis)
+        object.__setattr__(self, "scenario", scenario)
         if self.setup_archetype != "continuation":
             raise ValueError("setup_archetype_required")
         if not self.primary_anchor_ref or not self.invalidation_anchor_ref:
@@ -171,6 +182,8 @@ class EntryHypothesisV1(BaseModel):
             raise ValueError("entry_anchors_must_be_distinct")
         if (self.entry_profile_id, self.entry_profile_version) not in ENTRY_PROFILES:
             raise ValueError("entry_profile_required")
+        if self.execution_urgency not in {"PASSIVE", "BOUNDED_URGENT"}:
+            raise ValueError("entry_execution_urgency_required")
         if self.entry_profile_id == "anchor-resting-maker" and self.execution_urgency != "PASSIVE":
             raise ValueError("resting_maker_must_be_passive")
         if self.risk_tier == "NONE" or self.horizon == "NONE":
@@ -185,11 +198,23 @@ def validate_hypothesis_references(
 ) -> None:
     if hypothesis.decision == "NO_PLAN":
         return
-    anchors = {anchor.anchor_id for anchor in context.anchors}
+    anchors = {anchor.anchor_id: anchor for anchor in context.anchors}
     if hypothesis.primary_anchor_ref not in anchors or hypothesis.invalidation_anchor_ref not in anchors:
         raise ValueError("hypothesis_anchor_ref_not_supplied")
+    if anchors[hypothesis.primary_anchor_ref].directional_role not in {"entry_candidate", "both"}:
+        raise ValueError("hypothesis_primary_anchor_role_invalid")
+    if anchors[hypothesis.invalidation_anchor_ref].directional_role not in {
+        "invalidation_candidate", "both",
+    }:
+        raise ValueError("hypothesis_invalidation_anchor_role_invalid")
     facts = set(anchors)
-    for section in (context.market_structure, context.quant_context, context.candidate):
+    for section in (
+        context.market_structure,
+        context.quant_context,
+        context.portfolio_context,
+        context.execution_context,
+        context.candidate,
+    ):
         refs = section.get("fact_refs", ()) if isinstance(section, dict) else ()
         facts.update(str(item) for item in refs)
     if not set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs).issubset(facts):
@@ -203,12 +228,21 @@ def build_entry_analysis_context(
     candle_windows: dict[str, list[dict]],
     *,
     cutoff_at: datetime,
+    candidate_detected_at: str | None,
+    positions: list[dict] | None = None,
     orderbook: dict | None = None,
 ) -> EntryAnalysisContextV1:
     """Freeze exact stored bars and existing causal structure into one model input."""
     from aletheia.data.ccxt_provider import timeframe_ms
-    from aletheia.data.market_structure import derive_market_structure
+    from aletheia.data.market_structure import (
+        CONTRACT_VERSION,
+        CORE_ALGORITHM_VERSION,
+        PARAMS_HASH,
+        canonical_market_structure_facts,
+        derive_market_structure,
+    )
     from aletheia.data.providers import Candle
+    from aletheia.data.symbols import InstrumentId
 
     cutoff = cutoff_at.astimezone(timezone.utc)
     cutoff_ms = int(cutoff.timestamp() * 1000)
@@ -219,10 +253,20 @@ def build_entry_analysis_context(
     venue, symbol, market_type = (
         str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"])
     )
+    if (
+        candidate.get("id") != generation.get("last_candidate_id")
+        or candidate.get("venue") != venue
+        or candidate.get("symbol") != symbol
+        or candidate.get("market_type") != market_type
+        or candidate.get("scanner_family") != generation.get("candidate_family")
+        or candidate.get("scanner_direction") != generation.get("direction")
+    ):
+        raise ValueError("candidate_generation_identity_mismatch")
+    instrument_id = InstrumentId.from_parts(venue, symbol, market_type)
     for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96)):
         interval = timeframe_ms(timeframe)
         rows = tuple(candle_windows.get(timeframe, ())[-limit:])
-        valid = bool(rows)
+        valid = len(rows) == limit
         previous = None
         bars: list[dict[str, Any]] = []
         for row in rows:
@@ -238,6 +282,7 @@ def build_entry_analysis_context(
                     valid = valid and known.tzinfo is not None and known.timestamp() * 1000 <= cutoff_ms
             previous = ts if isinstance(ts, int) else previous
             bars.append({key: row.get(key) for key in ("ts", "open", "high", "low", "close", "volume", "provider", "exchange", "market_type", "first_persisted_at", "last_mutated_at")})
+        valid = valid and len({row.get("provider") for row in rows}) == 1
         if not valid:
             serialized[timeframe] = {"availability": "unavailable", "bars": [], "source_fingerprint": None}
             structures[timeframe] = {"availability": "unavailable", "fact_refs": []}
@@ -248,11 +293,10 @@ def build_entry_analysis_context(
             [Candle(int(row["ts"]), float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"]), float(row["volume"]), True, str(row["provider"]), venue) for row in bars],
             tf_ms=interval,
         )
-        swing_rows = [asdict(item) for item in geometry.swings]
-        event_rows = [
-            asdict(item) for item in geometry.events
-        ]
-        section_refs = [f"structure:{timeframe}:{fingerprint(item)}" for item in swing_rows + event_rows]
+        swings, events = canonical_market_structure_facts(geometry, instrument_id, timeframe)
+        swing_rows = [asdict(item) for item in swings]
+        event_rows = [asdict(item) for item in events]
+        section_refs = [item.id for item in (*swings, *events)]
         fact_refs.extend(section_refs)
         structures[timeframe] = {
             "availability": geometry.availability,
@@ -261,34 +305,80 @@ def build_entry_analysis_context(
             "swings": swing_rows,
             "events": event_rows,
             "geometry_fingerprint": geometry.geometry_fingerprint,
+            "provenance": {
+                "contract_version": CONTRACT_VERSION,
+                "instrument": {
+                    "exchange": instrument_id.exchange,
+                    "symbol": instrument_id.symbol,
+                    "market_type": instrument_id.market_type,
+                },
+                "instrument_id": str(instrument_id),
+                "timeframe": timeframe,
+                "requested_as_of_ms": cutoff_ms,
+                "as_of_ms": bars[-1]["ts"] + interval,
+                "first_bar_open_at_ms": bars[0]["ts"],
+                "last_bar_open_at_ms": bars[-1]["ts"],
+                "first_bar_close_at_ms": bars[0]["ts"] + interval,
+                "last_bar_close_at_ms": bars[-1]["ts"] + interval,
+                "admitted_bar_count": len(bars),
+                "requested_limit": limit,
+                "fetched_bar_count": len(rows),
+                "provider_outcome": "stored_complete_window",
+                "provider_failure_reason": None,
+                "source_provider": next(iter({row["provider"] for row in bars})),
+                "source_exchange": venue,
+                "history_quality": "complete",
+                "geometry_fingerprint": geometry.geometry_fingerprint,
+                "source_candle_fingerprint": source_hash,
+                "core_algorithm_version": CORE_ALGORITHM_VERSION,
+                "params_hash": PARAMS_HASH,
+                "fvg_algorithm_version": None,
+                "computed_at_ms": cutoff_ms,
+            },
             "fact_refs": section_refs,
         }
         if timeframe == "15m" and geometry.availability == "available":
-            for item in geometry.swings:
+            direction = str(generation["direction"])
+            for item in swings:
                 anchors.append(EntryAnchorV1(
                     venue=venue, symbol=symbol, market_type=market_type,
                     kind="confirmed_swing", price=item.price,
-                    directional_role="both", known_at_ms=item.known_at_ms,
-                    source_fact_refs=(f"swing:{item.kind}:{item.origin_at_ms}",),
+                    directional_role=(
+                        "invalidation_candidate"
+                        if (direction == "long" and item.kind == "low")
+                        or (direction == "short" and item.kind == "high")
+                        else "entry_candidate"
+                    ),
+                    known_at_ms=item.known_at_ms,
+                    source_fact_refs=(item.id,),
                     source_fingerprint=fingerprint(asdict(item)),
                     geometry_fingerprint=geometry.geometry_fingerprint,
                     aliases=("price_action", "smc"),
                 ))
-            for item in geometry.events:
+            for item in events:
                 anchors.append(EntryAnchorV1(
                     venue=venue, symbol=symbol, market_type=market_type,
-                    kind="broken_structure_level", price=item.broken_swing.price,
+                    kind="broken_structure_level", price=item.broken_level,
                     directional_role="both", known_at_ms=item.known_at_ms,
-                    source_fact_refs=(f"{item.type}:{item.break_at_ms}",),
+                    source_fact_refs=(item.id, item.broken_swing_id),
                     source_fingerprint=fingerprint(asdict(item)),
                     geometry_fingerprint=geometry.geometry_fingerprint,
                     aliases=("price_action", "smc"),
                 ))
+    if candidate_detected_at is None:
+        raise ValueError("candidate_detected_at_unavailable")
+    detected = datetime.fromisoformat(str(candidate_detected_at).replace("Z", "+00:00"))
+    if detected.tzinfo is None:
+        raise ValueError("candidate_detected_at_timezone_required")
+    detected = detected.astimezone(timezone.utc)
+    detected_ms = int(detected.timestamp() * 1000)
+    if detected_ms > cutoff_ms:
+        raise ValueError("candidate_detected_at_after_cutoff")
     candidate_ref = f"candidate:{candidate['id']}"
     anchors.append(EntryAnchorV1(
         venue=venue, symbol=symbol, market_type=market_type,
         kind="candidate_reference", price=float(candidate["entry_price_usd"]),
-        directional_role="entry_candidate", known_at_ms=cutoff_ms,
+        directional_role="entry_candidate", known_at_ms=detected_ms,
         source_fact_refs=(candidate_ref,), source_fingerprint=fingerprint(candidate_ref),
     ))
     if serialized.get("15m", {}).get("availability") == "available":
@@ -311,7 +401,8 @@ def build_entry_analysis_context(
             anchors.append(EntryAnchorV1(
                 venue=venue, symbol=symbol, market_type=market_type,
                 kind="causal_breakout", price=geometry.breakout_level,
-                directional_role="entry_candidate", known_at_ms=cutoff_ms,
+                directional_role="entry_candidate",
+                known_at_ms=max(int(row["ts"]) + 15 * 60 * 1000 for row in serialized["15m"]["bars"][-21:]),
                 source_fact_refs=tuple(geometry.source_candle_ids),
                 source_fingerprint=geometry.source_hash,
                 geometry_fingerprint=geometry.geometry_fingerprint,
@@ -325,14 +416,78 @@ def build_entry_analysis_context(
         age_ms = (cutoff - observed.astimezone(timezone.utc)).total_seconds() * 1000 if observed.tzinfo else float("inf")
         orderbook_available = 0 <= age_ms <= 2_000
     estimated_cost = candidate.get("estimated_cost")
+    quant_fields = (
+        "atr_pct", "rsi_15m", "atr_15m_pct", "return_15m", "return_1h",
+        "return_4h", "return_24h", "funding_rate", "open_interest", "oi_delta_1h",
+        "long_short_ratio", "top_trader_position_ratio", "taker_buy_ratio", "vol_ratio",
+        "relative_strength_24h", "oi_price_divergence", "rsi_4h", "atr_4h_pct",
+        "bb_width_4h", "vol_ratio_4h", "bb_squeeze", "data_freshness_sec",
+    )
+    try:
+        feature_at = datetime.fromisoformat(str(feature.get("ts") or "").replace("Z", "+00:00"))
+    except ValueError:
+        feature_at = None
+    feature_valid = bool(
+        feature.get("id")
+        and feature.get("asset_id") == candidate.get("asset_id")
+        and feature_at is not None
+        and feature_at.tzinfo is not None
+        and feature_at.astimezone(timezone.utc) <= cutoff
+    )
+    quant_values = (
+        {key: feature.get(key) for key in quant_fields if feature.get(key) is not None}
+        if feature_valid else {}
+    )
+    feature_ref = f"feature:{feature.get('id')}" if feature_valid else None
+    admitted_positions = []
+    for position in positions or ():
+        try:
+            opened = datetime.fromisoformat(str(position.get("opened_at") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if opened.tzinfo is None or opened.astimezone(timezone.utc) > cutoff:
+            continue
+        mark = position.get("current_price") or position.get("entry_price")
+        try:
+            notional = abs(float(position["quantity"]) * float(mark))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(notional):
+            admitted_positions.append((position, notional))
+    portfolio_refs = [f"position:{item[0]['id']}" for item in admitted_positions]
+    portfolio = {
+        "availability": "available",
+        "as_of": cutoff.isoformat(),
+        "open_position_count": len(admitted_positions),
+        "total_notional_usd": sum(item[1] for item in admitted_positions),
+        "same_instrument_notional_usd": sum(
+            item[1] for item in admitted_positions
+            if item[0].get("symbol") == symbol and item[0].get("market_type") == market_type
+        ),
+        "long_count": sum(item[0].get("direction") == "long" for item in admitted_positions),
+        "short_count": sum(item[0].get("direction") == "short" for item in admitted_positions),
+        "fact_refs": portfolio_refs,
+    }
     return EntryAnalysisContextV1(
         analysis_cutoff_at=cutoff.isoformat(),
         instrument={"venue": venue, "symbol": symbol, "market_type": market_type, "direction": generation["direction"]},
-        planning_generation={"id": generation["id"], "planner_contract_version": generation["planner_contract_version"], "candidate_id": candidate["id"], "candidate_family": generation["candidate_family"]},
-        candidate={"candidate_price": candidate["entry_price_usd"], "detected_at": cutoff.isoformat(), "motive_evidence": candidate.get("inclusion_reason"), "risk_flags": candidate.get("risk_flags"), "fact_refs": [candidate_ref]},
+        planning_generation={"id": generation["id"], "planner_contract_version": generation["planner_contract_version"], "activation_identity": generation.get("activation_identity"), "candidate_id": candidate["id"], "candidate_family": generation["candidate_family"]},
+        candidate={"candidate_price": candidate["entry_price_usd"], "detected_at": detected.isoformat(), "motive_evidence": candidate.get("inclusion_reason"), "risk_flags": candidate.get("risk_flags"), "fact_refs": [candidate_ref]},
         candle_windows=serialized, market_structure={**structures, "fact_refs": fact_refs},
-        quant_context={"feature_snapshot": feature, "fact_refs": [f"feature:{feature.get('id')}"] if feature.get("id") else []},
-        portfolio_context={"availability": "unavailable"},
+        quant_context={
+            "availability": "available" if feature_ref and quant_values else "unavailable",
+            "feature_snapshot_id": feature.get("id") if feature_valid else None,
+            "feature_snapshot_at": feature.get("ts") if feature_valid else None,
+            "technical_algorithm_version": feature.get("technical_algorithm_version") if feature_valid else None,
+            "technical_snapshot_manifest_hash": (
+                fingerprint(feature.get("technical_snapshot_manifest") or "{}")
+                if feature_valid else None
+            ),
+            "values": quant_values,
+            "unavailable_fields": sorted(set(quant_fields) - set(quant_values)),
+            "fact_refs": [feature_ref] if feature_ref else [],
+        },
+        portfolio_context=portfolio,
         execution_context={
             "availability": "available" if orderbook_available else "unavailable",
             "bid": orderbook.get("bid_price") if orderbook else None,
@@ -341,12 +496,13 @@ def build_entry_analysis_context(
             "depth_10bps_usd": orderbook.get("total_depth_10bps_usd") if orderbook else None,
             "observed_at": orderbook.get("observed_at") if orderbook else None,
             "estimated_costs": estimated_cost,
+            "fact_refs": [f"orderbook:{orderbook.get('id')}"] if orderbook and orderbook.get("id") else [],
         },
         anchors=selected,
         entry_profiles=(
             {"id": "anchor-resting-maker", "version": "v1"},
             {"id": "anchor-retrace-reclaim", "version": "v1"},
         ),
-        learning_context={"availability": "unavailable"},
+        learning_context={"availability": "unavailable", "reason": "exact_ai_entry_evidence_unavailable"},
         unavailable_sections=tuple(key for key, value in serialized.items() if value["availability"] == "unavailable"),
     )

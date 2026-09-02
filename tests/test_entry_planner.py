@@ -150,6 +150,29 @@ def test_unchanged_candidate_and_duplicate_wakes_create_one_durable_owner():
     assert repo.claim_next_candidate_planning("owner-two") is None
 
 
+def test_bound_planner_input_prevents_candidate_retargeting():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert repo.claim_next_candidate_planning("owner")["id"] == generation["id"]
+    payload = json.dumps({"frozen_candidate_id": candidate.id}, sort_keys=True)
+    import hashlib
+
+    assert repo.bind_candidate_planner_input(
+        generation["id"], "owner", payload, hashlib.sha256(payload.encode()).hexdigest()
+    )
+    churn = _candidate(rank=8, price=105.0)
+    same, created = repo.ensure_candidate_planning_generation(churn.id)
+
+    assert created is False
+    assert same["last_candidate_id"] == candidate.id
+    assert repo.get_candidate_planning_generation(generation["id"])["last_candidate_id"] == candidate.id
+    with pytest.raises(sqlite3.IntegrityError, match="Bound planner Candidate is immutable"):
+        repo.get_db().execute(
+            "UPDATE candidate_planning_generations SET last_candidate_id=? WHERE id=?",
+            (churn.id, generation["id"]),
+        )
+
+
 def test_ai_entry_activation_is_forward_only_and_reenable_rotates_identity():
     from aletheia.config.loader import load_config, save_config
 
@@ -702,12 +725,135 @@ def test_ai_entry_compiler_emits_v2_without_momentum_treatment(monkeypatch):
     primary = EntryAnchorV1(venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference", price=100, directional_role="entry_candidate", known_at_ms=1, source_fact_refs=("candidate:c1",), source_fingerprint="candidate")
     invalidation = EntryAnchorV1(venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing", price=95, directional_role="invalidation_candidate", known_at_ms=1, source_fact_refs=("swing:s1",), source_fingerprint="swing")
     context = EntryAnalysisContextV1(
-        analysis_cutoff_at="2026-09-02T00:00:00Z", instrument={"venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, planning_generation={"id":"g1","planner_contract_version":"entry-planner/v3","candidate_id":"c1","candidate_family":"momentum"}, candidate={"fact_refs":["candidate:c1"]}, candle_windows={tf:{"availability":"available","bars":[]} for tf in ("4h","1h","15m")}, market_structure={"15m":{"atr14":2.0,"break_tolerance":0.1},"fact_refs":[]}, quant_context={"fact_refs":[]}, portfolio_context={"availability":"unavailable"}, execution_context={"availability":"available","bid":99.9,"ask":100.1,"spread_bps":2,"depth_10bps_usd":100_000,"estimated_costs":0.1}, anchors=(primary,invalidation), entry_profiles=({"id":"anchor-retrace-reclaim","version":"v1"},), learning_context={"availability":"unavailable"},
+        analysis_cutoff_at="2026-09-02T00:00:00Z", instrument={"venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, planning_generation={"id":"g1","planner_contract_version":"entry-planner/v3","candidate_id":"c1","candidate_family":"momentum"}, candidate={"candidate_price":100,"fact_refs":["candidate:c1"]}, candle_windows={"4h":{"availability":"unavailable","bars":[]},"1h":{"availability":"unavailable","bars":[]},"15m":{"availability":"available","bars":[{} for _ in range(96)]}}, market_structure={"15m":{"atr14":2.0,"break_tolerance":0.1},"fact_refs":[]}, quant_context={"values":{"atr_pct":2},"fact_refs":[]}, portfolio_context={"availability":"unavailable"}, execution_context={"availability":"available","bid":99.9,"ask":100.1,"spread_bps":2,"depth_10bps_usd":100_000,"estimated_costs":0.1}, anchors=(primary,invalidation), entry_profiles=({"id":"anchor-retrace-reclaim","version":"v1"},), learning_context={"availability":"unavailable"},
     )
     hypothesis = EntryHypothesisV1(decision="ENTRY_PLAN", reason_code="OK", thesis="bounded", scenario="reclaim", setup_archetype="continuation", primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id, entry_profile_id="anchor-retrace-reclaim", entry_profile_version="v1", execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,))
-    plan = compile_ai_entry_plan({"id":"g1","last_candidate_id":"c1","candidate_family":"momentum","venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, {"id":"c1","entry_price_usd":100}, {"atr_pct":2}, context, hypothesis, cfg)
+    plan = compile_ai_entry_plan({"id":"g1","last_candidate_id":"candidate-b","candidate_family":"momentum","venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, context, hypothesis, cfg)
+    assert plan.candidate_id == "c1"
     assert (plan.version, plan.behavior_version, plan.treatment_exposure_id) == ("entry-plan/v2", "ai-entry-hypothesis-compiler/v1", None)
     assert plan.trigger_spec_id == "anchor-retrace-reclaim"
+
+
+def test_ai_entry_v3_frozen_lineage_reaches_attributed_proposal(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
+    from aletheia.trading.entry_analysis import (
+        EntryAnalysisContextV1, EntryAnchorV1, EntryHypothesisV1, canonical_json, fingerprint,
+    )
+    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngineV2
+    from aletheia.universe.fast_stream import FastMarketEvent
+    from aletheia.universe.fast_trigger import TriggerPolicy
+
+    activation = datetime.now(timezone.utc) - timedelta(seconds=1)
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.agent.ai_entry_hypothesis_enabled = True
+    cfg.agent.ai_entry_hypothesis_activated_at = activation
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.live.state = "live_disabled"
+    save_config(cfg)
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert generation["planner_contract_version"] == "entry-planner/v3"
+    assert repo.claim_next_candidate_planning("v3-owner")["id"] == generation["id"]
+
+    primary = EntryAnchorV1(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference",
+        price=100, directional_role="entry_candidate", known_at_ms=1,
+        source_fact_refs=(f"candidate:{candidate.id}",), source_fingerprint="candidate",
+    )
+    invalidation = EntryAnchorV1(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing",
+        price=95, directional_role="invalidation_candidate", known_at_ms=1,
+        source_fact_refs=("swing:s1",), source_fingerprint="swing",
+    )
+    context = EntryAnalysisContextV1(
+        analysis_cutoff_at=datetime.now(timezone.utc).isoformat(),
+        instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
+        planning_generation={"id": generation["id"], "planner_contract_version": "entry-planner/v3", "activation_identity": generation["activation_identity"], "candidate_id": candidate.id, "candidate_family": "momentum"},
+        candidate={"candidate_price": 100, "fact_refs": [f"candidate:{candidate.id}"]},
+        candle_windows={"4h": {"availability": "unavailable", "bars": []}, "1h": {"availability": "unavailable", "bars": []}, "15m": {"availability": "available", "bars": [{} for _ in range(96)]}},
+        market_structure={"15m": {"atr14": 2.0, "break_tolerance": 0.1}, "fact_refs": []},
+        quant_context={"values": {"atr_pct": 2.0}, "fact_refs": []},
+        portfolio_context={"availability": "available", "fact_refs": []},
+        execution_context={"availability": "available", "bid": 99.9, "ask": 100.1, "spread_bps": 2, "depth_10bps_usd": 100_000, "estimated_costs": 0.1, "fact_refs": []},
+        anchors=(primary, invalidation),
+        entry_profiles=({"id": "anchor-retrace-reclaim", "version": "v1"},),
+        learning_context={"availability": "unavailable"},
+    )
+    input_payload = canonical_json(context.model_dump(mode="json"))
+    assert repo.bind_candidate_planner_input(
+        generation["id"], "v3-owner", input_payload,
+        fingerprint(context.model_dump(mode="json")),
+    )
+    hypothesis = EntryHypothesisV1(
+        decision="ENTRY_PLAN", reason_code="OK", thesis="bounded", scenario="reclaim",
+        setup_archetype="continuation", primary_anchor_ref=primary.anchor_id,
+        invalidation_anchor_ref=invalidation.anchor_id,
+        entry_profile_id="anchor-retrace-reclaim", entry_profile_version="v1",
+        execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY",
+        supporting_fact_refs=(primary.anchor_id,),
+    )
+    policy = SimpleNamespace(
+        policy_id="test", revision=1,
+        capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100),
+        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
+    )
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.resolve_risk_policy", lambda *_a, **_k: SimpleNamespace(policy=policy, policy_hash="hash"))
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
+    monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
+    plan = compile_ai_entry_plan(generation, context, hypothesis, cfg)
+    assert repo.complete_candidate_planning_with_plan(
+        generation["id"], "v3-owner", plan,
+    )[0] == "planned"
+    stored = EntryPlan.model_validate_json(repo.get_entry_plan(plan.plan_id)["plan_json"])
+
+    params = stored.trigger_params
+    engine = MomentumTriggerEngineV2(
+        instrument=InstrumentId.from_parts("bitget", "BTC/USDT", "perp"),
+        direction="long", breakout_level=params["breakout_level"],
+        pullback_band=(params["pullback_low"], params["pullback_high"]),
+        sweep_band=(params["sweep_low"], params["sweep_high"]),
+        entry_zone=(params["entry_low"], params["entry_high"]),
+        invalidation_price=params["invalidation_price"], atr_abs=params["atr_abs"],
+        geometry_version=params["geometry_version"], geometry_fingerprint=params["geometry_fingerprint"],
+        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
+        trigger_spec_id=stored.trigger_spec_id, trigger_spec_version=stored.trigger_spec_version,
+    )
+    engine.confirm_subscription()
+    instrument = engine.instrument
+    event = lambda kind, at, sequence, **values: FastMarketEvent(
+        event_type=kind, instrument=instrument, exchange_timestamp_ms=at,
+        received_timestamp_ms=at, sequence=sequence, **values,
+    )
+    events = (
+        event("quote", 1_000, 1, bid=99.9, ask=99.95),
+        event("depth", 1_050, 1, bids=((100.1, 10.0),), asks=((100.2, 10.0),)),
+        event("trade", 1_100, 1, price=100.0, size=10.0, side="buy"),
+        event("trade", 1_250, 2, price=100.0, size=4.0, side="sell"),
+        event("quote", 1_200, 2, bid=99.8, ask=99.9),
+        event("quote", 1_500, 3, bid=100.05, ask=100.15),
+        event("quote", 1_900, 4, bid=100.1, ask=100.2),
+    )
+    ready = None
+    for item in events:
+        ready = engine.observe(item) or ready
+    observed = datetime.now(timezone.utc)
+    proposal = build_entry_plan_order_intent(
+        stored, bid=ready.bid, ask=ready.ask, observed_at=observed.isoformat(),
+        source_observed_at=observed.isoformat(), trigger_evidence=ready.entry_trigger,
+        now=observed,
+    )
+    attribution = json.loads(proposal.attribution_snapshot)
+    assert attribution["entry_plan_version"] == "entry-plan/v2"
+    assert attribution["entry_behavior_version"] == "ai-entry-hypothesis-compiler/v1"
+    assert attribution["analysis_context_fingerprint"] == context.context_fingerprint
+    assert attribution["entry_trigger"]["trigger_spec_id"] == "anchor-retrace-reclaim"
 
 
 def test_plan_intent_portable_schema_requires_every_strict_property():
