@@ -540,6 +540,16 @@ def verify_audit_chain() -> dict:
                     if record_prev is None:
                         prev_hash = _hash_record(raw_line)
                         continue
+                    if not (
+                        isinstance(record_prev, str)
+                        and len(record_prev) == 64
+                        and all(char in "0123456789abcdef" for char in record_prev)
+                    ):
+                        errors.append(f"{label}: invalid _prev_hash")
+                        rec_ts = record.get("created_at") or record.get("timestamp") or ""
+                        error_timestamps.append(str(rec_ts))
+                        prev_hash = _hash_record(raw_line)
+                        continue
 
                     if record_prev != prev_hash:
                         errors.append(
