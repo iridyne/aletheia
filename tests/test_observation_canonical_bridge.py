@@ -648,6 +648,33 @@ def test_retention_claim_cannot_invent_unbound_source_identity():
         )
 
 
+def test_lab_cutover_rejects_fabricated_active_retention_claim():
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import get_lab_db
+
+    db = get_lab_db()
+    db.execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('claim-cutover-proof', 'test', 'v1', 1, 'slot-claim-cutover-proof', 'observe_only', 'active', '{}', "
+        "'claim-cutover-spec', '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00', "
+        "'2026-01-03T00:00:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO observation_retention_claims "
+        "(claim_id, observation_id, generation, source_kind, source_ref, source_hash, claim_domain, "
+        "derived_from_fingerprint, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+        (
+            "fabricated-claim", "claim-cutover-proof", 1, "test", "unbound-source", "a" * 64,
+            "outcomes", "derived", "2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="authority_cutover_retention_claim_unproven"):
+        set_authority_source("lab", actor="owner", reason="fabricated claim")
+
+
 def test_evaluation_source_cutoff_rejects_unstructured_text():
     from aletheia.observation_lab.canonical import record_observation_evaluation
     from aletheia.observation_lab.db import get_lab_db

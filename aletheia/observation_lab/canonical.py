@@ -1084,6 +1084,26 @@ def _assert_lab_cutover_ready(
                     "WHERE status='active' AND source_kind='outcome_candidate_key'"
                 ).fetchall()
             }
+            # A claim row is only a protection proof when its source identity
+            # can still be derived from the immutable Lab exposure/unit.  Do
+            # this validation at the cutover boundary as well as on insert:
+            # historical imports or direct DB edits must not turn a fabricated
+            # active claim into retention authority.
+            for claim in lab.execute(
+                "SELECT observation_id, generation, source_kind, source_ref, source_hash "
+                "FROM observation_retention_claims WHERE status='active' ORDER BY claim_id"
+            ).fetchall():
+                try:
+                    _validate_retention_claim_source(
+                        lab,
+                        observation_id=str(claim[0]),
+                        generation=int(claim[1]),
+                        source_kind=str(claim[2]),
+                        source_ref=str(claim[3]),
+                        source_hash=str(claim[4]),
+                    )
+                except Exception as exc:
+                    raise RuntimeError("authority_cutover_retention_claim_unproven") from exc
     except (FileNotFoundError, OSError, sqlite3.Error) as exc:
         raise RuntimeError("authority_cutover_retention_unavailable") from exc
     if exposed_outcomes - claimed_outcomes:
