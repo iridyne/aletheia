@@ -690,9 +690,18 @@ class BinanceFastMarketStream:
                     payload = json.loads(message.data)
                 except (TypeError, json.JSONDecodeError):
                     continue
-                if payload.get("result") is None and isinstance(payload.get("id"), int):
-                    self._pending_acks.discard(payload["id"])
-                    self._refresh_confirmation()
+                request_id = payload.get("id")
+                if type(request_id) is int and request_id in self._pending_acks:
+                    if "error" in payload:
+                        self._health = self._health.model_copy(
+                            update={
+                                "subscriptions_confirmed": False,
+                                "reason": "fast_trigger_subscription_rejected:binance",
+                            }
+                        )
+                    elif "result" in payload and payload["result"] is None:
+                        self._pending_acks.remove(request_id)
+                        self._refresh_confirmation()
                     continue
                 instrument = _binance_instrument(payload.get("s"), market_type, self._instruments)
                 if market_type == "spot" and payload.get("e") == "depthUpdate" and instrument is not None:

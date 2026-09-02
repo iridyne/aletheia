@@ -1900,6 +1900,57 @@ async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync(
 
 
 @pytest.mark.asyncio
+async def test_binance_subscription_confirmation_rejects_error_and_unknown_acks():
+    import aiohttp
+
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import BinanceFastMarketStream, FastStreamHealth
+
+    class _Ws:
+        def __init__(self):
+            self.messages = asyncio.Queue()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return await self.messages.get()
+
+    async def send(payload):
+        await ws.messages.put(
+            aiohttp.WSMessage(
+                type=aiohttp.WSMsgType.TEXT,
+                data=json.dumps(payload),
+                extra=None,
+            )
+        )
+        await asyncio.sleep(0)
+
+    stream = BinanceFastMarketStream()
+    stream._instruments = {InstrumentId.from_parts("binance", "BTC/USDT", "perp")}
+    stream._pending_acks = {7}
+    stream._health = FastStreamHealth(connected=True)
+    ws = _Ws()
+    reader = asyncio.create_task(stream._read_socket("perp", ws))
+
+    await send({"id": 99, "result": None})
+    assert stream._pending_acks == {7}
+    assert stream.health().subscriptions_confirmed is False
+
+    await send({"id": 7, "error": {"code": 2, "msg": "sensitive venue detail"}})
+    assert stream._pending_acks == {7}
+    assert stream.health().subscriptions_confirmed is False
+    assert stream.health().reason == "fast_trigger_subscription_rejected:binance"
+
+    await send({"id": 7, "result": None})
+    assert stream._pending_acks == set()
+    assert stream.health().subscriptions_confirmed is True
+
+    reader.cancel()
+    await asyncio.gather(reader, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_binance_connect_uses_managed_proxy_session(monkeypatch):
     from aletheia.universe import fast_stream
 
