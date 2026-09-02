@@ -18,6 +18,8 @@ Old rows (produced with no active session) stay NULL — history is never fabric
 These tests are written before the production code (TDD).
 """
 
+import json
+import os
 import sqlite3
 
 import pytest
@@ -44,6 +46,17 @@ def setup_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     _invalidate_config_cache()
+
+
+def _write_process_binding(tmp_path, *, session_id, pid, process_started_at):
+    (tmp_path / "runtime-session-binding.json").write_text(
+        json.dumps({
+            "session_id": session_id,
+            "backend_pid": pid,
+            "process_started_at": process_started_at,
+        }),
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +127,12 @@ def test_start_session_persists_row_and_sets_current(tmp_path, monkeypatch):
     assert row["runtime_id"] == session["runtime_id"]
     assert row["ended_at"] is None
     assert not row["shutdown_clean"]
+    binding = json.loads(
+        (tmp_path / "runtime-session-binding.json").read_text(encoding="utf-8")
+    )
+    assert binding["session_id"] == session["session_id"]
+    assert binding["backend_pid"] == os.getpid()
+    assert binding["process_started_at"] > 0
 
     # current_provenance mirrors the active session.
     prov = rs.current_provenance()
@@ -304,6 +323,10 @@ def test_persist_failure_leaves_provenance_null(tmp_path, monkeypatch):
     assert session["durable"] is False
     assert rs.current_session_id() is not None
     assert rs.current_session_durable() is False
+    binding = json.loads(
+        (tmp_path / "runtime-session-binding.json").read_text(encoding="utf-8")
+    )
+    assert binding["session_id"] is None
 
     # Child insert must leave runtime_session_id NULL.
     repo.insert_opportunity(Opportunity(id="opp-nodurable", symbol="BTC/USDT", market="spot"))
@@ -611,12 +634,56 @@ def test_external_gateway_session_matches_live_backend_process_start(tmp_path, m
     monkeypatch.setattr(pidfile, "read_pid", lambda: 123)
     monkeypatch.setattr(pidfile, "is_running", lambda: True)
     monkeypatch.setattr(psutil, "Process", _Process)
+    _write_process_binding(
+        tmp_path,
+        session_id="live-session",
+        pid=456,
+        process_started_at=datetime.fromisoformat(live_started).timestamp() - 1,
+    )
 
     session = rs.current_external_gateway_session([
         {"session_id": "live-session", "started_at": live_started},
         {"session_id": "stale-supervisor-match", "started_at": stale_started},
     ])
     assert session["session_id"] == "live-session"
+
+
+def test_external_gateway_session_rejects_nearby_prior_process(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from datetime import datetime
+
+    from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.gateway import frontdoor_route, pidfile
+    import psutil
+
+    prior_started = "2026-08-08T00:00:00+00:00"
+    current_started = "2026-08-08T00:01:00+00:00"
+
+    class _Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def create_time(self):
+            return datetime.fromisoformat(current_started).timestamp()
+
+        def children(self, recursive=False):
+            assert recursive is True
+            return [_Process(456)] if self.pid == 123 else []
+
+    monkeypatch.setattr(frontdoor_route, "read_frontdoor_route", lambda: {"backend_pid": 456})
+    monkeypatch.setattr(pidfile, "read_pid", lambda: 123)
+    monkeypatch.setattr(pidfile, "is_running", lambda: True)
+    monkeypatch.setattr(psutil, "Process", _Process)
+    _write_process_binding(
+        tmp_path,
+        session_id="missing-current-session",
+        pid=456,
+        process_started_at=datetime.fromisoformat(current_started).timestamp(),
+    )
+
+    assert rs.current_external_gateway_session([
+        {"session_id": "prior-session", "started_at": prior_started},
+    ]) is None
 
 
 def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
