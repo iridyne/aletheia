@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from math import inf, nan
+import traceback
 
 import pytest
 from fastapi import HTTPException
@@ -56,6 +57,22 @@ def test_webhook_timeout_boundaries_are_accepted():
 def test_enabled_webhook_rejects_unusable_url(url):
     with pytest.raises(ValidationError):
         WebhookConfig(enabled=True, url=url)
+
+
+def test_invalid_webhook_error_does_not_expose_secret():
+    secret = "GBF_TEST_SECRET_2684"
+
+    with pytest.raises(ValidationError) as exc_info:
+        WebhookConfig(enabled=True, url="not a URL", secret=secret)
+
+    rendered = "\n".join(
+        (
+            str(exc_info.value),
+            repr(exc_info.value),
+            "".join(traceback.format_exception(exc_info.value)),
+        )
+    )
+    assert secret not in rendered
 
 
 @pytest.mark.parametrize(
