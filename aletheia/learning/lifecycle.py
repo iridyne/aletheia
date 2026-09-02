@@ -509,7 +509,16 @@ def _execute_trial_admission(
         created_at=now,
     )
     try:
-        with transaction():
+        with transaction(immediate=True):
+            gate_reason = trial_admission_gate_reason(
+                hypothesis.path_id,
+                persist_config_migrations=False,
+            )
+            if gate_reason is not None:
+                return LifecycleResult(
+                    "hold", "admit_trial", gate_reason,
+                    experiment_id, verdict_id=verdict_id,
+                )
             if not insert_lifecycle_event(event):
                 existing = get_lifecycle_event_by_dedup_key(dedup_key)
                 return LifecycleResult(
@@ -674,7 +683,17 @@ def _promote_one_stage(
         created_at=now,
     )
     try:
-        with transaction():
+        with transaction(immediate=True):
+            gate_reason = _promotion_gate_reason(
+                hypothesis.path_id,
+                persist_config_migrations=False,
+            )
+            if gate_reason is not None:
+                return LifecycleResult(
+                    "hold", "promote_stage", gate_reason,
+                    experiment.experiment_id,
+                    verdict_id=str(verdict["verdict_id"]),
+                )
             if not insert_lifecycle_event(event):
                 existing = get_lifecycle_event_by_dedup_key(dedup_key)
                 return LifecycleResult(

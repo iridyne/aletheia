@@ -127,7 +127,13 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
                 {
                     "information_policy_epoch": service.POLICY_EPOCH_LABEL,
                         "member_fingerprint": service._member_fingerprint(
-                            fingerprint_members, None
+                            fingerprint_members,
+                            None,
+                            policy_id=(
+                                str(cfg.universe.candidate_selection_policy_epoch)
+                                if failure_kind == "candidate_authority_evidence"
+                                else "legacy_total_score_v1"
+                            ),
                         ),
                 }
             )

@@ -184,6 +184,13 @@ def test_target_snapshot_empty_is_intentional_no_fill(svc, enabled_cfg):
     ):
         assert svc.get_current_universe() == []
 
+        enabled_cfg.universe = UniverseConfig.model_validate({
+            **enabled_cfg.universe.model_dump(mode="json"),
+            "candidate_selection_policy": "legacy_total_score_v1",
+            "candidate_selection_policy_epoch": None,
+        })
+        assert svc.get_current_universe() == []
+
 
 def test_returns_active_members(svc, enabled_cfg):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
@@ -451,6 +458,12 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
         changed = deepcopy(base)
         changed[0][field] = value
         assert _member_fingerprint(changed, "risk_on") != baseline, field
+
+    assert _member_fingerprint(
+        [], "risk_on", policy_id="legacy_total_score_v1",
+    ) != _member_fingerprint(
+        [], "risk_on", policy_id="candidate-selection-utility:epoch",
+    )
 
 
 def test_previous_snapshot_fingerprint_reads_frozen_semantic_payload(monkeypatch):

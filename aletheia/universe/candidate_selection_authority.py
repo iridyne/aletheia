@@ -30,6 +30,10 @@ def candidate_selection_policy_identity(cfg: object) -> dict[str, object]:
             "fast_trigger_mode": cfg.fast_trigger.mode,
             "monitoring_venue": fast_market_data_venue_for_config(cfg),
             "paper_execution_mode": cfg.exchange.paper_execution_mode,
+            "enabled_markets": {
+                str(market): bool(enabled)
+                for market, enabled in sorted(cfg.exchange.enabled_markets.items())
+            },
         }
         identity["preferred_market_type"] = cfg.exchange.preferred_market_type
     if hasattr(cfg, "trading"):

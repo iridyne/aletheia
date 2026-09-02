@@ -3032,36 +3032,38 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
     from aletheia.universe.candidate_selection_evaluation import (
         evaluate_candidate_selection_policy,
     )
+    from aletheia.storage import repositories as repo
 
-    cfg = load_config()
-    overlap_block_reason = candidate_selection_overlap_block_reason()
-    if overlap_block_reason is not None:
-        raise HTTPException(409, overlap_block_reason)
-    try:
-        qualification = evaluate_candidate_selection_policy()
-    except Exception as exc:
-        raise HTTPException(
-            503,
-            detail={
-                "code": "candidate_selection_qualification_unavailable",
-                "message": "Candidate Selection qualification evidence is unavailable.",
-            },
-        ) from exc
-    if str(qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
-        raise HTTPException(409, "candidate_selection_policy_epoch_changed")
-    proposed = UniverseConfig.model_validate({
-        **cfg.universe.model_dump(mode="json"),
-        "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
-        "candidate_selection_policy_epoch": req.expected_policy_epoch,
-    })
-    block_reason = candidate_selection_authority_block_reason(
-        cfg.model_copy(update={"universe": proposed}), qualification,
-    )
-    if block_reason is not None:
-        raise HTTPException(409, block_reason)
-    before = cfg.universe.model_dump(mode="json")
-    cfg.universe = proposed
-    save_config(cfg)
+    with repo.transaction(immediate=True):
+        cfg = load_config()
+        overlap_block_reason = candidate_selection_overlap_block_reason()
+        if overlap_block_reason is not None:
+            raise HTTPException(409, overlap_block_reason)
+        try:
+            qualification = evaluate_candidate_selection_policy()
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                detail={
+                    "code": "candidate_selection_qualification_unavailable",
+                    "message": "Candidate Selection qualification evidence is unavailable.",
+                },
+            ) from exc
+        if str(qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+            raise HTTPException(409, "candidate_selection_policy_epoch_changed")
+        proposed = UniverseConfig.model_validate({
+            **cfg.universe.model_dump(mode="json"),
+            "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+            "candidate_selection_policy_epoch": req.expected_policy_epoch,
+        })
+        block_reason = candidate_selection_authority_block_reason(
+            cfg.model_copy(update={"universe": proposed}), qualification,
+        )
+        if block_reason is not None:
+            raise HTTPException(409, block_reason)
+        before = cfg.universe.model_dump(mode="json")
+        cfg.universe = proposed
+        save_config(cfg)
     from aletheia.files.jsonl import write_audit
     try:
         write_audit({
@@ -3075,7 +3077,8 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
         })
     except Exception as exc:
         cfg.universe = UniverseConfig.model_validate(before)
-        save_config(cfg)
+        with repo.transaction(immediate=True):
+            save_config(cfg)
         raise HTTPException(
             500,
             detail={

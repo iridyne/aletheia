@@ -729,6 +729,51 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
 
 
 @pytest.mark.anyio
+async def test_candidate_selection_admission_rechecks_overlap_under_writer_permit(
+    client, monkeypatch,
+):
+    from contextlib import contextmanager
+
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.universe import candidate_selection_authority as authority
+
+    entered = False
+    real_transaction = repo.transaction
+
+    @contextmanager
+    def competing_learning_transition(*, immediate=False, savepoint=False):
+        nonlocal entered
+        assert immediate is True
+        with real_transaction(immediate=immediate, savepoint=savepoint):
+            entered = True
+            yield
+
+    monkeypatch.setattr(repo, "transaction", competing_learning_transition)
+    monkeypatch.setattr(
+        authority,
+        "candidate_selection_overlap_block_reason",
+        lambda: (
+            "candidate_selection_overlapping_learning_authority"
+            if entered else None
+        ),
+    )
+
+    response = await client.post(
+        "/api/settings/universe/candidate-selection/admit",
+        json={
+            "expected_policy_epoch": "candidate-selection-utility:qualified",
+            "reason": "owner reviewed qualification",
+            "confirm_admission": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "candidate_selection_overlapping_learning_authority"
+    assert load_config().universe.candidate_selection_policy == "legacy_total_score_v1"
+
+
+@pytest.mark.anyio
 async def test_candidate_selection_admission_fails_closed_when_evidence_unavailable(
     client, monkeypatch,
 ):

@@ -403,11 +403,21 @@ def load_candidate_selection_outcomes(
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
+    cutoff = parse_utc_instant(settled_through) if settled_through else None
+    if settled_through and cutoff is None:
+        raise ValueError("candidate_selection_training_cutoff_invalid")
+    cutoff_clause = " AND b.captured_at < ?" if cutoff else ""
+    limit_clause = "" if cutoff else " LIMIT ?"
+    params: tuple[object, ...] = (
+        (CANDIDATE_SELECTION_RECORD_VERSION, cutoff.isoformat())
+        if cutoff else (CANDIDATE_SELECTION_RECORD_VERSION, int(limit_batches) * 1000)
+    )
     records = db.execute(
         "SELECT r.scanner_run_id, r.compact_output_json FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
-        "WHERE b.record_version=? ORDER BY b.captured_at DESC, r.candidate_index LIMIT ?",
-        (CANDIDATE_SELECTION_RECORD_VERSION, int(limit_batches) * 1000),
+        f"WHERE b.record_version=?{cutoff_clause} "
+        f"ORDER BY b.captured_at DESC, r.candidate_index{limit_clause}",
+        params,
     ).fetchall()
     labels_by_key: dict[str, list[dict[str, object]]] = {}
     for row in records:
@@ -445,12 +455,9 @@ def load_candidate_selection_outcomes(
         ).fetchall()
         for row in rows:
             base = dict(row)
-            if settled_through:
+            if cutoff:
                 entry_at = parse_utc_instant(base.get("entry_ts"))
                 settled_at = parse_utc_instant(base.get("settled_at"))
-                cutoff = parse_utc_instant(settled_through)
-                if cutoff is None:
-                    raise ValueError("candidate_selection_training_cutoff_invalid")
                 if entry_at is None or entry_at >= cutoff:
                     continue
                 if settled_at is not None and settled_at > cutoff:

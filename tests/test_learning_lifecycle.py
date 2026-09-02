@@ -345,8 +345,8 @@ def _configure(monkeypatch, cfg):
     import aletheia.learning.lifecycle as lifecycle
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
 
-    monkeypatch.setattr(authority, "load_config", lambda: cfg)
-    monkeypatch.setattr(lifecycle, "load_config", lambda: cfg)
+    monkeypatch.setattr(authority, "load_config", lambda **_kwargs: cfg)
+    monkeypatch.setattr(lifecycle, "load_config", lambda **_kwargs: cfg)
     monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
     synthetic_contract = lambda **kwargs: build_behavior_contract_hash(
@@ -953,6 +953,44 @@ def test_universe_learning_admission_is_blocked_by_candidate_target_authority(mo
 
     assert result.action == "hold"
     assert result.reason == "learning_overlapping_candidate_selection_authority"
+
+
+def test_universe_learning_admission_rechecks_candidate_authority_under_writer_permit(
+    monkeypatch,
+):
+    from contextlib import contextmanager
+
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
+    )
+    cfg = _settings(automation=True, paper=True, paths=[hypothesis.path_id])
+    _configure(monkeypatch, cfg)
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    real_transaction = lifecycle.transaction
+
+    @contextmanager
+    def competing_candidate_transition(*, immediate=False, savepoint=False):
+        assert immediate is True
+        with real_transaction(immediate=immediate, savepoint=savepoint):
+            cfg.universe.candidate_selection_policy = "candidate_selection_utility_v1"
+            yield
+
+    monkeypatch.setattr(lifecycle, "transaction", competing_candidate_transition)
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="attempt concurrent paper admission",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "learning_overlapping_candidate_selection_authority"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize(

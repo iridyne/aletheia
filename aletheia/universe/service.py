@@ -505,7 +505,12 @@ def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]
     return sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
 
 
-def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
+def _member_fingerprint(
+    allocated: list[dict],
+    regime_tag: str | None,
+    *,
+    policy_id: str = "legacy_total_score_v1",
+) -> str:
     """Deterministic hash of a sorted allocation for change-suppression.
 
     The fingerprint covers every persisted member field that can change the
@@ -566,6 +571,7 @@ def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
     payload = json.dumps(
         {
             "information_policy_epoch": POLICY_EPOCH_LABEL,
+            "candidate_selection_policy": policy_id,
             "members": material,
             "regime": regime_tag,
         },
@@ -889,10 +895,7 @@ class UniverseService:
 
         members = repo.list_universe_members(snap["id"], limit=limit or 50)
         if not members:
-            if (
-                cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
-                and snap.get("policy_id") == cfg.universe.candidate_selection_policy_epoch
-            ):
+            if str(snap.get("policy_id") or "").startswith("candidate-selection-utility:"):
                 return []
             logger.warning("Active snapshot has no members; falling back to static pool")
             return self._fallback_as_members(cfg)
@@ -911,10 +914,7 @@ class UniverseService:
             result.append(m_out)
 
         if not result:
-            if (
-                cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
-                and snap.get("policy_id") == cfg.universe.candidate_selection_policy_epoch
-            ):
+            if str(snap.get("policy_id") or "").startswith("candidate-selection-utility:"):
                 return []
             logger.warning("All universe members expired; falling back to static pool")
             return self._fallback_as_members(cfg)
@@ -1229,13 +1229,22 @@ class UniverseService:
             snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
             expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
             regime_tag_for_fp = current_regime.state if current_regime else None
+            snapshot_policy_id = (
+                str(cfg.universe.candidate_selection_policy_epoch or "")
+                if candidate_selection_authority_bundle is not None
+                else "legacy_total_score_v1"
+            )
 
             # Phase 3 retention: change-suppression on universe_snapshots.
             # If the allocation fingerprint matches the currently-active snapshot
             # AND that snapshot is younger than the heartbeat floor, skip the
             # write and reuse the previous snapshot. This collapses ~5 of every
             # 6 refreshes to a no-op when the top-N is stable.
-            new_fp = _member_fingerprint(allocated, regime_tag_for_fp)
+            new_fp = _member_fingerprint(
+                allocated,
+                regime_tag_for_fp,
+                policy_id=snapshot_policy_id,
+            )
             prev_fp, prev_snapshot_id, prev_age_sec = _previous_snapshot_fingerprint(
                 market_type,
             )
@@ -1392,11 +1401,7 @@ class UniverseService:
 
             snap = UniverseSnapshot(
                 market_type=market_type,
-                policy_id=(
-                    cfg.universe.candidate_selection_policy_epoch
-                    if candidate_selection_authority_bundle is not None
-                    else "legacy_total_score_v1"
-                ),
+                policy_id=snapshot_policy_id,
                 expires_at=expires_at,
                 summary=json.dumps(
                     {

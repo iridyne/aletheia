@@ -209,8 +209,6 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             records.append((decision, keys, payload.get("target_selected") is True))
         parsed.append((batch, records))
     outcomes = _rows_for_keys(all_keys)
-    observed_commits: set[str] = set()
-    observed_behaviors: set[str] = set()
     clusters = []
     for batch, records in parsed:
         captured = _parse_time(batch.get("captured_at"))
@@ -228,6 +226,9 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         cluster_complete = True
         cluster_expected_outcome_n = cluster_complete_outcome_n = 0
         cluster_exclusions: Counter[str] = Counter()
+        cluster_invalid: set[str] = set()
+        cluster_commits: set[str] = set()
+        cluster_behaviors: set[str] = set()
         try:
             capacity = int(json.loads(str(batch["policy_json"]))["universe"]["max_candidates"])
         except (KeyError, TypeError, ValueError):
@@ -241,13 +242,13 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
                 row = outcomes.get(str(key))
                 provenance_reason = _runtime_provenance_reason(row) if row else None
                 if provenance_reason:
-                    invalid.add(provenance_reason)
+                    cluster_invalid.add(provenance_reason)
                     cluster_exclusions[provenance_reason] += 1
                     cluster_complete = False
                     continue
                 if row and row.get("status") == "settled":
-                    observed_commits.add(str(row["producer_commit"]))
-                    observed_behaviors.add(str(row["producer_behavior_fingerprint"]))
+                    cluster_commits.add(str(row["producer_commit"]))
+                    cluster_behaviors.add(str(row["producer_behavior_fingerprint"]))
                 assessment = assess_candidate_outcome(row, as_of_at=now) if row else None
                 if assessment and assessment.eligible:
                     cluster_complete_outcome_n += 1
@@ -296,6 +297,9 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             "expected_outcome_n": cluster_expected_outcome_n,
             "complete_outcome_n": cluster_complete_outcome_n,
             "exclusion_counts": cluster_exclusions,
+            "invalid_reasons": cluster_invalid,
+            "observed_commits": cluster_commits,
+            "observed_behaviors": cluster_behaviors,
             "target": sum(target_values) / capacity,
             "legacy": sum(legacy_values) / capacity,
             "target_values": target_values,
@@ -307,16 +311,6 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             "target_symbols": target_symbols,
             "legacy_symbols": legacy_symbols,
         })
-    if len(observed_commits) != 1:
-        invalid.add("mixed_runtime_commit")
-    if len(observed_behaviors) != 1:
-        invalid.add("mixed_runtime_behavior")
-    report["runtime_provenance"] = {
-        "producer_commit": next(iter(observed_commits)) if len(observed_commits) == 1 else None,
-        "behavior_fingerprint": next(iter(observed_behaviors)) if len(observed_behaviors) == 1 else None,
-    }
-    if (report.get("selection_policy") or {}).get("runtime_identity") != report["runtime_provenance"]:
-        invalid.add("runtime_policy_identity_mismatch")
     fixed_look = []
     fixed_look_population = []
     days: set[date] = set()
@@ -330,6 +324,24 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             and _longest_days(days) >= _MIN_CONSECUTIVE_DAYS
         ):
             break
+    observed_commits = {
+        value for cluster in fixed_look_population for value in cluster["observed_commits"]
+    }
+    observed_behaviors = {
+        value for cluster in fixed_look_population for value in cluster["observed_behaviors"]
+    }
+    for cluster in fixed_look_population:
+        invalid.update(cluster["invalid_reasons"])
+    if len(observed_commits) != 1:
+        invalid.add("mixed_runtime_commit")
+    if len(observed_behaviors) != 1:
+        invalid.add("mixed_runtime_behavior")
+    report["runtime_provenance"] = {
+        "producer_commit": next(iter(observed_commits)) if len(observed_commits) == 1 else None,
+        "behavior_fingerprint": next(iter(observed_behaviors)) if len(observed_behaviors) == 1 else None,
+    }
+    if (report.get("selection_policy") or {}).get("runtime_identity") != report["runtime_provenance"]:
+        invalid.add("runtime_policy_identity_mismatch")
     expected_outcome_n = sum(cluster["expected_outcome_n"] for cluster in fixed_look_population)
     complete_outcome_n = sum(cluster["complete_outcome_n"] for cluster in fixed_look_population)
     coverage = complete_outcome_n / expected_outcome_n if expected_outcome_n else 0.0

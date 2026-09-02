@@ -546,7 +546,10 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     )
     repo.get_db().commit()
 
-    frozen = load_candidate_selection_outcomes(settled_through="2026-09-02T12:00:00+00:00")
+    frozen = load_candidate_selection_outcomes(
+        limit_batches=0,
+        settled_through="2026-09-02T12:00:00+00:00",
+    )
     assert frozen[0]["status"] == "pending"
     assert frozen[0]["settled_at"] is None
     assert frozen[0]["net_return_pct"] is None
@@ -784,6 +787,12 @@ def test_candidate_selection_epoch_identity_includes_execution_cost_assumptions(
     after = candidate_selection_policy_identity(cfg)
 
     assert before["cost_assumptions"] != after["cost_assumptions"]
+
+    before = candidate_selection_policy_identity(cfg)
+    cfg.exchange.enabled_markets["usdt_futures"] = False
+    after = candidate_selection_policy_identity(cfg)
+
+    assert before["action_route"] != after["action_route"]
 
 
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
@@ -1087,6 +1096,19 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     assert frozen["verdict"] == "positive", frozen
     assert frozen["fixed_look_cluster_n"] == 50
     assert frozen["full_arm_outcome_coverage"] == 1.0
+
+    repo.get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
+        "producer_commit='unattested-late-commit' WHERE outcome_candidate_key=?",
+        (
+            (late_captured + timedelta(hours=4, minutes=1)).isoformat(),
+            "candidate-selection-utility:v1:late:0:long",
+        ),
+    )
+    still_frozen = evaluate_candidate_selection_policy(
+        as_of_at=(start + timedelta(days=13)).isoformat(),
+    )
+    assert still_frozen["verdict"] == "positive", still_frozen
 
     repo.get_db().execute(
         "UPDATE filter_candidate_outcomes SET producer_commit='unattested-commit' "
