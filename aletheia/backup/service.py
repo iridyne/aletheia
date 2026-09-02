@@ -1,5 +1,7 @@
 """Backup service — creates and manages workspace backups."""
 
+import hashlib
+import json
 import logging
 import re
 import shutil
@@ -30,16 +32,51 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_BACKUP_PROFILES = frozenset({"online", "authoritative"})
+_GENESIS_HASH = "0" * 64
+
+
+def _audit_path_key(path: Path) -> tuple[int, int]:
+    if path.name == "audit.jsonl":
+        return (1, 0)
+    suffix = path.name.removeprefix("audit.jsonl.")
+    try:
+        return (0, int(suffix))
+    except ValueError:
+        return (2, 0)
+
+
 class BackupManifest:
     """Metadata for a backup bundle."""
 
-    def __init__(self, backup_id: str, created_at: str, data_dir: str, file_count: int, total_bytes: int, config_status: str = "absent"):
+    def __init__(
+        self,
+        backup_id: str,
+        created_at: str,
+        data_dir: str,
+        file_count: int,
+        total_bytes: int,
+        config_status: str = "absent",
+        *,
+        profile: str = "online",
+        sqlite_identity: str | None = None,
+        lab_sqlite_identity: str | None = None,
+        audit_head_hash: str = _GENESIS_HASH,
+        audit_inventory: list[dict[str, object]] | None = None,
+        checkpoint_identity: str | None = None,
+    ):
         self.backup_id = backup_id
         self.created_at = created_at
         self.data_dir = data_dir
         self.file_count = file_count
         self.total_bytes = total_bytes
         self.config_status = config_status
+        self.profile = profile
+        self.sqlite_identity = sqlite_identity
+        self.lab_sqlite_identity = lab_sqlite_identity
+        self.audit_head_hash = audit_head_hash
+        self.audit_inventory = audit_inventory or []
+        self.checkpoint_identity = checkpoint_identity
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +86,14 @@ class BackupManifest:
             "file_count": self.file_count,
             "total_bytes": self.total_bytes,
             "config_status": self.config_status,
+            "schema_version": 2,
+            "profile": self.profile,
+            "recovery_eligible": self.profile == "authoritative",
+            "sqlite_identity": self.sqlite_identity,
+            "lab_sqlite_identity": self.lab_sqlite_identity,
+            "audit_head_hash": self.audit_head_hash,
+            "audit_inventory": self.audit_inventory,
+            "checkpoint_identity": self.checkpoint_identity,
         }
 
 
@@ -93,7 +138,7 @@ class BackupService:
         finally:
             src_conn.close()
 
-    def create_backup(self, label: str | None = None) -> Path:
+    def create_backup(self, label: str | None = None, *, profile: str = "online") -> Path:
         """Create a full backup of the workspace. Returns archive path.
 
         #281: label is validated against _SAFE_LABEL_RE before use.
@@ -101,6 +146,11 @@ class BackupService:
         #287: SQLite snapshot failure propagates — no raw-copy fallback.
         #291: archive is written to a partial file and renamed atomically.
         """
+        if profile not in _BACKUP_PROFILES:
+            raise ValueError(
+                f"Unknown backup profile {profile!r}; expected one of {sorted(_BACKUP_PROFILES)}"
+            )
+
         # #281: validate label before constructing any paths
         if label is not None:
             if not _SAFE_LABEL_RE.match(label):
@@ -138,13 +188,115 @@ class BackupService:
             file_count = 0
             total_bytes = 0
 
-            # Copy app.db via WAL-safe SQLite snapshot (#59, #287).
-            db_path = self._data_dir / "app.db"
-            if db_path.exists():
-                dst = staging / "app.db"
-                self._snapshot_sqlite_db(db_path, dst)
-                file_count += 1
-                total_bytes += dst.stat().st_size
+            sqlite_identity: str | None = None
+            lab_sqlite_identity: str | None = None
+            audit_head_hash = _GENESIS_HASH
+            audit_inventory: list[dict[str, object]] = []
+
+            # The online profile is an explicitly non-recovery snapshot. The
+            # authoritative profile is used only by callers that have already
+            # quiesced every runtime writer; the audit lock closes the remaining
+            # cross-process JSONL race while the files are copied.
+            from aletheia.files.jsonl import _exclusive_file_lock
+
+            write_lock_acquired = False
+            if profile == "authoritative":
+                # Application writers share this permit; taking it here turns
+                # the caller's quiesce claim into an executable boundary for
+                # any still-running process that follows the normal write path.
+                from aletheia.storage.sqlite import acquire_write_lock
+
+                acquire_write_lock(timeout=30.0, path=self._data_dir / "app.db")
+                write_lock_acquired = True
+
+            audit_lock = _exclusive_file_lock(
+                self._data_dir / "logs" / ".audit.lock",
+                timeout_sec=30.0,
+            )
+            try:
+                with audit_lock:
+                    # Copy app.db via WAL-safe SQLite snapshot (#59, #287).
+                    db_path = self._data_dir / "app.db"
+                    if db_path.exists():
+                        dst = staging / "app.db"
+                        self._snapshot_sqlite_db(db_path, dst)
+                        sqlite_identity = sha256_file(dst)
+                        file_count += 1
+                        total_bytes += dst.stat().st_size
+
+                    # Observation Lab is an independently-owned durable store. Keep
+                    # its SQLite snapshot and cold archive files in the same managed
+                    # bundle so a recovery checkpoint cannot silently rewind Main only.
+                    lab_root = self._data_dir / "observation-lab"
+                    lab_db = lab_root / "lab.db"
+                    if lab_db.exists():
+                        dst_lab = staging / "observation-lab" / "lab.db"
+                        dst_lab.parent.mkdir(parents=True, exist_ok=True)
+                        self._snapshot_sqlite_db(lab_db, dst_lab)
+                        lab_sqlite_identity = sha256_file(dst_lab)
+                        file_count += 1
+                        total_bytes += dst_lab.stat().st_size
+
+                    # The audit copy must be made while holding the same lock as the
+                    # writer. Its inventory and head are recorded below as the exact
+                    # cross-store identity, rather than inferred from timestamps.
+                    logs_dir = self._data_dir / "logs"
+                    if logs_dir.exists():
+                        dst_logs = staging / "logs"
+                        dst_logs.mkdir(exist_ok=True)
+                        for item in logs_dir.rglob("*"):
+                            if item.is_file() and not _should_exclude(item):
+                                rel = item.relative_to(logs_dir)
+                                dst = dst_logs / rel
+                                dst.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(item, dst)
+                                file_count += 1
+                                total_bytes += item.stat().st_size
+
+                        audit_paths = [
+                            path
+                            for path in dst_logs.rglob("audit.jsonl*")
+                            if path.is_file()
+                            and (
+                                path.name == "audit.jsonl"
+                                or path.name.startswith("audit.jsonl.")
+                                and path.name[len("audit.jsonl."):].isdigit()
+                            )
+                        ]
+                        audit_paths.sort(key=_audit_path_key)
+                        last_line = ""
+                        for audit_path in audit_paths:
+                            audit_bytes = audit_path.read_bytes()
+                            audit_inventory.append({
+                                "path": audit_path.relative_to(staging).as_posix(),
+                                "sha256": hashlib.sha256(audit_bytes).hexdigest(),
+                                "size_bytes": len(audit_bytes),
+                            })
+                            for line in audit_bytes.decode("utf-8").splitlines():
+                                if line.strip():
+                                    last_line = line.strip()
+                        if last_line:
+                            audit_head_hash = hashlib.sha256(last_line.encode("utf-8")).hexdigest()
+
+                    # Finalized Lab generations are immutable cold evidence. Copy
+                    # them as payload (when present) so a joint recovery archive can
+                    # replay the same terminal result instead of relying on Main.
+                    archives_dir = lab_root / "archives"
+                    if archives_dir.exists():
+                        dst_archives = staging / "observation-lab" / "archives"
+                        for item in archives_dir.rglob("*"):
+                            if item.is_file() and not _should_exclude(item):
+                                rel = item.relative_to(archives_dir)
+                                dst = dst_archives / rel
+                                dst.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(item, dst)
+                                file_count += 1
+                                total_bytes += item.stat().st_size
+            finally:
+                if write_lock_acquired:
+                    from aletheia.storage.sqlite import release_write_lock
+
+                    release_write_lock()
 
             # Copy config with credential redaction — never raw-copy (#1175).
             from aletheia.config.redact import redact_config_dict
@@ -174,20 +326,6 @@ class BackupService:
                         file_count += 1
                         total_bytes += f.stat().st_size
 
-            # #58 fix: copy runtime-home logs/ (contains audit.jsonl).
-            logs_dir = self._data_dir / "logs"
-            if logs_dir.exists():
-                dst_logs = staging / "logs"
-                dst_logs.mkdir(exist_ok=True)
-                for item in logs_dir.rglob("*"):
-                    if item.is_file() and not _should_exclude(item):
-                        rel = item.relative_to(logs_dir)
-                        dst = dst_logs / rel
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(item, dst)
-                        file_count += 1
-                        total_bytes += item.stat().st_size
-
             # Copy artifacts (excluding secrets)
             artifacts_dir = self._data_dir / "artifacts"
             if artifacts_dir.exists():
@@ -211,6 +349,17 @@ class BackupService:
                     checksums.append(f"{h}  {rel}")
             (staging / "checksums.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
 
+            checkpoint_payload = {
+                "profile": profile,
+                "sqlite_identity": sqlite_identity,
+                "lab_sqlite_identity": lab_sqlite_identity,
+                "audit_head_hash": audit_head_hash,
+                "audit_inventory": audit_inventory,
+            }
+            checkpoint_identity = hashlib.sha256(
+                json.dumps(checkpoint_payload, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+
             # Write manifest
             manifest = BackupManifest(
                 backup_id=backup_id,
@@ -219,6 +368,12 @@ class BackupService:
                 file_count=file_count,
                 total_bytes=total_bytes,
                 config_status=config_status,
+                profile=profile,
+                sqlite_identity=sqlite_identity,
+                lab_sqlite_identity=lab_sqlite_identity,
+                audit_head_hash=audit_head_hash,
+                audit_inventory=audit_inventory,
+                checkpoint_identity=checkpoint_identity,
             )
             (staging / "manifest.yaml").write_text(
                 yaml.dump(manifest.to_dict(), default_flow_style=False, allow_unicode=True),

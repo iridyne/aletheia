@@ -1,9 +1,13 @@
 """Backup verification — checks integrity of backup archives."""
 
+import hashlib
+import json
 import re
 import tarfile
 import tempfile
 from pathlib import Path
+
+import yaml
 
 from aletheia.storage.hashing import sha256_file
 
@@ -22,6 +26,9 @@ class VerifyResult:
         self.checked_count: int = 0
         self.mismatches: list[str] = []
         self.errors: list[str] = []
+        self.profile: str | None = None
+        self.recovery_eligible: bool = False
+        self.checkpoint_identity: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -30,6 +37,9 @@ class VerifyResult:
             "checked_count": self.checked_count,
             "mismatches": self.mismatches,
             "errors": self.errors,
+            "profile": self.profile,
+            "recovery_eligible": self.recovery_eligible,
+            "checkpoint_identity": self.checkpoint_identity,
         }
 
 
@@ -67,6 +77,36 @@ def verify_backup(archive_path: Path) -> VerifyResult:
             result.errors.append("Empty archive")
             return result
         bundle_dir = subdirs[0]
+
+        manifest_file = bundle_dir / "manifest.yaml"
+        manifest: dict = {}
+        if manifest_file.exists():
+            try:
+                loaded = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    manifest = loaded
+                else:
+                    result.valid = False
+                    result.errors.append("manifest.yaml must contain a mapping")
+            except Exception as exc:
+                result.valid = False
+                result.errors.append(f"manifest.yaml could not be parsed: {exc}")
+
+        # Archives created before the profile contract remain verifiable, but
+        # they are never eligible as authoritative recovery checkpoints.
+        profile = manifest.get("profile", "legacy")
+        result.profile = profile if isinstance(profile, str) else None
+        result.recovery_eligible = profile == "authoritative"
+        checkpoint_identity = manifest.get("checkpoint_identity")
+        result.checkpoint_identity = (
+            checkpoint_identity if isinstance(checkpoint_identity, str) else None
+        )
+        if profile not in {"legacy", "online", "authoritative"}:
+            result.valid = False
+            result.errors.append(f"Unknown backup profile: {profile!r}")
+
+        if profile == "authoritative":
+            _verify_checkpoint_manifest(bundle_dir, manifest, result)
 
         # Read checksums
         checksums_file = bundle_dir / "checksums.txt"
@@ -146,3 +186,115 @@ def verify_backup(archive_path: Path) -> VerifyResult:
                 result.valid = False
 
     return result
+
+
+def _verify_checkpoint_manifest(
+    bundle_dir: Path, manifest: dict, result: VerifyResult,
+) -> None:
+    """Validate the cross-store identity recorded for an authoritative backup."""
+    sqlite_identity = manifest.get("sqlite_identity")
+    lab_sqlite_identity = manifest.get("lab_sqlite_identity")
+    audit_head_hash = manifest.get("audit_head_hash")
+    inventory = manifest.get("audit_inventory")
+    checkpoint_identity = manifest.get("checkpoint_identity")
+
+    if manifest.get("recovery_eligible") is not True:
+        result.valid = False
+        result.errors.append("authoritative checkpoint must advertise recovery_eligible=true")
+
+    if not isinstance(sqlite_identity, str) or not re.fullmatch(r"[0-9a-f]{64}", sqlite_identity):
+        result.valid = False
+        result.errors.append("authoritative checkpoint is missing a valid sqlite_identity")
+    app_db = bundle_dir / "app.db"
+    if isinstance(sqlite_identity, str) and app_db.exists():
+        if hashlib.sha256(app_db.read_bytes()).hexdigest() != sqlite_identity:
+            result.valid = False
+            result.errors.append("authoritative checkpoint sqlite_identity does not match app.db")
+    elif isinstance(sqlite_identity, str):
+        result.valid = False
+        result.errors.append("authoritative checkpoint declares sqlite_identity without app.db")
+
+    if lab_sqlite_identity is not None:
+        lab_db = bundle_dir / "observation-lab" / "lab.db"
+        if not isinstance(lab_sqlite_identity, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", lab_sqlite_identity
+        ):
+            result.valid = False
+            result.errors.append("authoritative checkpoint lab_sqlite_identity is invalid")
+        elif not lab_db.exists() or hashlib.sha256(lab_db.read_bytes()).hexdigest() != lab_sqlite_identity:
+            result.valid = False
+            result.errors.append("authoritative checkpoint lab_sqlite_identity does not match lab.db")
+
+    if not isinstance(audit_head_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", audit_head_hash):
+        result.valid = False
+        result.errors.append("authoritative checkpoint is missing a valid audit_head_hash")
+        audit_head_hash = "0" * 64
+    if not isinstance(inventory, list):
+        result.valid = False
+        result.errors.append("authoritative checkpoint audit_inventory must be a list")
+        inventory = []
+
+    actual_inventory: list[dict[str, object]] = []
+    seen_paths: set[str] = set()
+    last_line = ""
+    for item in inventory:
+        if not isinstance(item, dict):
+            result.valid = False
+            result.errors.append("authoritative checkpoint audit_inventory contains a non-object")
+            continue
+        path_value = item.get("path")
+        expected_hash = item.get("sha256")
+        expected_size = item.get("size_bytes")
+        if not isinstance(path_value, str) or not re.fullmatch(
+            r"logs/audit\.jsonl(?:\.\d+)?", path_value
+        ):
+            result.valid = False
+            result.errors.append(f"authoritative checkpoint audit path is invalid: {path_value!r}")
+            continue
+        if path_value in seen_paths:
+            result.valid = False
+            result.errors.append(f"authoritative checkpoint audit path is duplicated: {path_value}")
+            continue
+        seen_paths.add(path_value)
+        path = bundle_dir / path_value
+        try:
+            path.resolve().relative_to(bundle_dir.resolve())
+        except ValueError:
+            result.valid = False
+            result.errors.append(f"authoritative checkpoint audit path escapes bundle: {path_value}")
+            continue
+        if not path.is_file() or not isinstance(expected_hash, str) or not isinstance(expected_size, int):
+            result.valid = False
+            result.errors.append(f"authoritative checkpoint audit inventory mismatch: {path_value}")
+            continue
+        data = path.read_bytes()
+        actual_inventory.append({
+            "path": path_value,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size_bytes": len(data),
+        })
+        if actual_inventory[-1]["sha256"] != expected_hash or len(data) != expected_size:
+            result.valid = False
+            result.errors.append(f"authoritative checkpoint audit bytes changed: {path_value}")
+        for line in data.decode("utf-8").splitlines():
+            if line.strip():
+                last_line = line.strip()
+
+    actual_head = hashlib.sha256(last_line.encode("utf-8")).hexdigest() if last_line else "0" * 64
+    if actual_head != audit_head_hash:
+        result.valid = False
+        result.errors.append("authoritative checkpoint audit_head_hash does not match audit inventory")
+
+    payload = {
+        "profile": "authoritative",
+        "sqlite_identity": sqlite_identity,
+        "lab_sqlite_identity": lab_sqlite_identity,
+        "audit_head_hash": audit_head_hash,
+        "audit_inventory": inventory,
+    }
+    actual_identity = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if not isinstance(checkpoint_identity, str) or checkpoint_identity != actual_identity:
+        result.valid = False
+        result.errors.append("authoritative checkpoint identity does not match manifest contents")

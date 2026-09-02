@@ -370,7 +370,9 @@ def compact_database(
         # Create and verify a WAL-consistent recovery point before the first
         # mutating pragma. The backup service publishes archives atomically.
         notify("backup", "creating and verifying a WAL-consistent recovery point")
-        backup_path = BackupService(data_dir=db_file.parent).create_backup("pre_compact")
+        backup_path = BackupService(data_dir=db_file.parent).create_backup(
+            "pre_compact", profile="authoritative"
+        )
         verification = verify_backup(backup_path)
         if not verification.valid:
             raise RuntimeError(

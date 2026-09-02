@@ -28,6 +28,7 @@ def test_normal_activation_runs_migrations_without_restoring_backup(monkeypatch,
             "candidate_release": "new",
             "previous_release": "old",
             "backup_path": str(tmp_path / "backup.tar.gz"),
+            "backup_profile": "online",
         },
     )
     monkeypatch.setattr(
@@ -40,6 +41,15 @@ def test_normal_activation_runs_migrations_without_restoring_backup(monkeypatch,
         "validate_current_data",
         lambda: {"ok": True, "sqlite": "ok", "audit_records": 7},
     )
+    class FakeBackupService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def create_backup(self, *, label, profile):
+            assert profile == "authoritative"
+            return tmp_path / "authoritative.tar.gz"
+
+    monkeypatch.setattr(packaged, "BackupService", FakeBackupService)
 
     result = packaged_commands.prepare_activation_data()
     assert result == {
@@ -62,6 +72,7 @@ def test_manual_rollback_restores_exact_checkpoint_before_validation(monkeypatch
             "candidate_release": "old",
             "previous_release": "new",
             "backup_path": str(backup),
+            "backup_profile": "authoritative",
         },
     )
     calls: list[Path] = []
@@ -98,6 +109,7 @@ def test_rollback_data_preparation_rejects_missing_checkpoint(monkeypatch, tmp_p
             "candidate_release": "old",
             "previous_release": "new",
             "backup_path": str(missing),
+            "backup_profile": "authoritative",
         },
     )
 
