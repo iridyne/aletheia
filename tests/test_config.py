@@ -205,6 +205,55 @@ def test_unknown_config_error_exposes_safe_path_and_repair_hint(tmp_path):
     assert config_file.read_text(encoding="utf-8") == yaml_text
 
 
+@pytest.mark.parametrize(
+    ("enabled", "activated_at"),
+    [(False, None), (True, "2026-08-31T12:00:00+00:00")],
+)
+def test_removed_ai_entry_keys_are_migrated_before_strict_validation(
+    tmp_path, enabled, activated_at,
+):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["agent"].update({
+        "ai_entry_hypothesis_enabled": enabled,
+        "ai_entry_hypothesis_activated_at": activated_at,
+    })
+    config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    original = config_file.read_text(encoding="utf-8")
+
+    with patch.object(loader, "DATA_DIR", tmp_path), patch.object(
+        loader, "CONFIG_PATH", config_file
+    ), patch.object(loader, "_config_cache", None):
+        loaded = loader.load_config(persist_migrations=False)
+
+    assert loaded.agent.permission_mode == "Paper"
+    assert config_file.read_text(encoding="utf-8") == original
+
+
+def test_removed_ai_entry_keys_are_persisted_once_when_requested(tmp_path):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["agent"].update({
+        "ai_entry_hypothesis_enabled": True,
+        "ai_entry_hypothesis_activated_at": "2026-08-31T12:00:00+00:00",
+    })
+    config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with patch.object(loader, "DATA_DIR", tmp_path), patch.object(
+        loader, "CONFIG_PATH", config_file
+    ), patch.object(loader, "_config_cache", None):
+        loaded = loader.load_config()
+
+    persisted = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+    assert loaded.agent.permission_mode == "Paper"
+    assert "ai_entry_hypothesis_enabled" not in persisted["agent"]
+    assert "ai_entry_hypothesis_activated_at" not in persisted["agent"]
+
+
 def test_strict_config_load_preserves_dynamic_mappings(tmp_path):
     config_file = tmp_path / "config.yaml"
     data = AletheiaConfig().model_dump(mode="json")
