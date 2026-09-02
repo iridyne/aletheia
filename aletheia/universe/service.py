@@ -311,6 +311,71 @@ async def _persist_relative_rank_shadow_nonfatal(*args, **kwargs) -> int:
     return await _persist_twin_shadow_nonfatal(*args, **kwargs)
 
 
+async def _persist_candidate_selection_shadow_nonfatal(
+    *,
+    population: list[dict],
+    legacy_scored: list[dict],
+    legacy_allocated: list[dict],
+    scanner_run_id: str,
+    captured_at: str,
+    cfg,
+) -> int:
+    """Persist #2729 full-denominator evidence without joining authority failure."""
+
+    def build_and_persist() -> int:
+        from aletheia.universe.candidate_selection_shadow import (
+            build_candidate_selection_shadow_bundle,
+            candidate_selection_training_cutoff,
+            load_candidate_selection_outcomes,
+        )
+
+        action_routes = {
+            (
+                str(item.get("feature_snapshot_id") or ""),
+                str(item.get("venue") or ""),
+                str(item.get("market_type") or "spot"),
+                str(item.get("symbol") or ""),
+            ): fast_market_data_unavailability_reason(
+                cfg,
+                str(item.get("venue") or ""),
+                str(item.get("market_type") or "spot"),
+            )
+            for item in population
+        }
+        training_cutoff = candidate_selection_training_cutoff()
+        bundle = build_candidate_selection_shadow_bundle(
+            population,
+            scanner_run_id=scanner_run_id,
+            captured_at=captured_at,
+            universe_config=cfg.universe,
+            legacy_scored=legacy_scored,
+            legacy_allocated=legacy_allocated,
+            action_route_reasons=action_routes,
+            historical_outcomes=load_candidate_selection_outcomes(
+                settled_through=training_cutoff,
+            ),
+            estimator_training_cutoff=training_cutoff,
+        )
+        return repo.insert_universe_twin_shadow_bundle(
+            bundle.batch,
+            bundle.evidence,
+            outcomes=bundle.outcomes,
+        )
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(build_and_persist),
+            timeout=_TWIN_SHADOW_TIMEOUT_SEC,
+        )
+    except Exception as shadow_exc:
+        logger.warning(
+            "Candidate Selection Utility Shadow unavailable without authority impact: %s: %s",
+            type(shadow_exc).__name__,
+            shadow_exc,
+        )
+        return 0
+
+
 @contextmanager
 def _atomic_universe_publication():
     """Publish snapshot, Candidates, and derived setup facts as one unit.
@@ -1186,6 +1251,14 @@ class UniverseService:
                         "Registered %d experiment candidate outcome row(s) across full arms",
                         len(experiment_outcomes),
                     )
+                await _persist_candidate_selection_shadow_nonfatal(
+                    population=features_list,
+                    legacy_scored=unique_scored,
+                    legacy_allocated=allocated,
+                    scanner_run_id=run.id,
+                    captured_at=entry_ts,
+                    cfg=cfg,
+                )
                 _capture_universe_discovery_nonfatal(
                     scanner_run_id=run.id,
                     population=unique_scored,
@@ -1345,6 +1418,14 @@ class UniverseService:
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     snapshot_id=snap.id,
                 )
+            await _persist_candidate_selection_shadow_nonfatal(
+                population=features_list,
+                legacy_scored=unique_scored,
+                legacy_allocated=allocated,
+                scanner_run_id=run.id,
+                captured_at=entry_ts,
+                cfg=cfg,
+            )
             _capture_universe_discovery_nonfatal(
                 scanner_run_id=run.id,
                 population=unique_scored,

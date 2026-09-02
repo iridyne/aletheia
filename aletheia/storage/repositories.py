@@ -8066,6 +8066,42 @@ def _validate_universe_twin_prospective_bundle(
 ) -> None:
     """Reject partial or internally inconsistent prospective identities."""
 
+    if batch.record_version == "candidate-selection-utility-shadow-record/v1":
+        if batch.promotion_eligible or any(item.promotion_eligible for item in evidence):
+            raise ValueError("candidate_selection_shadow_promotion_not_allowed")
+        if any(item.shadow_authority_applied for item in evidence):
+            raise ValueError("candidate_selection_shadow_authority_not_allowed")
+        expected_keys: set[str] = set()
+        for item in evidence:
+            for field in (
+                "experiment_id", "policy_epoch_id", "behavior_contract_hash",
+                "primary_horizon", "outcome_contract_version", "metric_version",
+            ):
+                if getattr(item, field) != getattr(batch, field):
+                    raise ValueError("candidate_selection_shadow_identity_mismatch")
+            try:
+                payload = json.loads(item.compact_output_json)
+                keys = payload["outcome_candidate_keys"]
+                contract = payload["evidence_contract"]
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("candidate_selection_shadow_contract_invalid") from None
+            if contract.get("outcome_contract_version") != "candidate-selection-utility-outcome/v1":
+                raise ValueError("candidate_selection_shadow_outcome_contract_invalid")
+            if not isinstance(keys, dict) or set(keys) - {"long", "short"}:
+                raise ValueError("candidate_selection_shadow_outcome_keys_invalid")
+            expected_keys.update(str(value) for value in keys.values())
+        actual_keys = {str(row.get("outcome_candidate_key") or "") for row in outcome_rows}
+        if actual_keys != expected_keys or "" in actual_keys:
+            raise ValueError("candidate_selection_shadow_full_denominator_mismatch")
+        if any(
+            row.get("horizon") != "4h"
+            or row.get("scanner_family") != "candidate_selection_utility"
+            or row.get("entry_ts") != batch.captured_at
+            for row in outcome_rows
+        ):
+            raise ValueError("candidate_selection_shadow_outcome_identity_invalid")
+        return
+
     prospective_markers = (
         "experiment_id",
         "policy_epoch_id",
@@ -8166,7 +8202,10 @@ def insert_universe_twin_shadow_bundle(
     if any(item.captured_at != batch.captured_at for item in evidence):
         raise ValueError("universe_twin_shadow_capture_time_mismatch")
     _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
-    if batch.experiment_id is not None:
+    if (
+        batch.experiment_id is not None
+        and batch.record_version != "candidate-selection-utility-shadow-record/v1"
+    ):
         outcome_by_key = {str(row["outcome_candidate_key"]): row for row in outcome_rows}
         if len(outcome_by_key) != len(outcome_rows):
             raise ValueError("universe_twin_shadow_duplicate_outcome_identity")

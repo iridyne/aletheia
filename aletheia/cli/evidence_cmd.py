@@ -13,6 +13,37 @@ universe_discovery_app = typer.Typer(
     help="Frozen Universe candidate-selection benchmark.",
 )
 evidence_app.add_typer(universe_discovery_app, name="universe-discovery")
+candidate_selection_app = typer.Typer(
+    no_args_is_help=True,
+    help="Candidate Selection Utility Shadow evidence.",
+)
+evidence_app.add_typer(candidate_selection_app, name="candidate-selection")
+
+
+@candidate_selection_app.command("status")
+def candidate_selection_status(
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+):
+    """Show frozen estimator and prospective fixed-look qualification state."""
+    from aletheia.universe.candidate_selection_evaluation import (
+        evaluate_candidate_selection_policy,
+    )
+
+    result = evaluate_candidate_selection_policy()
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+    for key in (
+        "verdict", "policy_epoch_id", "training_cutoff", "expected_cluster_n",
+        "complete_cluster_n", "fixed_look_cluster_n", "full_arm_outcome_coverage",
+        "paired_utility_delta", "paired_utility_lower_bound", "qualification_eligible",
+        "promotion_eligible", "owner_admission_required",
+    ):
+        if key in result:
+            typer.echo(f"{key}: {result[key]}")
+    for key in ("blocking_reasons", "invalid_reasons"):
+        if result.get(key):
+            typer.echo(f"{key}: {', '.join(result[key])}")
 
 
 def _emit_benchmark(result: dict, json_output: bool) -> None:

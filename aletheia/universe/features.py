@@ -837,6 +837,10 @@ async def _fetch_single_feature(
         "symbol": symbol,
         "venue": asset.get("venue", ""),
         "market_type": asset.get("market_type", "spot"),
+        # Exact registry/source facts consumed by the target Hard Gate.  They are
+        # additive in-memory evidence and do not alter the legacy filter path.
+        "registry_status": asset.get("status"),
+        "feature_source": "universe_feature_snapshot/v1",
         "instrument_background": instrument_background,
         "analysis_context": analysis_context,
         "quote_volume_24h": quote_volume_24h,
@@ -951,6 +955,7 @@ async def _fetch_single_feature(
     feat["_computed_feature_snapshot"] = snap
     feat["feature_snapshot_id"] = snap.id
     feat["feature_ts"] = snap.ts
+    feat["feature_snapshot_ts"] = snap.ts
 
     # Phase 3 retention: change-suppression. Skip near-duplicate writes; force
     # a write past the 60-min heartbeat floor so per-asset freshness stays live.
@@ -966,12 +971,14 @@ async def _fetch_single_feature(
                 # the feat dict still references a real row.
                 feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
                 feat["feature_ts"] = prev_row.get("ts") or snap.ts
+                feat["feature_snapshot_ts"] = feat["feature_ts"]
             elif age_sec < _FEATURE_SUPPRESSION_HEARTBEAT_SEC:
                 # 30-60 min window — write only if the numeric shape moved.
                 if _feature_snapshot_equivalent(prev_row, snap):
                     should_write = False
                     feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
                     feat["feature_ts"] = prev_row.get("ts") or snap.ts
+                    feat["feature_snapshot_ts"] = feat["feature_ts"]
 
     if should_write:
         if snapshot_buffer is None:

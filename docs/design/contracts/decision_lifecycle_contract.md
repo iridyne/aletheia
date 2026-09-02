@@ -59,6 +59,12 @@ Universe 选出的行是 Candidate；物理表 `universe_members` 仅是兼容�
 但历史 `universe_scanner` Opportunity、Setup 和 conditional authorization 只能用于审计、恢复或
 在没有 current Entry Plan owner 时的显式 compatibility adapter，不能与 Entry Plan 并行取得权限。
 
+Candidate 选择目标合同见
+[`candidate_selection_utility_contract.md`](candidate_selection_utility_contract.md)。其 V1 当前仅写入
+同一 T0 全分母 Shadow 证据；`universe-step-v3` / `total_score` 仍是生产 Candidate authority，直至
+目标 policy epoch 自身通过前瞻资格且由 authenticated owner 显式 admission。任何 Shadow 失败不得
+改变当前 Candidate、Planning Generation、Entry Plan、Risk 或 Gateway 状态。
+
 > 固定持有期反事实结果遵循 `docs/design/contracts/opportunity_outcome_contract.md`。历史 gross-only 行、
 > 永续缺 funding、方向未知或过晚 ticker 只能用于解释，不得进入自动学习。
 
