@@ -153,6 +153,11 @@ def refresh_okx_demo_symbols() -> int:
         return await fetch_venue_capabilities("okx_demo")
 
     with _symbols_lock:
+        if (
+            _okx_demo_symbols is not None
+            and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL
+        ):
+            return sum(len(_okx_demo_symbols.get(key, frozenset())) for key in ("swap", "spot"))
         result = _run_coro(_load())
         if not isinstance(result, dict):
             raise RuntimeError("okx_demo_symbol_refresh_unavailable")
