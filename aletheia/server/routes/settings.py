@@ -455,6 +455,7 @@ def get_settings() -> SettingsResponse:
 
 @router.post("/trading-mandate")
 def set_trading_mandate(req: TradingMandateRequest):
+    from aletheia.files.jsonl import write_audit
     from aletheia.trading.trading_mandate import TradingMandateConfig, resolve_trading_mandate
 
     candidate = TradingMandateConfig.model_validate(
@@ -482,7 +483,6 @@ def set_trading_mandate(req: TradingMandateRequest):
     mutate_config(mutator)
     cfg = load_config()
     after = _trading_mandate_view(cfg)
-    from aletheia.files.jsonl import write_audit
 
     write_audit({
         "actor": "human",
@@ -2898,6 +2898,19 @@ def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
     }
 
 
+def _mirror_candidate_selection_authority_audits() -> str:
+    from aletheia.storage import repositories as repo
+
+    try:
+        mirrored = repo.reconcile_audit_event_outbox((
+            "candidate_selection_authority_admitted",
+            "candidate_selection_authority_rolled_back",
+        ))
+    except Exception:
+        mirrored = False
+    return "mirrored" if mirrored else "pending"
+
+
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "refresh_interval_min": (1, 60),
     "max_candidates": (5, 100),
@@ -3140,10 +3153,7 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
                 after_state=json.dumps(latest_proposed.model_dump(mode="json"), sort_keys=True),
                 message=f"Candidate Selection Utility admitted: {req.reason}",
             )
-            if not repo.insert_audit_event_once(event):
-                raise RuntimeError("candidate_selection_admission_audit_identity_conflict")
-            if not write_audit(event.model_dump(), mirror_db=False):
-                raise OSError("candidate_selection_admission_audit_chain_unavailable")
+            repo.insert_audit_event_outbox(event)
             latest.universe = latest_proposed
             admitted["cfg"] = latest
             return True
@@ -3161,7 +3171,10 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
                 },
             ) from exc
         cfg = admitted["cfg"]
-    return _candidate_selection_status(cfg)
+    return {
+        **_candidate_selection_status(cfg),
+        "audit_mirror_status": _mirror_candidate_selection_authority_audits(),
+    }
 
 
 @router.post("/universe/candidate-selection/rollback")
@@ -3171,7 +3184,6 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
     from aletheia.universe.candidate_selection_authority import LEGACY_CANDIDATE_POLICY
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
-    from aletheia.files.jsonl import write_audit
 
     with repo.transaction(immediate=True):
         rolled_back: dict[str, Any] = {}
@@ -3194,10 +3206,7 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
                 after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
                 message=f"Candidate Selection Utility rolled back: {req.reason}",
             )
-            if not repo.insert_audit_event_once(event):
-                raise RuntimeError("candidate_selection_rollback_audit_identity_conflict")
-            if not write_audit(event.model_dump(), mirror_db=False):
-                raise OSError("candidate_selection_rollback_audit_chain_unavailable")
+            repo.insert_audit_event_outbox(event)
             latest.universe = proposed
             rolled_back["cfg"] = latest
             return True
@@ -3213,7 +3222,10 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
                 },
             ) from exc
         cfg = rolled_back["cfg"]
-    return _candidate_selection_status(cfg)
+    return {
+        **_candidate_selection_status(cfg),
+        "audit_mirror_status": _mirror_candidate_selection_authority_audits(),
+    }
 
 
 # ---------------------------------------------------------------------------

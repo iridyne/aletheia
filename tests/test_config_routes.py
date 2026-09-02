@@ -693,14 +693,14 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     )
     assert route_restored.status_code == 200
 
-    def audit_under_writer_permit(_record, **_kwargs):
-        assert repo.get_db().in_transaction
-        return True
+    def audit_after_commit(events, **_kwargs):
+        assert not repo.get_db().in_transaction
+        return {event["id"] for event in events}
 
     with patch(
-        "aletheia.files.jsonl.write_audit",
-        side_effect=audit_under_writer_permit,
-    ) as write_audit:
+        "aletheia.files.jsonl.write_audits_deduplicated",
+        side_effect=audit_after_commit,
+    ) as write_audits:
         admitted = await client.post(
             "/api/settings/universe/candidate-selection/admit",
             json={
@@ -711,7 +711,8 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
         )
     assert admitted.status_code == 200, admitted.text
     assert admitted.json()["authority_enabled"] is True
-    assert write_audit.call_args.args[0]["event_type"] == "candidate_selection_authority_admitted"
+    assert write_audits.call_args.args[0][0]["event_type"] == "candidate_selection_authority_admitted"
+    assert admitted.json()["audit_mirror_status"] == "mirrored"
     assert load_config().universe.candidate_selection_policy_epoch == epoch
     assert repo.candidate_selection_epoch_is_admitted(epoch) is True
 
@@ -760,9 +761,9 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     assert restored_route.status_code == 200
 
     with patch(
-        "aletheia.files.jsonl.write_audit",
-        side_effect=audit_under_writer_permit,
-    ) as write_audit:
+        "aletheia.files.jsonl.write_audits_deduplicated",
+        side_effect=audit_after_commit,
+    ) as write_audits:
         rolled_back = await client.post(
             "/api/settings/universe/candidate-selection/rollback",
             json={
@@ -772,7 +773,8 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
         )
     assert rolled_back.status_code == 200, rolled_back.text
     assert rolled_back.json()["configured_policy"] == "legacy_total_score_v1"
-    assert write_audit.call_args.args[0]["event_type"] == "candidate_selection_authority_rolled_back"
+    assert write_audits.call_args.args[0][0]["event_type"] == "candidate_selection_authority_rolled_back"
+    assert rolled_back.json()["audit_mirror_status"] == "mirrored"
     assert load_config().universe.candidate_selection_policy_epoch is None
     assert repo.candidate_selection_epoch_is_admitted(epoch) is False
 
@@ -899,8 +901,8 @@ async def test_candidate_selection_admission_restores_legacy_when_audit_fails(
         lambda **_kwargs: qualification,
     )
     monkeypatch.setattr(
-        "aletheia.files.jsonl.write_audit",
-        lambda _record, **_kwargs: False,
+        "aletheia.storage.repositories.insert_audit_event_outbox",
+        lambda _event: (_ for _ in ()).throw(OSError("audit unavailable")),
     )
     response = await client.post(
         "/api/settings/universe/candidate-selection/admit",
@@ -943,8 +945,8 @@ async def test_candidate_selection_rollback_restores_target_when_audit_fails(
     })
     save_config(cfg)
     monkeypatch.setattr(
-        "aletheia.files.jsonl.write_audit",
-        lambda _record: False,
+        "aletheia.storage.repositories.insert_audit_event_outbox",
+        lambda _event: (_ for _ in ()).throw(OSError("audit unavailable")),
     )
 
     response = await client.post(
@@ -960,6 +962,35 @@ async def test_candidate_selection_rollback_restores_target_when_audit_fails(
     restored = load_config().universe
     assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
     assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
+
+
+def test_candidate_authority_audit_jsonl_uses_committed_outbox(monkeypatch):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    event = AuditEvent(
+        actor="human",
+        source="dashboard",
+        event_type="candidate_selection_authority_admitted",
+        entity_type="universe_config",
+        entity_id="candidate-selection-utility:outbox",
+    )
+    calls = []
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audits_deduplicated",
+        lambda events, **_kwargs: calls.append(events) or set(),
+    )
+    with repo.transaction(immediate=True):
+        repo.insert_audit_event_outbox(event)
+        assert calls == []
+
+    assert repo.reconcile_audit_event_outbox((event.event_type,)) is False
+    assert calls and calls[0][0]["id"] == event.id
+    row = repo.get_db().execute(
+        "SELECT jsonl_mirror_status FROM audit_events WHERE id=?",
+        (event.id,),
+    ).fetchone()
+    assert row["jsonl_mirror_status"] == "failed"
 
 
 @pytest.mark.anyio

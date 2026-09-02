@@ -389,8 +389,15 @@ async def _persist_candidate_selection_shadow_nonfatal(
     cfg,
     family_spread_tolerances: dict[str, float] | None = None,
     family_spread_evidence: dict[str, object] | None = None,
+    legacy_control_restricted: bool = False,
 ) -> int:
     """Persist #2729 full-denominator evidence without joining authority failure."""
+
+    if legacy_control_restricted:
+        logger.info(
+            "Candidate Selection Shadow skipped while Learning controls the legacy arm"
+        )
+        return 0
 
     def build_and_persist() -> int:
         bundle = _build_candidate_selection_bundle(
@@ -943,6 +950,14 @@ class UniverseService:
         snapshot_id, member_id, ttl_sec, expires_at, execution_eligible.
         """
         cfg = load_config()
+
+        try:
+            repo.reconcile_audit_event_outbox((
+                "candidate_selection_authority_admitted",
+                "candidate_selection_authority_rolled_back",
+            ))
+        except Exception as exc:
+            logger.warning("Candidate authority audit mirror retry failed: %s", exc)
         if not cfg.universe.enabled:
             return self._fallback_as_members(cfg)
 
@@ -1466,6 +1481,7 @@ class UniverseService:
                         cfg=cfg,
                         family_spread_tolerances=family_tolerances,
                         family_spread_evidence=family_spread_evidence,
+                        legacy_control_restricted=restrict_calibration_scope,
                     )
                 _capture_universe_discovery_nonfatal(
                     scanner_run_id=run.id,
@@ -1669,6 +1685,7 @@ class UniverseService:
                     cfg=cfg,
                     family_spread_tolerances=family_tolerances,
                     family_spread_evidence=family_spread_evidence,
+                    legacy_control_restricted=restrict_calibration_scope,
                 )
             _capture_universe_discovery_nonfatal(
                 scanner_run_id=run.id,

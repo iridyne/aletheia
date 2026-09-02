@@ -480,6 +480,90 @@ def insert_audit_event_once(event: AuditEvent) -> bool:
         tuple(data.values()),
     )
     return cursor.rowcount == 1
+
+
+def insert_audit_event_outbox(event: AuditEvent) -> None:
+    """Persist an audit fact and enroll its JSONL mirror in the same transaction."""
+
+    db = get_db()
+    if not db.in_transaction:
+        raise RuntimeError("audit outbox enrollment requires a transaction")
+    if not insert_audit_event_once(event):
+        raise RuntimeError("audit outbox identity conflict")
+    db.execute(
+        "UPDATE audit_events SET jsonl_mirror_status='pending', "
+        "jsonl_attempt_count=0, jsonl_last_error_class=NULL, "
+        "jsonl_mirrored_at=NULL WHERE id=?",
+        (event.id,),
+    )
+
+
+def reconcile_audit_event_outbox(
+    event_types: Sequence[str],
+    *,
+    limit: int = 100,
+) -> bool:
+    """Retry committed audit JSONL mirrors; return whether the backlog drained."""
+
+    kinds = tuple(dict.fromkeys(str(value) for value in event_types if value))
+    if not kinds:
+        return True
+    placeholders = ",".join("?" for _ in kinds)
+    rows = get_db().execute(
+        "SELECT id, timestamp, actor, source, event_type, entity_type, entity_id, "
+        "before_state, after_state, message FROM audit_events WHERE "
+        f"event_type IN ({placeholders}) AND jsonl_mirror_status IN ('pending','failed') "
+        "ORDER BY timestamp, id LIMIT ?",
+        (*kinds, min(max(int(limit), 1), 100)),
+    ).fetchall()
+    if not rows:
+        return True
+
+    def state(value: object) -> object:
+        try:
+            return json.loads(str(value)) if value is not None else None
+        except (TypeError, ValueError):
+            return str(value)
+
+    events = [{
+        "id": row["id"],
+        "timestamp": row["timestamp"],
+        "actor": row["actor"],
+        "source": row["source"],
+        "event_type": row["event_type"],
+        "entity_type": row["entity_type"],
+        "entity_id": row["entity_id"],
+        "before": state(row["before_state"]),
+        "after": state(row["after_state"]),
+        "message": row["message"],
+    } for row in rows]
+    error_class = None
+    try:
+        from aletheia.files.jsonl import write_audits_deduplicated
+
+        mirrored = write_audits_deduplicated(events, lock_timeout_sec=1.0)
+    except Exception as exc:
+        mirrored = set()
+        error_class = type(exc).__name__
+    now = datetime.now(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        for event in events:
+            audit_id = str(event["id"])
+            success = audit_id in mirrored
+            get_db().execute(
+                "UPDATE audit_events SET jsonl_mirror_status=?, "
+                "jsonl_attempt_count=COALESCE(jsonl_attempt_count,0)+1, "
+                "jsonl_last_error_class=?, jsonl_mirrored_at=? WHERE id=?",
+                (
+                    "mirrored" if success else "failed",
+                    None if success else error_class or "incomplete_mirror",
+                    now if success else None,
+                    audit_id,
+                ),
+            )
+    return len(mirrored) == len(events)
+
+
 def has_audit_event(*, event_type: str, entity_id: str) -> bool:
     row = (
         get_db()

@@ -875,6 +875,29 @@ def test_candidate_selection_bundle_rejects_unavailable_adaptive_control():
         )
 
 
+@pytest.mark.anyio
+async def test_candidate_selection_shadow_skips_learning_controlled_legacy_arm(
+    monkeypatch,
+):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe import service
+
+    monkeypatch.setattr(
+        service,
+        "_build_candidate_selection_bundle",
+        lambda **_kwargs: pytest.fail("mixed-control Candidate evidence must not be built"),
+    )
+    assert await service._persist_candidate_selection_shadow_nonfatal(
+        population=[],
+        legacy_scored=[],
+        legacy_allocated=[],
+        scanner_run_id="learning-controlled",
+        captured_at="2026-09-02T00:00:00+00:00",
+        cfg=AletheiaConfig(),
+        legacy_control_restricted=True,
+    ) == 0
+
+
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     import json
     from datetime import datetime, timedelta, timezone
