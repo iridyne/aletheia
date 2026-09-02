@@ -1,5 +1,11 @@
+import asyncio
+import hashlib
+import hmac
 import sqlite3
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -7,7 +13,12 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import reset_db
 
 
-def setup_env(tmp_path, monkeypatch):
+def _submit_inline(delivery, *, event_type):
+    delivery()
+    return True
+
+
+def setup_env(tmp_path, monkeypatch, *, inline_remote=True):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -19,6 +30,10 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    if inline_remote:
+        from aletheia import notifications
+
+        monkeypatch.setattr(notifications, "_submit_remote_delivery", _submit_inline)
 
 
 def test_notify_operator_writes_local_records_and_windows_toast(tmp_path, monkeypatch):
@@ -67,6 +82,115 @@ def test_notify_operator_respects_windows_toast_config(tmp_path, monkeypatch):
     notifications.notify_operator("Health degraded", "market data stale", source="health")
 
     assert toasts == []
+
+
+def test_trade_fill_returns_while_remote_delivery_is_in_flight(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch, inline_remote=False)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia import notifications
+
+    cfg = load_config()
+    cfg.webhook.url = "https://example.test/hook"
+    cfg.webhook.secret = "test-secret"
+    cfg.webhook.notify_trade_fills = True
+    cfg.webhook.enabled = True
+    save_config(cfg)
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    requests = []
+
+    class StalledOpener:
+        def open(self, request, *, timeout):
+            requests.append(request)
+            started.set()
+            release.wait(2)
+            completed.set()
+
+    import aletheia.net as net
+
+    monkeypatch.setattr(net, "build_urllib_opener", lambda: StalledOpener())
+    started_at = time.monotonic()
+    try:
+        notifications.notify_trade_fill(
+            symbol="BTC/USDT",
+            direction="long",
+            quantity=0.01,
+            fill_price=60000.0,
+            position_id="pos-nonblocking",
+            execution_mode="paper_internal",
+        )
+        assert time.monotonic() - started_at < 0.2
+        assert started.wait(1)
+    finally:
+        release.set()
+    assert completed.wait(1)
+    assert len(requests) == 1
+    expected_signature = hmac.new(b"test-secret", requests[0].data, hashlib.sha256).hexdigest()
+    assert requests[0].get_header("X-aletheia-signature") == expected_signature
+
+
+@pytest.mark.anyio
+async def test_operator_notification_does_not_block_event_loop(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch, inline_remote=False)
+    from aletheia import notifications
+
+    release = threading.Event()
+    started = threading.Event()
+    completed = threading.Event()
+
+    def stalled_telegram(*_args, **_kwargs):
+        started.set()
+        release.wait(2)
+
+    monkeypatch.setattr(notifications, "_send_telegram_alert", stalled_telegram)
+    monkeypatch.setattr(notifications, "_send_webhook", lambda *_args, **_kwargs: completed.set())
+    started_at = time.monotonic()
+    try:
+        notifications.notify_operator(
+            "Connectivity degraded",
+            "remote channel stalled",
+            audit=False,
+            error_log=False,
+            windows=False,
+        )
+        await asyncio.sleep(0)
+        assert time.monotonic() - started_at < 0.2
+        assert started.wait(1)
+    finally:
+        release.set()
+    assert completed.wait(1)
+
+
+def test_remote_delivery_capacity_drops_without_waiting(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch, inline_remote=False)
+    from aletheia import notifications
+    from aletheia.files.jsonl import read_jsonl
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    slots = threading.BoundedSemaphore(1)
+    started = threading.Event()
+    release = threading.Event()
+
+    def stalled_delivery():
+        started.set()
+        release.wait(2)
+
+    monkeypatch.setattr(notifications, "_REMOTE_DELIVERY_EXECUTOR", executor)
+    monkeypatch.setattr(notifications, "_REMOTE_DELIVERY_SLOTS", slots)
+    try:
+        assert notifications._submit_remote_delivery(stalled_delivery, event_type="first") is True
+        assert started.wait(1)
+        started_at = time.monotonic()
+        assert notifications._submit_remote_delivery(lambda: None, event_type="overflow") is False
+        assert time.monotonic() - started_at < 0.2
+    finally:
+        release.set()
+        executor.shutdown(wait=True)
+
+    drops = [entry for entry in read_jsonl("errors.jsonl") if entry.get("event_type") == "remote_delivery_dropped"]
+    assert drops[-1]["delivery_event_type"] == "overflow"
+    assert drops[-1]["reason"] == "capacity_exhausted"
 
 
 # ─── Issue #407 ───────────────────────────────────────────────────────────────

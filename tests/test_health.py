@@ -4,6 +4,7 @@ Health is computed from REAL backend data. Alerts fire only on transition into a
 unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 """
 
+import asyncio
 import sqlite3
 
 
@@ -53,8 +54,8 @@ def _add_run(status):
 
 async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
     """§1.3: _send_alert is called from sync run_health_check, which may itself run
-    inside an event loop (FastAPI route). It must actually deliver — not fire-and-
-    forget a task that gets GC'd — and must not raise."""
+    inside an event loop (FastAPI route). It must admit durable process-owned work,
+    return without blocking that loop, and eventually deliver."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -75,9 +76,13 @@ async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_mod, "TelegramBot", FakeBot)
 
     from aletheia.agent_runtime import health
-    # We are inside a running loop (async test). This previously scheduled an
-    # un-awaited task and delivered nothing; now it must complete synchronously.
     health._send_alert("test issue")
+
+    async def delivered():
+        while len(sent) < 2:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(delivered(), timeout=1)
 
     assert len(sent) == 2
     assert all("test issue" in text for _, text in sent)

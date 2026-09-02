@@ -11,9 +11,12 @@ import logging
 import os
 import platform
 import subprocess
+import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import partial
 from html import escape
 
 logger = logging.getLogger("aletheia.notifications")
@@ -24,6 +27,48 @@ _IS_WINDOWS = platform.system() == "Windows"
 _DEDUP_WINDOW_SEC = 120.0
 _recent_messages: dict[str, float] = {}  # hash → monotonic timestamp
 _DEDUP_MAX_ENTRIES = 200
+
+_REMOTE_DELIVERY_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aletheia-notify")
+_REMOTE_DELIVERY_SLOTS = threading.BoundedSemaphore(4)
+
+
+def _record_remote_delivery_drop(event_type: str, reason: str) -> None:
+    logger.warning("Remote notification dropped for %s: %s", event_type, reason)
+    try:
+        from aletheia.files.jsonl import write_error
+
+        write_error({
+            "source": "notifications",
+            "event_type": "remote_delivery_dropped",
+            "delivery_event_type": event_type,
+            "reason": reason,
+            "message": "Remote advisory notification was not admitted.",
+        })
+    except Exception:
+        pass
+
+
+def _submit_remote_delivery(delivery: Callable[[], None], *, event_type: str) -> bool:
+    """Admit remote advisory I/O without waiting or building an unbounded queue."""
+    if not _REMOTE_DELIVERY_SLOTS.acquire(blocking=False):
+        _record_remote_delivery_drop(event_type, "capacity_exhausted")
+        return False
+
+    def run() -> None:
+        try:
+            delivery()
+        except Exception as exc:
+            logger.warning("Remote notification failed for %s: %s", event_type, type(exc).__name__)
+        finally:
+            _REMOTE_DELIVERY_SLOTS.release()
+
+    try:
+        _REMOTE_DELIVERY_EXECUTOR.submit(run)
+    except RuntimeError:
+        _REMOTE_DELIVERY_SLOTS.release()
+        _record_remote_delivery_drop(event_type, "executor_unavailable")
+        return False
+    return True
 
 
 def send_windows_toast(title: str, message: str) -> None:
@@ -134,13 +179,7 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
                 except Exception:
                     pass
 
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(_send_all())
-        else:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(asyncio.run, _send_all()).result()
+        asyncio.run(_send_all())
     except Exception as e:
         logger.warning("Telegram notification failed (non-critical): %s", e)
 
@@ -185,6 +224,47 @@ def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
         build_urllib_opener().open(req, timeout=timeout)
     except Exception as e:
         logger.debug("Webhook notification failed (non-critical): %s", e)
+
+
+def _deliver_remote(
+    *,
+    telegram_message: str | None,
+    telegram_level: str,
+    require_alert_switch: bool,
+    webhook_payload: dict | None,
+    event_type: str,
+) -> None:
+    if telegram_message is not None:
+        _send_telegram_alert(
+            telegram_message,
+            level=telegram_level,
+            _require_alert_switch=require_alert_switch,
+        )
+    if webhook_payload is not None:
+        _send_webhook(webhook_payload, event_type=event_type)
+
+
+def _schedule_remote(
+    *,
+    telegram_message: str | None,
+    telegram_level: str,
+    require_alert_switch: bool,
+    webhook_payload: dict | None,
+    event_type: str,
+) -> None:
+    if telegram_message is None and webhook_payload is None:
+        return
+    _submit_remote_delivery(
+        partial(
+            _deliver_remote,
+            telegram_message=telegram_message,
+            telegram_level=telegram_level,
+            require_alert_switch=require_alert_switch,
+            webhook_payload=webhook_payload,
+            event_type=event_type,
+        ),
+        event_type=event_type,
+    )
 
 
 def notify_operator(
@@ -246,15 +326,18 @@ def notify_operator(
         except Exception:
             pass
 
-    if telegram:
-        _send_telegram_alert(f"{clean_title}: {clean_message}", level=level)
-
-    _send_webhook({
-        "title": clean_title,
-        "message": clean_message,
-        "level": level,
-        "source": source,
-    }, event_type="alert")
+    _schedule_remote(
+        telegram_message=f"{clean_title}: {clean_message}" if telegram else None,
+        telegram_level=level,
+        require_alert_switch=True,
+        webhook_payload={
+            "title": clean_title,
+            "message": clean_message,
+            "level": level,
+            "source": source,
+        },
+        event_type="alert",
+    )
 
 
 def notify_trade_fill(
@@ -298,11 +381,11 @@ def notify_trade_fill(
         lines.append(f"TP: {take_profit_price:.4f}")
     lines.append(f"pos/{position_id[:8]}")
     msg = "\n".join(lines)
-    if send_telegram:
-        # Issue #407: trade fills are not "alerts" — bypass the health-alert toggle.
-        _send_telegram_alert(msg, level="info", _require_alert_switch=False)
-    if send_webhook:
-        _send_webhook({
+    _schedule_remote(
+        telegram_message=msg if send_telegram else None,
+        telegram_level="info",
+        require_alert_switch=False,
+        webhook_payload={
             "symbol": symbol,
             "direction": dir_label,
             "quantity": quantity,
@@ -311,7 +394,9 @@ def notify_trade_fill(
             "execution_mode": execution_mode,
             "stop_price": stop_price,
             "take_profit_price": take_profit_price,
-        }, event_type="trade_fill")
+        } if send_webhook else None,
+        event_type="trade_fill",
+    )
 
 
 def notify_daily_summary() -> None:
@@ -349,16 +434,18 @@ def notify_daily_summary() -> None:
             f"Open positions: {open_count}",
             f"Portfolio value: {total:.2f} USDT",
         ]
-        if send_telegram:
-            # Issue #407: daily summary is not an "alert" — bypass the health-alert toggle.
-            _send_telegram_alert("\n".join(lines), level="info", _require_alert_switch=False)
-        if send_webhook:
-            _send_webhook({
+        _schedule_remote(
+            telegram_message="\n".join(lines) if send_telegram else None,
+            telegram_level="info",
+            require_alert_switch=False,
+            webhook_payload={
                 "realized_pnl": realized,
                 "unrealized_pnl": unrealized,
                 "open_positions": open_count,
                 "total_value_usdt": total,
                 "realized_pnl_complete": realized is not None,
-            }, event_type="daily_summary")
+            } if send_webhook else None,
+            event_type="daily_summary",
+        )
     except Exception as e:
         logger.warning("notify_daily_summary failed: %s", e)
