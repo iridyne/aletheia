@@ -9387,7 +9387,7 @@ def transition_entry_plan(
 
 
 def get_active_universe_members(limit: int | None = 20) -> list[dict]:
-    """Return top-ranked members from the currently active universe snapshot."""
+    """Return members from the active universe snapshot, optionally bounded."""
     snap = get_active_universe_snapshot()
     if not snap:
         return []

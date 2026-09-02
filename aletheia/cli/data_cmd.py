@@ -415,8 +415,11 @@ def backfill(
     if symbols:
         venue = exchange or load_config().market_data.ccxt_exchange
         instruments = [(venue, s.strip(), market_type) for s in symbols.split(",") if s.strip()]
+        active_members = skipped_members = 0
     else:
-        members = get_active_universe_members()
+        members = get_active_universe_members(limit=None)
+        active_members = len(members)
+        skipped_members = 0
         instruments = []
         for member in members:
             asset = get_universe_asset(member.get("asset_id")) or {}
@@ -424,13 +427,25 @@ def backfill(
             mkt = member.get("market_type") or asset.get("market_type")
             if venue and member.get("symbol") and mkt:
                 instruments.append((venue, member["symbol"], mkt))
+            else:
+                skipped_members += 1
 
     if not instruments:
+        if not symbols:
+            typer.echo(
+                f"Active members: {active_members}; eligible instruments: 0; "
+                f"skipped: {skipped_members}."
+            )
         typer.echo("No symbols to backfill (empty universe).")
         raise typer.Exit(1)
 
     tf_list = [t.strip() for t in timeframes.split(",")]
     typer.echo(f"Backfilling {len(instruments)} instruments × {len(tf_list)} timeframes ({months}mo)...")
+    if not symbols:
+        typer.echo(
+            f"Active members: {active_members}; eligible instruments: {len(instruments)}; "
+            f"skipped: {skipped_members}."
+        )
 
     total_bars = 0
     for venue, sym, mkt in instruments:
