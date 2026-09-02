@@ -56,10 +56,11 @@ FIRST_EXPOSURE_CTE_SQL = (
     " SELECT fd.*, "
     " ROW_NUMBER() OVER ("
     "   PARTITION BY fd.filter_name, fd.stage, fd.filter_version, fd.outcome_candidate_key "
-    "   ORDER BY datetime(fd.evaluated_at), fd.rowid"
+    "   ORDER BY aletheia_instant_us(fd.evaluated_at), fd.rowid"
     " ) AS exposure_rank, "
-    " MIN(fd.evaluated_at) OVER ("
-    "   PARTITION BY fd.filter_name, fd.stage, fd.filter_version, fd.outcome_candidate_key"
+    " FIRST_VALUE(fd.evaluated_at) OVER ("
+    "   PARTITION BY fd.filter_name, fd.stage, fd.filter_version, fd.outcome_candidate_key "
+    "   ORDER BY aletheia_instant_us(fd.evaluated_at), fd.rowid"
     " ) AS first_evaluated_at "
     " FROM filter_decisions fd "
     " WHERE fd.decision IN ('passed','rejected') "
@@ -482,7 +483,7 @@ def filter_feedback_stats(
     as_of_at: str | datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db, register_instant_us
 
     from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
@@ -497,10 +498,15 @@ def filter_feedback_stats(
     # reject cohorts remain disjoint. Apply the report window only after ranking,
     # otherwise a pass just outside the window can be forgotten and its later
     # rejection incorrectly becomes the candidate's first exposure.
-    time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
+    time_clause = (
+        " AND aletheia_instant_us(fd.first_evaluated_at) >= aletheia_instant_us(?)"
+        if evaluated_since else ""
+    )
     params = (evaluated_since,) if evaluated_since else ()
     complete_net = "fo.status='settled' AND " + current_cost_model_complete_outcome_sql("fo")
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
@@ -728,7 +734,7 @@ def observer_pre_filter_diagnostics(
     inputs and exact-version cost-aware outcomes; it never re-runs the current
     filter and never writes configuration or experiment state.
     """
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db, register_instant_us
     from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
     observed_end = (
@@ -738,11 +744,13 @@ def observer_pre_filter_diagnostics(
     )
 
     time_clause = (
-        " AND datetime(fd.first_evaluated_at) >= datetime(?)"
+        " AND aletheia_instant_us(fd.first_evaluated_at) >= aletheia_instant_us(?)"
         if evaluated_since else ""
     )
     params = (evaluated_since,) if evaluated_since else ()
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
         "fd.direction, fd.market_type, fd.input_snapshot, "

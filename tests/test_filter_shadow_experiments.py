@@ -5,6 +5,39 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 
+def test_shared_first_exposure_orders_same_second_by_exact_instant():
+    from aletheia.analytics.filter_evidence import FIRST_EXPOSURE_CTE_SQL
+    from aletheia.storage.sqlite import get_db, register_instant_us
+
+    db = get_db()
+    register_instant_us(db)
+    rows = [
+        ("newer", "newer", "newer", "rejected", "2026-08-30T10:00:00.900000+00:00"),
+        ("older", "older", "older", "passed", "2026-08-30T10:00:00.100000+00:00"),
+    ]
+    db.executemany(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, symbol, market_type, "
+        "filter_name, stage, decision, reason_code, filter_version, "
+        "outcome_candidate_key, evaluated_at) "
+        "VALUES (?, ?, ?, 'opportunity', 'BTC/USDT', 'perp', "
+        "'ranker_confidence_gate', 'paper_ranker', ?, 'test', 'v1', "
+        "'shared-candidate', ?)",
+        rows,
+    )
+
+    first = db.execute(
+        FIRST_EXPOSURE_CTE_SQL
+        + "SELECT decision, first_evaluated_at FROM ranked_filter_decisions "
+        "WHERE exposure_rank = 1"
+    ).fetchone()
+
+    assert dict(first) == {
+        "decision": "passed",
+        "first_evaluated_at": "2026-08-30T10:00:00.100000+00:00",
+    }
+
+
 def _ready_replay(*, filter_version: str, ttl_sec: int = 3600) -> dict:
     return {
         "read_only": True,
@@ -444,6 +477,42 @@ def _record_ranker_candidate(
         "SELECT filter_version FROM filter_decisions WHERE candidate_key=?",
         (key,),
     ).fetchone()[0]
+
+
+def test_frozen_units_use_exact_first_exposure_within_same_second():
+    from aletheia.counterfactual.filter_experiments import (
+        capture_frozen_units_for,
+        register_replay_ready_experiments,
+    )
+    from aletheia.observation_lab.units import list_frozen_units
+    from aletheia.storage.sqlite import get_db
+
+    started_at = datetime(2026, 8, 30, 10, 0, 0, 50_000, tzinfo=timezone.utc)
+    register_replay_ready_experiments([_ready_ranker_replay()], now=started_at)
+    db = get_db()
+    rows = [
+        ("frozen-newer", "frozen-newer", "frozen-newer", "rejected", "2026-08-30T10:00:00.900000+00:00"),
+        ("frozen-older", "frozen-older", "frozen-older", "passed", "2026-08-30T10:00:00.100000+00:00"),
+    ]
+    db.executemany(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, symbol, market_type, "
+        "direction, scanner_family, filter_name, stage, decision, reason_code, "
+        "filter_version, outcome_candidate_key, evaluated_at) "
+        "VALUES (?, ?, ?, 'opportunity', 'BTC/USDT', 'perp', 'long', "
+        "'mean_reversion', 'ranker_confidence_gate', 'paper_ranker', ?, "
+        "'test', 'v1', 'shared-frozen-candidate', ?)",
+        rows,
+    )
+    experiment = dict(
+        db.execute("SELECT * FROM filter_shadow_experiments").fetchone()
+    )
+
+    assert capture_frozen_units_for(experiment) == 1
+    units = list_frozen_units(experiment["id"])
+    assert [(unit["decision"], unit["first_evaluated_at"]) for unit in units] == [
+        ("passed", "2026-08-30T10:00:00.100000+00:00")
+    ]
 
 
 def _seed_ranker_cohort(

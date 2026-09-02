@@ -35,7 +35,7 @@ from aletheia.counterfactual.filter_replay import (
 from aletheia.observation_lab import units as lab_units
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import transaction
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import get_db, register_instant_us
 
 
 # Fallback gates when a replay does not declare its own gates in the top-level
@@ -321,7 +321,9 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
     if filter_name not in _FROZEN_REBUILD_ADAPTERS:
         return 0
     timestamp = _iso(now)
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         """
         WITH first_exposure AS (
             SELECT outcome_candidate_key,
@@ -332,7 +334,7 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
                    filter_version,
                    ROW_NUMBER() OVER (
                        PARTITION BY outcome_candidate_key
-                       ORDER BY datetime(evaluated_at), rowid
+                       ORDER BY aletheia_instant_us(evaluated_at), rowid
                    ) AS rn
             FROM filter_decisions
             WHERE filter_name = ?
@@ -347,8 +349,8 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
                evaluated_at AS first_evaluated_at, filter_version
         FROM first_exposure
         WHERE rn = 1
-          AND julianday(evaluated_at) > julianday(?)
-        ORDER BY datetime(evaluated_at), outcome_candidate_key
+          AND aletheia_instant_us(evaluated_at) > aletheia_instant_us(?)
+        ORDER BY aletheia_instant_us(evaluated_at), outcome_candidate_key
         """,
         (
             experiment["filter_name"],
