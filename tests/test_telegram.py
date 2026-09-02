@@ -1,7 +1,10 @@
 """Tests for Telegram bot adapter."""
 
+from contextlib import asynccontextmanager
+
 import pytest
 
+import aletheia.telegram.bot as bot_module
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.telegram.bot import TelegramBot
@@ -267,3 +270,91 @@ def test_pnl_command_preserves_incomplete_realized_state(monkeypatch):
 
     assert "Realized: unavailable" in response
     assert "Total: unavailable" in response
+@pytest.mark.anyio
+async def test_reply_failure_does_not_stop_polling_or_replay_command(monkeypatch, caplog):
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}
+    monkeypatch.setattr(bot, "configure", lambda: True)
+
+    client = _FakeTelegramClient([
+        [{"update_id": 1, "message": {"chat": {"id": 123}, "text": "/pause"}}],
+        [{"update_id": 2, "message": {"chat": {"id": 123}, "text": "/status"}}],
+    ])
+    handled: list[str] = []
+
+    async def handle(_chat_id, text):
+        handled.append(text)
+        if text == "/status":
+            bot.stop()
+        return "reply"
+
+    async def send(_chat_id, _text, *, parse_mode):
+        if len(handled) == 1:
+            raise ConnectionError("temporary")
+
+    monkeypatch.setattr(bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client))
+    monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
+    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(bot, "send_message", send)
+
+    await bot.run(poll_interval=0)
+
+    assert handled == ["/pause", "/status"]
+    assert bot._offset == 3
+    assert "Telegram reply delivery failed for update_id=1: ConnectionError" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_command_failure_retries_without_advancing_offset(monkeypatch):
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}
+    monkeypatch.setattr(bot, "configure", lambda: True)
+
+    update = {"update_id": 7, "message": {"chat": {"id": 123}, "text": "/pause"}}
+    client = _FakeTelegramClient([[update], [update]])
+    attempts = 0
+
+    async def handle(_chat_id, _text):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("command failed")
+        bot.stop()
+        return None
+
+    monkeypatch.setattr(bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client))
+    monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
+    monkeypatch.setattr(bot, "handle_message", handle)
+
+    await bot.run(poll_interval=0)
+
+    assert client.seen_offsets == [0, 0]
+    assert attempts == 2
+    assert bot._offset == 8
+
+
+async def _async_noop() -> None:
+    return None
+
+
+@asynccontextmanager
+async def _fake_httpx_client(client):
+    yield client
+
+
+class _FakeTelegramClient:
+    def __init__(self, batches):
+        self._batches = iter(batches)
+        self.seen_offsets: list[int] = []
+
+    async def get(self, _url, *, params):
+        self.seen_offsets.append(params["offset"])
+        return _FakeTelegramResponse(next(self._batches))
+
+
+class _FakeTelegramResponse:
+    def __init__(self, updates):
+        self._updates = updates
+
+    def json(self):
+        return {"ok": True, "result": self._updates}

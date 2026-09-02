@@ -263,6 +263,11 @@ class TelegramBot:
             while self._running:
                 try:
                     updates = await self._fetch_updates(client)
+                    for update in updates:
+                        await self._handle_update(update, client)
+                        update_id = update.get("update_id")
+                        if update_id is not None:
+                            self._offset = max(self._offset, int(update_id) + 1)
                     backoff = poll_interval
                     if self._consecutive_poll_failures > 0:
                         logger.info("Telegram polling recovered after %d failures", self._consecutive_poll_failures)
@@ -275,8 +280,6 @@ class TelegramBot:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60.0)
                     continue
-                for update in updates:
-                    await self._handle_update(update, client)
                 await asyncio.sleep(poll_interval)
 
     def stop(self) -> None:
@@ -306,12 +309,7 @@ class TelegramBot:
         payload = resp.json()
         if not payload.get("ok"):
             raise RuntimeError(f"Telegram API error: {payload}")
-        updates = payload.get("result", [])
-        for update in updates:
-            update_id = update.get("update_id")
-            if update_id is not None:
-                self._offset = max(self._offset, int(update_id) + 1)
-        return updates
+        return payload.get("result", [])
 
     async def _handle_update(self, update: dict[str, Any], client) -> None:
         message = update.get("message") or {}
@@ -326,4 +324,20 @@ class TelegramBot:
         if response:
             # Issue #1745: responses are plain text; omit parse_mode so Telegram
             # renders them as-is with no markup interpretation.
-            await self.send_message(int(chat_id), response, parse_mode=None)
+            try:
+                await self.send_message(int(chat_id), response, parse_mode=None)
+            except Exception as exc:
+                logger.warning(
+                    "Telegram reply delivery failed for update_id=%s: %s",
+                    update.get("update_id"),
+                    type(exc).__name__,
+                )
+                try:
+                    from aletheia.files.jsonl import write_error
+
+                    write_error({
+                        "source": "telegram_bot",
+                        "message": f"Telegram reply delivery failed: {type(exc).__name__}",
+                    })
+                except Exception:
+                    pass
