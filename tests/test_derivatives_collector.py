@@ -21,6 +21,92 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 
+def test_derivatives_source_time_survives_persistence_and_controls_freshness(
+    tmp_path,
+    monkeypatch,
+):
+    import aletheia.data.collectors.derivatives as mod
+    from aletheia.config import loader as cfg_loader
+    from aletheia.data.freshness import fresh_row
+    from aletheia.storage import migrations, repositories as repo
+    from aletheia.storage import sqlite as sq
+
+    acquired_at = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return acquired_at
+
+    monkeypatch.setattr(mod, "datetime", FixedDateTime)
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    sq.close_db()
+    migrations.run_migrations()
+
+    stale_ms = int((acquired_at - timedelta(hours=2)).timestamp() * 1000)
+    funding = mod._parse_funding(
+        "BTC/USDT",
+        "okx",
+        {"fundingRate": 0.0001, "timestamp": stale_ms},
+    )
+    oi = mod._parse_oi(
+        "BTC/USDT",
+        "okx",
+        {"openInterestValue": 1_000_000.0, "timestamp": stale_ms},
+    )
+
+    assert funding is not None
+    assert oi is not None
+    for snapshot, domain in ((funding, "funding"), (oi, "open_interest")):
+        row = snapshot.model_dump()
+        assert row["source_observed_at"] == (acquired_at - timedelta(hours=2)).isoformat()
+        assert row["acquired_at"] == acquired_at.isoformat()
+        assert row["source_time_status"] == "provided"
+        assert row["observed_at"] == row["source_observed_at"]
+        assert fresh_row(row, domain, now=acquired_at) is None
+
+    recent_ms = int((acquired_at - timedelta(minutes=2)).timestamp() * 1000)
+    recent = mod._parse_funding(
+        "ETH/USDT",
+        "okx",
+        {"fundingRate": 0.0002, "timestamp": recent_ms},
+    )
+    recent_oi = mod._parse_oi(
+        "ETH/USDT",
+        "okx",
+        {"openInterestValue": 2_000_000.0, "timestamp": recent_ms},
+    )
+    assert recent is not None
+    assert recent_oi is not None
+    repo.insert_funding_rate_snapshot(recent.model_dump())
+    repo.insert_open_interest_snapshot(recent_oi.model_dump())
+    persisted = repo.latest_funding_rate("ETH/USDT", exchange="okx")
+    persisted_oi = repo.latest_open_interest("ETH/USDT", exchange="okx")
+    assert persisted is not None
+    assert persisted_oi is not None
+    assert persisted["source_observed_at"] == recent.source_observed_at
+    assert persisted["acquired_at"] == recent.acquired_at
+    assert persisted_oi["source_observed_at"] == recent_oi.source_observed_at
+    assert persisted_oi["acquired_at"] == recent_oi.acquired_at
+    assert fresh_row(persisted, "funding", now=acquired_at) is not None
+    assert fresh_row(persisted_oi, "open_interest", now=acquired_at) is not None
+    persisted["acquired_at"] = (acquired_at - timedelta(hours=2)).isoformat()
+    assert fresh_row(persisted, "funding", now=acquired_at) is None
+
+    future_ms = int((acquired_at + timedelta(minutes=6)).timestamp() * 1000)
+    for raw, expected_status in (
+        ({"fundingRate": 0.0001}, "missing"),
+        ({"fundingRate": 0.0001, "timestamp": "bad"}, "invalid"),
+        ({"fundingRate": 0.0001, "timestamp": future_ms}, "future"),
+    ):
+        snapshot = mod._parse_funding("SOL/USDT", "okx", raw)
+        assert snapshot is not None
+        assert snapshot.source_time_status == expected_status
+        assert fresh_row(snapshot.model_dump(), "funding", now=acquired_at) is None
+
+    sq.close_db()
+
+
 # ---------------------------------------------------------------------------
 # _parse_oi — LSR threading
 # ---------------------------------------------------------------------------

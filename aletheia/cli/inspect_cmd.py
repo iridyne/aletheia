@@ -1563,12 +1563,18 @@ def microstructure(
             entry["funding_rate"] = fr.get("funding_rate")
             entry["funding_exchange"] = fr.get("exchange")
             entry["funding_observed_at"] = fr.get("observed_at")
+            entry["funding_source_observed_at"] = fr.get("source_observed_at")
+            entry["funding_acquired_at"] = fr.get("acquired_at")
+            entry["funding_source_time_status"] = fr.get("source_time_status")
             entry["funding_state"] = assess_freshness(fr, "funding").state
         if oi:
             entry["oi_usd"] = oi.get("open_interest_usd")
             entry["oi_delta_1h"] = oi.get("oi_change_1h_pct")
             entry["oi_exchange"] = oi.get("exchange")
             entry["oi_observed_at"] = oi.get("observed_at")
+            entry["oi_source_observed_at"] = oi.get("source_observed_at")
+            entry["oi_acquired_at"] = oi.get("acquired_at")
+            entry["oi_source_time_status"] = oi.get("source_time_status")
             entry["oi_state"] = assess_freshness(oi, "open_interest").state
         if ob:
             entry["spread_bps"] = ob.get("spread_bps")

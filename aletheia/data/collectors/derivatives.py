@@ -22,6 +22,7 @@ from aletheia.data.models import (
     FundingRateSnapshot,
     OpenInterestSnapshot,
 )
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
 
@@ -155,6 +156,10 @@ class DerivativesCollector:
                     snap = _parse_funding(sym, primary_name, fr)
                     if snap:
                         funding.append(snap)
+                        if snap.source_time_status != "provided":
+                            errors.append(
+                                f"funding_source_time_{snap.source_time_status} {sym}"
+                            )
                     else:
                         errors.append(f"funding_invalid {sym}")
                 # LSR is folded into the same OI dataclass — no follow-up UPDATE.
@@ -167,6 +172,10 @@ class DerivativesCollector:
                     )
                     if snap:
                         oi.append(snap)
+                        if snap.source_time_status != "provided":
+                            errors.append(
+                                f"open_interest_source_time_{snap.source_time_status} {sym}"
+                            )
                     else:
                         errors.append(f"open_interest_invalid {sym}")
 
@@ -270,6 +279,8 @@ def _parse_funding(
     mark = _finite_float(raw_mark) if raw_mark is not None else None
     if raw_mark is not None and (mark is None or mark <= 0):
         return None
+    acquired_at = datetime.now(timezone.utc)
+    source_observed_at, source_time_status = provider_source_time(raw, acquired_at)
 
     try:
         return FundingRateSnapshot(
@@ -279,7 +290,10 @@ def _parse_funding(
             funding_rate_annualized=round(annualized, 4),
             next_funding_time=str(next_time) if next_time else None,
             mark_price=mark,
-            observed_at=datetime.now(timezone.utc).isoformat(),
+            source_observed_at=source_observed_at,
+            acquired_at=acquired_at.isoformat(),
+            source_time_status=source_time_status,
+            observed_at=source_observed_at or "",
         )
     except ValueError:
         return None
@@ -299,6 +313,37 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def provider_source_time(
+    raw: dict,
+    acquired_at: datetime,
+) -> tuple[str | None, str]:
+    """Normalize one CCXT source timestamp without inventing source-now."""
+    raw_timestamp = raw.get("timestamp")
+    raw_datetime = raw.get("datetime")
+    try:
+        if raw_timestamp is not None:
+            if isinstance(raw_timestamp, bool):
+                return None, "invalid"
+            timestamp = float(raw_timestamp)
+            if not math.isfinite(timestamp):
+                return None, "invalid"
+            parsed = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
+        elif raw_datetime:
+            parsed = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.astimezone(timezone.utc)
+        else:
+            return None, "missing"
+    except (OSError, OverflowError, TypeError, ValueError):
+        return None, "invalid"
+
+    acquired_at = acquired_at.astimezone(timezone.utc)
+    if parsed > acquired_at + MAX_FUTURE_SKEW:
+        return None, "future"
+    return parsed.isoformat(), "provided"
 
 
 def extract_oi_usd(
@@ -365,6 +410,8 @@ def _parse_oi(
     top_position_ratio = _finite_float(top_position_ratio)
     if top_position_ratio is not None and top_position_ratio < 0:
         top_position_ratio = None
+    acquired_at = datetime.now(timezone.utc)
+    source_observed_at, source_time_status = provider_source_time(raw, acquired_at)
 
     # TRUE ~1h change vs a snapshot ~1h ago on THIS venue — not the ~2-min
     # previous tick (data_collectors runs every 2 min, so the old delta almost
@@ -394,7 +441,10 @@ def _parse_oi(
             oi_change_1h_pct=oi_change_1h_pct,
             long_short_ratio=lsr,
             top_trader_position_ratio=top_position_ratio,
-            observed_at=datetime.now(timezone.utc).isoformat(),
+            source_observed_at=source_observed_at,
+            acquired_at=acquired_at.isoformat(),
+            source_time_status=source_time_status,
+            observed_at=source_observed_at or "",
         )
     except ValueError:
         return None

@@ -54,6 +54,9 @@ class FundingRateSnapshot(BaseModel):
     funding_rate_annualized: float
     next_funding_time: str | None = None
     mark_price: float | None = Field(default=None, gt=0)
+    source_observed_at: str | None = None
+    acquired_at: str | None = None
+    source_time_status: str | None = None
     observed_at: str
 
 
@@ -67,6 +70,9 @@ class OpenInterestSnapshot(BaseModel):
     oi_change_1h_pct: float | None = None
     long_short_ratio: float | None = None
     top_trader_position_ratio: float | None = None
+    source_observed_at: str | None = None
+    acquired_at: str | None = None
+    source_time_status: str | None = None
     observed_at: str
 
 
