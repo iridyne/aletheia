@@ -51,6 +51,12 @@ _CAPTURE_RECEIPT_REASONS = frozenset({
 })
 
 
+def _capture_receipt_reason_allowed(reason: object) -> bool:
+    """Recognize bounded resolver refusals that carry no Generation identity."""
+    value = str(reason or "")
+    return value in _CAPTURE_RECEIPT_REASONS or value.startswith("undeclared_conflict:")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -1900,8 +1906,9 @@ def resolve_observation_treatment(
                 manifests = load_active_manifests(
                     now=now, interference_key=interference_key, db=lab,
                 )
-                snapshot_fingerprint = _hash([m.manifest_hash for m in manifests])
-                inactive_manifest = None
+                snapshot_hashes = tuple(m.manifest_hash for m in manifests)
+                snapshot_fingerprint = _hash(list(snapshot_hashes))
+                root_status: dict[str, str] = {}
                 for manifest in manifests:
                     root = lab.execute(
                         "SELECT status FROM observation_windows "
@@ -1911,36 +1918,79 @@ def resolve_observation_treatment(
                     # Pre-V2 manifests may not have a root row.  Keep those
                     # legacy Lab records readable; once a V2 root exists its
                     # terminal status is authoritative.
-                    if root is not None and root["status"] != "active":
-                        inactive_manifest = manifest
-                        break
-                revocations = lab.execute(
+                    root_status[manifest.manifest_hash] = (
+                        str(root["status"]) if root is not None else "active"
+                    )
+                active_manifests = [
+                    manifest for manifest in manifests
+                    if root_status[manifest.manifest_hash] == "active"
+                ]
+                relevant_manifests = [
+                    manifest for manifest in manifests
+                    if manifest.treatment_adapter_id == adapter_id
+                ]
+                inactive_manifest = next(
+                    (
+                        manifest for manifest in relevant_manifests
+                        if root_status[manifest.manifest_hash] != "active"
+                    ),
+                    None,
+                )
+                revocation_rows = lab.execute(
                     "SELECT manifest_hash, revoked_at, reason FROM manifest_revocations "
                     "WHERE manifest_hash IN ({}) ORDER BY manifest_hash, revoked_at".format(
                         ",".join("?" for _ in manifests) or "NULL"
                     ),
                     [m.manifest_hash for m in manifests],
                 ).fetchall() if manifests else []
-                revocation_fingerprint = _hash([tuple(row) for row in revocations])
-                revoked = {str(row[0]) for row in revocations}
+                revocation_fingerprint = _hash([tuple(row) for row in revocation_rows])
+                try:
+                    decision_now = datetime.fromisoformat(
+                        str(now or _now()).replace("Z", "+00:00")
+                    )
+                    if decision_now.tzinfo is None or decision_now.utcoffset() is None:
+                        raise ValueError("revocation_decision_time_must_be_utc")
+                    decision_now = decision_now.astimezone(timezone.utc)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError("revocation_decision_time_unavailable") from exc
+                revoked = set()
+                for row in revocation_rows:
+                    try:
+                        revoked_at = datetime.fromisoformat(
+                            str(row[1]).replace("Z", "+00:00")
+                        )
+                        if revoked_at.tzinfo is None or revoked_at.utcoffset() is None:
+                            raise ValueError
+                        if revoked_at.astimezone(timezone.utc) <= decision_now:
+                            revoked.add(str(row[0]))
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        raise ValueError("manifest_revocation_timestamp_unavailable") from exc
+                revoked_manifest = next(
+                    (manifest for manifest in relevant_manifests if manifest.manifest_hash in revoked),
+                    None,
+                )
+                snapshot_args = {
+                    "active_manifest_snapshot": snapshot_hashes,
+                    "manifest_set_fingerprint": snapshot_fingerprint,
+                    "revocation_snapshot_fingerprint": revocation_fingerprint,
+                }
                 if inactive_manifest is not None:
                     result = _decision(
                         baseline_value,
                         reason="observation_generation_not_active",
                         manifest=inactive_manifest,
-                        manifest_set_fingerprint=snapshot_fingerprint,
-                        revocation_snapshot_fingerprint=revocation_fingerprint,
+                        **snapshot_args,
                     )
-                elif revoked:
+                elif revoked_manifest is not None:
                     result = _decision(
                         baseline_value,
                         reason="manifest_revoked",
-                        manifest_set_fingerprint=snapshot_fingerprint,
-                        revocation_snapshot_fingerprint=revocation_fingerprint,
+                        manifest=revoked_manifest,
+                        **snapshot_args,
                     )
                 else:
                     incompatible = [
-                        m for m in manifests
+                        m for m in active_manifests
                         if m.treatment_adapter_id == adapter_id
                         and m.treatment_adapter_version != adapter.adapter_version
                     ]
@@ -1949,12 +1999,11 @@ def resolve_observation_treatment(
                             baseline_value,
                             reason="adapter_version_incompatible",
                             manifest=incompatible[0],
-                            manifest_set_fingerprint=snapshot_fingerprint,
-                            revocation_snapshot_fingerprint=revocation_fingerprint,
+                            **snapshot_args,
                         )
                     else:
                         eligible = []
-                        for manifest in manifests:
+                        for manifest in active_manifests:
                             if manifest.treatment_adapter_id != adapter_id:
                                 continue
                             try:
@@ -1965,8 +2014,7 @@ def resolve_observation_treatment(
                                     baseline_value,
                                     reason="adapter_eligibility_unavailable",
                                     manifest=manifest,
-                                    manifest_set_fingerprint=snapshot_fingerprint,
-                                    revocation_snapshot_fingerprint=revocation_fingerprint,
+                                    **snapshot_args,
                                 )
                                 break
                         else:
@@ -1974,26 +2022,23 @@ def resolve_observation_treatment(
                                 result = _decision(
                                     baseline_value,
                                     reason="no_eligible_manifest",
-                                    manifest_set_fingerprint=snapshot_fingerprint,
-                                    revocation_snapshot_fingerprint=revocation_fingerprint,
+                                    **snapshot_args,
                                 )
                             else:
                                 from aletheia.observation_lab.conflict import resolve_manifest_conflict
 
-                                conflict = resolve_manifest_conflict(manifests)
+                                conflict = resolve_manifest_conflict(active_manifests)
                                 if conflict.outcome.startswith("undeclared_conflict"):
                                     result = _decision(
                                         baseline_value,
                                         reason=conflict.outcome,
-                                        manifest_set_fingerprint=snapshot_fingerprint,
-                                        revocation_snapshot_fingerprint=revocation_fingerprint,
+                                        **snapshot_args,
                                     )
                                 elif conflict.outcome == "factorial_ok":
                                     result = _decision(
                                         baseline_value,
                                         reason="factorial_requires_versioned_adapter",
-                                        manifest_set_fingerprint=snapshot_fingerprint,
-                                        revocation_snapshot_fingerprint=revocation_fingerprint,
+                                        **snapshot_args,
                                     )
                                 else:
                                     manifest = next(
@@ -2004,16 +2049,14 @@ def resolve_observation_treatment(
                                         result = _decision(
                                             baseline_value,
                                             reason="manifest_conflict_no_admitted_match",
-                                            manifest_set_fingerprint=snapshot_fingerprint,
-                                            revocation_snapshot_fingerprint=revocation_fingerprint,
+                                            **snapshot_args,
                                         )
                                     elif manifest.manifest_contract_version not in _SUPPORTED_MANIFEST_VERSIONS:
                                         result = _decision(
                                             baseline_value,
                                             reason="manifest_contract_unsupported",
                                             manifest=manifest,
-                                            manifest_set_fingerprint=snapshot_fingerprint,
-                                            revocation_snapshot_fingerprint=revocation_fingerprint,
+                                            **snapshot_args,
                                         )
                                     elif manifest.manifest_contract_version == "execution-manifest/v2" and (
                                         manifest.deterministic_baseline != baseline_value
@@ -2022,16 +2065,14 @@ def resolve_observation_treatment(
                                             baseline_value,
                                             reason="baseline_manifest_mismatch",
                                             manifest=manifest,
-                                            manifest_set_fingerprint=snapshot_fingerprint,
-                                            revocation_snapshot_fingerprint=revocation_fingerprint,
+                                            **snapshot_args,
                                         )
                                     elif _deny_tombstone_exists(db=main_db, manifest=manifest):
                                         result = _decision(
                                             baseline_value,
                                             reason="main_deny_tombstone",
                                             manifest=manifest,
-                                            manifest_set_fingerprint=snapshot_fingerprint,
-                                            revocation_snapshot_fingerprint=revocation_fingerprint,
+                                            **snapshot_args,
                                         )
                                     else:
                                         assignment_key = assignment_unit_key
@@ -2076,6 +2117,7 @@ def resolve_observation_treatment(
                                             generation=manifest.generation,
                                             manifest_id=manifest.manifest_id,
                                             manifest_hash=manifest.manifest_hash,
+                                            active_manifest_snapshot=snapshot_hashes,
                                             manifest_set_fingerprint=snapshot_fingerprint,
                                             revocation_snapshot_fingerprint=revocation_fingerprint,
                                         )
@@ -2607,7 +2649,7 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                     missing_identity = not row["observation_id"] or row["generation"] is None
                     if missing_identity and not (
                         kind == "capture"
-                        and str(row["resolution_reason"] or "") in _CAPTURE_RECEIPT_REASONS
+                        and _capture_receipt_reason_allowed(row["resolution_reason"])
                     ):
                         raise ValueError("unclassified_receipt_identity")
                     if missing_identity:

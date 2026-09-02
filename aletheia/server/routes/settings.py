@@ -1462,6 +1462,18 @@ def get_learning_experiment(experiment_id: str):
                 ).fetchone()
         except Exception as exc:
             raise HTTPException(503, "observation Lab unavailable") from exc
+        try:
+            from aletheia.storage.sqlite import get_db
+
+            owner_receipt = get_db().execute(
+                "SELECT receipt_id, lab_application_status, lab_application_error, "
+                "lab_applied_observation_id, lab_applied_generation, lab_applied_event_id "
+                "FROM observation_delivery_outbox WHERE receipt_kind='owner_action' "
+                "AND observation_id=? AND generation=? ORDER BY sequence DESC LIMIT 1",
+                (row["observation_id"], int(row["generation"])),
+            ).fetchone()
+        except Exception as exc:
+            raise HTTPException(503, "observation owner-action status unavailable") from exc
         return {
             "available": True,
             "experiment_id": f"{row['observation_id']}:g{row['generation']}",
@@ -1474,7 +1486,25 @@ def get_learning_experiment(experiment_id: str):
             "last_error": row.get("last_error"),
             "lifecycle": dict(latest_event) if latest_event else None,
             "owner_action_status": (
-                "applied" if latest_event and latest_event["source_receipt_id"] else None
+                str(owner_receipt["lab_application_status"] or "pending")
+                if owner_receipt is not None
+                else None
+            ),
+            "owner_action_receipt_id": (
+                str(owner_receipt["receipt_id"]) if owner_receipt is not None else None
+            ),
+            "owner_action_error": (
+                owner_receipt["lab_application_error"] if owner_receipt is not None else None
+            ),
+            "owner_action_result": (
+                {
+                    "observation_id": owner_receipt["lab_applied_observation_id"],
+                    "generation": owner_receipt["lab_applied_generation"],
+                    "event_id": owner_receipt["lab_applied_event_id"],
+                }
+                if owner_receipt is not None
+                and owner_receipt["lab_application_status"] == "applied"
+                else None
             ),
         }
     from aletheia.learning.lifecycle import inspect_learning_experiment
@@ -1556,6 +1586,13 @@ class ObservationOwnerActionRequest(SettingsRequest):
         if not normalized:
             raise ValueError("manifest identity must not be empty")
         return normalized
+
+    @field_validator("expected_generation")
+    @classmethod
+    def _positive_expected_generation(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and int(value) <= 0:
+            raise ValueError("expected_generation must be positive")
+        return value
 
 
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
@@ -1651,7 +1688,11 @@ def queue_observation_owner_action(
             manifest_id=req.manifest_id,
             manifest_hash=req.manifest_hash,
             expected_manifest_hash=req.expected_manifest_hash,
-            expected_generation=req.expected_generation or parsed_generation,
+            expected_generation=(
+                req.expected_generation
+                if req.expected_generation is not None
+                else parsed_generation
+            ),
             dedup_key=dedup_key,
         )
     except ValueError as exc:

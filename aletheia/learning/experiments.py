@@ -256,6 +256,7 @@ def _resolve_numeric_via_observation_lab(
                 "outcome_seeds": outcome_seeds,
                 "outcome_source": "fixed_horizon_candidate" if outcome_candidate_key else None,
                 "resolution_reason": decision.reason,
+                "active_manifest_snapshot": list(decision.active_manifest_snapshot),
                 "manifest_set_fingerprint": decision.manifest_set_fingerprint,
                 "revocation_snapshot_fingerprint": decision.revocation_snapshot_fingerprint,
                 "authority_source": authority.source,
