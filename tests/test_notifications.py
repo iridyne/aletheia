@@ -1,5 +1,8 @@
+import asyncio
 import sqlite3
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -327,7 +330,7 @@ def test_trade_fill_escapes_dynamic_text_once_at_final_telegram_boundary(
     async def send_message(bot, chat_id, text, *, parse_mode):
         delivered.append((chat_id, text, parse_mode))
 
-    monkeypatch.setattr(notifications, "_is_duplicate", lambda message: False)
+    monkeypatch.setattr(notifications, "_reserve_delivery", lambda message, recipient: True)
     monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
@@ -375,7 +378,7 @@ def test_daily_summary_reaches_final_telegram_boundary_without_literal_markup(
     async def send_message(bot, chat_id, text, *, parse_mode):
         delivered.append((chat_id, text, parse_mode))
 
-    monkeypatch.setattr(notifications, "_is_duplicate", lambda message: False)
+    monkeypatch.setattr(notifications, "_reserve_delivery", lambda message, recipient: True)
     monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
@@ -453,6 +456,80 @@ def test_daily_summary_webhook_preserves_incomplete_mode_scoped_realized_pnl(
     assert payload["realized_pnl"] is None
     assert payload["realized_pnl_complete"] is False
     assert payload["unrealized_pnl"] == -5.0
+
+
+def test_telegram_fanout_retries_only_failed_recipient(tmp_path, monkeypatch, caplog):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia import notifications
+    from aletheia.telegram.bot import TelegramBot
+
+    cfg = load_config()
+    cfg.telegram.enabled = True
+    cfg.health.alert_via_telegram = True
+    save_config(cfg)
+    notifications._recent_messages.clear()
+    notifications._inflight_messages.clear()
+    attempts: list[int] = []
+
+    def configure(bot):
+        bot.allowed_chat_ids = [1, 2]
+        return True
+
+    async def send_message(_bot, chat_id, _text, *, parse_mode):
+        attempts.append(chat_id)
+        if chat_id == 1 and attempts.count(1) == 1:
+            raise RuntimeError("rejected")
+
+    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(TelegramBot, "configure", configure)
+    monkeypatch.setattr(TelegramBot, "send_message", send_message)
+
+    notifications._send_telegram_alert("mixed result")
+    notifications._send_telegram_alert("mixed result")
+
+    assert attempts == [1, 2, 1]
+    assert "Telegram delivery failed for chat_id=1: RuntimeError" in caplog.text
+
+
+def test_telegram_fanout_reserves_concurrent_delivery(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia import notifications
+    from aletheia.telegram.bot import TelegramBot
+
+    cfg = load_config()
+    cfg.telegram.enabled = True
+    cfg.health.alert_via_telegram = True
+    save_config(cfg)
+    notifications._recent_messages.clear()
+    notifications._inflight_messages.clear()
+    entered = threading.Event()
+    release = threading.Event()
+    attempts = []
+
+    def configure(bot):
+        bot.allowed_chat_ids = [1]
+        return True
+
+    async def send_message(_bot, chat_id, _text, *, parse_mode):
+        attempts.append(chat_id)
+        entered.set()
+        await asyncio.to_thread(release.wait)
+
+    monkeypatch.setattr(notifications, "_is_dnd", lambda: False)
+    monkeypatch.setattr(TelegramBot, "configure", configure)
+    monkeypatch.setattr(TelegramBot, "send_message", send_message)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(notifications._send_telegram_alert, "same message")
+        assert entered.wait(timeout=5)
+        second = pool.submit(notifications._send_telegram_alert, "same message")
+        second.result(timeout=5)
+        release.set()
+        first.result(timeout=5)
+
+    assert attempts == [1]
 
 
 @pytest.mark.anyio
