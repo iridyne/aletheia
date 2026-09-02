@@ -80,6 +80,132 @@ def _read_bundle_jsonl(archive_path: Path, jsonl_name: str) -> list[dict]:
     return [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _read_bundle_manifest(archive_path: Path) -> dict:
+    with tarfile.open(archive_path, "r:gz") as tar:
+        member = next(member for member in tar.getmembers() if member.name.endswith("/manifest.yaml"))
+        stream = tar.extractfile(member)
+        assert stream is not None
+        import yaml
+        return yaml.safe_load(stream.read())
+
+
+@pytest.mark.parametrize("payload, reason", [
+    (None, "config_export_missing"),
+    (b"\xff\xfe invalid", "config_export_failed"),
+])
+def test_config_only_export_fails_without_safe_config(tmp_path, payload, reason):
+    if payload is not None:
+        (tmp_path / "config.yaml").write_bytes(payload)
+
+    from aletheia.sync.exporter import ExportService
+    with pytest.raises(RuntimeError, match=reason):
+        ExportService(data_dir=tmp_path).export_bundle(mode="config-only")
+
+    assert not list((tmp_path / "exports").iterdir())
+
+
+def test_research_export_reports_omitted_config_as_degraded(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_bytes(b"\xff\xfe invalid")
+    from aletheia.sync.exporter import ExportService
+    service = ExportService(data_dir=tmp_path)
+    monkeypatch.setattr(service, "_export_db_tables", lambda *_args, **_kwargs: None)
+    archive = service.export_bundle(mode="research-pack")
+
+    assert service.config_status == "omitted"
+    assert _read_bundle_manifest(archive)["config_status"] == "omitted"
+    with tarfile.open(archive, "r:gz") as tar:
+        assert not any(member.name.endswith("/config/config.yaml") for member in tar.getmembers())
+
+    from aletheia.server.routes import persistence
+    monkeypatch.setattr("aletheia.sync.exporter.ExportService", lambda: service)
+    result = persistence.create_export(persistence.ExportRequest(mode="research-pack"))
+    assert result["status"] == "degraded"
+    assert result["config_status"] == "omitted"
+
+
+def test_export_rejects_unknown_mode_before_creating_or_cleaning_staging(
+    tmp_path, monkeypatch,
+):
+    import aletheia.sync.exporter as exporter
+
+    removed = []
+    monkeypatch.setattr(exporter.shutil, "rmtree", lambda path, **_kwargs: removed.append(path))
+
+    with pytest.raises(ValueError, match="Unknown export mode"):
+        exporter.ExportService(data_dir=tmp_path).export_bundle(mode="x/../../victim")
+
+    assert removed == []
+    assert not (tmp_path / "exports").exists()
+
+
+def test_config_only_rejects_non_mapping_yaml(tmp_path):
+    (tmp_path / "config.yaml").write_text("- not\n- a mapping\n", encoding="utf-8")
+
+    from aletheia.sync.exporter import ExportService
+
+    with pytest.raises(RuntimeError, match="config_export_failed"):
+        ExportService(data_dir=tmp_path).export_bundle(mode="config-only")
+
+    assert not list((tmp_path / "exports").iterdir())
+
+
+def test_reused_export_service_resets_config_status(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_bytes(b"\xff\xfe invalid")
+    from aletheia.sync.exporter import ExportService
+
+    service = ExportService(data_dir=tmp_path)
+    monkeypatch.setattr(service, "_export_db_tables", lambda *_args, **_kwargs: None)
+    first = service.export_bundle(mode="research-pack")
+    assert _read_bundle_manifest(first)["config_status"] == "omitted"
+
+    monkeypatch.setattr(service, "_export_runtime", lambda *_args, **_kwargs: None)
+    second = service.export_bundle(mode="runtime-snapshot")
+    assert service.config_status == "not_included"
+    assert _read_bundle_manifest(second)["config_status"] == "not_included"
+
+
+def test_config_stat_failure_degrades_composite_export(tmp_path, monkeypatch):
+    from aletheia.sync.exporter import ExportService
+
+    config_path = tmp_path / "config.yaml"
+    original_exists = Path.exists
+
+    def fail_config_stat(path):
+        if path == config_path:
+            raise OSError("injected stat failure")
+        return original_exists(path)
+
+    service = ExportService(data_dir=tmp_path)
+    monkeypatch.setattr(Path, "exists", fail_config_stat)
+    monkeypatch.setattr(service, "_export_db_tables", lambda *_args, **_kwargs: None)
+    archive = service.export_bundle(mode="research-pack")
+
+    assert service.config_status == "omitted"
+    assert _read_bundle_manifest(archive)["config_status"] == "omitted"
+
+
+def test_partial_config_write_is_not_published(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text("app:\n  dashboard_port: 8787\n", encoding="utf-8")
+    from aletheia.sync.exporter import ExportService
+
+    original_write_text = Path.write_text
+
+    def partial_config_write(path, data, *args, **kwargs):
+        if path.name == "config.yaml" and path.parent.name == "config":
+            original_write_text(path, "partial", encoding="utf-8")
+            raise OSError("injected partial write")
+        return original_write_text(path, data, *args, **kwargs)
+
+    service = ExportService(data_dir=tmp_path)
+    monkeypatch.setattr(Path, "write_text", partial_config_write)
+    monkeypatch.setattr(service, "_export_db_tables", lambda *_args, **_kwargs: None)
+    archive = service.export_bundle(mode="research-pack")
+
+    assert service.config_status == "omitted"
+    with tarfile.open(archive, "r:gz") as tar:
+        assert not any(member.name.endswith("/config/config.yaml") for member in tar.getmembers())
+
+
 def test_proposal_pack_exports_only_the_named_proposal(tmp_path, monkeypatch):
     """#62/#162: proposal-pack now filters trade_proposals by id."""
     _setup_env(tmp_path, monkeypatch)

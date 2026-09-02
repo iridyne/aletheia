@@ -20,6 +20,13 @@ def _utcnow() -> str:
 
 # Secrets patterns that must never be exported
 _SECRET_PATTERNS = {".env", ".key", ".pem", ".secret", "secrets/"}
+_EXPORT_MODES = frozenset({
+    "config-only",
+    "research-pack",
+    "proposal-pack",
+    "runtime-snapshot",
+    "full-backup",
+})
 
 
 def _is_secret_path(path: str) -> bool:
@@ -70,6 +77,7 @@ class ExportService:
 
     def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir or get_data_dir()
+        self.config_status = "not_included"
 
     def export_bundle(
         self,
@@ -79,6 +87,9 @@ class ExportService:
         proposal_id: str | None = None,
     ) -> Path:
         """Create an export bundle. Returns path to the archive."""
+        if mode not in _EXPORT_MODES:
+            raise ValueError(f"Unknown export mode: {mode}")
+        self.config_status = "not_included"
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         bundle_name = f"aletheia_export_{mode}_{timestamp}"
         exports_dir = self._data_dir / "exports"
@@ -87,48 +98,67 @@ class ExportService:
         bundle_dir = exports_dir / bundle_name
         bundle_dir.mkdir(parents=True, exist_ok=True)
 
-        if mode == "config-only":
-            self._export_config(bundle_dir)
-        elif mode == "research-pack":
-            self._export_research(bundle_dir, since)
-        elif mode == "proposal-pack":
-            self._export_proposal(bundle_dir, proposal_id)
-        elif mode == "runtime-snapshot":
-            self._export_runtime(bundle_dir)
-        elif mode == "full-backup":
-            self._export_full(bundle_dir)
-        else:
-            raise ValueError(f"Unknown export mode: {mode}")
+        try:
+            if mode == "config-only":
+                self._export_config(bundle_dir, required=True)
+            elif mode == "research-pack":
+                self._export_research(bundle_dir, since)
+            elif mode == "proposal-pack":
+                self._export_proposal(bundle_dir, proposal_id)
+            elif mode == "runtime-snapshot":
+                self._export_runtime(bundle_dir)
+            elif mode == "full-backup":
+                self._export_full(bundle_dir)
+            self._write_checksums(bundle_dir)
+            self._write_manifest(bundle_dir, mode)
 
-        # Generate checksums
-        self._write_checksums(bundle_dir)
+            archive_path = output or (exports_dir / f"{bundle_name}.tar.gz")
+            with tarfile.open(archive_path, "w:gz") as tar:
+                tar.add(bundle_dir, arcname=bundle_name)
+            return archive_path
+        finally:
+            shutil.rmtree(bundle_dir, ignore_errors=True)
 
-        # Generate manifest
-        self._write_manifest(bundle_dir, mode)
-
-        # Create tar.gz archive
-        archive_path = output or (exports_dir / f"{bundle_name}.tar.gz")
-        with tarfile.open(archive_path, "w:gz") as tar:
-            tar.add(bundle_dir, arcname=bundle_name)
-
-        # Cleanup temp dir
-        shutil.rmtree(bundle_dir)
-
-        return archive_path
-
-    def _export_config(self, bundle_dir: Path) -> None:
+    def _export_config(self, bundle_dir: Path, *, required: bool = False) -> None:
         """Export config with credential-bearing fields redacted (keeps manifest secrets_included=False honest)."""
         config_src = self._data_dir / "config.yaml"
-        if config_src.exists():
-            (bundle_dir / "config").mkdir(exist_ok=True)
-            dst = bundle_dir / "config" / "config.yaml"
-            try:
-                data = yaml.safe_load(config_src.read_text(encoding="utf-8")) or {}
-                redacted = _redact_config_dict(data)
-                dst.write_text(yaml.safe_dump(redacted, default_flow_style=False, sort_keys=False), encoding="utf-8")
-            except Exception:
-                # Fail closed: never fall back to copying the raw file (that would leak).
-                dst.write_text("# config.yaml omitted from export: could not parse to redact secrets\n", encoding="utf-8")
+        try:
+            config_exists = config_src.exists()
+        except OSError as exc:
+            self.config_status = "omitted"
+            if required:
+                raise RuntimeError("config_export_failed") from exc
+            return
+        if not config_exists:
+            self.config_status = "absent"
+            if required:
+                raise RuntimeError("config_export_missing")
+            return
+        config_path: Path | None = None
+        try:
+            loaded = yaml.safe_load(config_src.read_text(encoding="utf-8"))
+            if loaded is not None and not isinstance(loaded, dict):
+                raise TypeError("config root must be a mapping")
+            data = loaded or {}
+            redacted = _redact_config_dict(data)
+            config_dir = bundle_dir / "config"
+            config_dir.mkdir(exist_ok=True)
+            config_path = config_dir / "config.yaml"
+            config_path.write_text(
+                yaml.safe_dump(redacted, default_flow_style=False, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.config_status = "omitted"
+            if config_path is not None:
+                try:
+                    config_path.unlink(missing_ok=True)
+                except OSError as cleanup_exc:
+                    raise RuntimeError("config_export_cleanup_failed") from cleanup_exc
+            if required:
+                raise RuntimeError("config_export_failed") from exc
+            return
+        self.config_status = "redacted"
 
     def _export_research(self, bundle_dir: Path, since: str | None) -> None:
         """Export evidence, claims, analyses, lessons, skills."""
@@ -312,6 +342,7 @@ class ExportService:
             "schema_version": "v1",
             "mode": mode,
             "secrets_included": False,
+            "config_status": self.config_status,
         }
         (bundle_dir / "manifest.yaml").write_text(
             yaml.dump(manifest, default_flow_style=False, allow_unicode=True),

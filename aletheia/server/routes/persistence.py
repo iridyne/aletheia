@@ -226,7 +226,8 @@ def create_export(req: ExportRequest):
 
     svc = ExportService()
     path = svc.export_bundle(mode=req.mode, since=req.since, proposal_id=req.proposal_id)
-    return {"path": str(path), "status": "ok"}
+    status = "degraded" if svc.config_status in {"absent", "omitted"} else "ok"
+    return {"path": str(path), "status": status, "config_status": svc.config_status}
 
 
 class ImportRequest(BaseModel):
