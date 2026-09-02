@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -1075,6 +1076,10 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             "warnings": sorted(set((preflight.get("warnings") or []) + (comparison.get("warnings") or []))),
         },
     )
+    if result.get("schema_changed") and result.get("frontend_built"):
+        from aletheia.update.applier import _PREVIOUS_DASHBOARD_STATIC
+
+        shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
     return {
         **result,
         "continuity_verified": True,

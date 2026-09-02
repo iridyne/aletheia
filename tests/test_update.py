@@ -960,7 +960,7 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     assert result["actual_head"] == "old111"
 
 
-def test_apply_refuses_schema_change_without_transactional_deployer(tmp_path, monkeypatch):
+def test_apply_refuses_schema_change_without_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier, git_ops
 
@@ -980,12 +980,58 @@ def test_apply_refuses_schema_change_without_transactional_deployer(tmp_path, mo
         lambda: pytest.fail("schema-bearing source must not be loaded in-process"),
     )
 
-    result = applier.apply_update(restart=True)
+    result = applier.apply_update(restart=False)
 
     assert result["applied"] is False
     assert result["rolled_back"] is True
-    assert result["reason"] == "schema_update_requires_transactional_deployer"
+    assert result["reason"] == "schema_update_requires_restart"
     assert calls == [("reset", "old111")]
+
+
+def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.backup import service as backup_service
+    from aletheia.update import applier, auto, git_ops
+
+    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    calls = []
+    backups = iter([tmp_path / "preflight.tar", tmp_path / "activation.tar"])
+
+    class FakeBackupService:
+        def __init__(self, data_dir):
+            calls.append(("backup_service", data_dir))
+
+        def create_backup(self, *, label):
+            path = next(backups)
+            calls.append(("backup", label, path))
+            return path
+
+    monkeypatch.setattr(backup_service, "BackupService", FakeBackupService)
+    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: calls.append(("reset", commit)) or {"ok": True})
+    monkeypatch.setattr(git_ops, "merge_fast_forward", lambda commit: calls.append(("advance", commit)) or {"ok": True})
+    monkeypatch.setattr(
+        auto,
+        "_candidate_preflight",
+        lambda commit, backup: calls.append(("preflight", commit, backup)) or (tmp_path / "candidate"),
+    )
+    monkeypatch.setattr(auto, "_remove_candidate", lambda candidate: calls.append(("remove", candidate)))
+    monkeypatch.setattr(
+        applier,
+        "run_smoke_check",
+        lambda: pytest.fail("live-data smoke is replaced by restored-copy candidate preflight"),
+    )
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append(("restart",)) or {"ok": True})
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is True
+    assert result["schema_changed"] is True
+    assert result["schema_backup"] == str(tmp_path / "activation.tar")
+    assert ("preflight", "new222", tmp_path / "preflight.tar") in calls
+    assert calls.index(("preflight", "new222", tmp_path / "preflight.tar")) < calls.index(("advance", "new222"))
+    assert calls.index(("backup", "interactive_schema_activate", tmp_path / "activation.tar")) < calls.index(
+        ("restart",)
+    )
 
 
 def test_rollback_applied_update_restores_source_metadata_and_gateway(monkeypatch):
@@ -1010,6 +1056,40 @@ def test_rollback_applied_update_restores_source_metadata_and_gateway(monkeypatc
         ("reset", "old111"),
         ("metadata", "old111"),
         ("restart",),
+        ("audit", "update_postflight_rolled_back"),
+    ]
+
+
+def test_rollback_applied_schema_update_restores_transaction_backup(tmp_path, monkeypatch):
+    from aletheia.update import applier, auto, git_ops
+
+    calls = []
+    monkeypatch.setattr(
+        auto,
+        "_rollback_to_old_runtime",
+        lambda old, backup, had_static, *, restore_static: calls.append(
+            ("restore", old, backup, had_static, restore_static)
+        )
+        or {"ok": True},
+    )
+    monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
+    monkeypatch.setattr(applier, "_persist_current_commit_fresh", lambda commit: {"ok": True})
+    monkeypatch.setattr(applier, "write_audit", lambda event: calls.append(("audit", event["event_type"])))
+
+    result = applier.rollback_applied_update(
+        {
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "schema_changed": True,
+            "schema_backup": str(tmp_path / "activation.tar"),
+            "frontend_built": True,
+            "had_previous_static": True,
+        }
+    )
+
+    assert result["rolled_back"] is True
+    assert calls == [
+        ("restore", "old111", tmp_path / "activation.tar", True, True),
         ("audit", "update_postflight_rolled_back"),
     ]
 

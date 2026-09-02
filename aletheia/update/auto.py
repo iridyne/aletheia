@@ -403,7 +403,9 @@ def _uv() -> str:
 
 def _candidate_preflight(target: str, backup: Path) -> Path:
     """Restore into a temporary root and migrate it using the pinned candidate."""
-    worktree = Path(tempfile.mkdtemp(prefix="aletheia-auto-", dir=_paths()["root"]))
+    root = _paths()["root"]
+    root.mkdir(parents=True, exist_ok=True)
+    worktree = Path(tempfile.mkdtemp(prefix="aletheia-auto-", dir=root))
     added = git_ops._git("worktree", "add", "--detach", str(worktree), target)  # noqa: SLF001
     if added.returncode:
         shutil.rmtree(worktree, ignore_errors=True)
