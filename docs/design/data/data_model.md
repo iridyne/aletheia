@@ -5,6 +5,8 @@
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
 > Last updated: 2026-08-08
 
+> Issue #2737 target ownership: [Observation Experiment Ownership V2](../contracts/observation_experiment_ownership_v2.md) makes `observation-lab/lab.db` the eventual canonical store for registered Experiment/Generation state while `app.db` retains production facts, behavior-policy identity, and the bounded delivery outbox. This is a serial migration target, not current schema truth: before Phase 8, existing legacy Experiment tables and authority remain active; before Phase 11, no physical legacy retirement is implied. The target table list is a responsibility checklist and must reuse existing Lab primitives unless an independent invariant requires new storage.
+
 ---
 
 ## 1. Architecture Overview
