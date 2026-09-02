@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - POSIX
     _msvcrt = None
 
-from aletheia.config.schema import AletheiaConfig
+from aletheia.config.schema import AletheiaConfig, WebhookConfig
 from aletheia.runtime_paths import preview_root, runtime_home
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -262,6 +262,23 @@ def _audit_operator_authority_migration(
         pass
 
 
+def _audit_webhook_config_migration() -> None:
+    """Best-effort audit without copying webhook credentials into the event."""
+    try:
+        from aletheia.files.jsonl import write_audit
+
+        write_audit({
+            "actor": "system",
+            "source": "config_loader",
+            "event_type": "webhook_config_migrated",
+            "entity_type": "webhook_config",
+            "entity_id": "webhook",
+            "message": "Disabled a legacy enabled webhook with an invalid URL.",
+        })
+    except Exception:
+        pass
+
+
 def _raise_operator_authority_conflict(reason: str) -> None:
     """Reject a write that could make both System Operator owners effective."""
     try:
@@ -408,6 +425,14 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         operator_section_present = isinstance(raw.get("operator"), dict)
+        webhook = raw.get("webhook")
+        webhook_migrated = (
+            isinstance(webhook, dict)
+            and bool(webhook.get("enabled"))
+            and not WebhookConfig.url_is_usable(webhook.get("url"))
+        )
+        if webhook_migrated:
+            webhook["enabled"] = False
         # Reject unknown persisted keys recursively before any authority can
         # start or a later save can erase the malformed source key.  Pydantic's
         # runtime override propagates through nested models while leaving typed
@@ -442,7 +467,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
                     "AletheiaConfig", safe_errors, hide_input=True
                 ) from None
             raise
-        changed = False
+        changed = webhook_migrated
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))
@@ -475,6 +500,8 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
             )
         if changed and persist_migrations:
             save_config(cfg, allow_operator_handoff=True)
+            if webhook_migrated:
+                _audit_webhook_config_migration()
             if authority_reason:
                 _audit_operator_authority_migration(
                     before=authority_before,
