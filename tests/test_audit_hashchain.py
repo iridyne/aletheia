@@ -104,6 +104,29 @@ def test_verify_detects_tamper(tmp_path):
     assert len(result["errors"]) >= 1
 
 
+@pytest.mark.parametrize("bad_prev_hash", [7, [], {}, "", "short"])
+def test_verify_rejects_malformed_prev_hash(tmp_path, bad_prev_hash):
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
+
+    write_audit(
+        {"action": "first", "timestamp": "2026-01-01T00:00:00"}, mirror_db=False,
+    )
+    write_audit(
+        {"action": "second", "timestamp": "2026-01-01T00:01:00"}, mirror_db=False,
+    )
+    path = tmp_path / "audit.jsonl"
+    lines = path.read_text("utf-8").splitlines()
+    second = json.loads(lines[1])
+    second["_prev_hash"] = bad_prev_hash
+    lines[1] = json.dumps(second)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = verify_audit_chain()
+
+    assert result["valid"] is False
+    assert result["errors"] == ["audit.jsonl:2: invalid _prev_hash"]
+
+
 def test_verify_handles_legacy_records(tmp_path):
     """Records without _prev_hash (pre-hash-chain) should not break verification."""
     from aletheia.files.jsonl import verify_audit_chain
