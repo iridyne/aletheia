@@ -13,8 +13,32 @@ Monitoring. Durable authority remains in `candidate_planning_generations`,
 `entry_plans`, canonical Proposals/Risk Decisions, and Orders. Risk is the only
 approval authority and Gateway is the only order/cancel authority.
 
-`ENTRY_PLAN_VERSION` remains `entry-plan/v1`. Existing immutable plan JSON is
-not rewritten.
+Historical and legacy planning retains `entry-plan/v1`; its canonical JSON and
+hash are not rewritten. Forward-only AI Entry planning uses `entry-plan/v2`,
+which additionally requires exact context, hypothesis, selected Anchor,
+Profile, and compiled geometry identities.
+
+## AI Entry hypothesis authority
+
+The default-off `agent.ai_entry_hypothesis_enabled` owner gate is supported only
+for Paper with Live disabled. Each false-to-true transition records a new UTC
+activation identity. Only a Momentum Candidate whose immutable parent Snapshot
+`created_at >= activated_at` receives `entry-planner/v3`; reused pre-activation
+Snapshots remain Planner V2 even if their attention lease is extended.
+
+Planner V3 binds one immutable canonical `planner_input_json/hash` per generation.
+It contains bounded completed exact-instrument windows (30×4h, 48×1h, 96×15m),
+existing causal Market Structure facts, at most 12 canonical 15m Anchors, and
+explicit unavailable sections. The model emits `entry-hypothesis/v1`: controlled
+enums and supplied references only, with no price, size, leverage, ATR multiplier,
+slippage, or other numeric execution authority. `NO_PLAN` clears every execution
+field and requires a stable non-OK reason.
+
+`anchor-resting-maker/v1` and `anchor-retrace-reclaim/v1` are deterministic
+compiler Profiles. The latter reuses the existing retrace/sweep/reclaim engine
+and 0.25 ATR semantics under its own identity; Fast Monitoring never invokes AI.
+Plan activation and execution revalidate the V3 generation, activation identity,
+Paper/Live gate, immutable hashes, and V2 provenance before Proposal or Risk.
 
 ## Planner contract epoch
 

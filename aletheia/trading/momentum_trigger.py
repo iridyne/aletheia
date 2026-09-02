@@ -70,7 +70,7 @@ class MomentumTriggerEngineV2:
         self.entry_zone = _zone(entry_zone, "entry_zone")
         self.invalidation_price = _positive(invalidation_price, "invalidation_price")
         self.atr_abs = _positive(atr_abs, "atr_abs")
-        if geometry_version != GEOMETRY_VERSION:
+        if geometry_version not in {GEOMETRY_VERSION, "anchor-retrace-reclaim-geometry/v1"}:
             raise ValueError("momentum_trigger_geometry_version_invalid")
         if (
             not isinstance(geometry_fingerprint, str)

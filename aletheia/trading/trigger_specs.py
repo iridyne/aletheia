@@ -90,6 +90,14 @@ def _momentum_v2_params(raw: dict) -> dict:
     }
 
 
+def _anchor_retrace_params(raw: dict) -> dict:
+    params = _momentum_v2_params({**raw, "geometry_version": "momentum-entry-geometry/v2"})
+    if raw.get("geometry_version") != "anchor-retrace-reclaim-geometry/v1":
+        raise ValueError("anchor_geometry_version_invalid")
+    params["geometry_version"] = raw["geometry_version"]
+    return params
+
+
 _REGISTRY = {
     ("momentum-retrace-reclaim", "v1"): TriggerSpecContract(
         spec_id="momentum-retrace-reclaim",
@@ -106,6 +114,15 @@ _REGISTRY = {
         data_requirements=("quote", "trade", "books5", "candle1m"),
         freshness_ms=2_000,
         validate_params=_momentum_v2_params,
+        planner_visible=False,
+    ),
+    ("anchor-retrace-reclaim", "v1"): TriggerSpecContract(
+        spec_id="anchor-retrace-reclaim",
+        version="v1",
+        candidate_families=("momentum",),
+        data_requirements=("quote", "trade", "books5", "candle1m"),
+        freshness_ms=2_000,
+        validate_params=_anchor_retrace_params,
         planner_visible=False,
     ),
 }

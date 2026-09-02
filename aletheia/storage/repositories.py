@@ -8698,6 +8698,7 @@ def ensure_candidate_planning_generation(
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
+    from aletheia.storage.models import AI_ENTRY_PLANNER_CONTRACT_VERSION, PLANNER_CONTRACT_VERSION
     from aletheia.trading.entry_plan import candidate_planning_identity
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -8710,6 +8711,24 @@ def ensure_candidate_planning_generation(
             raise ValueError("candidate_not_found")
         if not bool(candidate.get("execution_eligible")):
             raise ValueError("candidate_execution_ineligible")
+        planner_contract_version = PLANNER_CONTRACT_VERSION
+        activation_identity = None
+        if str(candidate.get("scanner_family") or "") == "momentum":
+            from aletheia.config.loader import load_config
+
+            agent = load_config(persist_migrations=False).agent
+            activated_at = agent.ai_entry_hypothesis_activated_at
+            snapshot = get_db().execute(
+                "SELECT created_at FROM universe_snapshots WHERE id=?",
+                (candidate.get("snapshot_id"),),
+            ).fetchone()
+            if agent.ai_entry_hypothesis_enabled and activated_at is not None and snapshot is not None:
+                snapshot_at = datetime.fromisoformat(str(snapshot["created_at"]).replace("Z", "+00:00"))
+                if snapshot_at.tzinfo is None:
+                    snapshot_at = snapshot_at.replace(tzinfo=timezone.utc)
+                if snapshot_at.astimezone(timezone.utc) >= activated_at.astimezone(timezone.utc):
+                    planner_contract_version = AI_ENTRY_PLANNER_CONTRACT_VERSION
+                    activation_identity = activated_at.astimezone(timezone.utc).isoformat()
         planning_key, planning_identity = candidate_planning_identity(candidate)
         existing_row = (
             get_db()
@@ -8733,7 +8752,8 @@ def ensure_candidate_planning_generation(
             and not manual_replan
             and not eligibility_recovered
             and existing["planning_identity"] == planning_identity
-            and existing["planner_contract_version"] == PLANNER_CONTRACT_VERSION
+            and existing["planner_contract_version"] == planner_contract_version
+            and existing.get("activation_identity") == activation_identity
         ):
             execute_write(
                 "UPDATE candidate_planning_generations SET last_candidate_id=?, updated_at=? WHERE id=?",
@@ -8749,7 +8769,10 @@ def ensure_candidate_planning_generation(
             if eligibility_recovered
             else "planning_contract_superseded"
             if existing is not None
-            and existing["planner_contract_version"] != PLANNER_CONTRACT_VERSION
+            and (
+                existing["planner_contract_version"] != planner_contract_version
+                or existing.get("activation_identity") != activation_identity
+            )
             else "incompatible_planning_generation"
         )
         if existing is not None:
@@ -8788,6 +8811,8 @@ def ensure_candidate_planning_generation(
             soft_expires_at=(current_time + timedelta(seconds=int(soft_lease_sec))).isoformat(),
             hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
             attention_max_age_sec=int(max_attention_age_sec),
+            planner_contract_version=planner_contract_version,
+            activation_identity=activation_identity,
         )
         data = _stamp_provenance(generation.model_dump())
         _insert("candidate_planning_generations", data)
@@ -9024,6 +9049,21 @@ def release_candidate_planning_claim(
     return updated.rowcount == 1
 
 
+def bind_candidate_planner_input(
+    generation_id: str, owner_token: str, payload: str, digest: str
+) -> bool:
+    """Bind a claimed generation to one immutable canonical model input."""
+    if hashlib.sha256(payload.encode()).hexdigest() != digest:
+        raise ValueError("planner_input_hash_mismatch")
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET planner_input_json=?,planner_input_hash=? "
+        "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=? "
+        "AND (planner_input_hash IS NULL OR planner_input_hash=?)",
+        (payload, digest, generation_id, owner_token, digest),
+    )
+    return updated.rowcount == 1
+
+
 def complete_candidate_planning_with_plan(
     generation_id: str,
     owner_token: str,
@@ -9084,6 +9124,7 @@ def complete_candidate_planning_with_plan(
             planning_generation_id=generation_id,
             candidate_id=plan.candidate_id,
             planning_key=row["planning_key"],
+            version=plan.version,
             venue=plan.venue,
             symbol=plan.symbol,
             market_type=plan.market_type,

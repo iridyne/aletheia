@@ -22,6 +22,7 @@ STOP_DISTANCE_BELOW_VOL_TARGET = "stop_distance_below_vol_target"
 SIDEWAYS_STOP_MULT = 2.0
 
 ENTRY_PLAN_VERSION = "entry-plan/v1"
+ENTRY_PLAN_V2_VERSION = "entry-plan/v2"
 PLANNING_IDENTITY_VERSION = "candidate-planning/v1"
 ENTRY_PLAN_EXECUTION_MODES = ("RESTING_MAKER", "TRIGGERED")
 ENTRY_PLAN_STATUSES = (
@@ -164,7 +165,7 @@ class EntryPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     plan_id: str = Field(default_factory=_new_id)
-    version: Literal["entry-plan/v1"] = ENTRY_PLAN_VERSION
+    version: Literal["entry-plan/v1", "entry-plan/v2"] = ENTRY_PLAN_VERSION
     planning_generation_id: str
     candidate_id: str
     candidate_family: str
@@ -215,6 +216,16 @@ class EntryPlan(BaseModel):
     runtime_session_id: str | None = None
     producer_commit: str | None = None
     behavior_fingerprint: str | None = None
+    analysis_context_version: Literal["entry-analysis-context/v1"] | None = None
+    analysis_context_fingerprint: str | None = None
+    entry_hypothesis_version: Literal["entry-hypothesis/v1"] | None = None
+    entry_hypothesis_json: str | None = None
+    entry_hypothesis_hash: str | None = None
+    primary_anchor_snapshot: dict | None = None
+    invalidation_anchor_snapshot: dict | None = None
+    entry_profile_id: Literal["anchor-resting-maker", "anchor-retrace-reclaim"] | None = None
+    entry_profile_version: Literal["v1"] | None = None
+    compiled_geometry_fingerprint: str | None = None
 
     @field_validator(
         "stop_price",
@@ -228,6 +239,47 @@ class EntryPlan(BaseModel):
 
     @model_validator(mode="after")
     def _contract_is_coherent(self) -> EntryPlan:
+        provenance_fields = (
+            "analysis_context_version",
+            "analysis_context_fingerprint",
+            "entry_hypothesis_version",
+            "entry_hypothesis_json",
+            "entry_hypothesis_hash",
+            "primary_anchor_snapshot",
+            "invalidation_anchor_snapshot",
+            "entry_profile_id",
+            "entry_profile_version",
+            "compiled_geometry_fingerprint",
+        )
+        if self.version == ENTRY_PLAN_VERSION:
+            if any(getattr(self, field) is not None for field in provenance_fields):
+                raise ValueError("entry_plan_v1_provenance_forbidden")
+        else:
+            if any(getattr(self, field) is None for field in provenance_fields):
+                raise ValueError("entry_plan_v2_provenance_required")
+            try:
+                hypothesis = json.loads(str(self.entry_hypothesis_json))
+            except json.JSONDecodeError as exc:
+                raise ValueError("entry_plan_v2_hypothesis_invalid") from exc
+            if hashlib.sha256(str(self.entry_hypothesis_json).encode()).hexdigest() != self.entry_hypothesis_hash:
+                raise ValueError("entry_plan_v2_hypothesis_hash_mismatch")
+            from aletheia.trading.entry_analysis import EntryAnchorV1, fingerprint
+
+            primary = EntryAnchorV1.model_validate(self.primary_anchor_snapshot)
+            invalidation = EntryAnchorV1.model_validate(self.invalidation_anchor_snapshot)
+            if hypothesis.get("primary_anchor_ref") != primary.anchor_id:
+                raise ValueError("entry_plan_v2_primary_anchor_mismatch")
+            if hypothesis.get("invalidation_anchor_ref") != invalidation.anchor_id:
+                raise ValueError("entry_plan_v2_invalidation_anchor_mismatch")
+            geometry = {
+                "entry_zone": self.entry_zone,
+                "invalidation_price": self.invalidation_price,
+                "stop_price": self.stop_price,
+                "target_price": self.target_price,
+                "trigger_params": self.trigger_params,
+            }
+            if fingerprint(geometry) != self.compiled_geometry_fingerprint:
+                raise ValueError("entry_plan_v2_geometry_hash_mismatch")
         low, high = self.entry_zone
         if low <= 0 or high < low:
             raise ValueError("entry_plan_entry_zone_invalid")
@@ -360,7 +412,17 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
 
 
 def entry_plan_payload(plan: EntryPlan) -> tuple[str, str]:
-    payload = json.dumps(plan.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    v2_fields = {
+        "analysis_context_version", "analysis_context_fingerprint",
+        "entry_hypothesis_version", "entry_hypothesis_json", "entry_hypothesis_hash",
+        "primary_anchor_snapshot", "invalidation_anchor_snapshot", "entry_profile_id",
+        "entry_profile_version", "compiled_geometry_fingerprint",
+    }
+    payload = json.dumps(
+        plan.model_dump(mode="json", exclude=v2_fields if plan.version == ENTRY_PLAN_VERSION else None),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return payload, hashlib.sha256(payload.encode()).hexdigest()
 
 

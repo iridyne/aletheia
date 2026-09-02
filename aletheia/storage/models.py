@@ -1649,6 +1649,7 @@ class UniverseMember(BaseModel):
 Candidate = UniverseMember
 
 PLANNER_CONTRACT_VERSION = "entry-planner/v2"
+AI_ENTRY_PLANNER_CONTRACT_VERSION = "entry-planner/v3"
 
 
 class CandidatePlanningGeneration(_Provenanced):
@@ -1658,7 +1659,7 @@ class CandidatePlanningGeneration(_Provenanced):
     planning_key: str = Field(min_length=64, max_length=64)
     planning_identity: str = Field(min_length=64, max_length=64)
     identity_version: Literal["candidate-planning/v1"] = "candidate-planning/v1"
-    planner_contract_version: Literal["entry-planner/v2"] = PLANNER_CONTRACT_VERSION
+    planner_contract_version: Literal["entry-planner/v2", "entry-planner/v3"] = PLANNER_CONTRACT_VERSION
     candidate_id: str
     last_candidate_id: str
     venue: str
@@ -1688,6 +1689,9 @@ class CandidatePlanningGeneration(_Provenanced):
     attention_policy_version: Literal["candidate-attention/v1"] = "candidate-attention/v1"
     attention_terminal_at: str | None = None
     attention_terminal_reason: str | None = None
+    planner_input_json: str | None = None
+    planner_input_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    activation_identity: str | None = None
 
 
 class EntryPlanRecord(_Provenanced):
@@ -1697,7 +1701,7 @@ class EntryPlanRecord(_Provenanced):
     planning_generation_id: str
     candidate_id: str
     planning_key: str
-    version: Literal["entry-plan/v1"] = "entry-plan/v1"
+    version: Literal["entry-plan/v1", "entry-plan/v2"] = "entry-plan/v1"
     venue: str
     symbol: str
     market_type: Literal["spot", "perp"]

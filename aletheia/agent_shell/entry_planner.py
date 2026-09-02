@@ -14,6 +14,14 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from aletheia.storage import repositories as repo
+from aletheia.trading.entry_analysis import (
+    EntryAnalysisContextV1,
+    EntryHypothesisV1,
+    build_entry_analysis_context,
+    canonical_json,
+    fingerprint,
+    validate_hypothesis_references,
+)
 from aletheia.trading.trigger_specs import (
     compatible_trigger_specs,
     require_compatible_trigger_spec,
@@ -96,7 +104,7 @@ class PlanIntent(_PlanIntentWire):
         return self
 
 
-PlannerFn = Callable[[dict], Awaitable[PlanIntent | dict | None]]
+PlannerFn = Callable[[dict], Awaitable[PlanIntent | EntryHypothesisV1 | dict | None]]
 
 ENTRY_PLANNER_MIN_CONCURRENCY = 3
 ENTRY_PLANNER_MAX_CONCURRENCY = 15
@@ -295,11 +303,56 @@ async def plan_next_candidate(
                 "model_invoked": False,
             }
         feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
-        context = _candidate_context(
-            generation,
-            candidate=candidate,
-            feature=feature,
-        )
+        if generation.get("planner_contract_version") == "entry-planner/v3":
+            activation = cfg.agent.ai_entry_hypothesis_activated_at
+            if (
+                not cfg.agent.ai_entry_hypothesis_enabled
+                or activation is None
+                or generation.get("activation_identity") != activation.astimezone(timezone.utc).isoformat()
+                or cfg.exchange.paper_execution_mode not in {"paper_internal", "bitget_demo"}
+                or cfg.live.state != "live_disabled"
+            ):
+                stored = _complete_semantic_no_plan(generation["id"], owner, "AI_ENTRY_GATE_CLOSED")
+                return {"status": "no_plan" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": False}
+            if generation.get("planner_input_json"):
+                context_model = EntryAnalysisContextV1.model_validate_json(generation["planner_input_json"])
+            else:
+                cutoff = datetime.now(timezone.utc)
+                cutoff_ms = int(cutoff.timestamp() * 1000)
+                windows = {
+                    timeframe: repo.get_ohlcv_candles(
+                        generation["symbol"], timeframe, limit, generation["venue"],
+                        generation["market_type"], cutoff_ms, include_provenance=True,
+                    )
+                    for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96))
+                }
+                context_model = build_entry_analysis_context(
+                    generation, candidate, feature, windows, cutoff_at=cutoff,
+                    orderbook=repo.latest_orderbook(
+                        generation["symbol"], generation["venue"], generation["market_type"]
+                    ),
+                )
+                if (
+                    context_model.candle_windows["15m"]["availability"] != "available"
+                    or not context_model.anchors
+                ):
+                    repo.defer_candidate_planning_with_code(
+                        generation["id"], owner, "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE"
+                    )
+                    return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
+                payload = canonical_json(context_model.model_dump(mode="json"))
+                if not repo.bind_candidate_planner_input(
+                    generation["id"], owner, payload,
+                    fingerprint(context_model.model_dump(mode="json")),
+                ):
+                    return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": False}
+            context = context_model.model_dump(mode="json")
+        else:
+            context = _candidate_context(
+                generation,
+                candidate=candidate,
+                feature=feature,
+            )
     except Exception as exc:
         repo.defer_candidate_planning_with_code(
             generation["id"],
@@ -352,7 +405,11 @@ async def plan_next_candidate(
             "model_invoked": True,
         }
     try:
-        intent = PlanIntent.model_validate(raw)
+        intent = (
+            EntryHypothesisV1.model_validate(raw)
+            if generation.get("planner_contract_version") == "entry-planner/v3"
+            else PlanIntent.model_validate(raw)
+        )
     except ValidationError as exc:
         code = _intent_validation_code(exc)
         repo.defer_candidate_planning_with_code(
@@ -376,6 +433,29 @@ async def plan_next_candidate(
             "planning_generation_id": generation["id"],
             "model_invoked": True,
         }
+    if isinstance(intent, EntryHypothesisV1):
+        try:
+            validate_hypothesis_references(intent, context_model)
+        except ValueError as exc:
+            stored = _complete_semantic_no_plan(
+                generation["id"], owner, "INVALID_HYPOTHESIS_REFERENCE", detail=str(exc)
+            )
+            return {
+                "status": "no_plan" if stored else "stale",
+                "planning_generation_id": generation["id"],
+                "model_invoked": True,
+            }
+        from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
+
+        try:
+            plan = compile_ai_entry_plan(generation, candidate, feature, context_model, intent, cfg)
+        except PlanIntentError as exc:
+            repo.defer_candidate_planning_with_code(
+                generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{exc.code}", max_attempts=1
+            )
+            return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": True}
+        status, record = repo.complete_candidate_planning_with_plan(generation["id"], owner, plan)
+        return {"status": status, "planning_generation_id": generation["id"], "entry_plan_id": record["id"] if record else None, "model_invoked": True}
     try:
         _validate_intent_against_candidate(
             intent,
@@ -465,7 +545,7 @@ async def plan_next_candidate(
 async def system_operator_entry_planner(
     context: dict,
     provider_name: str | None = None,
-) -> PlanIntent | None:
+) -> PlanIntent | EntryHypothesisV1 | None:
     """Canonical slow AI producer; all output is validated before persistence."""
 
     from aletheia.agents.helpers import llm_structured
@@ -473,7 +553,14 @@ async def system_operator_entry_planner(
     from aletheia.model_provider.router import get_provider_for_tier
 
     provider_name = provider_name or get_provider_for_tier("deep")
-    system_prompt = """You are Aletheia System Operator. Return one strict PlanIntent.
+    is_v3 = context.get("context_version") == "entry-analysis-context/v1"
+    system_prompt = ("""You are Aletheia System Operator. Return one strict EntryHypothesisV1.
+Select only anchor IDs, fact refs, and entry profile id/version present in the supplied context.
+Use continuation only. Choose distinct primary and invalidation anchors, LOW or MEDIUM risk,
+INTRADAY or SWING horizon, and at least one supplied supporting fact. The resting-maker profile
+requires PASSIVE urgency; retrace-reclaim permits PASSIVE or BOUNDED_URGENT. Do not emit prices,
+sizes, leverage, numeric risk, ATR multipliers, slippage, or hidden reasoning. Return NO_PLAN with
+a non-OK reason when evidence, anchors, or profiles are insufficient or conflicting.""" if is_v3 else """You are Aletheia System Operator. Return one strict PlanIntent.
 You may choose only these lifecycle branches:
   1. RESTING_MAKER + POST_ONLY_LIMIT: passive maker Order without a trigger.
   2. TRIGGERED + POST_ONLY_LIMIT: wait for a compatible trigger, then maker Order.
@@ -489,18 +576,18 @@ Candidate and internally consistent. Keep thesis, scenario, and evidence_refs sh
 Prices, sizes, stop, target, leverage, expiry, slippage, timeout, and trigger
 parameters are deterministic code output; do not emit them.
 Return NO_PLAN with reason_code=INSUFFICIENT_EVIDENCE, CONFLICTING_SIGNALS,
-STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
+STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry.""")
     with inference_priority(InferencePriority.DEFAULT):
         result, error = await llm_structured(
             system_prompt,
             json.dumps(context, sort_keys=True, default=str),
-            schema=_PlanIntentWireSchema,
+            schema=EntryHypothesisV1 if is_v3 else _PlanIntentWireSchema,
             max_tokens=768,
             provider=provider_name,
             fallback_to_defaults=False,
             caller="agent_shell.entry_planner",
             context_symbol=str((context.get("candidate") or {}).get("symbol") or ""),
-            reasoning_effort="none",
+            reasoning_effort="medium" if is_v3 else "none",
         )
     if error:
         error_text = str(error)
@@ -520,9 +607,9 @@ STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry."""
         raise PlanIntentError("PLANNER_UNAVAILABLE")
     if result is None:
         raise PlanIntentError("PLANNER_UNAVAILABLE")
-    result = _canonicalize_no_plan(result)
+    result = result if is_v3 else _canonicalize_no_plan(result)
     try:
-        return PlanIntent.model_validate(result)
+        return EntryHypothesisV1.model_validate(result) if is_v3 else PlanIntent.model_validate(result)
     except ValidationError as exc:
         raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{_intent_validation_code(exc)}") from exc
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -409,3 +410,133 @@ def compile_entry_plan(
         raise
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise PlanIntentError("COMPILER_INTERNAL", type(exc).__name__) from exc
+
+
+def compile_ai_entry_plan(generation, candidate, feature, context, hypothesis, cfg) -> EntryPlan:
+    """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
+    from aletheia.agent_shell.entry_planner import PlanIntent, PlanIntentError
+    from aletheia.trading.entry_analysis import canonical_json, fingerprint
+
+    if context.execution_context.get("availability") != "available":
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
+    try:
+        spread = float(context.execution_context["spread_bps"])
+        depth = float(context.execution_context["depth_10bps_usd"])
+        costs = float(context.execution_context["estimated_costs"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE") from exc
+    if (
+        not all(math.isfinite(value) for value in (spread, depth, costs))
+        or spread < 0 or costs < 0
+        or spread > float(cfg.universe.max_spread_bps)
+        or depth < float(cfg.universe.min_depth_10bps_usd)
+    ):
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
+    anchors = {item.anchor_id: item for item in context.anchors}
+    primary = anchors[hypothesis.primary_anchor_ref]
+    invalidation = anchors[hypothesis.invalidation_anchor_ref]
+    direction = generation["direction"]
+    if (direction == "long" and invalidation.price >= primary.price) or (
+        direction == "short" and invalidation.price <= primary.price
+    ):
+        raise PlanIntentError("INVALIDATION_ANCHOR_WRONG_SIDE")
+    structure = context.market_structure.get("15m") or {}
+    atr = float(structure.get("atr14") or 0.0)
+    if not math.isfinite(atr) or atr <= 0:
+        raise PlanIntentError("ATR_UNAVAILABLE")
+    tolerance = float(structure.get("break_tolerance") or 0.05 * atr)
+    stop = invalidation.price - tolerance if direction == "long" else invalidation.price + tolerance
+    rr = _RISK_REWARD_TARGET[hypothesis.risk_tier]
+    retrace = hypothesis.entry_profile_id == "anchor-retrace-reclaim"
+    quarter = 0.25 * atr
+    if retrace:
+        zone = (
+            (primary.price, primary.price + quarter)
+            if direction == "long" else (primary.price - quarter, primary.price)
+        )
+        worst_entry = zone[1] if direction == "long" else zone[0]
+    else:
+        zone = (primary.price, primary.price)
+        worst_entry = primary.price
+    target = (
+        worst_entry + rr * (worst_entry - stop)
+        if direction == "long" else worst_entry - rr * (stop - worst_entry)
+    )
+    if target <= 0:
+        raise PlanIntentError("COMPILER_GEOMETRY_UNSATISFIABLE")
+    geometry_material = {
+        "entry_zone": zone,
+        "invalidation_price": invalidation.price,
+        "stop_price": stop,
+        "target_price": target,
+        "trigger_params": {},
+    }
+    trigger_params = {}
+    if retrace:
+        trigger_params = {
+            "breakout_level": primary.price,
+            "pullback_low": primary.price - quarter,
+            "pullback_high": primary.price + quarter,
+            "entry_low": zone[0], "entry_high": zone[1],
+            "invalidation_price": invalidation.price,
+            "sweep_low": primary.price - quarter if direction == "long" else primary.price,
+            "sweep_high": primary.price if direction == "long" else primary.price + quarter,
+            "atr_abs": atr,
+            "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "0" * 64,
+        }
+        trigger_params["geometry_fingerprint"] = fingerprint(
+            {key: value for key, value in trigger_params.items() if key != "geometry_fingerprint"}
+        )
+        geometry_material["trigger_params"] = trigger_params
+    synthetic = PlanIntent(
+        decision="ENTRY_PLAN", reason_code="OK", thesis=hypothesis.thesis,
+        scenario=hypothesis.scenario, evidence_refs=list(hypothesis.supporting_fact_refs),
+        execution_mode="RESTING_MAKER", order_tactic="POST_ONLY_LIMIT",
+        trigger_spec_id=None, trigger_spec_version=None,
+        risk_tier=hypothesis.risk_tier, horizon=hypothesis.horizon,
+    )
+    base = compile_entry_plan(generation, candidate, feature, synthetic, cfg)
+    old_entry = base.entry_zone[1] if direction == "long" else base.entry_zone[0]
+    old_fraction = abs(old_entry - base.stop_price) / old_entry
+    new_fraction = abs(worst_entry - stop) / worst_entry
+    bounded_notional = min(base.max_notional, base.max_notional * old_fraction / new_fraction)
+    maker = synthetic.order_tactic == "POST_ONLY_LIMIT"
+    maker = hypothesis.execution_urgency == "PASSIVE"
+    bid, ask = float(context.execution_context["bid"]), float(context.execution_context["ask"])
+    limit_price = primary.price if maker else None
+    if maker and ((direction == "long" and primary.price >= ask) or (direction == "short" and primary.price <= bid)):
+        raise PlanIntentError("POST_ONLY_WOULD_CROSS")
+    hypothesis_json = canonical_json(hypothesis.model_dump(mode="json"))
+    updates = {
+        "version": "entry-plan/v2", "entry_zone": zone,
+        "execution_mode": "TRIGGERED" if retrace else "RESTING_MAKER",
+        "order_tactic": "POST_ONLY_LIMIT" if maker else "OPPOSING_BBO_IOC",
+        "maker_required": maker, "time_in_force": "POST_ONLY" if maker else "IOC",
+        "price_rule": "EXACT_LIMIT" if maker else "OPPOSING_BBO",
+        "bbo_reference": None if maker else ("ask" if direction == "long" else "bid"),
+        "max_wait_sec": 60 if maker else 0,
+        "max_slippage_bps": None if maker else 20.0,
+        "trigger_spec_id": "anchor-retrace-reclaim" if retrace else None,
+        "trigger_spec_version": "v1" if retrace else None,
+        "invalidation_price": invalidation.price, "stop_price": stop, "target_price": target,
+        "trigger_params": trigger_params,
+        "trigger_data_requirements": (("quote", "trade", "books5", "candle1m") if retrace else ()),
+        "trigger_freshness_ms": 2000 if retrace else None,
+        "limit_price": limit_price,
+        "worst_price": (worst_entry if not maker else None),
+        "max_notional": bounded_notional,
+        "behavior_version": "ai-entry-hypothesis-compiler/v1",
+        "treatment_exposure_id": None,
+        "analysis_context_version": context.context_version,
+        "analysis_context_fingerprint": context.context_fingerprint,
+        "entry_hypothesis_version": hypothesis.version,
+        "entry_hypothesis_json": hypothesis_json,
+        "entry_hypothesis_hash": hashlib.sha256(hypothesis_json.encode()).hexdigest(),
+        "primary_anchor_snapshot": primary.model_dump(mode="json"),
+        "invalidation_anchor_snapshot": invalidation.model_dump(mode="json"),
+        "entry_profile_id": hypothesis.entry_profile_id,
+        "entry_profile_version": hypothesis.entry_profile_version,
+        "compiled_geometry_fingerprint": fingerprint(geometry_material),
+    }
+    return EntryPlan.model_validate({**base.model_dump(mode="json"), **updates})
