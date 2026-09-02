@@ -100,6 +100,35 @@ def test_future_success_is_not_fresh_or_healthy(monkeypatch):
     assert "future" in check.detail
 
 
+def test_future_success_does_not_hide_valid_fresh_run(monkeypatch):
+    import aletheia.agents.research_worker as worker
+    from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
+
+    valid = SerenityResearchRun(
+        trigger_type="manual",
+        status="completed",
+        finished_at="2026-07-11T03:00:00+00:00",
+    )
+    future = SerenityResearchRun(
+        trigger_type="manual",
+        status="completed",
+        finished_at="2026-07-12T10:00:00+00:00",
+    )
+    repo.insert_serenity_research_run(valid)
+    repo.insert_serenity_research_run(future)
+    enqueued: list[str] = []
+    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+
+    result = _enqueue_serenity_research_if_due(
+        datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
+    )
+
+    assert result["status"] == "fresh"
+    assert result["run_id"] == valid.id
+    assert enqueued == []
+    assert len(repo.list_serenity_research_runs(limit=10)) == 2
+
+
 def test_unrelated_active_run_suppresses_scheduled_batch(monkeypatch):
     import aletheia.agents.research_worker as worker
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
