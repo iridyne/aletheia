@@ -124,6 +124,27 @@ class TestSymbolFilter:
         assert count == 5  # 3 swap + 2 spot
         assert mod._okx_demo_symbols == fake_result
 
+    def test_contended_refresh_reuses_newly_fresh_cache(self):
+        import aletheia.execution.okx_broker as mod
+
+        fake_result = {
+            "swap": frozenset({"BTC/USDT"}),
+            "spot": frozenset({"BTC/USDT"}),
+        }
+        runner = MagicMock(
+            side_effect=closing_coro_runner(
+                fake_result,
+                RuntimeError("redundant refresh failed"),
+            )
+        )
+
+        with patch("aletheia.execution.okx_broker._run_coro", runner):
+            first = mod.refresh_okx_demo_symbols()
+            second = mod.refresh_okx_demo_symbols()
+
+        assert first == second == 2
+        assert runner.call_count == 1
+
     def test_empty_refresh_is_known_loaded_absence(self):
         import aletheia.execution.okx_broker as mod
 
