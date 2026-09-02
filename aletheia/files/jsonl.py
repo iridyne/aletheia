@@ -506,52 +506,53 @@ def verify_audit_chain() -> dict:
     across file rotation boundaries.
     """
     path = _log_dir() / "audit.jsonl"
-    paths = _jsonl_paths_chronological(path)
-    if not paths:
-        return {"valid": True, "records": 0, "errors": [], "error_timestamps": [], "reanchors": 0}
+    with _exclusive_file_lock(_log_dir() / ".audit.lock"):
+        paths = _jsonl_paths_chronological(path)
+        if not paths:
+            return {"valid": True, "records": 0, "errors": [], "error_timestamps": [], "reanchors": 0}
 
-    errors: list[str] = []
-    error_timestamps: list[str] = []
-    prev_hash = _GENESIS_HASH
-    count = 0
+        errors: list[str] = []
+        error_timestamps: list[str] = []
+        prev_hash = _GENESIS_HASH
+        count = 0
 
-    for current_path in paths:
-        try:
-            line_iter = current_path.open("r", encoding="utf-8")
-        except OSError:
-            continue
-        with line_iter as f:
-            for i, raw_line in enumerate(f, 1):
-                raw_line = raw_line.strip()
-                if not raw_line:
-                    continue
-                count += 1
-                label = f"{current_path.name}:{i}"
-                try:
-                    record = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    errors.append(f"{label}: invalid JSON")
-                    error_timestamps.append("")
-                    prev_hash = _GENESIS_HASH
-                    continue
+        for current_path in paths:
+            try:
+                line_iter = current_path.open("r", encoding="utf-8")
+            except OSError:
+                continue
+            with line_iter as f:
+                for i, raw_line in enumerate(f, 1):
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    count += 1
+                    label = f"{current_path.name}:{i}"
+                    try:
+                        record = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        errors.append(f"{label}: invalid JSON")
+                        error_timestamps.append("")
+                        prev_hash = _GENESIS_HASH
+                        continue
 
-                record_prev = record.get("_prev_hash")
-                if record_prev is None:
+                    record_prev = record.get("_prev_hash")
+                    if record_prev is None:
+                        prev_hash = _hash_record(raw_line)
+                        continue
+
+                    if record_prev != prev_hash:
+                        errors.append(
+                            f"{label}: _prev_hash mismatch "
+                            f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
+                        )
+                        rec_ts = record.get("created_at") or record.get("timestamp") or ""
+                        error_timestamps.append(str(rec_ts))
+
                     prev_hash = _hash_record(raw_line)
-                    continue
 
-                if record_prev != prev_hash:
-                    errors.append(
-                        f"{label}: _prev_hash mismatch "
-                        f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
-                    )
-                    rec_ts = record.get("created_at") or record.get("timestamp") or ""
-                    error_timestamps.append(str(rec_ts))
-
-                prev_hash = _hash_record(raw_line)
-
-    return {"valid": len(errors) == 0, "records": count, "errors": errors,
-            "error_timestamps": error_timestamps, "reanchors": 0}
+        return {"valid": len(errors) == 0, "records": count, "errors": errors,
+                "error_timestamps": error_timestamps, "reanchors": 0}
 
 
 def write_error(record: dict) -> None:

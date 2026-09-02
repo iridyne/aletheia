@@ -3,6 +3,7 @@
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import pytest
 
@@ -158,6 +159,54 @@ def test_verify_audit_chain_spans_rotated_files(tmp_path, monkeypatch):
     result = verify_audit_chain()
     assert result["valid"] is True
     assert result["records"] == 4
+
+
+def test_verify_audit_chain_does_not_mix_rotation_generations(tmp_path, monkeypatch):
+    import aletheia.files.jsonl as jmod
+
+    jmod.write_audit(
+        {"action": "first", "timestamp": "2026-01-01T00:00:00"}, mirror_db=False,
+    )
+    (tmp_path / "audit.jsonl").rename(tmp_path / "audit.jsonl.1")
+    jmod.write_audit(
+        {"action": "second", "timestamp": "2026-01-01T00:01:00"}, mirror_db=False,
+    )
+    monkeypatch.setattr(jmod, "_max_bytes", lambda: 1)
+
+    discovered = threading.Event()
+    writer_done = threading.Event()
+    real_paths = jmod._jsonl_paths_chronological
+
+    def pause_after_discovery(path):
+        paths = real_paths(path)
+        if threading.current_thread().name == "audit-verifier":
+            discovered.set()
+            writer_done.wait(timeout=0.25)
+        return paths
+
+    monkeypatch.setattr(jmod, "_jsonl_paths_chronological", pause_after_discovery)
+    verified = []
+    verifier = threading.Thread(
+        target=lambda: verified.append(jmod.verify_audit_chain()),
+        name="audit-verifier",
+    )
+    verifier.start()
+    assert discovered.wait(timeout=1)
+
+    def rotate_and_append():
+        jmod.write_audit(
+            {"action": "third", "timestamp": "2026-01-01T00:02:00"}, mirror_db=False,
+        )
+        writer_done.set()
+
+    writer = threading.Thread(target=rotate_and_append)
+    writer.start()
+    verifier.join(timeout=2)
+    writer.join(timeout=2)
+
+    assert not verifier.is_alive()
+    assert not writer.is_alive()
+    assert verified[0]["valid"] is True
 
 
 def test_verify_detects_tampered_rotated_tail(tmp_path, monkeypatch):
