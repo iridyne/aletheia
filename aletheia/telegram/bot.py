@@ -63,11 +63,11 @@ class TelegramBot:
 
     def _authorization_error(self, chat_id: int) -> str | None:
         cfg = load_config()
-        effective_allowed = self.allowed_chat_ids or set(cfg.telegram.allowed_chat_ids)
-        if cfg.telegram.enabled and not effective_allowed:
-            return "Telegram is enabled but no allowed_chat_ids are configured."
+        if not cfg.telegram.enabled:
+            return "Telegram is disabled."
+        effective_allowed = set(cfg.telegram.allowed_chat_ids)
         if not effective_allowed:
-            return None
+            return "Telegram is enabled but no allowed_chat_ids are configured."
         if chat_id not in effective_allowed:
             return "Unauthorized."
         return None

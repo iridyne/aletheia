@@ -20,6 +20,10 @@ def setup_test_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    cfg = loader.load_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.allowed_chat_ids = [123]
+    loader.save_config(cfg)
 
 
 @pytest.mark.anyio
@@ -117,8 +121,13 @@ async def test_help_command(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_unauthorized_chat_rejected(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.telegram.allowed_chat_ids = [999]
+    save_config(cfg)
+
     bot = TelegramBot()
-    bot.allowed_chat_ids = {999}  # Only chat 999 allowed
     # Unauthorized chats get no reply at all (silent + audited), not an error string.
     resp = await bot.handle_message(123, "/status")
     assert resp is None
@@ -140,6 +149,29 @@ async def test_enabled_telegram_requires_allowed_chat_ids(tmp_path, monkeypatch)
     # status leak — the condition is audited instead.
     resp = await bot.handle_message(123, "/status")
     assert resp is None
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_authorization_tracks_current_config_after_startup(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}  # Startup snapshot.
+
+    cfg = load_config()
+    cfg.telegram.allowed_chat_ids = [456]
+    save_config(cfg)
+
+    assert await bot.handle_message(123, "/status") is None
+    assert "Gateway" in await bot.handle_message(456, "/status")
+
+    cfg = load_config()
+    cfg.telegram.enabled = False
+    save_config(cfg)
+
+    assert await bot.handle_message(456, "/status") is None
     reset_db()
 
 
