@@ -18,7 +18,7 @@ from aletheia.storage.models import (
 from aletheia.trading.entry_plan import EntryPlan
 from aletheia.trading.momentum_trigger import MomentumTriggerEngineV2
 from aletheia.universe.fast_stream import (
-    fast_market_data_venue_for_config,
+    fast_market_data_unavailability_reason,
     fast_market_stream_for_config,
 )
 from aletheia.universe.fast_trigger import (
@@ -358,7 +358,12 @@ async def _load_watchers(
             or authorization.direction != setup.direction
             or authorization.entry_zone != setup.entry_zone
             or authorization.invalidation_price != setup.invalidation_price
-            or setup.venue.lower() != fast_market_data_venue_for_config(cfg)
+            or fast_market_data_unavailability_reason(
+                cfg,
+                setup.venue,
+                setup.market_type,
+            )
+            is not None
         ):
             await asyncio.to_thread(
                 repo.transition_universe_setup,
@@ -591,7 +596,11 @@ async def _load_entry_plan_watchers(
             if _entry_plan_outcome_is_unresolved(outcome):
                 plans[plan.plan_id] = plan
             continue
-        if plan.venue.lower() != fast_market_data_venue_for_config(cfg):
+        if fast_market_data_unavailability_reason(
+            cfg,
+            plan.venue,
+            plan.market_type,
+        ) is not None:
             outcome = await _terminalize_entry_plan(
                 row,
                 status="invalidated",

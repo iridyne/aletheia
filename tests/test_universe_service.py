@@ -617,9 +617,10 @@ def test_fast_market_data_unavailability_reason_returns_stable_tokens():
 
     cfg_binance = MagicMock()
     cfg_binance.exchange.paper_execution_mode = "binance_testnet"
-    # binance has no adapter in _FAST_STREAM_ADAPTERS, so mismatch first
+    # Binance public streams cover the matching venue; exact market capability
+    # is checked when the caller supplies the candidate's market type.
     result = fast_market_data_unavailability_reason(cfg_binance, "binance")
-    assert result in ("FAST_MARKET_DATA_VENUE_MISMATCH", "FAST_MARKET_DATA_STREAM_UNAVAILABLE")
+    assert result is None
 
 
 def test_venue_ineligible_candidate_does_not_gain_planning_generation(tmp_path, monkeypatch):

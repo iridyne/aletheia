@@ -269,6 +269,7 @@ async def plan_next_candidate(
         venue_reason = fast_market_data_unavailability_reason(
             cfg,
             str(candidate["venue"]),
+            str(candidate["market_type"]),
         )
         if venue_reason is not None:
             stored = _complete_semantic_no_plan(
