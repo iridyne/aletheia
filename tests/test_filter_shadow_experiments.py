@@ -451,6 +451,26 @@ def test_lab_filter_shadow_rejects_malformed_source_time():
     }
 
 
+def test_lab_filter_shadow_rejects_malformed_observation_start():
+    from aletheia.observation_lab import filter_shadow
+
+    with pytest.raises(ValueError, match="observation_started_at_unavailable"):
+        filter_shadow._source_rows(
+            spec={
+                "filter_name": "ranker_confidence_gate",
+                "stage": "paper_ranker",
+                "scanner_family": "momentum",
+                "direction": "long",
+                "market_type": "perp",
+            },
+            root={
+                "started_at": "not-a-time",
+                "collect_until": "2026-08-20T13:00:00+00:00",
+            },
+            as_of_at="2026-08-20T12:30:00+00:00",
+        )
+
+
 def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments

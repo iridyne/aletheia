@@ -189,6 +189,11 @@ def _source_rows(
     collect_until = _parse_time(root.get("collect_until"))
     if collect_until is None:
         return [], False
+    started_at = _parse_time(root.get("started_at"))
+    if started_at is None:
+        raise ValueError("observation_started_at_unavailable")
+    if started_at >= collect_until:
+        raise ValueError("observation_interval_unavailable")
     as_of = _parse_time(as_of_at)
     if as_of is None:
         return [], False
