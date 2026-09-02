@@ -1991,27 +1991,30 @@ def reschedule_universe_refresh(interval_min: int) -> bool:
 def _reschedule_job_preserving_pause(job_id: str, *, trigger: str, **kwargs) -> bool:
     """Replace one trigger without reviving a layered-paused job."""
 
-    if _scheduler is None:
-        return False
-    job = _scheduler.get_job(job_id)
-    if job is None:
-        return False
-    missing = object()
-    next_run_time = getattr(job, "next_run_time", missing)
-    if next_run_time is not None and job_id not in _selectively_paused_jobs:
-        _scheduler.reschedule_job(job_id, trigger=trigger, **kwargs)
+    from aletheia.agent_runtime.pause_ownership import _pause_transition_lock
+
+    with _pause_transition_lock:
+        if _scheduler is None:
+            return False
+        job = _scheduler.get_job(job_id)
+        if job is None:
+            return False
+        missing = object()
+        next_run_time = getattr(job, "next_run_time", missing)
+        if next_run_time is not None and job_id not in _selectively_paused_jobs:
+            _scheduler.reschedule_job(job_id, trigger=trigger, **kwargs)
+            return True
+        trigger_kwargs = dict(kwargs)
+        if trigger == "interval":
+            if _scheduler.timezone is not None:
+                trigger_kwargs.setdefault("timezone", _scheduler.timezone)
+            replacement = IntervalTrigger(**trigger_kwargs)
+        elif trigger == "cron":
+            replacement = CronTrigger(**trigger_kwargs)
+        else:
+            raise ValueError(f"unsupported scheduler trigger: {trigger}")
+        _scheduler.modify_job(job_id, trigger=replacement, next_run_time=None)
         return True
-    trigger_kwargs = dict(kwargs)
-    if trigger == "interval":
-        if _scheduler.timezone is not None:
-            trigger_kwargs.setdefault("timezone", _scheduler.timezone)
-        replacement = IntervalTrigger(**trigger_kwargs)
-    elif trigger == "cron":
-        replacement = CronTrigger(**trigger_kwargs)
-    else:
-        raise ValueError(f"unsupported scheduler trigger: {trigger}")
-    _scheduler.modify_job(job_id, trigger=replacement, next_run_time=None)
-    return True
 
 
 def reschedule_learning_jobs(interval_min: int) -> bool:
