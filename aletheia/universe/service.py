@@ -339,6 +339,16 @@ def _atomic_universe_publication():
         _record_publication_duration(started)
 
 
+def _persist_attempt_learning_exposures(writes: list[dict]) -> None:
+    """Join deferred scoring evidence to the Universe publication transaction."""
+    from aletheia.learning.ledger import insert_exposure
+
+    for write in writes:
+        inserted = insert_exposure(**write)
+        if inserted is None:
+            raise RuntimeError("learning_experiment_closed_before_publication")
+
+
 def _volume_ranked_instruments(rows: list, default_venue: str):
     """Normalize structured and legacy volume-ranking rows to exact instruments."""
     from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId
@@ -921,6 +931,7 @@ class UniverseService:
 
             # Scan all coarsely-filtered candidates to get family + direction assignments.
             pre_scored = []
+            deferred_exposure_writes: list[dict] = []
             for feat in coarse_filtered:
                 scanner_result = run_all_scanners(feat)
                 authority_score_audit: dict[str, object] = {}
@@ -934,6 +945,7 @@ class UniverseService:
                     scoring_audit_out=authority_score_audit,
                     calibration_learning_identity=calibration_learning_identity,
                     restrict_calibration_learning_scope=restrict_calibration_scope,
+                    deferred_exposure_writes=deferred_exposure_writes,
                 )
                 pre_scored.append({**feat, **scanner_result, "total_score": total})
 
@@ -1084,6 +1096,7 @@ class UniverseService:
                     allocated=allocated,
                 )
                 with _atomic_universe_publication():
+                    _persist_attempt_learning_exposures(deferred_exposure_writes)
                     selected_generation_ids, new_generation_ids, planning_generations_created = (
                         _ensure_planning_generations(
                             repo.list_universe_members(prev_snapshot_id, limit=500),
@@ -1220,6 +1233,7 @@ class UniverseService:
             # and its Opportunity handoff are durable. Superseding the previous
             # healthy snapshot is the final write in this publication unit.
             with _atomic_universe_publication():
+                _persist_attempt_learning_exposures(deferred_exposure_writes)
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)
 

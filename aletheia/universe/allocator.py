@@ -303,6 +303,7 @@ def compute_total_score(
     scoring_audit_out: dict[str, object] | None = None,
     calibration_learning_identity: dict | None = None,
     restrict_calibration_learning_scope: bool = False,
+    deferred_exposure_writes: list[dict] | None = None,
 ) -> float:
     """Compute the final total_score for universe ranking.
 
@@ -442,6 +443,7 @@ def compute_total_score(
                 exposed_at=outcome_entry_ts,
                 outcome_seeds=outcome_seeds,
                 require_outcome_seed=bool(candidate_key),
+                deferred_exposure_writes=deferred_exposure_writes,
             )
             opportunity = influence.value
             calibration_effective_multiplier = (
