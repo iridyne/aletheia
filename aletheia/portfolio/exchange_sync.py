@@ -103,7 +103,23 @@ def _read_raw(mode: str) -> Optional[dict]:
     try:
         return json.loads(row["value"], parse_constant=_reject_non_finite_json)
     except (ValueError, TypeError):
-        return None
+        return {
+            "equity_usdt": None,
+            "available_usdt": None,
+            "frozen_usdt": None,
+            "futures_unrealized_pnl": None,
+            "total_equity_usdt": None,
+            "total_available_usdt": None,
+            "total_unrealized_pnl": None,
+            "accounts": [],
+            "positions": [],
+            "errors": [],
+            "connected_brokers": [],
+            "fetched_at": None,
+            "sync_status": "error",
+            "sync_complete": False,
+            "cache_error": "invalid_cache",
+        }
 
 
 def _age_seconds(fetched_at: str) -> Optional[float]:
@@ -184,6 +200,8 @@ def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -
     """Classify a cached state for the UI: ok / stale / unconfigured / error."""
     if state is None:
         return "unconfigured"
+    if state.get("cache_error") == "invalid_cache":
+        return "error"
     age = state.get("age_seconds")
     try:
         age_value = float(age)
@@ -243,6 +261,8 @@ def get_unified_cached_state() -> Optional[dict]:
     raw = _read_raw("unified")
     if raw is None:
         return None
+    if raw.get("cache_error") == "invalid_cache":
+        return raw
     raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
     if "connected_brokers" in raw:
         raw["connected_brokers"] = list(raw.get("connected_brokers") or [])
