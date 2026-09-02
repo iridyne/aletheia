@@ -283,7 +283,12 @@ def apply_proxy_env() -> None:
     (re)writes NO_PROXY so loopback/internal traffic stays DIRECT even when a proxy
     is active, and sets ALL_PROXY so SOCKS-aware clients pick the same proxy up.
     """
-    existing = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    existing = (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+    )
     if not existing:
         try:
             proxy = _proxy_url()
