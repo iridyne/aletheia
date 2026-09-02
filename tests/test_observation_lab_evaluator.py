@@ -148,3 +148,43 @@ def test_lab_evaluator_records_immutable_result_from_lab_exposures():
     ).fetchone()[0] == 2
     # Lab evaluation must not materialize a legacy Experiment/Hypothesis row.
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 0
+
+
+def test_canonical_runner_keeps_window_active_when_evaluation_is_unavailable():
+    from aletheia.observation_lab.canonical import register_observation_spec
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.kernel import advance_windows
+    from aletheia.observation_lab.runner import register_builtin_handlers
+
+    reset_lab_db()
+    register_builtin_handlers()
+    root = register_observation_spec(
+        {
+            "observation_id": "lab-evaluator-unavailable",
+            "path_id": "universe_family_calibration",
+            "filter_name": "test-filter",
+            "stage": "shadow",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "4h",
+            "control": {"value": 1.0},
+            "treatment": {"value": 2.0},
+        },
+        started_at="2026-08-01T00:00:00+00:00",
+        collect_until="2026-08-02T00:00:00+00:00",
+        finalize_not_before="2026-08-02T00:00:00+00:00",
+    )
+
+    advanced = advance_windows(
+        now="2026-08-03T00:00:00+00:00",
+    )
+
+    result = advanced["results"][f"{root['observation_id']}:1"]
+    assert result["status"] == "advanced"
+    summary = result["summary"]
+    assert summary["evaluation"]["available"] is False
+    assert get_lab_db().execute(
+        "SELECT status FROM observation_windows WHERE observation_id=? AND generation=1",
+        (root["observation_id"],),
+    ).fetchone()[0] == "active"

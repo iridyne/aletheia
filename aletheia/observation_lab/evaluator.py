@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import sqlite3
 from typing import Any, Mapping
 
 from aletheia.observation_lab.db import readonly_lab_db
@@ -87,6 +88,14 @@ def _optional_finite(value: Any) -> float | None:
     except (TypeError, ValueError, OverflowError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _strict_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    return None
 
 
 def _gate_integer(
@@ -257,9 +266,11 @@ def _source_rows(
         )
         effect_mode = str(manifest.get("effect_mode") or "observe_only")
         assignment = str(row.get("assignment") or "unassigned")
-        applied = bool(row.get("applied"))
+        applied = _strict_bool(row.get("applied"))
+        behavior_changed = _strict_bool(row.get("behavior_changed"))
+        if applied is None or behavior_changed is None:
+            raise ValueError("malformed_exposure_boolean")
         authority_applied = effect_mode == "paper_treatment" and applied and assignment == "treatment"
-        behavior_changed = bool(row.get("behavior_changed"))
         behavior_reason = (
             "effective_treatment_delta"
             if behavior_changed
@@ -294,9 +305,7 @@ def _source_rows(
             }),
             "outcome_contract_version": outcome_contract_version,
             "experiment_stage": stage,
-            "concurrent_policy_epoch": (
-                row.get("behavior_policy_epoch_ref") or policy_epoch or ""
-            ),
+            "concurrent_policy_epoch": row.get("behavior_policy_epoch_ref") or "",
             "code_commit": row.get("producer_commit"),
             "outcome_source": row.get("outcome_source"),
             "exposed_at": row.get("exposed_at"),
@@ -367,7 +376,7 @@ def _evaluation_payload(cohort: Any, evaluation: Any) -> dict[str, Any]:
     }
 
 
-def evaluate_observation(
+def _evaluate_observation(
     observation_id: str,
     generation: int | None = None,
     *,
@@ -469,6 +478,36 @@ def evaluate_observation(
     if models is None:
         return {"available": False, "reason": "measurement_path_unavailable"}
     experiment, hypothesis, path_id = models
+    expected_policy_epoch = str(contract.get("behavior_policy_epoch_ref") or "").strip()
+    policy_epochs = {
+        str(row.get("behavior_policy_epoch_ref") or "").strip()
+        for row in exposures
+    }
+    if exposures and (
+        (
+            expected_policy_epoch
+            and any(epoch != expected_policy_epoch for epoch in policy_epochs)
+        )
+        or (
+            not expected_policy_epoch
+            and (
+                not policy_epochs
+                or "" in policy_epochs
+                or len(policy_epochs) != 1
+            )
+        )
+    ):
+        return {
+            "available": False,
+            "reason": (
+                "policy_epoch_contract_mismatch"
+                if expected_policy_epoch
+                else "policy_epoch_unavailable"
+            ),
+            "observation_id": observation_id,
+            "generation": generation,
+            "evaluation_kind": evaluation_kind,
+        }
     assignment_units, cutoff, plan_payload, plan_reason = _plan_cutoff(
         plan,
         observation_id=observation_id,
@@ -685,6 +724,43 @@ def evaluate_observation(
         ),
         "exposure_fingerprint": exposure_fingerprint,
     }
+
+
+def evaluate_observation(
+    observation_id: str,
+    generation: int | None = None,
+    *,
+    evaluation_kind: str = "monitoring",
+    as_of_at: str | datetime | None = None,
+) -> dict[str, Any]:
+    if evaluation_kind not in {"monitoring", "confirmatory"}:
+        raise ValueError("invalid_evaluation_kind")
+    if as_of_at is not None and _parse_time(as_of_at) is None:
+        raise ValueError("as_of_at_must_be_utc")
+    try:
+        return _evaluate_observation(
+            observation_id,
+            generation,
+            evaluation_kind=evaluation_kind,
+            as_of_at=as_of_at,
+        )
+    except (
+        FileNotFoundError,
+        OSError,
+        sqlite3.Error,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ) as exc:
+        return {
+            "available": False,
+            "reason": "evaluation_projection_unavailable",
+            "observation_id": observation_id,
+            "generation": generation,
+            "evaluation_kind": evaluation_kind,
+            "error": type(exc).__name__,
+        }
 
 
 def evaluate_active_observations(*, limit: int = 10) -> dict[str, Any]:

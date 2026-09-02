@@ -264,7 +264,7 @@ def register_builtin_handlers() -> None:
                 "handler": window.get("kind"),
                 "evaluation": evaluation,
             },
-            can_finalize=can_finalize,
+            can_finalize=can_finalize and evaluation is not None and evaluation.get("available") is True,
         )
 
     def _canonical_capture(window: dict[str, Any], event: dict[str, Any]) -> ObservationProgress:
@@ -289,7 +289,7 @@ def register_builtin_handlers() -> None:
                     "status": "finalized",
                     "handler": window.get("kind"),
                 }
-        return {"status": "finalized", "handler": window.get("kind")}
+        raise RuntimeError("canonical_evaluation_result_unavailable")
 
     def _canonical_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         return ()
