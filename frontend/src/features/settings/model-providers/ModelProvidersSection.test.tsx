@@ -11,6 +11,7 @@ import {
 } from "./ModelProvidersSection";
 import { blankApiProfile, draftFromProfile } from "./modelProviderState";
 import type { ProviderConfigView, ProviderTypeView } from "./types";
+import SOURCE from "./ModelProvidersSection.tsx?raw";
 
 const API_TYPE: ProviderTypeView = {
 	id: "openai_compatible",
@@ -93,6 +94,10 @@ function changeInput(input: HTMLInputElement, value: string) {
 }
 
 describe("ModelProvidersSection", () => {
+	it("clears an old API profile error when a retry starts", () => {
+		expect(SOURCE.match(/onMutate: \(\) => setError\(null\)/g)).toHaveLength(2);
+	});
+
 	it("renders the clean state without forcing a provider or role", () => {
 		const html = renderCleanModelSettings();
 

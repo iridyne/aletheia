@@ -456,11 +456,13 @@ function ApiProfiles({
 			providerId: string;
 			enabled: boolean;
 		}) => api.updateModelProfile(providerId, { enabled }),
+		onMutate: () => setError(null),
 		onSuccess: invalidate,
 		onError: (value) => setError(mutationMessage(value)),
 	});
 	const remove = useMutation({
 		mutationFn: api.deleteModelProfile,
+		onMutate: () => setError(null),
 		onSuccess: invalidate,
 		onError: (value) => setError(mutationMessage(value)),
 	});
