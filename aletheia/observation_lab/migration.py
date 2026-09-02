@@ -37,6 +37,16 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
 
+def _legacy_source_cutoff(value: Any, *, source_kind: str) -> str:
+    """Preserve an old evidence boundary without inventing a Main watermark."""
+    return _json({
+        "source_name": "main",
+        "main_import_contiguous_sequence": None,
+        "legacy_source_kind": source_kind,
+        "legacy_source_cutoff": str(value or ""),
+    })
+
+
 def _table_exists(db: sqlite3.Connection, table: str) -> bool:
     return db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -543,11 +553,15 @@ def apply_legacy_learning_migration(
                 continue
             result = dict(row)
             evaluation_id = f"legacy:{row.get('verdict_id') or _hash(row)}"
+            source_cutoff = _legacy_source_cutoff(
+                row.get("window_end") or row.get("created_at"),
+                source_kind="learning_contribution_verdict",
+            )
             lab.execute(
                 "INSERT OR IGNORE INTO observation_evaluations "
                 "(evaluation_id, observation_id, generation, evaluation_kind, source_cutoff, input_fingerprint, exposure_fingerprint, outcome_fingerprint, result_json, verdict, disposition, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (evaluation_id, root[0], root[1], "confirmatory" if row.get("inference_role") == "confirmatory" else "monitoring", str(row.get("window_end") or row.get("created_at") or _now()), _hash(row), _hash({"experiment_id": row.get("experiment_id")}), _hash(row.get("harm_metrics_json") or "{}"), _json(result), str(row.get("verdict") or "legacy_unverified"), "legacy_unverified", row.get("created_at") or _now()),
+                (evaluation_id, root[0], root[1], "confirmatory" if row.get("inference_role") == "confirmatory" else "monitoring", source_cutoff, _hash(row), _hash({"experiment_id": row.get("experiment_id")}), _hash(row.get("harm_metrics_json") or "{}"), _json(result), str(row.get("verdict") or "legacy_unverified"), "legacy_unverified", row.get("created_at") or _now()),
             )
             lab.execute(
                 "INSERT OR IGNORE INTO observation_results "
@@ -559,7 +573,7 @@ def apply_legacy_learning_migration(
                         "SELECT spec_hash FROM observation_windows WHERE observation_id=? AND generation=?",
                         (root[0], root[1]),
                     ).fetchone()[0]), evaluation_id,
-                    str(row.get("window_end") or row.get("created_at") or _now()),
+                    source_cutoff,
                     str(row.get("verdict") or "legacy_unverified"), "legacy_unverified",
                     _json(result), _hash({"evaluation_id": evaluation_id, "result": result}),
                     row.get("created_at") or _now(),
@@ -610,13 +624,17 @@ def apply_legacy_learning_migration(
                 unprovable += 1
                 continue
             evaluation_id = f"legacy:filter-shadow-evaluation:{row.get('id') or _hash(row)}"
+            source_cutoff = _legacy_source_cutoff(
+                row.get("evidence_through_at") or row.get("created_at"),
+                source_kind="filter_shadow_evaluation",
+            )
             lab.execute(
                 "INSERT OR IGNORE INTO observation_evaluations "
                 "(evaluation_id, observation_id, generation, evaluation_kind, source_cutoff, input_fingerprint, exposure_fingerprint, outcome_fingerprint, result_json, verdict, disposition, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     evaluation_id, root[0], root[1], "monitoring",
-                    str(row.get("evidence_through_at") or row.get("created_at") or _now()),
+                    source_cutoff,
                     _hash(row), _hash({"experiment_id": row.get("experiment_id")}),
                     _hash(row.get("note") or ""), _json(row), "legacy_unverified",
                     "legacy_unverified", row.get("created_at") or _now(),
@@ -632,7 +650,7 @@ def apply_legacy_learning_migration(
                         "SELECT spec_hash FROM observation_windows WHERE observation_id=? AND generation=?",
                         (root[0], root[1]),
                     ).fetchone()[0]), evaluation_id,
-                    str(row.get("evidence_through_at") or row.get("created_at") or _now()),
+                    source_cutoff,
                     "legacy_unverified", "legacy_unverified", _json(row),
                     _hash({"evaluation_id": evaluation_id, "result": row}),
                     row.get("created_at") or _now(),
