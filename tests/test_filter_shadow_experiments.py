@@ -491,17 +491,23 @@ def test_frozen_units_use_exact_first_exposure_within_same_second():
     register_replay_ready_experiments([_ready_ranker_replay()], now=started_at)
     db = get_db()
     rows = [
-        ("frozen-newer", "frozen-newer", "frozen-newer", "rejected", "2026-08-30T10:00:00.900000+00:00"),
-        ("frozen-older", "frozen-older", "frozen-older", "passed", "2026-08-30T10:00:00.100000+00:00"),
+        (
+            "frozen-newer", "frozen-newer", "frozen-newer", "rejected",
+            "2026-08-30T10:00:00.900000+00:00", '{"minimum_confidence":"high"}',
+        ),
+        (
+            "frozen-older", "frozen-older", "frozen-older", "passed",
+            "2026-08-30T10:00:00.100000+00:00", '{"minimum_confidence":"high"}',
+        ),
     ]
     db.executemany(
         "INSERT INTO filter_decisions "
         "(id, dedup_key, candidate_key, candidate_kind, symbol, market_type, "
         "direction, scanner_family, filter_name, stage, decision, reason_code, "
-        "filter_version, outcome_candidate_key, evaluated_at) "
+        "filter_version, outcome_candidate_key, evaluated_at, parameter_snapshot) "
         "VALUES (?, ?, ?, 'opportunity', 'BTC/USDT', 'perp', 'long', "
         "'mean_reversion', 'ranker_confidence_gate', 'paper_ranker', ?, "
-        "'test', 'v1', 'shared-frozen-candidate', ?)",
+        "'test', 'v1', 'shared-frozen-candidate', ?, ?)",
         rows,
     )
     experiment = dict(
