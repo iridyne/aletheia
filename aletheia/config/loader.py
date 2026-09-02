@@ -522,7 +522,9 @@ def _save_config_locked(
             "The operator-shell process is still running; legacy fallback cannot become effective until that process is gone"
         )
     cfg.runtime.set_pause_scope(cfg.exchange.mode)
-    data = cfg.model_dump(mode="json")
+    data = AletheiaConfig.model_validate(cfg.model_dump(mode="python")).model_dump(
+        mode="json"
+    )
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(CONFIG_PATH.parent), suffix=".tmp")
     try:

@@ -71,6 +71,26 @@ def test_config_roundtrip(tmp_path):
         assert loaded.app.dashboard_port == 8787
 
 
+def test_config_save_revalidates_mutated_risk_authority(tmp_path):
+    config_file = tmp_path / "config.yaml"
+
+    with patch("aletheia.config.loader.DATA_DIR", tmp_path), patch(
+        "aletheia.config.loader.CONFIG_PATH", config_file
+    ):
+        cfg = AletheiaConfig()
+        save_config(cfg)
+        valid_content = config_file.read_text(encoding="utf-8")
+
+        cfg.risk.symbol_filter_mode = "off"
+        with pytest.raises(ValidationError, match="symbol_filter_mode"):
+            save_config(cfg)
+        assert config_file.read_text(encoding="utf-8") == valid_content
+
+        cfg.risk.symbol_filter_mode = "whitelist"
+        save_config(cfg)
+        assert load_config().risk.symbol_filter_mode == "whitelist"
+
+
 def test_config_save_fsyncs_temp_file_before_directory(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
 
