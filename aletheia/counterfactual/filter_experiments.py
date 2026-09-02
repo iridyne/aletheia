@@ -200,6 +200,31 @@ def evaluate_active_shadow_experiments(
     *, now: datetime | None = None
 ) -> dict[str, int]:
     """Append one evidence snapshot for each collecting experiment."""
+    if _lab_authority():
+        from aletheia.observation_lab.filter_shadow import (
+            evaluate_filter_shadow_observation,
+            list_filter_shadow_observations,
+        )
+
+        summary = {
+            "evaluated": 0,
+            "ready_for_review": 0,
+            "completed_no_support": 0,
+            "invalidated": 0,
+        }
+        for row in list_filter_shadow_observations(status="active", limit=1000) or []:
+            result = evaluate_filter_shadow_observation(
+                str(row["observation_id"]), int(row["generation"]), as_of_at=now,
+            )
+            summary["evaluated"] += 1
+            disposition = str(
+                ((result.get("evaluations") or [{}])[0]).get("disposition") or ""
+            )
+            if disposition in {"ready_for_review", "completed_no_support"}:
+                summary[disposition] += 1
+            elif result.get("safety_action") or result.get("verdict") in {"invalid", "negative"}:
+                summary["invalidated"] += 1
+        return summary
     timestamp = _iso(now)
     summary = {
         "evaluated": 0,
@@ -320,6 +345,23 @@ def evaluate_one_experiment(
     operator can force a fresh evaluation snapshot without waiting for the
     controller cycle. Used by the ``aletheia observe evaluate`` CLI.
     """
+    if _lab_authority():
+        from aletheia.observation_lab.filter_shadow import (
+            evaluate_filter_shadow_observation,
+            list_filter_shadow_observations,
+        )
+
+        for row in list_filter_shadow_observations(limit=1000) or []:
+            if experiment_id in {
+                str(row.get("id") or ""),
+                str(row.get("observation_id") or ""),
+            }:
+                return evaluate_filter_shadow_observation(
+                    str(row["observation_id"]),
+                    int(row["generation"]),
+                    as_of_at=now,
+                )
+        raise ValueError(f"unknown observation id: {experiment_id}")
     target: dict[str, Any] | None = None
     for row in repo.list_filter_shadow_experiments(limit=1000):
         if row["id"] == experiment_id:
@@ -437,6 +479,10 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
 
 def build_filter_shadow_experiment_report(limit: int = 50) -> list[dict[str, Any]]:
     """Return plans with their latest evidence snapshot for CLI/API diagnostics."""
+    if _lab_authority():
+        from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+
+        return list_filter_shadow_observations(limit=limit) or []
     rows: list[dict[str, Any]] = []
     for experiment in repo.list_filter_shadow_experiments(limit=max(1, int(limit))):
         row = dict(experiment)

@@ -204,6 +204,208 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
     assert save_calls == []
 
 
+def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
+    from aletheia.counterfactual.filter_experiments import (
+        build_filter_shadow_experiment_report,
+        register_replay_ready_experiments,
+    )
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.evaluator import evaluate_observation
+    from aletheia.storage.sqlite import get_db
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-canonical-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    version = _record_ttl_candidate(
+        key="opportunity:lab-filter-history",
+        evaluated_at=start,
+        decision="rejected",
+        net_return_pct=9.0,
+    )
+    assert register_replay_ready_experiments(
+        [_ready_replay(filter_version=version)], now=start,
+    ) == {"registered": 1, "already_registered": 0, "skipped": 0}
+    # A later decision for the same candidate is still not a prospective first
+    # exposure: the pre-registration row owns the immutable identity.
+    _record_ttl_candidate(
+        key="opportunity:lab-filter-history",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="passed",
+        net_return_pct=9.0,
+    )
+    _record_ttl_candidate(
+        key="opportunity:lab-filter-no-trigger",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="rejected",
+        net_return_pct=0.0,
+        lateness_sec=3_600,
+    )
+    from aletheia.analytics.filter_evidence import record_filter_decision
+
+    record_filter_decision(
+        candidate_key="opportunity:lab-filter-invalid",
+        candidate_kind="opportunity",
+        filter_name="family_ttl",
+        stage="paper_ranker",
+        decision="rejected",
+        reason_code="malformed_snapshot",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+        inputs={},
+        parameters={"ttl_sec": 1_800},
+        evaluated_at=(start + timedelta(minutes=1)).isoformat(),
+    )
+
+    for index in range(20):
+        observed_at = start + timedelta(minutes=index + 1)
+        _record_ttl_candidate(
+            key=f"opportunity:lab-control-{index}",
+            evaluated_at=observed_at,
+            decision="passed",
+            net_return_pct=0.0,
+        )
+        _record_ttl_candidate(
+            key=f"opportunity:lab-treatment-{index}",
+            evaluated_at=observed_at,
+            decision="rejected",
+            net_return_pct=0.4,
+        )
+
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    evaluated = evaluate_observation(
+        root["observation_id"], 1, as_of_at=start + timedelta(hours=2),
+    )
+    assert evaluated["available"] is True
+    assert evaluated["verdict"] == "positive"
+    assert evaluated["evaluations"][0]["disposition"] == "ready_for_review"
+    assert evaluated["evaluations"][0]["no_trigger_unit_count"] == 1
+    assert evaluated["evaluations"][0]["invalid_unit_count"] == 1
+    repeated = evaluate_observation(
+        root["observation_id"], 1, as_of_at=start + timedelta(hours=2),
+    )
+    assert repeated["evaluations"][0]["evaluation_id"] == evaluated["evaluations"][0]["evaluation_id"]
+    from aletheia.counterfactual.filter_experiments import evaluate_active_shadow_experiments
+
+    assert evaluate_active_shadow_experiments(
+        now=start + timedelta(hours=2),
+    ) == {
+        "evaluated": 1,
+        "ready_for_review": 1,
+        "completed_no_support": 0,
+        "invalidated": 0,
+    }
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE observation_id=?",
+        (root["observation_id"],),
+    ).fetchone()[0] == 40
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_units WHERE observation_id=? AND admission='admitted'",
+        (root["observation_id"],),
+    ).fetchone()[0] == 40
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_retention_claims "
+        "WHERE observation_id=? AND status='active'",
+        (root["observation_id"],),
+    ).fetchone()[0] == 40
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_shadow_evaluations"
+    ).fetchone()[0] == 0
+    report = build_filter_shadow_experiment_report()
+    assert report[0]["observation_id"] == root["observation_id"]
+    assert report[0]["latest_evaluation"]["disposition"] == "ready_for_review"
+
+
+def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.evaluator import evaluate_observation
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="observer-filter-shadow-canonical-test")
+    start = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+
+    def add_candidate(key: str, when: datetime, decision: str, inputs: dict) -> str:
+        record_filter_decision(
+            candidate_key=key,
+            candidate_kind="opportunity",
+            filter_name="observer_pre_filter",
+            stage="observer_pre_filter",
+            decision=decision,
+            reason_code="test",
+            symbol=f"BTC/{key[-1]}/USDT",
+            venue="okx",
+            market_type="perp",
+            direction="long",
+            scanner_family="momentum",
+            entry_price_usd=100.0,
+            inputs=inputs,
+            parameters={"rsi_deviation": 12.0, "atr_pct": 0.8},
+            evaluated_at=when.isoformat(),
+        )
+        return get_db().execute(
+            "SELECT filter_version FROM filter_decisions WHERE candidate_key=?",
+            (key,),
+        ).fetchone()[0]
+
+    version = add_candidate(
+        "opportunity:observer-history", start, "passed", {"rsi": 50.0, "atr_pct": 0.1},
+    )
+    replay = _ready_observer_replay(filter_version=version)
+    replay["min_samples"] = 20
+    assert register_replay_ready_experiments([replay], now=start)["registered"] == 1
+    db = get_db()
+    for index in range(20):
+        when = start + timedelta(days=index, minutes=1)
+        control_key = f"opportunity:observer-control-{index}"
+        treatment_key = f"opportunity:observer-treatment-{index}"
+        add_candidate(control_key, when, "passed", {"rsi": 50.0, "atr_pct": 0.1})
+        add_candidate(treatment_key, when, "rejected", {"rsi": 61.0, "atr_pct": 0.1})
+        for key, net in ((control_key, 0.0), (treatment_key, 0.8)):
+                for horizon in ("1h", "4h", "24h"):
+                    outcome = db.execute(
+                    "SELECT due_at, entry_price_usd FROM filter_candidate_outcomes "
+                        "WHERE outcome_candidate_key=? AND horizon=?",
+                        (key, horizon),
+                    ).fetchone()
+                    due = datetime.fromisoformat(outcome[0])
+                    db.execute(
+                        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
+                    "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
+                    "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0.0, "
+                    "net_return_pct=?, min_tradable_edge_pct=0.05, "
+                    "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+                    "cost_model_version=? "
+                        "WHERE outcome_candidate_key=? AND horizon=?",
+                        (
+                            (due + timedelta(minutes=1)).isoformat(), net + 0.2,
+                            100.0 + net + 0.2, net, COST_MODEL_VERSION, key, horizon,
+                        ),
+                    )
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    evaluated = evaluate_observation(
+        root["observation_id"], 1, as_of_at=start + timedelta(days=30),
+    )
+    evidence = evaluated["evaluations"][0]
+    assert evaluated["verdict"] == "positive"
+    assert evidence["newly_admitted"]["settled_n"] == 20
+    assert evidence["treatment"]["settled_n"] == 40
+    assert evidence["companion_horizons_ok"] is True
+    assert evidence["bootstrap_delta_lcb_pct"] > 0
+
+
 def _ready_observer_replay(*, filter_version: str) -> dict:
     """A replay with three ready alternatives; the least-permissive is (10, 0.7)."""
     return {

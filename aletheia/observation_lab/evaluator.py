@@ -390,6 +390,22 @@ def _evaluate_observation(
     """
     if evaluation_kind not in {"monitoring", "confirmatory"}:
         raise ValueError("invalid_evaluation_kind")
+    # Filter-shadow has no Learning measurement path: its control/treatment
+    # arms are virtual replays over Main filter facts, captured by the Lab
+    # adapter.  Keep that branch here so every caller shares one authority
+    # seam and the generic evaluator cannot silently report unavailable.
+    from aletheia.observation_lab.filter_shadow import (
+        evaluate_filter_shadow_observation,
+        is_filter_shadow_generation,
+    )
+
+    if is_filter_shadow_generation(observation_id, generation):
+        return evaluate_filter_shadow_observation(
+            observation_id,
+            generation,
+            evaluation_kind=evaluation_kind,
+            as_of_at=as_of_at,
+        )
     cutoff_at = _parse_time(as_of_at) if as_of_at is not None else _now()
     if cutoff_at is None:
         raise ValueError("as_of_at_must_be_utc")
