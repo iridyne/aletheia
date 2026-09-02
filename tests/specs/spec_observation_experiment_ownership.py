@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -27,6 +28,7 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/analytics/alpha_attribution.py",
     "aletheia/analytics/profit_gradient_evidence.py",
     "aletheia/cli/data_cmd.py",
+    "aletheia/cli/learning_cmd.py",
     "aletheia/cli/observe_cmd.py",
     "aletheia/config/schema.py",
     "aletheia/counterfactual/__init__.py",
@@ -53,6 +55,7 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/server/routes/data.py",
     "aletheia/server/routes/settings.py",
     "aletheia/storage/migrations.py",
+    "aletheia/storage/repositories.py",
     "aletheia/universe/service.py",
     "aletheia/update/continuity.py",
 })
@@ -62,6 +65,7 @@ _REFERENCE_ALLOWLIST = frozenset({
 # operations or tables.
 _WRITER_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
+    "aletheia/cli/observe_cmd.py",
     "aletheia/counterfactual/filter_experiments.py",
     "aletheia/learning/contribution_runner.py",
     "aletheia/learning/experiments.py",
@@ -72,6 +76,7 @@ _WRITER_ALLOWLIST = frozenset({
     "aletheia/learning/maintenance.py",
     "aletheia/maintenance/data_retention_backfill.py",
     "aletheia/storage/migrations.py",
+    "aletheia/storage/repositories.py",
     "aletheia/universe/service.py",
 })
 
@@ -99,11 +104,22 @@ _SQL_WRITE = re.compile(
     re.IGNORECASE,
 )
 
-_CALL_WRITE = re.compile(
-    r"\b(?:insert_record|insert_experiment|insert_exposure|insert_contribution_verdict|"
-    r"insert_filter_shadow_experiment|update_filter_shadow_experiment|"
-    r"prune_filter_shadow_experiments)\s*\(",
-)
+_NAMED_LEGACY_WRITE_CALLS = frozenset({
+    "insert_experiment",
+    "insert_exposure",
+    "insert_contribution_verdict",
+    "insert_filter_shadow_experiment",
+    "update_filter_shadow_experiment",
+    "prune_filter_shadow_experiments",
+    "_persist_attempt_learning_exposures",
+})
+
+# These modules intentionally dispatch table writes dynamically, so neither a
+# literal SQL regex nor a constant first argument can prove their target.
+_DYNAMIC_LEGACY_WRITERS = frozenset({
+    "aletheia/maintenance/data_retention_backfill.py",
+    "aletheia/storage/repositories.py",
+})
 
 
 def _production_sources() -> dict[str, str]:
@@ -111,6 +127,54 @@ def _production_sources() -> dict[str, str]:
         path.relative_to(_ROOT).as_posix(): path.read_text(encoding="utf-8")
         for path in _SRC.rglob("*.py")
     }
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _discover_legacy_writers(sources: dict[str, str]) -> set[str]:
+    writers = set(_DYNAMIC_LEGACY_WRITERS)
+    for path, source in sources.items():
+        if _SQL_WRITE.search(source):
+            writers.add(path)
+            continue
+        tree = ast.parse(source, filename=path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_name(node)
+            if name in _NAMED_LEGACY_WRITE_CALLS:
+                writers.add(path)
+                break
+            if (
+                name == "insert_record"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value in _LEGACY_TABLES
+            ):
+                writers.add(path)
+                break
+    return writers
+
+
+def _assert_exact_inventory(
+    *,
+    label: str,
+    discovered: set[str],
+    allowed: frozenset[str],
+) -> None:
+    unexpected = discovered - allowed
+    stale = allowed - discovered
+    assert not unexpected and not stale, (
+        f"{label} inventory drift: "
+        f"unexpected={sorted(unexpected)}, stale={sorted(stale)}. "
+        "Update #2737's exact migration debt ceiling with the code change."
+    )
 
 
 @spec_claim(SpecClaim(
@@ -123,11 +187,10 @@ def test_legacy_experiment_reference_inventory_cannot_grow():
         for path, source in _production_sources().items()
         if any(table in source for table in _LEGACY_TABLES)
     }
-    unexpected = discovered - _REFERENCE_ALLOWLIST
-    assert not unexpected, (
-        "NEW LEGACY EXPERIMENT REFERENCE(S): "
-        f"{sorted(unexpected)}. Use ObservationHandler/TreatmentAdapter and Lab V2, "
-        "or update #2737's migration contract before changing the debt ceiling."
+    _assert_exact_inventory(
+        label="LEGACY EXPERIMENT REFERENCE",
+        discovered=discovered,
+        allowed=_REFERENCE_ALLOWLIST,
     )
 
 
@@ -141,11 +204,10 @@ def test_legacy_treatment_caller_inventory_cannot_grow():
         for path, source in _production_sources().items()
         if any(api in source for api in _TREATMENT_APIS)
     }
-    unexpected = discovered - _TREATMENT_CALLER_ALLOWLIST
-    assert not unexpected, (
-        "NEW LEGACY TREATMENT CALLER(S): "
-        f"{sorted(unexpected)}. Register an ObservationHandler/TreatmentAdapter "
-        "under #2737 instead of growing the legacy apply_* surface."
+    _assert_exact_inventory(
+        label="LEGACY TREATMENT CALLER",
+        discovered=discovered,
+        allowed=_TREATMENT_CALLER_ALLOWLIST,
     )
 
 
@@ -154,24 +216,9 @@ def test_legacy_treatment_caller_inventory_cannot_grow():
     "No production module outside the temporary writer allowlist may add a legacy Experiment-table write.",
 ))
 def test_no_new_legacy_experiment_writer():
-    writers: set[str] = set()
-    for path, source in _production_sources().items():
-        mentions_legacy_table = any(table in source for table in _LEGACY_TABLES)
-        if _SQL_WRITE.search(source) or (mentions_legacy_table and _CALL_WRITE.search(source)):
-            writers.add(path)
-
-    unexpected = writers - _WRITER_ALLOWLIST
-    assert not unexpected, (
-        "NEW LEGACY EXPERIMENT WRITER(S): "
-        f"{sorted(unexpected)}. New Experiment state belongs to Observation Lab; "
-        "the Phase-1 allowlist may shrink but must not grow without contract review."
+    sources = _production_sources()
+    _assert_exact_inventory(
+        label="LEGACY EXPERIMENT WRITER",
+        discovered=_discover_legacy_writers(sources),
+        allowed=_WRITER_ALLOWLIST,
     )
-
-
-def test_legacy_experiment_allowlists_only_name_existing_production_modules():
-    missing = {
-        path
-        for path in _REFERENCE_ALLOWLIST | _WRITER_ALLOWLIST | _TREATMENT_CALLER_ALLOWLIST
-        if not (_ROOT / path).is_file()
-    }
-    assert not missing, f"STALE LEGACY EXPERIMENT INVENTORY: {sorted(missing)}"
