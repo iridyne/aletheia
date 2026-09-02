@@ -139,7 +139,7 @@ def test_tradability_evidence_records_first_rejection_then_not_applicable(cfg):
         "FROM filter_decision_batches WHERE run_id=? ORDER BY filter_name",
         ("tradability-run",),
     ).fetchall()
-    assert len(rows) == 5
+    assert len(rows) == 6
     facts_by_filter = {
         row["filter_name"]: decode_filter_decision_batch(row["candidate_facts"])
         for row in rows
@@ -150,3 +150,30 @@ def test_tradability_evidence_records_first_rejection_then_not_applicable(cfg):
     assert [fact["decision"] for fact in blacklist_facts] == [
         "passed", "not_applicable",
     ]
+
+
+def test_critical_depth_rejection_is_complete_auditable_evidence(cfg):
+    from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+    from aletheia.storage.sqlite import get_db
+
+    shallow = _make_feat("SHALLOW/USDT")
+    shallow["depth_10bps_usd"] = 2_499.0
+
+    assert apply_tradability_filters(
+        [shallow], cfg, scanner_run_id="tradability-depth-run",
+    ) == []
+
+    row = get_db().execute(
+        "SELECT candidate_count, rejected_count, candidate_facts, parameter_snapshot "
+        "FROM filter_decision_batches WHERE run_id=? AND filter_name='tradability_depth'",
+        ("tradability-depth-run",),
+    ).fetchone()
+    assert (row["candidate_count"], row["rejected_count"]) == (1, 1)
+    fact = decode_filter_decision_batch(row["candidate_facts"])[0]
+    assert fact["candidate_key"] == "feature:SHALLOW/USDT"
+    assert fact["reason_code"] == "depth_below_critical_minimum"
+    assert fact["inputs"] == {
+        "configured_minimum_depth_10bps_usd": 25_000,
+        "depth_10bps_usd": 2_499.0,
+        "effective_rejection_depth_10bps_usd": 2_500.0,
+    }

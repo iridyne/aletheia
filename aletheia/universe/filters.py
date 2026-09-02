@@ -39,6 +39,7 @@ _TRADABILITY_FILTERS = (
     "tradability_volume",
     "tradability_spread",
     "tradability_freshness",
+    "tradability_depth",
 )
 
 # Coarse spread multiplier: assets with spread > max_spread_bps * this are hard-rejected
@@ -167,6 +168,10 @@ def _record_tradability_batches(
         "tradability_volume": {"minimum_quote_volume_24h_usdt": cfg.min_volume_24h_usdt},
         "tradability_spread": {"maximum_rejection_spread_bps": cfg.max_spread_bps * spread_multiplier},
         "tradability_freshness": {"maximum_freshness_sec": _MAX_FRESHNESS_SEC},
+        "tradability_depth": {
+            "configured_minimum_depth_10bps_usd": cfg.min_depth_10bps_usd,
+            "effective_rejection_depth_10bps_usd": cfg.min_depth_10bps_usd * 0.1,
+        },
     }
     for filter_name in _TRADABILITY_FILTERS:
         record_filter_decision_batch(
@@ -301,23 +306,41 @@ def _run_filter_pass(
                 inputs={"data_freshness_sec": freshness},
             ))
 
-        # Depth gate: hard reject only when depth is critically low (< 10% of
-        # configured minimum). Skipped when depth is unavailable — the collector
-        # runs on its own schedule and absence of data should not block assets.
-        if active:
-            depth = feat.get("depth_10bps_usd")
-            min_depth = cfg.min_depth_10bps_usd
-            if (
-                depth is not None
-                and min_depth
-                and min_depth > 0
-                and depth < min_depth * 0.1
-            ):
-                logger.debug(
-                    "Depth gate rejected %s: depth=%.0f < %.0f (10%% of min)",
-                    feat.get("symbol"), depth, min_depth * 0.1,
-                )
-                active = False
+        # Depth gate: preserve the legacy availability policy while recording
+        # the same complete candidate denominator as every preceding gate.
+        depth = feat.get("depth_10bps_usd")
+        min_depth = cfg.min_depth_10bps_usd
+        threshold = min_depth * 0.1 if min_depth and min_depth > 0 else None
+        depth_inputs = {
+            "depth_10bps_usd": depth,
+            "configured_minimum_depth_10bps_usd": min_depth,
+            "effective_rejection_depth_10bps_usd": threshold,
+        }
+        if not active:
+            facts_by_filter["tradability_depth"].append(_candidate_fact(
+                feat, decision="not_applicable", reason_code="prior_gate_rejected",
+                inputs=depth_inputs,
+            ))
+        elif depth is not None and threshold is not None and depth < threshold:
+            facts_by_filter["tradability_depth"].append(_candidate_fact(
+                feat, decision="rejected", reason_code="depth_below_critical_minimum",
+                inputs=depth_inputs,
+            ))
+            logger.debug(
+                "Depth gate rejected %s: depth=%.0f < %.0f (10%% of min)",
+                feat.get("symbol"), depth, threshold,
+            )
+            active = False
+        else:
+            facts_by_filter["tradability_depth"].append(_candidate_fact(
+                feat,
+                decision="passed",
+                reason_code=(
+                    "depth_sufficient" if depth is not None and threshold is not None
+                    else "depth_unavailable_allowed"
+                ),
+                inputs=depth_inputs,
+            ))
 
         if not active:
             continue
