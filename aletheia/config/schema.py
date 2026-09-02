@@ -1084,27 +1084,31 @@ class WebhookConfig(BaseModel):
         if not isinstance(value, Mapping) or not value.get("enabled"):
             return value
         raw_url = value.get("url")
+        if not cls.url_is_usable(raw_url):
+            raise ValueError("enabled webhook requires a valid HTTP(S) URL")
+        return value
+
+    @staticmethod
+    def url_is_usable(raw_url: object) -> bool:
         url = raw_url.strip() if isinstance(raw_url, str) else ""
         if not url or any(
             character.isspace() or ord(character) < 32 or ord(character) == 127
             for character in url
         ):
-            raise ValueError("enabled webhook requires a valid HTTP(S) URL")
+            return False
         try:
             parsed = urlsplit(url)
             port = parsed.port
             hostname = parsed.hostname
-        except ValueError as exc:
-            raise ValueError("enabled webhook requires a valid HTTP(S) URL") from exc
-        if (
+        except ValueError:
+            return False
+        return not (
             parsed.scheme not in {"http", "https"}
             or not hostname
             or parsed.username is not None
             or parsed.password is not None
             or port == 0
-        ):
-            raise ValueError("enabled webhook requires a valid HTTP(S) URL")
-        return value
+        )
 
 
 class HealthConfig(BaseModel):

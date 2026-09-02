@@ -227,6 +227,40 @@ def test_strict_config_load_preserves_dynamic_mappings(tmp_path):
     assert loaded.universe.family_quota == {"momentum": 0.5, "mean_reversion": 0.5}
 
 
+@pytest.mark.parametrize("legacy_url", ["", "not a url"])
+def test_legacy_enabled_webhook_with_invalid_url_is_safely_disabled(
+    tmp_path, legacy_url,
+):
+    import aletheia.config.loader as loader
+
+    config_file = tmp_path / "config.yaml"
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw["operator"]["loop_enabled"] = False
+    raw["webhook"].update({
+        "enabled": True,
+        "url": legacy_url,
+        "secret": "sensitive-legacy-secret",
+        "notify_alerts": False,
+    })
+    webhook_before = raw["webhook"].copy()
+    config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with patch.object(loader, "DATA_DIR", tmp_path), patch.object(
+        loader, "CONFIG_PATH", config_file
+    ), patch.object(loader, "is_preview_mode", return_value=True), patch(
+        "aletheia.files.jsonl.write_audit"
+    ) as write_audit:
+        loader._invalidate_config_cache()
+        loaded = loader.load_config()
+
+    assert loaded.webhook.enabled is False
+    persisted = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+    assert persisted["webhook"] == {**webhook_before, "enabled": False}
+    audit = write_audit.call_args.args[0]
+    assert audit["event_type"] == "webhook_config_migrated"
+    assert "sensitive-legacy-secret" not in str(audit)
+
+
 def test_bootstrap_creates_dirs(tmp_path):
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path
