@@ -44,7 +44,7 @@ class FastStreamHealth(BaseModel):
 
 
 class FastMarketStream(Protocol):
-    async def connect(self) -> None: ...
+    async def connect(self, instruments: set[InstrumentId] | None = None) -> None: ...
     async def set_instruments(self, instruments: set[InstrumentId]) -> None: ...
     def events(self) -> AsyncIterator[FastMarketEvent]: ...
     def health(self) -> FastStreamHealth: ...
@@ -192,7 +192,7 @@ class BitgetFastMarketStream:
         self._ping_task: asyncio.Task | None = None
         self._pong_event: asyncio.Event | None = None
 
-    async def connect(self) -> None:
+    async def connect(self, instruments: set[InstrumentId] | None = None) -> None:
         if self._ws is not None and not self._ws.closed:
             return
         self._session = aiohttp.ClientSession()
@@ -584,15 +584,27 @@ class BinanceFastMarketStream:
         self._pending_acks: set[int] = set()
         self._sequences: dict[tuple[InstrumentId, str], int] = {}
 
-    async def connect(self) -> None:
+    async def connect(self, instruments: set[InstrumentId] | None = None) -> None:
         if self._sockets:
             return
+        if instruments is not None and any(
+            item.exchange != "binance" or item.market_type not in self._endpoints
+            for item in instruments
+        ):
+            raise ValueError("fast_trigger_stream_venue_mismatch:binance")
+        required_market_types = (
+            {item.market_type for item in instruments}
+            if instruments
+            else set(self._endpoints)
+        )
         self._session = aiohttp_session(timeout=aiohttp.ClientTimeout(total=15, connect=10))
         apply_proxy_env()
         configured_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
         websocket_proxy = configured_proxy if str(configured_proxy or "").lower().startswith(("http://", "https://")) else None
         try:
             for market_type, endpoint in self._endpoints.items():
+                if market_type not in required_market_types:
+                    continue
                 ws = await self._session.ws_connect(endpoint, heartbeat=30, proxy=websocket_proxy)
                 self._sockets[market_type] = ws
                 self._reader_tasks.append(asyncio.create_task(self._read_socket(market_type, ws)))

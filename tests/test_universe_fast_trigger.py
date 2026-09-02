@@ -1378,7 +1378,7 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
         def __init__(self):
             self.subscriptions = []
 
-        async def connect(self):
+        async def connect(self, _instruments=None):
             pass
 
         async def set_instruments(self, instruments):
@@ -1469,7 +1469,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
     class Stream:
         connect_calls = 0
 
-        async def connect(self):
+        async def connect(self, _instruments=None):
             self.connect_calls += 1
 
         async def set_instruments(self, _instruments):
@@ -2055,6 +2055,72 @@ async def test_binance_subscription_confirmation_rejects_error_and_unknown_acks(
 
     reader.cancel()
     await asyncio.gather(reader, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("required_market_types", "unavailable_market_type", "should_connect"),
+    [
+        ({"spot"}, "perp", True),
+        ({"perp"}, "spot", True),
+        ({"spot", "perp"}, "spot", False),
+    ],
+)
+async def test_binance_connect_only_requires_watched_market_sockets(
+    monkeypatch,
+    required_market_types,
+    unavailable_market_type,
+    should_connect,
+):
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe import fast_stream
+
+    class _Ws:
+        closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Future()
+
+        async def close(self):
+            self.closed = True
+
+    class _Session:
+        closed = False
+
+        async def ws_connect(self, endpoint, **_kwargs):
+            calls.append(endpoint)
+            if endpoint == unavailable_market_type:
+                raise RuntimeError("endpoint unavailable")
+            return _Ws()
+
+        async def close(self):
+            self.closed = True
+
+    instruments = {
+        InstrumentId.from_parts("binance", "BTC/USDT", market_type)
+        for market_type in required_market_types
+    }
+    session = _Session()
+    calls = []
+    monkeypatch.setattr(fast_stream, "apply_proxy_env", lambda: None)
+    monkeypatch.setattr(fast_stream, "aiohttp_session", lambda **_kwargs: session)
+    stream = fast_stream.BinanceFastMarketStream(
+        spot_endpoint="spot",
+        perp_endpoint="perp",
+    )
+
+    if should_connect:
+        await stream.connect(instruments)
+        assert calls == [next(iter(required_market_types))]
+        assert set(stream._sockets) == required_market_types
+        await stream.close()
+    else:
+        with pytest.raises(RuntimeError, match="endpoint unavailable"):
+            await stream.connect(instruments)
+        assert session.closed is True
 
 
 @pytest.mark.asyncio
