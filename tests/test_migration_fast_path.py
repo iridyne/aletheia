@@ -161,6 +161,27 @@ def test_failed_migration_is_not_recorded_and_can_retry(tmp_path, monkeypatch):
     connection.close()
 
 
+def test_ai_entry_v57_repairs_incomplete_schema_in_one_retry(_inmemory_db):
+    import aletheia.storage.migrations as migrations
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    db.execute("DROP TRIGGER trg_entry_plan_no_delete")
+    db.execute("DROP INDEX idx_entry_plans_watch")
+    db.commit()
+
+    migrations._apply_ai_entry_v57_integrity_v60(db)
+    names = {
+        row[0] for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE name IN "
+            "('trg_entry_plan_no_delete','idx_entry_plans_watch')"
+        )
+    }
+    assert names == {"trg_entry_plan_no_delete", "idx_entry_plans_watch"}
+    migrations._apply_ai_entry_v57_integrity_v60(db)
+    assert not db.execute("PRAGMA foreign_key_check").fetchall()
+
+
 def test_read_only_verification_reports_pending_without_creating_ledger(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.migrations as migrations
@@ -234,9 +255,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 60)
+        f"aletheia-sqlite-v{version}" for version in range(2, 61)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v59"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v60"
     connection.close()
 
 
@@ -701,8 +722,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260902_0058_derivatives_source_time_v59",
-        "aletheia-sqlite-v59",
+        "20260902_0059_ai_entry_v57_integrity_v60",
+        "aletheia-sqlite-v60",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")

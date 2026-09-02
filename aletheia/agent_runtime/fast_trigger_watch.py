@@ -558,6 +558,24 @@ async def _load_entry_plan_watchers(
             if _entry_plan_outcome_is_unresolved(outcome):
                 plans[plan.plan_id] = plan
             continue
+        if getattr(plan, "version", "entry-plan/v1") == "entry-plan/v2":
+            try:
+                from aletheia.execution.entry_plan_execution import (
+                    require_entry_plan_runtime_authority,
+                )
+
+                await asyncio.to_thread(require_entry_plan_runtime_authority, plan)
+            except (TypeError, ValueError):
+                outcome = await _terminalize_entry_plan(
+                    row,
+                    status="invalidated",
+                    reason="entry_plan_runtime_authority_revoked",
+                    cancel_entry_plan_order=cancel_entry_plan_order,
+                    now=now,
+                )
+                if _entry_plan_outcome_is_unresolved(outcome):
+                    plans[plan.plan_id] = plan
+                continue
         try:
             from aletheia.risk.policy import resolve_risk_policy
 
@@ -691,6 +709,8 @@ async def _load_entry_plan_watchers(
                     geometry_version=str(params["geometry_version"]),
                     geometry_fingerprint=str(params["geometry_fingerprint"]),
                     policy=policy,
+                    trigger_spec_id=trigger_identity[0],
+                    trigger_spec_version=trigger_identity[1],
                 )
             elif trigger_identity == _MOMENTUM_V1_TRIGGER:
                 engine = TriggerEngine(

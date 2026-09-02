@@ -8280,6 +8280,14 @@ def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
     return dict(row) if row else None
 
 
+def get_universe_snapshot_created_at(snapshot_id: str) -> str | None:
+    row = get_db().execute(
+        "SELECT created_at FROM universe_snapshots WHERE id=?",
+        (snapshot_id,),
+    ).fetchone()
+    return str(row["created_at"]) if row is not None else None
+
+
 def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") -> int:
     """Expire unclaimed generations from superseded snapshots with evidence.
 
@@ -8700,11 +8708,14 @@ def ensure_candidate_planning_generation(
 
     from aletheia.storage.models import AI_ENTRY_PLANNER_CONTRACT_VERSION
     from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.config.loader import load_config
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not 300 <= int(soft_lease_sec) <= int(max_attention_age_sec) <= 86_400:
         raise ValueError("candidate_attention_bounds_invalid")
     timestamp = current_time.isoformat()
+    # Config is filesystem-backed. Resolve it before taking the SQLite write lock.
+    agent = load_config(persist_migrations=False).agent
     with transaction(immediate=True):
         candidate = get_candidate(candidate_id)
         if candidate is None:
@@ -8714,9 +8725,6 @@ def ensure_candidate_planning_generation(
         planner_contract_version = PLANNER_CONTRACT_VERSION
         activation_identity = None
         if str(candidate.get("scanner_family") or "") == "momentum":
-            from aletheia.config.loader import load_config
-
-            agent = load_config(persist_migrations=False).agent
             activated_at = agent.ai_entry_hypothesis_activated_at
             snapshot = get_db().execute(
                 "SELECT created_at FROM universe_snapshots WHERE id=?",
@@ -8756,10 +8764,14 @@ def ensure_candidate_planning_generation(
             and existing.get("activation_identity") == activation_identity
         ):
             execute_write(
-                "UPDATE candidate_planning_generations SET last_candidate_id=?, updated_at=? WHERE id=?",
+                "UPDATE candidate_planning_generations SET "
+                "last_candidate_id=CASE WHEN planner_input_json IS NULL THEN ? ELSE last_candidate_id END, "
+                "updated_at=? WHERE id=?",
                 (candidate_id, timestamp, existing["id"]),
             )
-            existing.update(last_candidate_id=candidate_id, updated_at=timestamp)
+            if existing.get("planner_input_json") is None:
+                existing["last_candidate_id"] = candidate_id
+            existing["updated_at"] = timestamp
             return existing, False
 
         reason = (
@@ -9110,6 +9122,25 @@ def complete_candidate_planning_with_plan(
             return "stale", None
         if row["status"] != "planning":
             return "claim_lost", None
+        if plan.version == "entry-plan/v2":
+            from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
+
+            try:
+                frozen_context = EntryAnalysisContextV1.model_validate_json(
+                    row["planner_input_json"] or ""
+                )
+            except Exception as exc:
+                raise ValueError("entry_plan_frozen_context_invalid") from exc
+            if (
+                row["planner_contract_version"] != "entry-planner/v3"
+                or row["planner_input_hash"]
+                != fingerprint(frozen_context.model_dump(mode="json"))
+                or plan.analysis_context_fingerprint
+                != frozen_context.context_fingerprint
+                or row["activation_identity"]
+                != frozen_context.planning_generation.get("activation_identity")
+            ):
+                raise ValueError("entry_plan_frozen_context_mismatch")
         if (
             plan.candidate_id != row["last_candidate_id"]
             or plan.venue != row["venue"]

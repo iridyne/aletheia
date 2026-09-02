@@ -261,6 +261,19 @@ def _complete_semantic_no_plan(
     return repo.complete_candidate_planning_no_plan(generation_id, owner, result)
 
 
+def _ai_entry_gate_is_open(generation: dict, cfg) -> bool:
+    activation = cfg.agent.ai_entry_hypothesis_activated_at
+    return bool(
+        cfg.agent.ai_entry_hypothesis_enabled
+        and activation is not None
+        and generation.get("activation_identity")
+        == activation.astimezone(timezone.utc).isoformat()
+        and cfg.agent.permission_mode == "Paper"
+        and cfg.exchange.paper_execution_mode in {"paper_internal", "bitget_demo"}
+        and cfg.live.state == "live_disabled"
+    )
+
+
 async def plan_next_candidate(
     planner: PlannerFn,
     *,
@@ -283,13 +296,11 @@ async def plan_next_candidate(
             "model_invoked": False,
         }
     try:
-        candidate = repo.get_candidate(generation["last_candidate_id"])
-        if candidate is None:
-            raise ValueError("candidate_not_found")
+        is_v3 = generation.get("planner_contract_version") == "entry-planner/v3"
         venue_reason = fast_market_data_unavailability_reason(
             cfg,
-            str(candidate["venue"]),
-            str(candidate["market_type"]),
+            str(generation["venue"]),
+            str(generation["market_type"]),
         )
         if venue_reason is not None:
             stored = _complete_semantic_no_plan(
@@ -302,21 +313,19 @@ async def plan_next_candidate(
                 "planning_generation_id": generation["id"],
                 "model_invoked": False,
             }
-        feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
-        if generation.get("planner_contract_version") == "entry-planner/v3":
-            activation = cfg.agent.ai_entry_hypothesis_activated_at
-            if (
-                not cfg.agent.ai_entry_hypothesis_enabled
-                or activation is None
-                or generation.get("activation_identity") != activation.astimezone(timezone.utc).isoformat()
-                or cfg.exchange.paper_execution_mode not in {"paper_internal", "bitget_demo"}
-                or cfg.live.state != "live_disabled"
-            ):
+        candidate: dict | None = None
+        feature: dict = {}
+        if is_v3:
+            if not _ai_entry_gate_is_open(generation, cfg):
                 stored = _complete_semantic_no_plan(generation["id"], owner, "AI_ENTRY_GATE_CLOSED")
                 return {"status": "no_plan" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": False}
             if generation.get("planner_input_json"):
                 context_model = EntryAnalysisContextV1.model_validate_json(generation["planner_input_json"])
             else:
+                candidate = repo.get_candidate(generation["last_candidate_id"])
+                if candidate is None:
+                    raise ValueError("candidate_not_found")
+                feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
                 cutoff = datetime.now(timezone.utc)
                 cutoff_ms = int(cutoff.timestamp() * 1000)
                 windows = {
@@ -328,6 +337,10 @@ async def plan_next_candidate(
                 }
                 context_model = build_entry_analysis_context(
                     generation, candidate, feature, windows, cutoff_at=cutoff,
+                    candidate_detected_at=repo.get_universe_snapshot_created_at(
+                        str(candidate["snapshot_id"])
+                    ),
+                    positions=repo.list_all_open_positions(),
                     orderbook=repo.latest_orderbook(
                         generation["symbol"], generation["venue"], generation["market_type"]
                     ),
@@ -348,6 +361,10 @@ async def plan_next_candidate(
                     return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": False}
             context = context_model.model_dump(mode="json")
         else:
+            candidate = repo.get_candidate(generation["last_candidate_id"])
+            if candidate is None:
+                raise ValueError("candidate_not_found")
+            feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
             context = _candidate_context(
                 generation,
                 candidate=candidate,
@@ -434,6 +451,14 @@ async def plan_next_candidate(
             "model_invoked": True,
         }
     if isinstance(intent, EntryHypothesisV1):
+        cfg = load_config(persist_migrations=False)
+        if not _ai_entry_gate_is_open(generation, cfg):
+            stored = _complete_semantic_no_plan(generation["id"], owner, "AI_ENTRY_GATE_CLOSED")
+            return {
+                "status": "no_plan" if stored else "stale",
+                "planning_generation_id": generation["id"],
+                "model_invoked": True,
+            }
         try:
             validate_hypothesis_references(intent, context_model)
         except ValueError as exc:
@@ -448,7 +473,7 @@ async def plan_next_candidate(
         from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
 
         try:
-            plan = compile_ai_entry_plan(generation, candidate, feature, context_model, intent, cfg)
+            plan = compile_ai_entry_plan(generation, context_model, intent, cfg)
         except PlanIntentError as exc:
             repo.defer_candidate_planning_with_code(
                 generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{exc.code}", max_attempts=1

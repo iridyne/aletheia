@@ -2888,3 +2888,19 @@ async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_pa
     assert await watch._observe_entry_plan_engine(plan, engine, events[-1]) is None
     assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_state_transition")) == 4
     assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_trigger_observed")) == 1
+
+    anchor_engine = MomentumTriggerEngineV2(
+        instrument=instrument, direction="long", breakout_level=100.0,
+        pullback_band=(99.5, 100.5), sweep_band=(99.5, 100.0),
+        entry_zone=(100.0, 100.5), invalidation_price=98.0, atr_abs=2.0,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="c" * 64,
+        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
+        trigger_spec_id="anchor-retrace-reclaim", trigger_spec_version="v1",
+    )
+    anchor_engine.confirm_subscription()
+    anchor_ready = None
+    for observed in events:
+        anchor_ready = anchor_engine.observe(observed) or anchor_ready
+    assert anchor_ready.entry_trigger["trigger_spec_id"] == "anchor-retrace-reclaim"
+    assert anchor_ready.entry_trigger["trigger_spec_version"] == "v1"

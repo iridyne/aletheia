@@ -45,6 +45,24 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
     generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
     if generation is None or generation.get("planner_contract_version") != "entry-planner/v3":
         raise ValueError("ai_entry_generation_contract_mismatch")
+    from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
+
+    try:
+        context = EntryAnalysisContextV1.model_validate_json(generation.get("planner_input_json") or "")
+    except Exception as exc:
+        raise ValueError("ai_entry_context_invalid") from exc
+    if (
+        generation.get("planner_input_hash") != fingerprint(context.model_dump(mode="json"))
+        or plan.analysis_context_fingerprint != context.context_fingerprint
+        or plan.candidate_id != context.planning_generation.get("candidate_id")
+        or generation.get("activation_identity")
+        != context.planning_generation.get("activation_identity")
+        or plan.venue != context.instrument.get("venue")
+        or plan.symbol != context.instrument.get("symbol")
+        or plan.market_type != context.instrument.get("market_type")
+        or plan.direction != context.instrument.get("direction")
+    ):
+        raise ValueError("ai_entry_context_identity_mismatch")
     from aletheia.config.loader import load_config
 
     cfg = load_config(persist_migrations=False)
@@ -53,10 +71,20 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         not cfg.agent.ai_entry_hypothesis_enabled
         or activation is None
         or generation.get("activation_identity") != activation.astimezone(timezone.utc).isoformat()
+        or cfg.agent.permission_mode != "Paper"
+        or plan.required_permission != "Paper"
+        or plan.execution_account_mode != cfg.exchange.paper_execution_mode
         or cfg.exchange.paper_execution_mode not in {"paper_internal", "bitget_demo"}
         or cfg.live.state != "live_disabled"
     ):
         raise ValueError("ai_entry_activation_gate_closed")
+
+
+def require_entry_plan_runtime_authority(plan: EntryPlan) -> None:
+    """Revalidate persisted experimental authority without creating an Order."""
+
+    _require_momentum_v2_authority(plan)
+    _require_ai_entry_authority(plan)
 
 
 
@@ -86,8 +114,17 @@ def build_entry_plan_order_intent(
     now: datetime | None = None,
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
-    _require_momentum_v2_authority(plan)
-    _require_ai_entry_authority(plan)
+    require_entry_plan_runtime_authority(plan)
+    if plan.version == "entry-plan/v2" and plan.execution_mode == "TRIGGERED":
+        if trigger_evidence is None:
+            raise ValueError("ai_entry_trigger_evidence_required")
+        if (
+            trigger_evidence.get("trigger_spec_id") != plan.trigger_spec_id
+            or trigger_evidence.get("trigger_spec_version") != plan.trigger_spec_version
+            or trigger_evidence.get("geometry_fingerprint")
+            != plan.trigger_params.get("geometry_fingerprint")
+        ):
+            raise ValueError("ai_entry_trigger_identity_mismatch")
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if _instant(plan.expires_at) <= current:
@@ -164,6 +201,11 @@ def build_entry_plan_order_intent(
                 "entry_profile_id": plan.entry_profile_id,
                 "entry_profile_version": plan.entry_profile_version,
                 "compiled_geometry_fingerprint": plan.compiled_geometry_fingerprint,
+                "required_permission": plan.required_permission,
+                "execution_account_mode": plan.execution_account_mode,
+                "risk_policy_id": plan.risk_policy_id,
+                "risk_policy_revision": plan.risk_policy_revision,
+                "risk_policy_hash": plan.risk_policy_hash,
                 "market_received_at": observed_at,
                 "market_source_at": source_observed_at,
                 **({"entry_trigger": dict(trigger_evidence)} if trigger_evidence is not None else {}),
@@ -201,8 +243,7 @@ def execute_entry_plan(
     if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
         raise ValueError("entry_plan_hash_mismatch")
     plan = EntryPlan.model_validate_json(payload)
-    _require_momentum_v2_authority(plan)
-    _require_ai_entry_authority(plan)
+    require_entry_plan_runtime_authority(plan)
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 

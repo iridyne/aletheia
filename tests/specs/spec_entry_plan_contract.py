@@ -35,10 +35,16 @@ def test_universe_publication_has_one_entry_planning_owner():
 def test_ai_entry_v3_has_one_frozen_input_and_execution_gate():
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
     from aletheia.storage.repositories import bind_candidate_planner_input
+    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
     from aletheia.trading.entry_plan import EntryPlan
 
     assert "planner_input_hash" in inspect.getsource(bind_candidate_planner_input)
-    assert "ai_entry_activation_gate_closed" in inspect.getsource(_require_ai_entry_authority)
+    authority_source = inspect.getsource(_require_ai_entry_authority)
+    assert "ai_entry_activation_gate_closed" in authority_source
+    assert 'permission_mode != "Paper"' in authority_source
+    assert "planner_input_json" in authority_source
+    assert "candidate" not in inspect.signature(compile_ai_entry_plan).parameters
+    assert "feature" not in inspect.signature(compile_ai_entry_plan).parameters
     assert "analysis_context_fingerprint" in EntryPlan.model_fields
 
 

@@ -519,6 +519,16 @@ def _canonical_facts(
     return swings, events
 
 
+def canonical_market_structure_facts(
+    geometry: MarketStructureGeometry,
+    instrument: InstrumentId,
+    timeframe: str,
+) -> tuple[tuple[SwingPoint, ...], tuple[StructureEvent, ...]]:
+    """Expose the kernel's canonical IDs to other deterministic consumers."""
+
+    return _canonical_facts(geometry, instrument, timeframe)
+
+
 def _source_identity(candles: Sequence[Candle], field: str) -> str | None:
     values = {
         str(getattr(candle, field) or "")
