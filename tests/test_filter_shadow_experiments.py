@@ -321,6 +321,16 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
     assert report[0]["observation_id"] == root["observation_id"]
     assert report[0]["latest_evaluation"]["disposition"] == "ready_for_review"
 
+    # The scheduled Lab pass must evaluate the canonical root too; a Lab
+    # authority branch that merely reports "skipped" would leave the active
+    # filter-shadow generation without a lifecycle/evidence advance.
+    from aletheia.observation_lab.runner import run_lab_windows
+
+    runner_result = run_lab_windows()
+    filter_window = runner_result["results"]["filter_shadow_evaluate"]
+    assert filter_window["status"] == "canonical_lab_authority"
+    assert filter_window["evaluation"]["evaluated"] == 1
+
 
 def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
     from aletheia.analytics.filter_evidence import record_filter_decision

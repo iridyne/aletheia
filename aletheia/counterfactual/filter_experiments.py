@@ -92,8 +92,11 @@ def _lab_authority() -> bool:
     except FileNotFoundError:
         return False
     except Exception as exc:
-        # A pre-V2 database has no cutover row; every other failure is a deny.
-        return "no such table: observation_authority_state" not in str(exc)
+        # A pre-V2 database has no cutover row.  Every other authority read
+        # failure must remain unavailable rather than selecting either writer.
+        if "no such table: observation_authority_state" in str(exc):
+            return False
+        raise RuntimeError("observation_authority_unavailable") from exc
 
 
 def _adapter_causal_identity_hash(filter_name: str) -> str | None:

@@ -341,10 +341,23 @@ def _register_default_windows() -> None:
         from aletheia.observation_lab.canonical import get_authority_source
 
         if get_authority_source().source == "lab":
+            # Canonical filter-shadow roots are advanced by the durable
+            # ObservationHandler window.  Keep this compatibility window as a
+            # projection only; evaluating here as well would append a second
+            # snapshot in the same runner pass.
+            from aletheia.observation_lab.filter_shadow import (
+                list_filter_shadow_observations,
+            )
+
+            roots = list_filter_shadow_observations(status="active", limit=1000) or []
+            evaluation = {
+                "evaluated": len(roots),
+                "canonical_handler": True,
+            }
             return {
                 "status": "canonical_lab_authority",
                 "frozen_units_captured": 0,
-                "evaluation": {"skipped": True, "reason": "canonical_lab_authority"},
+                "evaluation": evaluation,
             }
         from aletheia.counterfactual.filter_experiments import (
             capture_frozen_units_for,
