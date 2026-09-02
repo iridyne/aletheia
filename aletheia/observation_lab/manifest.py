@@ -187,9 +187,11 @@ def build_manifest(
         raise ValueError(f"unknown composability_contract: {composability_contract}")
     if unavailable_fallback not in {"baseline", "exclude"}:
         raise ValueError(f"unknown unavailable_fallback: {unavailable_fallback}")
-    _, _, effective_from, effective_until = _validated_interval(
-        effective_from, effective_until,
-    )
+    # Validate the interval but preserve the caller's spelling in the
+    # content-addressed payload. Existing manifests may use either ``Z`` or
+    # ``+00:00``; rewriting a valid legacy spelling would break publish
+    # idempotency on retry.
+    _validated_interval(effective_from, effective_until)
 
     fields = {
         "manifest_id": uuid.uuid4().hex,
@@ -240,13 +242,9 @@ def publish_manifest(manifest: ExecutionManifest) -> bool:
     """
     from aletheia.observation_lab.db import get_lab_db
 
-    _, _, normalized_from, normalized_until = _validated_interval(
+    _validated_interval(
         manifest.effective_from, manifest.effective_until,
     )
-    if (manifest.effective_from, manifest.effective_until) != (
-        normalized_from, normalized_until,
-    ):
-        raise ValueError("manifest effective interval is not canonical UTC")
 
     db = get_lab_db()
     existing = db.execute(

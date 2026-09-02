@@ -87,6 +87,16 @@ def test_build_manifest_rejects_invalid_effective_interval(
         )
 
 
+def test_build_manifest_preserves_submillisecond_interval_and_hash_input():
+    manifest = _sample_manifest(
+        effective_from="2026-08-19T00:00:00.000001+00:00",
+        effective_until="2026-08-19T00:00:00.000002+00:00",
+    )
+
+    assert manifest.effective_from.endswith(".000001+00:00")
+    assert manifest.effective_until.endswith(".000002+00:00")
+
+
 def test_publish_manifest_is_idempotent_on_same_hash():
     from aletheia.observation_lab.manifest import publish_manifest
 
