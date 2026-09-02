@@ -125,26 +125,37 @@ def _render_observation_list(payload: list[dict], *, json_output: bool) -> None:
 
 def _list_lab_observations(*, status: str | None, limit: int) -> list[dict] | None:
     """Project Lab roots into the historical CLI list shape."""
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
     from aletheia.observation_lab.db import readonly_lab_db
 
     try:
+        filter_rows = list_filter_shadow_observations(limit=1000)
+        if filter_rows is None:
+            return None
+        filter_by_key = {
+            (str(row["observation_id"]), int(row["generation"])): row
+            for row in filter_rows
+        }
         with readonly_lab_db(allow_missing=True) as db:
             if db is None:
                 return None
-            clauses = []
-            params: list[object] = []
-            if status:
-                clauses.append("status=?")
-                params.append(status)
-            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             rows = db.execute(
                 "SELECT observation_id, kind, generation, status, started_at, spec_json "
-                f"FROM observation_windows {where} "
-                "ORDER BY started_at DESC, observation_id, generation LIMIT ?",
-                (*params, max(1, min(int(limit), 1000))),
+                "FROM observation_windows ORDER BY started_at DESC, observation_id, generation "
+                "LIMIT ?",
+                (1000,),
             ).fetchall()
             result: list[dict] = []
             for row in rows:
+                key = (str(row["observation_id"]), int(row["generation"]))
+                if row["kind"] == "filter_shadow":
+                    projected = filter_by_key.get(key)
+                    if projected is None or (status and projected["status"] != status):
+                        continue
+                    result.append(projected)
+                    continue
+                if status and str(row["status"]) != status:
+                    continue
                 try:
                     spec = json.loads(row["spec_json"] or "{}")
                 except (TypeError, ValueError, json.JSONDecodeError):
@@ -161,7 +172,11 @@ def _list_lab_observations(*, status: str | None, limit: int) -> list[dict] | No
                         (row["observation_id"], row["generation"]),
                     ).fetchone()[0] or 0),
                 })
-            return result
+            result.sort(key=lambda item: (
+                str(item.get("started_at") or ""),
+                str(item.get("id") or ""),
+            ), reverse=True)
+            return result[: max(1, min(int(limit), 1000))]
     except Exception:
         return None
 
@@ -1403,15 +1418,39 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
         if lab_db is not None and authority_source == "lab":
             try:
                 rows = lab_db.execute(
-                    "SELECT status FROM observation_windows"
+                    "SELECT w.status, w.kind, e.result_json "
+                    "FROM observation_windows w "
+                    "LEFT JOIN observation_evaluations e ON e.evaluation_id = ("
+                    "SELECT evaluation_id FROM observation_evaluations "
+                    "WHERE observation_id=w.observation_id AND generation=w.generation "
+                    "ORDER BY created_at DESC, evaluation_id DESC LIMIT 1)"
                 ).fetchall()
+                projected: list[str] = []
+                for row in rows:
+                    status = str(row[0])
+                    if status == "active":
+                        disposition = "collecting"
+                        if row[2]:
+                            try:
+                                payload = json.loads(str(row[2]))
+                            except (TypeError, ValueError, json.JSONDecodeError):
+                                payload = {}
+                            if isinstance(payload, dict) and payload.get("disposition") in {
+                                "ready_for_review", "completed_no_support", "invalidated",
+                            }:
+                                disposition = str(payload["disposition"])
+                    elif status == "invalidated":
+                        disposition = "invalidated"
+                    else:
+                        disposition = "completed_no_support"
+                    projected.append(disposition)
                 counts = {
                     "available": True,
                     "total": len(rows),
-                    "collecting": sum(1 for row in rows if row[0] == "active"),
-                    "ready_for_review": sum(1 for row in rows if row[0] == "ready_for_review"),
-                    "completed_no_support": sum(1 for row in rows if row[0] == "completed_no_support"),
-                    "invalidated": sum(1 for row in rows if row[0] == "invalidated"),
+                    "collecting": projected.count("collecting"),
+                    "ready_for_review": projected.count("ready_for_review"),
+                    "completed_no_support": projected.count("completed_no_support"),
+                    "invalidated": projected.count("invalidated"),
                 }
             except Exception:
                 storage["lab_db"]["status"] = "unreachable"
