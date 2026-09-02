@@ -120,6 +120,23 @@ def _worker_signature() -> dict[str, Any]:
 def _observation_ids() -> dict[str, Any]:
     """Read durable Observation identities; statuses may progress independently."""
     try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            from aletheia.observation_lab.db import readonly_lab_db
+
+            with readonly_lab_db() as lab:
+                rows = lab.execute(
+                    "SELECT observation_id, generation FROM observation_windows "
+                    "ORDER BY observation_id, generation"
+                ).fetchall()
+            ids = [f"{row['observation_id']}:g{int(row['generation'])}" for row in rows]
+            return {
+                "available": True,
+                "unavailable_reason": None,
+                "ids": ids,
+                "total": len(ids),
+            }
         from aletheia.storage import repositories as repo
 
         rows = repo.list_filter_shadow_experiments(limit=1000)

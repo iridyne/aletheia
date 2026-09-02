@@ -2,6 +2,39 @@
 from __future__ import annotations
 
 
+def test_observation_ids_use_canonical_lab_generations(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.observation_lab import canonical
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.update import continuity
+
+    monkeypatch.setattr(
+        canonical,
+        "get_authority_source",
+        lambda: SimpleNamespace(source="lab"),
+    )
+    get_lab_db().execute(
+        "INSERT INTO observation_windows ("
+        "observation_id, kind, handler_version, generation, slot_key, authority_mode, "
+        "status, spec_json, spec_hash, started_at, collect_until, finalize_not_before"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "lab-observation", "filter_shadow", "canonical-v1", 2,
+            "lab-observation", "observe_only", "active", "{}", "hash",
+            "2026-09-01T00:00:00+00:00", "2026-09-02T00:00:00+00:00",
+            "2026-09-03T00:00:00+00:00",
+        ),
+    )
+
+    assert continuity._observation_ids() == {
+        "available": True,
+        "unavailable_reason": None,
+        "ids": ["lab-observation:g2"],
+        "total": 1,
+    }
+
+
 def _snap(
     *,
     boot_commit: str | None = "abc111",
