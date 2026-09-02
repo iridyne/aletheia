@@ -245,6 +245,21 @@ async def settle_due_filter_outcomes(
             if entry_dt and due_dt
             else _horizon_seconds(row.get("horizon"))
         )
+        execution_fee_pct = cfg.trading.execution_fee_pct
+        slippage_bps = cfg.trading.slippage_bps
+        fallback_spread_bps = cfg.universe.max_spread_bps
+        if row.get("scanner_family") == "candidate_selection_utility":
+            try:
+                cost_snapshot = repo.candidate_selection_cost_assumptions(
+                    str(row["outcome_candidate_key"])
+                )
+                if cost_snapshot is None:
+                    return _DEFERRED
+                execution_fee_pct = float(cost_snapshot["execution_fee_pct"])
+                slippage_bps = float(cost_snapshot["slippage_bps"])
+                fallback_spread_bps = float(cost_snapshot["fallback_spread_bps"])
+            except (KeyError, TypeError, ValueError):
+                return _DEFERRED
         economics = estimate_outcome_economics(
             entry_price=entry,
             exit_price=exit_price,
@@ -252,10 +267,10 @@ async def settle_due_filter_outcomes(
             market_type=row.get("market_type"),
             hold_seconds=hold_seconds,
             entry_spread_bps=row.get("entry_spread_bps"),
-            fallback_spread_bps=cfg.universe.max_spread_bps,
+            fallback_spread_bps=fallback_spread_bps,
             funding_rate_at_entry=row.get("funding_rate_at_entry"),
-            execution_fee_pct=cfg.trading.execution_fee_pct,
-            slippage_bps=cfg.trading.slippage_bps,
+            execution_fee_pct=execution_fee_pct,
+            slippage_bps=slippage_bps,
             range_high=observation.get("range_high"),
             range_low=observation.get("range_low"),
             price_quality_ok=True,

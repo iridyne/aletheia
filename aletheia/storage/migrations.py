@@ -2000,11 +2000,6 @@ _ADDITIVE_COLUMNS = [
     ("atr_pct", "universe_members", "REAL"),
     # Phase 2A+.12: persist all-family scores dict for ensemble analysis
     ("all_scores", "universe_members", "TEXT DEFAULT '{}'"),
-    # #2729: additive authority identity and comparable economic selection unit.
-    # Historical rows remain explicitly legacy with unavailable Utility.
-    ("candidate_selection_policy", "universe_members", "TEXT NOT NULL DEFAULT 'legacy_total_score_v1'"),
-    ("candidate_selection_policy_epoch", "universe_members", "TEXT"),
-    ("candidate_selection_utility_pct", "universe_members", "REAL"),
     ("entry_market_summary", "positions", "TEXT"),
     # LLM structured observations preserved from market_observer output
     ("key_observations", "opportunities", "TEXT NOT NULL DEFAULT ''"),
@@ -3306,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v62"
+SCHEMA_VERSION = "aletheia-sqlite-v63"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3325,6 +3320,15 @@ _LEGACY_BASELINE_ID = "20260806_0001_legacy_schema_v2"
 # it. Add a new MigrationStep for every future schema or data upgrade.
 _LEGACY_BASELINE_CHECKSUM = "b210b180fa4392a542a5275941ca15d1a443374b3e951055d8a4bbc12d32f8ee"
 _MIGRATION_LOCK_TIMEOUT_SEC = 120.0
+
+_CANDIDATE_SELECTION_UTILITY_COLUMNS = (
+    ("candidate_selection_policy", "universe_members", "TEXT NOT NULL DEFAULT 'legacy_total_score_v1'"),
+    ("candidate_selection_policy_epoch", "universe_members", "TEXT"),
+    ("candidate_selection_utility_pct", "universe_members", "REAL"),
+)
+_CANDIDATE_SELECTION_UTILITY_CHECKSUM = hashlib.sha256(
+    (repr(_CANDIDATE_SELECTION_UTILITY_COLUMNS) + "\ncandidate_selection_utility_v1").encode("utf-8")
+).hexdigest()
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status_started
@@ -6866,6 +6870,20 @@ def _apply_position_path_observations_v26(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_candidate_selection_utility_v63(db: sqlite3.Connection) -> None:
+    """Add Candidate policy identity and comparable Utility without rewriting history."""
+
+    if not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='universe_members'"
+    ).fetchone():
+        return
+    existing = {str(row[1]) for row in db.execute("PRAGMA table_info(universe_members)")}
+    for column, table, column_type in _CANDIDATE_SELECTION_UTILITY_COLUMNS:
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -7453,6 +7471,12 @@ _MIGRATIONS = (
         checksum=_OBSERVATION_AUTHORITY_CUTOVER_PROOF_CHECKSUM,
         schema_version="aletheia-sqlite-v62",
         apply=_apply_observation_authority_cutover_proof_v62,
+    ),
+    MigrationStep(
+        migration_id="20260903_0062_candidate_selection_utility_v63",
+        checksum=_CANDIDATE_SELECTION_UTILITY_CHECKSUM,
+        schema_version="aletheia-sqlite-v63",
+        apply=_apply_candidate_selection_utility_v63,
     ),
 )
 

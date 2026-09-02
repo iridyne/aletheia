@@ -106,6 +106,13 @@ def build_candidate_selection_shadow_bundle(
 ) -> TwinShadowBundle:
     """Build one same-T0 full-denominator comparison and optional authority record."""
 
+    frozen_selection_policy = dict(
+        selection_policy or candidate_selection_policy_identity(universe_config)
+    )
+    cost_assumptions = {
+        **dict(frozen_selection_policy.get("cost_assumptions") or {}),
+        "fallback_spread_bps": universe_config.max_spread_bps,
+    }
     scored = {_identity(item): item for item in legacy_scored}
     selected = {_identity(item) for item in legacy_allocated}
     gates = []
@@ -161,12 +168,29 @@ def build_candidate_selection_shadow_bundle(
             },
         )
         decisions.append(decision)
+    ranked_target = select_admitted_candidates(decisions, max_candidates=len(decisions))
+    preferred_market = str(frozen_selection_policy.get("preferred_market_type") or "auto")
+    market_rank = {"spot": 0, "perp": 1} if preferred_market == "spot" else {"perp": 0, "spot": 1}
+    target_by_symbol = {}
+    decision_features = {
+        decision.candidate_key: feature
+        for decision, feature in zip(decisions, population, strict=True)
+    }
+    for decision in ranked_target:
+        feature = decision_features[decision.candidate_key]
+        symbol = str(feature.get("symbol") or "")
+        current = target_by_symbol.get(symbol)
+        current_market = (
+            str(decision_features[current.candidate_key].get("market_type") or "spot")
+            if current is not None else None
+        )
+        if current is None or market_rank.get(
+            str(feature.get("market_type") or "spot"), 2,
+        ) < market_rank.get(current_market, 2):
+            target_by_symbol[symbol] = decision
     target_selected_keys = {
         item.candidate_key
-        for item in select_admitted_candidates(
-            decisions,
-            max_candidates=universe_config.max_candidates,
-        )
+        for item in list(target_by_symbol.values())[:universe_config.max_candidates]
     }
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
         legacy_direction = decision.legacy_control.get("primary_direction")
@@ -226,9 +250,6 @@ def build_candidate_selection_shadow_bundle(
         )
         if effective_training_cutoff is not None else None
     )
-    frozen_selection_policy = dict(
-        selection_policy or candidate_selection_policy_identity(universe_config)
-    )
     behavior_contract_hash = canonical_fingerprint({
         "version": CANDIDATE_SELECTION_UTILITY_VERSION,
         "record_version": CANDIDATE_SELECTION_RECORD_VERSION,
@@ -284,6 +305,7 @@ def build_candidate_selection_shadow_bundle(
                 "estimator_training_cutoff": effective_training_cutoff,
                 "training_outcome_fingerprint": training_outcome_fingerprint,
                 "source_outcome_fingerprints": available_source_fingerprints,
+                "cost_assumptions": cost_assumptions,
             },
         }
         compact = _json(material)
@@ -415,10 +437,13 @@ def load_candidate_selection_outcomes(
         for row in rows:
             base = dict(row)
             if settled_through:
+                entry_at = parse_utc_instant(base.get("entry_ts"))
                 settled_at = parse_utc_instant(base.get("settled_at"))
                 cutoff = parse_utc_instant(settled_through)
                 if cutoff is None:
                     raise ValueError("candidate_selection_training_cutoff_invalid")
+                if entry_at is None or entry_at >= cutoff:
+                    continue
                 if settled_at is not None and settled_at > cutoff:
                     for field in (
                         "settled_at", "exit_price_usd", "gross_return_pct",

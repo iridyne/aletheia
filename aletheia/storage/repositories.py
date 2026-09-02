@@ -10672,6 +10672,27 @@ def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
     return {f"{row['outcome_candidate_key']}:{row['primary_horizon']}" for row in rows}
 
 
+def candidate_selection_cost_assumptions(outcome_candidate_key: str) -> dict | None:
+    """Return the immutable capture-time costs linked to one Candidate outcome."""
+
+    row = get_db().execute(
+        "SELECT json_extract(r.compact_output_json, '$.evidence_contract.cost_assumptions') "
+        "FROM universe_twin_shadow_records r "
+        "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
+        "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
+        "WHERE b.record_version='candidate-selection-utility-record/v1' "
+        "AND j.value=? LIMIT 1",
+        (outcome_candidate_key,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        value = json.loads(str(row[0]))
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 _PRIORITY_SCAN_BATCH_ROWS = 2000
 # The open-experiment keys attach to RECENT candidates, so when a backlog exists the
 # priority rows sit at the new end of the due range and a short scan finds none of

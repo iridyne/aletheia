@@ -31,10 +31,22 @@ def candidate_selection_policy_identity(cfg: object) -> dict[str, object]:
             "monitoring_venue": fast_market_data_venue_for_config(cfg),
             "paper_execution_mode": cfg.exchange.paper_execution_mode,
         }
+        identity["preferred_market_type"] = cfg.exchange.preferred_market_type
     if hasattr(cfg, "trading"):
         identity["cost_assumptions"] = {
             "execution_fee_pct": cfg.trading.execution_fee_pct,
             "slippage_bps": cfg.trading.slippage_bps,
+        }
+    try:
+        from aletheia.agent_runtime.runtime_session import current_provenance
+
+        provenance = current_provenance()
+    except Exception:
+        provenance = {}
+    if provenance.get("producer_commit") and provenance.get("behavior_fingerprint"):
+        identity["runtime_identity"] = {
+            "producer_commit": provenance["producer_commit"],
+            "behavior_fingerprint": provenance["behavior_fingerprint"],
         }
     return identity
 

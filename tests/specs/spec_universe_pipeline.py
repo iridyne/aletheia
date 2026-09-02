@@ -109,6 +109,14 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         "liquidity_score": 90.0,
         "ttl_sec": 3600,
     }]
+    fingerprint_members = allocated
+    if failure_kind == "candidate_authority_evidence":
+        fingerprint_members = [{
+            **allocated[0],
+            "candidate_selection_policy": "candidate_selection_utility_v1",
+            "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
+            "candidate_selection_utility_pct": 1.0,
+        }]
     previous = UniverseSnapshot(
         id="previous-healthy-universe",
         market_type="crypto",
@@ -118,7 +126,9 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             json.dumps(
                 {
                     "information_policy_epoch": service.POLICY_EPOCH_LABEL,
-                    "member_fingerprint": service._member_fingerprint(allocated, None),
+                        "member_fingerprint": service._member_fingerprint(
+                            fingerprint_members, None
+                        ),
                 }
             )
             if reuse_previous_snapshot
@@ -138,6 +148,9 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         scanner_direction="long",
         expires_at="2099-01-01T00:00:00+00:00",
     ))
+    previous_member_expires_at = repo.get_universe_member(
+        "previous-healthy-member"
+    )["expires_at"]
     requalification_generation_id = None
     requalification_before = None
     if failure_kind == "scanner_completion":
@@ -333,6 +346,10 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             lambda *_args, **_kwargs: {("bitget", "BTC/USDT", "spot", "momentum", "long")},
         )
         monkeypatch.setattr(
+            "aletheia.universe.allocator.decorate_universe_candidates",
+            lambda *_args: None,
+        )
+        monkeypatch.setattr(
             service.repo,
             "insert_universe_twin_shadow_bundle",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(failure_code)),
@@ -401,6 +418,10 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             "snapshot_id": previous.id,
         })
     assert [dict(row) for row in members] == expected_members
+    if reuse_previous_snapshot:
+        assert repo.get_universe_member("previous-healthy-member")["expires_at"] == (
+            previous_member_expires_at
+        )
     failed_run = db.execute(
         "SELECT status,snapshot_id,errors FROM universe_scanner_runs "
         "ORDER BY rowid DESC LIMIT 1"
@@ -543,13 +564,15 @@ def test_publication_failure_rolls_back_attempt_learning_activation(
     )
 
 
+@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
 def test_candidate_authority_evidence_failure_cannot_publish_target_snapshot(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, reuse_previous_snapshot,
 ):
     _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         tmp_path,
         monkeypatch,
         "candidate_authority_evidence",
+        reuse_previous_snapshot=reuse_previous_snapshot,
     )
 
 

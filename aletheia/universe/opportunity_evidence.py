@@ -57,6 +57,14 @@ def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> Mechani
             mechanism_id, f"{mechanism_id}/v1", "unavailable", None, None, None, None,
             (), (), reasons, reasons,
         )
+    directions = {item.direction for item in usable}
+    if len(directions) > 1:
+        refs = tuple(sorted({e.raw_feature_id for item in usable for e in item.evidence}))
+        groups = tuple(sorted({e.evidence_group_id for item in usable for e in item.evidence}))
+        return MechanismEvidenceV1(
+            mechanism_id, f"{mechanism_id}/v1", "unavailable", None, None, None, None,
+            refs, groups, ("mechanism_direction_conflict",), ("direction_resolution",),
+        )
     # One mechanism keeps one witness: choose the most conservative usable source,
     # never add Momentum and Short Bias as if they were independent evidence.
     selected = max(usable, key=lambda item: (item.pessimistic_score, item.point_score, item.component_id))

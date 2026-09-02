@@ -143,6 +143,15 @@ def test_opportunity_evidence_maps_mechanisms_without_summing_short_bias():
     )
     assert all(item.applicability == "unavailable" for item in invalid.mechanisms)
 
+    conflict = build_opportunity_evidence(
+        _feature(relative_strength_24h=8.0, return_4h=-5.0, return_24h=-4.0, rsi_14=50.0),
+        candidate_key="candidate-evidence-conflict",
+        source_cutoff_at="2026-09-02T00:00:00+00:00",
+    )
+    continuation = next(item for item in conflict.mechanisms if item.mechanism_id == "continuation")
+    assert continuation.applicability == "unavailable"
+    assert continuation.reason_codes == ("mechanism_direction_conflict",)
+
 
 def test_within_run_percentile_requires_twenty_and_average_ranks_ties():
     from aletheia.universe.opportunity_evidence import (
@@ -443,6 +452,28 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     repo.insert_universe_twin_shadow_bundle(
         bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
     )
+    after_cutoff = build_candidate_selection_shadow_bundle(
+        population,
+        scanner_run_id="candidate-selection-after-cutoff",
+        captured_at="2026-09-02T13:00:00+00:00",
+        universe_config=UniverseConfig(max_candidates=3),
+        legacy_scored=legacy,
+        legacy_allocated=legacy,
+        action_route_reasons={
+            (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
+            for item in population
+        },
+        historical_outcomes=(),
+    )
+    repo.insert_universe_twin_shadow_bundle(
+        after_cutoff.batch,
+        after_cutoff.evidence,
+        outcomes=after_cutoff.outcomes,
+        min_interval_sec=0,
+    )
+    after_cutoff_keys = {
+        outcome.outcome_candidate_key for outcome in after_cutoff.outcomes
+    }
     key = load_candidate_selection_outcomes()[0]["outcome_candidate_key"]
     repo.get_db().execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
@@ -457,6 +488,10 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     assert frozen[0]["settled_at"] is None
     assert frozen[0]["net_return_pct"] is None
     assert frozen[0]["mae_pct"] is None
+    assert all(row["entry_ts"] < "2026-09-02T12:00:00+00:00" for row in frozen)
+    assert not after_cutoff_keys.intersection(
+        row["outcome_candidate_key"] for row in frozen
+    )
 
 
 def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
@@ -487,6 +522,47 @@ def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
     assert payload["candidate_selection"]["hard_gate"]["status"] == "unavailable"
     assert set(payload["outcome_candidate_keys"]) == {"long"}
     assert len(bundle.outcomes) == 1
+
+
+def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
+    import json
+    import aletheia.universe.candidate_selection_shadow as shadow_module
+
+    spot = _feature(symbol="SAME/USDT", market_type="spot", feature_snapshot_id="spot")
+    perp = _feature(
+        index=1, symbol="SAME/USDT", market_type="perp",
+        feature_snapshot_id="perp", funding_rate=0.0,
+    )
+    population = [spot, perp]
+    legacy = [
+        {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0}
+        for item in population
+    ]
+    monkeypatch.setattr(
+        shadow_module,
+        "select_admitted_candidates",
+        lambda decisions, **_kwargs: tuple(decisions),
+    )
+    bundle = shadow_module.build_candidate_selection_shadow_bundle(
+        population,
+        scanner_run_id="candidate-selection-market-dedup",
+        captured_at="2026-09-02T00:00:00+00:00",
+        universe_config=UniverseConfig(max_candidates=2),
+        legacy_scored=legacy,
+        legacy_allocated=legacy,
+        action_route_reasons={
+            (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
+            for item in population
+        },
+        historical_outcomes=(),
+        selection_policy={"preferred_market_type": "spot"},
+    )
+    selected = [
+        row.market_type
+        for row in bundle.evidence
+        if json.loads(row.compact_output_json)["target_selected"]
+    ]
+    assert selected == ["spot"]
 
 
 def test_shadow_retains_full_supported_multi_mechanism_record():
@@ -539,6 +615,8 @@ def test_shadow_retains_full_supported_multi_mechanism_record():
 
 
 def test_candidate_selection_authority_requires_qualification_and_projects_target():
+    import json
+
     from aletheia.storage import repositories as repo
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
@@ -568,6 +646,20 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     }
     shadow = build_candidate_selection_shadow_bundle(**kwargs)
     assert shadow.batch.policy_epoch_id
+    cost_bound = build_candidate_selection_shadow_bundle(
+        **kwargs,
+        selection_policy={
+            "cost_assumptions": {"execution_fee_pct": 0.06, "slippage_bps": 5.0},
+        },
+    )
+    cost_snapshot = json.loads(cost_bound.evidence[0].compact_output_json)[
+        "evidence_contract"
+    ]["cost_assumptions"]
+    assert cost_snapshot == {
+        "execution_fee_pct": 0.06,
+        "fallback_spread_bps": kwargs["universe_config"].max_spread_bps,
+        "slippage_bps": 5.0,
+    }
     changed_policy = build_candidate_selection_shadow_bundle(
         **{**kwargs, "universe_config": UniverseConfig(max_candidates=4)},
     )
@@ -631,6 +723,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
         FilterCandidateOutcome,
+        RuntimeSession,
         UniverseTwinShadowBatch,
         UniverseTwinShadowEvidence,
     )
@@ -647,6 +740,11 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     cutoff = start.isoformat()
     policy_epoch = "candidate-selection-utility:fixed-policy"
     behavior_hash = "f" * 64
+    repo.insert_runtime_session(RuntimeSession(
+        session_id="candidate-runtime",
+        boot_commit="candidate-deployed-commit",
+        behavior_fingerprint="candidate-runtime-behavior",
+    ))
     for index in range(50):
         captured = start + timedelta(hours=index * 4)
         run_id = f"fixed-look-{index:02d}"
@@ -729,6 +827,12 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
                 settlement_price_source="horizon_ohlcv",
                 settlement_lag_sec=60.0,
                 cost_model_version="v1",
+                producer_runtime_session_id="candidate-runtime",
+                producer_commit="candidate-deployed-commit",
+                producer_behavior_fingerprint="candidate-runtime-behavior",
+                settlement_runtime_session_id="candidate-runtime",
+                settlement_producer_commit="candidate-deployed-commit",
+                settlement_behavior_fingerprint="candidate-runtime-behavior",
                 status="settled",
             ))
         batch = UniverseTwinShadowBatch(
@@ -745,7 +849,15 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
             feature_source_fingerprint="source-v1",
             metric_version=CANDIDATE_SELECTION_METRIC_VERSION,
             allocator_random_state_json="null",
-            policy_json=json.dumps({"universe": {"max_candidates": 2}}),
+            policy_json=json.dumps({
+                "universe": {"max_candidates": 2},
+                "selection_policy": {
+                    "runtime_identity": {
+                        "producer_commit": "candidate-deployed-commit",
+                        "behavior_fingerprint": "candidate-runtime-behavior",
+                    },
+                },
+            }),
             allocation_context_json="{}",
             candidate_count=2,
             blocking_reasons_json='["owner_admission_required"]',
@@ -905,3 +1017,14 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     assert frozen["verdict"] == "positive", frozen
     assert frozen["fixed_look_cluster_n"] == 50
     assert frozen["full_arm_outcome_coverage"] == 1.0
+
+    repo.get_db().execute(
+        "UPDATE filter_candidate_outcomes SET producer_commit='unattested-commit' "
+        "WHERE outcome_candidate_key=?",
+        ("candidate-selection-utility:v1:fixed-look-01:0:long",),
+    )
+    invalid = evaluate_candidate_selection_policy(
+        as_of_at=(start + timedelta(days=10)).isoformat(),
+    )
+    assert invalid["verdict"] == "invalid"
+    assert "runtime_provenance_unattested" in invalid["invalid_reasons"]

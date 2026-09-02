@@ -47,7 +47,8 @@ second Candidate, Outcome, experiment, scheduler, or database platform. Each
 successful sampled scanner run persists the complete same-T0 population plus
 one canonical 4h outcome per observed direction. The compact record maps all
 mechanism cohort labels to that shared outcome, so several labels cannot become
-duplicated economics.
+duplicated economics. The same record freezes the numeric cost assumptions used
+at settlement, so a later Settings change cannot restate a pending outcome.
 
 When estimator support first becomes available, the path freezes its training
 cutoff, complete eligible training-dataset fingerprint, and selection settings
@@ -77,7 +78,8 @@ outcomes are retained for fixed-look replay rather than entering the generic
 30-day Twin/outcome prune. If configured policy state is unreadable, Candidate
 evidence pruning fails closed.
 At a frozen cutoff, a row settled later remains a pending denominator row with
-no post-cutoff settlement fields; it cannot disappear or borrow future facts.
+no post-cutoff settlement fields, while a post-cutoff exposure is excluded. The
+training cohort cannot disappear, expand, or borrow future facts.
 
 `uv run aletheia evidence candidate-selection status --json` is read-only. A
 positive report sets `qualification_eligible=true` and
@@ -94,9 +96,20 @@ that same qualification before every target publication. Missing, stale,
 negative, neutral, insufficient, or invalid evidence fails closed and preserves
 the previous active snapshot.
 
+Qualification requires attested capture and settlement Runtime Sessions, one
+consistent deployed commit and behavior fingerprint, and equality with the
+runtime identity frozen in the policy epoch. Missing, mixed, or unattested
+provenance is invalid evidence, never a local-checkout inference.
+
 An active target snapshot may intentionally contain no members when every row
 is below-floor or unavailable. Reads preserve that empty Candidate set and do
 not replace it with legacy static fallback rows.
+
+Within a mechanism, usable Long and Short witnesses are an unresolved conflict
+and make that mechanism unavailable. Target allocation keeps the full
+instrument denominator but admits at most one preferred-market instrument per
+symbol thesis. On a change-suppressed target refresh, TTL renewal commits in the
+same publication transaction as required target evidence.
 
 An authoritative refresh writes the target selection evidence, canonical 4h
 outcomes, Candidate rows, Planning Generation handoffs, and scanner completion

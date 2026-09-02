@@ -1259,26 +1259,20 @@ class UniverseService:
                 # every carrier to be ttl_expired on the next ranker scan even
                 # though we just re-confirmed the same working set is valid.
                 # See repositories.refresh_active_snapshot_ttls for semantics.
-                refreshed_opps = 0
-                try:
-                    refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
-                        prev_snapshot_id,
-                        now,
-                    )
-                    if refreshed_members or refreshed_opps:
-                        logger.info(
-                            "Universe refresh (suppressed): TTL slid forward — members=%d opps=%d snapshot=%s",
-                            refreshed_members,
-                            refreshed_opps,
+                refreshed_members = refreshed_opps = 0
+                if candidate_selection_authority_bundle is None:
+                    try:
+                        refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
                             prev_snapshot_id,
+                            now,
                         )
-                except Exception as _e:
-                    # Non-fatal: the worst case is the pre-fix behavior (some
-                    # carriers hard-reject as ttl_expired next scan).
-                    logger.warning(
-                        "Universe refresh: TTL slide failed (non-fatal): %s",
-                        _e,
-                    )
+                    except Exception as _e:
+                        # Legacy TTL renewal remains best-effort; target renewal
+                        # joins the required evidence transaction below.
+                        logger.warning(
+                            "Universe refresh: TTL slide failed (non-fatal): %s",
+                            _e,
+                        )
                 # Nudge ranker only when the slide made previously-expired
                 # opportunities eligible again. Without this the operator has
                 # to wait up to 3 min for the next tick to re-see them.
@@ -1311,6 +1305,11 @@ class UniverseService:
                     allocated=allocated,
                 )
                 with _atomic_universe_publication():
+                    if candidate_selection_authority_bundle is not None:
+                        refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
+                            prev_snapshot_id,
+                            now,
+                        )
                     _persist_attempt_learning_exposures(deferred_exposure_writes)
                     selected_generation_ids, new_generation_ids, planning_generations_created = (
                         _ensure_planning_generations(
@@ -1347,6 +1346,20 @@ class UniverseService:
                         completed_at=datetime.now(timezone.utc).isoformat(),
                         snapshot_id=prev_snapshot_id,
                     )
+                if refreshed_members or refreshed_opps:
+                    logger.info(
+                        "Universe refresh (suppressed): TTL slid forward — members=%d opps=%d snapshot=%s",
+                        refreshed_members,
+                        refreshed_opps,
+                        prev_snapshot_id,
+                    )
+                if candidate_selection_authority_bundle is not None and refreshed_opps:
+                    try:
+                        from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+                        notify_paper_trader(source="universe_refresh_ttl_slide")
+                    except Exception as _e:
+                        logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
                 if experiment_outcomes:
                     logger.info(
                         "Registered %d experiment candidate outcome row(s) across full arms",

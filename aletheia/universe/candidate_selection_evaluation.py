@@ -80,6 +80,33 @@ def _rows_for_keys(keys: set[str]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _runtime_provenance_reason(row: dict[str, Any]) -> str | None:
+    if row.get("status") != "settled":
+        return None
+    pairs = (
+        ("producer_runtime_session_id", "producer_commit", "producer_behavior_fingerprint"),
+        ("settlement_runtime_session_id", "settlement_producer_commit", "settlement_behavior_fingerprint"),
+    )
+    for session_field, commit_field, behavior_field in pairs:
+        session_id = row.get(session_field)
+        commit = row.get(commit_field)
+        behavior = row.get(behavior_field)
+        if not session_id or not commit or not behavior:
+            return "runtime_provenance_unavailable"
+        session = repo.get_runtime_session(str(session_id))
+        if (
+            session is None
+            or session.get("boot_commit") != commit
+            or session.get("behavior_fingerprint") != behavior
+        ):
+            return "runtime_provenance_unattested"
+    if row.get("producer_commit") != row.get("settlement_producer_commit"):
+        return "mixed_runtime_commit"
+    if row.get("producer_behavior_fingerprint") != row.get("settlement_behavior_fingerprint"):
+        return "mixed_runtime_behavior"
+    return None
+
+
 def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[str, Any]:
     """Evaluate the first outcome-independent fixed look; never admit authority."""
 
@@ -182,6 +209,8 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             records.append((decision, keys, payload.get("target_selected") is True))
         parsed.append((batch, records))
     outcomes = _rows_for_keys(all_keys)
+    observed_commits: set[str] = set()
+    observed_behaviors: set[str] = set()
     clusters = []
     for batch, records in parsed:
         captured = _parse_time(batch.get("captured_at"))
@@ -210,6 +239,15 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             for key in keys.values():
                 cluster_expected_outcome_n += 1
                 row = outcomes.get(str(key))
+                provenance_reason = _runtime_provenance_reason(row) if row else None
+                if provenance_reason:
+                    invalid.add(provenance_reason)
+                    cluster_exclusions[provenance_reason] += 1
+                    cluster_complete = False
+                    continue
+                if row and row.get("status") == "settled":
+                    observed_commits.add(str(row["producer_commit"]))
+                    observed_behaviors.add(str(row["producer_behavior_fingerprint"]))
                 assessment = assess_candidate_outcome(row, as_of_at=now) if row else None
                 if assessment and assessment.eligible:
                     cluster_complete_outcome_n += 1
@@ -269,6 +307,16 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
             "target_symbols": target_symbols,
             "legacy_symbols": legacy_symbols,
         })
+    if len(observed_commits) != 1:
+        invalid.add("mixed_runtime_commit")
+    if len(observed_behaviors) != 1:
+        invalid.add("mixed_runtime_behavior")
+    report["runtime_provenance"] = {
+        "producer_commit": next(iter(observed_commits)) if len(observed_commits) == 1 else None,
+        "behavior_fingerprint": next(iter(observed_behaviors)) if len(observed_behaviors) == 1 else None,
+    }
+    if (report.get("selection_policy") or {}).get("runtime_identity") != report["runtime_provenance"]:
+        invalid.add("runtime_policy_identity_mismatch")
     fixed_look = []
     fixed_look_population = []
     days: set[date] = set()
