@@ -5,6 +5,8 @@
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
 > Last updated: 2026-08-08
 
+> Issue #2737: the [Phase 1 Migration Contract](../contracts/observation_experiment_ownership_v2.md) freezes current legacy storage, while the [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future Lab V2 target. Before Phase 8, existing legacy Experiment tables and authority remain active; before Phase 11, no physical legacy retirement is implied.
+
 ---
 
 ## 1. Architecture Overview

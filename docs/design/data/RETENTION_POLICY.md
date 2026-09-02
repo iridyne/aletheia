@@ -6,6 +6,8 @@
 > Last updated: 2026-08-06 (offline layout optimization and WAL backlog evidence).
 > Source: `/tmp/RETENTION_SPEC.md` + `/tmp/RETENTION_SYNTHESIS.json` (workflow output).
 
+> Issue #2737: the [Phase 1 Migration Contract](../contracts/observation_experiment_ownership_v2.md) preserves the current no-prune and earliest-exposure guards, while the [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future exact-claim design. No retention authority changes until its serial proof and cutover gates are satisfied.
+
 Two hard rules govern every retention decision here:
 
 1. **Trust-bearing tables are permanent.** The 12 audit-chain tables and the
