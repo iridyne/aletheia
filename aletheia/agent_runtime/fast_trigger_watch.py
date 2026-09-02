@@ -800,10 +800,10 @@ async def _watch_loop(cfg) -> None:
         stream = fast_market_stream_for_config(cfg)
         event_task: asyncio.Task | None = None
         try:
-            await stream.connect()
             setups, engines = await _load_watchers(cfg)
             plans, plan_engines = await _load_entry_plan_watchers(cfg)
             instruments = _watched_instruments(engines, plan_engines, plans)
+            await stream.connect(instruments)
             await stream.set_instruments(instruments)
             _status = {
                 "running": True,
@@ -837,6 +837,10 @@ async def _watch_loop(cfg) -> None:
                         fresh_plan_engines,
                         fresh_plans,
                     )
+                    if {
+                        item.market_type for item in fresh_instruments
+                    } != {item.market_type for item in subscribed}:
+                        break
                     if fresh_instruments != subscribed:
                         if event_task is not None:
                             if event_task.done():
