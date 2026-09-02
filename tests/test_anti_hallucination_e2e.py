@@ -303,6 +303,14 @@ def test_ps_lessons_surface_to_pi_prompt(tmp_path, monkeypatch):
     # Advance lesson to applied status (the only status visible to Layer3)
     store.accept(lesson.lesson_id)
     store.mark_applied(lesson.lesson_id, policy_version_id="test-policy-1")
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE ps_lessons SET dry_run_until = '2000-01-01T00:00:00+00:00'"
+        " WHERE lesson_id = ?",
+        (lesson.lesson_id,),
+    )
+    db.commit()
     from aletheia.agent_shell.trading_context import _build_layer3_wisdom
     layer3 = _build_layer3_wisdom()
     assert layer3["ps_lessons"], "ps_lessons must surface into Layer3"

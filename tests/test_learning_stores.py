@@ -265,12 +265,14 @@ class TestLessonStoreStateMachine:
         store = LessonStore()
         lesson = store.create("Applicable lesson", "dreaming_agent", "r1")
         store.accept(lesson.lesson_id)
+        dry_run_until = store.get(lesson.lesson_id).dry_run_until
         policy_version_id = "pv-test-001"
         store.mark_applied(lesson.lesson_id, policy_version_id)
 
         fetched = store.get(lesson.lesson_id)
         assert fetched.status == "applied"
         assert fetched.applied_policy_version == policy_version_id
+        assert fetched.dry_run_until == dry_run_until
         _teardown()
 
     def test_archive_stamps_status(self, tmp_path, monkeypatch):
