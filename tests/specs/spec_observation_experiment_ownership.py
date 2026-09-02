@@ -114,14 +114,6 @@ _NAMED_LEGACY_WRITE_CALLS = frozenset({
     "_persist_attempt_learning_exposures",
 })
 
-# These modules intentionally dispatch table writes dynamically, so neither a
-# literal SQL regex nor a constant first argument can prove their target.
-_DYNAMIC_LEGACY_WRITERS = frozenset({
-    "aletheia/maintenance/data_retention_backfill.py",
-    "aletheia/storage/repositories.py",
-})
-
-
 def _production_sources() -> dict[str, str]:
     return {
         path.relative_to(_ROOT).as_posix(): path.read_text(encoding="utf-8")
@@ -137,8 +129,24 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
+def _constant_keyword(node: ast.Call, name: str) -> object | None:
+    for keyword in node.keywords:
+        if keyword.arg == name and isinstance(keyword.value, ast.Constant):
+            return keyword.value.value
+    return None
+
+
+def _declares_legacy_dispatch(node: ast.Call) -> bool:
+    """Recognise a table-specific dynamic retention dispatch from its plan row."""
+    return (
+        _call_name(node) == "RetentionTarget"
+        and _constant_keyword(node, "table") in _LEGACY_TABLES
+        and _constant_keyword(node, "prune_fn") in _NAMED_LEGACY_WRITE_CALLS
+    )
+
+
 def _discover_legacy_writers(sources: dict[str, str]) -> set[str]:
-    writers = set(_DYNAMIC_LEGACY_WRITERS)
+    writers: set[str] = set()
     for path, source in sources.items():
         if _SQL_WRITE.search(source):
             writers.add(path)
@@ -148,7 +156,7 @@ def _discover_legacy_writers(sources: dict[str, str]) -> set[str]:
             if not isinstance(node, ast.Call):
                 continue
             name = _call_name(node)
-            if name in _NAMED_LEGACY_WRITE_CALLS:
+            if name in _NAMED_LEGACY_WRITE_CALLS or _declares_legacy_dispatch(node):
                 writers.add(path)
                 break
             if (
@@ -178,7 +186,7 @@ def _assert_exact_inventory(
 
 
 @spec_claim(SpecClaim(
-    "OEO-S01", _CONTRACT, "§3 current legacy ownership inventory and freeze", "L2a",
+    "OEO-S01", _CONTRACT, "Frozen legacy storage inventory", "L2a",
     "Phase 1 freezes all current production references to the legacy Experiment tables and rejects new coupling.",
 ))
 def test_legacy_experiment_reference_inventory_cannot_grow():
@@ -195,7 +203,7 @@ def test_legacy_experiment_reference_inventory_cannot_grow():
 
 
 @spec_claim(SpecClaim(
-    "OEO-S02", _CONTRACT, "§3 current legacy ownership inventory and freeze", "L2a",
+    "OEO-S02", _CONTRACT, "Frozen legacy treatment-call inventory", "L2a",
     "Phase 1 enumerates every legacy apply_numeric_treatment/apply_boolean_treatment reference and rejects new callers.",
 ))
 def test_legacy_treatment_caller_inventory_cannot_grow():
@@ -212,7 +220,7 @@ def test_legacy_treatment_caller_inventory_cannot_grow():
 
 
 @spec_claim(SpecClaim(
-    "OEO-S03", _CONTRACT, "§3 current legacy ownership inventory and freeze", "L2a",
+    "OEO-S03", _CONTRACT, "Verification and rollback", "L2a",
     "No production module outside the temporary writer allowlist may add a legacy Experiment-table write.",
 ))
 def test_no_new_legacy_experiment_writer():
