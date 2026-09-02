@@ -28,21 +28,32 @@ def test_universe_publication_has_one_entry_planning_owner():
 @spec_claim(
     SpecClaim(
         "EP-S10", "entry_plan_contract", "AI Entry hypothesis authority", "L2a",
-        "Planner V3 freezes one bounded input and Entry Plan V2 fails closed on provenance or activation mismatch.",
+        "Momentum defaults to Planner V3; Entry Plan V2 fails closed on provenance or global runtime authority mismatch.",
         status="implemented",
     )
 )
 def test_ai_entry_v3_has_one_frozen_input_and_execution_gate():
+    from aletheia.config.schema import AgentConfig
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
-    from aletheia.storage.repositories import bind_candidate_planner_input
+    from aletheia.server.routes.settings import router as settings_router
+    from aletheia.storage.repositories import (
+        bind_candidate_planner_input,
+        ensure_candidate_planning_generation,
+    )
     from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
     from aletheia.trading.entry_plan import EntryPlan
 
     assert "planner_input_hash" in inspect.getsource(bind_candidate_planner_input)
     authority_source = inspect.getsource(_require_ai_entry_authority)
-    assert "ai_entry_activation_gate_closed" in authority_source
+    assert "ai_entry_runtime_authority_unavailable" in authority_source
     assert 'permission_mode != "Paper"' in authority_source
     assert "planner_input_json" in authority_source
+    assert "activation_identity" not in authority_source
+    generation_source = inspect.getsource(ensure_candidate_planning_generation)
+    assert "AI_ENTRY_PLANNER_CONTRACT_VERSION" in generation_source
+    assert "ai_entry_hypothesis" not in generation_source
+    assert "ai_entry_hypothesis_enabled" not in AgentConfig.model_fields
+    assert all(route.path != "/ai-entry-hypothesis" for route in settings_router.routes)
     assert "candidate" not in inspect.signature(compile_ai_entry_plan).parameters
     assert "feature" not in inspect.signature(compile_ai_entry_plan).parameters
     assert "analysis_context_fingerprint" in EntryPlan.model_fields

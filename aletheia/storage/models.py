@@ -1691,6 +1691,7 @@ class CandidatePlanningGeneration(_Provenanced):
     attention_terminal_reason: str | None = None
     planner_input_json: str | None = None
     planner_input_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    # Deprecated schema field retained for historical row compatibility.
     activation_identity: str | None = None
 
 

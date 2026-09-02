@@ -695,53 +695,6 @@ def set_bypass_distress_gate(req: BypassDistressGateRequest):
     return {"old": old, "new": req.enabled}
 
 
-class AiEntryHypothesisRequest(SettingsRequest):
-    enabled: bool
-
-
-@router.post("/ai-entry-hypothesis")
-def set_ai_entry_hypothesis(req: AiEntryHypothesisRequest):
-    """Owner gate for forward-only Planner V3 Paper evidence."""
-    cfg = load_config()
-    if req.enabled and (
-        cfg.exchange.paper_execution_mode not in {"paper_internal", "bitget_demo"}
-        or cfg.live.state != "live_disabled"
-        or cfg.agent.permission_mode != "Paper"
-    ):
-        raise HTTPException(409, detail={"code": "ai_entry_hypothesis_paper_mode_required"})
-    old = bool(cfg.agent.ai_entry_hypothesis_enabled)
-    old_activation = cfg.agent.ai_entry_hypothesis_activated_at
-    cfg.agent.ai_entry_hypothesis_enabled = req.enabled
-    if req.enabled and not old:
-        cfg.agent.ai_entry_hypothesis_activated_at = datetime.now(timezone.utc)
-    save_config(cfg)
-    from aletheia.files.jsonl import write_audit
-
-    write_audit({
-        "actor": "human",
-        "source": "dashboard",
-        "event_type": "ai_entry_hypothesis_changed",
-        "entity_type": "agent_config",
-        "before": {"enabled": old, "activated_at": old_activation.isoformat() if old_activation else None},
-        "after": {
-            "enabled": req.enabled,
-            "activated_at": (
-                cfg.agent.ai_entry_hypothesis_activated_at.isoformat()
-                if cfg.agent.ai_entry_hypothesis_activated_at else None
-            ),
-        },
-        "message": f"ai_entry_hypothesis {old} -> {req.enabled}",
-    })
-    return {
-        "old": old,
-        "new": req.enabled,
-        "activated_at": (
-            cfg.agent.ai_entry_hypothesis_activated_at.isoformat()
-            if cfg.agent.ai_entry_hypothesis_activated_at else None
-        ),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Exchange markets config
 # ---------------------------------------------------------------------------

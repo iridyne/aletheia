@@ -124,11 +124,11 @@ def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monk
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
     from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
 
-    activation = datetime(2026, 9, 2, tzinfo=timezone.utc)
+    instant = datetime(2026, 9, 2, tzinfo=timezone.utc)
     context = EntryAnalysisContextV1(
-        analysis_cutoff_at=activation.isoformat(),
+        analysis_cutoff_at=instant.isoformat(),
         instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
-        planning_generation={"id": "g-v3", "planner_contract_version": "entry-planner/v3", "activation_identity": activation.isoformat(), "candidate_id": "c1", "candidate_family": "momentum"},
+        planning_generation={"id": "g-v3", "planner_contract_version": "entry-planner/v3", "candidate_id": "c1", "candidate_family": "momentum"},
         candidate={"fact_refs": ["candidate:c1"]},
         candle_windows={tf: {"availability": "unavailable", "bars": []} for tf in ("4h", "1h", "15m")},
         market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
@@ -138,7 +138,6 @@ def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monk
     )
     generation = {
         "id": "g-v3", "planner_contract_version": "entry-planner/v3",
-        "activation_identity": activation.isoformat(),
         "planner_input_json": context.model_dump_json(),
         "planner_input_hash": fingerprint(context.model_dump(mode="json")),
     }
@@ -149,7 +148,7 @@ def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monk
         required_permission="Paper", execution_account_mode="paper_internal",
     )
     cfg = SimpleNamespace(
-        agent=SimpleNamespace(ai_entry_hypothesis_enabled=True, ai_entry_hypothesis_activated_at=activation, permission_mode="Paper"),
+        agent=SimpleNamespace(permission_mode="Paper"),
         exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
         live=SimpleNamespace(state="live_disabled"),
     )
@@ -158,7 +157,7 @@ def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monk
     _require_ai_entry_authority(plan)
 
     cfg.agent.permission_mode = "Manual"
-    with pytest.raises(ValueError, match="ai_entry_activation_gate_closed"):
+    with pytest.raises(ValueError, match="ai_entry_runtime_authority_unavailable"):
         _require_ai_entry_authority(plan)
     cfg.agent.permission_mode = "Paper"
     generation["planner_input_hash"] = "0" * 64

@@ -55,8 +55,6 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         generation.get("planner_input_hash") != fingerprint(context.model_dump(mode="json"))
         or plan.analysis_context_fingerprint != context.context_fingerprint
         or plan.candidate_id != context.planning_generation.get("candidate_id")
-        or generation.get("activation_identity")
-        != context.planning_generation.get("activation_identity")
         or plan.venue != context.instrument.get("venue")
         or plan.symbol != context.instrument.get("symbol")
         or plan.market_type != context.instrument.get("market_type")
@@ -66,22 +64,18 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
     from aletheia.config.loader import load_config
 
     cfg = load_config(persist_migrations=False)
-    activation = cfg.agent.ai_entry_hypothesis_activated_at
     if (
-        not cfg.agent.ai_entry_hypothesis_enabled
-        or activation is None
-        or generation.get("activation_identity") != activation.astimezone(timezone.utc).isoformat()
-        or cfg.agent.permission_mode != "Paper"
+        cfg.agent.permission_mode != "Paper"
         or plan.required_permission != "Paper"
         or plan.execution_account_mode != cfg.exchange.paper_execution_mode
         or cfg.exchange.paper_execution_mode not in {"paper_internal", "bitget_demo"}
         or cfg.live.state != "live_disabled"
     ):
-        raise ValueError("ai_entry_activation_gate_closed")
+        raise ValueError("ai_entry_runtime_authority_unavailable")
 
 
 def require_entry_plan_runtime_authority(plan: EntryPlan) -> None:
-    """Revalidate persisted experimental authority without creating an Order."""
+    """Revalidate persisted plan lineage and global authority without creating an Order."""
 
     _require_momentum_v2_authority(plan)
     _require_ai_entry_authority(plan)

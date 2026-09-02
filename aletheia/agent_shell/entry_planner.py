@@ -261,14 +261,9 @@ def _complete_semantic_no_plan(
     return repo.complete_candidate_planning_no_plan(generation_id, owner, result)
 
 
-def _ai_entry_gate_is_open(generation: dict, cfg) -> bool:
-    activation = cfg.agent.ai_entry_hypothesis_activated_at
+def _ai_entry_runtime_is_supported(cfg) -> bool:
     return bool(
-        cfg.agent.ai_entry_hypothesis_enabled
-        and activation is not None
-        and generation.get("activation_identity")
-        == activation.astimezone(timezone.utc).isoformat()
-        and cfg.agent.permission_mode == "Paper"
+        cfg.agent.permission_mode == "Paper"
         and cfg.exchange.paper_execution_mode in {"paper_internal", "bitget_demo"}
         and cfg.live.state == "live_disabled"
     )
@@ -316,8 +311,8 @@ async def plan_next_candidate(
         candidate: dict | None = None
         feature: dict = {}
         if is_v3:
-            if not _ai_entry_gate_is_open(generation, cfg):
-                stored = _complete_semantic_no_plan(generation["id"], owner, "AI_ENTRY_GATE_CLOSED")
+            if not _ai_entry_runtime_is_supported(cfg):
+                stored = _complete_semantic_no_plan(generation["id"], owner, "AI_ENTRY_RUNTIME_UNSUPPORTED")
                 return {"status": "no_plan" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": False}
             if generation.get("planner_input_json"):
                 context_model = EntryAnalysisContextV1.model_validate_json(generation["planner_input_json"])
@@ -452,8 +447,10 @@ async def plan_next_candidate(
         }
     if isinstance(intent, EntryHypothesisV1):
         cfg = load_config(persist_migrations=False)
-        if not _ai_entry_gate_is_open(generation, cfg):
-            stored = _complete_semantic_no_plan(generation["id"], owner, "AI_ENTRY_GATE_CLOSED")
+        if not _ai_entry_runtime_is_supported(cfg):
+            stored = _complete_semantic_no_plan(
+                generation["id"], owner, "AI_ENTRY_RUNTIME_UNSUPPORTED"
+            )
             return {
                 "status": "no_plan" if stored else "stale",
                 "planning_generation_id": generation["id"],

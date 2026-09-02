@@ -471,7 +471,7 @@ def build_entry_analysis_context(
     return EntryAnalysisContextV1(
         analysis_cutoff_at=cutoff.isoformat(),
         instrument={"venue": venue, "symbol": symbol, "market_type": market_type, "direction": generation["direction"]},
-        planning_generation={"id": generation["id"], "planner_contract_version": generation["planner_contract_version"], "activation_identity": generation.get("activation_identity"), "candidate_id": candidate["id"], "candidate_family": generation["candidate_family"]},
+        planning_generation={"id": generation["id"], "planner_contract_version": generation["planner_contract_version"], "candidate_id": candidate["id"], "candidate_family": generation["candidate_family"]},
         candidate={"candidate_price": candidate["entry_price_usd"], "detected_at": detected.isoformat(), "motive_evidence": candidate.get("inclusion_reason"), "risk_flags": candidate.get("risk_flags"), "fact_refs": [candidate_ref]},
         candle_windows=serialized, market_structure={**structures, "fact_refs": fact_refs},
         quant_context={
