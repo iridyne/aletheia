@@ -286,6 +286,40 @@ class TestGetWatchedSymbols:
             "binance:BTC/USDT:perp",
         ]
 
+    def test_position_with_protection_state_keeps_frozen_venue(self, monkeypatch):
+        import aletheia.config.loader as loader
+        import aletheia.storage.repositories as repo
+
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "bitget"
+        cfg.event_triggers.enabled = False
+        monkeypatch.setattr(loader, "load_config", lambda: cfg)
+        monkeypatch.setattr(
+            repo,
+            "list_all_open_positions",
+            lambda: [
+                {
+                    "id": "protected-position",
+                    "symbol": "BTC/USDT",
+                    "market_type": "usdt_futures",
+                    "execution_mode": "paper_internal",
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            repo,
+            "get_position_protection_state",
+            lambda _position_id: {
+                "venue": "binance",
+                "symbol": "BTC/USDT",
+                "market_type": "perp",
+            },
+        )
+
+        assert [str(item) for item in get_watched_instruments()] == [
+            "binance:BTC/USDT:perp"
+        ]
+
     def test_pending_spot_and_perp_bypass_universe_tick_gate(self, monkeypatch):
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo

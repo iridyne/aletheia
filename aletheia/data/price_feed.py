@@ -342,8 +342,23 @@ def get_watched_instruments(
 
     # Always watch open position symbols
     try:
-        from aletheia.storage.repositories import list_all_open_positions
+        from aletheia.storage.repositories import (
+            get_position_protection_state,
+            list_all_open_positions,
+        )
         for p in list_all_open_positions():
+            position_id = str(p.get("id") or "").strip()
+            protection_state = (
+                get_position_protection_state(position_id) if position_id else None
+            )
+            if protection_state is not None:
+                append_instrument(
+                    protection_state["symbol"],
+                    protection_state["market_type"],
+                    protection_state["venue"],
+                    is_always_on=True,
+                )
+                continue
             position_venue = protective_price_venue(
                 p.get("execution_mode"),
                 configured_data_venue=default_exchange,
