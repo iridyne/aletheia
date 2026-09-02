@@ -58,9 +58,25 @@ def _run(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-async def _command(execution_mode: str, method: str, command):
-    require_uta_mutation_qualification(execution_mode)
+def _close_adapter(adapter) -> None:
+    try:
+        _run(adapter.close())
+    except Exception:
+        pass
+
+
+def _create_qualified_adapter(execution_mode: str):
     adapter = create_uta_adapter(execution_mode)
+    try:
+        require_uta_mutation_qualification(execution_mode, adapter=adapter)
+    except Exception:
+        _close_adapter(adapter)
+        raise
+    return adapter
+
+
+async def _command(execution_mode: str, method: str, command):
+    adapter = _create_qualified_adapter(execution_mode)
     try:
         return await getattr(adapter, method)(command)
     finally:
@@ -213,7 +229,7 @@ def execute_order(
             raise RuntimeError("entry_plan_order_transition_conflict")
     instrument = instrument_from_local(symbol, market_type)
     try:
-        adapter = create_uta_adapter(execution_mode)
+        adapter = _create_qualified_adapter(execution_mode)
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -348,7 +364,7 @@ def close_position(
             "already_pending": True,
         }
     try:
-        adapter = create_uta_adapter(row["execution_mode"])
+        adapter = _create_qualified_adapter(row["execution_mode"])
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -408,7 +424,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
     adapter = None
     command = None
     try:
-        adapter = create_uta_adapter(position["execution_mode"])
+        adapter = _create_qualified_adapter(position["execution_mode"])
         command = SubmitOrderCommand(
             command_id=str(uuid4()),
             expected_account=adapter.identity,
@@ -479,7 +495,7 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     old_stop = identifiers.get("sl") if isinstance(identifiers, dict) else None
     if not old_stop:
         return False
-    adapter = create_uta_adapter(position["execution_mode"])
+    adapter = _create_qualified_adapter(position["execution_mode"])
     command = CancelOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,
