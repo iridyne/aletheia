@@ -68,22 +68,43 @@ def assess_freshness(
     except KeyError as exc:
         raise ValueError(f"unknown freshness domain: {domain}") from exc
 
-    if not row or not row.get(timestamp_field):
+    if not row:
         return FreshnessVerdict(False, "missing", None, max_age.total_seconds())
-
-    observed_at = _as_utc(row.get(timestamp_field))
-    if observed_at is None:
-        return FreshnessVerdict(False, "invalid", None, max_age.total_seconds())
 
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     current = current.astimezone(timezone.utc)
-    age = current - observed_at
-    age_seconds = age.total_seconds()
-    if age < -MAX_FUTURE_SKEW:
-        return FreshnessVerdict(False, "future", age_seconds, max_age.total_seconds())
-    if age > max_age:
+    timestamp_values = [row.get(timestamp_field)]
+    source_status = row.get("source_time_status") if timestamp_field == "observed_at" else None
+    if source_status is not None:
+        if source_status not in {"provided", "missing", "invalid", "future"}:
+            source_status = "invalid"
+        if source_status != "provided":
+            return FreshnessVerdict(
+                False,
+                source_status,
+                None,
+                max_age.total_seconds(),
+            )
+        timestamp_values = [row.get("source_observed_at"), row.get("acquired_at")]
+
+    ages: list[timedelta] = []
+    for value in timestamp_values:
+        if not value:
+            return FreshnessVerdict(False, "missing", None, max_age.total_seconds())
+        observed_at = _as_utc(value)
+        if observed_at is None:
+            return FreshnessVerdict(False, "invalid", None, max_age.total_seconds())
+        age = current - observed_at
+        age_seconds = age.total_seconds()
+        if age < -MAX_FUTURE_SKEW:
+            return FreshnessVerdict(False, "future", age_seconds, max_age.total_seconds())
+        ages.append(age)
+
+    oldest_age = max(ages)
+    age_seconds = oldest_age.total_seconds()
+    if oldest_age > max_age:
         return FreshnessVerdict(False, "stale", age_seconds, max_age.total_seconds())
     return FreshnessVerdict(True, "fresh", age_seconds, max_age.total_seconds())
 

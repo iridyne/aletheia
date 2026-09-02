@@ -167,23 +167,11 @@ def _record_priority_failure(asset: dict, component: str, reason: str) -> None:
         logger.debug("Could not record pending candidate refresh failure", exc_info=True)
 
 
-def _funding_observed_at(data: dict, *, received_at: datetime) -> str:
-    raw_ts = data.get("timestamp")
-    if raw_ts is not None:
-        try:
-            return datetime.fromtimestamp(float(raw_ts) / 1000, timezone.utc).isoformat()
-        except (TypeError, ValueError, OSError):
-            pass
-    raw_datetime = data.get("datetime")
-    if raw_datetime:
-        try:
-            parsed = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc).isoformat()
-        except ValueError:
-            pass
-    return received_at.astimezone(timezone.utc).isoformat()
+def _provider_observed_at(data: dict, *, received_at: datetime) -> str | None:
+    from aletheia.data.collectors.derivatives import provider_source_time
+
+    observed_at, _status = provider_source_time(data, received_at)
+    return observed_at
 
 
 def _pct_return(closes: list[float], bars: int) -> float | None:
@@ -773,10 +761,12 @@ async def _fetch_single_feature(
                 if live_rate is not None and not isinstance(live_rate, bool):
                     live_funding_rate = float(live_rate)
                     if math.isfinite(live_funding_rate):
-                        funding_rate = live_funding_rate
-                        funding_observed_at = _funding_observed_at(
-                            fr_data, received_at=now
-                        )
+                        observed_at = _provider_observed_at(fr_data, received_at=now)
+                        if observed_at and fresh_row(
+                            {"observed_at": observed_at}, "funding", now=now,
+                        ):
+                            funding_rate = live_funding_rate
+                            funding_observed_at = observed_at
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
@@ -791,9 +781,13 @@ async def _fetch_single_feature(
                 exchange.fetch_open_interest(perp_sym),
                 timeout=5.0,
             )
-            extracted = extract_oi_usd(oi_data or {}, mark_price)
-            if extracted is not None:
-                open_interest = extracted[0]
+            observed_at = _provider_observed_at(oi_data or {}, received_at=now)
+            if observed_at and fresh_row(
+                {"observed_at": observed_at}, "open_interest", now=now,
+            ):
+                extracted = extract_oi_usd(oi_data or {}, mark_price)
+                if extracted is not None:
+                    open_interest = extracted[0]
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 

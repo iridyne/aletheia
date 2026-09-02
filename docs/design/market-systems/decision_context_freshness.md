@@ -28,6 +28,14 @@ decision-use limits, not claims about the underlying economic series' update
 frequency. For example, FRED values may be daily, but the macro row's
 `observed_at` proves when this installation last verified and assembled them.
 
+Primary funding and open-interest rows use two clocks. `source_observed_at`
+preserves the CCXT provider timestamp, `acquired_at` preserves local receipt,
+and compatibility field `observed_at` equals the source timestamp. Both clocks
+must pass the domain age and future-skew limits. Missing, malformed, or future
+provider time is recorded through `source_time_status` and is never replaced by
+local receipt time; such a row is unavailable to decision consumers. Funding
+observation time remains distinct from settlement and next-funding time.
+
 Freshness is fail-closed:
 
 - Missing and malformed timestamps are unusable.

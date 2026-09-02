@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v58"
+SCHEMA_VERSION = "aletheia-sqlite-v59"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3995,6 +3995,18 @@ _PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM = hashlib.sha256(
     (
         _PAPER_FUNDING_REVIVAL_CURSOR_SQL
         + "\npaper_funding_revival_cursor_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_DERIVATIVES_SOURCE_TIME_COLUMNS = tuple(
+    (column, table, "TEXT")
+    for table in ("funding_rate_snapshots", "open_interest_snapshots")
+    for column in ("source_observed_at", "acquired_at", "source_time_status")
+)
+_DERIVATIVES_SOURCE_TIME_CHECKSUM = hashlib.sha256(
+    (
+        repr(_DERIVATIVES_SOURCE_TIME_COLUMNS)
+        + "\nderivatives_source_time_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5607,6 +5619,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260902_0057_paper_funding_revival_cursor_v58": (
         "durable round-robin cursor for terminal Paper funding revival"
     ),
+    "20260902_0058_derivatives_source_time_v59": (
+        "provider source and local acquisition time for primary derivatives"
+    ),
 }
 
 
@@ -6218,6 +6233,23 @@ def _apply_paper_funding_revival_cursor_v58(db: sqlite3.Connection) -> None:
     """Persist only the scheduling keyset for terminal Paper funding revival."""
     db.executescript(_PAPER_FUNDING_REVIVAL_CURSOR_SQL)
     db.execute("PRAGMA optimize")
+
+
+def _apply_derivatives_source_time_v59(db: sqlite3.Connection) -> None:
+    """Add source/acquisition provenance without rewriting legacy observations."""
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    for column, table, column_type in _DERIVATIVES_SOURCE_TIME_COLUMNS:
+        if table not in tables:
+            continue
+        existing = {
+            str(row[1])
+            for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
@@ -6860,6 +6892,12 @@ _MIGRATIONS = (
         checksum=_PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM,
         schema_version="aletheia-sqlite-v58",
         apply=_apply_paper_funding_revival_cursor_v58,
+    ),
+    MigrationStep(
+        migration_id="20260902_0058_derivatives_source_time_v59",
+        checksum=_DERIVATIVES_SOURCE_TIME_CHECKSUM,
+        schema_version="aletheia-sqlite-v59",
+        apply=_apply_derivatives_source_time_v59,
     ),
 )
 

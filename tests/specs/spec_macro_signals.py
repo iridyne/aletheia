@@ -42,6 +42,32 @@ _SIGNALS_TAB = _ROOT / "frontend" / "src" / "features" / "settings" / "tabs" / "
 _CONTRACT = "data_layer_contract"
 
 
+@spec_claim(
+    SpecClaim(
+        "MS-C08",
+        _CONTRACT,
+        "decision-context derivatives source time",
+        "L2c",
+        "Primary funding and open-interest evidence preserves provider and local "
+        "acquisition clocks, and invalid provider time cannot gain freshness.",
+        status="implemented",
+    ),
+)
+def test_primary_derivatives_source_time_contract_is_explicit():
+    freshness_doc = (
+        _ROOT / "docs" / "design" / "market-systems" / "decision_context_freshness.md"
+    ).read_text(encoding="utf-8")
+    models = _MODELS.read_text(encoding="utf-8")
+    derivatives = _DERIVATIVES.read_text(encoding="utf-8")
+
+    for field in ("source_observed_at", "acquired_at", "source_time_status"):
+        assert field in freshness_doc
+        assert models.count(field) >= 2
+        assert field in derivatives
+    assert "provider_source_time" in derivatives
+    assert 'observed_at=source_observed_at or ""' in derivatives
+
+
 # ---------------------------------------------------------------------------
 # Step 1 — Binance Long/Short Ratio
 # ---------------------------------------------------------------------------

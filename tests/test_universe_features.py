@@ -1,7 +1,7 @@
 """Focused regressions for Universe feature collection."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -214,21 +214,21 @@ def test_market_snapshot_rejects_invalid_numeric_facts(overrides):
         MarketSnapshot(**payload)
 
 
-def test_funding_observed_at_prefers_source_timestamp():
-    from aletheia.universe.features import _funding_observed_at
+def test_provider_observed_at_requires_source_timestamp():
+    from aletheia.universe.features import _provider_observed_at
 
     source = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
     received = datetime(2026, 8, 26, 12, 15, tzinfo=timezone.utc)
 
-    assert _funding_observed_at(
+    assert _provider_observed_at(
         {"timestamp": int(source.timestamp() * 1000)},
         received_at=received,
     ) == source.isoformat()
-    assert _funding_observed_at(
+    assert _provider_observed_at(
         {"datetime": "2026-08-26T12:00:00Z"},
         received_at=received,
     ) == "2026-08-26T12:00:00+00:00"
-    assert _funding_observed_at({}, received_at=received) == received.isoformat()
+    assert _provider_observed_at({}, received_at=received) is None
 
 
 def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
@@ -335,18 +335,19 @@ def test_only_explicit_derivative_market_types_read_derivative_enrichment(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("live_rate", "fallback_rate", "expected"),
+    ("live_rate", "fallback_rate", "source_age", "expected", "expected_oi"),
     [
-        ("NaN", 0.0001, 0.0001),
-        ("Infinity", None, None),
-        ("-Infinity", -0.0001, -0.0001),
-        (True, 0.0001, 0.0001),
-        (False, None, None),
-        (-0.0002, 0.0001, -0.0002),
+        ("NaN", 0.0001, 0, 0.0001, 123.0),
+        ("Infinity", None, 0, None, 123.0),
+        ("-Infinity", -0.0001, 0, -0.0001, 123.0),
+        (True, 0.0001, 0, 0.0001, 123.0),
+        (False, None, 0, None, 123.0),
+        (-0.0002, 0.0001, 0, -0.0002, 123.0),
+        (-0.0002, 0.0001, 16, 0.0001, None),
     ],
 )
 async def test_live_funding_override_requires_finite_rate(
-    monkeypatch, live_rate, fallback_rate, expected,
+    monkeypatch, live_rate, fallback_rate, source_age, expected, expected_oi,
 ):
     from aletheia.storage import repositories as repo
     from aletheia.universe.features import _fetch_single_feature
@@ -375,10 +376,20 @@ async def test_live_funding_override_requires_finite_rate(
             return []
 
         async def fetch_funding_rate(self, *args, **kwargs):
-            return {"fundingRate": live_rate}
+            return {
+                "fundingRate": live_rate,
+                "timestamp": int(
+                    (now - timedelta(minutes=source_age)).timestamp() * 1000
+                ),
+            }
 
         async def fetch_open_interest(self, *args, **kwargs):
-            return {}
+            return {
+                "openInterestValue": 123.0,
+                "timestamp": int(
+                    (now - timedelta(minutes=source_age)).timestamp() * 1000
+                ),
+            }
 
     feature = await _fetch_single_feature(
         Exchange(),
@@ -395,3 +406,4 @@ async def test_live_funding_override_requires_finite_rate(
 
     assert feature is not None
     assert feature["funding_rate"] == expected
+    assert feature["open_interest"] == expected_oi
