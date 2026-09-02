@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v57"
+SCHEMA_VERSION = "aletheia-sqlite-v58"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3983,6 +3983,20 @@ CREATE TRIGGER trg_entry_plan_no_delete BEFORE DELETE ON entry_plans
 BEGIN SELECT RAISE(ABORT,'Entry Plan history is retained'); END;
 """
 _AI_ENTRY_V57_CHECKSUM = hashlib.sha256((_AI_ENTRY_V57_SQL + "\nai_entry_v57").encode()).hexdigest()
+
+_PAPER_FUNDING_REVIVAL_CURSOR_SQL = """
+CREATE TABLE IF NOT EXISTS paper_funding_revival_cursor (
+    queue_id TEXT PRIMARY KEY CHECK (queue_id = 'terminal_funding'),
+    last_position_rowid INTEGER NOT NULL CHECK (last_position_rowid > 0),
+    updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL)
+);
+"""
+_PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM = hashlib.sha256(
+    (
+        _PAPER_FUNDING_REVIVAL_CURSOR_SQL
+        + "\npaper_funding_revival_cursor_v1"
+    ).encode("utf-8")
+).hexdigest()
 
 _KNOWLEDGE_DOCUMENT_COLUMNS = (
     ("content_format", "TEXT"),
@@ -5590,6 +5604,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260901_0053_universe_discovery_benchmark_v54": (
         "read-only prospective Universe discovery benchmark window and evidence storage"
     ),
+    "20260902_0057_paper_funding_revival_cursor_v58": (
+        "durable round-robin cursor for terminal Paper funding revival"
+    ),
 }
 
 
@@ -6195,6 +6212,12 @@ def _apply_ai_entry_v57(db: sqlite3.Connection) -> None:
         db.execute(f"PRAGMA schema_version={schema_version + 1}")
     if db.execute("PRAGMA foreign_key_check").fetchall():
         raise MigrationStateError("ai_entry_v57_foreign_key_violation")
+
+
+def _apply_paper_funding_revival_cursor_v58(db: sqlite3.Connection) -> None:
+    """Persist only the scheduling keyset for terminal Paper funding revival."""
+    db.executescript(_PAPER_FUNDING_REVIVAL_CURSOR_SQL)
+    db.execute("PRAGMA optimize")
 
 
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
@@ -6831,6 +6854,12 @@ _MIGRATIONS = (
         checksum=_AI_ENTRY_V57_CHECKSUM,
         schema_version="aletheia-sqlite-v57",
         apply=_apply_ai_entry_v57,
+    ),
+    MigrationStep(
+        migration_id="20260902_0057_paper_funding_revival_cursor_v58",
+        checksum=_PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM,
+        schema_version="aletheia-sqlite-v58",
+        apply=_apply_paper_funding_revival_cursor_v58,
     ),
 )
 
