@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 import hashlib
-import json
 import logging
 import sqlite3
 import time
@@ -4206,6 +4205,8 @@ def retire_legacy_experiment_tables(
     deterministic legacy-import checkpoint; an empty fresh schema needs no
     import but still requires the durable ``lab`` authority switch.
     """
+    import json
+
     from aletheia.config.loader import get_data_dir
 
     connection = db or get_db()
