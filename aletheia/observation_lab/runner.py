@@ -352,8 +352,19 @@ def _register_default_windows() -> None:
             roots = list_filter_shadow_observations(status="active", limit=1000) or []
             evaluation = {
                 "evaluated": len(roots),
+                "ready_for_review": 0,
+                "completed_no_support": 0,
+                "invalidated": 0,
                 "canonical_handler": True,
             }
+            for root in roots:
+                disposition = str(
+                    ((root.get("latest_evaluation") or {}).get("disposition") or "")
+                )
+                if disposition in {
+                    "ready_for_review", "completed_no_support", "invalidated",
+                }:
+                    evaluation[disposition] += 1
             return {
                 "status": "canonical_lab_authority",
                 "frozen_units_captured": 0,

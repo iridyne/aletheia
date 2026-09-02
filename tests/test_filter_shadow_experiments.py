@@ -330,6 +330,7 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
     filter_window = runner_result["results"]["filter_shadow_evaluate"]
     assert filter_window["status"] == "canonical_lab_authority"
     assert filter_window["evaluation"]["evaluated"] == 1
+    assert filter_window["evaluation"]["ready_for_review"] == 1
 
 
 def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
