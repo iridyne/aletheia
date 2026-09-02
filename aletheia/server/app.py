@@ -222,6 +222,15 @@ def should_write_gateway_pidfile(context: dict) -> bool:
     return context.get("runtime_mode") == "current"
 
 
+def _clear_owned_gateway_pid(app: FastAPI) -> None:
+    if not getattr(app.state, "_owns_pid", False):
+        return
+    from aletheia.gateway.pidfile import clear_pid
+
+    clear_pid()
+    app.state._owns_pid = False
+
+
 async def _llm_startup_gate(cfg) -> None:
     """Probe LLM providers at boot; pause the trading loop if none can do inference.
 
@@ -558,6 +567,21 @@ async def lifespan(app: FastAPI):
             init_scheduler()
         except Exception as e:
             logger.warning("Scheduler failed to start: %s", e)
+            try:
+                agent_job_manager.stop()
+            except Exception as stop_error:
+                logger.warning(
+                    "Agent job manager cleanup after scheduler failure failed: %s",
+                    stop_error,
+                )
+            try:
+                _clear_owned_gateway_pid(app)
+            except Exception as pid_error:
+                logger.warning(
+                    "Owned PID cleanup after scheduler failure failed: %s",
+                    pid_error,
+                )
+            raise RuntimeError("scheduler_initialization_failed") from e
     else:
         logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
     stage_started = _log_startup_stage("scheduler_initialization", stage_started, startup_started)
@@ -802,10 +826,7 @@ async def lifespan(app: FastAPI):
                 logger.debug("Runtime session end failed: %s", e)
         # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
         # In supervised mode the PID belongs to the supervisor — don't touch it.
-        if getattr(app.state, "_owns_pid", False):
-            from aletheia.gateway.pidfile import clear_pid
-
-            clear_pid()
+        _clear_owned_gateway_pid(app)
         logger.info("Aletheia shutting down")
 
 

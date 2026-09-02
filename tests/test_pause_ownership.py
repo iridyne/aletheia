@@ -6,6 +6,8 @@ import asyncio
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
 from aletheia.config.schema import AletheiaConfig, RuntimeConfig
 
 
@@ -201,6 +203,9 @@ def test_persisted_stale_release_never_resumes(tmp_path, monkeypatch) -> None:
 def test_scheduler_resume_failure_restores_owner_lease(tmp_path, monkeypatch) -> None:
     """A scheduler failure cannot leave config claiming the gateway resumed."""
     _isolated_config(tmp_path, monkeypatch)
+    from apscheduler.schedulers.base import STATE_STOPPED
+
+    from aletheia.agent_runtime import scheduler
     from aletheia.agent_runtime.pause_ownership import acquire_pause, release_pause
     from aletheia.config.loader import load_config
 
@@ -210,13 +215,9 @@ def test_scheduler_resume_failure_restores_owner_lease(tmp_path, monkeypatch) ->
         generation="outage-1",
     )
 
-    def _resume_fails() -> None:
-        raise RuntimeError("scheduler unavailable")
-
-    monkeypatch.setattr(
-        "aletheia.agent_runtime.scheduler.resume_scheduler",
-        _resume_fails,
-    )
+    fake_scheduler = MagicMock()
+    fake_scheduler.state = STATE_STOPPED
+    monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
 
     result = release_pause(
         "exchange_connectivity",
@@ -231,6 +232,20 @@ def test_scheduler_resume_failure_restores_owner_lease(tmp_path, monkeypatch) ->
     assert persisted.runtime.pause_owners[
         "exchange_connectivity"
     ].generation == "outage-1"
+
+
+def test_nonresumable_scheduler_raises_scheduler_failure(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from apscheduler.schedulers.base import STATE_STOPPED
+
+    from aletheia.agent_runtime import scheduler
+
+    fake_scheduler = MagicMock()
+    fake_scheduler.state = STATE_STOPPED
+    monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
+
+    with pytest.raises(RuntimeError, match="scheduler_not_resumable"):
+        scheduler.resume_scheduler()
 
 
 def test_public_scheduler_resume_refuses_durable_pause_owner(
@@ -273,7 +288,7 @@ def test_final_owner_release_uses_owner_aware_scheduler_resume(
 ) -> None:
     """The authoritative final-owner path may re-enter the shared transition lock."""
     _isolated_config(tmp_path, monkeypatch)
-    from apscheduler.schedulers.base import STATE_PAUSED
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
     from aletheia.agent_runtime import scheduler
     from aletheia.agent_runtime.pause_ownership import acquire_pause, release_pause
@@ -286,6 +301,7 @@ def test_final_owner_release_uses_owner_aware_scheduler_resume(
 
     fake_scheduler = MagicMock()
     fake_scheduler.state = STATE_PAUSED
+    fake_scheduler.resume.side_effect = lambda: setattr(fake_scheduler, "state", STATE_RUNNING)
     monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
 
     result = release_pause(
@@ -411,7 +427,7 @@ def test_llm_resume_gate_still_resumes_after_releasing_final_owners(
 ) -> None:
     """Owner enforcement must not deadlock the legitimate LLM-gated resume path."""
     _isolated_config(tmp_path, monkeypatch)
-    from apscheduler.schedulers.base import STATE_PAUSED
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
     from aletheia.agent_runtime import resume_gate, scheduler
     from aletheia.config.loader import load_config, save_config
@@ -440,6 +456,7 @@ def test_llm_resume_gate_still_resumes_after_releasing_final_owners(
 
     fake_scheduler = MagicMock()
     fake_scheduler.state = STATE_PAUSED
+    fake_scheduler.resume.side_effect = lambda: setattr(fake_scheduler, "state", STATE_RUNNING)
     monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
     monkeypatch.setattr(
         resume_gate,
@@ -623,7 +640,7 @@ def test_resume_initializes_then_releases_nonblocking_mode_brake(
     tmp_path, monkeypatch
 ) -> None:
     _isolated_config(tmp_path, monkeypatch)
-    from apscheduler.schedulers.base import STATE_PAUSED
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
     from aletheia.agent_runtime import scheduler
     from aletheia.config.loader import save_config
@@ -640,6 +657,7 @@ def test_resume_initializes_then_releases_nonblocking_mode_brake(
 
     fake_scheduler = MagicMock()
     fake_scheduler.state = STATE_PAUSED
+    fake_scheduler.resume.side_effect = lambda: setattr(fake_scheduler, "state", STATE_RUNNING)
     monkeypatch.setattr(scheduler, "_scheduler", None)
     monkeypatch.setattr(scheduler, "init_scheduler", lambda: setattr(scheduler, "_scheduler", fake_scheduler))
     monkeypatch.setattr(scheduler, "_selectively_paused_jobs", {"paper_trader"})
