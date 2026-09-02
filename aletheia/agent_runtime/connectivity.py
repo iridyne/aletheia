@@ -489,10 +489,18 @@ async def _exchange_auto_resume_loop(
                 successes_needed,
             )
             if _consecutive_successes >= successes_needed:
-                recovery_attempt_finished = await _resume_from_network(
-                    cfg,
-                    pause_generation=pause_generation,
-                )
+                try:
+                    recovery_attempt_finished = await _resume_from_network(
+                        cfg,
+                        pause_generation=pause_generation,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "exchange_auto_resume: recovery attempt failed (%s), "
+                        "retaining pause and retrying",
+                        type(exc).__name__,
+                    )
+                    continue
                 if recovery_attempt_finished:
                     return
         else:

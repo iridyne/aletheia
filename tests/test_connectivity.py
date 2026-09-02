@@ -516,6 +516,60 @@ async def test_exchange_auto_resume_survives_transient_config_read(monkeypatch):
     resume.assert_awaited_once()
 
 
+@pytest.mark.parametrize("failed_read", [2, 3])
+@pytest.mark.asyncio
+async def test_exchange_auto_resume_survives_recovery_config_read_failure(
+    tmp_path, monkeypatch, failed_read
+):
+    setup_env(tmp_path, monkeypatch)
+    _reset_connectivity_state()
+
+    import aletheia.agent_runtime.connectivity as conn_mod
+    import aletheia.config.loader as loader
+
+    cfg = _claim_connectivity_pause(loader.load_config(), generation="generation-1")
+    cfg.health.exchange_auto_resume_success_threshold = 1
+    loader.save_config(cfg)
+    real_load_config = loader.load_config
+    reads = 0
+
+    def flaky_load_config(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        if reads == failed_read:
+            raise OSError("temporary recovery config read failure")
+        return real_load_config(*args, **kwargs)
+
+    reachable = {
+        "reachable": True,
+        "latency_ms": 1.0,
+        "error": None,
+        "exchange": "okx",
+    }
+    external = {"reachable": True, "status": "disabled", "error": None}
+    resumed = []
+    monkeypatch.setattr(loader, "load_config", flaky_load_config)
+    monkeypatch.setattr(conn_mod.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        conn_mod,
+        "_probe_exchange_and_external",
+        AsyncMock(return_value=(reachable, external)),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True) or True,
+    )
+
+    await conn_mod._exchange_auto_resume_loop(
+        interval_sec=0,
+        pause_generation="generation-1",
+    )
+
+    assert reads > failed_read
+    assert resumed == [True]
+    assert real_load_config().runtime.paused is False
+
+
 # ---------------------------------------------------------------------------
 # Test 3: Startup gate — exchange unreachable at boot → immediate pause
 # ---------------------------------------------------------------------------
