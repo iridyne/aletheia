@@ -2540,6 +2540,7 @@ def _run_outcome_hook_replay():
 
 
 def _run_reconciliation():
+    failure_reasons = []
     try:
         from aletheia.execution.reconciliation import reconcile
         summary = reconcile()
@@ -2548,21 +2549,19 @@ def _run_reconciliation():
                 "reconciliation completed with %d reported errors",
                 len(summary["errors"]),
             )
-            _record_job_failure(
-                "reconciliation", "reconciliation_reported_errors"
-            )
+            failure_reasons.append("reconciliation_reported_errors")
         from aletheia.storage.event_store import get_event_store
 
         mirror = get_event_store().reconcile_jsonl(limit=100)
         if mirror["attempted"]:
             logger.info("event JSONL mirror reconciliation: %s", mirror)
         if mirror["failed"]:
-            _record_job_failure(
-                "reconciliation", f"event_jsonl_mirror_failed:{mirror['failed']}"
-            )
+            failure_reasons.append(f"event_jsonl_mirror_failed:{mirror['failed']}")
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
-        _record_job_failure("reconciliation", str(e))
+        failure_reasons.append(str(e))
+    if failure_reasons:
+        _record_job_failure("reconciliation", "; ".join(failure_reasons))
 
 
 def _run_exchange_sync():
