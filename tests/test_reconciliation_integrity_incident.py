@@ -356,6 +356,10 @@ def test_operator_prompt_progressive_unlock_and_rollout_share_incident_refreeze(
     )
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: rollout_cfg)
     monkeypatch.setattr(
+        "aletheia.trading.sizing_policy.assess_persona_distress",
+        lambda cfg: "healthy",
+    )
+    monkeypatch.setattr(
         "aletheia.config.loader.save_config",
         lambda cfg: (_ for _ in ()).throw(AssertionError("must not advance")),
     )
