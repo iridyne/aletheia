@@ -3252,9 +3252,11 @@ def _run_cleanup():
         # ------------------------------------------------------------------
         # Read experiment state for clean_window_cutoff guard. If this fails,
         # skip the affected prunes rather than silently deleting protected data.
+        experiment_floor_read_ok = False
         min_open_exp_at = None
         try:
             min_open_exp_at = repo.min_open_experiment_exposure_at()
+            experiment_floor_read_ok = True
         except repo.ExperimentStateReadError as e:
             logger.warning("Cannot read experiment state for cleanup guard: %s", e)
             from aletheia.infra.events import emit_infra_event
@@ -3289,7 +3291,7 @@ def _run_cleanup():
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
             "universe_forward_outcomes": (
                 repo.prune_universe_forward_outcomes(30, min_experiment_started_at=min_open_exp_at)
-                if min_open_exp_at is not None else 0
+                if experiment_floor_read_ok else 0
             ),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
@@ -3303,14 +3305,14 @@ def _run_cleanup():
                     r.filter_decisions_days,
                     min_experiment_started_at=min_open_exp_at,
                 )
-                if min_open_exp_at is not None else 0
+                if experiment_floor_read_ok else 0
             ),
             "filter_candidate_outcomes": (
                 repo.prune_filter_candidate_outcomes(
                     r.filter_candidate_outcomes_days,
                     min_experiment_started_at=min_open_exp_at,
                 )
-                if min_open_exp_at is not None else 0
+                if experiment_floor_read_ok else 0
             ),
             "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
@@ -3343,9 +3345,12 @@ def _run_cleanup():
             # Universe: scanner_runs next, then snapshots which cascade-delete
             # universe_members inside its own transaction.
             "universe_scanner_runs": repo.prune_universe_scanner_runs(r.universe_scanner_runs_days),
-            "universe_snapshots": repo.prune_universe_snapshots(
-                r.universe_snapshots_days,
-                min_experiment_started_at=min_open_exp_at,
+            "universe_snapshots": (
+                repo.prune_universe_snapshots(
+                    r.universe_snapshots_days,
+                    min_experiment_started_at=min_open_exp_at,
+                )
+                if experiment_floor_read_ok else 0
             ),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.

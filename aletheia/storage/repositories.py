@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
+from typing import cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -7127,6 +7128,9 @@ class ExperimentStateReadError(Exception):
     pass
 
 
+_AUTO_EXPERIMENT_FLOOR = object()
+
+
 def min_open_experiment_exposure_at() -> str | None:
     """Return the earliest durable exposure of an active open experiment.
 
@@ -7147,6 +7151,12 @@ def min_open_experiment_exposure_at() -> str | None:
         return None
     val = row["m"] if hasattr(row, "keys") else row[0]
     return str(val) if val else None
+
+
+def _resolve_experiment_floor(value: str | None | object) -> str | None:
+    if value is _AUTO_EXPERIMENT_FLOOR:
+        return min_open_experiment_exposure_at()
+    return cast(str | None, value)
 
 def _observation_retention_floor(domain: str) -> str | None:
     try:
@@ -7182,7 +7192,7 @@ def _effective_cutoff(
 
 def prune_filter_decisions(
     days: int = 45,
-    min_experiment_started_at: str | None = None,
+    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
     """Prune filter_decisions with clean_window_cutoff guard.
 
@@ -7190,15 +7200,14 @@ def prune_filter_decisions(
     before ``now - days``, keep everything back to that experiment's start so
     the paired-cohort read stays reproducible.
     """
-    if min_experiment_started_at is None:
-        min_experiment_started_at = min_open_experiment_exposure_at()
+    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
     cutoff = _effective_cutoff(days, min_experiment_started_at)
     return _delete_by_rowid_batches("filter_decisions", "evaluated_at < ?", (cutoff,))
 
 
 def prune_filter_candidate_outcomes(
     days: int = 30,
-    min_experiment_started_at: str | None = None,
+    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
     """Prune filter_candidate_outcomes with clean_window_cutoff guard.
 
@@ -7206,8 +7215,7 @@ def prune_filter_candidate_outcomes(
     open experiment still needs for its paired cohort — the effective cutoff is
     the OLDER of ``now - days`` and the earliest open-experiment start.
     """
-    if min_experiment_started_at is None:
-        min_experiment_started_at = min_open_experiment_exposure_at()
+    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
     observation_floor = _observation_retention_floor("filter_candidate_outcomes")
     if observation_floor:
         min_experiment_started_at = min(
@@ -11848,11 +11856,10 @@ def prune_universe_feature_snapshots(days: int = 14) -> int:
 
 def prune_universe_forward_outcomes(
     days: int = 30,
-    min_experiment_started_at: str | None = None,
+    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
     """Prune selected-member outcomes without deleting open-experiment fallback evidence."""
-    if min_experiment_started_at is None:
-        min_experiment_started_at = min_open_experiment_exposure_at()
+    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
     cutoff = _effective_cutoff(days, min_experiment_started_at)
     return _delete_by_rowid_batches(
         "universe_forward_outcomes",
@@ -12189,7 +12196,7 @@ def prune_filter_shadow_experiments(days: int = 90) -> int:
 
 def prune_universe_members(
     days: int = 30,
-    min_experiment_started_at: str | None = None,
+    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
     """Prune universe_members whose parent snapshot is older than ``days``.
 
@@ -12197,8 +12204,7 @@ def prune_universe_members(
     this first inside a single transaction.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    if min_experiment_started_at is None:
-        min_experiment_started_at = min_open_experiment_exposure_at()
+    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
     outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     was_in_tx = db.in_transaction
@@ -12218,7 +12224,7 @@ def prune_universe_members(
 
 def prune_universe_snapshots(
     days: int = 30,
-    min_experiment_started_at: str | None = None,
+    min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
     """Prune universe_snapshots older than ``days`` + cascade-delete universe_members.
 
@@ -12228,8 +12234,7 @@ def prune_universe_snapshots(
     experiment remain until those outcomes leave their guarded window.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    if min_experiment_started_at is None:
-        min_experiment_started_at = min_open_experiment_exposure_at()
+    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
     outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     snap_ids = [
