@@ -205,25 +205,33 @@ def observation_status(
 
     register_builtin_handlers()
 
+    embedded_observation_id, embedded_generation = _split_lab_observation_ref(
+        observation_id
+    )
+    resolved_generation = generation or embedded_generation
     durable = None
     try:
-        durable = status_window(observation_id, generation) if generation else status_window(observation_id)
+        durable = (
+            status_window(embedded_observation_id, resolved_generation)
+            if resolved_generation
+            else status_window(embedded_observation_id)
+        )
     except KeyError:
         rows = get_lab_db().execute(
             "SELECT DISTINCT observation_id FROM observation_windows "
             "WHERE substr(observation_id, 1, ?) = ? ORDER BY observation_id",
-            (len(observation_id), observation_id),
+            (len(embedded_observation_id), embedded_observation_id),
         ).fetchall()
         if len(rows) > 1:
             typer.echo(
-                f"prefix {observation_id!r} is ambiguous - "
+                f"prefix {embedded_observation_id!r} is ambiguous - "
                 f"matches {[str(row[0]) for row in rows]}", err=True,
             )
             raise typer.Exit(code=2)
         if rows:
             durable = (
-                status_window(str(rows[0][0]), generation)
-                if generation else status_window(str(rows[0][0]))
+                status_window(str(rows[0][0]), resolved_generation)
+                if resolved_generation else status_window(str(rows[0][0]))
             )
     if durable is not None:
         if json_output:
@@ -1203,21 +1211,37 @@ def close_observation(
 def _find_lab_generation(observation_id: str) -> dict | None:
     from aletheia.observation_lab.db import readonly_lab_db
 
+    observation_id, generation = _split_lab_observation_ref(observation_id)
     try:
         with readonly_lab_db(allow_missing=True) as db:
             if db is None:
                 return None
+            generation_clause = " AND generation=?" if generation else ""
+            params: tuple[object, ...] = (
+                observation_id, len(observation_id), observation_id,
+            )
+            if generation:
+                params += (generation,)
             rows = db.execute(
                 "SELECT observation_id, generation, status FROM observation_windows "
-                "WHERE observation_id=? OR substr(observation_id,1,?)=? "
+                "WHERE (observation_id=? OR substr(observation_id,1,?)=?) "
+                f"{generation_clause} "
                 "ORDER BY observation_id, generation DESC",
-                (observation_id, len(observation_id), observation_id),
+                params,
             ).fetchall()
             if len(rows) != 1:
                 return None
             return dict(rows[0])
     except Exception:
         return None
+
+
+def _split_lab_observation_ref(value: str) -> tuple[str, int | None]:
+    """Accept the report id form ``<observation_id>:g<generation>``."""
+    prefix, separator, raw_generation = str(value).rpartition(":g")
+    if separator and prefix and raw_generation.isdigit() and int(raw_generation) > 0:
+        return prefix, int(raw_generation)
+    return str(value), None
 
 
 def _systemctl_show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:

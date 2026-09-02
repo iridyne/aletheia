@@ -186,6 +186,13 @@ def _source_rows(
     filter_name = str(spec["filter_name"])
     version = str(spec.get("filter_version") or "").strip()
     exact_version = filter_name in _VERSIONED_FILTERS
+    collect_until = _parse_time(root.get("collect_until"))
+    if collect_until is None:
+        return [], False
+    as_of = _parse_time(as_of_at)
+    if as_of is None:
+        return [], False
+    upper_operator = "<=" if as_of < collect_until else "<"
     partition = (
         "fd.outcome_candidate_key, fd.filter_version"
         if exact_version else "fd.outcome_candidate_key"
@@ -202,6 +209,20 @@ def _source_rows(
     ]
     if exact_version:
         params.append(version)
+    malformed = db.execute(
+        "SELECT 1 FROM filter_decisions fd"
+        " WHERE fd.filter_name=? AND fd.stage=?"
+        " AND COALESCE(fd.scanner_family,'unknown')=?"
+        " AND fd.direction=? AND fd.market_type=?"
+        " AND fd.decision IN ('passed','rejected')"
+        " AND fd.outcome_candidate_key IS NOT NULL"
+        " AND fd.outcome_candidate_key <> ''"
+        f"{version_clause}"
+        " AND aletheia_instant_us(fd.evaluated_at) IS NULL LIMIT 1",
+        tuple(params),
+    ).fetchone()
+    if malformed is not None:
+        raise ValueError("filter_shadow_source_time_unavailable")
     params.extend((str(root["started_at"]), as_of_at, _MAX_CAPTURE_UNITS + 1))
     rows = db.execute(
         "WITH ranked AS ("
@@ -219,7 +240,7 @@ def _source_rows(
         f"{version_clause}"
         ") SELECT * FROM ranked WHERE _first_rank=1"
         " AND aletheia_instant_us(evaluated_at) > aletheia_instant_us(?)"
-        " AND aletheia_instant_us(evaluated_at) <= aletheia_instant_us(?)"
+        f" AND aletheia_instant_us(evaluated_at) {upper_operator} aletheia_instant_us(?)"
         " ORDER BY aletheia_instant_us(evaluated_at), outcome_candidate_key LIMIT ?",
         tuple(params),
     ).fetchall()
@@ -391,9 +412,17 @@ def capture_filter_shadow_exposures(
             "observation_id": observation_id,
             "generation": actual_generation,
         }
-    rows, capped = _source_rows(
-        spec=spec, root=root, as_of_at=source_at.isoformat(),
-    )
+    try:
+        rows, capped = _source_rows(
+            spec=spec, root=root, as_of_at=source_at.isoformat(),
+        )
+    except ValueError as exc:
+        return {
+            "available": False,
+            "reason": str(exc),
+            "observation_id": observation_id,
+            "generation": actual_generation,
+        }
     if capped:
         return {
             "available": False,

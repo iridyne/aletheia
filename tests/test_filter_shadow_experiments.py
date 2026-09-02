@@ -333,6 +333,100 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
     assert filter_window["evaluation"]["ready_for_review"] == 1
 
 
+def test_lab_filter_shadow_respects_half_open_collect_interval():
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.canonical import register_observation_spec
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-half-open-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    version = _record_ttl_candidate(
+        key="opportunity:at-collect-until",
+        evaluated_at=start + timedelta(hours=1),
+        decision="passed",
+        net_return_pct=0.0,
+    )
+    register_observation_spec(
+        {
+            "filter_name": "family_ttl",
+            "filter_version": version,
+            "stage": "paper_ranker",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "1h",
+            "control": {"ttl_sec": 1800},
+            "treatment": {"ttl_sec": 3600},
+            "min_samples": 20,
+        },
+        actor="owner",
+        started_at=start.isoformat(),
+        collect_until=(start + timedelta(hours=1)).isoformat(),
+        finalize_not_before=(start + timedelta(hours=1)).isoformat(),
+    )
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    result = capture_filter_shadow_exposures(
+        root["observation_id"], 1,
+        as_of_at=datetime.fromisoformat(root["collect_until"]),
+    )
+    assert result["available"] is True
+    assert result["units_inserted"] == 0
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_units WHERE observation_id=?",
+        (root["observation_id"],),
+    ).fetchone()[0] == 0
+
+
+def test_lab_filter_shadow_rejects_malformed_source_time():
+    from aletheia.observation_lab.canonical import register_observation_spec, set_authority_source
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+    from aletheia.storage.sqlite import get_db
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-invalid-time-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    version = _record_ttl_candidate(
+        key="opportunity:malformed-source-time",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="passed",
+        net_return_pct=0.0,
+    )
+    get_db().execute(
+        "UPDATE filter_decisions SET evaluated_at='not-a-time' WHERE candidate_key=?",
+        ("opportunity:malformed-source-time",),
+    )
+    register_observation_spec(
+        {
+            "filter_name": "family_ttl",
+            "filter_version": version,
+            "stage": "paper_ranker",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "1h",
+            "control": {"ttl_sec": 1800},
+            "treatment": {"ttl_sec": 3600},
+        },
+        actor="owner",
+        started_at=start.isoformat(),
+    )
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    result = capture_filter_shadow_exposures(root["observation_id"], 1)
+    assert result == {
+        "available": False,
+        "reason": "filter_shadow_source_time_unavailable",
+        "observation_id": root["observation_id"],
+        "generation": 1,
+    }
+
+
 def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
