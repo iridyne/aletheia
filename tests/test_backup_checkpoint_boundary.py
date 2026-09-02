@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+import pytest
 
 
 def _seed_workspace(root: Path) -> None:
@@ -89,6 +90,37 @@ def test_authoritative_backup_records_lab_and_audit_identity(tmp_path):
     checked = verify_backup(tampered)
     assert not checked.valid
     assert any("audit bytes changed" in error for error in checked.errors)
+
+
+def test_lab_authoritative_backup_requires_verified_joint_checkpoint(tmp_path):
+    _seed_workspace(tmp_path)
+    app = sqlite3.connect(str(tmp_path / "app.db"))
+    app.execute(
+        "CREATE TABLE observation_authority_state ("
+        "state_key TEXT PRIMARY KEY, authority_source TEXT NOT NULL, authority_epoch TEXT NOT NULL, "
+        "actor TEXT NOT NULL, reason TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    app.execute(
+        "INSERT INTO observation_authority_state VALUES "
+        "('experiment_authority', 'lab', 'lab:test', 'test', 'test', '2026-01-01T00:00:00+00:00')"
+    )
+    app.commit()
+    app.close()
+    lab = tmp_path / "observation-lab"
+    lab.mkdir()
+    connection = sqlite3.connect(str(lab / "lab.db"))
+    connection.execute(
+        "CREATE TABLE joint_checkpoints (joint_fingerprint TEXT, recorded_at TEXT, checkpoint_id TEXT)"
+    )
+    connection.commit()
+    connection.close()
+
+    from aletheia.backup.service import BackupService
+
+    with pytest.raises(RuntimeError, match="joint_checkpoint"):
+        BackupService(data_dir=tmp_path).create_backup(
+            label="lab-without-proof", profile="authoritative"
+        )
 
 
 def test_restore_requires_authoritative_profile(tmp_path):

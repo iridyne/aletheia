@@ -309,6 +309,15 @@ def _decode_json(value: Any) -> dict[str, Any]:
     return decoded
 
 
+def _strict_bool(value: Any) -> bool | None:
+    """Return an explicit legacy boolean without coercing unknown bytes."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    return None
+
+
 def _insert_exposures(db: sqlite3.Connection, rows: list[dict[str, Any]], experiments: dict[str, dict[str, Any]], roots: dict[str, tuple[str, int, bool]]) -> tuple[int, int]:
     inserted = unprovable = 0
     for row in rows:
@@ -318,11 +327,15 @@ def _insert_exposures(db: sqlite3.Connection, rows: list[dict[str, Any]], experi
             unprovable += 1
             continue
         observation_id, generation, root_unverified = root
+        manifest: dict[str, Any] = {}
+        manifest_valid = True
         try:
             before = _decode_json(row.get("before_json"))
             after = _decode_json(row.get("after_json"))
+            manifest = _decode_json(row.get("manifest_json"))
         except (TypeError, ValueError, json.JSONDecodeError):
-            before, after = {}, {}
+            before, after, manifest = {}, {}, {}
+            manifest_valid = False
             root_unverified = True
         exposure_id = str(row.get("exposure_id") or "")
         source_receipt_id = (
@@ -343,13 +356,55 @@ def _insert_exposures(db: sqlite3.Connection, rows: list[dict[str, Any]], experi
         applied_hash = _hash(after)
         candidate = str(row.get("candidate_key") or f"legacy-exposure:{exposure_id}")
         assignment_key = str(row.get("assignment_unit_key") or candidate)
+        assignment = str(row.get("assignment") or "unassigned")
+        if assignment not in {"treatment", "control", "unassigned"}:
+            assignment = "unassigned"
+
+        # Preserve legacy authority/effect evidence when it is explicit.  A
+        # malformed or ambiguous payload remains historical evidence only;
+        # never infer a behavior-bearing exposure from a missing flag.
+        explicit_applied = _strict_bool(manifest.get("authority_applied"))
+        explicit_changed = _strict_bool(manifest.get("behavior_changed"))
+        applied = int(explicit_applied is True and assignment == "treatment" and not root_unverified)
+        behavior_changed = int(
+            applied
+            and (
+                explicit_changed is True
+                if explicit_changed is not None
+                else after != before
+            )
+            and after != before
+        )
+        if not manifest_valid:
+            applied = behavior_changed = 0
+
+        active_manifest_snapshot = manifest.get("active_manifest_snapshot")
+        if not isinstance(active_manifest_snapshot, list) or not all(
+            isinstance(item, str) and item.strip() for item in active_manifest_snapshot
+        ):
+            active_manifest_snapshot = []
+        else:
+            active_manifest_snapshot = [str(item) for item in active_manifest_snapshot]
+        manifest_set_fingerprint = manifest.get("manifest_set_fingerprint")
+        if not isinstance(manifest_set_fingerprint, str) or not manifest_set_fingerprint.strip():
+            manifest_set_fingerprint = _hash(active_manifest_snapshot) if active_manifest_snapshot else None
+        revocation_snapshot_fingerprint = manifest.get("revocation_snapshot_fingerprint")
+        if not isinstance(revocation_snapshot_fingerprint, str) or not revocation_snapshot_fingerprint.strip():
+            revocation_snapshot_fingerprint = None
+        manifest_id = manifest.get("manifest_id") or row.get("manifest_id")
+        manifest_hash = manifest.get("manifest_hash") or row.get("manifest_hash")
+        behavior_policy_epoch_ref = (
+            manifest.get("behavior_policy_epoch_ref")
+            or row.get("behavior_policy_epoch_ref")
+            or row.get("concurrent_policy_epoch")
+        )
         values = (
             target_exposure_id, source_receipt_id,
-            None, observation_id, generation, row.get("manifest_id"), None, assignment_key, candidate,
-            str(row.get("assignment") or "unassigned") if str(row.get("assignment") or "unassigned") in {"treatment", "control", "unassigned"} else "unassigned",
-            0, 0, baseline_hash, applied_hash, _json(before), _json(after), row.get("outcome_candidate_key"),
+            None, observation_id, generation, manifest_id, manifest_hash, assignment_key, candidate,
+            assignment, applied, behavior_changed, baseline_hash, applied_hash, _json(before), _json(after), row.get("outcome_candidate_key"),
             row.get("outcome_source"), "legacy_unverified" if root_unverified else "legacy_import",
-            row.get("behavior_contract_hash"), row.get("concurrent_policy_epoch"), "[]", None, None,
+            row.get("behavior_contract_hash") or manifest.get("behavior_contract_hash"), behavior_policy_epoch_ref,
+            _json(active_manifest_snapshot), manifest_set_fingerprint, revocation_snapshot_fingerprint,
             "legacy", None, row.get("code_commit"), row.get("exposed_at") or _now(), _now(),
         )
         db.execute(
@@ -366,10 +421,17 @@ def _insert_exposures(db: sqlite3.Connection, rows: list[dict[str, Any]], experi
 
 
 def apply_legacy_learning_migration(
-    *, archive_root: str | None = None, retire_legacy_schema: bool = False,
+    *,
+    archive_root: str | None = None,
+    retire_legacy_schema: bool = False,
+    runtime_commit: str | None = None,
+    rollback_backup_identity: str | None = None,
 ) -> dict[str, Any]:
     """Import one app snapshot into Lab; safe to rerun after interruption."""
     from aletheia.storage.sqlite import read_snapshot
+
+    if retire_legacy_schema and not str(rollback_backup_identity or "").strip():
+        raise ValueError("rollback_backup_identity_required")
 
     with read_snapshot() as app:
         snapshot = _legacy_snapshot(app)
@@ -627,16 +689,29 @@ def apply_legacy_learning_migration(
         "idempotent": True,
     }
     if retire_legacy_schema:
-        from aletheia.observation_lab.canonical import set_authority_source
+        from aletheia.observation_lab.canonical import (
+            build_authority_cutover_proof,
+            set_authority_source,
+        )
+        from aletheia.observation_lab.checkpoint import (
+            compute_joint_checkpoint,
+            save_joint_checkpoint,
+        )
         from aletheia.storage.migrations import retire_legacy_experiment_tables
 
         # The explicit retirement flag is the cutover command: import first,
-        # then select Lab authority only after the deterministic checkpoint is
-        # durable, and finally remove the legacy runtime tables.
+        # then record a joint checkpoint and the complete cutover proof before
+        # selecting Lab authority, and finally remove legacy runtime tables.
+        save_joint_checkpoint(compute_joint_checkpoint(notes="legacy_import_cutover"))
+        proof = build_authority_cutover_proof(
+            runtime_commit=runtime_commit,
+            rollback_backup_identity=rollback_backup_identity,
+        )
         set_authority_source(
             "lab",
             actor="migration",
             reason="legacy_import_and_schema_retirement",
+            cutover_proof=proof,
         )
         result["legacy_schema_retirement"] = retire_legacy_experiment_tables()
     return result

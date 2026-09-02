@@ -910,8 +910,12 @@ def restore_update_backup(archive_path: Path) -> dict[str, Any]:
 
     data_dir = get_data_dir()
     with worker_cycle_exclusion():
-        for suffix in ("-wal", "-shm"):
-            (data_dir / f"app.db{suffix}").unlink(missing_ok=True)
+        for database in (data_dir / "app.db", data_dir / "observation-lab" / "lab.db"):
+            for suffix in ("-wal", "-shm"):
+                # Both stores are part of the authoritative cut.  Stale
+                # sidecars beside either restored database can replay frames
+                # from the newer runtime and invalidate the rollback proof.
+                (database.parent / f"{database.name}{suffix}").unlink(missing_ok=True)
         result = RestoreService().restore(
             archive_path,
             data_dir,

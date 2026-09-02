@@ -72,6 +72,11 @@ class KnowledgeYieldReportV1(BaseModel):
     current_economic_knowledge_n: int = Field(ge=0)
     slices: list[KnowledgeYieldSliceV1]
     cross_slice_aggregate: None = None
+    # Report-level availability is distinct from an empty/zero measurement.
+    # A Lab-authority process cannot safely derive the legacy economic view
+    # from app.db, so it must expose that proof gap explicitly.
+    availability: str = "available"
+    unavailable_reasons: list[str] = Field(default_factory=list)
 
 
 def build_knowledge_yield_report(
@@ -92,6 +97,8 @@ def build_knowledge_yield_report(
                 generation_cost_availability="unavailable",
                 current_economic_knowledge_n=0,
                 slices=[],
+                availability="unavailable",
+                unavailable_reasons=["canonical_lab_result_projection_unavailable"],
             )
     except FileNotFoundError:
         pass
@@ -103,6 +110,8 @@ def build_knowledge_yield_report(
                 generation_cost_availability="unavailable",
                 current_economic_knowledge_n=0,
                 slices=[],
+                availability="unavailable",
+                unavailable_reasons=["canonical_lab_authority_unavailable"],
             )
     from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
 

@@ -118,6 +118,70 @@ def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path
     assert verify_generation_archive(archive[0])["available"] is True
 
 
+def test_legacy_exposure_import_preserves_explicit_manifest_effect_identity():
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="manifest-hypothesis",
+        fingerprint="manifest-fingerprint",
+        cohort_id="manifest-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="legacy",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    experiment = LearningExperiment(
+        experiment_id="manifest-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment_salt="manifest-salt",
+        started_at="2026-01-01T00:00:00+00:00",
+    )
+    insert_experiment(experiment)
+    insert_exposure(LearningExposure(
+        exposure_id="manifest-exposure",
+        dedup_key="manifest-exposure-dedup",
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment="treatment",
+        consumer="test",
+        consumer_stage="score",
+        path_id=hypothesis.path_id,
+        overlap_group=hypothesis.overlap_group,
+        assignment_unit_key="unit-1",
+        candidate_key="candidate-1",
+        before_json='{"value":1}',
+        after_json='{"value":2}',
+        manifest_json=(
+            '{"authority_applied":true,"behavior_changed":true,'
+            '"manifest_id":"legacy-manifest","manifest_hash":"legacy-hash",'
+            '"active_manifest_snapshot":["legacy-hash"],'
+            '"manifest_set_fingerprint":"manifest-set",'
+            '"revocation_snapshot_fingerprint":"revocation-set",'
+            '"behavior_policy_epoch_ref":"policy-1"}'
+        ),
+        outcome_contract_version="v1",
+        concurrent_policy_epoch="legacy-epoch",
+        exposed_at="2026-01-01T00:00:00+00:00",
+    ))
+
+    apply_legacy_learning_migration()
+    row = get_lab_db().execute(
+        "SELECT manifest_id, manifest_hash, applied, behavior_changed, "
+        "active_manifest_snapshot_json, manifest_set_fingerprint, "
+        "revocation_snapshot_fingerprint, behavior_policy_epoch_ref "
+        "FROM observation_exposures WHERE source_receipt_id='legacy:manifest-exposure'"
+    ).fetchone()
+    assert tuple(row) == (
+        "legacy-manifest", "legacy-hash", 1, 1, '["legacy-hash"]',
+        "manifest-set", "revocation-set", "policy-1",
+    )
+
+
 def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.migration import apply_legacy_learning_migration
@@ -218,3 +282,61 @@ def test_explicit_lab_retirement_drops_legacy_runtime_and_restores_foreign_keys(
         assert db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone() is None
+
+
+def test_nonempty_lab_cutover_requires_and_records_complete_proof():
+    from aletheia.observation_lab.canonical import (
+        build_authority_cutover_proof,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+    )
+    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="proof-hypothesis",
+        fingerprint="proof-fingerprint",
+        cohort_id="proof-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="test",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    insert_experiment(LearningExperiment(
+        experiment_id="proof-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        stage="shadow",
+        assignment_salt="proof-salt",
+        started_at="2026-01-01T00:00:00+00:00",
+    ))
+    apply_legacy_learning_migration()
+
+    with pytest.raises(RuntimeError, match="authority_cutover_proof_required"):
+        set_authority_source("lab", actor="owner", reason="proof required")
+
+    save_joint_checkpoint(compute_joint_checkpoint(notes="cutover-proof-test"))
+    proof = build_authority_cutover_proof(rollback_backup_identity="backup-test")
+    state = set_authority_source(
+        "lab", actor="owner", reason="complete proof", cutover_proof=proof,
+    )
+    assert state.source == "lab"
+    row = get_db().execute(
+        "SELECT authority_source, migration_plan_fingerprint, retention_claim_fingerprint, "
+        "checkpoint_fingerprint, runtime_commit, rollback_backup_identity "
+        "FROM observation_authority_cutover_proofs"
+    ).fetchone()
+    assert tuple(row) == (
+        "lab",
+        proof["migration_plan_fingerprint"],
+        proof["retention_claim_fingerprint"],
+        proof["checkpoint_fingerprint"],
+        proof["runtime_commit"],
+        "backup-test",
+    )

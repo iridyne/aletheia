@@ -316,6 +316,7 @@ def request_rollback() -> dict[str, Any]:
         "candidate_release": previous,
         "previous_release": selection["current"],
         "backup_path": str(backup),
+        "backup_profile": "authoritative",
         "was_paused": bool(packaged.load_config().runtime.paused),
         "health_soak_sec": 10,
         "requested_at": packaged._utc_now(),  # noqa: SLF001
@@ -327,7 +328,7 @@ def request_rollback() -> dict[str, Any]:
         status="ready",
         target_release=previous,
         message="Rollback requested; waiting for tray-controlled activation",
-        extra={"backup_path": str(backup)},
+        extra={"backup_path": str(backup), "backup_profile": "authoritative"},
     )
     return {"accepted": True, "operation_id": operation_id, "state": read_update_state()}
 

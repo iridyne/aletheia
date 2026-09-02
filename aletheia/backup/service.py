@@ -347,6 +347,22 @@ class BackupService:
                     raise RuntimeError("authoritative_lab_backup_requires_lab_db")
                 if lab_checkpoint_identity is None:
                     raise RuntimeError("authoritative_lab_backup_requires_joint_checkpoint")
+                try:
+                    from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
+
+                    checkpoint = verify_joint_checkpoint(create_lab=False)
+                except Exception as exc:
+                    raise RuntimeError(
+                        "authoritative_lab_backup_requires_verified_joint_checkpoint"
+                    ) from exc
+                if (
+                    not checkpoint.ok
+                    or checkpoint.last is None
+                    or checkpoint.last.joint_fingerprint != lab_checkpoint_identity
+                ):
+                    raise RuntimeError(
+                        "authoritative_lab_backup_requires_verified_joint_checkpoint"
+                    )
 
             # Copy config with credential redaction — never raw-copy (#1175).
             from aletheia.config.redact import redact_config_dict

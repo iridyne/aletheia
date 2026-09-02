@@ -380,7 +380,7 @@ def observation_checkpoint(
     )
     verdict = verify_joint_checkpoint()
     saved = False
-    if not verify_only:
+    if not verify_only and verdict.ok:
         save_joint_checkpoint(compute_joint_checkpoint())
         saved = True
     payload = {
@@ -729,6 +729,14 @@ def migrate_learning_ledger(
         "--retire-legacy-schema",
         help="After a successful Lab import, physically drop retired Experiment tables.",
     ),
+    runtime_commit: str | None = typer.Option(
+        None, "--runtime-commit", help="Runtime commit included in the cutover proof."
+    ),
+    rollback_backup_identity: str | None = typer.Option(
+        None,
+        "--rollback-backup-identity",
+        help="Authoritative backup identity required for schema retirement.",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Plan or apply the idempotent legacy Learning→Lab import."""
@@ -745,6 +753,8 @@ def migrate_learning_ledger(
             apply_legacy_learning_migration(
                 archive_root=str(archive_root) if archive_root else None,
                 retire_legacy_schema=retire_legacy_schema,
+                runtime_commit=runtime_commit,
+                rollback_backup_identity=rollback_backup_identity,
             )
             if apply_migration
             else plan_legacy_learning_migration()
@@ -779,13 +789,34 @@ def migrate_learning_ledger(
 def set_experiment_authority(
     source: str = typer.Argument(..., help="Canonical source: legacy or lab."),
     reason: str = typer.Option(..., "--reason", help="Audited cutover/rollback reason."),
+    runtime_commit: str | None = typer.Option(
+        None, "--runtime-commit", help="Runtime commit included in a Lab cutover proof."
+    ),
+    rollback_backup_identity: str | None = typer.Option(
+        None,
+        "--rollback-backup-identity",
+        help="Authoritative backup identity included in a Lab cutover proof.",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Atomically select exactly one durable Experiment authority source."""
-    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.canonical import (
+        build_authority_cutover_proof,
+        set_authority_source,
+    )
 
     try:
-        state = set_authority_source(source, actor="operator", reason=reason)
+        proof = (
+            build_authority_cutover_proof(
+                runtime_commit=runtime_commit,
+                rollback_backup_identity=rollback_backup_identity,
+            )
+            if source == "lab"
+            else None
+        )
+        state = set_authority_source(
+            source, actor="operator", reason=reason, cutover_proof=proof,
+        )
     except (RuntimeError, ValueError) as exc:
         typer.echo(f"authority change refused: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -975,7 +1006,10 @@ def publish_manifest_cmd(
     - ``deterministic_baseline`` (dict), ``unavailable_fallback``
       (``baseline`` / ``exclude``)
 
-    Optional: ``effective_until``, ``owner_admission_ref``.
+    Optional: ``effective_until``, ``owner_admission_ref``, and, for a
+    Paper publication, ``inference_plan`` (with ``plan`` and frozen
+    ``cutoff`` mappings). ``no_manifest_reason`` records an explicit
+    non-executable publication decision instead of issuing a Manifest.
 
     Exit codes:
     - 0: manifest published or silent no-op (same hash already present).
@@ -1000,6 +1034,13 @@ def publish_manifest_cmd(
         typer.echo("spec file must contain a YAML mapping", err=True)
         raise typer.Exit(code=1)
 
+    # Lifecycle-only publication fields are not Manifest wire fields.  Keep
+    # them in the same YAML document so the Lab transaction can atomically
+    # freeze the plan, publish the Manifest, and append its lifecycle/audit
+    # evidence.
+    inference_plan = spec.pop("inference_plan", None)
+    no_manifest_reason = spec.pop("no_manifest_reason", None)
+
     try:
         manifest = build_manifest(**spec)
     except (TypeError, ValueError, KeyError) as exc:
@@ -1016,6 +1057,8 @@ def publish_manifest_cmd(
                 manifest,
                 actor="operator",
                 reason="cli_manifest_publish",
+                inference_plan=inference_plan,
+                no_manifest_reason=no_manifest_reason,
             )
             newly_inserted = bool(publication["published"])
         else:
@@ -1035,6 +1078,12 @@ def publish_manifest_cmd(
         "generation": manifest.generation,
         "newly_inserted": newly_inserted,
     }
+    if _experiment_authority_source() == "lab":
+        payload.update({
+            "lifecycle_event_id": publication["lifecycle_event_id"],
+            "inference_plan_id": publication["inference_plan_id"],
+            "no_manifest_reason": publication["no_manifest_reason"],
+        })
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -1442,6 +1491,11 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                 bridge = observation_bridge_health()
             except Exception:
                 storage["lab_db"]["status"] = "unreachable"
+
+    if app_db is not None and authority_source == "unavailable":
+        unavailable_reasons.add("experiment_authority_unavailable")
+    if lab_db is not None and authority_source == "lab" and not bridge.get("available", False):
+        unavailable_reasons.add("observation_bridge_unavailable")
 
     for name in ("app_db", "lab_db"):
         status = storage[name]["status"]

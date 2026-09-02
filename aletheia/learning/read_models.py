@@ -255,8 +255,10 @@ def _build_lab_learning_contribution_projection(*, limit: int) -> dict[str, Any]
                 contract = dict(contract_row) if contract_row else {}
                 spec = _safe_object(window.get("spec_json"))
                 result_row = lab.execute(
-                    "SELECT * FROM observation_results WHERE observation_id=? AND generation=? "
-                    "ORDER BY created_at DESC, result_id DESC LIMIT 1",
+                    "SELECT r.*, e.evaluation_kind FROM observation_results r "
+                    "LEFT JOIN observation_evaluations e ON e.evaluation_id=r.evaluation_id "
+                    "WHERE r.observation_id=? AND r.generation=? "
+                    "ORDER BY r.created_at DESC, r.result_id DESC LIMIT 1",
                     (observation_id, generation),
                 ).fetchone()
                 result = dict(result_row) if result_row else None
@@ -267,7 +269,10 @@ def _build_lab_learning_contribution_projection(*, limit: int) -> dict[str, Any]
                     "COUNT(DISTINCT CASE WHEN assignment='treatment' THEN assignment_unit_key END) AS treatment_n, "
                     "COUNT(DISTINCT CASE WHEN assignment='control' THEN assignment_unit_key END) AS control_n, "
                     "COUNT(DISTINCT outcome_candidate_key) AS outcome_n, "
-                    "SUM(CASE WHEN applied=1 THEN 1 ELSE 0 END) AS applied_n "
+                    "COUNT(DISTINCT CASE WHEN assignment='treatment' AND applied=1 "
+                    "THEN assignment_unit_key END) AS applied_treatment_n, "
+                    "COUNT(DISTINCT CASE WHEN assignment='treatment' AND behavior_changed=1 "
+                    "THEN assignment_unit_key END) AS intervention_treatment_n "
                     "FROM observation_exposures WHERE observation_id=? AND generation=?",
                     (observation_id, generation),
                 ).fetchone()
@@ -308,8 +313,11 @@ def _build_lab_learning_contribution_projection(*, limit: int) -> dict[str, Any]
                         "statistical_unit": spec.get("statistical_unit"),
                         "behavior_contract_hash": contract.get("behavior_contract_hash"),
                         "code_commit": window.get("producer_commit"),
-                        "matches_running_cohort": True,
-                        "mismatch_reason": None,
+                        # Lab has no authoritative view of the currently
+                        # running Main cohort in this projection.  Preserve
+                        # that missing comparison instead of claiming a match.
+                        "matches_running_cohort": None,
+                        "mismatch_reason": "running_cohort_identity_unavailable",
                     },
                     "measurement": {
                         "state": verdict,
@@ -322,7 +330,11 @@ def _build_lab_learning_contribution_projection(*, limit: int) -> dict[str, Any]
                         "evaluated_at": latest_at,
                         "window_start": window.get("started_at"),
                         "window_end": window.get("collect_until"),
-                        "inference_role": "confirmatory" if result and result.get("evaluation_id") else "monitoring",
+                        "inference_role": (
+                            result.get("evaluation_kind")
+                            if result and result.get("evaluation_kind") in {"monitoring", "confirmatory"}
+                            else "monitoring"
+                        ),
                         "authority_eligible": False,
                     },
                     "inference": {
@@ -336,8 +348,8 @@ def _build_lab_learning_contribution_projection(*, limit: int) -> dict[str, Any]
                     "samples": {
                         "raw_exposures": int(exposures["raw_n"] or 0),
                         "exposed_treatment_units": int(exposures["treatment_n"] or 0),
-                        "exposed_authority_applied_treatment_units": int(exposures["applied_n"] or 0),
-                        "exposed_actual_intervention_treatment_units": int(exposures["applied_n"] or 0),
+                        "exposed_authority_applied_treatment_units": int(exposures["applied_treatment_n"] or 0),
+                        "exposed_actual_intervention_treatment_units": int(exposures["intervention_treatment_n"] or 0),
                         "exposed_control_units": int(exposures["control_n"] or 0),
                         "treatment_assignment_units": int(exposures["treatment_n"] or 0),
                         "control_assignment_units": int(exposures["control_n"] or 0),
@@ -412,11 +424,17 @@ def _build_lab_learning_contribution_projection(*, limit: int) -> dict[str, Any]
     }
     for item in items:
         state = path_states.get(item["path_id"])
-        if state and state["state"] == "empty":
-            state.update({
-                "state": "active",
-                "data_freshness": item["data_freshness"],
-            })
+        if state:
+            if item.get("experiment_status") == "active":
+                state.update({
+                    "state": "active",
+                    "data_freshness": item["data_freshness"],
+                })
+            elif state["state"] == "empty":
+                state.update({
+                    "state": "terminal",
+                    "data_freshness": item["data_freshness"],
+                })
     latest = [item["data_freshness"].get("last_evaluated_at") for item in items if item["data_freshness"].get("last_evaluated_at")]
     return {
         "schema_version": SCHEMA_VERSION,

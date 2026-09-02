@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v61"
+SCHEMA_VERSION = "aletheia-sqlite-v62"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4278,6 +4278,48 @@ def retire_legacy_experiment_tables(
 
 _OBSERVATION_OWNERSHIP_V2_CHECKSUM = hashlib.sha256(
     (_OBSERVATION_OWNERSHIP_V2_SQL + "\nobservation_experiment_ownership_v2").encode("utf-8")
+).hexdigest()
+
+# A Lab cutover is an evidence boundary, not a boolean configuration change.
+# Keep the operator's migration, retention, checkpoint, runtime, and rollback
+# identities in an append-only Main ledger before the authority epoch changes.
+_OBSERVATION_AUTHORITY_CUTOVER_PROOF_SQL = """
+CREATE TABLE IF NOT EXISTS observation_authority_cutover_proofs (
+    proof_id TEXT PRIMARY KEY,
+    authority_source TEXT NOT NULL CHECK (authority_source = 'lab'),
+    migration_plan_fingerprint TEXT NOT NULL CHECK (length(trim(migration_plan_fingerprint)) > 0),
+    retention_claim_fingerprint TEXT NOT NULL CHECK (length(trim(retention_claim_fingerprint)) > 0),
+    checkpoint_fingerprint TEXT NOT NULL CHECK (length(trim(checkpoint_fingerprint)) > 0),
+    runtime_commit TEXT NOT NULL CHECK (length(trim(runtime_commit)) > 0),
+    rollback_backup_identity TEXT NOT NULL CHECK (length(trim(rollback_backup_identity)) > 0),
+    actor TEXT NOT NULL CHECK (length(trim(actor)) > 0),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    recorded_at TEXT NOT NULL,
+    UNIQUE (
+        authority_source,
+        migration_plan_fingerprint,
+        retention_claim_fingerprint,
+        checkpoint_fingerprint,
+        runtime_commit,
+        rollback_backup_identity
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_observation_authority_cutover_proofs_recent
+    ON observation_authority_cutover_proofs(recorded_at DESC);
+CREATE TRIGGER IF NOT EXISTS trg_observation_authority_cutover_proofs_no_update
+BEFORE UPDATE ON observation_authority_cutover_proofs BEGIN
+    SELECT RAISE(ABORT, 'observation_authority_cutover_proofs is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_observation_authority_cutover_proofs_no_delete
+BEFORE DELETE ON observation_authority_cutover_proofs BEGIN
+    SELECT RAISE(ABORT, 'observation_authority_cutover_proofs is append-only');
+END;
+"""
+_OBSERVATION_AUTHORITY_CUTOVER_PROOF_CHECKSUM = hashlib.sha256(
+    (
+        _OBSERVATION_AUTHORITY_CUTOVER_PROOF_SQL
+        + "\nobservation_authority_cutover_proof_v1"
+    ).encode("utf-8")
 ).hexdigest()
 
 _DERIVATIVES_SOURCE_TIME_COLUMNS = tuple(
@@ -5910,6 +5952,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260902_0060_observation_experiment_ownership_v2_v61": (
         "bounded Main-to-Lab Observation receipts, deny tombstones, and authority source"
     ),
+    "20260903_0061_observation_authority_cutover_proof_v62": (
+        "append-only migration, retention, checkpoint, runtime, and rollback proof for Lab authority"
+    ),
 }
 
 
@@ -6632,6 +6677,13 @@ def _apply_observation_ownership_v2_v61(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_observation_authority_cutover_proof_v62(db: sqlite3.Connection) -> None:
+    """Install the append-only evidence ledger for Lab authority cutover."""
+
+    db.executescript(_OBSERVATION_AUTHORITY_CUTOVER_PROOF_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_paper_funding_revival_cursor_v58(db: sqlite3.Connection) -> None:
     """Persist only the scheduling keyset for terminal Paper funding revival."""
     db.executescript(_PAPER_FUNDING_REVIVAL_CURSOR_SQL)
@@ -7313,6 +7365,12 @@ _MIGRATIONS = (
         checksum=_OBSERVATION_OWNERSHIP_V2_CHECKSUM,
         schema_version="aletheia-sqlite-v61",
         apply=_apply_observation_ownership_v2_v61,
+    ),
+    MigrationStep(
+        migration_id="20260903_0061_observation_authority_cutover_proof_v62",
+        checksum=_OBSERVATION_AUTHORITY_CUTOVER_PROOF_CHECKSUM,
+        schema_version="aletheia-sqlite-v62",
+        apply=_apply_observation_authority_cutover_proof_v62,
     ),
 )
 

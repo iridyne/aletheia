@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import sqlite3
 import tarfile
 import tempfile
 from pathlib import Path
@@ -15,6 +16,17 @@ _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 # Files exempt from the "unlisted payload" check — the exporter writes manifest.yaml
 # after checksums.txt, so it cannot include itself in the manifest.
 _EXEMPT_NAMES = frozenset({"checksums.txt", "manifest.yaml"})
+
+
+def _open_sqlite_readonly(path: Path) -> sqlite3.Connection:
+    """Inspect a bundled SQLite snapshot without creating WAL sidecars."""
+    # The backup contains a single sqlite3.Connection.backup() image, not its
+    # source WAL sidecar.  Immutable mode therefore reads the complete image
+    # without creating ``-wal``/``-shm`` files that would look like unlisted
+    # payload during the later checksum scan.
+    return sqlite3.connect(
+        path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True,
+    )
 
 
 class VerifyResult:
@@ -238,15 +250,13 @@ def _verify_checkpoint_manifest(
         result.errors.append("Lab-authoritative checkpoint is missing lab_sqlite_identity")
 
     if authority_source == "lab":
+        lab_db = bundle_dir / "observation-lab" / "lab.db"
         if not isinstance(lab_checkpoint_identity, str) or not _HEX_RE.match(lab_checkpoint_identity):
             result.valid = False
             result.errors.append("Lab-authoritative checkpoint is missing lab_checkpoint_identity")
         else:
-            lab_db = bundle_dir / "observation-lab" / "lab.db"
             try:
-                import sqlite3
-
-                with sqlite3.connect(str(lab_db)) as connection:
+                with _open_sqlite_readonly(lab_db) as connection:
                     row = connection.execute(
                         "SELECT joint_fingerprint FROM joint_checkpoints "
                         "ORDER BY recorded_at DESC, checkpoint_id DESC LIMIT 1"
@@ -257,6 +267,123 @@ def _verify_checkpoint_manifest(
             except (OSError, sqlite3.Error):
                 result.valid = False
                 result.errors.append("Lab-authoritative checkpoint lab checkpoint is unreadable")
+
+        # A Lab checkpoint is only recoverable when every compact archive it
+        # references is present in the bundle and still carries its replay
+        # identity.  The database may contain absolute paths from the source
+        # host; map only the managed ``observation-lab/...`` suffix into the
+        # extracted bundle and reject anything outside that root.
+        try:
+            with _open_sqlite_readonly(lab_db) as connection:
+                archive_rows = connection.execute(
+                    "SELECT archive_id, archive_path, archive_sha256, replay_fingerprint "
+                    "FROM observation_archives ORDER BY archive_id"
+                ).fetchall()
+        except (OSError, sqlite3.Error):
+            archive_rows = None
+            result.valid = False
+            result.errors.append("Lab-authoritative checkpoint archive index is unreadable")
+        if archive_rows is not None:
+            import gzip
+
+            for archive_id, archive_path, archive_sha256, replay_fingerprint in archive_rows:
+                raw_path = Path(str(archive_path))
+                try:
+                    parts = raw_path.parts
+                    marker = parts.index("observation-lab")
+                    relative = Path(*parts[marker:])
+                    if relative.parts[:2] != ("observation-lab", "archives"):
+                        raise ValueError("archive_path_outside_managed_root")
+                    bundle_archive = bundle_dir / relative
+                    bundle_archives_root = (bundle_dir / "observation-lab" / "archives").resolve()
+                    bundle_archive.resolve().relative_to(bundle_archives_root)
+                except (ValueError, IndexError):
+                    result.valid = False
+                    result.errors.append(
+                        f"Lab-authoritative archive path is outside managed root: {archive_id}"
+                    )
+                    continue
+                if not bundle_archive.is_file():
+                    result.valid = False
+                    result.errors.append(
+                        f"Lab-authoritative archive is missing from bundle: {archive_id}"
+                    )
+                    continue
+                data = bundle_archive.read_bytes()
+                if not isinstance(archive_sha256, str) or hashlib.sha256(data).hexdigest() != archive_sha256:
+                    result.valid = False
+                    result.errors.append(
+                        f"Lab-authoritative archive bytes do not match index: {archive_id}"
+                    )
+                    continue
+                try:
+                    payload = json.loads(gzip.decompress(data))
+                    replay = payload.get("replay_fingerprint") if isinstance(payload, dict) else None
+                    candidate = dict(payload) if isinstance(payload, dict) else {}
+                    candidate.pop("replay_fingerprint", None)
+                    expected_replay = hashlib.sha256(
+                        json.dumps(
+                            candidate,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            allow_nan=False,
+                            default=str,
+                        ).encode("utf-8")
+                    ).hexdigest()
+                except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    replay = None
+                    expected_replay = None
+                if (
+                    not isinstance(replay, str)
+                    or replay != replay_fingerprint
+                    or replay != expected_replay
+                ):
+                    result.valid = False
+                    result.errors.append(
+                        f"Lab-authoritative archive replay identity mismatch: {archive_id}"
+                    )
+
+        # Non-empty legacy Experiment state is allowed in an authoritative
+        # bundle only when the durable Main cutover proof is present.  Empty
+        # fresh schemas need no proof row.
+        legacy_tables = (
+            "learning_experiments", "learning_exposures",
+            "learning_contribution_verdicts", "learning_inference_decisions",
+            "learning_lifecycle_events", "filter_shadow_experiments",
+            "filter_shadow_evaluations", "strategy_experiments",
+        )
+        try:
+            with _open_sqlite_readonly(app_db) as connection:
+                legacy_count = 0
+                for table in legacy_tables:
+                    exists = connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        (table,),
+                    ).fetchone()
+                    if exists is not None:
+                        legacy_count += int(
+                            connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] or 0
+                        )
+                if legacy_count:
+                    proof = connection.execute(
+                        "SELECT migration_plan_fingerprint, retention_claim_fingerprint, "
+                        "checkpoint_fingerprint, runtime_commit, rollback_backup_identity "
+                        "FROM observation_authority_cutover_proofs "
+                        "ORDER BY recorded_at DESC, proof_id DESC LIMIT 1"
+                    ).fetchone()
+                    if proof is None or any(not str(value or "").strip() for value in proof):
+                        result.valid = False
+                        result.errors.append(
+                            "Lab-authoritative checkpoint is missing cutover proof for legacy state"
+                        )
+                    elif str(proof[2]) != str(lab_checkpoint_identity):
+                        result.valid = False
+                        result.errors.append(
+                            "Lab-authoritative checkpoint cutover proof does not match Lab checkpoint"
+                        )
+        except (OSError, sqlite3.Error):
+            result.valid = False
+            result.errors.append("Lab-authoritative checkpoint cutover proof is unreadable")
 
     if not isinstance(audit_head_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", audit_head_hash):
         result.valid = False

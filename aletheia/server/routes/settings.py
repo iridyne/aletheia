@@ -1639,7 +1639,7 @@ def queue_observation_owner_action(
                 parsed_generation = int(raw_generation)
             if parsed_generation is None:
                 rows = lab.execute(
-                    "SELECT observation_id, generation FROM observation_windows "
+                    "SELECT observation_id, generation, status FROM observation_windows "
                     "WHERE observation_id=? ORDER BY generation DESC",
                     (parsed_observation,),
                 ).fetchall()

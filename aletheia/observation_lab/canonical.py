@@ -15,6 +15,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from aletheia.observation_lab.db import (
@@ -48,6 +49,7 @@ _CAPTURE_RECEIPT_REASONS = frozenset({
     "malformed_effective_window", "assignment_namespace_unavailable", "assignment_hash_version_unsupported",
     "allocation_unavailable", "control_baseline_mismatch", "owner_admission_unavailable",
     "effect_mode_unsupported", "adapter_output_unavailable", "outcome_seed_unavailable",
+    "joint_checkpoint_unavailable", "observe_only_generation",
 })
 
 
@@ -105,6 +107,25 @@ def _require_generation_root(
     ).fetchone()
     if row is None:
         raise ValueError("observation_generation_root_unavailable")
+
+
+def _resolve_managed_archive_path(stored_path: str) -> Path:
+    """Resolve an archive path after a bundle restore without rewriting history."""
+    path = Path(str(stored_path)).expanduser()
+    if path.is_file():
+        return path
+    try:
+        parts = path.parts
+        marker = parts.index("observation-lab")
+        relative = Path(*parts[marker:])
+        if relative.parts[:2] != ("observation-lab", "archives"):
+            return path
+        managed_root = (get_data_dir() / "observation-lab" / "archives").resolve()
+        candidate = (get_data_dir() / relative).resolve()
+        candidate.relative_to(managed_root)
+    except (ValueError, OSError):
+        return path
+    return candidate
 
 
 def record_observation_nomination(
@@ -642,11 +663,24 @@ def consume_inference_plan(
 
     def _write(connection: sqlite3.Connection) -> str:
         row = connection.execute(
-            "SELECT status, consumed_evaluation_id FROM observation_inference_plans WHERE plan_id=?",
+            "SELECT observation_id, generation, status, consumed_evaluation_id "
+            "FROM observation_inference_plans WHERE plan_id=?",
             (plan_id,),
         ).fetchone()
         if row is None:
             raise ValueError("inference_plan_unavailable")
+        evaluation = connection.execute(
+            "SELECT observation_id, generation FROM observation_evaluations "
+            "WHERE evaluation_id=?",
+            (evaluation_id,),
+        ).fetchone()
+        if evaluation is None:
+            raise ValueError("inference_evaluation_unavailable")
+        if (
+            str(evaluation[0]) != str(row[0])
+            or int(evaluation[1]) != int(row[1])
+        ):
+            raise sqlite3.IntegrityError("inference_evaluation_identity_mismatch")
         if row["consumed_evaluation_id"] is not None:
             if row["consumed_evaluation_id"] != evaluation_id:
                 raise sqlite3.IntegrityError("inference_plan_consumption_conflict")
@@ -750,7 +784,179 @@ def get_authority_source(*, db: sqlite3.Connection | None = None) -> AuthoritySo
     return AuthoritySource(source, epoch, str(row[2]), str(row[3]), str(row[4]))
 
 
-def _assert_lab_cutover_ready(connection: sqlite3.Connection) -> None:
+_CUTOVER_PROOF_FIELDS = (
+    "migration_plan_fingerprint",
+    "retention_claim_fingerprint",
+    "checkpoint_fingerprint",
+    "runtime_commit",
+    "rollback_backup_identity",
+)
+_CUTOVER_FINGERPRINT_FIELDS = frozenset({
+    "migration_plan_fingerprint",
+    "retention_claim_fingerprint",
+    "checkpoint_fingerprint",
+})
+
+
+def _normalise_cutover_proof(proof: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(proof, Mapping):
+        raise RuntimeError("authority_cutover_proof_required")
+    result: dict[str, str] = {}
+    for field in _CUTOVER_PROOF_FIELDS:
+        value = _text(proof.get(field), field)
+        if field in _CUTOVER_FINGERPRINT_FIELDS and (
+            len(value) != 64 or any(char not in "0123456789abcdef" for char in value)
+        ):
+            raise RuntimeError(f"authority_cutover_{field}_invalid")
+        result[field] = value
+    return result
+
+
+def _runtime_commit() -> str | None:
+    try:
+        from aletheia.agent_runtime.build_info import get_boot_commit
+        from aletheia.update.git_ops import current_commit
+
+        return get_boot_commit() or current_commit()
+    except Exception:
+        return None
+
+
+def _retention_claim_fingerprint() -> str:
+    """Hash exact Lab retention claims used by the cutover proof."""
+    with readonly_lab_db(allow_missing=True) as lab:
+        if lab is None:
+            raise RuntimeError("authority_cutover_retention_unavailable")
+        try:
+            rows = lab.execute(
+                "SELECT claim_id, observation_id, generation, source_kind, source_ref, "
+                "source_hash, claim_domain, derived_from_fingerprint, status, created_at, "
+                "released_at, release_proof_fingerprint, release_reason "
+                "FROM observation_retention_claims ORDER BY claim_id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise RuntimeError("authority_cutover_retention_unavailable") from exc
+    return _hash([dict(row) for row in rows])
+
+
+def build_authority_cutover_proof(
+    *,
+    runtime_commit: str | None = None,
+    rollback_backup_identity: str | None = None,
+) -> dict[str, str]:
+    """Build the read-only identity bundle required for a Lab cutover."""
+    from aletheia.observation_lab.checkpoint import (
+        latest_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.observation_lab.migration import plan_legacy_learning_migration
+
+    plan = plan_legacy_learning_migration()
+    if not plan.get("available"):
+        raise RuntimeError("authority_cutover_legacy_import_unavailable")
+    # A fresh schema has no legacy evidence to prove.  Keep the operator
+    # command usable for fresh installs; the durable authority switch still
+    # validates Lab availability and records its own epoch.
+    if not any(
+        int(details.get("row_count") or 0)
+        for details in plan.get("legacy_tables", {}).values()
+        if isinstance(details, Mapping)
+    ):
+        return {}
+    checkpoint = latest_joint_checkpoint()
+    if checkpoint is None:
+        raise RuntimeError("authority_cutover_checkpoint_unavailable")
+    verdict = verify_joint_checkpoint()
+    if not verdict.ok:
+        raise RuntimeError("authority_cutover_checkpoint_unavailable")
+    runtime = _text(runtime_commit or _runtime_commit(), "runtime_commit")
+    backup = _text(rollback_backup_identity, "rollback_backup_identity")
+    return {
+        "migration_plan_fingerprint": _text(plan.get("plan_fingerprint"), "migration_plan_fingerprint"),
+        "retention_claim_fingerprint": _retention_claim_fingerprint(),
+        "checkpoint_fingerprint": _text(checkpoint.joint_fingerprint, "checkpoint_fingerprint"),
+        "runtime_commit": runtime,
+        "rollback_backup_identity": backup,
+    }
+
+
+def _record_authority_cutover_proof(
+    connection: sqlite3.Connection,
+    proof: Mapping[str, Any],
+    *,
+    actor: str,
+    reason: str,
+) -> str:
+    values = _normalise_cutover_proof(proof)
+    proof_id = f"observation-authority-proof:{uuid.uuid4().hex}"
+    connection.execute(
+        "INSERT OR IGNORE INTO observation_authority_cutover_proofs "
+        "(proof_id, authority_source, migration_plan_fingerprint, retention_claim_fingerprint, "
+        "checkpoint_fingerprint, runtime_commit, rollback_backup_identity, actor, reason, recorded_at) "
+        "VALUES (?, 'lab', ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            proof_id,
+            values["migration_plan_fingerprint"],
+            values["retention_claim_fingerprint"],
+            values["checkpoint_fingerprint"],
+            values["runtime_commit"],
+            values["rollback_backup_identity"],
+            _text(actor, "actor"),
+            _text(reason, "reason"),
+            _now(),
+        ),
+    )
+    row = connection.execute(
+        "SELECT proof_id FROM observation_authority_cutover_proofs WHERE authority_source='lab' "
+        "AND migration_plan_fingerprint=? AND retention_claim_fingerprint=? "
+        "AND checkpoint_fingerprint=? AND runtime_commit=? AND rollback_backup_identity=?",
+        tuple(values[field] for field in _CUTOVER_PROOF_FIELDS),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("authority_cutover_proof_record_unavailable")
+    return str(row[0])
+
+
+def record_authority_cutover_proof(
+    proof: Mapping[str, Any],
+    *,
+    actor: str,
+    reason: str,
+    db: sqlite3.Connection | None = None,
+) -> str:
+    """Validate and persist one append-only Lab cutover proof."""
+
+    def _write(connection: sqlite3.Connection) -> str:
+        validated = _assert_lab_cutover_ready(connection, cutover_proof=proof)
+        if validated is None:
+            raise RuntimeError("authority_cutover_proof_not_required")
+        return _record_authority_cutover_proof(
+            connection, validated, actor=actor, reason=reason,
+        )
+
+    if db is not None:
+        if db.in_transaction:
+            return _write(db)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            result = _write(db)
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
+
+    with transaction(immediate=True):
+        return _write(db or get_db())
+
+
+def _assert_lab_cutover_ready(
+    connection: sqlite3.Connection,
+    *,
+    cutover_proof: Mapping[str, Any] | None = None,
+) -> dict[str, str] | None:
     """Refuse Lab authority until the legacy evidence boundary is proven.
 
     An authority flip is a behavior boundary, not a configuration toggle.  A
@@ -775,6 +981,36 @@ def _assert_lab_cutover_ready(connection: sqlite3.Connection) -> None:
     if int(pending or 0):
         raise RuntimeError("authority_cutover_pending_main_receipts")
 
+    # An active Lab generation may already have immutable exposures while its
+    # canonical outcome is still in Main.  Every such outcome identity needs
+    # an active exact claim before the source switch; otherwise ordinary Main
+    # TTL could delete evidence underneath the new authority.
+    try:
+        with readonly_lab_db(allow_missing=True) as lab:
+            if lab is None:
+                raise RuntimeError("authority_cutover_lab_unavailable")
+            exposed_outcomes = {
+                str(row[0])
+                for row in lab.execute(
+                    "SELECT DISTINCT e.outcome_candidate_key "
+                    "FROM observation_exposures e "
+                    "JOIN observation_windows w "
+                    "ON w.observation_id=e.observation_id AND w.generation=e.generation "
+                    "WHERE w.status='active' AND e.outcome_candidate_key IS NOT NULL"
+                ).fetchall()
+            }
+            claimed_outcomes = {
+                str(row[0])
+                for row in lab.execute(
+                    "SELECT DISTINCT source_ref FROM observation_retention_claims "
+                    "WHERE status='active' AND source_kind='outcome_candidate_key'"
+                ).fetchall()
+            }
+    except (FileNotFoundError, OSError, sqlite3.Error) as exc:
+        raise RuntimeError("authority_cutover_retention_unavailable") from exc
+    if exposed_outcomes - claimed_outcomes:
+        raise RuntimeError("authority_cutover_retention_claim_missing")
+
     counts: dict[str, int] = {}
     for table in _LEGACY_EXPERIMENT_TABLES:
         exists = connection.execute(
@@ -785,7 +1021,7 @@ def _assert_lab_cutover_ready(connection: sqlite3.Connection) -> None:
                 connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] or 0
             )
     if not any(counts.values()):
-        return
+        return None
 
     # The import checkpoint is compared with a fresh read-only legacy snapshot;
     # a changed row after import must block cutover rather than silently
@@ -811,12 +1047,117 @@ def _assert_lab_cutover_ready(connection: sqlite3.Connection) -> None:
     if cursor is None or str(cursor[0] or "") != str(plan.get("plan_fingerprint") or ""):
         raise RuntimeError("authority_cutover_legacy_import_checkpoint_missing")
 
+    proof = _normalise_cutover_proof(cutover_proof)
+    expected_plan = _text(plan.get("plan_fingerprint"), "migration_plan_fingerprint")
+    if proof["migration_plan_fingerprint"] != expected_plan:
+        raise RuntimeError("authority_cutover_migration_equivalence_mismatch")
+
+    from aletheia.observation_lab.checkpoint import (
+        latest_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+
+    latest = latest_joint_checkpoint()
+    try:
+        verdict = verify_joint_checkpoint()
+    except Exception as exc:
+        raise RuntimeError("authority_cutover_checkpoint_unavailable") from exc
+    if latest is None or not verdict.ok:
+        raise RuntimeError("authority_cutover_checkpoint_unavailable")
+    if proof["checkpoint_fingerprint"] != str(latest.joint_fingerprint):
+        raise RuntimeError("authority_cutover_checkpoint_mismatch")
+    if proof["retention_claim_fingerprint"] != _retention_claim_fingerprint():
+        raise RuntimeError("authority_cutover_retention_mismatch")
+    observed_runtime = _runtime_commit()
+    if observed_runtime and proof["runtime_commit"] != observed_runtime:
+        raise RuntimeError("authority_cutover_runtime_commit_mismatch")
+    if plan.get("source_commit") and proof["runtime_commit"] != str(plan["source_commit"]):
+        raise RuntimeError("authority_cutover_source_commit_mismatch")
+    return proof
+
+
+def _assert_legacy_rollback_ready(
+    connection: sqlite3.Connection,
+    *,
+    rollback_proof: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """Allow legacy authority only from an explicitly proven same cut.
+
+    A Lab-to-legacy flip is not a recovery mechanism: it would re-enable the
+    frozen Main ledger.  Keep the safe default (Lab baseline) unless the
+    caller presents the exact predeclared cutover proof and the legacy rows
+    still exist for an equivalent rollback target.
+    """
+    proof = _normalise_cutover_proof(rollback_proof)
+    from aletheia.observation_lab.checkpoint import (
+        latest_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.observation_lab.db import readonly_lab_db
+    from aletheia.observation_lab.migration import plan_legacy_learning_migration
+    from aletheia.storage.migrations import _LEGACY_EXPERIMENT_TABLES
+
+    missing = [
+        table for table in _LEGACY_EXPERIMENT_TABLES
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None
+    ]
+    if missing:
+        raise RuntimeError("authority_rollback_legacy_tables_unavailable")
+    plan = plan_legacy_learning_migration()
+    if not plan.get("available") or proof["migration_plan_fingerprint"] != str(
+        plan.get("plan_fingerprint") or ""
+    ):
+        raise RuntimeError("authority_rollback_migration_equivalence_mismatch")
+    if any(
+        str(item.get("table")) != "strategy_experiments"
+        for item in plan.get("unprovable_rows", ())
+    ):
+        raise RuntimeError("authority_rollback_unprovable_legacy_evidence")
+    with readonly_lab_db(allow_missing=True) as lab:
+        cursor = None if lab is None else lab.execute(
+            "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
+            "WHERE source_name='legacy_learning'"
+        ).fetchone()
+    if cursor is None or str(cursor[0] or "") != proof["migration_plan_fingerprint"]:
+        raise RuntimeError("authority_rollback_import_checkpoint_mismatch")
+    latest = latest_joint_checkpoint()
+    try:
+        verdict = verify_joint_checkpoint()
+    except Exception as exc:
+        raise RuntimeError("authority_rollback_checkpoint_unavailable") from exc
+    if latest is None or not verdict.ok or proof["checkpoint_fingerprint"] != str(
+        latest.joint_fingerprint
+    ):
+        raise RuntimeError("authority_rollback_checkpoint_mismatch")
+    if proof["retention_claim_fingerprint"] != _retention_claim_fingerprint():
+        raise RuntimeError("authority_rollback_retention_mismatch")
+    observed_runtime = _runtime_commit()
+    if observed_runtime and proof["runtime_commit"] != observed_runtime:
+        raise RuntimeError("authority_rollback_runtime_commit_mismatch")
+    if plan.get("source_commit") and proof["runtime_commit"] != str(plan["source_commit"]):
+        raise RuntimeError("authority_rollback_source_commit_mismatch")
+    recorded = connection.execute(
+        "SELECT proof_id FROM observation_authority_cutover_proofs "
+        "WHERE authority_source='lab' AND migration_plan_fingerprint=? "
+        "AND retention_claim_fingerprint=? AND checkpoint_fingerprint=? "
+        "AND runtime_commit=? AND rollback_backup_identity=? "
+        "ORDER BY recorded_at DESC, proof_id DESC LIMIT 1",
+        tuple(proof[field] for field in _CUTOVER_PROOF_FIELDS),
+    ).fetchone()
+    if recorded is None:
+        raise RuntimeError("authority_rollback_proof_unrecorded")
+    return {**proof, "proof_id": str(recorded[0])}
+
 
 def set_authority_source(
     source: str,
     *,
     actor: str,
     reason: str,
+    cutover_proof: Mapping[str, Any] | None = None,
+    rollback_proof: Mapping[str, Any] | None = None,
     db: sqlite3.Connection | None = None,
 ) -> AuthoritySource:
     """Record one durable ``legacy``/``lab`` source; there is no dual mode."""
@@ -826,12 +1167,23 @@ def set_authority_source(
     reason = _text(reason, "reason")
 
     def _write(connection: sqlite3.Connection) -> AuthoritySource:
-        if source == "lab":
-            _assert_lab_cutover_ready(connection)
         current = get_authority_source(db=connection)
         if current.source == source:
             return current
+        proof = None
+        rollback = None
+        if source == "lab":
+            proof = _assert_lab_cutover_ready(connection, cutover_proof=cutover_proof)
+        elif current.source == "lab":
+            rollback = _assert_legacy_rollback_ready(
+                connection, rollback_proof=rollback_proof,
+            )
         epoch = f"{source}:{uuid.uuid4().hex}"
+        proof_id = None
+        if proof is not None:
+            proof_id = _record_authority_cutover_proof(
+                connection, proof, actor=actor, reason=reason,
+            )
         updated = connection.execute(
             "UPDATE observation_authority_state SET authority_source=?, authority_epoch=?, "
             "actor=?, reason=?, updated_at=? WHERE state_key='experiment_authority'",
@@ -853,13 +1205,24 @@ def set_authority_source(
                     "authority_source": source,
                     "authority_epoch": epoch,
                     "reason": reason,
+                    "cutover_proof_id": proof_id,
+                    "rollback_proof_id": rollback.get("proof_id") if rollback else None,
                 }), reason,
             ),
         )
         return get_authority_source(db=connection)
 
-    if db is not None and db.in_transaction:
-        return _write(db)
+    if db is not None:
+        if db.in_transaction:
+            return _write(db)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            result = _write(db)
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
     from aletheia.storage.repositories import transaction
     from aletheia.storage.sqlite import get_db
 
@@ -1140,7 +1503,7 @@ def publish_manifest_with_lifecycle(
         if contract is None:
             raise ValueError("generation_contract_unavailable")
         root = db.execute(
-            "SELECT status, spec_hash FROM observation_windows "
+            "SELECT status, spec_hash, spec_json FROM observation_windows "
             "WHERE observation_id=? AND generation=?",
             (manifest.observation_id, int(manifest.generation)),
         ).fetchone()
@@ -1148,6 +1511,40 @@ def publish_manifest_with_lifecycle(
             raise ValueError("observation_generation_not_active")
         if str(root[1]) != manifest.spec_hash:
             raise ValueError("manifest_spec_hash_mismatch")
+        try:
+            manifest_start = datetime.fromisoformat(
+                str(manifest.effective_from).replace("Z", "+00:00")
+            )
+            manifest_end = (
+                datetime.fromisoformat(str(manifest.effective_until).replace("Z", "+00:00"))
+                if manifest.effective_until is not None else None
+            )
+            generation_start = datetime.fromisoformat(
+                str(contract["started_at"]).replace("Z", "+00:00")
+            )
+            generation_end = (
+                datetime.fromisoformat(str(contract["effective_until"]).replace("Z", "+00:00"))
+                if contract["effective_until"] is not None else None
+            )
+            if any(
+                value.tzinfo is None or value.utcoffset() != timedelta(0)
+                for value in (manifest_start, generation_start, *(
+                    [manifest_end] if manifest_end is not None else []
+                ), *(
+                    [generation_end] if generation_end is not None else []
+                ))
+            ):
+                raise ValueError("manifest_generation_interval_must_be_utc")
+            if manifest_start < generation_start:
+                raise ValueError("manifest_effective_from_before_generation")
+            if generation_end is not None and (
+                manifest_end is None or manifest_end > generation_end
+            ):
+                raise ValueError("manifest_effective_until_after_generation")
+        except (TypeError, ValueError) as exc:
+            if str(exc).startswith("manifest_"):
+                raise
+            raise ValueError("manifest_generation_interval_invalid") from exc
         if str(contract["behavior_contract_hash"]) != manifest.behavior_contract_hash:
             raise ValueError("manifest_behavior_contract_mismatch")
         contract_fields = [
@@ -1173,6 +1570,12 @@ def publish_manifest_with_lifecycle(
                 raise ValueError("owner_admission_lineage_mismatch")
             if not str(contract["stage"] or "").startswith("paper_"):
                 raise ValueError("paper_manifest_requires_paper_stage")
+            spec = _safe_json_object(root["spec_json"])
+            if (
+                spec.get("production_mutation_allowed") is False
+                or spec.get("authorizing") is False
+            ):
+                raise ValueError("observe_only_generation")
             if no_manifest_reason is None and _adapter(
                 manifest.treatment_adapter_id, manifest.treatment_adapter_version,
             ) is None:
@@ -1203,6 +1606,12 @@ def publish_manifest_with_lifecycle(
         plan_id = None
         if inference_plan is not None:
             plan_payload = dict(inference_plan.get("plan") or inference_plan)
+            cutoff = inference_plan.get("cutoff")
+            if (
+                manifest.effect_mode == "paper_treatment"
+                and cutoff is None
+            ):
+                raise ValueError("paper_manifest_requires_frozen_inference_plan")
             plan_id = register_inference_plan(
                 observation_id=manifest.observation_id,
                 generation=int(manifest.generation),
@@ -1211,11 +1620,8 @@ def publish_manifest_with_lifecycle(
                 status=str(inference_plan.get("status") or "collecting"),
                 db=db,
             )
-            cutoff = inference_plan.get("cutoff")
             if cutoff is not None:
                 freeze_inference_plan(plan_id, cutoff=dict(cutoff), db=db)
-            elif manifest.effect_mode == "paper_treatment":
-                raise ValueError("paper_manifest_requires_frozen_inference_plan")
         elif manifest.effect_mode == "paper_treatment" and no_manifest_reason is None:
             raise ValueError("paper_manifest_requires_frozen_inference_plan")
         published = publish_manifest(manifest, db=db)
@@ -1343,8 +1749,6 @@ def record_archive(
     db: sqlite3.Connection | None = None,
 ) -> str:
     """Record a verified immutable archive root before any hot-row eviction."""
-    from pathlib import Path
-
     archive_path = str(Path(archive_path).expanduser().resolve())
     path = Path(archive_path)
     if not path.is_file():
@@ -1364,6 +1768,14 @@ def record_archive(
 
     def _write(connection: sqlite3.Connection) -> str:
         _require_generation_root(connection, observation_id, int(generation))
+
+        def _mark_archive_identity() -> None:
+            connection.execute(
+                "UPDATE observation_windows SET artifact_path=?, artifact_sha256=? "
+                "WHERE observation_id=? AND generation=?",
+                (archive_path, archive_sha256, observation_id, int(generation)),
+            )
+
         existing = connection.execute(
             "SELECT * FROM observation_archives WHERE observation_id=? AND generation=?",
             (observation_id, int(generation)),
@@ -1378,6 +1790,7 @@ def record_archive(
                 "terminal_status": terminal_status,
             }.items()):
                 raise sqlite3.IntegrityError("observation_archive_identity_conflict")
+            _mark_archive_identity()
             return str(existing["archive_id"])
         connection.execute(
             "INSERT INTO observation_archives "
@@ -1388,6 +1801,7 @@ def record_archive(
                 archive_path, archive_sha256, replay_fingerprint, terminal_at, created_at,
             ),
         )
+        _mark_archive_identity()
         return archive_id
 
     return _lab_write(db, _write)
@@ -1531,15 +1945,20 @@ def write_generation_archive(
 def verify_generation_archive(archive_id: str) -> dict[str, Any]:
     """Verify archive bytes and the compact Lab root without mutating state."""
     import gzip
-    from pathlib import Path
-    from aletheia.observation_lab.db import get_lab_db
 
-    row = get_lab_db().execute(
-        "SELECT * FROM observation_archives WHERE archive_id=?", (archive_id,)
-    ).fetchone()
+    # Verification is a read-only proof surface.  Do not materialize a fresh
+    # Lab when the authority database is missing; that would turn unavailable
+    # archive evidence into an empty, apparently valid store.
+    with readonly_lab_db(allow_missing=True) as lab:
+        if lab is None:
+            return {"available": False, "reason": "lab_unavailable"}
+        row = lab.execute(
+            "SELECT * FROM observation_archives WHERE archive_id=?", (archive_id,)
+        ).fetchone()
     if row is None:
         return {"available": False, "reason": "archive_unavailable"}
-    path = Path(str(row["archive_path"]))
+    row = dict(row)
+    path = _resolve_managed_archive_path(str(row["archive_path"]))
     if not path.is_file():
         return {"available": False, "reason": "archive_file_unavailable"}
     data = path.read_bytes()
@@ -1550,6 +1969,18 @@ def verify_generation_archive(archive_id: str) -> dict[str, Any]:
         payload = json.loads(gzip.decompress(data))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {"available": False, "reason": "archive_payload_invalid"}
+    if not isinstance(payload, dict):
+        return {"available": False, "reason": "archive_payload_invalid"}
+    if any(
+        payload.get(field) != expected
+        for field, expected in (
+            ("archive_schema", row["archive_schema"]),
+            ("observation_id", row["observation_id"]),
+            ("generation", int(row["generation"])),
+            ("terminal_status", row["terminal_status"]),
+        )
+    ):
+        return {"available": False, "reason": "archive_identity_mismatch"}
     replay = payload.get("replay_fingerprint")
     candidate = dict(payload)
     candidate.pop("replay_fingerprint", None)
@@ -1564,6 +1995,25 @@ def verify_generation_archive(archive_id: str) -> dict[str, Any]:
         actual_count = 0 if value is None else len(value) if isinstance(value, list) else 1
         if counts.get(key) != actual_count or fingerprints.get(key) != _hash(value):
             return {"available": False, "reason": "archive_row_proof_mismatch"}
+    root = rows.get("observation_window")
+    if not isinstance(root, dict) or any(
+        root.get(field) != expected
+        for field, expected in (
+            ("observation_id", row["observation_id"]),
+            ("generation", int(row["generation"])),
+            ("status", row["terminal_status"]),
+            ("spec_hash", payload.get("spec_hash")),
+        )
+    ):
+        return {"available": False, "reason": "archive_root_identity_mismatch"}
+    expected_root_identity = _hash({
+        "observation_id": row["observation_id"],
+        "generation": int(row["generation"]),
+        "spec_hash": payload.get("spec_hash"),
+        "replay_fingerprint": replay,
+    })
+    if str(row["root_identity"]) != expected_root_identity:
+        return {"available": False, "reason": "archive_root_identity_mismatch"}
     return {
         "available": True,
         "archive_id": archive_id,
@@ -1864,6 +2314,39 @@ def resolve_observation_treatment(
             persist_receipt=persist_receipt,
         )
 
+    # A stored joint checkpoint is the cross-store cutover boundary.  Once one
+    # exists, a mismatch means Main/Lab/Manifest identity is unproven; do not
+    # let a Paper manifest continue changing behavior from that cut.
+    try:
+        from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
+
+        checkpoint_verdict = verify_joint_checkpoint(create_lab=False)
+    except Exception as exc:
+        _log.warning("Observation joint checkpoint unavailable: %s", exc)
+        checkpoint_verdict = None
+    if checkpoint_verdict is None or not checkpoint_verdict.ok:
+        result = _decision(baseline_value, reason="joint_checkpoint_unavailable")
+        return _attach_receipt(
+            result,
+            baseline=baseline_value,
+            db=db,
+            receipt_id=receipt_id,
+            candidate_key=candidate_key,
+            outcome_candidate_key=outcome_candidate_key,
+            outcome_seeds=outcome_seeds,
+            consumer=consumer,
+            consumer_stage=consumer_stage,
+            runtime_session_id=runtime_session_id,
+            producer_commit=producer_commit,
+            adapter_id=adapter_id,
+            adapter_version=adapter.adapter_version,
+            authority_source=authority.source,
+            authority_epoch=authority.epoch,
+            assignment_unit_key=assignment_unit_key,
+            outcome_source=("fixed_horizon_candidate" if outcome_candidate_key else None),
+            persist_receipt=persist_receipt,
+        )
+
     try:
         pending = main_db.execute(
             "SELECT COUNT(*) FROM observation_delivery_outbox "
@@ -1909,9 +2392,10 @@ def resolve_observation_treatment(
                 snapshot_hashes = tuple(m.manifest_hash for m in manifests)
                 snapshot_fingerprint = _hash(list(snapshot_hashes))
                 root_status: dict[str, str] = {}
+                root_specs: dict[str, dict[str, Any]] = {}
                 for manifest in manifests:
                     root = lab.execute(
-                        "SELECT status FROM observation_windows "
+                        "SELECT status, spec_json FROM observation_windows "
                         "WHERE observation_id=? AND generation=?",
                         (manifest.observation_id, manifest.generation),
                     ).fetchone()
@@ -1920,6 +2404,9 @@ def resolve_observation_treatment(
                     # terminal status is authoritative.
                     root_status[manifest.manifest_hash] = (
                         str(root["status"]) if root is not None else "active"
+                    )
+                    root_specs[manifest.manifest_hash] = (
+                        _safe_json_object(root["spec_json"]) if root is not None else {}
                     )
                 active_manifests = [
                     manifest for manifest in manifests
@@ -2082,6 +2569,20 @@ def resolve_observation_treatment(
                                             manifest=manifest,
                                             **snapshot_args,
                                         )
+                                    elif manifest.effect_mode == "paper_treatment" and (
+                                        root_specs[manifest.manifest_hash].get(
+                                            "production_mutation_allowed"
+                                        ) is False
+                                        or root_specs[manifest.manifest_hash].get(
+                                            "authorizing"
+                                        ) is False
+                                    ):
+                                        result = _decision(
+                                            baseline_value,
+                                            reason="observe_only_generation",
+                                            manifest=manifest,
+                                            **snapshot_args,
+                                        )
                                     elif _deny_tombstone_exists(db=main_db, manifest=manifest):
                                         result = _decision(
                                             baseline_value,
@@ -2215,6 +2716,29 @@ def _insert_receipt(connection: sqlite3.Connection, values: dict[str, Any]) -> s
     return str(values["receipt_id"])
 
 
+def _outbox_capacity_available(
+    connection: sqlite3.Connection, *, receipt_id: str | None = None,
+) -> bool:
+    """Return whether one new Lab-authority receipt fits the bounded outbox."""
+    if receipt_id and connection.execute(
+        "SELECT 1 FROM observation_delivery_outbox WHERE receipt_id=?",
+        (receipt_id,),
+    ).fetchone() is not None:
+        return True
+    try:
+        pending = connection.execute(
+            "SELECT COUNT(*) FROM observation_delivery_outbox "
+            "WHERE acknowledged_at IS NULL"
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        # Rolling upgrades may not have the acknowledgement column yet; the
+        # whole legacy outbox is conservatively treated as pending.
+        pending = connection.execute(
+            "SELECT COUNT(*) FROM observation_delivery_outbox"
+        ).fetchone()[0]
+    return int(pending or 0) < _OUTBOX_CAPACITY
+
+
 def append_delivery_receipt(
     *,
     receipt_kind: str = "treatment",
@@ -2311,13 +2835,22 @@ def append_delivery_receipt(
     if db is not None and not db.in_transaction:
         raise RuntimeError("receipt_requires_main_transaction")
     if db is not None and db.in_transaction:
+        if authority_source == "lab" and not _outbox_capacity_available(
+            db, receipt_id=values["receipt_id"]
+        ):
+            raise RuntimeError("observation_outbox_capacity")
         insert_filter_candidate_outcomes_batch(outcome_seeds or [], db=db)
         return _insert_receipt(db, values)
     from aletheia.storage.repositories import transaction
     with transaction(immediate=True):
         from aletheia.storage.sqlite import get_db
+        connection = db or get_db()
+        if authority_source == "lab" and not _outbox_capacity_available(
+            connection, receipt_id=values["receipt_id"]
+        ):
+            raise RuntimeError("observation_outbox_capacity")
         insert_filter_candidate_outcomes_batch(outcome_seeds or [])
-        return _insert_receipt(db or get_db(), values)
+        return _insert_receipt(connection, values)
 
 
 def _attach_receipt(
@@ -2349,6 +2882,27 @@ def _attach_receipt(
             "authority_epoch": authority_epoch,
             "outcome_source": outcome_source,
         })
+    if authority_source == "lab":
+        # The bounded outbox is itself the backpressure boundary.  Once full,
+        # retain the deterministic baseline decision but do not append another
+        # fallback/capture row that would exceed the declared capacity.  An
+        # existing receipt remains idempotently readable during retries.
+        from aletheia.storage.sqlite import get_db
+
+        receipt_db = db or get_db()
+        if not _outbox_capacity_available(receipt_db, receipt_id=receipt_id):
+            return ObservationTreatmentDecision(**{
+                **decision.__dict__,
+                "payload": dict(baseline),
+                "applied": False,
+                "assignment": "unassigned",
+                "behavior_changed": False,
+                "reason": "outbox_backpressure",
+                "receipt_id": None,
+                "authority_source": authority_source,
+                "authority_epoch": authority_epoch,
+                "outcome_source": outcome_source,
+            })
     receipt = append_delivery_receipt(
         receipt_kind=("treatment" if decision.observation_id is not None else "capture"),
         receipt_id=receipt_id,
@@ -2446,7 +3000,10 @@ def record_owner_action(
             manifest_id=manifest_id,
             manifest_hash=manifest_hash,
             assignment="unassigned",
-            resolution_reason="owner_action_pending",
+            # Preserve the authenticated operator explanation across the
+            # asynchronous Main -> Lab boundary.  The importer uses this
+            # exact value for the lifecycle/audit reason.
+            resolution_reason=reason,
             authority_source=authority.source,
             authority_epoch=authority.epoch,
             actor=actor,
@@ -2477,6 +3034,16 @@ def _apply_owner_action(
     reason = str(row["resolution_reason"] or "owner_action")
     actor = str(row["actor"] or "unknown")
     receipt_id = str(row["receipt_id"])
+    existing_event = connection.execute(
+        "SELECT event_id, generation FROM observation_lifecycle_events "
+        "WHERE source_receipt_id=? ORDER BY generation DESC, created_at DESC, event_id DESC LIMIT 1",
+        (receipt_id,),
+    ).fetchone()
+    if existing_event is not None:
+        # The Lab transaction may be replayed after Main acknowledgement or a
+        # cursor restore.  Return the already committed lifecycle identity
+        # before inspecting the now-terminal predecessor again.
+        return str(existing_event[0]), int(existing_event[1])
     root = connection.execute(
         "SELECT * FROM observation_windows WHERE observation_id=? AND generation=?",
         (observation_id, generation),
@@ -2534,7 +3101,14 @@ def _apply_owner_action(
         )
         spec = _safe_json_object(root["spec_json"])
         spec["stage"] = successor_stage
-        spec["authority_mode"] = "external_authority" if str(successor_stage).startswith("paper_") else "observe_only"
+        paper_successor = str(successor_stage).startswith("paper_") and action in {"admit", "promote"}
+        spec["authority_mode"] = "external_authority" if paper_successor else "observe_only"
+        # Registration is always observe-only.  Only this authenticated owner
+        # transition can opt a successor into a behavior-bearing generation;
+        # the separate Manifest publication still has to prove the adapter,
+        # frozen look, and owner lineage in the same Lab transaction.
+        spec["production_mutation_allowed"] = paper_successor
+        spec["authorizing"] = paper_successor
         spec_json = _json(spec)
         spec_hash = hashlib.sha256(spec_json.encode("utf-8")).hexdigest()
         collect_until = str(root["collect_until"])
@@ -2576,12 +3150,37 @@ def _apply_owner_action(
                 behavior_policy_epoch_ref=contract["behavior_policy_epoch_ref"],
                 behavior_policy_epoch_hash=contract["behavior_policy_epoch_hash"],
                 owner_admission_ref=(
-                    f"owner-action:{receipt_id}" if action == "admit" else contract["owner_admission_ref"]
+                    f"owner-action:{receipt_id}"
+                    if action in {"admit", "promote"}
+                    else contract["owner_admission_ref"]
                 ),
                 started_at=now,
                 effective_until=collect_until,
                 gates=gates,
                 harm_budget=harm_budget,
+                db=connection,
+            )
+        if paper_successor:
+            # Every treatment-bearing successor has a fresh Lab-owned fixed-
+            # look plan before it can publish a Paper Manifest.  The owner
+            # action does not invent a cutoff; publication must freeze the
+            # exact cutoff atomically when the executable contract is issued.
+            predecessor_plan = connection.execute(
+                "SELECT inference_contract_version FROM observation_inference_plans "
+                "WHERE observation_id=? AND generation=?",
+                (observation_id, generation),
+            ).fetchone()
+            register_inference_plan(
+                observation_id=observation_id,
+                generation=next_generation,
+                inference_contract_version=(
+                    str(predecessor_plan[0]) if predecessor_plan else "observation-fixed-look/v1"
+                ),
+                plan={
+                    "source": "owner_action",
+                    "owner_action_receipt_id": receipt_id,
+                    "parent_generation": generation,
+                },
                 db=connection,
             )
         successor_event = _append_lifecycle_event(
@@ -2597,15 +3196,44 @@ def _apply_owner_action(
             dedup_key=f"owner-action-successor:{receipt_id}",
             audit_identity=f"observation-owner:{receipt_id}:successor",
         )
+        if paper_successor:
+            # A Paper stage without a published Manifest is intentionally not
+            # executable yet.  Record that explicit state in the same Lab
+            # transaction so an operator/API cannot mistake admission for
+            # treatment authority.
+            _append_lifecycle_event(
+                connection,
+                observation_id=observation_id,
+                generation=next_generation,
+                to_status=str(successor_stage),
+                action="manifest_not_published",
+                reason="owner_action_pending_manifest",
+                actor=actor,
+                dedup_key=f"owner-action-manifest-pending:{receipt_id}",
+                audit_identity=f"observation-owner:{receipt_id}:manifest-pending",
+            )
         return successor_event, next_generation
+    terminal_status = {
+        "withdraw": "invalidated", "invalidate": "invalidated", "revoke": "invalidated",
+        "close": "aborted", "finalize": "finalized",
+    }.get(action, "active")
+    if action == "finalize":
+        # A forced terminal action must not manufacture a finalized result.
+        # If no immutable evaluation/result exists yet, preserve the evidence
+        # as an aborted generation and leave finalization to the normal kernel
+        # path (or an explicit result-bearing action).
+        result_exists = connection.execute(
+            "SELECT 1 FROM observation_results WHERE observation_id=? AND generation=? LIMIT 1",
+            (observation_id, generation),
+        ).fetchone()
+        if result_exists is None:
+            terminal_status = "aborted"
+            reason = f"{reason}:finalize_without_result"
     event_id = _append_lifecycle_event(
         connection,
         observation_id=observation_id,
         generation=generation,
-        to_status={
-            "withdraw": "invalidated", "invalidate": "invalidated", "revoke": "invalidated",
-            "close": "aborted", "finalize": "finalized",
-        }.get(action, "active"),
+        to_status=terminal_status,
         action=action,
         reason=reason,
         actor=actor,
@@ -2627,6 +3255,76 @@ def _safe_json_object(value: Any) -> dict[str, Any]:
     return dict(decoded) if isinstance(decoded, dict) else {}
 
 
+def _lab_receipt_application_update(
+    lab: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> tuple[str, str, str | None, int | None, str | None, str | None] | None:
+    """Recover a committed Lab application so Main acknowledgement can retry.
+
+    Main acknowledgement is intentionally a second transaction after the Lab
+    commit.  If that transaction is interrupted, the cursor is already ahead;
+    this lookup turns the durable Lab evidence back into the same mutable Main
+    status update without importing the receipt twice.
+    """
+    receipt_id = str(row["receipt_id"])
+    kind = str(row["receipt_kind"] or "")
+    if kind in {"treatment", "capture"}:
+        exposure = lab.execute(
+            "SELECT observation_id, generation FROM observation_exposures "
+            "WHERE source_receipt_id=?",
+            (receipt_id,),
+        ).fetchone()
+        if exposure is not None:
+            return (
+                receipt_id, "applied", str(exposure[0]), int(exposure[1]), None, None,
+            )
+        # Identity-less capture receipts intentionally have no Exposure row;
+        # their durable audit payload is still sufficient acknowledgement proof.
+        audits = lab.execute(
+            "SELECT event_type, payload_json FROM lab_audit_outbox "
+            "WHERE event_type IN ('observation_receipt_unclassified', "
+            "'observation_receipt_rejected_after_terminalization')",
+        ).fetchall()
+        for audit in audits:
+            payload = _safe_json_object(audit[1])
+            if str(payload.get("source_receipt_id") or "") != receipt_id:
+                continue
+            status = (
+                "rejected"
+                if audit[0] == "observation_receipt_rejected_after_terminalization"
+                or payload.get("status") == "rejected"
+                else "applied"
+            )
+            return (
+                receipt_id, status, row["observation_id"], row["generation"], None,
+                payload.get("reason"),
+            )
+        return None
+    if kind == "owner_action":
+        event = lab.execute(
+            "SELECT event_id, observation_id, generation FROM observation_lifecycle_events "
+            "WHERE source_receipt_id=? ORDER BY created_at DESC, event_id DESC LIMIT 1",
+            (receipt_id,),
+        ).fetchone()
+        if event is not None:
+            return (
+                receipt_id, "applied", str(event[1]), int(event[2]), str(event[0]), None,
+            )
+        audits = lab.execute(
+            "SELECT payload_json FROM lab_audit_outbox "
+            "WHERE event_type='observation_owner_action_rejected'",
+        ).fetchall()
+        for audit in audits:
+            payload = _safe_json_object(audit[0])
+            if str(payload.get("source_receipt_id") or "") == receipt_id:
+                return (
+                    receipt_id, "conflicted" if "conflict" in str(payload.get("application_error") or "")
+                    else "rejected", row["observation_id"], row["generation"], None,
+                    str(payload.get("application_error") or "")[:400] or None,
+                )
+    return None
+
+
 def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> dict[str, Any]:
     """At-least-once import from Main outbox; cursor advances only per success."""
     from aletheia.storage.sqlite import get_db
@@ -2636,7 +3334,6 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
         return {"available": False, "reason": "lab_unavailable", "processed": 0}
     try:
         main = get_db()
-        acknowledged: list[int] = []
         with lab_transaction(immediate=True) as lab:
             cursor = lab.execute(
                 "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json "
@@ -2659,10 +3356,22 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                 "SELECT * FROM observation_delivery_outbox WHERE sequence>? ORDER BY sequence LIMIT ?",
                 (watermark, max(1, min(int(limit), 1000))),
             ).fetchall()
+            # A previous Lab commit may have advanced the cursor while Main's
+            # acknowledgement transaction failed.  Rebuild those updates from
+            # canonical Lab evidence before reading the next prefix.
+            pending_ack_rows = main.execute(
+                "SELECT * FROM observation_delivery_outbox "
+                "WHERE acknowledged_at IS NULL AND sequence<=? ORDER BY sequence",
+                (watermark,),
+            ).fetchall()
             processed = 0
             failed: int | None = None
             failed_reason: str | None = None
             application_updates: list[tuple[str, str, str | None, int | None, str | None, str | None]] = []
+            for pending_row in pending_ack_rows:
+                recovered = _lab_receipt_application_update(lab, pending_row)
+                if recovered is not None:
+                    application_updates.append(recovered)
             for row in rows:
                 try:
                     sequence = int(row["sequence"])
@@ -2693,12 +3402,12 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                                 "candidate_key": row["candidate_key"],
                                 "consumer": row["consumer"],
                                 "consumer_stage": row["consumer_stage"],
+                                "receipt": {key: row[key] for key in row.keys()},
                             },
                             dedup_key=f"observation-receipt-capture:{row['receipt_id']}",
                             db=lab,
                         )
                         watermark = sequence
-                        acknowledged.append(watermark)
                         application_updates.append(
                             (str(row["receipt_id"]), "applied", None, None, None, None)
                         )
@@ -2711,6 +3420,83 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                         processed += 1
                         continue
                     if kind in {"treatment", "capture"}:
+                        root = lab.execute(
+                            "SELECT status FROM observation_windows "
+                            "WHERE observation_id=? AND generation=?",
+                            (row["observation_id"], row["generation"]),
+                        ).fetchone()
+                        if root is None:
+                            # A present receipt whose generation was never
+                            # registered is durable transport evidence, not a
+                            # reason to invent an Exposure or block later
+                            # sequence numbers forever.  Advance the cursor
+                            # with an explicit non-authorizing rejection.
+                            enqueue_lab_audit(
+                                event_type="observation_receipt_unclassified",
+                                payload={
+                                    "source_receipt_id": row["receipt_id"],
+                                    "observation_id": row["observation_id"],
+                                    "generation": row["generation"],
+                                    "reason": "observation_generation_root_unavailable",
+                                    "status": "rejected",
+                                    "receipt": {key: row[key] for key in row.keys()},
+                                },
+                                dedup_key=f"observation-receipt-root:{row['receipt_id']}",
+                                observation_id=row["observation_id"],
+                                generation=int(row["generation"]),
+                                db=lab,
+                            )
+                            application_updates.append(
+                                (
+                                    str(row["receipt_id"]), "rejected",
+                                    str(row["observation_id"]), int(row["generation"]),
+                                    None, "observation_generation_root_unavailable",
+                                )
+                            )
+                            watermark = sequence
+                            retry = [item for item in retry if item != watermark]
+                            receipt_chain = _hash({
+                                "prior": receipt_chain,
+                                "sequence": sequence,
+                                "receipt_id": str(row["receipt_id"]),
+                            })
+                            processed += 1
+                            continue
+                        if str(root[0]) != "active":
+                            # Do not append a late Exposure after a terminal
+                            # result was fingerprinted.  Preserve the receipt
+                            # as explicit non-authorizing audit evidence.
+                            enqueue_lab_audit(
+                                event_type="observation_receipt_rejected_after_terminalization",
+                                payload={
+                                    "source_receipt_id": row["receipt_id"],
+                                    "observation_id": row["observation_id"],
+                                    "generation": row["generation"],
+                                    "terminal_status": str(root[0]),
+                                    "reason": "receipt_after_generation_terminalization",
+                                    "receipt": {key: row[key] for key in row.keys()},
+                                },
+                                dedup_key=f"observation-receipt-terminal:{row['receipt_id']}",
+                                observation_id=row["observation_id"],
+                                generation=int(row["generation"]),
+                                db=lab,
+                            )
+                            application_updates.append(
+                                (
+                                    str(row["receipt_id"]), "rejected", str(row["observation_id"]),
+                                    int(row["generation"]), None,
+                                    "receipt_after_generation_terminalization",
+                                )
+                            )
+                            watermark = sequence
+                            retry = [item for item in retry if item != watermark]
+                            receipt_chain = _hash({
+                                "prior": receipt_chain,
+                                "sequence": sequence,
+                                "receipt_id": str(row["receipt_id"]),
+                            })
+                            processed += 1
+                            continue
                         lab.execute(
                             "INSERT OR IGNORE INTO observation_exposures "
                             "(exposure_id, source_receipt_id, receipt_sequence, observation_id, generation, manifest_id, manifest_hash, "
@@ -2816,7 +3602,6 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                             )
                         )
                     watermark = sequence
-                    acknowledged.append(watermark)
                     receipt_chain = _hash({
                         "prior": receipt_chain,
                         "sequence": sequence,
@@ -2845,6 +3630,7 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                             "action": row["owner_action"],
                             "reason": row["resolution_reason"],
                             "application_error": str(exc)[:400],
+                            "receipt": {key: row[key] for key in row.keys()},
                         },
                         dedup_key=f"observation-owner-rejected:{row['receipt_id']}",
                         observation_id=row["observation_id"],
@@ -2853,7 +3639,6 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                     )
                     sequence = int(row["sequence"])
                     watermark = sequence
-                    acknowledged.append(watermark)
                     receipt_chain = _hash({
                         "prior": receipt_chain,
                         "sequence": sequence,
@@ -2924,7 +3709,7 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
         # Acknowledgement is deliberately after the Lab commit. If this Main
         # update fails, the rows remain pending and the next pass retries the
         # acknowledgement without re-importing the canonical exposure.
-        if acknowledged:
+        if application_updates:
             with transaction(immediate=True):
                 main.executemany(
                     "UPDATE observation_delivery_outbox SET acknowledged_at=?, "
@@ -3057,14 +3842,13 @@ def prune_observation_delivery_outbox(
                     if isinstance(payload, dict) and payload.get("source_receipt_id"):
                         covered_receipts.add(str(payload["source_receipt_id"]))
                 import gzip
-                from pathlib import Path
 
                 for archive in lab.execute(
                     "SELECT archive_path, archive_sha256, replay_fingerprint "
                     "FROM observation_archives"
                 ).fetchall():
                     try:
-                        data = Path(str(archive[0])).read_bytes()
+                        data = _resolve_managed_archive_path(str(archive[0])).read_bytes()
                         if hashlib.sha256(data).hexdigest() != str(archive[1]):
                             continue
                         payload = json.loads(gzip.decompress(data))
@@ -3259,6 +4043,8 @@ def observation_bridge_health() -> dict[str, Any]:
                     "outbox_high_watermark": int(pending[2] or 0),
                     "fallback_counts": {str(row[0]): int(row[1]) for row in fallback_rows},
                     "outbox_application_counts": application_counts,
+                    "active_retention_claim_count": None,
+                    "active_retention_claims_by_domain": None,
                     "storage": {"app_db": app_files, "lab_db": lab_files},
                 }
             cursor = lab.execute(
@@ -3272,7 +4058,8 @@ def observation_bridge_health() -> dict[str, Any]:
             ).fetchone()
             manifest_rows = lab.execute(
                 "SELECT manifest_hash, manifest_contract_version, effect_mode, created_at, "
-                "effective_from, effective_until, observation_windows.status "
+                "treatment_adapter_id, treatment_adapter_version, effective_from, "
+                "effective_until, observation_windows.status "
                 "FROM execution_manifests LEFT JOIN observation_windows "
                 "ON observation_windows.observation_id=execution_manifests.observation_id "
                 "AND observation_windows.generation=execution_manifests.generation "
@@ -3285,16 +4072,16 @@ def observation_bridge_health() -> dict[str, Any]:
             snapshot_now = datetime.now(timezone.utc)
             active_rows = []
             for row in manifest_rows:
-                start = datetime.fromisoformat(str(row[4]).replace("Z", "+00:00"))
+                start = datetime.fromisoformat(str(row[6]).replace("Z", "+00:00"))
                 end = (
-                    datetime.fromisoformat(str(row[5]).replace("Z", "+00:00"))
-                    if row[5] is not None else None
+                    datetime.fromisoformat(str(row[7]).replace("Z", "+00:00"))
+                    if row[7] is not None else None
                 )
                 if (
                     start.tzinfo is None
                     or start.utcoffset() != timedelta(0)
                     or (end is not None and (end.tzinfo is None or end.utcoffset() != timedelta(0)))
-                    or (row[6] is not None and str(row[6]) != "active")
+                    or (row[8] is not None and str(row[8]) != "active")
                 ):
                     raise ValueError("manifest_interval_timezone_unavailable")
                 if start <= snapshot_now and (end is None or end > snapshot_now):
@@ -3317,6 +4104,13 @@ def observation_bridge_health() -> dict[str, Any]:
             claims = lab.execute(
                 "SELECT COUNT(*) FROM observation_retention_claims WHERE status='active'"
             ).fetchone()[0]
+            claim_rows = lab.execute(
+                "SELECT claim_domain, COUNT(*) FROM observation_retention_claims "
+                "WHERE status='active' GROUP BY claim_domain ORDER BY claim_domain"
+            ).fetchall()
+            claims_by_domain = {
+                str(row[0]): int(row[1]) for row in claim_rows
+            }
             archives = lab.execute("SELECT COUNT(*) FROM observation_archives").fetchone()[0]
             results = lab.execute("SELECT COUNT(*) FROM observation_results").fetchone()[0]
             imported_exposures = lab.execute(
@@ -3324,7 +4118,9 @@ def observation_bridge_health() -> dict[str, Any]:
             ).fetchone()[0]
             archive_backlog = lab.execute(
                 "SELECT COUNT(*) FROM observation_windows WHERE status IN ('finalized','invalidated','aborted') "
-                "AND (artifact_path IS NULL OR artifact_sha256 IS NULL)"
+                "AND NOT EXISTS (SELECT 1 FROM observation_archives a "
+                "WHERE a.observation_id=observation_windows.observation_id "
+                "AND a.generation=observation_windows.generation)"
             ).fetchone()[0]
             hot_rows = {
                 table: int(lab.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)
@@ -3385,9 +4181,26 @@ def observation_bridge_health() -> dict[str, Any]:
                 "latest_manifest_age_seconds": latest_manifest_age,
                 "manifest_contracts": sorted({str(row[1]) for row in active_rows}),
                 "manifest_effect_modes": sorted({str(row[2]) for row in active_rows}),
+                "manifest_adapter_versions": sorted({
+                    f"{row[4]}:{row[5]}" for row in active_rows
+                }),
+                "manifest_contract_compatibility": {
+                    "supported_versions": sorted(_SUPPORTED_MANIFEST_VERSIONS),
+                    "active_versions": sorted({str(row[1]) for row in active_rows}),
+                    "unsupported_versions": sorted({
+                        str(row[1]) for row in active_rows
+                        if str(row[1]) not in _SUPPORTED_MANIFEST_VERSIONS
+                    }),
+                    "compatible": all(
+                        str(row[1]) in _SUPPORTED_MANIFEST_VERSIONS
+                        and _adapter(str(row[4]), str(row[5])) is not None
+                        for row in active_rows
+                    ),
+                },
                 "active_manifest_count": len(active_rows),
                 "active_revocation_count": len(effective_revocations),
                 "active_retention_claim_count": int(claims or 0),
+                "active_retention_claims_by_domain": claims_by_domain,
                 "archive_count": int(archives or 0),
                 "result_count": int(results or 0),
                 "archive_backlog_count": int(archive_backlog or 0),
@@ -3413,6 +4226,7 @@ __all__ = [
     "TreatmentAdapter",
     "append_delivery_receipt",
     "append_lifecycle_event",
+    "build_authority_cutover_proof",
     "compact_finalized_generations",
     "consume_inference_plan",
     "enqueue_lab_audit",
@@ -3423,6 +4237,7 @@ __all__ = [
     "mirror_lab_audit_outbox",
     "observation_bridge_health",
     "record_archive",
+    "record_authority_cutover_proof",
     "record_generation_contract",
     "record_observation_evaluation",
     "record_observation_nomination",

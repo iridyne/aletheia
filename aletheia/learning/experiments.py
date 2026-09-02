@@ -118,6 +118,7 @@ def _resolve_numeric_via_observation_lab(
     from aletheia.observation_lab.canonical import (
         append_delivery_receipt,
         get_authority_source,
+        _outbox_capacity_available,
         register_treatment_adapter,
         resolve_observation_treatment,
     )
@@ -126,9 +127,6 @@ def _resolve_numeric_via_observation_lab(
     treatment_value = float(treatment)
     if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
         raise ValueError("numeric Learning treatment values must be finite")
-    if require_outcome_seed and len(outcome_seeds or []) != 1:
-        raise RuntimeError("learning_outcome_seed_unavailable")
-
     authority = get_authority_source(db=runtime_db)
     receipt_id = (
         "observation-treatment:"
@@ -145,6 +143,20 @@ def _resolve_numeric_via_observation_lab(
         if candidate_key
         else uuid4().hex
     )
+    if deferred_exposure_writes is not None and authority.source == "lab":
+        from aletheia.storage.sqlite import get_db
+
+        if not _outbox_capacity_available(runtime_db or get_db(), receipt_id=receipt_id):
+            # Do not queue a receipt that cannot fit when the publication
+            # transaction later commits.  The already-computed score stays on
+            # the deterministic baseline and the ordinary Paper publication
+            # can continue while the Lab bridge drains.
+            return InfluenceDecision(
+                baseline_value, False, "unassigned", "outbox_backpressure",
+            )
+    if require_outcome_seed and len(outcome_seeds or []) != 1:
+        if authority.source != "lab":
+            raise RuntimeError("learning_outcome_seed_unavailable")
     persist_receipt = deferred_exposure_writes is None
     adapter_id = str((manifest or {}).get("treatment_adapter_id") or f"learning.numeric:{path_id}")
     adapter_version = str((manifest or {}).get("treatment_adapter_version") or "v1")
@@ -203,7 +215,14 @@ def _resolve_numeric_via_observation_lab(
             "producer_commit": (manifest or {}).get("producer_commit"),
         }
         if persist_receipt:
-            receipt = append_delivery_receipt(db=runtime_db, **receipt_values)
+            try:
+                receipt = append_delivery_receipt(db=runtime_db, **receipt_values)
+            except RuntimeError as exc:
+                if str(exc) != "observation_outbox_capacity":
+                    raise
+                # The bounded Lab transport is full.  Keep the producer on
+                # deterministic baseline without growing the backlog.
+                receipt = None
         else:
             deferred_exposure_writes.append({"canonical_receipt": receipt_values})
             receipt = receipt_id
@@ -232,7 +251,9 @@ def _resolve_numeric_via_observation_lab(
     if isinstance(payload_value, bool) or not isinstance(payload_value, (int, float)):
         payload_value = baseline_value
     payload_value = float(payload_value)
-    if not persist_receipt:
+    if not persist_receipt and not (
+        decision.reason == "outbox_backpressure" and decision.receipt_id is None
+    ):
         deferred_exposure_writes.append({
             "canonical_receipt": {
                 "receipt_kind": "treatment",

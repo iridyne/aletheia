@@ -28,11 +28,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+
+# Checkpoints prove durable evidence identity, not scheduler heartbeats or
+# mirror retry counters.  The latter change during a quiet bridge tick and
+# must not make a coherent restore look divergent.
+_CHECKPOINT_EXCLUDED_TABLES = frozenset({"observation_job_health"})
+_CHECKPOINT_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "observation_import_cursors": (
+        "source_name", "contiguous_sequence", "retry_sequences_json",
+        "source_checkpoint_json", "source_checkpoint_fingerprint",
+    ),
+    "lab_audit_outbox": (
+        "audit_id", "dedup_key", "event_type", "observation_id", "generation",
+        "payload_json",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -134,17 +151,14 @@ def _lab_schema_state() -> tuple[str, int]:
 @contextmanager
 def _lab_read_snapshot():
     """Hold one consistent Lab read transaction across a checkpoint digest."""
-    from aletheia.observation_lab.db import get_lab_db
+    # Checkpoint computation is a read-only proof surface.  ``get_lab_db``
+    # materializes the schema when the file is missing, which would turn a
+    # missing/corrupt Lab restore into a new empty authority.  Use the physical
+    # read-only boundary so absence remains an explicit proof failure.
+    from aletheia.observation_lab.db import readonly_lab_db
 
-    db = get_lab_db()
-    owns_transaction = not db.in_transaction
-    if owns_transaction:
-        db.execute("BEGIN")
-    try:
+    with readonly_lab_db() as db:
         yield db
-    finally:
-        if owns_transaction and db.in_transaction:
-            db.rollback()
 
 
 def _json_value(value: Any) -> Any:
@@ -169,14 +183,21 @@ def _lab_state_fingerprint() -> str:
         material: list[Any] = []
         for table in tables:
             name = str(table["name"])
+            if name in _CHECKPOINT_EXCLUDED_TABLES:
+                continue
             columns = [
                 str(row["name"])
                 for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
             ]
+            selected_columns = _CHECKPOINT_TABLE_COLUMNS.get(name, tuple(columns))
+            if not selected_columns:
+                continue
+            if any(column not in columns for column in selected_columns):
+                raise RuntimeError(f"checkpoint_lab_schema_unavailable:{name}")
             rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
             encoded_rows = sorted(
                 [
-                    [_json_value(row[column]) for column in columns]
+                    [_json_value(row[column]) for column in selected_columns]
                     for row in rows
                 ],
                 key=_canonical_json,
@@ -184,7 +205,7 @@ def _lab_state_fingerprint() -> str:
             material.append({
                 "name": name,
                 "sql": table["sql"],
-                "columns": columns,
+                "columns": list(selected_columns),
                 "rows": encoded_rows,
             })
     return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
@@ -246,13 +267,23 @@ def _fingerprint(
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
+def compute_joint_checkpoint(
+    *, notes: str | None = None, create_lab: bool = True,
+) -> JointCheckpoint:
     """Snapshot current app + lab + manifest state as a fingerprint.
 
     Does NOT persist. Callers use ``save_joint_checkpoint`` to append. Kept
     separate so tests and CLI can inspect the current shape without touching
     the ledger.
     """
+    if create_lab:
+        # Explicit checkpoint creation is an operator/runner write boundary;
+        # materialize the Lab schema only for that caller.  Verification and
+        # runtime resolution can pass ``create_lab=False`` to preserve a
+        # missing Lab as unavailable evidence.
+        from aletheia.observation_lab.db import get_lab_db
+
+        get_lab_db()
     head, count = _read_app_migration_state()
     outbox_watermark, outbox_pending, outbox_fingerprint = _read_app_outbox_state()
     with _lab_read_snapshot():
@@ -334,11 +365,14 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
 
 def latest_joint_checkpoint() -> JointCheckpoint | None:
     """Read the most recent stored checkpoint, or None on a fresh Lab."""
-    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.db import readonly_lab_db
 
-    row = get_lab_db().execute(
-        "SELECT * FROM joint_checkpoints ORDER BY recorded_at DESC LIMIT 1"
-    ).fetchone()
+    with readonly_lab_db(allow_missing=True) as db:
+        if db is None:
+            return None
+        row = db.execute(
+            "SELECT * FROM joint_checkpoints ORDER BY recorded_at DESC LIMIT 1"
+        ).fetchone()
     if row is None:
         return None
     return JointCheckpoint(
@@ -360,7 +394,7 @@ def latest_joint_checkpoint() -> JointCheckpoint | None:
     )
 
 
-def verify_joint_checkpoint() -> CheckpointVerification:
+def verify_joint_checkpoint(*, create_lab: bool = True) -> CheckpointVerification:
     """Compare current joint state against the latest stored checkpoint.
 
     Returns:
@@ -370,8 +404,28 @@ def verify_joint_checkpoint() -> CheckpointVerification:
       silently proceed; failing closed on the affected Observations is
       the required response per new #1072 §"Storage and runtime boundary".
     """
-    current = compute_joint_checkpoint()
-    last = latest_joint_checkpoint()
+    try:
+        current = compute_joint_checkpoint(create_lab=create_lab)
+    except (FileNotFoundError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
+        try:
+            last = latest_joint_checkpoint()
+        except (FileNotFoundError, OSError, sqlite3.Error, ValueError, TypeError):
+            last = None
+        return CheckpointVerification(
+            ok=False,
+            last=last,
+            current_fingerprint="<unavailable>",
+            reason="lab_unavailable",
+        )
+    try:
+        last = latest_joint_checkpoint()
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError, TypeError):
+        return CheckpointVerification(
+            ok=False,
+            last=None,
+            current_fingerprint=current.joint_fingerprint,
+            reason="lab_unavailable",
+        )
     if (
         current.main_outbox_high_watermark < 0
         or current.main_outbox_pending_count < 0

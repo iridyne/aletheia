@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -360,6 +361,47 @@ def test_legacy_numeric_caller_uses_lab_seam_after_cutover(monkeypatch):
     assert tuple(row) == ("lab", "candidate-1")
 
 
+def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monkeypatch):
+    from aletheia.learning import experiments
+    from aletheia.observation_lab import canonical
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        set_authority_source,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(canonical, "_OUTBOX_CAPACITY", 1)
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    set_authority_source("lab", actor="owner", reason="deferred-backpressure-test")
+    append_delivery_receipt(
+        receipt_id="backpressure-existing",
+        assignment="unassigned",
+        resolution_reason="test",
+        authority_source="lab",
+    )
+    deferred: list[dict] = []
+    decision = experiments.apply_numeric_treatment(
+        path_id="ranker_case_score",
+        scope={"feature": "score"},
+        action={"delta": 1},
+        source_cohort="test",
+        target_horizon="24h",
+        candidate_key="backpressure-candidate",
+        baseline=1.0,
+        treatment=2.0,
+        consumer="test",
+        consumer_stage="score",
+        deferred_exposure_writes=deferred,
+    )
+
+    assert decision.value == 1.0
+    assert decision.reason == "outbox_backpressure"
+    assert deferred == []
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM observation_delivery_outbox"
+    ).fetchone()[0] == 1
+
+
 def test_observe_only_and_deny_tombstone_never_change_baseline():
     from aletheia.observation_lab.canonical import (
         register_treatment_adapter,
@@ -559,6 +601,46 @@ def test_lab_audit_outbox_mirrors_idempotently(monkeypatch, tmp_path):
     assert len([line for line in lines if audit_id in line]) == 1
 
 
+def test_inference_plan_rejects_evaluation_from_another_generation():
+    from aletheia.observation_lab.canonical import (
+        consume_inference_plan,
+        freeze_inference_plan,
+        record_observation_evaluation,
+        register_inference_plan,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+
+    db = get_lab_db()
+    for observation_id in ("obs-plan-a", "obs-plan-b"):
+        db.execute(
+            "INSERT INTO observation_windows "
+            "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+            "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+            "VALUES (?, 'test', 'v1', 1, ?, 'observe_only', 'active', '{}', ?, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00', "
+            "'2026-01-03T00:00:00+00:00')",
+            (observation_id, f"slot:{observation_id}", f"spec:{observation_id}"),
+        )
+    plan_id = register_inference_plan(
+        observation_id="obs-plan-a", generation=1,
+        inference_contract_version="look/v1", plan={"look": 1},
+    )
+    freeze_inference_plan(plan_id, cutoff={"sequence": 1})
+    evaluation_id = record_observation_evaluation(
+        observation_id="obs-plan-b", generation=1, evaluation_kind="monitoring",
+        source_cutoff="main:sequence=1", input_fingerprint="input-b",
+        exposure_fingerprint="exposure-b", outcome_fingerprint="outcome-b",
+        result={"verdict": "hold"}, verdict="hold", disposition="monitoring",
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="inference_evaluation_identity_mismatch"):
+        consume_inference_plan(plan_id, evaluation_id=evaluation_id)
+    assert db.execute(
+        "SELECT status, consumed_evaluation_id FROM observation_inference_plans WHERE plan_id=?",
+        (plan_id,),
+    ).fetchone()["status"] == "frozen"
+
+
 def test_importer_does_not_treat_a_numeric_outbox_gap_as_missing_evidence():
     from aletheia.observation_lab.canonical import import_delivery_receipts
     from aletheia.observation_lab.db import get_lab_db
@@ -747,6 +829,26 @@ def test_owner_admission_creates_lab_successor_and_applied_receipt():
         (root["observation_id"],),
     ).fetchone()
     assert tuple(contract) == ("paper_10", 1, f"owner-action:{receipt_id}")
+    successor = get_lab_db().execute(
+        "SELECT spec_json FROM observation_windows WHERE observation_id=? AND generation=2",
+        (root["observation_id"],),
+    ).fetchone()
+    successor_spec = json.loads(successor["spec_json"])
+    assert successor_spec["production_mutation_allowed"] is True
+    assert successor_spec["authorizing"] is True
+    plan = get_lab_db().execute(
+        "SELECT status, plan_json FROM observation_inference_plans "
+        "WHERE observation_id=? AND generation=2",
+        (root["observation_id"],),
+    ).fetchone()
+    assert plan["status"] == "collecting"
+    assert json.loads(plan["plan_json"])["owner_action_receipt_id"] == receipt_id
+    assert get_lab_db().execute(
+        "SELECT 1 FROM observation_lifecycle_events "
+        "WHERE observation_id=? AND generation=2 AND action='manifest_not_published' "
+        "AND reason='owner_action_pending_manifest'",
+        (root["observation_id"],),
+    ).fetchone() is not None
     receipt = get_db().execute(
         "SELECT lab_application_status, lab_applied_generation, lab_applied_event_id "
         "FROM observation_delivery_outbox WHERE receipt_id=?",
@@ -755,6 +857,108 @@ def test_owner_admission_creates_lab_successor_and_applied_receipt():
     assert receipt["lab_application_status"] == "applied"
     assert receipt["lab_applied_generation"] == 2
     assert receipt["lab_applied_event_id"]
+
+
+def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
+    from aletheia.observation_lab.canonical import (
+        import_delivery_receipts,
+        publish_manifest_with_lifecycle,
+        record_owner_action,
+        register_observation_spec,
+        register_treatment_adapter,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.manifest import build_manifest
+
+    register_treatment_adapter(_Adapter(), replace=True)
+    set_authority_source("lab", actor="owner", reason="paper-publication-test")
+    root = register_observation_spec({
+        "filter_name": "paper-publication",
+        "stage": "shadow",
+        "scanner_family": "test",
+        "direction": "long",
+        "market_type": "spot",
+        "horizon": "24h",
+        "control": {"value": 1.0},
+        "treatment": {"value": 2.0},
+    })
+    receipt_id = record_owner_action(
+        action="admit",
+        actor="owner",
+        reason="owner approved paper publication",
+        observation_id=root["observation_id"],
+        generation=1,
+        dedup_key="paper-publication:admit",
+    )
+    assert import_delivery_receipts()["processed"] == 1
+    lab = get_lab_db()
+    successor = lab.execute(
+        "SELECT * FROM observation_windows WHERE observation_id=? AND generation=2",
+        (root["observation_id"],),
+    ).fetchone()
+    contract = lab.execute(
+        "SELECT * FROM observation_generation_contracts WHERE observation_id=? AND generation=2",
+        (root["observation_id"],),
+    ).fetchone()
+    plan = lab.execute(
+        "SELECT * FROM observation_inference_plans WHERE observation_id=? AND generation=2",
+        (root["observation_id"],),
+    ).fetchone()
+    assert plan["status"] == "collecting"
+    manifest = build_manifest(
+        observation_id=root["observation_id"],
+        generation=2,
+        spec_hash=successor["spec_hash"],
+        treatment_adapter_id="test-adapter",
+        treatment_adapter_version="v1",
+        assignment_policy=contract["assignment_policy"],
+        assignment_salt=contract["assignment_salt"],
+        assignment_namespace_key=contract["assignment_namespace_key"],
+        assignment_hash_version=contract["assignment_hash_version"],
+        assignment_unit_key_template=contract["assignment_unit_key_template"],
+        allocation_pct=contract["allocation_pct"],
+        control_payload={"value": 1.0},
+        treatment_payload={"value": 2.0},
+        eligible_population={"path_id": "paper-publication"},
+        behavior_contract_hash=contract["behavior_contract_hash"],
+        interference_key="paper-publication",
+        composability_contract="exclusive",
+        effective_from=successor["started_at"],
+        effective_until=contract["effective_until"],
+        deterministic_baseline={"value": 1.0},
+        unavailable_fallback="baseline",
+        owner_admission_ref=f"owner-action:{receipt_id}",
+        effect_mode="paper_treatment",
+    )
+    publication = publish_manifest_with_lifecycle(
+        manifest,
+        actor="owner",
+        reason="paper manifest approved",
+        inference_plan={
+            "inference_contract_version": plan["inference_contract_version"],
+            "plan": json.loads(plan["plan_json"]),
+            "cutoff": {"sequence": 1},
+        },
+    )
+    assert publication["published"] is True
+    assert publication["inference_plan_id"] == plan["plan_id"]
+    assert lab.execute(
+        "SELECT status, cutoff_json FROM observation_inference_plans WHERE plan_id=?",
+        (plan["plan_id"],),
+    ).fetchone()["status"] == "frozen"
+    assert lab.execute(
+        "SELECT 1 FROM execution_manifests WHERE manifest_hash=?",
+        (manifest.manifest_hash,),
+    ).fetchone() is not None
+    assert lab.execute(
+        "SELECT 1 FROM observation_lifecycle_events WHERE dedup_key=?",
+        (f"manifest-publish:{manifest.manifest_hash}",),
+    ).fetchone() is not None
+    assert lab.execute(
+        "SELECT 1 FROM lab_audit_outbox WHERE dedup_key=?",
+        (f"observation-lifecycle:manifest-publish:{manifest.manifest_hash}",),
+    ).fetchone() is not None
 
 
 def test_main_delivery_outbox_is_append_only_until_acknowledged():

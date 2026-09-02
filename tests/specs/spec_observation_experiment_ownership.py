@@ -27,6 +27,9 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
     "aletheia/analytics/alpha_attribution.py",
     "aletheia/analytics/profit_gradient_evidence.py",
+    # Backup verification must inspect legacy rows so an unproven cutover
+    # cannot be presented as an authoritative recovery checkpoint.
+    "aletheia/backup/verify.py",
     "aletheia/cli/data_cmd.py",
     "aletheia/cli/learning_cmd.py",
     "aletheia/cli/observe_cmd.py",
