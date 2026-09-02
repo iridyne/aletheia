@@ -11,11 +11,11 @@ NOT run here — too slow for an unattended update path.
 """
 
 import logging
-import os
 import subprocess
 
 from aletheia.config.loader import _PROJECT_ROOT
 from aletheia.gateway.pidfile import _no_window_kwargs
+from aletheia.update.process_env import safe_env
 
 logger = logging.getLogger("aletheia.update.smoke")
 
@@ -27,16 +27,9 @@ _FAST_TESTS = [
     "tests/test_workflow_routes.py",
 ]
 
-# #136: strip every exchange/API credential prefix the app reads from os.environ
-# (COINALYZE_/FRED_ are read directly; OKX_/BINANCE_ for cross-broker parity).
-_SECRET_PREFIXES = ("BITGET_", "OKX_", "BINANCE_", "OPENAI_", "ANTHROPIC_", "LLM_",
-                    "TELEGRAM_BOT_TOKEN", "COINALYZE_", "FRED_")
-
-
 def _safe_env() -> dict:
     """Return os.environ with secret-bearing keys stripped."""
-    return {k: v for k, v in os.environ.items()
-            if not k.startswith(_SECRET_PREFIXES)}
+    return safe_env()
 
 
 def run_smoke_check() -> dict:

@@ -49,6 +49,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from aletheia.backup.restore import RestoreService
 from aletheia.backup.service import BackupService
 from aletheia.config.loader import get_data_dir, load_config
+from aletheia.update.process_env import safe_env
 
 HOST_ROOT_ENV = "ALETHEIA_HOST_ROOT"
 FEED_URL_ENV = "ALETHEIA_UPDATE_FEED_URL"
@@ -69,6 +70,7 @@ _ACTIVE_PHASES = {
     "rolling_back",
 }
 _STAGE_LOCK_TTL_SEC = 60 * 60
+_DOWNLOAD_TIMEOUT_SEC = 120.0
 _stage_thread_lock = threading.Lock()
 _stage_thread: threading.Thread | None = None
 _LOCAL_RELEASE_TIMESTAMP = re.compile(r"\.local-(\d{14})$")
@@ -526,13 +528,24 @@ def _download_artifact(
     expected_hash = str(artifact["sha256"])
     url = str(artifact["url"])
     parsed = urlparse(url)
+    deadline = time.monotonic() + _DOWNLOAD_TIMEOUT_SEC
+
+    def ensure_deadline() -> None:
+        if time.monotonic() >= deadline:
+            raise PackagedUpdateError(
+                "update_download_timeout",
+                f"update artifact download exceeded {_DOWNLOAD_TIMEOUT_SEC:g}s",
+            )
+
     try:
+        ensure_deadline()
         if parsed.scheme == "file":
             source = Path(parsed.path)
             total = source.stat().st_size
             copied = 0
             with source.open("rb") as src, partial.open("wb") as dst:
                 while chunk := src.read(1024 * 1024):
+                    ensure_deadline()
                     dst.write(chunk)
                     copied += len(chunk)
                     _write_state(
@@ -550,7 +563,7 @@ def _download_artifact(
                 "GET",
                 url,
                 follow_redirects=True,
-                timeout=120.0,
+                timeout=30.0,
                 headers=_request_headers(),
             ) as response:
                 response.raise_for_status()
@@ -558,6 +571,7 @@ def _download_artifact(
                 copied = 0
                 with partial.open("wb") as dst:
                     for chunk in response.iter_bytes(1024 * 1024):
+                        ensure_deadline()
                         dst.write(chunk)
                         copied += len(chunk)
                         _write_state(
@@ -568,9 +582,17 @@ def _download_artifact(
                             progress=(copied / total) if total else None,
                             message="Downloading update payload",
                         )
+    except PackagedUpdateError:
+        partial.unlink(missing_ok=True)
+        raise
     except (OSError, httpx.HTTPError) as exc:
         partial.unlink(missing_ok=True)
         raise PackagedUpdateError("update_download_failed", str(exc)) from exc
+    try:
+        ensure_deadline()
+    except PackagedUpdateError:
+        partial.unlink(missing_ok=True)
+        raise
     if partial.stat().st_size != expected_size:
         partial.unlink(missing_ok=True)
         raise PackagedUpdateError("update_artifact_size_mismatch")
@@ -644,7 +666,7 @@ def _preflight_candidate(
         expected_sha=expected_sha,
     )
     executable = Path(str(manifest["entrypoint_path"]))
-    env = dict(os.environ)
+    env = safe_env()
     env[PACKAGED_ENV] = "1"
     env[HOST_ROOT_ENV] = str(host_root())
     env["ALETHEIA_DATA_DIR"] = str(data_copy)

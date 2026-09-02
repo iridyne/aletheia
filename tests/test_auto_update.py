@@ -70,6 +70,17 @@ def test_local_or_revoked_tag_is_not_a_candidate(tmp_path, monkeypatch):
     assert auto.run()["reason"] == "up_to_date"
 
 
+def test_local_tag_discovery_failure_does_not_report_up_to_date(tmp_path, monkeypatch):
+    from aletheia.update import auto, git_ops
+
+    _linux_source(monkeypatch)
+    monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
+    monkeypatch.setattr(git_ops, "remote_tag_names", lambda: {"v1.1.0"})
+    monkeypatch.setattr(git_ops, "tag_names", lambda: None)
+
+    assert auto.run()["reason"] == "local_tag_discovery_failed"
+
+
 def test_release_fetch_is_master_plus_tags(monkeypatch):
     from aletheia.update import git_ops
 
@@ -258,6 +269,38 @@ def test_candidate_frontend_always_installs_worktree_dependencies(tmp_path, monk
     assert calls == [["ci"], ["run", "build"]]
 
 
+def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.update import auto, git_ops
+
+    root = tmp_path / "candidates"
+    monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
+    monkeypatch.setattr(git_ops, "_git", lambda *_args: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        auto,
+        "RestoreService",
+        lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
+    )
+    monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
+    monkeypatch.setattr(
+        auto,
+        "_run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="RuntimeError: smoke_stage=fast_tests; smoke_detail=workflow route mismatch",
+        ),
+    )
+
+    with pytest.raises(auto.AutoUpdateError) as error:
+        auto._candidate_preflight("target", tmp_path / "backup.tar")
+
+    assert error.value.reason == "candidate_preflight_failed"
+    assert "smoke_stage=fast_tests" in error.value.detail
+    assert "workflow route mismatch" in error.value.detail
+
+
 def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     from aletheia.update import auto
 
@@ -392,6 +435,21 @@ def test_gateway_command_start_slow_start_is_ok(monkeypatch):
     assert result["ok"] is False
 
 
+def test_auto_run_command_timeout_is_classified(monkeypatch):
+    from aletheia.update import auto
+
+    monkeypatch.setattr(
+        auto.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired(["uv"], 300)),
+    )
+
+    result = auto._run(["uv"], cwd=Path("."), timeout=3)
+
+    assert result.returncode == 124
+    assert "3s" in result.stderr
+
+
 def test_nonblocking_flock_excludes_concurrent_timer(tmp_path, monkeypatch):
     from aletheia.update import auto
 
@@ -416,6 +474,23 @@ def test_systemd_units_are_user_timer_contract(monkeypatch):
     assert "OnUnitInactiveSec=5min" in units["aletheia-auto-update.timer"]
     assert "Persistent=true" in units["aletheia-auto-update.timer"]
     assert "RandomizedDelaySec=30s" in units["aletheia-auto-update.timer"]
+
+
+def test_systemctl_timeout_has_stable_reason(monkeypatch):
+    from aletheia.update import auto
+
+    monkeypatch.setattr(
+        auto.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(["systemctl"], auto._SYSTEMCTL_TIMEOUT_SEC)
+        ),
+    )
+
+    with pytest.raises(auto.AutoUpdateError) as error:
+        auto._systemctl("daemon-reload")
+
+    assert error.value.reason == "systemd_user_operation_timeout"
 
 
 def test_auto_update_requires_explicit_paper_runtime_role(monkeypatch):

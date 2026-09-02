@@ -1,7 +1,7 @@
 """Shared test fixtures + safety guards.
 
-`bitget_demo` (now the default `paper_execution_mode`) places REAL orders on Bitget's
-demo API. Secrets are read from the OS keyring first, which the per-test `tmp_path`
+`paper_internal` is the default `paper_execution_mode`; `bitget_demo` places REAL
+orders on Bitget's demo API. Secrets are read from the OS keyring first, which the per-test `tmp_path`
 DATA_DIR monkeypatch does NOT sandbox — so without a guard an unmocked test that runs
 paper_trader to a trade could fire a real demo order over the network during pytest.
 

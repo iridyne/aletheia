@@ -16,6 +16,7 @@ from aletheia.gateway.pidfile import _no_window_kwargs
 logger = logging.getLogger("aletheia.update.git")
 
 REPO_ROOT = _PROJECT_ROOT
+_GIT_TIMEOUT_SEC = 60
 
 
 def git_available() -> bool:
@@ -23,11 +24,23 @@ def git_available() -> bool:
 
 
 def _git(*args) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(REPO_ROOT), capture_output=True, text=True,
-        **_no_window_kwargs(),
-    )
+    command = ["git", *args]
+    try:
+        return subprocess.run(
+            command,
+            cwd=str(REPO_ROOT), capture_output=True, text=True,
+            timeout=_GIT_TIMEOUT_SEC,
+            **_no_window_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            "",
+            f"git command exceeded {_GIT_TIMEOUT_SEC}s",
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, "", str(exc))
 
 
 def is_repo() -> bool:
@@ -74,12 +87,24 @@ def _fetch_with_https_fallback(*args: str) -> subprocess.CompletedProcess:
     env["GIT_CONFIG_COUNT"] = "1"
     env["GIT_CONFIG_KEY_0"] = f"url.https://{host}/.insteadOf"
     env["GIT_CONFIG_VALUE_0"] = f"git@{host}:"
-    r2 = subprocess.run(
-        ["git", "fetch", *args],
-        cwd=str(REPO_ROOT), capture_output=True, text=True,
-        env=env,
-        **_no_window_kwargs(),
-    )
+    fallback_command = ["git", "fetch", *args]
+    try:
+        r2 = subprocess.run(
+            fallback_command,
+            cwd=str(REPO_ROOT), capture_output=True, text=True,
+            env=env,
+            timeout=_GIT_TIMEOUT_SEC,
+            **_no_window_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        r2 = subprocess.CompletedProcess(
+            fallback_command,
+            124,
+            "",
+            f"git command exceeded {_GIT_TIMEOUT_SEC}s",
+        )
+    except OSError as exc:
+        r2 = subprocess.CompletedProcess(fallback_command, 127, "", str(exc))
     if r2.returncode == 0:
         return r2
     combined = "; ".join(filter(None, [r.stderr.strip(), r2.stderr.strip()]))
@@ -105,10 +130,10 @@ def fetch_release_tags() -> dict:
     return {"ok": True}
 
 
-def tag_names() -> list[str]:
-    """Return local tag names after a successful fetch, or an empty list on error."""
+def tag_names() -> list[str] | None:
+    """Return local tag names, or ``None`` when Git cannot enumerate tags."""
     r = _git("tag", "--list")
-    return [line.strip() for line in r.stdout.splitlines() if line.strip()] if r.returncode == 0 else []
+    return [line.strip() for line in r.stdout.splitlines() if line.strip()] if r.returncode == 0 else None
 
 
 def remote_tag_names() -> set[str] | None:
@@ -188,10 +213,11 @@ def is_worktree_dirty() -> bool:
     return bool(r.stdout.strip())
 
 
-def changed_files(old: str, new: str) -> list[str]:
+def changed_files(old: str, new: str) -> list[str] | None:
+    """Return changed paths, or ``None`` when Git cannot classify the diff."""
     r = _git("diff", "--name-only", f"{old}..{new}")
     if r.returncode != 0:
-        return []
+        return None
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
 
 
