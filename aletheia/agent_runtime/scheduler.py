@@ -1189,6 +1189,17 @@ def _initial_learning_evaluator_run_time(
     return min(durable_due, default_run)
 
 
+def _observation_lab_owns_experiment_cycle() -> bool:
+    """Keep Main's legacy evaluator/lifecycle jobs out of Lab authority mode."""
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except Exception as exc:  # fail closed on an unreadable authority boundary
+        logger.warning("Observation experiment authority unavailable at scheduler startup: %s", exc)
+        return True
+
+
 def _run_pricing_reference_refresh() -> None:
     try:
         from aletheia.economics.pricing_sync import start_pricing_refresh
@@ -1566,41 +1577,44 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
     )
-    # AT-01 evaluator is measurement-only and remains available while autonomous
-    # Learning is disabled or layered pause is active.  Lifecycle control is a
-    # separate autonomous job and is stopped by the shared Learning gate.
-    _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
-    _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
-        _learning_interval,
-    )
-    _scheduler.add_job(
-        _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
-        "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
-        misfire_grace_time=300, max_instances=1, coalesce=True,
-        executor="learning_measurement",
-        next_run_time=_learning_evaluator_initial_run,
-    )
-    _scheduler.add_job(
-        _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
-        "date", run_date=datetime.now() + timedelta(minutes=2),
-        id="learning_measurement_startup_catchup", misfire_grace_time=None,
-        executor="learning_measurement",
-    )
-    _scheduler.add_job(
-        _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
-        "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
-        misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=4),
-    )
-    _scheduler.add_job(
-        _guarded(
-            "learning_lifecycle_audit_reconciler",
-            _run_learning_lifecycle_audit_reconciler,
-        ),
-        "interval", minutes=5, id="learning_lifecycle_audit_reconciler",
-        misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=5),
-    )
+    # AT-01 evaluator/lifecycle jobs remain a legacy compatibility lane only.
+    # Once Lab is authoritative, the observation bridge/runner owns this cycle;
+    # registering the old jobs would leave two lifecycle authorities in Main.
+    if not _observation_lab_owns_experiment_cycle():
+        _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
+        _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
+            _learning_interval,
+        )
+        _scheduler.add_job(
+            _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
+            "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
+            misfire_grace_time=300, max_instances=1, coalesce=True,
+            executor="learning_measurement",
+            next_run_time=_learning_evaluator_initial_run,
+        )
+        _scheduler.add_job(
+            _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
+            "date", run_date=datetime.now() + timedelta(minutes=2),
+            id="learning_measurement_startup_catchup", misfire_grace_time=None,
+            executor="learning_measurement",
+        )
+        _scheduler.add_job(
+            _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
+            "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
+            misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
+            next_run_time=datetime.now() + timedelta(minutes=4),
+        )
+        _scheduler.add_job(
+            _guarded(
+                "learning_lifecycle_audit_reconciler",
+                _run_learning_lifecycle_audit_reconciler,
+            ),
+            "interval", minutes=5, id="learning_lifecycle_audit_reconciler",
+            misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
+            next_run_time=datetime.now() + timedelta(minutes=5),
+        )
+    else:
+        logger.info("legacy Learning evaluator/lifecycle jobs skipped: Lab owns experiment cycle")
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
     # a consumed primary-venue deadline.
