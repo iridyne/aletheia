@@ -119,6 +119,80 @@ def test_available_balance_reserves_open_position_collateral(tmp_path, monkeypat
     assert account["available_balance_usdt"] == pytest.approx(150.0)
 
 
+def test_portfolio_pairs_fresh_local_marks_with_local_account_equity(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio.pnl import compute_portfolio
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+    local = Position(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, current_price=100.0,
+        unrealized_pnl=0.0, execution_mode="paper_internal",
+    )
+    repo.insert_position(local)
+
+    marks = {"BTC/USDT": 110.0}
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, *_args, **_kwargs: marks[symbol],
+    )
+
+    first = compute_portfolio()
+    assert first["positions_count"] == 1
+    assert first["exposure_by_symbol"] == {"BTC/USDT": pytest.approx(110.0)}
+    assert first["unrealized_pnl"] == pytest.approx(10.0)
+    assert first["account_equity_usdt"] == pytest.approx(210.0)
+    assert first["total_value_usdt"] == pytest.approx(210.0)
+
+    marks["BTC/USDT"] = 120.0
+    second = compute_portfolio()
+    assert second["unrealized_pnl"] == pytest.approx(20.0)
+    assert second["account_equity_usdt"] == pytest.approx(220.0)
+    assert repo._select_one("positions", local.id)["unrealized_pnl"] == 0.0
+
+
+def test_local_portfolio_headline_excludes_other_execution_modes(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio.pnl import compute_portfolio
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, current_price=100.0,
+        unrealized_pnl=0.0, execution_mode="paper_internal",
+    ))
+    repo.insert_position(Position(
+        symbol="ETH/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=1000.0, current_price=1000.0,
+        unrealized_pnl=0.0, execution_mode="okx_demo",
+    ))
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, *_args, **_kwargs: {
+            "BTC/USDT": 110.0,
+            "ETH/USDT": 2000.0,
+        }[symbol],
+    )
+
+    portfolio = compute_portfolio()
+    assert portfolio["positions_count"] == 1
+    assert [position["execution_mode"] for position in portfolio["positions"]] == [
+        "paper_internal"
+    ]
+    assert portfolio["exposure_by_symbol"] == {"BTC/USDT": pytest.approx(110.0)}
+    assert portfolio["unrealized_pnl"] == pytest.approx(10.0)
+
+
 def test_local_close_settles_realized_pnl_once(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.paper_account import get_paper_account

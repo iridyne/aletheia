@@ -1461,27 +1461,30 @@ def _compute_portfolio(
     uses_external_exchange: bool,
 ) -> dict:
     """Aggregate open positions into a portfolio summary (marks to market first)."""
+    selected_mode = execution_mode
+    if selected_mode is None and not uses_external_exchange:
+        selected_mode = "paper_internal"
     positions = mark_positions_to_market(persist=False)
-    if execution_mode:
-        positions = [p for p in positions if p["execution_mode"] == execution_mode]
+    if selected_mode:
+        positions = [p for p in positions if p["execution_mode"] == selected_mode]
 
     total_unrealized = sum(p["unrealized_pnl"] for p in positions)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
-    today_closed = _closed_today(execution_mode)
+    today_closed = _closed_today(selected_mode)
     total_today_realized, today_realized_unavailable_count = _complete_realized_total(today_closed)
 
     # Realized PnL: per-mode for the requested execution_mode (paper dashboard),
     # plus all-mode total for the exchange_account row.
     all_closed = _all_closed_positions()
-    if execution_mode:
-        mode_closed = [p for p in all_closed if p.get("execution_mode") == execution_mode]
+    if selected_mode:
+        mode_closed = [p for p in all_closed if p.get("execution_mode") == selected_mode]
     else:
         mode_closed = all_closed
     total_realized, realized_unavailable_count = _complete_realized_total(mode_closed)
     all_realized, all_realized_unavailable_count = _complete_realized_total(all_closed)
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
 
-    historical_accounting = historical_accounting_summary(execution_mode=execution_mode)
+    historical_accounting = historical_accounting_summary(execution_mode=selected_mode)
     all_historical_accounting = historical_accounting_summary(execution_mode=None)
 
     # Exposure by symbol
@@ -1519,7 +1522,7 @@ def _compute_portfolio(
     if not uses_external_exchange:
         from aletheia.portfolio.paper_account import get_paper_account
 
-        local_account = get_paper_account(event_limit=0)
+        local_account = get_paper_account(event_limit=0, open_positions=positions)
         # equity_usdt is always set now (issue #316: no longer gated on
         # economics_complete); use it directly.
         _eq = local_account.get("equity_usdt")
@@ -1645,7 +1648,7 @@ def _compute_portfolio(
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
         "unrealized_by_symbol": {k: round(v, 4) for k, v in unrealized_by_symbol.items()},
-        "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
+        "today_pnl_by_symbol": today_pnl_by_symbol(selected_mode),
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
         "today_realized_pnl_complete": today_realized_unavailable_count == 0,
