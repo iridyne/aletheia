@@ -98,6 +98,15 @@ write outside the temporary writer allowlist fails CI. The allowlist is a
 migration debt ceiling, not approval for additional coupling. It may only
 shrink or move to the Lab-owned model in later serial phases.
 
+The current legacy treatment API inventory is frozen as follows:
+
+| Legacy API | Current production references |
+|---|---|
+| `apply_numeric_treatment` | definition/dispatch in `aletheia/learning/experiments.py`; references in `knowledge/guards.py`, `trading/sizing_policy.py`, `universe/allocator.py`, `analytics/factor_feedback.py`, `learning/economic_knowledge.py`, `agents/paper_trader_ranker.py`, and `trading/entry_plan_compiler.py` |
+| `apply_boolean_treatment` | definition/dispatch in `aletheia/learning/experiments.py`; references in `learning/prompt_bundles.py` and `risk/engine.py` |
+
+No new caller may be added during migration. Later phases move these exact consumers through registered ObservationHandlers/TreatmentAdapters or preserve their deterministic baseline; they do not grow the legacy API surface.
+
 `LearningPath` is not a second Experiment registry after cutover. Consumer and
 knowledge-path identity may remain domain/Learning-owned; `ObservationHandler`
 owns measurement capability, `TreatmentAdapter` plus Main allow/deny gates owns
