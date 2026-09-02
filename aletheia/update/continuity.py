@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -15,6 +14,7 @@ from typing import Any
 import urllib.request
 
 from aletheia.files.jsonl import write_audit
+from aletheia.update.process_env import safe_env
 
 _SCHEMA_VERSION = "update_observer_continuity/v2"
 _VALID_OWNERS = {"main", "worker"}
@@ -264,7 +264,7 @@ def capture_update_continuity_fresh(*, timeout_sec: float = 20.0) -> dict[str, A
             capture_output=True,
             text=True,
             timeout=max(0.001, float(timeout_sec)),
-            env=os.environ.copy(),
+            env=safe_env(),
         )
     except subprocess.TimeoutExpired:
         return _unavailable_fresh_snapshot("target_postflight_projection_unavailable", detail="TimeoutExpired")
@@ -919,6 +919,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     # Re-anchor the observation checkpoint immediately after migrations run so
     # the next preflight sees the current migration state instead of the
     # pre-update one (which would trigger observation_checkpoint_app_migration_drift).
+    checkpoint_reanchor_error: str | None = None
     try:
         from aletheia.observation_lab.checkpoint import (
             compute_joint_checkpoint,
@@ -926,8 +927,14 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         )
 
         save_joint_checkpoint(compute_joint_checkpoint())
-    except Exception:
-        pass  # non-fatal: postflight captures current state regardless
+    except Exception as exc:
+        checkpoint_reanchor_error = type(exc).__name__
+        _record(
+            "update_observer_checkpoint_reanchor_failed",
+            str(result.get("new_commit") or "unknown"),
+            "Update checkpoint re-anchor failed; continuing to postflight verification",
+            error=checkpoint_reanchor_error,
+        )
 
     before_gateway = before.get("gateway") or {}
     before_control = before.get("control") or {}
@@ -956,6 +963,10 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         expected_target=expected_target,
         restart=restart,
     )
+    if checkpoint_reanchor_error:
+        comparison["warnings"] = sorted(
+            set((comparison.get("warnings") or []) + ["observation_checkpoint_reanchor_failed"])
+        )
     comparison_ms = round((time.monotonic() - comparison_started) * 1000)
     finish_phase()
     after_timings = after.get("timings_ms") or {}

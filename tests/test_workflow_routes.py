@@ -678,6 +678,13 @@ async def test_approve_paper_sanitizes_unexpected_execution_exception(client, mo
 async def test_portfolio_endpoint(client, monkeypatch):
     from datetime import datetime, timezone
     from aletheia.data import price_feed
+    from aletheia.config.loader import load_config, save_config
+
+    # The endpoint's all-mode projection follows the configured account mode.
+    # Select Bitget demo explicitly so this external position is in scope.
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
 
     # #1174: mark_positions_to_market now reads _instrument_price_cache (exact
     # venue/symbol/market_type) instead of the DB snapshot table.
