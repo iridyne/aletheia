@@ -212,9 +212,10 @@ def get_market_signals_for_positions(
     latest_allowed = now + _FUTURE_SKEW_ALLOWANCE
 
     try:
-        from aletheia.storage.sqlite import get_db
+        from aletheia.storage.sqlite import get_db, register_instant_us
 
         db = get_db()
+        register_instant_us(db)
         valid_requests = _validated_requests(db, unique_requests)
         if not valid_requests:
             return {}
@@ -242,11 +243,11 @@ def get_market_signals_for_positions(
             WHERE o.symbol IN ({placeholders})
               AND o.status = 'open'
               AND o.asset_class = 'crypto'
-              AND datetime(o.created_at) >= datetime(?)
-              AND datetime(o.created_at) <= datetime(?)
+              AND aletheia_instant_us(o.created_at) >= aletheia_instant_us(?)
+              AND aletheia_instant_us(o.created_at) <= aletheia_instant_us(?)
               AND o.valid_until IS NOT NULL
-              AND datetime(o.valid_until) >= datetime(?)
-            ORDER BY datetime(o.created_at) DESC, o.id DESC
+              AND aletheia_instant_us(o.valid_until) >= aletheia_instant_us(?)
+            ORDER BY aletheia_instant_us(o.created_at) DESC, o.id DESC
             """,
             (*symbols, cutoff.isoformat(), latest_allowed.isoformat(), now.isoformat()),
         ).fetchall()
@@ -312,9 +313,9 @@ def get_market_signals_for_positions(
                    atr_pct, funding_rate
             FROM universe_feature_snapshots
             WHERE asset_id IN ({placeholders})
-              AND datetime(ts) >= datetime(?)
-              AND datetime(ts) <= datetime(?)
-            ORDER BY asset_id, datetime(ts) DESC, id DESC
+              AND aletheia_instant_us(ts) >= aletheia_instant_us(?)
+              AND aletheia_instant_us(ts) <= aletheia_instant_us(?)
+            ORDER BY asset_id, aletheia_instant_us(ts) DESC, id DESC
             """,
             (*asset_ids, cutoff.isoformat(), latest_allowed.isoformat()),
         ).fetchall()
