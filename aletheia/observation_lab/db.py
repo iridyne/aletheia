@@ -84,8 +84,10 @@ _LAB_SCHEMA_SQL = (
     "behavior_contract_hash TEXT NOT NULL,"
     "interference_key TEXT NOT NULL,"
     "composability_contract TEXT NOT NULL,"       # 'exclusive' / 'disjoint_population' / 'factorial'
-    "effective_from TEXT NOT NULL,"
-    "effective_until TEXT,"
+    "effective_from TEXT NOT NULL CHECK (julianday(effective_from) IS NOT NULL),"
+    "effective_until TEXT CHECK (effective_until IS NULL OR ("
+    "julianday(effective_until) IS NOT NULL AND "
+    "julianday(effective_until) > julianday(effective_from))),"
     "deterministic_baseline_json TEXT NOT NULL,"
     "unavailable_fallback TEXT NOT NULL,"          # e.g. 'baseline' / 'exclude'
     "owner_admission_ref TEXT,"

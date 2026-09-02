@@ -128,6 +128,30 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def _utc_instant(value: str) -> tuple[datetime, str]:
+    """Parse one aware UTC instant and return its canonical ISO spelling."""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid UTC timestamp: {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValueError(f"timestamp must be timezone-aware UTC: {value!r}")
+    parsed = parsed.astimezone(timezone.utc)
+    return parsed, parsed.isoformat(timespec="microseconds")
+
+
+def _validated_interval(
+    effective_from: str, effective_until: str | None,
+) -> tuple[datetime, datetime | None, str, str | None]:
+    start, normalized_start = _utc_instant(effective_from)
+    if effective_until is None:
+        return start, None, normalized_start, None
+    end, normalized_end = _utc_instant(effective_until)
+    if end <= start:
+        raise ValueError("effective_until must be later than effective_from")
+    return start, end, normalized_start, normalized_end
+
+
 def build_manifest(
     *,
     observation_id: str,
@@ -163,6 +187,9 @@ def build_manifest(
         raise ValueError(f"unknown composability_contract: {composability_contract}")
     if unavailable_fallback not in {"baseline", "exclude"}:
         raise ValueError(f"unknown unavailable_fallback: {unavailable_fallback}")
+    _, _, effective_from, effective_until = _validated_interval(
+        effective_from, effective_until,
+    )
 
     fields = {
         "manifest_id": uuid.uuid4().hex,
@@ -198,6 +225,10 @@ class ManifestGenerationConflict(ValueError):
     """Different content published for the same (observation_id, generation)."""
 
 
+class ManifestIntegrityError(ValueError):
+    """Persisted manifest state violates the immutable wire contract."""
+
+
 def publish_manifest(manifest: ExecutionManifest) -> bool:
     """Idempotently persist one manifest to lab.db.
 
@@ -208,6 +239,14 @@ def publish_manifest(manifest: ExecutionManifest) -> bool:
     bump ``generation`` for a semantic change.
     """
     from aletheia.observation_lab.db import get_lab_db
+
+    _, _, normalized_from, normalized_until = _validated_interval(
+        manifest.effective_from, manifest.effective_until,
+    )
+    if (manifest.effective_from, manifest.effective_until) != (
+        normalized_from, normalized_until,
+    ):
+        raise ValueError("manifest effective interval is not canonical UTC")
 
     db = get_lab_db()
     existing = db.execute(
@@ -246,21 +285,35 @@ def load_active_manifests(
     """
     from aletheia.observation_lab.db import get_lab_db
 
-    when = now or _now()
-    params: list[Any] = [when, when]
-    clauses = [
-        "datetime(effective_from) <= datetime(?)",
-        "(effective_until IS NULL OR datetime(effective_until) > datetime(?))",
-    ]
+    try:
+        when, _ = _utc_instant(now or _now())
+    except ValueError as exc:
+        raise ManifestIntegrityError(str(exc)) from exc
+    params: list[Any] = []
+    clauses: list[str] = []
     if interference_key is not None:
         clauses.append("interference_key = ?")
         params.append(interference_key)
     rows = get_lab_db().execute(
         f"SELECT * FROM execution_manifests WHERE {' AND '.join(clauses)} "
-        "ORDER BY datetime(effective_from), manifest_id",
+        "ORDER BY effective_from, manifest_id" if clauses else
+        "SELECT * FROM execution_manifests ORDER BY effective_from, manifest_id",
         params,
     ).fetchall()
-    return [_row_to_manifest(dict(row)) for row in rows]
+    active: list[ExecutionManifest] = []
+    for row in rows:
+        manifest = _row_to_manifest(dict(row))
+        try:
+            start, end, _, _ = _validated_interval(
+                manifest.effective_from, manifest.effective_until,
+            )
+        except ValueError as exc:
+            raise ManifestIntegrityError(
+                f"invalid persisted manifest {manifest.manifest_id}: {exc}"
+            ) from exc
+        if start <= when and (end is None or end > when):
+            active.append(manifest)
+    return active
 
 
 def _row_to_manifest(row: dict[str, Any]) -> ExecutionManifest:
@@ -311,8 +364,22 @@ def resolve_treatment(
     ``applied=False`` — that's the "unavailable / exclusion reason" the
     exposure schema in Cluster 4 records for audit.
     """
-    when = now or _now()
-    if datetime.fromisoformat(when) < datetime.fromisoformat(manifest.effective_from):
+    try:
+        when, _ = _utc_instant(now or _now())
+        start, end, _, _ = _validated_interval(
+            manifest.effective_from, manifest.effective_until,
+        )
+    except ValueError:
+        return ManifestResolution(
+            applied=False,
+            assignment="unassigned",
+            manifest_id=manifest.manifest_id,
+            manifest_hash=manifest.manifest_hash,
+            payload=dict(manifest.deterministic_baseline),
+            reason="malformed_effective_window",
+            behavior_changed=False,
+        )
+    if when < start:
         return ManifestResolution(
             applied=False,
             assignment="unassigned",
@@ -322,8 +389,8 @@ def resolve_treatment(
             reason="not_effective_yet",
             behavior_changed=False,
         )
-    if manifest.effective_until is not None:
-        if datetime.fromisoformat(when) >= datetime.fromisoformat(manifest.effective_until):
+    if end is not None:
+        if when >= end:
             return ManifestResolution(
                 applied=False,
                 assignment="unassigned",

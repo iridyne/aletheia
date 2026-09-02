@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 
@@ -63,6 +65,26 @@ def test_build_manifest_rejects_out_of_range_allocation():
 def test_build_manifest_rejects_unknown_composability():
     with pytest.raises(ValueError, match="composability"):
         _sample_manifest(composability_contract="quantum_entangled")
+
+
+@pytest.mark.parametrize(
+    ("effective_from", "effective_until"),
+    [
+        ("not-a-timestamp", None),
+        ("2026-08-19T00:00:00", None),
+        ("2026-08-19T01:00:00+01:00", None),
+        ("2026-08-19T00:00:00+00:00", "2026-08-19T00:00:00+00:00"),
+        ("2026-08-19T00:00:00+00:00", "2026-08-18T00:00:00+00:00"),
+    ],
+)
+def test_build_manifest_rejects_invalid_effective_interval(
+    effective_from, effective_until,
+):
+    with pytest.raises(ValueError):
+        _sample_manifest(
+            effective_from=effective_from,
+            effective_until=effective_until,
+        )
 
 
 def test_publish_manifest_is_idempotent_on_same_hash():
@@ -133,6 +155,29 @@ def test_load_active_manifests_respects_effective_interval():
     now = "2026-06-01T00:00:00+00:00"
     ids = {m.observation_id for m in load_active_manifests(now=now)}
     assert ids == {"active-1"}
+
+
+def test_load_active_manifests_reports_malformed_legacy_row():
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.manifest import (
+        ManifestIntegrityError,
+        load_active_manifests,
+        publish_manifest,
+    )
+
+    manifest = _sample_manifest()
+    publish_manifest(manifest)
+    db = get_lab_db()
+    db.execute("PRAGMA ignore_check_constraints=ON")
+    db.execute(
+        "UPDATE execution_manifests SET effective_from='legacy-bad' "
+        "WHERE manifest_id=?",
+        (manifest.manifest_id,),
+    )
+    db.execute("PRAGMA ignore_check_constraints=OFF")
+
+    with pytest.raises(ManifestIntegrityError, match=manifest.manifest_id):
+        load_active_manifests(now="2026-08-19T12:00:00+00:00")
 
 
 def test_resolve_treatment_is_deterministic_and_arms_split_at_allocation():
@@ -216,3 +261,38 @@ def test_resolve_treatment_rejects_malformed_input():
     )
     assert r.applied is False
     assert r.reason == "malformed_input"
+
+
+@pytest.mark.parametrize(
+    ("effective_from", "effective_until", "now"),
+    [
+        ("bad", None, "2026-08-19T12:00:00+00:00"),
+        ("2026-08-19T00:00:00", None, "2026-08-19T12:00:00+00:00"),
+        ("2026-08-19T00:00:00+00:00", None, "naive-or-bad"),
+        (
+            "2026-08-19T00:00:00+00:00",
+            "2026-08-18T00:00:00+00:00",
+            "2026-08-19T12:00:00+00:00",
+        ),
+    ],
+)
+def test_resolve_treatment_fails_closed_for_malformed_time_shape(
+    effective_from, effective_until, now,
+):
+    from aletheia.observation_lab.manifest import resolve_treatment
+
+    manifest = replace(
+        _sample_manifest(),
+        effective_from=effective_from,
+        effective_until=effective_until,
+    )
+    result = resolve_treatment(
+        manifest=manifest,
+        candidate_key="candidate",
+        assignment_key="assignment",
+        now=now,
+    )
+
+    assert result.applied is False
+    assert result.reason == "malformed_effective_window"
+    assert result.payload == manifest.deterministic_baseline
