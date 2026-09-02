@@ -1328,13 +1328,18 @@ def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatc
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     resets = []
     monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
-    monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": False, "reason": "frontend_build_failed"})
+    monkeypatch.setattr(
+        applier,
+        "_build_frontend",
+        lambda _tree: {"ok": False, "reason": "frontend_build_failed", "detail": "tsc failed"},
+    )
     monkeypatch.setattr(applier, "_restart_gateway", lambda: pytest.fail("gateway must not restart"))
 
     result = applier.apply_update(restart=True)
 
     assert result["applied"] is False
     assert result["reason"] == "frontend_build_failed"
+    assert "tsc failed" in result["message"]
     assert resets == ["old111"]
 
 

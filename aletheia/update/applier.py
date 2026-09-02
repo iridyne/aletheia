@@ -494,7 +494,7 @@ def _rollback_update(
         "mode": "development",
         "old_commit": old,
         "attempted_commit": new,
-        "message": f"Update rolled back: {failure_reason}. No restart needed.",
+        "message": f"Update rolled back: {failure_reason}" + (f": {failure_detail}" if failure_detail else "") + ". No restart needed.",
         **_metadata_fields(metadata),
     }
 

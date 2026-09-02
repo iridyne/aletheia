@@ -836,7 +836,7 @@ export function KnowledgeTab() {
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={lessonAction.isPending || !['proposed', 'accepted', 'applied'].includes(selectedLesson.status)}
+                  disabled={lessonAction.isPending || !['proposed', 'accepted', 'applied'].includes(selectedLesson.status ?? '')}
                   onClick={() => lessonAction.mutate({ lessonId: selectedLesson.lesson_id, action: 'reject' })}
                 >
                   Reject
