@@ -14,6 +14,13 @@ class RestoreSecurityError(RuntimeError):
     """Raised when a restore operation would write outside the target tree via symlink."""
 
 
+def _is_audit_generation(path: Path) -> bool:
+    if path.name == "audit.jsonl":
+        return True
+    prefix = "audit.jsonl."
+    return path.name.startswith(prefix) and path.name[len(prefix):].isdigit()
+
+
 class RestoreResult:
     """Result of a restore operation."""
 
@@ -121,8 +128,35 @@ class RestoreService:
                 rollback_dir.mkdir()
                 overwrites: list[tuple[Path, Path]] = []  # (dst, backup_copy)
                 new_files: list[Path] = []
+                removed_files: list[tuple[Path, Path]] = []
 
                 try:
+                    archived_audit_paths = {
+                        item.relative_to(bundle_dir)
+                        for item in files_to_restore
+                        if item.parent.relative_to(bundle_dir) == Path("logs")
+                        and _is_audit_generation(item)
+                    }
+                    target_logs = target_dir / "logs"
+                    if target_logs.is_symlink():
+                        raise RestoreSecurityError(
+                            "restore target logs directory is a symlink"
+                        )
+                    if target_logs.exists():
+                        for stale in target_logs.glob("audit.jsonl*"):
+                            rel = stale.relative_to(target_dir)
+                            if not _is_audit_generation(stale) or rel in archived_audit_paths:
+                                continue
+                            if stale.is_symlink():
+                                raise RestoreSecurityError(
+                                    f"restore target is a symlink and would redirect the write: {rel}"
+                                )
+                            bk = rollback_dir / "_removed" / rel
+                            bk.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(stale, bk)
+                            removed_files.append((stale, bk))
+                            stale.unlink()
+
                     for item in files_to_restore:
                         rel = item.relative_to(bundle_dir)
                         dst = target_dir / rel
@@ -160,6 +194,13 @@ class RestoreService:
                     for p in new_files:
                         try:
                             p.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                    # Restore target-only audit generations removed for set replacement
+                    for dst, bk in removed_files:
+                        try:
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(bk, dst)
                         except Exception:
                             pass
                     # If target_dir was created by this call, remove it entirely
