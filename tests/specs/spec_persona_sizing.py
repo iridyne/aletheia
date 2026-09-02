@@ -929,6 +929,68 @@ def test_persona_rollout_refreezes_when_drawdown_evidence_is_unavailable(
     assert result["reason"] == "distress_evidence_unavailable"
 
 
+def test_persona_rollout_failed_invalidation_stays_fail_closed_until_retry(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading import persona_rollout
+    from aletheia.trading.persona import effective_operator_decidable
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_auto_advance_enabled = True
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
+    cfg.trading.active_persona = "roll"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audit", lambda *_args, **_kwargs: True
+    )
+    started = persona_rollout.start_persona_rollout(
+        cfg, now=datetime(2026, 8, 1, tzinfo=timezone.utc)
+    )
+    assert started
+    conn.execute(
+        "UPDATE persona_rollouts SET status='unlocked', authority='dynamic_persona' "
+        "WHERE rollout_id=?",
+        (started["rollout_id"],),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(
+        "aletheia.trading.sizing_policy.assess_persona_distress",
+        lambda cfg=None: "unavailable",
+    )
+    transaction = persona_rollout._transaction
+
+    def unavailable_transaction():
+        raise RuntimeError("rollout persistence unavailable")
+
+    monkeypatch.setattr(persona_rollout, "_transaction", unavailable_transaction)
+    result = persona_rollout.advance_persona_rollout()
+
+    assert result["action"] == "hold"
+    assert result["refreeze_status"] == "persistence_failed"
+
+    monkeypatch.setattr(persona_rollout, "_transaction", transaction)
+    monkeypatch.setattr(
+        "aletheia.trading.sizing_policy.assess_persona_distress",
+        lambda cfg=None: "healthy",
+    )
+    assert effective_operator_decidable(cfg.trading.personas["roll"], cfg) == {}
+
+    retry = persona_rollout.advance_persona_rollout()
+    assert retry["action"] == "refrozen"
+    assert conn.execute(
+        "SELECT status FROM persona_rollouts WHERE rollout_id=?",
+        (started["rollout_id"],),
+    ).fetchone()[0] == "refrozen"
+
+
 def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timezone
