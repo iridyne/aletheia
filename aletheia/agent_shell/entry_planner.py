@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ from aletheia.trading.trigger_specs import (
     require_compatible_trigger_spec,
 )
 from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+
+logger = logging.getLogger(__name__)
 
 
 class PlanIntentError(ValueError):
@@ -118,6 +121,7 @@ def _candidate_context(
         "planning_generation": {
             "id": generation["id"],
             "identity_version": generation["identity_version"],
+            "planner_contract_version": generation["planner_contract_version"],
         },
         "candidate": candidate,
         "latest_feature_snapshot": feature,
@@ -223,6 +227,14 @@ def _intent_validation_code(exc: BaseException) -> str:
                     return "OUTSIDE_ENUM"
         return "VALIDATION_FAILED"
     return "VALIDATION_FAILED"
+
+
+def _compile_validation_code(exc: BaseException) -> str:
+    if isinstance(exc, ValidationError):
+        return _intent_validation_code(exc)
+    raw = str(exc).split(":", 1)[0][:80]
+    bounded = "".join(character for character in raw if character.isalnum() or character in "_-")
+    return bounded or "VALIDATION_FAILED"
 
 
 def _complete_semantic_no_plan(
@@ -408,13 +420,29 @@ async def plan_next_candidate(
                 "planning_generation_id": generation["id"],
                 "model_invoked": True,
             }
-        repo.defer_candidate_planning_with_code(generation["id"], owner, exc.code, str(exc))
+        repo.defer_candidate_planning_with_code(
+            generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{exc.code}", max_attempts=1
+        )
+        return {
+            "status": "unavailable",
+            "planning_generation_id": generation["id"],
+            "model_invoked": True,
+        }
+    except (ValidationError, ValueError) as exc:
+        code = _compile_validation_code(exc)
+        repo.defer_candidate_planning_with_code(
+            generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{code}", max_attempts=1
+        )
         return {
             "status": "unavailable",
             "planning_generation_id": generation["id"],
             "model_invoked": True,
         }
     except Exception as exc:
+        logger.exception(
+            "entry_plan_compile_unexpected generation_id=%s phase=compile",
+            generation["id"],
+        )
         repo.defer_candidate_planning_with_code(generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__)
         return {
             "status": "unavailable",

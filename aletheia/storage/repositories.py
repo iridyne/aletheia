@@ -7702,6 +7702,7 @@ def plan_market_ohlcv_tiering(
 from aletheia.storage.models import (
     CandidatePlanningGeneration,
     EntryPlanRecord,
+    PLANNER_CONTRACT_VERSION,
     UniverseAsset,
     UniverseFeatureSnapshot,
     UniverseMember,
@@ -8732,6 +8733,7 @@ def ensure_candidate_planning_generation(
             and not manual_replan
             and not eligibility_recovered
             and existing["planning_identity"] == planning_identity
+            and existing["planner_contract_version"] == PLANNER_CONTRACT_VERSION
         ):
             execute_write(
                 "UPDATE candidate_planning_generations SET last_candidate_id=?, updated_at=? WHERE id=?",
@@ -8745,15 +8747,23 @@ def ensure_candidate_planning_generation(
             if manual_replan
             else "execution_eligibility_recovered"
             if eligibility_recovered
+            else "planning_contract_superseded"
+            if existing is not None
+            and existing["planner_contract_version"] != PLANNER_CONTRACT_VERSION
             else "incompatible_planning_generation"
         )
         if existing is not None:
+            terminal_reason = (
+                "planning_contract_superseded"
+                if reason == "planning_contract_superseded"
+                else "planning_generation_superseded"
+            )
             execute_write(
                 "UPDATE candidate_planning_generations SET is_current=0, "
                 "status='superseded', attention_status='terminal', "
-                "attention_terminal_at=?, attention_terminal_reason='planning_generation_superseded', "
+                "attention_terminal_at=?, attention_terminal_reason=?, "
                 "updated_at=? WHERE id=? AND is_current=1",
-                (timestamp, timestamp, existing["id"]),
+                (timestamp, terminal_reason, timestamp, existing["id"]),
             )
             execute_write(
                 "UPDATE entry_plans SET status='invalidated', terminal_at=?, "
@@ -8978,11 +8988,11 @@ def defer_candidate_planning_with_code(
 ) -> bool:
     """Persist a bounded planner reason code while retaining retry semantics."""
 
-    reason = f"{str(code)}:{str(detail)}"[:160]
+    reason = str(code) if not detail else f"{str(code)}:{str(detail)}"
     return defer_candidate_planning(
         generation_id,
         owner_token,
-        reason,
+        reason[:160],
         retry_seconds=retry_seconds,
         max_attempts=max_attempts,
         now=now,
@@ -9200,6 +9210,7 @@ def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
         .execute(
             "SELECT um.*, ur.venue AS registry_venue, "
             "pg.id AS planning_generation_id, pg.status AS planning_status, "
+            "pg.planner_contract_version, "
             "pg.result_kind, pg.result_json AS planning_result_json, "
             "pg.attempt_count, pg.attention_status, pg.soft_expires_at, "
             "pg.hard_expires_at, pg.attention_terminal_reason, "

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -14,7 +15,7 @@ from aletheia.agent_shell.entry_planner import (
     run_entry_planner_batch,
 )
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import UniverseMember, UniverseSnapshot
+from aletheia.storage.models import UniverseAsset, UniverseMember, UniverseSnapshot
 from aletheia.trading.entry_plan import EntryPlan
 from aletheia.model_provider.base import portable_json_schema_payload
 
@@ -147,6 +148,57 @@ def test_unchanged_candidate_and_duplicate_wakes_create_one_durable_owner():
     claimed = repo.claim_next_candidate_planning("owner-one")
     assert claimed and claimed["id"] == generation["id"]
     assert repo.claim_next_candidate_planning("owner-two") is None
+
+
+@pytest.mark.parametrize("terminal_status", ["unavailable", "no_plan", "planned"])
+def test_planner_contract_upgrade_supersedes_each_durable_result_once(terminal_status):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    original_result = json.dumps({"reason": "legacy-result"})
+    plan = None
+    if terminal_status == "planned":
+        assert repo.claim_next_candidate_planning("legacy-owner")
+        plan = _plan(generation)
+        assert repo.complete_candidate_planning_with_plan(
+            generation["id"], "legacy-owner", plan
+        )[0] == "planned"
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET planner_contract_version='entry-planner/v1', "
+        "status=?, result_json=?, attention_status='terminal' WHERE id=?",
+        (terminal_status, original_result, generation["id"]),
+    )
+
+    refreshed = _candidate(rank=9, price=104)
+    current, created = repo.ensure_candidate_planning_generation(refreshed.id)
+    same, created_again = repo.ensure_candidate_planning_generation(refreshed.id)
+
+    old = repo.get_candidate_planning_generation(generation["id"])
+    assert created is True and created_again is False
+    assert same["id"] == current["id"]
+    assert current["planner_contract_version"] == "entry-planner/v2"
+    assert old["is_current"] == 0
+    assert old["attention_terminal_reason"] == "planning_contract_superseded"
+    assert old["result_json"] == original_result
+    repo.upsert_universe_asset(
+        UniverseAsset(
+            id=refreshed.asset_id,
+            venue=refreshed.venue,
+            market_type=refreshed.market_type,
+            symbol=refreshed.symbol,
+        )
+    )
+    [current_projection] = repo.list_current_candidate_workbench(refreshed.snapshot_id)
+    history = {row["id"]: row for row in repo.list_planning_history()}
+    assert current_projection["planner_contract_version"] == "entry-planner/v2"
+    assert history[generation["id"]]["planner_contract_version"] == "entry-planner/v1"
+    assert history[generation["id"]]["attention_terminal_reason"] == (
+        "planning_contract_superseded"
+    )
+    if terminal_status == "planned":
+        assert plan is not None
+        stored_plan = repo.get_entry_plan(plan.plan_id)
+        assert stored_plan["status"] == "invalidated"
+        assert stored_plan["terminal_reason"] == "planning_contract_superseded"
 
 
 def test_candidate_planning_claim_prefers_current_rank_over_fifo_age():
@@ -1089,6 +1141,76 @@ def test_retry_exhaustion_terminals_attention_as_planning_unavailable():
     assert stored["status"] == "unavailable"
     assert stored["attention_status"] == "terminal"
     assert stored["attention_terminal_reason"] == "planning_unavailable"
+
+
+def test_compile_validation_is_terminal_after_one_attempt(monkeypatch):
+    from aletheia.config.loader import load_config
+
+    candidate = _candidate(scanner_family="value")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.execute_write(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?, ?, ?, ?)",
+        ("feature-compile-invalid", candidate.asset_id, datetime.now(timezone.utc).isoformat(), 1.5),
+    )
+
+    async def planner(_context):
+        return PlanIntent(
+            decision="ENTRY_PLAN",
+            reason_code="OK",
+            thesis="x",
+            scenario="y",
+            evidence_refs=[],
+            execution_mode="RESTING_MAKER",
+            order_tactic="POST_ONLY_LIMIT",
+            trigger_spec_id=None,
+            trigger_spec_version=None,
+            risk_tier="LOW",
+            horizon="INTRADAY",
+        )
+
+    def invalid_compile(*_args, **_kwargs):
+        raise ValueError("stop_reference_invalid:unsafe detail is not persisted")
+
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.compile_entry_plan", invalid_compile
+    )
+    cfg = load_config()
+    first = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    second = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+
+    assert first["status"] == "unavailable"
+    assert second["status"] == "idle"
+    assert stored["attempt_count"] == 1
+    assert stored["attention_status"] == "terminal"
+    assert json.loads(stored["result_json"])["reason"] == (
+        "ENTRY_PLAN_COMPILE_INVALID:stop_reference_invalid"
+    )
+
+
+def test_planner_contract_migration_preserves_legacy_rows_and_current_index():
+    from aletheia.storage.migrations import _apply_planner_contract_version_v56
+
+    db = sqlite3.connect(":memory:")
+    db.execute(
+        "CREATE TABLE candidate_planning_generations "
+        "(id TEXT PRIMARY KEY, planning_key TEXT NOT NULL, is_current INTEGER NOT NULL)"
+    )
+    db.execute(
+        "CREATE UNIQUE INDEX idx_candidate_planning_current "
+        "ON candidate_planning_generations(planning_key) WHERE is_current=1"
+    )
+    db.execute("INSERT INTO candidate_planning_generations VALUES ('legacy','key',1)")
+
+    _apply_planner_contract_version_v56(db)
+    _apply_planner_contract_version_v56(db)
+
+    row = db.execute("SELECT * FROM candidate_planning_generations").fetchone()
+    indexes = {item[1] for item in db.execute("PRAGMA index_list(candidate_planning_generations)")}
+    assert row == ("legacy", "key", 1, "entry-planner/v1")
+    assert "idx_candidate_planning_current" in indexes
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO candidate_planning_generations VALUES ('duplicate','key',1,'entry-planner/v2')")
 
 
 def test_no_plan_terminals_candidate_attention():

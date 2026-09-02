@@ -202,6 +202,24 @@ def test_entry_planner_batch_captures_one_deep_provider_identity():
     assert source.count('get_provider_for_tier("deep")') == 1
     assert "available_capacity(\n        provider_name" in source
     assert "provider_name=provider_name" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S09",
+        "entry_plan_contract",
+        "Planner contract epoch",
+        "L2a",
+        "Candidate generations are reusable only under the current explicit Planner contract epoch.",
+        status="implemented",
+    )
+)
+def test_candidate_planning_generation_binds_explicit_planner_epoch():
+    from aletheia.storage.models import CandidatePlanningGeneration, PLANNER_CONTRACT_VERSION
+    from aletheia.storage.repositories import ensure_candidate_planning_generation
+
+    assert CandidatePlanningGeneration.model_fields["planner_contract_version"].default == PLANNER_CONTRACT_VERSION
+    assert "planner_contract_version" in inspect.getsource(ensure_candidate_planning_generation)
 @spec_claim(
     SpecClaim(
         "EP-S08",

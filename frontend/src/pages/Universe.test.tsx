@@ -66,6 +66,7 @@ const workbench: EntryWorkbenchResponse = {
     risk_flags: '[]', execution_eligible: 1, expires_at: '2026-08-28T01:00:00Z',
     planning_generation_id: null, planning_status: null, result_kind: null,
     planning_result_json: null, attempt_count: null, attention_status: null,
+    planner_contract_version: null,
     soft_expires_at: null, hard_expires_at: null, attention_terminal_reason: null,
     entry_plan_id: null, entry_plan_status: null, entry_plan_terminal_reason: null,
   }],
