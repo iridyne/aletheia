@@ -73,7 +73,7 @@ This is a change.
 NONE
 """
 
-# Release-please PR (exempt)
+# Release-please wording in an otherwise ordinary PR body.
 RELEASE_PLEASE_PR = """
 chore(main): release 1.2.3
 
@@ -129,9 +129,84 @@ def test_structured_check_exposes_bounded_reason_codes_without_changing_messages
     ]
 
 
-def test_release_please_pr_is_exempt() -> None:
-    failures = check_pr_description(RELEASE_PLEASE_PR, [])
-    assert not failures
+def test_release_please_text_does_not_exempt_a_normal_pr() -> None:
+    failures = check_pr_description(RELEASE_PLEASE_PR, ["aletheia/core.py"])
+    assert failures
+
+
+def _trusted_release_event(body: str | None) -> dict[str, object]:
+    return {
+        "repository": {"full_name": "iridyne/aletheia"},
+        "pull_request": {
+            "body": body,
+            "number": 123,
+            "user": {"login": "github-actions[bot]"},
+            "base": {"ref": "master"},
+            "head": {
+                "ref": "release-please--branches--master--components--aletheia",
+                "repo": {"full_name": "iridyne/aletheia"},
+            },
+        },
+    }
+
+
+def test_main_exempts_only_a_trusted_release_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(_trusted_release_event(RELEASE_PLEASE_PR)), encoding="utf-8"
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_REPOSITORY", "iridyne/aletheia")
+    monkeypatch.setattr(
+        checker,
+        "_changed_files_from_checkout",
+        lambda: pytest.fail("trusted release PR should not resolve a source diff"),
+    )
+
+    assert checker.main() == 0
+
+
+def test_main_does_not_exempt_release_text_without_trusted_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = _trusted_release_event(RELEASE_PLEASE_PR)
+    pull_request = event["pull_request"]
+    assert isinstance(pull_request, dict)
+    pull_request["user"] = {"login": "iridite"}
+    pull_request["head"] = {
+        "ref": "fix/ordinary-change",
+        "repo": {"full_name": "iridyne/aletheia"},
+    }
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setattr(checker, "_changed_files_from_checkout", lambda: ["aletheia/core.py"])
+
+    assert checker.main() == 1
+
+
+def test_main_rejects_null_body_deterministically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps({"pull_request": {"body": None, "number": 123}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setattr(
+        checker, "_changed_files_from_checkout", lambda: ["aletheia/core.py"]
+    )
+
+    assert checker.main() == 1
 
 
 def test_docs_only_pr_is_exempt() -> None:

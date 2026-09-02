@@ -1,7 +1,7 @@
 """Verify pull request Change Contract structure.
 
 Runs in CI on every PR. Checks PR description for required SDD Depth and
-Contract Delta structure. Exempts docs-only / governance-only PRs and
+Contract Delta structure. Exempts docs-only / governance-only PRs and trusted
 release-please PRs from the requirement.
 
 Exit 0: compliant or exempt
@@ -79,12 +79,53 @@ def _changed_files_from_checkout() -> list[str]:
     return [line.strip() for line in output.splitlines() if line.strip()]
 
 
-def check_pr_description(pr_body: str, changed_files: list[str]) -> list[str]:
+def _is_trusted_release_please_pr(payload: dict[str, object]) -> bool:
+    """Recognize the repository's release workflow without trusting PR prose."""
+    pull_request = payload.get("pull_request")
+    repository = payload.get("repository")
+    if not isinstance(pull_request, dict) or not isinstance(repository, dict):
+        return False
+
+    actor = pull_request.get("user")
+    head = pull_request.get("head")
+    base = pull_request.get("base")
+    head_repo = head.get("repo") if isinstance(head, dict) else None
+    repository_name = repository.get("full_name")
+    runner_repository = os.getenv("GITHUB_REPOSITORY", "").strip()
+    if runner_repository and repository_name != runner_repository:
+        return False
+
+    return (
+        isinstance(actor, dict)
+        and actor.get("login") == "github-actions[bot]"
+        and isinstance(base, dict)
+        and base.get("ref") == "master"
+        and isinstance(head, dict)
+        and isinstance(head.get("ref"), str)
+        and head["ref"].startswith("release-please--branches--master")
+        and isinstance(repository_name, str)
+        and bool(repository_name)
+        and isinstance(head_repo, dict)
+        and head_repo.get("full_name") == repository_name
+    )
+
+
+def check_pr_description(
+    pr_body: str,
+    changed_files: list[str],
+    *,
+    release_please_pr: bool = False,
+) -> list[str]:
     """Check PR description for required Change Contract structure.
 
     Returns a list of failure messages. Empty list means pass.
     """
-    return [failure["message"] for failure in structured_check_pr(pr_body, changed_files)]
+    return [
+        failure["message"]
+        for failure in structured_check_pr(
+            pr_body, changed_files, release_please_pr=release_please_pr
+        )
+    ]
 
 
 # Canonical structured reason-code messages for machine-readable preflight / handoff
@@ -97,7 +138,12 @@ FAILURE_MESSAGES = {
 }
 
 
-def structured_check_pr(pr_body: str, changed_files: list[str]) -> list[dict[str, str]]:
+def structured_check_pr(
+    pr_body: str,
+    changed_files: list[str],
+    *,
+    release_please_pr: bool = False,
+) -> list[dict[str, str]]:
     """Check PR description for required Change Contract structure.
 
     Returns a list of ``{"code": ..., "message": ...}`` failure objects. Empty
@@ -107,8 +153,8 @@ def structured_check_pr(pr_body: str, changed_files: list[str]) -> list[dict[str
     """
     failures: list[dict[str, str]] = []
 
-    # Exempt release-please PRs
-    if "release-please" in pr_body.lower():
+    # Exempt only a release PR identified by trusted event metadata.
+    if release_please_pr:
         return failures
 
     # Exempt docs-only / governance-only PRs
@@ -165,8 +211,9 @@ def main() -> int:
         print(f"Unable to read current pull-request body: {exc}", file=sys.stderr)
         return 1
 
-    # Release automation is exempt by identity and does not need a diff read.
-    if "release-please" in pr_body.lower():
+    release_please_pr = _is_trusted_release_please_pr(payload)
+    # Release automation is exempt by trusted identity and does not need a diff read.
+    if release_please_pr:
         changed_files: list[str] = []
     else:
         try:
@@ -178,7 +225,11 @@ def main() -> int:
             )
             return 1
 
-    failures = structured_check_pr(pr_body, changed_files)
+    failures = structured_check_pr(
+        pr_body,
+        changed_files,
+        release_please_pr=release_please_pr,
+    )
     if failures:
         print("Change Contract check failed:", file=sys.stderr)
         for failure in failures:
