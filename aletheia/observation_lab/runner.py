@@ -32,6 +32,7 @@ worker fleet or per-window daemon.
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -234,6 +235,22 @@ def register_builtin_handlers() -> None:
     register_observation_handler()
 
     def _canonical_progress(window: dict[str, Any]) -> ObservationProgress:
+        evaluation: dict[str, Any] | None = None
+        try:
+            from aletheia.observation_lab.evaluator import evaluate_observation
+
+            evaluation = evaluate_observation(
+                str(window["observation_id"]),
+                int(window["generation"]),
+            )
+        except Exception as exc:
+            # Evaluation is a Lab evidence failure, not permission to invent a
+            # healthy/empty measurement or to stop unrelated windows.
+            evaluation = {
+                "available": False,
+                "reason": "evaluation_unavailable",
+                "error": type(exc).__name__,
+            }
         try:
             due = datetime.fromisoformat(
                 str(window.get("finalize_not_before") or "").replace("Z", "+00:00")
@@ -242,7 +259,11 @@ def register_builtin_handlers() -> None:
         except (TypeError, ValueError, OverflowError):
             can_finalize = False
         return ObservationProgress(
-            summary={"status": "collecting", "handler": window.get("kind")},
+            summary={
+                "status": "collecting",
+                "handler": window.get("kind"),
+                "evaluation": evaluation,
+            },
             can_finalize=can_finalize,
         )
 
@@ -252,6 +273,22 @@ def register_builtin_handlers() -> None:
         )
 
     def _canonical_finalize(window: dict[str, Any]) -> dict[str, Any]:
+        from aletheia.observation_lab.canonical import latest_observation_result
+
+        result = latest_observation_result(
+            str(window["observation_id"]), int(window["generation"]),
+        )
+        if result is not None:
+            try:
+                payload = json.loads(str(result.get("result_json") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if isinstance(payload, dict):
+                return {
+                    **payload,
+                    "status": "finalized",
+                    "handler": window.get("kind"),
+                }
         return {"status": "finalized", "handler": window.get("kind")}
 
     def _canonical_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:

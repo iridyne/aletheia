@@ -584,6 +584,20 @@ def register_observation_spec(
         "control": value["control"],
         "treatment": value["treatment"],
     })
+    default_outcome_contract = "filter_candidate_outcomes/v1"
+    default_metric = "net_return_pct/v1"
+    path_id = str(value.get("path_id") or "").strip()
+    if path_id:
+        try:
+            from aletheia.learning.registry import (
+                get_learning_path,
+            )
+
+            path = get_learning_path(path_id)
+            default_outcome_contract = path.outcome_contract_version
+            default_metric = path.metric_version
+        except KeyError:
+            pass
     contract_args = {
         "observation_id": observation_id,
         "generation": generation,
@@ -594,11 +608,19 @@ def register_observation_spec(
         "assignment_unit_key_template": str(value.get("assignment_unit_key_template") or "{candidate_key}"),
         "allocation_pct": allocation,
         "target_horizon": str(value["horizon"]),
-        "outcome_contract_version": str(value.get("outcome_contract_version") or "filter_candidate_outcomes/v1"),
-        "metric_version": str(value.get("metric_version") or "net_return_pct/v1"),
+        "outcome_contract_version": str(value.get("outcome_contract_version") or default_outcome_contract),
+        "metric_version": str(value.get("metric_version") or default_metric),
         "behavior_contract_hash": behavior_hash,
+        "behavior_policy_epoch_ref": value.get("behavior_policy_epoch_ref"),
+        "behavior_policy_epoch_hash": value.get("behavior_policy_epoch_hash"),
         "started_at": started,
         "effective_until": collect_end,
+        "gates": value.get("gates") or {
+            key: value[key]
+            for key in ("min_samples_per_arm", "min_market_days", "effect_threshold")
+            if key in value
+        },
+        "harm_budget": value.get("harm_budget") or value.get("harm_gate") or {},
         "owner_admission_ref": value.get("owner_admission_ref"),
     }
     source_nomination_id = source_nomination_id or f"cli:{observation_id}:{generation}"
@@ -749,7 +771,7 @@ def consume_inference_plan(
         if row is None:
             raise ValueError("inference_plan_unavailable")
         evaluation = connection.execute(
-            "SELECT observation_id, generation FROM observation_evaluations "
+            "SELECT observation_id, generation, evaluation_kind FROM observation_evaluations "
             "WHERE evaluation_id=?",
             (evaluation_id,),
         ).fetchone()
@@ -760,6 +782,8 @@ def consume_inference_plan(
             or int(evaluation[1]) != int(row[1])
         ):
             raise sqlite3.IntegrityError("inference_evaluation_identity_mismatch")
+        if str(evaluation[2]) != "confirmatory":
+            raise ValueError("inference_evaluation_not_confirmatory")
         if row["consumed_evaluation_id"] is not None:
             if row["consumed_evaluation_id"] != evaluation_id:
                 raise sqlite3.IntegrityError("inference_plan_consumption_conflict")

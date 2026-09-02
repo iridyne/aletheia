@@ -53,6 +53,14 @@ Graduation/adoption remains a separate owner-approved Main behavior-policy
 change, after which the Lab generation is revoked/superseded and retained as
 evidence.
 
+For measurement-supported paths, the Lab evaluator reads the immutable Lab
+Exposure snapshot and exact Main outcome identities, then invokes the existing
+cohort and verdict algorithms in memory. It records only Lab Evaluation and
+Result rows; it never creates or reads legacy Experiment rows. Monitoring uses
+the descriptive look, while confirmatory evaluation requires a hash-valid,
+frozen Lab inference plan and its assignment-unit cutoff; a consumed plan
+returns its already-bound Evaluation rather than recomputing history.
+
 ## Frozen legacy storage inventory
 
 The temporary reference and writer allowlists in

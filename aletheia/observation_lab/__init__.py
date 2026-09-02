@@ -31,6 +31,10 @@ from aletheia.observation_lab.runner import (  # noqa: F401
     registered_windows,
     run_lab_windows,
 )
+from aletheia.observation_lab.evaluator import (  # noqa: F401
+    evaluate_active_observations,
+    evaluate_observation,
+)
 from aletheia.observation_lab.manifest import (  # noqa: F401
     ExecutionManifest,
     ManifestGenerationConflict,
@@ -72,6 +76,7 @@ from aletheia.observation_lab.exposure import (  # noqa: F401
 )
 from aletheia.observation_lab.canonical import (  # noqa: F401
     AuthoritySource,
+    NumericTreatmentAdapter,
     ObservationTreatmentDecision,
     TreatmentAdapter,
     append_delivery_receipt,

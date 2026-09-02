@@ -853,14 +853,24 @@ def evaluate_observation(
 ) -> None:
     """Run one evaluation pass for a specific Observation."""
     if _require_experiment_authority() == "lab":
-        result = _latest_lab_evaluation(observation_id)
-        if result is None:
-            typer.echo("canonical Lab evaluation unavailable", err=True)
+        from aletheia.observation_lab.evaluator import evaluate_observation as evaluate_lab
+
+        lookup_generation = None
+        lookup_id = observation_id
+        if ":g" in observation_id and observation_id.rsplit(":g", 1)[1].isdigit():
+            lookup_id, raw_generation = observation_id.rsplit(":g", 1)
+            lookup_generation = int(raw_generation)
+        result = evaluate_lab(lookup_id, lookup_generation)
+        if not result.get("available"):
+            typer.echo(
+                f"canonical Lab evaluation unavailable: {result.get('reason', 'unknown')}",
+                err=True,
+            )
             raise typer.Exit(code=1)
         if json_output:
             typer.echo(json.dumps(result, indent=2, default=str))
             return
-        typer.echo(f"disposition={result.get('disposition')}")
+        typer.echo("disposition=evaluated")
         typer.echo(f"verdict={result.get('verdict')}")
         typer.echo(f"source_cutoff={result.get('source_cutoff')}")
         return
