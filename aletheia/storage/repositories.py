@@ -492,6 +492,28 @@ def has_audit_event(*, event_type: str, entity_id: str) -> bool:
     return row is not None
 
 
+def candidate_selection_epoch_is_admitted(policy_epoch_id: str) -> bool:
+    """Return whether the epoch's latest committed authority transition admits it."""
+
+    row = get_db().execute(
+        "SELECT event_type FROM audit_events WHERE event_type IN ("
+        "'candidate_selection_authority_admitted', "
+        "'candidate_selection_authority_rolled_back') AND (entity_id=? OR "
+        "CASE WHEN event_type='candidate_selection_authority_admitted' "
+        "AND json_valid(after_state) THEN json_extract(after_state, "
+        "'$.candidate_selection_policy_epoch') END=? OR "
+        "CASE WHEN event_type='candidate_selection_authority_rolled_back' "
+        "AND json_valid(before_state) THEN json_extract(before_state, "
+        "'$.candidate_selection_policy_epoch') END=?) "
+        "ORDER BY timestamp DESC, rowid DESC LIMIT 1",
+        (policy_epoch_id, policy_epoch_id, policy_epoch_id),
+    ).fetchone()
+    return bool(
+        row
+        and row["event_type"] == "candidate_selection_authority_admitted"
+    )
+
+
 def list_audit_events(
     limit: int = 50, event_type: str | None = None,
 ) -> list[dict]:

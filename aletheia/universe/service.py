@@ -475,10 +475,7 @@ def _assert_candidate_selection_publication_authority(
     if (
         current.universe.candidate_selection_policy != "candidate_selection_utility_v1"
         or current.universe.candidate_selection_policy_epoch != expected_policy_id
-        or not repo.has_audit_event(
-            event_type="candidate_selection_authority_admitted",
-            entity_id=expected_policy_id,
-        )
+        or not repo.candidate_selection_epoch_is_admitted(expected_policy_id)
         or candidate_selection_policy_identity(
             current,
             family_spread_tolerances=(

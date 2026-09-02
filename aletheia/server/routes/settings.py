@@ -3170,32 +3170,41 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
 
     from aletheia.universe.candidate_selection_authority import LEGACY_CANDIDATE_POLICY
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
     from aletheia.files.jsonl import write_audit
 
     with repo.transaction(immediate=True):
-        cfg = load_config()
-        before = cfg.universe.model_dump(mode="json")
-        cfg.universe = UniverseConfig.model_validate({
-            **before,
-            "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
-            "candidate_selection_policy_epoch": None,
-        })
-        save_config(cfg)
-        try:
-            audit_written = write_audit({
-                "actor": "human",
-                "source": "dashboard",
-                "event_type": "candidate_selection_authority_rolled_back",
-                "entity_type": "universe_config",
-                "before": before,
-                "after": cfg.universe.model_dump(mode="json"),
-                "message": f"Candidate Selection Utility rolled back: {req.reason}",
+        rolled_back: dict[str, Any] = {}
+
+        def apply_rollback(latest) -> bool:
+            before = latest.universe.model_dump(mode="json")
+            previous_epoch = latest.universe.candidate_selection_policy_epoch
+            proposed = UniverseConfig.model_validate({
+                **before,
+                "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
+                "candidate_selection_policy_epoch": None,
             })
-            if not audit_written:
+            event = AuditEvent(
+                actor="human",
+                source="dashboard",
+                event_type="candidate_selection_authority_rolled_back",
+                entity_type="universe_config",
+                entity_id=previous_epoch,
+                before_state=json.dumps(before, sort_keys=True),
+                after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
+                message=f"Candidate Selection Utility rolled back: {req.reason}",
+            )
+            if not repo.insert_audit_event_once(event):
+                raise RuntimeError("candidate_selection_rollback_audit_identity_conflict")
+            if not write_audit(event.model_dump(), mirror_db=False):
                 raise OSError("candidate_selection_rollback_audit_chain_unavailable")
+            latest.universe = proposed
+            rolled_back["cfg"] = latest
+            return True
+
+        try:
+            mutate_config(apply_rollback)
         except Exception as exc:
-            cfg.universe = UniverseConfig.model_validate(before)
-            save_config(cfg)
             raise HTTPException(
                 500,
                 detail={
@@ -3203,6 +3212,7 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
                     "message": "Candidate Selection authority was unchanged because rollback audit persistence failed.",
                 },
             ) from exc
+        cfg = rolled_back["cfg"]
     return _candidate_selection_status(cfg)
 
 

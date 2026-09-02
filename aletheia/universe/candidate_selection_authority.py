@@ -142,10 +142,7 @@ def candidate_selection_authority_block_reason(
         try:
             from aletheia.storage import repositories as repo
 
-            admitted = repo.has_audit_event(
-                event_type="candidate_selection_authority_admitted",
-                entity_id=expected_epoch,
-            )
+            admitted = repo.candidate_selection_epoch_is_admitted(expected_epoch)
         except Exception:
             return "candidate_selection_admission_evidence_unavailable"
         if not admitted:

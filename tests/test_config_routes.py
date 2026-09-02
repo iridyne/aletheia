@@ -713,6 +713,7 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     assert admitted.json()["authority_enabled"] is True
     assert write_audit.call_args.args[0]["event_type"] == "candidate_selection_authority_admitted"
     assert load_config().universe.candidate_selection_policy_epoch == epoch
+    assert repo.candidate_selection_epoch_is_admitted(epoch) is True
 
     frozen = await client.post(
         "/api/settings/universe",
@@ -773,6 +774,7 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     assert rolled_back.json()["configured_policy"] == "legacy_total_score_v1"
     assert write_audit.call_args.args[0]["event_type"] == "candidate_selection_authority_rolled_back"
     assert load_config().universe.candidate_selection_policy_epoch is None
+    assert repo.candidate_selection_epoch_is_admitted(epoch) is False
 
 
 @pytest.mark.anyio
