@@ -27,6 +27,23 @@ def test_universe_publication_has_one_entry_planning_owner():
 
 @spec_claim(
     SpecClaim(
+        "EP-S10", "entry_plan_contract", "AI Entry hypothesis authority", "L2a",
+        "Planner V3 freezes one bounded input and Entry Plan V2 fails closed on provenance or activation mismatch.",
+        status="implemented",
+    )
+)
+def test_ai_entry_v3_has_one_frozen_input_and_execution_gate():
+    from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
+    from aletheia.storage.repositories import bind_candidate_planner_input
+    from aletheia.trading.entry_plan import EntryPlan
+
+    assert "planner_input_hash" in inspect.getsource(bind_candidate_planner_input)
+    assert "ai_entry_activation_gate_closed" in inspect.getsource(_require_ai_entry_authority)
+    assert "analysis_context_fingerprint" in EntryPlan.model_fields
+
+
+@spec_claim(
+    SpecClaim(
         "EP-S02",
         "decision_lifecycle_contract",
         "§1 Triggered hot path",

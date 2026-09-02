@@ -449,6 +449,8 @@ class AgentConfig(BaseModel):
     # Intended for demo/test phases where pipeline throughput matters more than
     # performance-based gating. Re-disable before evaluating real results.
     bypass_distress_gate: bool = False
+    ai_entry_hypothesis_enabled: bool = False
+    ai_entry_hypothesis_activated_at: datetime | None = None
 
 
 class OperatorConfig(BaseModel):

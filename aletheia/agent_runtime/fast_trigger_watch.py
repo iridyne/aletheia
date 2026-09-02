@@ -29,6 +29,7 @@ from aletheia.universe.fast_trigger import (
 )
 _MOMENTUM_V1_TRIGGER = ("momentum-retrace-reclaim", "v1")
 _MOMENTUM_V2_TRIGGER = ("momentum-retrace-reclaim", "v2")
+_ANCHOR_RETRACE_TRIGGER = ("anchor-retrace-reclaim", "v1")
 
 logger = logging.getLogger("aletheia.fast_trigger_watch")
 
@@ -677,7 +678,7 @@ async def _load_entry_plan_watchers(
         )
         trigger_identity = _entry_plan_trigger_identity(plan)
         try:
-            if trigger_identity == _MOMENTUM_V2_TRIGGER:
+            if trigger_identity in {_MOMENTUM_V2_TRIGGER, _ANCHOR_RETRACE_TRIGGER}:
                 engine: TriggerEngine | MomentumTriggerEngineV2 = MomentumTriggerEngineV2(
                     instrument=instrument,
                     direction=plan.direction,

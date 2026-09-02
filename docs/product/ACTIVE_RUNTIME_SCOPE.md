@@ -68,6 +68,13 @@ mode is the local `paper_internal` simulator. Exchange demo modes remain support
 adapters, but are not part of this active-scope proof until an owner-selected demo
 mode is added here with matching Golden Path and replay evidence.
 
+For Universe-linked entry, the same System Operator authority is expressed as
+Candidate → Candidate Planning Generation → immutable Entry Plan → Proposal.
+Default Planner V2 produces historical `entry-plan/v1`; the owner-gated,
+forward-only Momentum Planner V3 produces `entry-plan/v2` through the bounded
+Context/Hypothesis compiler. This is not an additional decision authority and
+does not alter the independent-Opportunity path declared in the front matter.
+
 The `authorized_extensions.cn_equity` declaration admits only the bounded
 implementation work approved by its Proposal. It does not add CN Equity to the
 active instrument profiles or current Runtime proof. CN starts semantically

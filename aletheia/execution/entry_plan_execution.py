@@ -39,6 +39,26 @@ def _require_momentum_v2_authority(plan: EntryPlan) -> None:
         raise ValueError("entry_plan_treatment_exposure_invalid")
 
 
+def _require_ai_entry_authority(plan: EntryPlan) -> None:
+    if plan.version != "entry-plan/v2":
+        return
+    generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
+    if generation is None or generation.get("planner_contract_version") != "entry-planner/v3":
+        raise ValueError("ai_entry_generation_contract_mismatch")
+    from aletheia.config.loader import load_config
+
+    cfg = load_config(persist_migrations=False)
+    activation = cfg.agent.ai_entry_hypothesis_activated_at
+    if (
+        not cfg.agent.ai_entry_hypothesis_enabled
+        or activation is None
+        or generation.get("activation_identity") != activation.astimezone(timezone.utc).isoformat()
+        or cfg.exchange.paper_execution_mode not in {"paper_internal", "bitget_demo"}
+        or cfg.live.state != "live_disabled"
+    ):
+        raise ValueError("ai_entry_activation_gate_closed")
+
+
 
 
 
@@ -67,6 +87,7 @@ def build_entry_plan_order_intent(
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
     _require_momentum_v2_authority(plan)
+    _require_ai_entry_authority(plan)
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if _instant(plan.expires_at) <= current:
@@ -131,6 +152,18 @@ def build_entry_plan_order_intent(
                 "treatment_exposure_id": plan.treatment_exposure_id,
                 "geometry_version": plan.trigger_params.get("geometry_version"),
                 "geometry_fingerprint": plan.trigger_params.get("geometry_fingerprint"),
+                "planner_contract_version": "entry-planner/v3" if plan.version == "entry-plan/v2" else None,
+                "entry_plan_version": plan.version,
+                "entry_behavior_version": plan.behavior_version,
+                "analysis_context_version": plan.analysis_context_version,
+                "analysis_context_fingerprint": plan.analysis_context_fingerprint,
+                "entry_hypothesis_version": plan.entry_hypothesis_version,
+                "entry_hypothesis_hash": plan.entry_hypothesis_hash,
+                "primary_anchor_id": (plan.primary_anchor_snapshot or {}).get("anchor_id"),
+                "invalidation_anchor_id": (plan.invalidation_anchor_snapshot or {}).get("anchor_id"),
+                "entry_profile_id": plan.entry_profile_id,
+                "entry_profile_version": plan.entry_profile_version,
+                "compiled_geometry_fingerprint": plan.compiled_geometry_fingerprint,
                 "market_received_at": observed_at,
                 "market_source_at": source_observed_at,
                 **({"entry_trigger": dict(trigger_evidence)} if trigger_evidence is not None else {}),
@@ -169,6 +202,7 @@ def execute_entry_plan(
         raise ValueError("entry_plan_hash_mismatch")
     plan = EntryPlan.model_validate_json(payload)
     _require_momentum_v2_authority(plan)
+    _require_ai_entry_authority(plan)
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 

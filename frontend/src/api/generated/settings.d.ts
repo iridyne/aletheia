@@ -27,6 +27,13 @@ export interface components {
     schemas: {
         /** AgentConfig */
         AgentConfig: {
+            /** Ai Entry Hypothesis Activated At */
+            ai_entry_hypothesis_activated_at?: string | null;
+            /**
+             * Ai Entry Hypothesis Enabled
+             * @default false
+             */
+            ai_entry_hypothesis_enabled: boolean;
             /**
              * Autonomous Learning
              * @default true
@@ -1623,8 +1630,9 @@ export interface components {
             /**
              * Symbol Filter Mode
              * @default blacklist
+             * @enum {string}
              */
-            symbol_filter_mode: string;
+            symbol_filter_mode: "whitelist" | "blacklist";
             /** Symbol List */
             symbol_list?: string[];
         };

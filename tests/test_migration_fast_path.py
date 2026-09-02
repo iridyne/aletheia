@@ -234,9 +234,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 57)
+        f"aletheia-sqlite-v{version}" for version in range(2, 58)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v56"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v57"
     connection.close()
 
 
@@ -701,8 +701,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260902_0055_planner_contract_version_v56",
-        "aletheia-sqlite-v56",
+        "20260902_0056_ai_entry_hypothesis_v57",
+        "aletheia-sqlite-v57",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")

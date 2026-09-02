@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v56"
+SCHEMA_VERSION = "aletheia-sqlite-v57"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3917,6 +3917,72 @@ _PLANNER_CONTRACT_VERSION_COLUMN = (
 _PLANNER_CONTRACT_VERSION_CHECKSUM = hashlib.sha256(
     (_PLANNER_CONTRACT_VERSION_COLUMN + "\nplanner_contract_version_v2").encode("utf-8")
 ).hexdigest()
+
+_AI_ENTRY_V57_SQL = """
+CREATE TABLE candidate_planning_generations_v57 (
+    id TEXT PRIMARY KEY, planning_key TEXT NOT NULL, planning_identity TEXT NOT NULL,
+    identity_version TEXT NOT NULL CHECK(identity_version='candidate-planning/v1'),
+    candidate_id TEXT NOT NULL, last_candidate_id TEXT NOT NULL, venue TEXT NOT NULL,
+    symbol TEXT NOT NULL, market_type TEXT NOT NULL CHECK(market_type IN ('spot','perp')),
+    candidate_family TEXT NOT NULL, direction TEXT NOT NULL CHECK(direction IN ('long','short')),
+    is_current INTEGER NOT NULL DEFAULT 1 CHECK(is_current IN (0,1)),
+    status TEXT NOT NULL CHECK(status IN ('pending','planning','planned','no_plan','unavailable','superseded')),
+    result_kind TEXT CHECK(result_kind IN ('entry_plan','no_plan','unavailable','stale_result')),
+    owner_token TEXT, claim_expires_at TEXT, retry_not_before TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+    result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)), entry_plan_id TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+    runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT,
+    attention_status TEXT NOT NULL DEFAULT 'active' CHECK(attention_status IN ('active','terminal')),
+    attention_started_at TEXT, last_requalified_at TEXT,
+    requalification_source_json TEXT CHECK(requalification_source_json IS NULL OR json_valid(requalification_source_json)),
+    soft_expires_at TEXT, hard_expires_at TEXT,
+    attention_max_age_sec INTEGER CHECK(attention_max_age_sec BETWEEN 300 AND 86400),
+    attention_policy_version TEXT CHECK(attention_policy_version IS NULL OR attention_policy_version='candidate-attention/v1'),
+    attention_terminal_at TEXT, attention_terminal_reason TEXT,
+    planner_contract_version TEXT NOT NULL DEFAULT 'entry-planner/v1'
+        CHECK(planner_contract_version IN ('entry-planner/v1','entry-planner/v2','entry-planner/v3')),
+    planner_input_json TEXT CHECK(planner_input_json IS NULL OR json_valid(planner_input_json)),
+    planner_input_hash TEXT CHECK(planner_input_hash IS NULL OR length(planner_input_hash)=64),
+    activation_identity TEXT
+);
+INSERT INTO candidate_planning_generations_v57
+SELECT *, NULL, NULL, NULL FROM candidate_planning_generations;
+CREATE TABLE entry_plans_v57 (
+    id TEXT PRIMARY KEY,
+    planning_generation_id TEXT NOT NULL UNIQUE REFERENCES candidate_planning_generations_v57(id),
+    candidate_id TEXT NOT NULL, planning_key TEXT NOT NULL,
+    version TEXT NOT NULL CHECK(version IN ('entry-plan/v1','entry-plan/v2')),
+    venue TEXT NOT NULL, symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL CHECK(market_type IN ('spot','perp')),
+    direction TEXT NOT NULL CHECK(direction IN ('long','short')),
+    execution_mode TEXT NOT NULL CHECK(execution_mode IN ('RESTING_MAKER','TRIGGERED')),
+    plan_json TEXT NOT NULL CHECK(json_valid(plan_json)), plan_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('waiting','risk_reserved','triggered','ordered','partially_filled','filled','invalidated','expired','cancelled','failed')),
+    order_id TEXT REFERENCES orders(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    terminal_at TEXT, terminal_reason TEXT, runtime_session_id TEXT,
+    producer_commit TEXT, behavior_fingerprint TEXT
+);
+INSERT INTO entry_plans_v57 SELECT * FROM entry_plans;
+DROP TABLE entry_plans;
+DROP TABLE candidate_planning_generations;
+ALTER TABLE candidate_planning_generations_v57 RENAME TO candidate_planning_generations;
+ALTER TABLE entry_plans_v57 RENAME TO entry_plans;
+CREATE UNIQUE INDEX idx_candidate_planning_current ON candidate_planning_generations(planning_key) WHERE is_current=1;
+CREATE INDEX idx_candidate_planning_work ON candidate_planning_generations(is_current,status,retry_not_before,created_at);
+CREATE INDEX idx_candidate_attention_active_deadline ON candidate_planning_generations(attention_status,is_current,soft_expires_at,hard_expires_at);
+CREATE INDEX idx_candidate_planning_history ON candidate_planning_generations(updated_at DESC,id DESC);
+CREATE INDEX idx_candidate_planning_candidate ON candidate_planning_generations(candidate_id,updated_at DESC);
+CREATE INDEX idx_candidate_planning_last_candidate ON candidate_planning_generations(last_candidate_id,updated_at DESC);
+CREATE INDEX idx_entry_plans_watch ON entry_plans(status,execution_mode,updated_at);
+CREATE UNIQUE INDEX idx_entry_plans_active_key ON entry_plans(planning_key) WHERE status IN ('waiting','risk_reserved','triggered','ordered','partially_filled');
+CREATE TRIGGER trg_entry_plan_facts_immutable
+BEFORE UPDATE OF planning_generation_id,candidate_id,planning_key,version,venue,symbol,market_type,direction,execution_mode,plan_json,plan_hash,created_at
+ON entry_plans BEGIN SELECT RAISE(ABORT,'Entry Plan facts are immutable'); END;
+CREATE TRIGGER trg_entry_plan_no_delete BEFORE DELETE ON entry_plans
+BEGIN SELECT RAISE(ABORT,'Entry Plan history is retained'); END;
+"""
+_AI_ENTRY_V57_CHECKSUM = hashlib.sha256((_AI_ENTRY_V57_SQL + "\nai_entry_v57").encode()).hexdigest()
 
 _KNOWLEDGE_DOCUMENT_COLUMNS = (
     ("content_format", "TEXT"),
@@ -6113,6 +6179,24 @@ def _apply_planner_contract_version_v56(db: sqlite3.Connection) -> None:
         )
 
 
+def _apply_ai_entry_v57(db: sqlite3.Connection) -> None:
+    """Add immutable Planner V3 input identity and Entry Plan V2 compatibility."""
+    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(candidate_planning_generations)")}
+    if "planner_input_json" in columns:
+        return
+    # Legacy fixtures and production databases may retain unrelated dormant
+    # triggers whose historical table projection no longer parses during ALTER.
+    db.execute("PRAGMA writable_schema=ON")
+    try:
+        db.executescript(_AI_ENTRY_V57_SQL)
+    finally:
+        db.execute("PRAGMA writable_schema=OFF")
+        schema_version = int(db.execute("PRAGMA schema_version").fetchone()[0])
+        db.execute(f"PRAGMA schema_version={schema_version + 1}")
+    if db.execute("PRAGMA foreign_key_check").fetchall():
+        raise MigrationStateError("ai_entry_v57_foreign_key_violation")
+
+
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
     """Persist future fingerprint inputs without rewriting historical identity."""
 
@@ -6741,6 +6825,12 @@ _MIGRATIONS = (
         checksum=_PLANNER_CONTRACT_VERSION_CHECKSUM,
         schema_version="aletheia-sqlite-v56",
         apply=_apply_planner_contract_version_v56,
+    ),
+    MigrationStep(
+        migration_id="20260902_0056_ai_entry_hypothesis_v57",
+        checksum=_AI_ENTRY_V57_CHECKSUM,
+        schema_version="aletheia-sqlite-v57",
+        apply=_apply_ai_entry_v57,
     ),
 )
 

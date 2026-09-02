@@ -89,6 +89,12 @@ Universe 选出的行是 Candidate；物理表 `universe_members` 仅是兼容�
 
 ### 2.1a Candidate Planning Generation 与 Entry Plan
 
+`entry-planner/v3` 是默认关闭、按激活时间前向隔离的 Momentum 合约。激活前
+Snapshot、旧 generation、`entry-plan/v1` 与既有 Position 不重规划、不回填；激活后
+Snapshot 冻结 Context → Hypothesis → `entry-plan/v2` provenance。关闭 gate 阻止新的
+V3 调用与 V2 AI Plan 执行，再次启用生成新的 activation identity，旧 activation 的
+计划不得恢复执行权。
+
 `candidate_planning_generations` 以 exact instrument、family、direction 和 thesis-level material facts
 建立耐久 planning identity；snapshot/member/rank/score/price churn 不在 ownership identity 中。每代
 最多一个 planning owner；No-Plan 耐久；unavailable 仅有界重试；旧 plan expiry/invalidation 不自动

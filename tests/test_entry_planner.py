@@ -150,6 +150,48 @@ def test_unchanged_candidate_and_duplicate_wakes_create_one_durable_owner():
     assert repo.claim_next_candidate_planning("owner-two") is None
 
 
+def test_ai_entry_activation_is_forward_only_and_reenable_rotates_identity():
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.live.state = "live_disabled"
+    cfg.agent.permission_mode = "Paper"
+    cfg.agent.ai_entry_hypothesis_enabled = True
+    cfg.agent.ai_entry_hypothesis_activated_at = datetime(2026, 9, 2, 1, tzinfo=timezone.utc)
+    save_config(cfg)
+
+    old_snapshot = UniverseSnapshot(
+        created_at="2026-09-02T00:59:59+00:00", expires_at="2099-01-01T00:00:00+00:00"
+    )
+    repo.insert_universe_snapshot(old_snapshot)
+    old = UniverseMember(
+        snapshot_id=old_snapshot.id, asset_id="asset-old", venue="bitget",
+        symbol="OLD/USDT", market_type="perp", rank=1, total_score=90,
+        scanner_family="momentum", scanner_direction="long", entry_price_usd=100,
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    repo.insert_candidate(old)
+    legacy, _ = repo.ensure_candidate_planning_generation(old.id)
+    assert legacy["planner_contract_version"] == "entry-planner/v2"
+    assert legacy["activation_identity"] is None
+
+    current = _candidate(asset_id="asset-new", symbol="NEW/USDT")
+    v3, _ = repo.ensure_candidate_planning_generation(current.id)
+    assert v3["planner_contract_version"] == "entry-planner/v3"
+    first_activation = v3["activation_identity"]
+
+    cfg.agent.ai_entry_hypothesis_enabled = False
+    save_config(cfg)
+    cfg.agent.ai_entry_hypothesis_enabled = True
+    cfg.agent.ai_entry_hypothesis_activated_at = datetime(2026, 9, 2, 2, tzinfo=timezone.utc)
+    save_config(cfg)
+    newer = _candidate(rank=2, asset_id="asset-new", symbol="NEW/USDT")
+    rotated, created = repo.ensure_candidate_planning_generation(newer.id)
+    assert created and rotated["id"] != v3["id"]
+    assert rotated["activation_identity"] != first_activation
+
+
 @pytest.mark.parametrize("terminal_status", ["unavailable", "no_plan", "planned"])
 def test_planner_contract_upgrade_supersedes_each_durable_result_once(terminal_status):
     candidate = _candidate()
@@ -642,6 +684,30 @@ def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
     assert treatment_plan.treatment_exposure_id == "exposure-treatment"
     assert treatment_plan.max_risk_pct == triggered_taker.max_risk_pct
     assert treatment_plan.max_leverage == triggered_taker.max_leverage
+
+
+def test_ai_entry_compiler_emits_v2_without_momentum_treatment(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.config.loader import load_config
+    from aletheia.trading.entry_analysis import EntryAnalysisContextV1, EntryAnchorV1, EntryHypothesisV1
+    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    policy = SimpleNamespace(policy_id="test", revision=1, capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100), loss=SimpleNamespace(max_single_trade_risk_pct=1.0))
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.resolve_risk_policy", lambda *_a, **_k: SimpleNamespace(policy=policy, policy_hash="hash"))
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
+    monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
+    primary = EntryAnchorV1(venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference", price=100, directional_role="entry_candidate", known_at_ms=1, source_fact_refs=("candidate:c1",), source_fingerprint="candidate")
+    invalidation = EntryAnchorV1(venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing", price=95, directional_role="invalidation_candidate", known_at_ms=1, source_fact_refs=("swing:s1",), source_fingerprint="swing")
+    context = EntryAnalysisContextV1(
+        analysis_cutoff_at="2026-09-02T00:00:00Z", instrument={"venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, planning_generation={"id":"g1","planner_contract_version":"entry-planner/v3","candidate_id":"c1","candidate_family":"momentum"}, candidate={"fact_refs":["candidate:c1"]}, candle_windows={tf:{"availability":"available","bars":[]} for tf in ("4h","1h","15m")}, market_structure={"15m":{"atr14":2.0,"break_tolerance":0.1},"fact_refs":[]}, quant_context={"fact_refs":[]}, portfolio_context={"availability":"unavailable"}, execution_context={"availability":"available","bid":99.9,"ask":100.1,"spread_bps":2,"depth_10bps_usd":100_000,"estimated_costs":0.1}, anchors=(primary,invalidation), entry_profiles=({"id":"anchor-retrace-reclaim","version":"v1"},), learning_context={"availability":"unavailable"},
+    )
+    hypothesis = EntryHypothesisV1(decision="ENTRY_PLAN", reason_code="OK", thesis="bounded", scenario="reclaim", setup_archetype="continuation", primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id, entry_profile_id="anchor-retrace-reclaim", entry_profile_version="v1", execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,))
+    plan = compile_ai_entry_plan({"id":"g1","last_candidate_id":"c1","candidate_family":"momentum","venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, {"id":"c1","entry_price_usd":100}, {"atr_pct":2}, context, hypothesis, cfg)
+    assert (plan.version, plan.behavior_version, plan.treatment_exposure_id) == ("entry-plan/v2", "ai-entry-hypothesis-compiler/v1", None)
+    assert plan.trigger_spec_id == "anchor-retrace-reclaim"
 
 
 def test_plan_intent_portable_schema_requires_every_strict_property():
