@@ -188,3 +188,53 @@ def test_canonical_runner_keeps_window_active_when_evaluation_is_unavailable():
         "SELECT status FROM observation_windows WHERE observation_id=? AND generation=1",
         (root["observation_id"],),
     ).fetchone()[0] == "active"
+
+
+def test_confirmatory_evaluation_requires_declared_authority_alpha():
+    from aletheia.observation_lab.canonical import (
+        freeze_inference_plan,
+        register_inference_plan,
+        register_observation_spec,
+    )
+    from aletheia.observation_lab.db import reset_lab_db
+    from aletheia.observation_lab.evaluator import evaluate_observation
+
+    reset_lab_db()
+    root = register_observation_spec(
+        {
+            "observation_id": "lab-evaluator-alpha-required",
+            "path_id": "universe_family_calibration",
+            "filter_name": "test-filter",
+            "stage": "shadow",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "4h",
+            "control": {"value": 1.0},
+            "treatment": {"value": 2.0},
+        },
+        started_at="2026-08-01T00:00:00+00:00",
+        collect_until="2026-08-02T00:00:00+00:00",
+    )
+    plan_id = register_inference_plan(
+        observation_id=root["observation_id"],
+        generation=1,
+        inference_contract_version="observation-fixed-look/v1",
+        plan={"inference_contract": "observation-fixed-look/v1"},
+    )
+    freeze_inference_plan(
+        plan_id,
+        cutoff={"assignment_unit_keys": ["unit"]},
+    )
+
+    result = evaluate_observation(
+        root["observation_id"], 1, evaluation_kind="confirmatory",
+    )
+
+    assert result == {
+        "available": False,
+        "reason": "inference_plan_invalid",
+        "observation_id": root["observation_id"],
+        "generation": 1,
+        "evaluation_kind": "confirmatory",
+    }

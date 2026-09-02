@@ -566,10 +566,9 @@ def _evaluate_observation(
             "inference_plan_hash": str(plan["plan_hash"]),
             "inference_cutoff_fingerprint": str(plan["cutoff_fingerprint"]),
         })
-        authority_alpha = _finite(
-            (plan_payload or {}).get("authority_alpha"), default=0.025,
-        )
-        if not 0.0 < authority_alpha < 1.0:
+        raw_authority_alpha = (plan_payload or {}).get("authority_alpha")
+        authority_alpha = _optional_finite(raw_authority_alpha)
+        if authority_alpha is None or not 0.0 < authority_alpha < 1.0:
             return {
                 "available": False,
                 "reason": "inference_plan_invalid",
