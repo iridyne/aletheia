@@ -448,6 +448,22 @@ def apply_legacy_learning_migration(
     plan = _plan_from_snapshot(snapshot)
     if not plan["available"]:
         return plan
+    # A cursor fingerprint is the identity of the legacy snapshot already
+    # projected into Lab.  Do not overwrite it when the source changes: an
+    # INSERT OR IGNORE retry would otherwise leave stale Lab rows while making
+    # the new, unverified source look imported.
+    with readonly_lab_db(allow_missing=True) as existing_lab:
+        if existing_lab is not None:
+            existing_cursor = existing_lab.execute(
+                "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
+                "WHERE source_name='legacy_learning'"
+            ).fetchone()
+            if (
+                existing_cursor is not None
+                and str(existing_cursor[0] or "")
+                and str(existing_cursor[0]) != str(plan["plan_fingerprint"])
+            ):
+                raise RuntimeError("legacy_import_source_changed")
     experiments = {str(row.get("experiment_id")): row for row in snapshot["learning_experiments"]}
     hypotheses = {str(row.get("hypothesis_id")): row for row in snapshot["learning_hypotheses"]}
     roots: dict[str, tuple[str, int, bool]] = {}

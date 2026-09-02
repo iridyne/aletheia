@@ -80,6 +80,50 @@ def test_plan_is_read_only_and_apply_is_idempotent():
     ).fetchone()[0] == 1
 
 
+def test_migration_refuses_to_replace_an_imported_legacy_snapshot():
+    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="changed-source-hypothesis",
+        fingerprint="changed-source-fingerprint",
+        cohort_id="changed-source-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="legacy",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    insert_experiment(LearningExperiment(
+        experiment_id="changed-source-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment_salt="source-v1",
+        started_at="2026-01-01T00:00:00+00:00",
+    ))
+
+    first = apply_legacy_learning_migration()
+    assert first["idempotent"] is True
+    old_fingerprint = get_lab_db().execute(
+        "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
+        "WHERE source_name='legacy_learning'"
+    ).fetchone()[0]
+    get_db().execute(
+        "UPDATE learning_experiments SET assignment_salt='source-v2' "
+        "WHERE experiment_id='changed-source-experiment'"
+    )
+
+    with pytest.raises(RuntimeError, match="legacy_import_source_changed"):
+        apply_legacy_learning_migration()
+    assert get_lab_db().execute(
+        "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
+        "WHERE source_name='legacy_learning'"
+    ).fetchone()[0] == old_fingerprint
+
+
 def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path):
     from aletheia.observation_lab.canonical import verify_generation_archive
     from aletheia.observation_lab.db import get_lab_db
@@ -116,6 +160,49 @@ def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path
     ).fetchone()
     assert archive is not None
     assert verify_generation_archive(archive[0])["available"] is True
+
+
+def test_legacy_retirement_rejects_corrupt_generation_archive(tmp_path):
+    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+    from aletheia.storage.migrations import MigrationStateError, retire_legacy_experiment_tables
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="archive-proof-hypothesis",
+        fingerprint="archive-proof-fingerprint",
+        cohort_id="archive-proof-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="legacy",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    insert_experiment(LearningExperiment(
+        experiment_id="archive-proof-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        status="completed_no_support",
+        assignment_salt="archive-proof-salt",
+        started_at="2026-01-01T00:00:00+00:00",
+        ended_at="2026-01-02T00:00:00+00:00",
+    ))
+
+    apply_legacy_learning_migration(archive_root=str(tmp_path))
+    archive_path = get_lab_db().execute(
+        "SELECT archive_path FROM observation_archives "
+        "WHERE observation_id='legacy-learning:archive-proof-experiment'"
+    ).fetchone()[0]
+    with open(archive_path, "ab") as archive:
+        archive.write(b"corrupt")
+
+    with pytest.raises(MigrationStateError, match="archive_unverified"):
+        retire_legacy_experiment_tables(get_db(), require_lab_authority=False)
+    assert get_db().execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='learning_experiments'"
+    ).fetchone() is not None
 
 
 def test_explicit_retirement_requires_import_proof_and_drops_legacy_tables():

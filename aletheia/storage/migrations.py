@@ -4297,10 +4297,30 @@ def retire_legacy_experiment_tables(
                     "AND NOT EXISTS (SELECT 1 FROM observation_archives a "
                     "WHERE a.observation_id=w.observation_id AND a.generation=w.generation)"
                 ).fetchone()[0]
+                archive_ids = [
+                    str(row[0])
+                    for row in lab.execute(
+                        "SELECT archive_id FROM observation_archives ORDER BY archive_id"
+                    ).fetchall()
+                ]
         except sqlite3.Error as exc:
             raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
         if int(missing_archives or 0):
             raise MigrationStateError("legacy_experiment_retirement_archive_missing")
+        # The archive index is not itself replay proof.  Verify every archive
+        # before dropping the only legacy copy so a corrupt file cannot be
+        # mistaken for recoverable historical evidence.
+        try:
+            from aletheia.observation_lab.canonical import verify_generation_archive
+
+            for archive_id in archive_ids:
+                verdict = verify_generation_archive(archive_id)
+                if verdict.get("available") is not True:
+                    raise MigrationStateError("legacy_experiment_retirement_archive_unverified")
+        except MigrationStateError:
+            raise
+        except Exception as exc:
+            raise MigrationStateError("legacy_experiment_retirement_archive_unverified") from exc
 
     owns_transaction = not connection.in_transaction
     if not owns_transaction:
