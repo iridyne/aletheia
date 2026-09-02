@@ -3033,6 +3033,7 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
         evaluate_candidate_selection_policy,
     )
     from aletheia.storage import repositories as repo
+    from aletheia.files.jsonl import write_audit
 
     with repo.transaction(immediate=True):
         cfg = load_config()
@@ -3064,28 +3065,26 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
         before = cfg.universe.model_dump(mode="json")
         cfg.universe = proposed
         save_config(cfg)
-    from aletheia.files.jsonl import write_audit
-    try:
-        write_audit({
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "candidate_selection_authority_admitted",
-            "entity_type": "universe_config",
-            "before": before,
-            "after": proposed.model_dump(mode="json"),
-            "message": f"Candidate Selection Utility admitted: {req.reason}",
-        })
-    except Exception as exc:
-        cfg.universe = UniverseConfig.model_validate(before)
-        with repo.transaction(immediate=True):
+        try:
+            write_audit({
+                "actor": "human",
+                "source": "dashboard",
+                "event_type": "candidate_selection_authority_admitted",
+                "entity_type": "universe_config",
+                "before": before,
+                "after": proposed.model_dump(mode="json"),
+                "message": f"Candidate Selection Utility admitted: {req.reason}",
+            })
+        except Exception as exc:
+            cfg.universe = UniverseConfig.model_validate(before)
             save_config(cfg)
-        raise HTTPException(
-            500,
-            detail={
-                "code": "candidate_selection_admission_audit_failed",
-                "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
-            },
-        ) from exc
+            raise HTTPException(
+                500,
+                detail={
+                    "code": "candidate_selection_admission_audit_failed",
+                    "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
+                },
+            ) from exc
     return _candidate_selection_status(cfg)
 
 
@@ -3094,36 +3093,38 @@ def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
     """Explicitly restore legacy Candidate authority without rewriting evidence."""
 
     from aletheia.universe.candidate_selection_authority import LEGACY_CANDIDATE_POLICY
-
-    cfg = load_config()
-    before = cfg.universe.model_dump(mode="json")
-    cfg.universe = UniverseConfig.model_validate({
-        **before,
-        "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
-        "candidate_selection_policy_epoch": None,
-    })
-    save_config(cfg)
+    from aletheia.storage import repositories as repo
     from aletheia.files.jsonl import write_audit
-    try:
-        write_audit({
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "candidate_selection_authority_rolled_back",
-            "entity_type": "universe_config",
-            "before": before,
-            "after": cfg.universe.model_dump(mode="json"),
-            "message": f"Candidate Selection Utility rolled back: {req.reason}",
+
+    with repo.transaction(immediate=True):
+        cfg = load_config()
+        before = cfg.universe.model_dump(mode="json")
+        cfg.universe = UniverseConfig.model_validate({
+            **before,
+            "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
+            "candidate_selection_policy_epoch": None,
         })
-    except Exception as exc:
-        cfg.universe = UniverseConfig.model_validate(before)
         save_config(cfg)
-        raise HTTPException(
-            500,
-            detail={
-                "code": "candidate_selection_rollback_audit_failed",
-                "message": "Candidate Selection authority was unchanged because rollback audit persistence failed.",
-            },
-        ) from exc
+        try:
+            write_audit({
+                "actor": "human",
+                "source": "dashboard",
+                "event_type": "candidate_selection_authority_rolled_back",
+                "entity_type": "universe_config",
+                "before": before,
+                "after": cfg.universe.model_dump(mode="json"),
+                "message": f"Candidate Selection Utility rolled back: {req.reason}",
+            })
+        except Exception as exc:
+            cfg.universe = UniverseConfig.model_validate(before)
+            save_config(cfg)
+            raise HTTPException(
+                500,
+                detail={
+                    "code": "candidate_selection_rollback_audit_failed",
+                    "message": "Candidate Selection authority was unchanged because rollback audit persistence failed.",
+                },
+            ) from exc
     return _candidate_selection_status(cfg)
 
 

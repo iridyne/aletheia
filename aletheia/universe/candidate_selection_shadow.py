@@ -195,7 +195,10 @@ def build_candidate_selection_shadow_bundle(
             target_by_symbol[symbol] = decision
     target_selected_keys = {
         item.candidate_key
-        for item in list(target_by_symbol.values())[:universe_config.max_candidates]
+        for item in sorted(
+            target_by_symbol.values(),
+            key=lambda item: (-float(item.economic_utility_pct), item.candidate_key),
+        )[:universe_config.max_candidates]
     }
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
         legacy_direction = decision.legacy_control.get("primary_direction")
@@ -477,7 +480,11 @@ def load_candidate_selection_outcomes(
     return result
 
 
-def candidate_selection_training_cutoff(*, policy_epoch_id: str | None = None) -> str | None:
+def candidate_selection_training_cutoff(
+    *,
+    policy_epoch_id: str | None = None,
+    selection_policy: Mapping[str, object] | None = None,
+) -> str | None:
     """Return the first frozen estimator cutoff, optionally for one policy epoch."""
 
     from aletheia.storage import repositories as repo
@@ -488,7 +495,8 @@ def candidate_selection_training_cutoff(*, policy_epoch_id: str | None = None) -
         if policy_epoch_id is not None else (CANDIDATE_SELECTION_RECORD_VERSION,)
     )
     rows = repo.get_db().execute(
-        "SELECT b.captured_at, r.compact_output_json FROM universe_twin_shadow_batches b "
+        "SELECT b.captured_at, b.policy_json, r.compact_output_json "
+        "FROM universe_twin_shadow_batches b "
         "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
         "WHERE b.record_version=? AND b.policy_epoch_id IS NOT NULL "
         f"{epoch_clause} "
@@ -497,8 +505,11 @@ def candidate_selection_training_cutoff(*, policy_epoch_id: str | None = None) -
     ).fetchall()
     for row in rows:
         try:
+            frozen_policy = json.loads(row["policy_json"]).get("selection_policy")
             contract = json.loads(row["compact_output_json"])["evidence_contract"]
         except (KeyError, TypeError, ValueError):
+            continue
+        if selection_policy is not None and frozen_policy != dict(selection_policy):
             continue
         cutoff = contract.get("estimator_training_cutoff")
         if cutoff:

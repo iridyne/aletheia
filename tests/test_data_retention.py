@@ -1252,7 +1252,11 @@ def test_prune_serenity_evidence_and_run_events(invariant_baseline):
 
 
 def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
-    from aletheia.storage.repositories import prune_runtime_sessions
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.storage.repositories import (
+        insert_filter_candidate_outcomes_batch,
+        prune_runtime_sessions,
+    )
 
     db = get_db()
     db.execute(
@@ -1273,7 +1277,26 @@ def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
         "VALUES ('rs-young', 'rt', ?, ?, 1)",
         (_iso(10), _iso(9)),
     )
+    db.execute(
+        "INSERT INTO runtime_sessions "
+        "(session_id, runtime_id, started_at, ended_at, shutdown_clean) "
+        "VALUES ('rs-candidate-evidence', 'rt', ?, ?, 1)",
+        (_iso(120), _iso(60)),
+    )
     db.commit()
+    insert_filter_candidate_outcomes_batch([FilterCandidateOutcome(
+        outcome_candidate_key="candidate-selection-runtime-retention",
+        venue="bitget",
+        symbol="BTC/USDT",
+        direction="long",
+        scanner_family="candidate_selection_utility",
+        horizon="4h",
+        entry_price_usd=100.0,
+        entry_ts=_iso(120),
+        due_at=_iso(119),
+        producer_runtime_session_id="rs-candidate-evidence",
+        settlement_runtime_session_id="rs-candidate-evidence",
+    )])
 
     assert prune_runtime_sessions(days=30) == 1
     remaining = {
@@ -1285,6 +1308,7 @@ def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
     assert "rs-open" in remaining
     assert "rs-old" not in remaining
     assert "rs-young" in remaining
+    assert "rs-candidate-evidence" in remaining
     _assert_invariants_preserved(*invariant_baseline)
 
 

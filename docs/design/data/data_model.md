@@ -534,7 +534,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `agent_shell_tasks` | 14d completed / 30d failed+cancelled; exempt `running`/`pending` | `prune_agent_shell_tasks` (new, cascade) |
 | `agent_shell_sessions` | 14d (30d if session has proposal/report/daily_summary artifact) | `prune_agent_shell_sessions` (new, cascade — children first) |
 | `agent_shell_commands` | 14d | `prune_agent_shell_commands` (new) |
-| `runtime_sessions` | 90d (configurable 1–90) | `prune_runtime_sessions` (new) |
+| `runtime_sessions` | 90d (configurable 1–90); rows referenced by retained Candidate qualification outcomes are protected | `prune_runtime_sessions` (new) |
 | `serenity_evidence` / `serenity_run_events` | 60d | `prune_serenity_evidence` (new) / `prune_serenity_run_events` (new) |
 | `backtest_runs` / `backtest_trades` | 60d (parent cascade) | `prune_backtest_runs` (new, cascade) |
 | `opportunities` (open) | 48h → `expired` | existing |

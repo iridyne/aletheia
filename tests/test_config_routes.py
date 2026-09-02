@@ -604,6 +604,7 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     client, monkeypatch,
 ):
     from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
     )
@@ -692,7 +693,13 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     )
     assert route_restored.status_code == 200
 
-    with patch("aletheia.files.jsonl.write_audit") as write_audit:
+    def audit_under_writer_permit(_record):
+        assert repo.get_db().in_transaction
+
+    with patch(
+        "aletheia.files.jsonl.write_audit",
+        side_effect=audit_under_writer_permit,
+    ) as write_audit:
         admitted = await client.post(
             "/api/settings/universe/candidate-selection/admit",
             json={
@@ -714,7 +721,10 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     assert frozen.json()["detail"]["code"] == "candidate_selection_policy_identity_frozen"
     assert load_config().universe.max_candidates == original_max_candidates
 
-    with patch("aletheia.files.jsonl.write_audit") as write_audit:
+    with patch(
+        "aletheia.files.jsonl.write_audit",
+        side_effect=audit_under_writer_permit,
+    ) as write_audit:
         rolled_back = await client.post(
             "/api/settings/universe/candidate-selection/rollback",
             json={
@@ -838,6 +848,14 @@ async def test_candidate_selection_admission_restores_legacy_when_audit_fails(
     cfg = load_config().universe
     assert cfg.candidate_selection_policy == "legacy_total_score_v1"
     assert cfg.candidate_selection_policy_epoch is None
+    from aletheia.universe.service import (
+        _assert_candidate_selection_publication_authority,
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="candidate_selection_authority_changed_before_publication",
+    ):
+        _assert_candidate_selection_publication_authority(epoch)
 
 
 @pytest.mark.anyio

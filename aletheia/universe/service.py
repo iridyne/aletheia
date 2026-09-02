@@ -344,7 +344,10 @@ def _build_candidate_selection_bundle(
         )
         for item in population
     }
-    training_cutoff = candidate_selection_training_cutoff()
+    selection_policy = candidate_selection_policy_identity(cfg)
+    training_cutoff = candidate_selection_training_cutoff(
+        selection_policy=selection_policy,
+    )
     return build_candidate_selection_shadow_bundle(
         population,
         scanner_run_id=scanner_run_id,
@@ -357,7 +360,7 @@ def _build_candidate_selection_bundle(
             settled_through=training_cutoff,
         ),
         estimator_training_cutoff=training_cutoff,
-        selection_policy=candidate_selection_policy_identity(cfg),
+        selection_policy=selection_policy,
         authority_applied=authority_applied,
         qualification_evidence=qualification_evidence,
     )
@@ -430,6 +433,17 @@ def _atomic_universe_publication():
             raise
     finally:
         _record_publication_duration(started)
+
+
+def _assert_candidate_selection_publication_authority(expected_policy_id: str) -> None:
+    """Revalidate target authority while holding the publication writer permit."""
+
+    current = load_config()
+    if (
+        current.universe.candidate_selection_policy != "candidate_selection_utility_v1"
+        or current.universe.candidate_selection_policy_epoch != expected_policy_id
+    ):
+        raise RuntimeError("candidate_selection_authority_changed_before_publication")
 
 
 def _persist_attempt_learning_exposures(writes: list[dict]) -> None:
@@ -1315,6 +1329,8 @@ class UniverseService:
                 )
                 with _atomic_universe_publication():
                     if candidate_selection_authority_bundle is not None:
+                        _assert_candidate_selection_publication_authority(snapshot_policy_id)
+                    if candidate_selection_authority_bundle is not None:
                         refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
                             prev_snapshot_id,
                             now,
@@ -1507,6 +1523,8 @@ class UniverseService:
             # and its Opportunity handoff are durable. Superseding the previous
             # healthy snapshot is the final write in this publication unit.
             with _atomic_universe_publication():
+                if candidate_selection_authority_bundle is not None:
+                    _assert_candidate_selection_publication_authority(snapshot_policy_id)
                 _persist_attempt_learning_exposures(deferred_exposure_writes)
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)

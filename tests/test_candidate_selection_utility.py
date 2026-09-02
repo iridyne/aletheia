@@ -592,6 +592,8 @@ def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
 
 def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
     import json
+    from dataclasses import replace
+
     import aletheia.universe.candidate_selection_shadow as shadow_module
 
     spot = _feature(symbol="SAME/USDT", market_type="spot", feature_snapshot_id="spot")
@@ -599,21 +601,31 @@ def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
         index=1, symbol="SAME/USDT", market_type="perp",
         feature_snapshot_id="perp", funding_rate=0.0,
     )
-    population = [spot, perp]
+    other = _feature(index=2, symbol="OTHER/USDT", feature_snapshot_id="other")
+    population = [spot, perp, other]
     legacy = [
         {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0}
         for item in population
     ]
-    monkeypatch.setattr(
-        shadow_module,
-        "select_admitted_candidates",
-        lambda decisions, **_kwargs: tuple(decisions),
-    )
+    utilities = {"spot": 1.0, "perp": 3.0, "other": 2.0}
+
+    def admitted(decisions, **_kwargs):
+        ranked = [
+            replace(
+                decision,
+                economic_utility_pct=utilities[feature["feature_snapshot_id"]],
+                admission_status="admitted",
+            )
+            for decision, feature in zip(decisions, population, strict=True)
+        ]
+        return tuple(sorted(ranked, key=lambda item: -float(item.economic_utility_pct)))
+
+    monkeypatch.setattr(shadow_module, "select_admitted_candidates", admitted)
     bundle = shadow_module.build_candidate_selection_shadow_bundle(
         population,
         scanner_run_id="candidate-selection-market-dedup",
         captured_at="2026-09-02T00:00:00+00:00",
-        universe_config=UniverseConfig(max_candidates=2),
+        universe_config=UniverseConfig(max_candidates=1),
         legacy_scored=legacy,
         legacy_allocated=legacy,
         action_route_reasons={
@@ -624,11 +636,11 @@ def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
         selection_policy={"preferred_market_type": "spot"},
     )
     selected = [
-        row.market_type
+        row.symbol
         for row in bundle.evidence
         if json.loads(row.compact_output_json)["target_selected"]
     ]
-    assert selected == ["spot"]
+    assert selected == ["OTHER/USDT"]
 
 
 def test_shadow_retains_full_supported_multi_mechanism_record():
@@ -689,6 +701,7 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     )
     from aletheia.universe.candidate_selection_shadow import (
         build_candidate_selection_shadow_bundle,
+        candidate_selection_training_cutoff,
         target_candidates_from_bundle,
     )
 
@@ -764,6 +777,19 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
         outcomes=authority.outcomes,
         min_interval_sec=0,
     ) == 20
+    assert candidate_selection_training_cutoff(
+        selection_policy=selection_policy,
+    ) == kwargs["captured_at"]
+    changed_cost_policy = {
+        **selection_policy,
+        "cost_assumptions": {
+            **selection_policy["cost_assumptions"],
+            "execution_fee_pct": 0.07,
+        },
+    }
+    assert candidate_selection_training_cutoff(
+        selection_policy=changed_cost_policy,
+    ) is None
     columns = {
         row[1] for row in repo.get_db().execute("PRAGMA table_info(universe_members)")
     }
@@ -774,7 +800,7 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     } <= columns
 
 
-def test_candidate_selection_epoch_identity_includes_execution_cost_assumptions():
+def test_candidate_selection_epoch_identity_includes_cost_route_and_legacy_control():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
@@ -793,6 +819,12 @@ def test_candidate_selection_epoch_identity_includes_execution_cost_assumptions(
     after = candidate_selection_policy_identity(cfg)
 
     assert before["action_route"] != after["action_route"]
+
+    before = candidate_selection_policy_identity(cfg)
+    cfg.universe.explore_ratio = 0.25
+    after = candidate_selection_policy_identity(cfg)
+
+    assert before["legacy_control"] != after["legacy_control"]
 
 
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
@@ -1047,7 +1079,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     )
     assert report["verdict"] == "positive", report
     assert report["policy_epoch_id"] == policy_epoch
-    assert report["expected_cluster_n"] == 51
+    assert report["expected_cluster_n"] == 50
     assert report["qualification_eligible"] is True
     assert report["promotion_eligible"] is True
     assert report["owner_admission_required"] is True
@@ -1120,3 +1152,8 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     )
     assert invalid["verdict"] == "invalid"
     assert "runtime_provenance_unattested" in invalid["invalid_reasons"]
+
+    historical = evaluate_candidate_selection_policy(
+        as_of_at=(start - timedelta(hours=12)).isoformat(),
+    )
+    assert historical["policy_epoch_id"] == "candidate-selection-utility:old-policy"

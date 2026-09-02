@@ -12356,15 +12356,19 @@ def prune_runtime_sessions(days: int = 90) -> int:
     """Prune finished runtime_sessions older than ``days`` (by started_at).
 
     Only rows with ``ended_at IS NOT NULL`` are eligible so a still-running boot
-    is never removed. Provenance fields on audit-chain rows (runtime_session_id)
-    become dangling FK-less references but the referenced row was fully consumed
-    at write time — audit reconstruction does not require the session record.
+    is never removed. Sessions referenced by retained Candidate qualification
+    outcomes remain durable because replay still verifies their attestation.
+    Other FK-less audit references were fully consumed at write time.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
     cur = execute_write(
-        "DELETE FROM runtime_sessions WHERE ended_at IS NOT NULL AND started_at < ?",
+        "DELETE FROM runtime_sessions WHERE ended_at IS NOT NULL AND started_at < ? "
+        "AND NOT EXISTS (SELECT 1 FROM filter_candidate_outcomes o "
+        "WHERE o.scanner_family='candidate_selection_utility' AND ("
+        "o.producer_runtime_session_id=runtime_sessions.session_id OR "
+        "o.settlement_runtime_session_id=runtime_sessions.session_id))",
         (cutoff,),
     )
     if not was_in_tx:

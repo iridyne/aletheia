@@ -111,11 +111,16 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     """Evaluate the first outcome-independent fixed look; never admit authority."""
 
     now = as_of_at or datetime.now(timezone.utc).isoformat()
+    as_of = _parse_time(now)
+    if as_of is None:
+        raise ValueError("candidate_selection_as_of_invalid")
+    now = as_of.isoformat()
     latest = repo.get_db().execute(
         "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
         "WHERE record_version=? AND policy_epoch_id IS NOT NULL "
+        "AND julianday(captured_at)<=julianday(?) "
         "ORDER BY captured_at DESC, scanner_run_id DESC LIMIT 1",
-        (CANDIDATE_SELECTION_RECORD_VERSION,),
+        (CANDIDATE_SELECTION_RECORD_VERSION, now),
     ).fetchone()
     policy_epoch_id = str(latest["policy_epoch_id"]) if latest else None
     training_cutoff = (
@@ -152,8 +157,10 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     batches = [
         dict(row) for row in repo.get_db().execute(
             "SELECT * FROM universe_twin_shadow_batches WHERE record_version=? "
-            "AND policy_epoch_id=? AND captured_at>=? ORDER BY captured_at, scanner_run_id",
-            (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff),
+            "AND policy_epoch_id=? AND julianday(captured_at)>=julianday(?) "
+            "AND julianday(captured_at)<=julianday(?) "
+            "ORDER BY captured_at, scanner_run_id",
+            (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff, now),
         ).fetchall()
     ]
     report["expected_cluster_n"] = len(batches)

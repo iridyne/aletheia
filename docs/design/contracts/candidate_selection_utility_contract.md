@@ -53,13 +53,16 @@ at settlement, so a later Settings change cannot restate a pending outcome.
 When estimator support first becomes available, the path freezes its training
 cutoff, complete eligible training-dataset fingerprint, and selection settings
 including the exact Fast Monitoring mode, venue, and paper execution route
-plus the configured execution fee and slippage assumptions into a new
-behavior/policy identity. Changing either cost assumption starts a distinct
-epoch. Per-cell source fingerprints remain in
+plus the configured execution fee and slippage assumptions and the legacy
+control's explore ratio, family quotas, regime quotas, and scanner weights into
+a new behavior/policy identity. The frozen training cutoff is looked up only
+within that exact identity; changing those inputs independently earns support
+and freezes a new cutoff instead of reusing incompatible training rows.
+Per-cell source fingerprints remain in
 each estimate for audit but do not make the epoch depend on the current
 Candidate composition. Later outcomes cannot change that estimator.
-Qualification consumes only post-cutoff
-clusters from the latest frozen policy epoch and uses the first
+Qualification consumes only post-cutoff clusters from the latest frozen policy
+epoch that existed at the requested as-of instant and uses the first
 outcome-independent fixed look whose earliest T0-ordered exposure prefix contains
 at least 50 clusters and seven consecutive UTC dates. That prefix must then have
 at least 50 complete clusters, 80% full-arm coverage, positive
@@ -75,7 +78,8 @@ terminal/reporting states and grant no authority.
 
 The admitted epoch, its frozen training denominator, and their canonical
 outcomes are retained for fixed-look replay rather than entering the generic
-30-day Twin/outcome prune. If configured policy state is unreadable, Candidate
+30-day Twin/outcome prune. Runtime Session attestations referenced by those
+outcomes are retained with them. If configured policy state is unreadable, Candidate
 evidence pruning fails closed.
 At a frozen cutoff, a row settled later remains a pending denominator row with
 no post-cutoff settlement fields, while a post-cutoff exposure is excluded. The
@@ -87,7 +91,10 @@ positive report sets `qualification_eligible=true` and
 does not mutate authority. The generic Universe configuration endpoint cannot
 change the protected policy fields. The owner admission endpoint accepts only
 the exact positive epoch, refuses an overlapping Paper Universe-calibration
-authority, and persists an audit event. The same exclusion applies in reverse:
+authority, and persists an audit event under the same writer permit as the
+configuration transition. Target refresh publication revalidates that exact
+configured epoch under the shared permit, so a failed/compensated admission
+cannot publish a stale target snapshot. The same exclusion applies in reverse:
 Universe-family Learning admission and later Paper progression refuse to run
 while target Candidate authority is configured. Admission and rollback
 configure the policy for the next successful Universe refresh; they do not

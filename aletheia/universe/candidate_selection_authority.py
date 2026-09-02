@@ -22,6 +22,24 @@ def candidate_selection_policy_identity(cfg: object) -> dict[str, object]:
         "max_spread_bps": universe.max_spread_bps,
         "min_depth_10bps_usd": universe.min_depth_10bps_usd,
         "blacklist": sorted({str(item).upper() for item in universe.blacklist}),
+        "legacy_control": {
+            "explore_ratio": universe.explore_ratio,
+            "family_quota": {
+                str(family): float(quota)
+                for family, quota in sorted(universe.family_quota.items())
+            },
+            "family_quota_by_regime": {
+                str(regime): {
+                    str(family): float(quota)
+                    for family, quota in sorted(quotas.items())
+                }
+                for regime, quotas in sorted(universe.family_quota_by_regime.items())
+            },
+            "scanner_weights": {
+                str(family): float(weight)
+                for family, weight in sorted(universe.scanner_weights.items())
+            },
+        },
     }
     if all(hasattr(cfg, field) for field in ("fast_trigger", "exchange", "market_data")):
         from aletheia.universe.fast_stream import fast_market_data_venue_for_config
