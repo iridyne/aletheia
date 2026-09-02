@@ -44,7 +44,7 @@ After the source switch:
 - `update.current_commit` is persisted by target-loaded `mutate_config`, which acquires the config writer permit and reloads the latest durable config before changing that one field;
 - the pre-pull `AletheiaConfig` object is never whole-saved after the source switch.
 
-This prevents a schema-changing target release from being followed by a stale pre-pull config serialization that overwrites target migrations or unrelated concurrent settings. The source updater refuses migration-bearing changes before loading target code; those releases require the existing transactional deployer because an in-place database migration cannot provide a truthful source-only rollback. If target-side commit metadata cannot be persisted after a non-schema restart, continuity is `unproven` and the updater attempts to restore the previous source, environment, metadata, and Gateway.
+This prevents a schema-changing target commit from being followed by a stale pre-pull config serialization that overwrites target migrations or unrelated concurrent settings. For a migration-bearing GitHub branch-head update, the source updater pins the fetched commit SHA, restores the old checkout, and reuses the Fedora transactional deployer's backup-copy migration/integrity/smoke preflight before advancing to that same SHA. It then creates a fresh activation backup before restart; activation or continuity failure restores both the old source and durable data. `--no-restart` remains unavailable for schema changes because it cannot complete that transaction. If target-side commit metadata cannot be persisted after restart, continuity is `unproven` and the updater attempts the same verified restoration.
 
 ## Post-restart health proof
 

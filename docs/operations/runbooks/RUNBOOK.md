@@ -243,6 +243,11 @@ uv run aletheia update --no-restart
 `update check` exits non-zero when the configured update source is disabled,
 unavailable, or cannot be fetched; a printed reason is not a successful check.
 
+The interactive source target is always the exact commit fetched from the configured
+GitHub branch; it does not select by product version or Release Tag. When that commit
+contains schema migrations, the same command preflights them on a restored backup copy
+and keeps a fresh activation backup so source and data can be restored together.
+
 `--no-restart` is an emergency source-checkout control: it does not build or
 activate dashboard artifacts. Do not use it while adopting a change that removes
 tracked dashboard build output. Use the default update path instead. If the

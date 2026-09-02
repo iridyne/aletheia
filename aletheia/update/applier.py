@@ -443,11 +443,48 @@ def _rollback_update(
 
 
 def rollback_applied_update(result: dict) -> dict:
-    """Restore a successfully activated non-schema source update and restart it."""
+    """Restore a successfully activated source update and restart it."""
     old = str(result.get("old_commit") or "")
     new = str(result.get("new_commit") or "")
-    if not old or not new or result.get("schema_changed"):
+    if not old or not new:
         return {"rolled_back": False, "reason": "rollback_context_unavailable"}
+
+    if result.get("schema_changed"):
+        backup = str(result.get("schema_backup") or "")
+        if not backup:
+            return {"rolled_back": False, "reason": "rollback_context_unavailable"}
+        from aletheia.update.auto import _rollback_to_old_runtime
+
+        recovery = _rollback_to_old_runtime(
+            old,
+            Path(backup),
+            bool(result.get("had_previous_static")),
+            restore_static=bool(result.get("frontend_built")),
+        )
+        metadata = _persist_current_commit_fresh(old)
+        _record_metadata_failure(old, metadata)
+        actual_head = git_ops.current_commit() or ""
+        rolled_back = bool(recovery.get("ok")) and metadata.get("ok") is True and actual_head == old
+        write_audit(
+            {
+                "actor": "human",
+                "source": "cli",
+                "event_type": "update_postflight_rolled_back" if rolled_back else "update_postflight_rollback_failed",
+                "entity_type": "system_update",
+                "entity_id": old,
+                "before": {"commit": new},
+                "after": {"commit": actual_head},
+                "message": "Schema update rollback " + ("succeeded" if rolled_back else "failed"),
+            }
+        )
+        return {
+            "rolled_back": rolled_back,
+            "reason": None if rolled_back else (recovery.get("reason") or "rollback_recovery_failed"),
+            "actual_head": actual_head,
+            "recovery_started": bool(recovery.get("ok")),
+            "recovery_errors": [] if rolled_back else [recovery.get("reason") or "rollback_recovery_failed"],
+            **_metadata_fields(metadata),
+        }
 
     rollback = git_ops.reset_hard(old)
     if not rollback.get("ok"):
@@ -613,15 +650,54 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     frontend_changed = any(path.startswith("frontend/") for path in changed_files)
     deps_reinstalled = False
 
-    if "aletheia/storage/migrations.py" in changed_files:
-        return _rollback_update(
-            old,
-            new,
-            python_deps_changed=False,
-            frontend_deps_changed=False,
-            restart=False,
-            failure_reason="schema_update_requires_transactional_deployer",
-        )
+    schema_changed = "aletheia/storage/migrations.py" in changed_files
+    schema_backup = ""
+    if schema_changed:
+        if not restart:
+            return _rollback_update(
+                old,
+                new,
+                python_deps_changed=False,
+                frontend_deps_changed=False,
+                restart=False,
+                failure_reason="schema_update_requires_restart",
+            )
+        if progress:
+            progress("Preflighting schema migration")
+        from aletheia.backup.service import BackupService
+        from aletheia.update.auto import AutoUpdateError, _candidate_preflight, _remove_candidate
+
+        reset = git_ops.reset_hard(old)
+        if not reset.get("ok"):
+            return {"applied": False, "reason": "schema_preflight_source_restore_failed", "mode": "development"}
+        candidate = None
+        try:
+            preflight_backup = BackupService(get_data_dir()).create_backup(label="interactive_schema_preflight")
+            candidate = _candidate_preflight(new, preflight_backup)
+        except AutoUpdateError as exc:
+            return {
+                "applied": False,
+                "reason": exc.reason,
+                "message": exc.detail,
+                "mode": "development",
+            }
+        except Exception as exc:
+            return {
+                "applied": False,
+                "reason": "schema_preflight_failed",
+                "message": type(exc).__name__,
+                "mode": "development",
+            }
+        finally:
+            _remove_candidate(candidate)
+        advanced = git_ops.merge_fast_forward(new)
+        if not advanced.get("ok"):
+            return {
+                "applied": False,
+                "reason": advanced.get("reason", "ff_only_rejected"),
+                "message": advanced.get("stderr", ""),
+                "mode": "development",
+            }
 
     if python_deps_changed:
         if progress:
@@ -666,23 +742,39 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 failure_reason=build["reason"],
             )
 
-    if progress:
-        progress("Running smoke check")
-    smoke = run_smoke_check()
-    if not smoke.get("ok"):
-        return _rollback_update(
-            old,
-            new,
-            python_deps_changed=python_deps_changed,
-            frontend_deps_changed=frontend_deps_changed,
-            restart=restart,
-            failure_reason="smoke_failed",
-            failure_detail=f"stage={smoke.get('stage')}: {smoke.get('detail')}",
-        )
+    if not schema_changed:
+        if progress:
+            progress("Running smoke check")
+        smoke = run_smoke_check()
+        if not smoke.get("ok"):
+            return _rollback_update(
+                old,
+                new,
+                python_deps_changed=python_deps_changed,
+                frontend_deps_changed=frontend_deps_changed,
+                restart=restart,
+                failure_reason="smoke_failed",
+                failure_detail=f"stage={smoke.get('stage')}: {smoke.get('detail')}",
+            )
 
     frontend_built = False
+    had_previous_static = False
     if restart:
-        had_previous_static = False
+        if schema_changed:
+            from aletheia.backup.service import BackupService
+
+            try:
+                schema_backup = str(BackupService(get_data_dir()).create_backup(label="interactive_schema_activate"))
+            except Exception as exc:
+                return _rollback_update(
+                    old,
+                    new,
+                    python_deps_changed=python_deps_changed,
+                    frontend_deps_changed=frontend_deps_changed,
+                    restart=False,
+                    failure_reason="schema_activation_backup_failed",
+                    failure_detail=type(exc).__name__,
+                )
         if dashboard_build_required:
             had_previous_static = _activate_frontend_build()
             frontend_built = True
@@ -690,6 +782,28 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             progress("Restarting gateway")
         restarted = _restart_gateway()
         if not restarted.get("ok"):
+            if schema_changed:
+                recovery = rollback_applied_update(
+                    {
+                        "old_commit": old,
+                        "new_commit": new,
+                        "schema_changed": True,
+                        "schema_backup": schema_backup,
+                        "frontend_built": frontend_built,
+                        "had_previous_static": had_previous_static,
+                    }
+                )
+                return {
+                    "applied": False,
+                    "rolled_back": recovery.get("rolled_back", False),
+                    "reason": "gateway_restart_failed",
+                    "mode": "development",
+                    "old_commit": old,
+                    "attempted_commit": new,
+                    "actual_head": recovery.get("actual_head", ""),
+                    "recovery_started": recovery.get("recovery_started", False),
+                    "message": restarted.get("detail", ""),
+                }
             if frontend_built:
                 _restore_frontend_build(had_previous_static)
             rollback = git_ops.reset_hard(old)
@@ -719,7 +833,7 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 ),
                 **_metadata_fields(metadata),
             }
-        if frontend_built:
+        if frontend_built and not schema_changed:
             shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
 
     metadata = _persist_current_commit_fresh(new)
@@ -764,7 +878,9 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         "python_deps_changed": python_deps_changed,
         "frontend_deps_changed": frontend_deps_changed,
         "frontend_changed": frontend_changed,
-        "schema_changed": False,
+        "schema_changed": schema_changed,
+        "schema_backup": schema_backup or None,
+        "had_previous_static": had_previous_static,
         "restart_requested": restart,
         "restart_completed": restart,
         "restart_required": not restart,
