@@ -100,11 +100,10 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
     1. Verifies the joint app.db + lab.db + manifest fingerprint against
        the last stored checkpoint. Result surfaces as ``joint_checkpoint``
        in the return dict. A mismatch is logged as a warning but does NOT
-       stop the pass — v1 records the drift; Packet 2+ can escalate to
-       per-window invalidation when it has treatment-bearing windows to
-       protect.
-    2. Saves the current fingerprint (idempotent no-op when unchanged
-       from the last stored row).
+       stop the observe-only pass.
+    2. Saves the post-window fingerprint only when the pre-pass proof was
+       valid (idempotent no-op when unchanged). An unresolved mismatch is
+       never promoted to a new trusted baseline.
 
     Errors in the checkpoint step are contained the same way per-window
     errors are: logged, surfaced in the summary, execution continues.
@@ -132,7 +131,13 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
                 window.name, window.kind, exc, exc_info=True,
             )
             results[window.name] = {"status": "error", "error": repr(exc)[:400]}
-    _save_checkpoint(checkpoint_summary)
+    if checkpoint_summary.get("ok") is True:
+        _save_checkpoint(checkpoint_summary)
+    else:
+        # A divergent checkpoint is an unresolved restore/continuity boundary.
+        # Never promote that state to the new trusted baseline merely because
+        # the observe-only window pass completed.
+        checkpoint_summary["save_skipped"] = "unresolved_checkpoint_mismatch"
     return {
         "windows_run": len(ordered),
         "windows_errored": errored,

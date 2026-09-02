@@ -80,9 +80,10 @@ def test_runner_reports_mismatch_on_manifest_change(clean_registry):
     assert second["joint_checkpoint"]["ok"] is False
     assert "fingerprint_mismatch" in second["joint_checkpoint"]["reason"]
 
-    # But it also SAVES the new fingerprint, so a third pass reads clean again.
+    # An unresolved mismatch must not be promoted to a new trusted baseline.
     third = run_lab_windows()
-    assert third["joint_checkpoint"]["ok"] is True
+    assert third["joint_checkpoint"]["ok"] is False
+    assert third["joint_checkpoint"]["save_skipped"] == "unresolved_checkpoint_mismatch"
 
 
 def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):

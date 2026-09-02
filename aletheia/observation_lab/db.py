@@ -31,6 +31,48 @@ def _schema_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+_EXECUTION_MANIFEST_COLUMNS = (
+    "manifest_id, observation_id, generation, spec_hash, manifest_hash, "
+    "treatment_adapter_id, treatment_adapter_version, assignment_policy, "
+    "assignment_salt, assignment_unit_key_template, allocation_pct, "
+    "control_payload_json, treatment_payload_json, eligible_population_json, "
+    "behavior_contract_hash, interference_key, composability_contract, "
+    "effective_from, effective_until, deterministic_baseline_json, "
+    "unavailable_fallback, owner_admission_ref, created_at"
+)
+
+
+_EXECUTION_MANIFEST_TABLE_SQL = (
+    "CREATE TABLE execution_manifests ("
+    "manifest_id TEXT PRIMARY KEY,"
+    "observation_id TEXT NOT NULL,"
+    "generation INTEGER NOT NULL,"
+    "spec_hash TEXT NOT NULL,"
+    "manifest_hash TEXT NOT NULL UNIQUE,"
+    "treatment_adapter_id TEXT NOT NULL,"
+    "treatment_adapter_version TEXT NOT NULL,"
+    "assignment_policy TEXT NOT NULL,"
+    "assignment_salt TEXT NOT NULL,"
+    "assignment_unit_key_template TEXT NOT NULL,"
+    "allocation_pct REAL NOT NULL,"
+    "control_payload_json TEXT NOT NULL,"
+    "treatment_payload_json TEXT NOT NULL,"
+    "eligible_population_json TEXT NOT NULL,"
+    "behavior_contract_hash TEXT NOT NULL,"
+    "interference_key TEXT NOT NULL,"
+    "composability_contract TEXT NOT NULL,"
+    "effective_from TEXT NOT NULL CHECK (julianday(effective_from) IS NOT NULL),"
+    "effective_until TEXT CHECK (effective_until IS NULL OR "
+    "julianday(effective_until) IS NOT NULL),"
+    "deterministic_baseline_json TEXT NOT NULL,"
+    "unavailable_fallback TEXT NOT NULL,"
+    "owner_admission_ref TEXT,"
+    "created_at TEXT NOT NULL,"
+    "UNIQUE (observation_id, generation)"
+    ");"
+)
+
+
 _LAB_SCHEMA_SQL = (
     "CREATE TABLE IF NOT EXISTS lab_schema_migrations ("
     "migration_id TEXT PRIMARY KEY,"
@@ -77,34 +119,10 @@ _LAB_SCHEMA_SQL = (
     # Immutable per (observation_id, generation, manifest_hash). Publishing
     # a semantically different manifest for the same observation MUST create
     # a new generation — this table never UPDATEs, only INSERTs.
-    "CREATE TABLE IF NOT EXISTS execution_manifests ("
-    "manifest_id TEXT PRIMARY KEY,"
-    "observation_id TEXT NOT NULL,"
-    "generation INTEGER NOT NULL,"
-    "spec_hash TEXT NOT NULL,"
-    "manifest_hash TEXT NOT NULL UNIQUE,"
-    "treatment_adapter_id TEXT NOT NULL,"
-    "treatment_adapter_version TEXT NOT NULL,"
-    "assignment_policy TEXT NOT NULL,"
-    "assignment_salt TEXT NOT NULL,"
-    "assignment_unit_key_template TEXT NOT NULL,"
-    "allocation_pct REAL NOT NULL,"
-    "control_payload_json TEXT NOT NULL,"
-    "treatment_payload_json TEXT NOT NULL,"
-    "eligible_population_json TEXT NOT NULL,"
-    "behavior_contract_hash TEXT NOT NULL,"
-    "interference_key TEXT NOT NULL,"
-    "composability_contract TEXT NOT NULL,"       # 'exclusive' / 'disjoint_population' / 'factorial'
-    "effective_from TEXT NOT NULL CHECK (julianday(effective_from) IS NOT NULL),"
-    "effective_until TEXT CHECK (effective_until IS NULL OR "
-    "julianday(effective_until) IS NOT NULL),"
-    "deterministic_baseline_json TEXT NOT NULL,"
-    "unavailable_fallback TEXT NOT NULL,"          # e.g. 'baseline' / 'exclude'
-    "owner_admission_ref TEXT,"
-    "created_at TEXT NOT NULL,"
-    "UNIQUE (observation_id, generation)"
-    ");"
-    "CREATE INDEX IF NOT EXISTS idx_execution_manifests_active "
+    + _EXECUTION_MANIFEST_TABLE_SQL.replace(
+        "CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1
+    )
+    + "CREATE INDEX IF NOT EXISTS idx_execution_manifests_active "
     "ON execution_manifests(effective_from, effective_until);"
     "CREATE INDEX IF NOT EXISTS idx_execution_manifests_interference "
     "ON execution_manifests(interference_key, effective_from);"
@@ -129,6 +147,12 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_joint_checkpoints_recent "
     "ON joint_checkpoints(recorded_at DESC);"
+    "CREATE TRIGGER IF NOT EXISTS trg_joint_checkpoints_no_update "
+    "BEFORE UPDATE ON joint_checkpoints BEGIN "
+    "SELECT RAISE(ABORT, 'joint_checkpoints is append-only'); END;"
+    "CREATE TRIGGER IF NOT EXISTS trg_joint_checkpoints_no_delete "
+    "BEFORE DELETE ON joint_checkpoints BEGIN "
+    "SELECT RAISE(ABORT, 'joint_checkpoints is append-only'); END;"
     # Typed exposure fact for Issue #1072.
     # Append-only. Every eligible prospective unit — even one whose manifest
     # resolution declined (fail-closed conflict, not-effective window,
@@ -288,6 +312,7 @@ def get_lab_db() -> sqlite3.Connection:
 
 def _ensure_lab_schema_ledger(conn: sqlite3.Connection) -> None:
     """Record the materialized Lab schema without rewriting migration history."""
+    _migrate_execution_manifest_constraints(conn)
     columns = {
         str(row["name"])
         for row in conn.execute("PRAGMA table_info(joint_checkpoints)").fetchall()
@@ -315,6 +340,84 @@ def _ensure_lab_schema_ledger(conn: sqlite3.Connection) -> None:
             "VALUES (?, ?, ?)",
             (f"lab-v{next_number}", checksum, _schema_now()),
         )
+
+
+def _migrate_execution_manifest_constraints(conn: sqlite3.Connection) -> None:
+    """Upgrade pre-ledger manifests before recording the new schema head.
+
+    ``CREATE TABLE IF NOT EXISTS`` does not alter an existing SQLite table. The
+    first Lab schema therefore needs one explicit, data-preserving rebuild so
+    the timestamp checks that the manifest resolver relies on are physically
+    present before their checksum is advertised as applied.
+    """
+    table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_manifests'"
+    ).fetchone()
+    if table is None or "julianday(effective_from)" in str(table[0]).lower():
+        return
+
+    rows = conn.execute(
+        f"SELECT {_EXECUTION_MANIFEST_COLUMNS} FROM execution_manifests"
+    ).fetchall()
+    for row in rows:
+        try:
+            start = datetime.fromisoformat(str(row[17]).replace("Z", "+00:00"))
+            end_value = row[18]
+            end = (
+                datetime.fromisoformat(str(end_value).replace("Z", "+00:00"))
+                if end_value is not None else None
+            )
+            if start.tzinfo is None or start.utcoffset() != timezone.utc.utcoffset(start):
+                raise ValueError("effective_from must be aware UTC")
+            if end is not None and (
+                end.tzinfo is None
+                or end.utcoffset() != timezone.utc.utcoffset(end)
+                or end <= start
+            ):
+                raise ValueError("effective_until must be later aware UTC")
+        except (TypeError, ValueError) as exc:
+            raise sqlite3.IntegrityError(
+                "cannot migrate malformed execution_manifest interval"
+            ) from exc
+
+    index_names = (
+        "idx_execution_manifests_active",
+        "idx_execution_manifests_interference",
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for index_name in index_names:
+            conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+        conn.execute("ALTER TABLE execution_manifests RENAME TO execution_manifests_legacy")
+        conn.execute(_EXECUTION_MANIFEST_TABLE_SQL)
+        placeholders = ", ".join("?" for _ in _EXECUTION_MANIFEST_COLUMNS.split(", "))
+        conn.executemany(
+            f"INSERT INTO execution_manifests ({_EXECUTION_MANIFEST_COLUMNS}) VALUES ({placeholders})",
+            [tuple(row) for row in rows],
+        )
+        conn.execute("DROP TABLE execution_manifests_legacy")
+        conn.execute(
+            "CREATE INDEX idx_execution_manifests_active "
+            "ON execution_manifests(effective_from, effective_until)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_execution_manifests_interference "
+            "ON execution_manifests(interference_key, effective_from)"
+        )
+        conn.execute(
+            "CREATE TRIGGER trg_execution_manifests_no_update "
+            "BEFORE UPDATE ON execution_manifests BEGIN "
+            "SELECT RAISE(ABORT, 'execution_manifests is append-only'); END;"
+        )
+        conn.execute(
+            "CREATE TRIGGER trg_execution_manifests_no_delete "
+            "BEFORE DELETE ON execution_manifests BEGIN "
+            "SELECT RAISE(ABORT, 'execution_manifests is append-only'); END;"
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 @contextmanager

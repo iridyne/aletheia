@@ -216,6 +216,54 @@ def test_execution_manifests_are_immutable():
         )
 
 
+def test_joint_checkpoint_ledger_is_append_only():
+    import sqlite3
+
+    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint
+    from aletheia.observation_lab.db import get_lab_db
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    checkpoint_id = get_lab_db().execute(
+        "SELECT checkpoint_id FROM joint_checkpoints LIMIT 1"
+    ).fetchone()[0]
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        get_lab_db().execute(
+            "UPDATE joint_checkpoints SET notes=? WHERE checkpoint_id=?",
+            ("tampered", checkpoint_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        get_lab_db().execute(
+            "DELETE FROM joint_checkpoints WHERE checkpoint_id=?",
+            (checkpoint_id,),
+        )
+
+
+def test_existing_manifest_table_is_migrated_before_schema_head_is_recorded():
+    import sqlite3
+
+    from aletheia.observation_lab import db as lab_db
+
+    connection = sqlite3.connect(":memory:")
+    legacy_sql = lab_db._EXECUTION_MANIFEST_TABLE_SQL.replace(
+        " CHECK (julianday(effective_from) IS NOT NULL)", ""
+    ).replace(
+        " CHECK (effective_until IS NULL OR julianday(effective_until) IS NOT NULL)", ""
+    )
+    connection.executescript(legacy_sql)
+    # Opening a real pre-constraint Lab first materializes the current script,
+    # including indexes/triggers attached to the legacy table.
+    connection.executescript(lab_db._LAB_SCHEMA_SQL)
+    lab_db._migrate_execution_manifest_constraints(connection)
+    table_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_manifests'"
+    ).fetchone()[0]
+    assert "julianday(effective_from)" in table_sql
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+        "AND name='trg_execution_manifests_no_update'"
+    ).fetchone()
+
+
 def test_fingerprint_is_deterministic_across_recomputes():
     from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
 

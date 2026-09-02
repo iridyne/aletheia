@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -99,14 +100,29 @@ def _active_manifest_hashes(now: str | None = None) -> tuple[str, ...]:
 
 
 def _lab_schema_state() -> tuple[str, int]:
+    with _lab_read_snapshot() as db:
+        rows = db.execute(
+            "SELECT migration_id FROM lab_schema_migrations ORDER BY rowid DESC"
+        ).fetchall()
+        if not rows:
+            return ("<empty>", 0)
+        return str(rows[0][0]), len(rows)
+
+
+@contextmanager
+def _lab_read_snapshot():
+    """Hold one consistent Lab read transaction across a checkpoint digest."""
     from aletheia.observation_lab.db import get_lab_db
 
-    rows = get_lab_db().execute(
-        "SELECT migration_id FROM lab_schema_migrations ORDER BY rowid DESC"
-    ).fetchall()
-    if not rows:
-        return ("<empty>", 0)
-    return str(rows[0][0]), len(rows)
+    db = get_lab_db()
+    owns_transaction = not db.in_transaction
+    if owns_transaction:
+        db.execute("BEGIN")
+    try:
+        yield db
+    finally:
+        if owns_transaction and db.in_transaction:
+            db.rollback()
 
 
 def _json_value(value: Any) -> Any:
@@ -122,48 +138,45 @@ def _lab_state_fingerprint() -> str:
     records the digest. The separate ledger digest below covers prior rows in
     a stable way, so saving a quiet checkpoint does not create self-drift.
     """
-    from aletheia.observation_lab.db import get_lab_db
-
-    db = get_lab_db()
-    tables = db.execute(
-        "SELECT name, sql FROM sqlite_master WHERE type='table' "
-        "AND name NOT LIKE 'sqlite_%' AND name <> 'joint_checkpoints' "
-        "ORDER BY name"
-    ).fetchall()
-    material: list[Any] = []
-    for table in tables:
-        name = str(table["name"])
-        columns = [
-            str(row["name"])
-            for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
-        ]
-        rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
-        encoded_rows = sorted(
-            [
-                [_json_value(row[column]) for column in columns]
-                for row in rows
-            ],
-            key=_canonical_json,
-        )
-        material.append({
-            "name": name,
-            "sql": table["sql"],
-            "columns": columns,
-            "rows": encoded_rows,
-        })
+    with _lab_read_snapshot() as db:
+        tables = db.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' AND name <> 'joint_checkpoints' "
+            "ORDER BY name"
+        ).fetchall()
+        material: list[Any] = []
+        for table in tables:
+            name = str(table["name"])
+            columns = [
+                str(row["name"])
+                for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
+            ]
+            rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
+            encoded_rows = sorted(
+                [
+                    [_json_value(row[column]) for column in columns]
+                    for row in rows
+                ],
+                key=_canonical_json,
+            )
+            material.append({
+                "name": name,
+                "sql": table["sql"],
+                "columns": columns,
+                "rows": encoded_rows,
+            })
     return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
 
 
 def _checkpoint_ledger_fingerprint(lab_state_fingerprint: str) -> str:
     """Hash historical checkpoint rows while excluding the current state rows."""
-    from aletheia.observation_lab.db import get_lab_db
-
-    rows = get_lab_db().execute(
-        "SELECT checkpoint_id, app_migration_head, app_migration_count, "
-        "active_manifest_hashes, active_manifest_count, lab_schema_head, "
-        "lab_schema_count, lab_state_fingerprint, checkpoint_ledger_fingerprint, "
-        "joint_fingerprint FROM joint_checkpoints ORDER BY rowid"
-    ).fetchall()
+    with _lab_read_snapshot() as db:
+        rows = db.execute(
+            "SELECT checkpoint_id, app_migration_head, app_migration_count, "
+            "active_manifest_hashes, active_manifest_count, lab_schema_head, "
+            "lab_schema_count, lab_state_fingerprint, checkpoint_ledger_fingerprint, "
+            "joint_fingerprint FROM joint_checkpoints ORDER BY rowid"
+        ).fetchall()
     material = [
         {
             "checkpoint_id": row["checkpoint_id"],
@@ -213,10 +226,11 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
     the ledger.
     """
     head, count = _read_app_migration_state()
-    hashes = _active_manifest_hashes()
-    lab_head, lab_count = _lab_schema_state()
-    lab_state = _lab_state_fingerprint()
-    ledger_state = _checkpoint_ledger_fingerprint(lab_state)
+    with _lab_read_snapshot():
+        hashes = _active_manifest_hashes()
+        lab_head, lab_count = _lab_schema_state()
+        lab_state = _lab_state_fingerprint()
+        ledger_state = _checkpoint_ledger_fingerprint(lab_state)
     fingerprint = _fingerprint(
         app_migration_head=head,
         app_migration_count=count,
