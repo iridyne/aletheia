@@ -6179,12 +6179,20 @@ def list_active_serenity_research_runs(limit: int = 100) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def get_latest_successful_serenity_research_run() -> dict | None:
+def get_latest_successful_serenity_research_run(
+    *, not_after: str | None = None,
+) -> dict | None:
     db = get_db()
+    time_limit = (
+        "AND julianday(COALESCE(finished_at, created_at)) <= julianday(?) "
+        if not_after is not None else ""
+    )
     row = db.execute(
         "SELECT * FROM serenity_research_runs "
         "WHERE status IN ('completed', 'completed_empty') "
-        "ORDER BY COALESCE(finished_at, created_at) DESC LIMIT 1"
+        f"{time_limit}"
+        "ORDER BY COALESCE(finished_at, created_at) DESC LIMIT 1",
+        (not_after,) if not_after is not None else (),
     ).fetchone()
     return dict(row) if row else None
 

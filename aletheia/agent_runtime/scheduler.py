@@ -1033,6 +1033,14 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     latest_in_future = latest_at is not None and latest_at > future_limit
     if latest_in_future:
         logger.warning("Serenity latest successful run has a future timestamp: %s", latest_at)
+        latest = repo.get_latest_successful_serenity_research_run(
+            not_after=future_limit.isoformat()
+        )
+        latest_at = _parse_scheduler_timestamp(
+            (latest or {}).get("finished_at") or (latest or {}).get("created_at")
+        )
+        if latest_at is not None and boundary <= latest_at:
+            return {"status": "fresh", "run_id": latest["id"], "batch_key": batch_key}
 
     attempted = repo.get_serenity_research_run_by_idempotency_key(batch_key)
     if attempted is not None:
