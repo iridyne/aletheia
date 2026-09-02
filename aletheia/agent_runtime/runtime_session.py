@@ -37,7 +37,38 @@ _current_session: dict | None = None
 # True only when the current session row has been verified as durably persisted in the DB.
 # Non-durable sessions must NOT stamp child rows with runtime_session_id.
 _session_durable: bool = False
-_RUNTIME_SESSION_PROCESS_MATCH_SECONDS = 300
+_PROCESS_BINDING_FILENAME = "runtime-session-binding.json"
+
+
+def _process_binding_path() -> Path:
+    from aletheia.config.loader import get_data_dir
+
+    return get_data_dir() / _PROCESS_BINDING_FILENAME
+
+
+def _write_process_binding(session_id: str | None) -> None:
+    import psutil
+
+    pid = os.getpid()
+    payload = {
+        "version": 1,
+        "session_id": session_id,
+        "backend_pid": pid,
+        "process_started_at": psutil.Process(pid).create_time(),
+    }
+    path = _process_binding_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _read_process_binding() -> dict | None:
+    try:
+        payload = json.loads(_process_binding_path().read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def current_external_gateway_session(
@@ -63,7 +94,16 @@ def current_external_gateway_session(
         managed_pids = {root.pid, *(child.pid for child in root.children(recursive=True))}
         if backend_pid not in managed_pids:
             return None
-        process_starts = [psutil.Process(backend_pid).create_time()]
+        backend_started_at = psutil.Process(backend_pid).create_time()
+        binding = _read_process_binding()
+        if (
+            not binding
+            or int(binding.get("backend_pid") or 0) != backend_pid
+            or float(binding.get("process_started_at") or 0) != backend_started_at
+            or not binding.get("session_id")
+        ):
+            return None
+        session_id = str(binding["session_id"])
         if open_sessions is None:
             from aletheia.storage.sqlite import get_db
 
@@ -76,21 +116,10 @@ def current_external_gateway_session(
     except Exception:
         return None
 
-    matches: list[tuple[float, float, dict]] = []
     for session in open_sessions:
-        try:
-            started = datetime.fromisoformat(
-                str(session.get("started_at") or "").replace("Z", "+00:00")
-            )
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-            started_ts = started.timestamp()
-            delta = min(abs(started_ts - value) for value in process_starts)
-        except (TypeError, ValueError):
-            continue
-        if session.get("session_id") and delta <= _RUNTIME_SESSION_PROCESS_MATCH_SECONDS:
-            matches.append((delta, -started_ts, session))
-    return dict(min(matches, key=lambda match: match[:2])[2]) if matches else None
+        if session.get("session_id") == session_id and session.get("ended_at") is None:
+            return dict(session)
+    return None
 
 
 def _sha(payload: object) -> str:
@@ -244,6 +273,14 @@ def start_runtime_session(cfg=None, runtime_context: dict | None = None) -> dict
 
     _current_session = {**session.model_dump(), "durable": durable}
     _session_durable = durable
+    try:
+        _write_process_binding(session.session_id if durable else None)
+    except Exception as e:
+        try:
+            _process_binding_path().unlink(missing_ok=True)
+        except OSError:
+            pass
+        logger.warning("runtime session process binding failed (external provenance unavailable): %s", e)
     logger.info(
         "runtime session started: %s (runtime_id=%s, commit=%s, mode=%s, durable=%s)",
         session.session_id, session.runtime_id,
