@@ -59,6 +59,17 @@ def test_enabled_webhook_rejects_unusable_url(url):
         WebhookConfig(enabled=True, url=url)
 
 
+@pytest.mark.parametrize("control", ["\x00", "\r", "\n", "\t", "\x7f"])
+def test_enabled_webhook_rejects_url_control_characters(control):
+    with pytest.raises(ValidationError):
+        WebhookConfig(enabled=True, url=f"http://exa{control}mple.test/hook")
+
+
+def test_enabled_webhook_accepts_percent_encoded_control_text():
+    url = "https://example.test/hook?value=%00"
+    assert WebhookConfig(enabled=True, url=url).url == url
+
+
 def test_invalid_webhook_error_does_not_expose_secret():
     secret = "GBF_TEST_SECRET_2684"
 

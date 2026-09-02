@@ -1085,7 +1085,10 @@ class WebhookConfig(BaseModel):
             return value
         raw_url = value.get("url")
         url = raw_url.strip() if isinstance(raw_url, str) else ""
-        if not url or any(character.isspace() for character in url):
+        if not url or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in url
+        ):
             raise ValueError("enabled webhook requires a valid HTTP(S) URL")
         try:
             parsed = urlsplit(url)
