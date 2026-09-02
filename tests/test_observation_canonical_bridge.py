@@ -172,7 +172,7 @@ def test_lab_authority_resolves_and_imports_one_receipt():
         "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
         "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
         "VALUES ('obs-canonical', 'filter_shadow', 'canonical-v1', 1, 'slot-canonical', "
-        "'observe_only', 'active', '{}', 'spec-hash', "
+        "'external_authority', 'active', '{\"production_mutation_allowed\":true,\"authorizing\":true}', 'spec-hash', "
         "'2020-01-01T00:00:00+00:00', '9999-12-31T00:00:00+00:00', "
         "'9999-12-31T00:00:00+00:00')"
     )
@@ -216,6 +216,49 @@ def test_lab_authority_resolves_and_imports_one_receipt():
         ("2020-01-01T00:00:00+00:00", decision.receipt_id),
     )
     assert prune_observation_delivery_outbox(keep_acknowledged=0)["deleted"] == 1
+
+
+def test_paper_manifest_without_explicit_lab_authorization_falls_back_to_baseline():
+    from aletheia.observation_lab.canonical import (
+        register_treatment_adapter,
+        resolve_observation_treatment,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.manifest import publish_manifest
+
+    register_treatment_adapter(_Adapter(), replace=True)
+    set_authority_source("lab", actor="owner", reason="missing-paper-authority-test")
+    lab = get_lab_db()
+    lab.execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('obs-missing-paper-authority', 'filter_shadow', 'canonical-v1', 1, "
+        "'slot-missing-paper-authority', 'external_authority', 'active', '{}', "
+        "'spec:missing-paper-authority', '2020-01-01T00:00:00+00:00', "
+        "'9999-12-31T00:00:00+00:00', '9999-12-31T00:00:00+00:00')"
+    )
+    manifest = _manifest(
+        observation_id="obs-missing-paper-authority",
+        spec_hash="spec:missing-paper-authority",
+    )
+    publish_manifest(manifest)
+
+    decision = resolve_observation_treatment(
+        adapter_id="test-adapter",
+        candidate_key="candidate-missing-paper-authority",
+        context={
+            "unit": "unit-missing-paper-authority",
+            "interference_key": "test-interference",
+        },
+        baseline={"value": 1.0},
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    assert decision.reason == "observe_only_generation"
+    assert decision.payload == {"value": 1.0}
+    assert decision.behavior_changed is False
 
 
 def test_lab_outbox_prune_stays_unavailable_without_import_proof():
@@ -310,11 +353,21 @@ def test_legacy_assignment_namespace_and_denominator_are_bitwise_compatible():
 def test_legacy_numeric_caller_uses_lab_seam_after_cutover(monkeypatch):
     from aletheia.learning import experiments
     from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.manifest import build_manifest, publish_manifest
     from aletheia.storage.sqlite import get_db
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
     set_authority_source("lab", actor="owner", reason="numeric-seam-test")
+    get_lab_db().execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('obs-numeric', 'filter_shadow', 'canonical-v1', 1, 'slot-numeric', "
+        "'external_authority', 'active', '{\"production_mutation_allowed\":true,\"authorizing\":true}', "
+        "'spec-numeric', '2020-01-01T00:00:00+00:00', '9999-12-31T00:00:00+00:00', "
+        "'9999-12-31T00:00:00+00:00')"
+    )
     publish_manifest(build_manifest(
         observation_id="obs-numeric",
         generation=1,

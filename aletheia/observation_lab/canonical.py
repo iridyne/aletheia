@@ -1572,8 +1572,8 @@ def publish_manifest_with_lifecycle(
                 raise ValueError("paper_manifest_requires_paper_stage")
             spec = _safe_json_object(root["spec_json"])
             if (
-                spec.get("production_mutation_allowed") is False
-                or spec.get("authorizing") is False
+                spec.get("production_mutation_allowed") is not True
+                or spec.get("authorizing") is not True
             ):
                 raise ValueError("observe_only_generation")
             if no_manifest_reason is None and _adapter(
@@ -2572,10 +2572,10 @@ def resolve_observation_treatment(
                                     elif manifest.effect_mode == "paper_treatment" and (
                                         root_specs[manifest.manifest_hash].get(
                                             "production_mutation_allowed"
-                                        ) is False
+                                        ) is not True
                                         or root_specs[manifest.manifest_hash].get(
                                             "authorizing"
-                                        ) is False
+                                        ) is not True
                                     ):
                                         result = _decision(
                                             baseline_value,
