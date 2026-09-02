@@ -7,6 +7,7 @@ corresponding settings route hooks.
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 
 
@@ -353,6 +354,58 @@ def test_trigger_changes_preserve_layered_pause(monkeypatch):
 
     assert all(job.next_run_time is None for job in jobs.values())
     assert scheduler._selectively_paused_jobs == job_ids
+
+
+def test_trigger_reschedule_is_atomic_with_final_pause_resume(monkeypatch):
+    from aletheia.agent_runtime import pause_ownership, scheduler
+
+    condition = threading.Condition()
+    state = {"started": False, "resume_done": False}
+
+    class GateLock:
+        def __enter__(self):
+            with condition:
+                state["started"] = True
+                condition.notify_all()
+                condition.wait_for(lambda: state["resume_done"])
+
+        def __exit__(self, *_args):
+            return False
+
+    class RaceScheduler(FakeScheduler):
+        def get_job(self, job_id):
+            snapshot = self._jobs.get(job_id)
+            with condition:
+                state["started"] = True
+                condition.notify_all()
+                condition.wait_for(lambda: state["resume_done"])
+            return snapshot
+
+    paused_job = FakeJob()
+    paused_job.next_run_time = None
+    fs = RaceScheduler(jobs={"universe_refresh": paused_job})
+    paused = {"universe_refresh"}
+    monkeypatch.setattr(scheduler, "_scheduler", fs)
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", paused)
+    monkeypatch.setattr(pause_ownership, "_pause_transition_lock", GateLock())
+
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(scheduler.reschedule_universe_refresh(30))
+    )
+    worker.start()
+    with condition:
+        assert condition.wait_for(lambda: state["started"], timeout=1)
+        running_job = FakeJob()
+        fs._jobs["universe_refresh"] = running_job
+        paused.clear()
+        state["resume_done"] = True
+        condition.notify_all()
+    worker.join(timeout=1)
+
+    assert result == [True]
+    assert fs._jobs["universe_refresh"].next_run_time is not None
+    assert paused == set()
 
 
 # ─── Settings route integration ──────────────────────────────────────────────
