@@ -18,6 +18,15 @@ _HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _EXEMPT_NAMES = frozenset({"checksums.txt", "manifest.yaml"})
 
 
+def _canonical_json(value: object) -> str:
+    """Use the same stable JSON shape as the joint-checkpoint writer."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _sha256_json(value: object) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
 def _open_sqlite_readonly(path: Path) -> sqlite3.Connection:
     """Inspect a bundled SQLite snapshot without creating WAL sidecars."""
     # The backup contains a single sqlite3.Connection.backup() image, not its
@@ -343,6 +352,8 @@ def _verify_checkpoint_manifest(
                         f"Lab-authoritative archive replay identity mismatch: {archive_id}"
                     )
 
+        _verify_outbox_cursor_cut(bundle_dir, result)
+
         # Non-empty legacy Experiment state is allowed in an authoritative
         # bundle only when the durable Main cutover proof is present.  Empty
         # fresh schemas need no proof row.
@@ -460,3 +471,240 @@ def _verify_checkpoint_manifest(
     if not isinstance(checkpoint_identity, str) or checkpoint_identity != actual_identity:
         result.valid = False
         result.errors.append("authoritative checkpoint identity does not match manifest contents")
+
+
+def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
+    """Prove the bundled Main receipt cut agrees with the Lab import cursor.
+
+    The joint checkpoint already carries the Main outbox digest, but checking
+    only the Lab database identity cannot detect a Lab-only rollback or a
+    cursor that refers to receipts omitted from the restored app snapshot.
+    Numeric sequence gaps remain allowed: they are only a problem when the
+    durable cursor/retry checkpoint or an acknowledged receipt proves that a
+    specific source row should be present.
+    """
+    app_db = bundle_dir / "app.db"
+    lab_db = bundle_dir / "observation-lab" / "lab.db"
+    if not app_db.is_file() or not lab_db.is_file():
+        result.valid = False
+        result.errors.append("Lab-authoritative outbox/cursor cut is unavailable")
+        return
+
+    try:
+        with _open_sqlite_readonly(app_db) as app:
+            app.row_factory = sqlite3.Row
+            outbox_columns = {
+                str(row[1])
+                for row in app.execute(
+                    "PRAGMA table_info(observation_delivery_outbox)"
+                ).fetchall()
+            }
+            required_outbox = {
+                "sequence", "receipt_id", "manifest_hash", "acknowledged_at",
+            }
+            if not required_outbox.issubset(outbox_columns):
+                raise sqlite3.Error("outbox_schema_unavailable")
+            select_columns = [
+                "sequence", "receipt_id", "manifest_hash", "acknowledged_at",
+            ]
+            if "lab_application_status" in outbox_columns:
+                select_columns.append("lab_application_status")
+            outbox_rows = app.execute(
+                "SELECT " + ", ".join(select_columns)
+                + " FROM observation_delivery_outbox ORDER BY sequence"
+            ).fetchall()
+            outbox_state = [
+                tuple(row[column] for column in select_columns[:4])
+                for row in outbox_rows
+            ]
+            outbox_by_sequence = {
+                int(row["sequence"]): row for row in outbox_rows
+            }
+            outbox_watermark = int(outbox_rows[-1]["sequence"]) if outbox_rows else 0
+            outbox_pending = sum(
+                1 for row in outbox_rows if row["acknowledged_at"] is None
+            )
+            outbox_fingerprint = _sha256_json(outbox_state)
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        result.valid = False
+        result.errors.append(
+            f"Lab-authoritative outbox cut is unreadable: {type(exc).__name__}"
+        )
+        return
+
+    try:
+        with _open_sqlite_readonly(lab_db) as lab:
+            lab.row_factory = sqlite3.Row
+            checkpoint_row = lab.execute(
+                "SELECT main_outbox_high_watermark, main_outbox_pending_count, "
+                "main_outbox_fingerprint FROM joint_checkpoints "
+                "ORDER BY recorded_at DESC, checkpoint_id DESC LIMIT 1"
+            ).fetchone()
+            cursor = lab.execute(
+                "SELECT contiguous_sequence, retry_sequences_json, "
+                "source_checkpoint_json, source_checkpoint_fingerprint "
+                "FROM observation_import_cursors WHERE source_name='main'"
+            ).fetchone()
+            exposure_rows = lab.execute(
+                "SELECT source_receipt_id FROM observation_exposures "
+                "WHERE source_receipt_id IS NOT NULL"
+            ).fetchall()
+            lifecycle_rows = lab.execute(
+                "SELECT source_receipt_id FROM observation_lifecycle_events "
+                "WHERE source_receipt_id IS NOT NULL"
+            ).fetchall()
+            audit_rows = lab.execute(
+                "SELECT payload_json FROM lab_audit_outbox"
+            ).fetchall()
+            archive_rows = lab.execute(
+                "SELECT archive_path, archive_sha256, replay_fingerprint "
+                "FROM observation_archives"
+            ).fetchall()
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        result.valid = False
+        result.errors.append(
+            f"Lab-authoritative import cursor is unreadable: {type(exc).__name__}"
+        )
+        return
+
+    if checkpoint_row is None:
+        result.valid = False
+        result.errors.append("Lab-authoritative joint checkpoint is missing outbox cut")
+    else:
+        checkpoint_values = (
+            checkpoint_row["main_outbox_high_watermark"],
+            checkpoint_row["main_outbox_pending_count"],
+            checkpoint_row["main_outbox_fingerprint"],
+        )
+        if checkpoint_values != (
+            outbox_watermark,
+            outbox_pending,
+            outbox_fingerprint,
+        ):
+            result.valid = False
+            result.errors.append(
+                "Lab-authoritative outbox cut does not match joint checkpoint"
+            )
+
+    if cursor is None:
+        # A fresh Lab with no imported Main receipts is a valid empty cut. A
+        # non-empty outbox still needs the cursor so the restore cannot claim
+        # that receipts were already imported.
+        if outbox_rows:
+            result.valid = False
+            result.errors.append("Lab-authoritative import cursor is missing")
+        return
+
+    try:
+        cursor_sequence = int(cursor["contiguous_sequence"])
+        retry_sequences = json.loads(cursor["retry_sequences_json"] or "[]")
+        checkpoint = json.loads(cursor["source_checkpoint_json"] or "")
+        cursor_fingerprint = str(cursor["source_checkpoint_fingerprint"] or "")
+        valid_cursor = (
+            cursor_sequence >= 0
+            and isinstance(retry_sequences, list)
+            and all(isinstance(item, int) and item >= 0 for item in retry_sequences)
+            and isinstance(checkpoint, dict)
+            and checkpoint.get("source_name") == "main"
+            and int(checkpoint.get("contiguous_sequence", -1)) == cursor_sequence
+            and len(cursor_fingerprint) == 64
+            and cursor_fingerprint == _sha256_json(checkpoint)
+            and isinstance(checkpoint.get("receipt_chain_fingerprint"), str)
+            and bool(re.fullmatch(r"[0-9a-f]{64}", checkpoint["receipt_chain_fingerprint"]))
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        valid_cursor = False
+        retry_sequences = []
+        checkpoint = {}
+        cursor_sequence = -1
+    if not valid_cursor:
+        result.valid = False
+        result.errors.append("Lab-authoritative import cursor checkpoint is invalid")
+        return
+
+    if len(set(retry_sequences)) != len(retry_sequences):
+        result.valid = False
+        result.errors.append("Lab-authoritative import cursor retries are duplicated")
+    for sequence in retry_sequences:
+        if sequence not in outbox_by_sequence:
+            result.valid = False
+            result.errors.append(
+                f"Lab-authoritative retry receipt is missing from app cut: {sequence}"
+            )
+
+    covered_receipts = {
+        str(row[0]) for row in exposure_rows if row[0] is not None
+    }
+    covered_receipts.update(
+        str(row[0]) for row in lifecycle_rows if row[0] is not None
+    )
+    for row in audit_rows:
+        try:
+            payload = json.loads(row[0] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            source_receipt_id = payload.get("source_receipt_id")
+            if source_receipt_id:
+                covered_receipts.add(str(source_receipt_id))
+
+    # Archive coverage is needed after hot exposure/lifecycle rows have been
+    # compacted.  Reuse the same managed-root/path rules as the archive check
+    # above and ignore malformed archives here; that check already records the
+    # precise archive error and the missing receipt must remain unproven.
+    import gzip
+
+    for archive_path, archive_sha256, replay_fingerprint in archive_rows:
+        try:
+            raw_path = Path(str(archive_path))
+            parts = raw_path.parts
+            marker = parts.index("observation-lab")
+            relative = Path(*parts[marker:])
+            if relative.parts[:2] != ("observation-lab", "archives"):
+                continue
+            archive = bundle_dir / relative
+            archive_root = (bundle_dir / "observation-lab" / "archives").resolve()
+            archive.resolve().relative_to(archive_root)
+            data = archive.read_bytes()
+            if hashlib.sha256(data).hexdigest() != str(archive_sha256):
+                continue
+            payload = json.loads(gzip.decompress(data))
+            candidate = dict(payload)
+            replay = candidate.pop("replay_fingerprint", None)
+            if replay != str(replay_fingerprint) or replay != _sha256_json(candidate):
+                continue
+            archive_rows_payload = payload.get("rows") or {}
+            for key in ("exposures", "lifecycle_events"):
+                for item in archive_rows_payload.get(key) or ():
+                    if isinstance(item, dict) and item.get("source_receipt_id"):
+                        covered_receipts.add(str(item["source_receipt_id"]))
+        except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+
+    for row in outbox_rows:
+        sequence = int(row["sequence"])
+        if sequence <= cursor_sequence and str(row["receipt_id"]) not in covered_receipts:
+            result.valid = False
+            result.errors.append(
+                f"Lab cursor claims receipt missing from Lab evidence: {row['receipt_id']}"
+            )
+        if sequence > cursor_sequence and (
+            row["acknowledged_at"] is not None
+            or (
+                "lab_application_status" in row.keys()
+                and row["lab_application_status"] in {"applied", "rejected", "conflicted"}
+            )
+        ):
+            result.valid = False
+            result.errors.append(
+                f"Main outbox receipt is newer than Lab cursor: {row['receipt_id']}"
+            )
+
+    last_receipt_id = checkpoint.get("last_receipt_id")
+    if cursor_sequence > 0 and (
+        not isinstance(last_receipt_id, str)
+        or not last_receipt_id
+        or last_receipt_id not in covered_receipts
+    ):
+        result.valid = False
+        result.errors.append("Lab cursor last receipt is missing from Lab evidence")
