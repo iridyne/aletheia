@@ -197,10 +197,15 @@ receipt. There is no implicit `latest` handler or adapter fallback.
 `ExecutionManifest` is reused and gains an explicit wire-contract version plus
 the minimum missing authority shape, including an effect mode such as
 `observe_only` or `paper_treatment`. Observe-only assigns arms and records an
-Exposure but executes baseline. Only owner-admitted Paper Generations may
-publish behavior-bearing Manifests. Missing, stale, expired, inverted,
-revoked, incompatible, conflicting, or unsupported composition resolves to
-baseline.
+Exposure but executes baseline. A control assignment must execute the
+caller-supplied deterministic baseline; any independently stored
+`control_payload` must hash-equal that baseline or the Manifest is incompatible
+and resolves to baseline. For every assignment, including control and refusal,
+`behavior_changed` is computed from the actual applied payload versus the
+caller-supplied baseline rather than inferred from the arm label. Only
+owner-admitted Paper Generations may publish behavior-bearing Manifests.
+Missing, stale, expired, inverted, revoked, incompatible, conflicting, or
+unsupported composition resolves to baseline.
 
 `factorial_ok` conflict classification is not executable authority by itself.
 Baseline remains mandatory unless a versioned adapter implements and tests the
@@ -228,8 +233,12 @@ receipt persists the exact Manifest authority snapshot used: active Manifest
 hashes, revocation-set/version fingerprint, resolution time, Manifest-set
 fingerprint, and contract version. Revocation is authoritative for decisions
 resolved after durable `revoked_at`; an already admitted in-flight Main
-transaction is not rewritten retroactively. Any cache has a versioned snapshot
-identity and bounded validity.
+transaction is not rewritten retroactively. Before applying a behavior-bearing
+cached Manifest, Main must perform a decision-time revocation-version check (or
+consume an equivalent immediate invalidation signal) against the read-only Lab
+projection. A cache has a versioned snapshot identity and bounded validity, but
+TTL alone is never sufficient for revocation safety. If current revocation
+state cannot be proven, resolution fails closed to baseline.
 
 ## 7. Main-to-Lab delivery and owner actions
 
@@ -246,11 +255,15 @@ typed resolution reason, Runtime Session, producer commit, authority snapshot,
 and application time.
 
 Transport is at-least-once and Lab import is exactly-once by source receipt ID.
-The importer watermark is the highest successfully processed existing committed
-receipt, not assumed integer contiguity. Numeric gaps alone are not evidence
+The importer watermark is the highest ordered prefix of existing committed
+receipts that has been successfully processed; it may skip unused numeric IDs
+but must never advance past an existing failed or unclassified committed
+receipt. An implementation may instead advance beyond a failure only after it
+atomically persists that exact receipt in a durable retry set that is always
+drained before acknowledgement/pruning. Numeric gaps alone are not evidence
 gaps. A missing-receipt alarm requires a persisted source
 checkpoint/range/hash proving a committed receipt should exist. Restore checks
-use persisted checkpoint, watermark, and source identity. Main prunes only
+use persisted checkpoint, watermark, retry state, and source identity. Main prunes only
 after Lab acknowledgement plus a safety grace. Capacity backpressure disables
 Experiment treatments to baseline while ordinary Paper continues.
 
@@ -296,9 +309,13 @@ explicit no-Manifest reason, and audit-outbox row. Withdrawal atomically
 persists lifecycle event, revocation, closure/refreeze, and audit row.
 
 The audit reconciler mirrors stable dedup identities to canonical audit JSONL
-and records acknowledgement/failure health. Before implementation, Phase 2
-must explicitly freeze which authority transitions require successful audit
-mirroring before effectiveness and which preserve eventual-mirror semantics.
+and records acknowledgement/failure health. Revocation, harm withdrawal,
+refreeze, and invalidation become effective in the same Lab transaction that
+persists their audit-outbox row; they never wait for external JSONL mirroring.
+The reconciler retries the mirror without restoring withdrawn authority.
+Behavior-enabling transitions may be held pending external audit
+acknowledgement when Phase 2 freezes that stricter rule, but audit failure can
+never delay a safety withdrawal.
 
 ## 9. Runtime ownership, compatibility, and observability
 
