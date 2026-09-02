@@ -555,9 +555,11 @@ def test_unified_cache_preserves_explicit_empty_connected_set(tmp_path, monkeypa
     assert cached["sync_status"] == "error"
 
 
-def test_exchange_cache_rejects_non_finite_json(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_exchange_cache_rejects_non_finite_json(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio import exchange_sync as es
+    from aletheia.server.routes import bitget
     from aletheia.storage.sqlite import execute_write
 
     with pytest.raises(ValueError):
@@ -567,7 +569,19 @@ def test_exchange_cache_rejects_non_finite_json(tmp_path, monkeypatch):
         "INSERT INTO settings(key, value) VALUES(?, ?)",
         ("exchange_account_state.demo", '{"equity_usdt": Infinity}'),
     )
-    assert es._read_raw("demo") is None
+    cached = es.get_cached_state("demo")
+    assert es.status_for(cached) == "error"
+    assert cached["cache_error"] == "invalid_cache"
+    assert cached["equity_usdt"] is None
+
+    execute_write(
+        "INSERT INTO settings(key, value) VALUES(?, ?)",
+        ("exchange_account_state.unified", "{"),
+    )
+    payload = await bitget.uta_state()
+    assert payload["sync_status"] == "error"
+    assert payload["cache_error"] == "invalid_cache"
+    assert payload["total_equity_usdt"] is None
 
 
 def test_uta_v1_default_cache_never_falls_back_to_legacy_bitget(tmp_path, monkeypatch):
