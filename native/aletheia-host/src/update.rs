@@ -1,6 +1,6 @@
 use crate::{
     activate_release, gateway_healthy, gateway_ready, read_selection, resolve_release,
-    wait_gateway_ready, HostPaths, HOST_ROOT_ENV, PACKAGED_ENV,
+    run_command_with_timeout, wait_gateway_ready, HostPaths, HOST_ROOT_ENV, PACKAGED_ENV,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -160,9 +160,11 @@ fn command_for_release(paths: &HostPaths, release_id: &str, args: &[&str]) -> Re
 }
 
 fn run_release(paths: &HostPaths, release_id: &str, args: &[&str]) -> Result<ExitStatus> {
-    command_for_release(paths, release_id, args)?
-        .status()
-        .with_context(|| format!("run release {release_id} with arguments {args:?}"))
+    run_command_with_timeout(
+        command_for_release(paths, release_id, args)?,
+        Duration::from_secs(300),
+        &format!("run release {release_id} with arguments {args:?}"),
+    )
 }
 
 fn require_success(status: ExitStatus, operation: &str) -> Result<()> {

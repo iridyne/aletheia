@@ -459,6 +459,79 @@ def test_preflight_failure_never_creates_switch_request(monkeypatch, tmp_path):
     assert not (host / "update-request.json").exists()
 
 
+def test_packaged_candidate_preflight_uses_sanitized_environment(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    executable = candidate / "aletheia-core"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    backup = tmp_path / "backup.tar.gz"
+    backup.write_bytes(b"backup")
+    host = tmp_path / "host"
+    seen = {}
+
+    monkeypatch.setattr(packaged, "_paths", lambda: {"preflight": tmp_path / "preflight"})
+    monkeypatch.setattr(packaged, "host_root", lambda: host)
+    monkeypatch.setattr(
+        packaged,
+        "RestoreService",
+        lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
+    )
+    monkeypatch.setattr(
+        packaged,
+        "_validate_release_dir",
+        lambda *_args, **_kwargs: {"entrypoint_path": str(executable)},
+    )
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["env"] = kwargs["env"]
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ALETHEIA_UPDATE_BEARER_TOKEN", "token")
+    monkeypatch.setattr(packaged.subprocess, "run", fake_run)
+
+    result = packaged._preflight_candidate(
+        candidate,
+        backup_path=backup,
+        operation_id="op-1",
+        target_release="0.5.1",
+        expected_sha="sha",
+    )
+
+    assert result == tmp_path / "preflight" / "op-1" / "data-copy"
+    assert seen["command"] == [str(executable), "__packaged_update_preflight"]
+    assert "OPENAI_API_KEY" not in seen["env"]
+    assert "ALETHEIA_UPDATE_BEARER_TOKEN" not in seen["env"]
+    assert seen["env"][packaged.PACKAGED_ENV] == "1"
+    assert seen["env"][packaged.HOST_ROOT_ENV] == str(host)
+    assert seen["env"]["ALETHEIA_DATA_DIR"] == str(result)
+
+
+def test_download_timeout_cleans_partial_artifact(monkeypatch, tmp_path):
+    source = tmp_path / "payload.tar.gz"
+    source.write_bytes(b"payload")
+    destination = tmp_path / "downloads" / source.name
+    monkeypatch.setattr(packaged, "_DOWNLOAD_TIMEOUT_SEC", 0.0)
+
+    with pytest.raises(packaged.PackagedUpdateError) as error:
+        packaged._download_artifact(
+            {
+                "url": source.as_uri(),
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "size_bytes": source.stat().st_size,
+            },
+            destination,
+            operation_id="op-1",
+            target_release="0.5.1",
+        )
+
+    assert error.value.reason == "update_download_timeout"
+    assert not destination.with_suffix(destination.suffix + ".partial").exists()
+
+
 def test_manual_rollback_requires_recent_committed_backup(monkeypatch, tmp_path):
     _, feed, public_key = _archive_and_feed(tmp_path)
     host, _ = _configure_host(monkeypatch, tmp_path, feed, public_key)

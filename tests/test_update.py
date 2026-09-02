@@ -100,6 +100,27 @@ def test_behind_count_parses_rev_list(tmp_path, monkeypatch):
     assert git_ops.behind_count("master") == 0
 
 
+def test_changed_files_returns_unknown_on_git_failure(monkeypatch):
+    from aletheia.update import git_ops
+
+    monkeypatch.setattr(git_ops, "_git", lambda *a, **k: _FakeProc(returncode=1, stderr="bad revision"))
+
+    assert git_ops.changed_files("old", "new") is None
+
+
+def test_git_timeout_is_reported_as_unknown_state(monkeypatch):
+    from aletheia.update import git_ops
+    import subprocess
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(["git"], 60)
+
+    monkeypatch.setattr(git_ops.subprocess, "run", timeout)
+
+    assert git_ops.current_commit() == ""
+    assert git_ops.changed_files("old", "new") is None
+
+
 def test_pull_rejects_local_ahead_before_merge(monkeypatch):
     from aletheia.update import git_ops
 
@@ -202,6 +223,40 @@ def test_check_disabled_returns_reason(tmp_path, monkeypatch):
     assert result["reason"] == "update_disabled"
 
 
+def test_check_rejects_unknown_remote_state(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+
+    monkeypatch.setattr(git_ops, "fetch", lambda branch="master": {"ok": True})
+    monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
+    monkeypatch.setattr(git_ops, "remote_commit", lambda branch="master": "")
+    monkeypatch.setattr(git_ops, "behind_count", lambda branch="master": -1)
+
+    result = applier.check_for_update()
+
+    assert result == {
+        "ok": False,
+        "reason": "remote_state_unavailable",
+        "mode": "development",
+    }
+
+
+def test_update_child_env_strips_provider_and_updater_credentials(monkeypatch):
+    from aletheia.update.process_env import safe_env
+
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ALETHEIA_UPDATE_BEARER_TOKEN", "token")
+    monkeypatch.setenv("ALETHEIA_OPERATOR_SERVICE_TOKEN", "operator-token")
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", "/tmp/safe-data")
+
+    env = safe_env()
+
+    assert "OPENAI_API_KEY" not in env
+    assert "ALETHEIA_UPDATE_BEARER_TOKEN" not in env
+    assert "ALETHEIA_OPERATOR_SERVICE_TOKEN" not in env
+    assert env["ALETHEIA_DATA_DIR"] == "/tmp/safe-data"
+
+
 def test_apply_refuses_dirty_worktree(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier, git_ops
@@ -296,6 +351,96 @@ def test_apply_pull_failure_graceful(tmp_path, monkeypatch):
     from aletheia.files.jsonl import read_jsonl
 
     assert any(e.get("event_type") == "update_failed" for e in read_jsonl("audit.jsonl"))
+
+
+def test_apply_fails_closed_when_changed_files_cannot_be_classified(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+
+    _stub_clean_pull(monkeypatch)
+    monkeypatch.setattr(git_ops, "changed_files", lambda *_args: None)
+    reset_calls = []
+    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
+    monkeypatch.setattr(applier, "_persist_current_commit_fresh", lambda _commit: {"ok": True})
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: pytest.fail("unknown diff must not reach smoke"))
+
+    result = applier.apply_update()
+
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
+    assert result["reason"] == "changed_files_unavailable"
+    assert reset_calls == ["old111"]
+    from aletheia.files.jsonl import read_jsonl
+
+    events = read_jsonl("audit.jsonl")
+    assert any(
+        event.get("event_type") == "update_failed" and "changed_files_unavailable" in event.get("message", "")
+        for event in events
+    )
+
+
+def test_schema_candidate_failure_is_durably_audited(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.backup import service as backup_service
+    from aletheia.update import applier, auto, git_ops
+
+    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    monkeypatch.setattr(git_ops, "reset_hard", lambda _commit: {"ok": True})
+    monkeypatch.setattr(
+        backup_service,
+        "BackupService",
+        lambda _data_dir: type("Backup", (), {"create_backup": lambda self, *, label: tmp_path / label})(),
+    )
+    monkeypatch.setattr(
+        auto,
+        "_candidate_preflight",
+        lambda *_args: (_ for _ in ()).throw(
+            auto.AutoUpdateError("candidate_preflight_failed", "smoke_stage=fast_tests; smoke_detail=route mismatch")
+        ),
+    )
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is False
+    assert result["reason"] == "candidate_preflight_failed"
+    assert "smoke_stage=fast_tests" in result["message"]
+    from aletheia.files.jsonl import read_jsonl
+
+    events = read_jsonl("audit.jsonl")
+    assert any(
+        event.get("event_type") == "update_failed" and "route mismatch" in event.get("message", "")
+        for event in events
+    )
+
+
+def test_schema_preflight_source_restore_retries_and_reports_actual_head(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier, git_ops
+
+    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    heads = iter(["old111", "new222", "unverified333"])
+    monkeypatch.setattr(git_ops, "current_commit", lambda: next(heads))
+    resets = []
+    monkeypatch.setattr(
+        git_ops,
+        "reset_hard",
+        lambda commit: resets.append(commit) or {"ok": False, "reason": "reset_failed", "stderr": "index locked"},
+    )
+
+    result = applier.apply_update(restart=True)
+
+    assert result["applied"] is False
+    assert result["reason"] == "schema_preflight_source_restore_failed"
+    assert result["actual_head"] == "unverified333"
+    assert resets == ["old111", "old111"]
+    from aletheia.files.jsonl import read_jsonl
+
+    events = read_jsonl("audit.jsonl")
+    assert any(
+        event.get("event_type") == "update_failed"
+        and event.get("after", {}).get("actual_head") == "unverified333"
+        for event in events
+    )
 
 
 def test_cli_update_runs_full_source_deployment_without_subcommand(monkeypatch):
@@ -719,6 +864,7 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
     from aletheia.update import applier
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     calls = []
     monkeypatch.setattr(applier, "_build_frontend", lambda _tree: calls.append("build") or {"ok": True})
@@ -782,6 +928,7 @@ def test_apply_restart_installs_changed_frontend_deps_before_build(tmp_path, mon
     from aletheia.update import applier
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/package-lock.json"])
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True})
     calls = []
     monkeypatch.setattr(applier, "_install_frontend_deps", lambda: calls.append("npm-ci") or {"ok": True})
@@ -920,6 +1067,7 @@ def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch)
     from aletheia.update import applier
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/App.tsx"])
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     backup = tmp_path / ".dashboard_static-previous"
     backup.mkdir()
@@ -940,6 +1088,7 @@ def test_apply_restart_restores_old_release_on_restart_failure(tmp_path, monkeyp
     from aletheia.update import applier, git_ops
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": True})
     monkeypatch.setattr(applier, "_activate_frontend_build", lambda: True)
@@ -1032,6 +1181,21 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
     assert calls.index(("backup", "interactive_schema_activate", tmp_path / "activation.tar")) < calls.index(
         ("restart",)
     )
+
+
+@pytest.mark.integration
+def test_candidate_preflight_runs_real_migration_validation_and_smoke(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.backup.service import BackupService
+    from aletheia.update import auto, git_ops
+
+    backup = BackupService(tmp_path).create_backup(label="candidate_integration")
+    candidate = None
+    try:
+        candidate = auto._candidate_preflight(git_ops.current_commit(), backup)
+        assert candidate.is_dir()
+    finally:
+        auto._remove_candidate(candidate)
 
 
 def test_rollback_applied_update_restores_source_metadata_and_gateway(monkeypatch):
@@ -1160,6 +1324,7 @@ def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatc
     from aletheia.update import applier, git_ops
 
     _stub_clean_pull(monkeypatch, changed_files=["frontend/src/pages/Settings.tsx"])
+    monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: True)
     resets = []
     monkeypatch.setattr(git_ops, "reset_hard", lambda commit: resets.append(commit) or {"ok": True})
     monkeypatch.setattr(applier, "_build_frontend", lambda _tree: {"ok": False, "reason": "frontend_build_failed"})

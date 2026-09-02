@@ -310,9 +310,31 @@ pub fn payload_command(paths: &HostPaths, args: &[String]) -> Result<Command> {
 }
 
 pub fn run_payload(paths: &HostPaths, args: &[String]) -> Result<ExitStatus> {
-    payload_command(paths, args)?
-        .status()
-        .with_context(|| format!("run selected Aletheia payload with arguments {args:?}"))
+    run_command_with_timeout(
+        payload_command(paths, args)?,
+        Duration::from_secs(300),
+        &format!("run selected Aletheia payload with arguments {args:?}"),
+    )
+}
+
+pub(crate) fn run_command_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+    description: &str,
+) -> Result<ExitStatus> {
+    let mut child = command.spawn().with_context(|| description.to_string())?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("{description} timed out after {timeout:?}");
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub fn run_gateway_action(paths: &HostPaths, action: &str) -> Result<ExitStatus> {
