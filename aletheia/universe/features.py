@@ -395,6 +395,7 @@ def _evaluate_ticker_prefilters(
     *,
     min_volume: float,
     priority_asset_ids: set[str] | None = None,
+    derivative_exchange=None,
 ) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
     """Evaluate ticker availability and volume in order without sampling facts."""
     candidates: list[tuple[dict, dict]] = []
@@ -442,7 +443,12 @@ def _evaluate_ticker_prefilters(
             reason_code="ticker_available",
             inputs={"ticker_symbol": ccxt_symbol},
         ))
-        volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
+        volume_exchange = (
+            derivative_exchange
+            if is_perp and derivative_exchange is not None
+            else exchange
+        )
+        volume = _quote_volume_24h(volume_exchange, ccxt_symbol, ticker)
         if volume is None:
             volume_facts.append(_ticker_candidate_fact(
                 asset,
@@ -1001,40 +1007,46 @@ async def collect_features(
     md = cfg.market_data
     venue = md.ccxt_exchange
     fallback_venue = md.ccxt_fallback or venue
-    provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
+    spot_provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
+    providers = [spot_provider]
     results = []
     priority_asset_ids = set(priority_asset_ids or ())
 
     try:
-        exchange = provider._ensure_primary()
-        exchange.options["defaultType"] = "spot"
-        await exchange.load_markets()
-
         # --- Phase A: batch ticker fetch (spot + perp) ---
         spot_assets = [a for a in assets if not _is_derivatives_market(a.get("market_type"))]
         perp_assets = [a for a in assets if _is_derivatives_market(a.get("market_type"))]
+        spot_exchange = spot_provider._ensure_primary()
+        spot_exchange.options["defaultType"] = "spot"
+        await spot_exchange.load_markets()
+        perp_exchange = None
+        if perp_assets:
+            perp_provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
+            providers.append(perp_provider)
+            perp_exchange = perp_provider._ensure_primary()
+            perp_exchange.options["defaultType"] = "swap"
+            await perp_exchange.load_markets()
 
         spot_symbols = list(dict.fromkeys(a["symbol"] for a in spot_assets if a.get("symbol")))
         perp_symbols = list(dict.fromkeys(to_ccxt_perp(a["symbol"]) for a in perp_assets if a.get("symbol")))
 
         tickers: dict = {}
 
-        exchange.options["defaultType"] = "spot"
-        tickers.update(await _chunked_fetch_tickers(exchange, spot_symbols))
+        tickers.update(await _chunked_fetch_tickers(spot_exchange, spot_symbols))
 
-        if perp_symbols:
-            exchange.options["defaultType"] = "swap"
-            tickers.update(await _chunked_fetch_tickers(exchange, perp_symbols))
+        if perp_symbols and perp_exchange is not None:
+            tickers.update(await _chunked_fetch_tickers(perp_exchange, perp_symbols))
 
         # --- Volume pre-filter ---
         min_vol = cfg.universe.min_volume_24h_usdt
         candidates, ticker_facts, volume_facts = _evaluate_ticker_prefilters(
             assets,
             tickers,
-            exchange,
+            spot_exchange,
             to_ccxt_perp,
             min_volume=min_vol,
             priority_asset_ids=priority_asset_ids,
+            derivative_exchange=perp_exchange,
         )
         candidate_asset_ids = {str(asset.get("id") or "") for asset, _ in candidates}
         for asset in assets:
@@ -1065,7 +1077,7 @@ async def collect_features(
         if needs_btc_context:
             try:
                 btc_ohlcv = await asyncio.wait_for(
-                    exchange.fetch_ohlcv(
+                    spot_exchange.fetch_ohlcv(
                         "BTC/USDT", timeframe="1h", limit=_OHLCV_1H_LIMIT
                     ),
                     timeout=_OHLCV_TIMEOUT,
@@ -1086,6 +1098,11 @@ async def collect_features(
             asset, ticker = asset_ticker_pair
             async with sem:
                 try:
+                    exchange = (
+                        perp_exchange
+                        if _is_derivatives_market(asset.get("market_type"))
+                        else spot_exchange
+                    )
                     return await _fetch_single_feature(
                         exchange, asset, ticker, now, to_ccxt_perp,
                         btc_return_24h=btc_return_24h,
@@ -1192,7 +1209,10 @@ async def collect_features(
                     results.append(result)
 
     finally:
-        await provider.close()
+        await asyncio.gather(
+            *(provider.close() for provider in providers),
+            return_exceptions=True,
+        )
 
     logger.info("Features collected for %d / %d assets", len(results), len(assets))
     return results
