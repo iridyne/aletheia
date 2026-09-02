@@ -17,7 +17,7 @@ This Contract describes current behavior only. It does not contain a future impl
 
 ## V2 migration boundary
 
-[Observation Experiment Ownership V2](observation_experiment_ownership_v2.md) is the accepted target authority for Issue #2737. During Phases 1–7 this v1 Contract continues to describe implemented runtime behavior: legacy Experiment truth and treatment authority remain in Main/Learning. At the explicit Phase 8 cutover, V2 supersedes only those storage/treatment-ownership clauses. Physical Lab isolation, exact causal identity, one Observation-cycle owner, deterministic failure isolation, and the prohibition on Risk/Gateway/credential/Live authority remain unchanged.
+The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) freezes the current #2737 Phase 1 boundary, while its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future target. During Phases 1–7 this v1 Contract continues to describe implemented runtime behavior: legacy Experiment truth and treatment authority remain in Main/Learning. Only an explicit Phase 8 cutover may move the relevant clauses into current Contracts. Physical Lab isolation, exact causal identity, one Observation-cycle owner, deterministic failure isolation, and the prohibition on Risk/Gateway/credential/Live authority remain unchanged.
 
 ## Related authorities
 
