@@ -60,4 +60,3 @@ def test_hypothesis_references_are_strict_and_no_plan_is_canonical():
     )
     assert no_plan.primary_anchor_ref is None
     assert no_plan.risk_tier == no_plan.horizon == "NONE"
-
