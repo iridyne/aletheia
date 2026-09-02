@@ -136,6 +136,22 @@ async def test_lesson_management_action_rejects_unknown_lesson(client):
 
 
 @pytest.mark.anyio
+async def test_lesson_management_rejects_stale_opposite_transition(client):
+    from aletheia.learning.lessons import LessonStore
+
+    store = LessonStore()
+    lesson = store.create("Owner rejected", "trade_case_study", "case-stale")
+    store.reject(lesson.lesson_id)
+
+    response = await client.post(
+        f"/api/persistence/lessons/{lesson.lesson_id}/accept"
+    )
+
+    assert response.status_code == 409
+    assert store.get(lesson.lesson_id).status == "rejected"
+
+
+@pytest.mark.anyio
 async def test_tunnel_guard_protects_lesson_management_actions(client):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.secrets import set_secret

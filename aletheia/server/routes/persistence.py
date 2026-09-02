@@ -276,6 +276,19 @@ def _lesson_or_404(store, lesson_id: str):
     return lesson
 
 
+def _lesson_transition_result(store, lesson_id: str, target_status: str):
+    lesson = _lesson_or_404(store, lesson_id)
+    if lesson.status != target_status:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Lesson transition conflict: expected {target_status}, "
+                f"found {lesson.status}"
+            ),
+        )
+    return lesson.model_dump()
+
+
 @router.post("/lessons/{lesson_id}/accept")
 def accept_lesson(lesson_id: str):
     """Accept a proposed lesson into dry-run review."""
@@ -284,7 +297,7 @@ def accept_lesson(lesson_id: str):
     store = LessonStore()
     _lesson_or_404(store, lesson_id)
     store.accept(lesson_id)
-    return _lesson_or_404(store, lesson_id).model_dump()
+    return _lesson_transition_result(store, lesson_id, "accepted")
 
 
 @router.post("/lessons/{lesson_id}/reject")
@@ -293,9 +306,9 @@ def reject_lesson(lesson_id: str):
     from aletheia.learning.lessons import LessonStore
 
     store = LessonStore()
-    _lesson_or_404(store, lesson_id)
-    store.reject(lesson_id)
-    return _lesson_or_404(store, lesson_id).model_dump()
+    lesson = _lesson_or_404(store, lesson_id)
+    store.reject(lesson_id, expected_status=lesson.status)
+    return _lesson_transition_result(store, lesson_id, "rejected")
 
 
 @router.post("/lessons/{lesson_id}/archive")
@@ -304,9 +317,9 @@ def archive_lesson(lesson_id: str):
     from aletheia.learning.lessons import LessonStore
 
     store = LessonStore()
-    _lesson_or_404(store, lesson_id)
-    store.archive(lesson_id)
-    return _lesson_or_404(store, lesson_id).model_dump()
+    lesson = _lesson_or_404(store, lesson_id)
+    store.archive(lesson_id, expected_status=lesson.status)
+    return _lesson_transition_result(store, lesson_id, "archived")
 
 
 # --- Skills ---
