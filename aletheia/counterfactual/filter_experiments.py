@@ -177,7 +177,7 @@ def register_replay_ready_experiments(
         if _lab_authority():
             from aletheia.observation_lab.canonical import register_observation_spec
 
-            register_observation_spec(
+            registered = register_observation_spec(
                 {
                     **scope,
                     "control": control_param,
@@ -189,8 +189,9 @@ def register_replay_ready_experiments(
                 actor="learning_replay",
                 source_hash=_hash_spec(replay),
                 started_at=timestamp,
+                return_created=True,
             )
-            summary["registered"] += 1
+            summary["registered" if registered.get("_created") else "already_registered"] += 1
             continue
         if repo.insert_filter_shadow_experiment(record):
             summary["registered"] += 1

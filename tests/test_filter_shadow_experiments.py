@@ -333,6 +333,30 @@ def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
     assert filter_window["evaluation"]["ready_for_review"] == 1
 
 
+def test_lab_filter_shadow_registration_reports_idempotent_repeat():
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import reset_lab_db
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-registration-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    replay = _ready_replay(filter_version="lab-repeat-v1")
+
+    assert register_replay_ready_experiments([replay], now=start) == {
+        "registered": 1,
+        "already_registered": 0,
+        "skipped": 0,
+    }
+    assert register_replay_ready_experiments(
+        [replay], now=start + timedelta(minutes=1),
+    ) == {
+        "registered": 0,
+        "already_registered": 1,
+        "skipped": 0,
+    }
+
+
 def test_lab_filter_shadow_respects_half_open_collect_interval():
     from aletheia.observation_lab.canonical import set_authority_source
     from aletheia.observation_lab.canonical import register_observation_spec

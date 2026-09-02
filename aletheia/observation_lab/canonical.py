@@ -544,6 +544,7 @@ def register_observation_spec(
     collect_until: str | None = None,
     finalize_not_before: str | None = None,
     producer_commit: str | None = None,
+    return_created: bool = False,
 ) -> dict[str, Any]:
     """Register one observe-only Generation in Lab with one immutable snapshot.
 
@@ -634,7 +635,10 @@ def register_observation_spec(
         if existing is not None:
             if existing["spec_hash"] != spec_digest:
                 raise ValueError("observation_generation_identity_conflict")
-            return dict(existing)
+            result = dict(existing)
+            if return_created:
+                result["_created"] = False
+            return result
         db.execute(
             "INSERT INTO observation_windows "
             "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
@@ -665,10 +669,13 @@ def register_observation_spec(
             actor=actor,
             dedup_key=f"observation-register:{observation_id}:{generation}:{spec_digest}",
         )
-        return dict(db.execute(
+        result = dict(db.execute(
             "SELECT * FROM observation_windows WHERE observation_id=? AND generation=?",
             (observation_id, generation),
         ).fetchone())
+        if return_created:
+            result["_created"] = True
+        return result
 
 
 def register_inference_plan(
