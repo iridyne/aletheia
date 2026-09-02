@@ -16,7 +16,7 @@ from aletheia.analytics.filter_evidence import (
     current_cost_model_sql,
 )
 from aletheia.learning.outcomes import candidate_outcome_temporal_reason
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import get_db, register_instant_us
 
 _MAX_REPLAYS = 8
 _MAX_OBSERVER_REPLAYS = 3
@@ -776,7 +776,7 @@ def _load_observer_first_exposure_rows(
     cap: int,
 ) -> tuple[list[dict[str, Any]], bool]:
     time_clause = (
-        " AND datetime(fd.first_evaluated_at) >= datetime(?)"
+        " AND aletheia_instant_us(fd.first_evaluated_at) >= aletheia_instant_us(?)"
         if evaluated_since else ""
     )
     params: list[Any] = [
@@ -785,7 +785,9 @@ def _load_observer_first_exposure_rows(
     if evaluated_since:
         params.append(evaluated_since)
     params.append(cap + 1)
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.outcome_candidate_key, fd.run_id, fd.symbol, "
         "fd.input_snapshot, fd.parameter_snapshot, fd.first_evaluated_at, "
@@ -803,7 +805,7 @@ def _load_observer_first_exposure_rows(
         " AND COALESCE(fd.scanner_family,'unknown')=? "
         " AND fd.direction=? AND fd.market_type=? "
         f"{time_clause} "
-        "ORDER BY datetime(fd.first_evaluated_at), fd.outcome_candidate_key LIMIT ?",
+        "ORDER BY aletheia_instant_us(fd.first_evaluated_at), fd.outcome_candidate_key LIMIT ?",
         tuple(params),
     ).fetchall()
     capped = len(rows) > cap
@@ -831,9 +833,15 @@ def _load_first_exposure_rows(
     cap: int,
 ) -> tuple[list[dict[str, Any]], bool]:
     if evaluated_after:
-        time_clause = " AND julianday(fd.first_evaluated_at) > julianday(?)"
+        time_clause = (
+            " AND aletheia_instant_us(fd.first_evaluated_at)"
+            " > aletheia_instant_us(?)"
+        )
     elif evaluated_since:
-        time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)"
+        time_clause = (
+            " AND aletheia_instant_us(fd.first_evaluated_at)"
+            " >= aletheia_instant_us(?)"
+        )
     else:
         time_clause = ""
     params: list[Any] = [
@@ -849,7 +857,9 @@ def _load_first_exposure_rows(
     if evaluated_after or evaluated_since:
         params.append(evaluated_after or evaluated_since)
     params.append(cap + 1)
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.outcome_candidate_key, fd.input_snapshot, fd.parameter_snapshot, "
         "fd.first_evaluated_at, fo.status, fo.entry_ts, fo.due_at, fo.settled_at, "
@@ -864,7 +874,7 @@ def _load_first_exposure_rows(
         " AND COALESCE(fd.scanner_family,'unknown')=? "
         " AND fd.direction=? AND fd.market_type=? "
         f"{time_clause} "
-        "ORDER BY datetime(fd.first_evaluated_at), fd.outcome_candidate_key LIMIT ?",
+        "ORDER BY aletheia_instant_us(fd.first_evaluated_at), fd.outcome_candidate_key LIMIT ?",
         tuple(params),
     ).fetchall()
     capped = len(rows) > cap
