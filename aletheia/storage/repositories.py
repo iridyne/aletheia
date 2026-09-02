@@ -8698,7 +8698,7 @@ def ensure_candidate_planning_generation(
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
-    from aletheia.storage.models import AI_ENTRY_PLANNER_CONTRACT_VERSION, PLANNER_CONTRACT_VERSION
+    from aletheia.storage.models import AI_ENTRY_PLANNER_CONTRACT_VERSION
     from aletheia.trading.entry_plan import candidate_planning_identity
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
