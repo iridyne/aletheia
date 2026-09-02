@@ -491,6 +491,53 @@ class TestSignalReaderConsumeObserverOutput:
         assert ctx.rsi_14 == 45.0
         assert ctx.atr_pct == 1.5
 
+    def test_same_second_signal_and_feature_use_exact_newest_instant(self, e2e_db):
+        base = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(
+            microsecond=0
+        )
+        _seed_instrument(
+            e2e_db,
+            asset_id="asset-same-second",
+            member_id="member-same-second",
+            symbol="BTC/USDT",
+            venue="binance",
+            market_type="spot",
+        )
+        for opportunity_id, offset_us, direction in (
+            ("a-newer", 900_000, "short"),
+            ("z-older", 100_000, "long"),
+        ):
+            repo.insert_opportunity(Opportunity(
+                id=opportunity_id,
+                symbol="BTC/USDT",
+                market="spot",
+                direction_bias=direction,
+                confidence="high",
+                confidence_score=80,
+                source_agent="market_observer",
+                asset_class="crypto",
+                universe_member_id="member-same-second",
+                created_at=(base + timedelta(microseconds=offset_us)).isoformat(),
+                valid_until=(base + timedelta(hours=1)).isoformat(),
+            ))
+        for feature_id, offset_us, rsi in (
+            ("a-feature-newer", 900_000, 90.0),
+            ("z-feature-older", 100_000, 10.0),
+        ):
+            e2e_db.execute(
+                "INSERT INTO universe_feature_snapshots "
+                "(id, asset_id, ts, rsi_14) VALUES (?, 'asset-same-second', ?, ?)",
+                (feature_id, (base + timedelta(microseconds=offset_us)).isoformat(), rsi),
+            )
+
+        request = MarketSignalRequest.from_parts("binance", "BTC/USDT", "spot")
+        context = get_market_signals_for_positions([request])[request]
+
+        assert context.source_opportunity_id == "a-newer"
+        assert context.direction_bias == "short"
+        assert context.feature_snapshot_id == "a-feature-newer"
+        assert context.rsi_14 == 90.0
+
 
 class TestExitRulesConsumeSignal:
     """exit_rules correctly interprets the MarketSignalContext."""
