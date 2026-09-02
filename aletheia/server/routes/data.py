@@ -2819,16 +2819,15 @@ def patch_serenity_theme_status(theme_id: str, body: dict):
     valid = {"active", "watching", "dismissed", "promoted", "expired"}
     if new_status not in valid:
         raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(sorted(valid))}")
-    theme = repo.get_serenity_theme(theme_id)
-    if not theme:
+    updated_at = datetime.now(timezone.utc).isoformat()
+    affected = repo.transition_serenity_theme_status(
+        theme_id,
+        status=new_status,
+        updated_at=updated_at,
+    )
+    if affected is None:
         raise HTTPException(404, "Theme not found")
-    repo.update_serenity_theme(theme_id, status=new_status, updated_at=datetime.now(timezone.utc).isoformat())
-    # Cascade dismiss/expire to child opportunities so thesis-invalidation exit fires
-    if new_status in ("dismissed", "expired"):
-        active_opps = repo.list_serenity_opportunities(theme_id=theme_id, status="active", limit=200)
-        for opp in active_opps:
-            repo.update_serenity_opportunity(opp["id"], status=new_status)
-    return {"id": theme_id, "status": new_status}
+    return {"id": theme_id, "status": new_status, "affected_opportunities": affected}
 
 
 @router.post("/serenity/themes/{theme_id}/feedback")

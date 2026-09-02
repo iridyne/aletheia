@@ -6030,6 +6030,43 @@ def update_serenity_opportunity(opp_id: str, **kwargs) -> None:
     _update("serenity_opportunities", opp_id, kwargs)
 
 
+def transition_active_serenity_opportunities_for_theme(
+    theme_id: str,
+    *,
+    status: str,
+    updated_at: str,
+) -> int:
+    result = execute_write(
+        "UPDATE serenity_opportunities SET status=?, updated_at=? "
+        "WHERE theme_id=? AND status='active'",
+        (status, updated_at, theme_id),
+    )
+    return result.rowcount
+
+
+def transition_serenity_theme_status(
+    theme_id: str,
+    *,
+    status: str,
+    updated_at: str,
+) -> int | None:
+    """Update one theme and atomically terminalize all active children."""
+    with transaction(immediate=True):
+        theme = execute_write(
+            "UPDATE serenity_themes SET status=?, updated_at=? WHERE id=?",
+            (status, updated_at, theme_id),
+        )
+        if theme.rowcount != 1:
+            return None
+        if status not in {"dismissed", "expired"}:
+            return 0
+        return transition_active_serenity_opportunities_for_theme(
+            theme_id,
+            status=status,
+            updated_at=updated_at,
+        )
+
+
 def transition_serenity_opportunity_to_reviewed(opportunity_id: str) -> bool:
     """Terminalize one exact active Serenity source without touching trade state."""
     result = execute_write(
@@ -13399,9 +13436,10 @@ def expire_stale_serenity_themes() -> int:
         theme_ids = [row["id"] for row in expired_themes]
         for theme_id in theme_ids:
             update_serenity_theme(theme_id, status="expired", updated_at=now_iso)
-            execute_write(
-                "UPDATE serenity_opportunities SET status='expired', updated_at=? WHERE theme_id=? AND status='active'",
-                (now_iso, theme_id),
+            transition_active_serenity_opportunities_for_theme(
+                theme_id,
+                status="expired",
+                updated_at=now_iso,
             )
         return len(theme_ids)
 
