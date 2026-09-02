@@ -540,6 +540,10 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     cfg.trading.persona_auto_advance_enabled = True
     cfg.trading.persona_unlock_step_samples = 5
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.trading.sizing_policy.assess_persona_distress",
+        lambda cfg=None: "healthy",
+    )
     roll = cfg.trading.personas["roll"]
     assert roll.unlock_ladder == ["notional_usdt", "kelly_fraction"]
 
@@ -672,6 +676,10 @@ def test_progressive_rollout_negative_exact_cohort_refreezes(tmp_path, monkeypat
     cfg.trading.active_persona = "roll"
     cfg.trading.persona_unlock_step_samples = 3
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.trading.sizing_policy.assess_persona_distress",
+        lambda cfg=None: "healthy",
+    )
     anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
     start_persona_rollout(cfg, now=anchor)
     state = current_persona_rollout(cfg)
@@ -830,6 +838,10 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
 
     cfg = AletheiaConfig()
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.trading.sizing_policy.assess_persona_distress",
+        lambda cfg=None: "healthy",
+    )
 
     # Master switch OFF → disabled no-op.
     assert advance_persona_rollout()["action"] == "disabled"

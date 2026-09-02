@@ -1880,7 +1880,7 @@ def _portfolio_drawdown_assessment(execution_mode: str, cfg=None) -> tuple[float
         # account and may be stale or unrelated. Either source can fabricate a
         # drawdown and turn every proposal into a $0-cap rejection.
         if execution_mode == "paper_internal":
-            return 1.0, True
+            return 1.0, False
 
         # View-completeness gate (P0, 2026-07-02): for exchange-backed modes, if the
         # active broker is missing from the unified view (e.g. OKX API down), the
