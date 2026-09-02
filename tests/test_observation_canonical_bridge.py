@@ -218,6 +218,168 @@ def test_lab_authority_resolves_and_imports_one_receipt():
     assert prune_observation_delivery_outbox(keep_acknowledged=0)["deleted"] == 1
 
 
+def test_importer_retries_main_ack_for_already_imported_receipt(monkeypatch):
+    from contextlib import contextmanager
+
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        import_delivery_receipts,
+        register_observation_spec,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.storage import repositories
+    from aletheia.storage.sqlite import get_db
+
+    set_authority_source("lab", actor="owner", reason="ack-retry-test")
+    root = register_observation_spec({
+        "filter_name": "ack-retry",
+        "stage": "shadow",
+        "scanner_family": "test",
+        "direction": "long",
+        "market_type": "spot",
+        "horizon": "24h",
+        "control": {"value": 1.0},
+        "treatment": {"value": 2.0},
+    })
+    receipt_id = append_delivery_receipt(
+        receipt_kind="treatment",
+        observation_id=root["observation_id"],
+        generation=1,
+        candidate_key="ack-retry-candidate",
+        assignment="control",
+        resolution_reason="ack-retry",
+        authority_source="lab",
+    )
+
+    original_transaction = repositories.transaction
+
+    @contextmanager
+    def fail_before_commit(*, immediate=False, savepoint=False):
+        with original_transaction(immediate=immediate, savepoint=savepoint):
+            yield
+            raise RuntimeError("simulated_main_ack_failure")
+
+    monkeypatch.setattr(repositories, "transaction", fail_before_commit)
+    with pytest.raises(RuntimeError, match="simulated_main_ack_failure"):
+        import_delivery_receipts()
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE source_receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] == 1
+    assert get_db().execute(
+        "SELECT acknowledged_at FROM observation_delivery_outbox WHERE receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] is None
+
+    monkeypatch.setattr(repositories, "transaction", original_transaction)
+    assert import_delivery_receipts()["processed"] == 0
+    receipt = get_db().execute(
+        "SELECT acknowledged_at, lab_application_status FROM observation_delivery_outbox "
+        "WHERE receipt_id=?",
+        (receipt_id,),
+    ).fetchone()
+    assert receipt["acknowledged_at"] is not None
+    assert receipt["lab_application_status"] == "applied"
+
+
+def test_lab_treatment_falls_back_when_joint_checkpoint_is_unproven(monkeypatch):
+    from types import SimpleNamespace
+
+    import aletheia.observation_lab.checkpoint as checkpoint
+    from aletheia.observation_lab.canonical import (
+        register_treatment_adapter,
+        resolve_observation_treatment,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.manifest import publish_manifest
+
+    register_treatment_adapter(_Adapter(), replace=True)
+    set_authority_source("lab", actor="owner", reason="checkpoint-gate-test")
+    lab = get_lab_db()
+    lab.execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('obs-checkpoint-gate', 'filter_shadow', 'canonical-v1', 1, "
+        "'slot-checkpoint-gate', 'external_authority', 'active', '{}', "
+        "'spec:checkpoint-gate', '2020-01-01T00:00:00+00:00', "
+        "'9999-12-31T00:00:00+00:00', '9999-12-31T00:00:00+00:00')"
+    )
+    publish_manifest(_manifest(
+        observation_id="obs-checkpoint-gate",
+        spec_hash="spec:checkpoint-gate",
+    ))
+    monkeypatch.setattr(
+        checkpoint,
+        "verify_joint_checkpoint",
+        lambda **_: SimpleNamespace(ok=False, reason="fingerprint_mismatch"),
+    )
+
+    decision = resolve_observation_treatment(
+        adapter_id="test-adapter",
+        candidate_key="checkpoint-gate-candidate",
+        context={"unit": "checkpoint-gate-unit", "interference_key": "test-interference"},
+        baseline={"value": 1.0},
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    assert decision.reason == "joint_checkpoint_unavailable"
+    assert decision.payload == {"value": 1.0}
+    assert decision.behavior_changed is False
+
+
+def test_late_delivery_receipt_is_rejected_after_generation_terminalization():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        append_lifecycle_event,
+        import_delivery_receipts,
+        register_observation_spec,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.storage.sqlite import get_db
+
+    set_authority_source("lab", actor="owner", reason="late-receipt-test")
+    root = register_observation_spec({
+        "filter_name": "late-receipt",
+        "stage": "shadow",
+        "scanner_family": "test",
+        "direction": "long",
+        "market_type": "spot",
+        "horizon": "24h",
+        "control": {"value": 1.0},
+        "treatment": {"value": 2.0},
+    })
+    append_lifecycle_event(
+        observation_id=root["observation_id"], generation=1,
+        to_status="finalized", action="finalize", reason="complete", actor="worker",
+        dedup_key="late-receipt:finalize",
+    )
+    receipt_id = append_delivery_receipt(
+        receipt_kind="treatment",
+        observation_id=root["observation_id"], generation=1,
+        candidate_key="late-receipt-candidate", assignment="control",
+        resolution_reason="late", authority_source="lab",
+    )
+
+    assert import_delivery_receipts()["processed"] == 1
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE source_receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] == 0
+    audit = get_lab_db().execute(
+        "SELECT event_type FROM lab_audit_outbox WHERE dedup_key=?",
+        (f"observation-receipt-terminal:{receipt_id}",),
+    ).fetchone()
+    assert audit[0] == "observation_receipt_rejected_after_terminalization"
+    assert get_db().execute(
+        "SELECT lab_application_status FROM observation_delivery_outbox WHERE receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] == "rejected"
+
+
 def test_paper_manifest_without_explicit_lab_authorization_falls_back_to_baseline():
     from aletheia.observation_lab.canonical import (
         register_treatment_adapter,

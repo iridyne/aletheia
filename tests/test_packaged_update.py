@@ -562,6 +562,7 @@ def test_manual_rollback_requires_recent_committed_backup(monkeypatch, tmp_path)
     request = json.loads((host / "update-request.json").read_text(encoding="utf-8"))
     assert request["action"] == "rollback"
     assert request["backup_path"] == str(backup)
+    assert request["backup_profile"] == "authoritative"
 
     (host / "update-request.json").unlink()
     committed_state["updated_at"] = f"unix:{time.time() - 3600}"

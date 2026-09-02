@@ -136,6 +136,10 @@ def test_restore_invalidates_unproven_observation_continuity_under_cycle_lock(mo
         to_dict=lambda: {"success": True, "files_restored": 2},
     )
     monkeypatch.setattr(packaged, "get_data_dir", lambda: tmp_path)
+    lab_dir = tmp_path / "observation-lab"
+    lab_dir.mkdir()
+    for suffix in ("-wal", "-shm"):
+        (lab_dir / f"lab.db{suffix}").write_bytes(b"stale")
     monkeypatch.setattr(
         packaged,
         "RestoreService",
@@ -155,3 +159,5 @@ def test_restore_invalidates_unproven_observation_continuity_under_cycle_lock(mo
         "lock-enter", "restore", "validate", "invalidate:False", "lock-exit",
     ]
     assert restored["observation_windows_invalidated"] == 3
+    assert not (lab_dir / "lab.db-wal").exists()
+    assert not (lab_dir / "lab.db-shm").exists()

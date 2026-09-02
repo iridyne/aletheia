@@ -29,6 +29,7 @@ _MEASUREMENT_STATES = {
     "negative",
     "invalid",
 }
+_ACTIVE_EXPERIMENT_STATUSES = frozenset({"registered", "active"})
 
 
 def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]:
@@ -86,6 +87,7 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
             )
             items.append(item)
             if path_id in path_states and path_states[path_id]["state"] == "empty":
+                experiment_status = str(item.get("experiment_status") or "")
                 path_states[path_id] = {
                     "path_id": path_id,
                     "availability": item["availability"],
@@ -97,7 +99,11 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
                         if item["availability"] == "partial"
                         else None
                     ),
-                    "state": "active",
+                    "state": (
+                        "active"
+                        if experiment_status in _ACTIVE_EXPERIMENT_STATUSES
+                        else "terminal"
+                    ),
                     "data_freshness": item["data_freshness"],
                 }
         except Exception:
