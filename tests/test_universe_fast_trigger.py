@@ -1915,6 +1915,59 @@ def test_binance_spot_book_rejects_snapshot_that_cannot_bridge_first_event():
 
 
 @pytest.mark.asyncio
+async def test_binance_spot_snapshot_retries_transient_failure():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
+
+    class _Response:
+        def __init__(self, error=None):
+            self.error = error
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def raise_for_status(self):
+            if self.error:
+                raise self.error
+
+        async def json(self):
+            return {
+                "lastUpdateId": 10,
+                "bids": [["99", "1"]],
+                "asks": [["101", "1"]],
+            }
+
+    class _Session:
+        def __init__(self):
+            self.attempts = 0
+
+        def get(self, *_args, **_kwargs):
+            self.attempts += 1
+            return _Response(RuntimeError("transient")) if self.attempts == 1 else _Response()
+
+    class _Ws:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+    stream = BinanceFastMarketStream()
+    stream._session = _Session()
+    stream._sockets["spot"] = _Ws()
+    stream._books[instrument] = _SpotBook()
+
+    await stream._load_spot_snapshot(instrument)
+
+    assert stream._session.attempts == 2
+    assert stream._books[instrument].last_update_id == 10
+    assert stream._sockets["spot"].closed is False
+
+
+@pytest.mark.asyncio
 async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
