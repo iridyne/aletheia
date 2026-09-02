@@ -6,7 +6,7 @@
 > Last updated: 2026-08-06 (offline layout optimization and WAL backlog evidence).
 > Source: `/tmp/RETENTION_SPEC.md` + `/tmp/RETENTION_SYNTHESIS.json` (workflow output).
 
-> Issue #2737 target authority: [Observation Experiment Ownership V2](../contracts/observation_experiment_ownership_v2.md) replaces broad Main-owned Experiment retention only after exact Lab claims, receipt acknowledgement, archive/replay proof, and the serial cutover gates exist. Until then, the current no-prune and earliest-exposure guards below remain authoritative. Target `observation_retention_claims` are a rebuildable derived index, never an independent evidence authority; unknown claim state fails closed for the affected domain, and claim release requires exact settled/imported/archive proof.
+> Issue #2737: the [Phase 1 Migration Contract](../contracts/observation_experiment_ownership_v2.md) preserves the current no-prune and earliest-exposure guards, while the [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future exact-claim design. No retention authority changes until its serial proof and cutover gates are satisfied.
 
 Two hard rules govern every retention decision here:
 
