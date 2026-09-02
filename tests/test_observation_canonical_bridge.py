@@ -608,8 +608,8 @@ def test_generation_contract_fixed_look_lifecycle_claim_and_archive(tmp_path):
         event_type="test_event", payload={"ok": True}, dedup_key="audit-test",
     )
     claim = upsert_retention_claim(
-        observation_id="obs-v2", generation=1, source_kind="outcome",
-        source_ref="candidate:1", source_hash="outcome-hash", claim_domain="outcomes",
+        observation_id="obs-v2", generation=1, source_kind="test",
+        source_ref="source-1", source_hash="hash-1", claim_domain="outcomes",
         derived_from_fingerprint="exposure-v1",
     )
     release_retention_claim(claim, proof_fingerprint="archive-v1", reason="archived")
@@ -624,6 +624,28 @@ def test_generation_contract_fixed_look_lifecycle_claim_and_archive(tmp_path):
     assert db.execute(
         "SELECT 1 FROM observation_units WHERE unit_id='unit-v2'"
     ).fetchone() is None
+
+
+def test_retention_claim_cannot_invent_unbound_source_identity():
+    from aletheia.observation_lab.canonical import upsert_retention_claim
+    from aletheia.observation_lab.db import get_lab_db
+
+    db = get_lab_db()
+    db.execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('claim-proof', 'test', 'v1', 1, 'slot-claim-proof', 'observe_only', 'active', '{}', "
+        "'claim-spec', '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00', "
+        "'2026-01-03T00:00:00+00:00')"
+    )
+    with pytest.raises(ValueError, match="retention_claim_source_unproven"):
+        upsert_retention_claim(
+            observation_id="claim-proof", generation=1,
+            source_kind="outcome_candidate_key", source_ref="missing-outcome",
+            source_hash="a" * 64, claim_domain="outcomes",
+            derived_from_fingerprint="derived",
+        )
 
 
 def test_lab_audit_outbox_mirrors_idempotently(monkeypatch, tmp_path):

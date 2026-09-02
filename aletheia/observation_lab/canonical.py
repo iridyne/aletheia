@@ -1646,6 +1646,71 @@ def publish_manifest_with_lifecycle(
         }
 
 
+def _validate_retention_claim_source(
+    connection: sqlite3.Connection,
+    *,
+    observation_id: str,
+    generation: int,
+    source_kind: str,
+    source_ref: str,
+    source_hash: str,
+) -> None:
+    """Require a retention claim to be derivable from immutable Lab evidence.
+
+    Retention claims are a rebuildable index, not an authority source.  A
+    caller may only claim a source identity already bound to this generation
+    by an imported Exposure or frozen Unit.  In particular, the importer hash
+    for an outcome candidate is recomputed from the receipt identity instead
+    of trusting a caller-provided label.
+    """
+    if source_kind == "outcome_candidate_key":
+        rows = connection.execute(
+            "SELECT source_receipt_id, receipt_sequence, outcome_candidate_key "
+            "FROM observation_exposures "
+            "WHERE observation_id=? AND generation=? AND outcome_candidate_key=?",
+            (observation_id, int(generation), source_ref),
+        ).fetchall()
+        if not rows:
+            raise ValueError("retention_claim_source_unproven")
+        for row in rows:
+            expected = _hash({
+                "receipt_id": row[0],
+                "sequence": row[1],
+                "outcome_candidate_key": row[2],
+            })
+            if expected == source_hash:
+                return
+        raise ValueError("retention_claim_source_hash_mismatch")
+
+    if source_kind in {"receipt", "main_receipt"}:
+        row = connection.execute(
+            "SELECT source_receipt_id, receipt_sequence, outcome_candidate_key "
+            "FROM observation_exposures "
+            "WHERE observation_id=? AND generation=? AND source_receipt_id=?",
+            (observation_id, int(generation), source_ref),
+        ).fetchone()
+        if row is None:
+            raise ValueError("retention_claim_source_unproven")
+        expected = _hash({
+            "receipt_id": row[0],
+            "sequence": row[1],
+            "outcome_candidate_key": row[2],
+        })
+        if expected != source_hash:
+            raise ValueError("retention_claim_source_hash_mismatch")
+        return
+
+    unit = connection.execute(
+        "SELECT source_hash FROM observation_units "
+        "WHERE observation_id=? AND generation=? AND source_kind=? AND source_ref=?",
+        (observation_id, int(generation), source_kind, source_ref),
+    ).fetchone()
+    if unit is None:
+        raise ValueError("retention_claim_source_unproven")
+    if str(unit[0]) != source_hash:
+        raise ValueError("retention_claim_source_hash_mismatch")
+
+
 def upsert_retention_claim(
     *,
     observation_id: str,
@@ -1670,6 +1735,14 @@ def upsert_retention_claim(
 
     def _write(connection: sqlite3.Connection) -> str:
         _require_generation_root(connection, observation_id, int(generation))
+        _validate_retention_claim_source(
+            connection,
+            observation_id=observation_id,
+            generation=int(generation),
+            source_kind=source_kind,
+            source_ref=source_ref,
+            source_hash=source_hash,
+        )
         existing = connection.execute(
             "SELECT * FROM observation_retention_claims WHERE observation_id=? AND generation=? "
             "AND source_kind=? AND source_ref=?",

@@ -7207,7 +7207,9 @@ def _observation_retention_floor(domain: str) -> str | None:
 def _active_observation_claim_refs(domain: str) -> tuple[str, ...]:
     """Return exact protected source identities for Lab-authoritative cleanup."""
     from aletheia.observation_lab.db import readonly_lab_db
+    from aletheia.observation_lab.canonical import _validate_retention_claim_source
 
+    refs: list[str] = []
     try:
         with readonly_lab_db() as lab:
             aliases = {domain}
@@ -7216,15 +7218,31 @@ def _active_observation_claim_refs(domain: str) -> tuple[str, ...]:
             aliases = tuple(sorted(aliases))
             placeholders = ",".join("?" for _ in aliases)
             rows = lab.execute(
-                "SELECT source_ref FROM observation_retention_claims WHERE status='active' "
+                "SELECT * FROM observation_retention_claims WHERE status='active' "
                 f"AND (claim_domain IN ({placeholders}) OR source_kind IN ({placeholders})) ORDER BY source_ref",
                 (*aliases, *aliases),
             ).fetchall()
+            for row in rows:
+                try:
+                    _validate_retention_claim_source(
+                        lab,
+                        observation_id=str(row["observation_id"]),
+                        generation=int(row["generation"]),
+                        source_kind=str(row["source_kind"]),
+                        source_ref=str(row["source_ref"]),
+                        source_hash=str(row["source_hash"]),
+                    )
+                except (ValueError, sqlite3.Error) as exc:
+                    raise ExperimentStateReadError(
+                        f"Observation retention claim unavailable: {exc}"
+                    ) from exc
+                if row["source_ref"]:
+                    refs.append(str(row["source_ref"]))
     except Exception as exc:
         raise ExperimentStateReadError(
             f"Failed to query exact Observation retention claims: {exc}"
         ) from exc
-    return tuple(str(row[0]) for row in rows if row[0])
+    return tuple(refs)
 
 
 def _protected_universe_outcome_ids(
