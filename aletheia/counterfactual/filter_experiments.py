@@ -31,6 +31,7 @@ from aletheia.counterfactual.filter_replay import (
     build_observer_pre_filter_replay,
     build_ranker_confidence_replay,
     build_ranker_confidence_replay_from_frozen,
+    _ranker_parameter_minimum,
 )
 from aletheia.observation_lab import units as lab_units
 from aletheia.storage import repositories as repo
@@ -411,6 +412,15 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
         return 0
     frozen: list[dict[str, Any]] = []
     for row in rows:
+        # A consumed causal input must match the registered control. Keep the
+        # incompatible row out of the frozen cohort; the next evaluation pass
+        # records the stable invalidation for the whole collecting experiment.
+        if (
+            filter_name == "ranker_confidence_gate"
+            and _ranker_parameter_minimum(row["parameter_snapshot"])
+            != _ranker_control_minimum(experiment)
+        ):
+            continue
         frozen.append({
             "id": uuid.uuid4().hex,
             "outcome_candidate_key": row["outcome_candidate_key"],
@@ -525,6 +535,12 @@ def _invalidation_for(experiment: dict[str, Any]) -> tuple[str, str] | None:
     """
     filter_name = str(experiment.get("filter_name") or "")
     if filter_name in _ADAPTER_CAUSAL_IDENTITY:
+        if _ranker_parameter_identity_changed(experiment):
+            return (
+                "adapter_causal_input_changed",
+                "A Ranker causal parameter snapshot is missing, malformed, or "
+                "differs from the registered control; the cohort is invalidated.",
+            )
         stored = experiment.get("adapter_identity_hash")
         current = _adapter_causal_identity_hash(filter_name)
         if stored and current and stored != current:
@@ -540,6 +556,39 @@ def _invalidation_for(experiment: dict[str, Any]) -> tuple[str, str] | None:
             "Production filter version changed after experiment start.",
         )
     return None
+
+
+def _ranker_control_minimum(experiment: dict[str, Any]) -> str | None:
+    return _ranker_parameter_minimum(experiment.get("control_parameter"))
+
+
+def _ranker_parameter_identity_changed(experiment: dict[str, Any]) -> bool:
+    """Detect post-start Ranker rows that cannot join the frozen cohort."""
+    expected = _ranker_control_minimum(experiment)
+    if expected is None:
+        return True
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
+        "SELECT parameter_snapshot FROM filter_decisions "
+        "WHERE filter_name=? AND stage=? "
+        "AND COALESCE(scanner_family,'unknown')=? AND direction=? "
+        "AND market_type=? AND decision IN ('passed','rejected') "
+        "AND outcome_candidate_key IS NOT NULL "
+        "AND aletheia_instant_us(evaluated_at) > aletheia_instant_us(?)",
+        (
+            experiment["filter_name"],
+            experiment["stage"],
+            experiment["scanner_family"],
+            experiment["direction"],
+            experiment["market_type"],
+            experiment["started_at"],
+        ),
+    ).fetchall()
+    return any(
+        _ranker_parameter_minimum(row["parameter_snapshot"]) != expected
+        for row in rows
+    )
 
 
 def _production_version_changed(experiment: dict[str, Any]) -> bool:

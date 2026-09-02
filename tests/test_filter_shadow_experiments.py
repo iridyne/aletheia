@@ -590,6 +590,79 @@ def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
     assert count_frozen_units(experiment_after["id"]) >= 40
 
 
+def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze():
+    from aletheia.counterfactual.filter_experiments import (
+        capture_frozen_units_for,
+        evaluate_active_shadow_experiments,
+        register_replay_ready_experiments,
+    )
+    from aletheia.observation_lab.units import list_frozen_units
+    from aletheia.storage.sqlite import get_db
+
+    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    register_replay_ready_experiments([_ready_ranker_replay()], now=start)
+    _record_ranker_candidate(
+        key="opportunity:mean_reversion:compatible",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="passed",
+        confidence="high",
+        net_return_pct=0.0,
+        minimum="high",
+    )
+    _record_ranker_candidate(
+        key="opportunity:mean_reversion:changed-minimum",
+        evaluated_at=start + timedelta(minutes=2),
+        decision="rejected",
+        confidence="medium",
+        net_return_pct=0.4,
+        minimum="medium",
+    )
+    experiment = dict(get_db().execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone())
+
+    # The incompatible row is not admitted to the immutable frozen cohort.
+    assert capture_frozen_units_for(experiment) == 1
+    assert len(list_frozen_units(experiment["id"])) == 1
+
+    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    after = dict(get_db().execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone())
+    assert summary["invalidated"] == 1
+    assert after["status"] == "invalidated"
+    assert after["invalidation_reason"] == "adapter_causal_input_changed"
+
+
+def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
+    from aletheia.counterfactual import filter_experiments as fe
+    from aletheia.storage.sqlite import get_db
+
+    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    fe.register_replay_ready_experiments([_ready_ranker_replay()], now=start)
+    _record_ranker_candidate(
+        key="opportunity:mean_reversion:malformed-parameters",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="rejected",
+        confidence="medium",
+        net_return_pct=0.4,
+        minimum="high",
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE filter_decisions SET parameter_snapshot=? WHERE candidate_key=?",
+        ("not-json", "opportunity:mean_reversion:malformed-parameters"),
+    )
+
+    summary = fe.evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    experiment = dict(db.execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone())
+    assert summary["invalidated"] == 1
+    assert experiment["status"] == "invalidated"
+    assert experiment["invalidation_reason"] == "adapter_causal_input_changed"
+
+
 def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
     from aletheia.counterfactual import filter_experiments as fe
     from aletheia.storage.sqlite import get_db
