@@ -76,6 +76,7 @@ afterEach(() => {
   document.body.innerHTML = ''
   queryProbe.keys = []
   queryProbe.catalogTotal = 2
+  knowledgeRows.lessons[0].status = 'proposed'
 })
 
 function render(ui: React.ReactNode) {
@@ -132,6 +133,17 @@ describe('Learning populated navigation', () => {
     const node = render(<KnowledgeTab />)
     clickButton(node, label)
     expect(node.textContent).toContain(expected)
+  })
+
+  it('does not offer acceptance for a rejected lesson', () => {
+    knowledgeRows.lessons[0].status = 'rejected'
+    const node = render(<KnowledgeTab />)
+    clickButton(node, 'Post-Trade Lessons')
+    const lessonRow = [...node.querySelectorAll('tr')].find(row => row.textContent?.includes('Visible post-trade lesson'))
+    act(() => lessonRow!.click())
+
+    const accept = [...node.querySelectorAll('button')].find(button => button.textContent === 'Accept') as HTMLButtonElement
+    expect(accept.disabled).toBe(true)
   })
 
   it('loads only the active knowledge collection and exposes complete catalog semantics', () => {

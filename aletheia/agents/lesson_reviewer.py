@@ -313,7 +313,10 @@ async def run_lesson_reviewer(
             continue
         if _deterministic_demote(evidence):
             started_at = time.monotonic()
-            store.reject(lesson.lesson_id)
+            if not store.reject(
+                lesson.lesson_id, expected_status=lesson.status,
+            ):
+                continue
             demoted += 1
             outputs.append(f"demoted:{lesson.lesson_id}")
             log_tool(
@@ -330,7 +333,10 @@ async def run_lesson_reviewer(
         decision, reason, judgment_failed = await _judge(lesson, evidence, run_id)
         if decision == "reject":
             started_at = time.monotonic()
-            store.reject(lesson.lesson_id)
+            if not store.reject(
+                lesson.lesson_id, expected_status=lesson.status,
+            ):
+                continue
             demoted += 1
             outputs.append(f"demoted:{lesson.lesson_id}")
             log_tool(
@@ -365,7 +371,8 @@ async def run_lesson_reviewer(
         decision, reason, judgment_failed = await _judge(lesson, evidence, run_id)
         if decision == "accept":
             started_at = time.monotonic()
-            store.accept(lesson.lesson_id)
+            if not store.accept(lesson.lesson_id):
+                continue
             newly_accepted.append(lesson.lesson_id)
             outputs.append(f"accepted:{lesson.lesson_id}")
             log_tool(
@@ -378,7 +385,10 @@ async def run_lesson_reviewer(
             )
         elif decision == "reject":
             started_at = time.monotonic()
-            store.reject(lesson.lesson_id)
+            if not store.reject(
+                lesson.lesson_id, expected_status="proposed",
+            ):
+                continue
             rejected += 1
             outputs.append(f"rejected:{lesson.lesson_id}")
             log_tool(
@@ -406,32 +416,69 @@ async def run_lesson_reviewer(
     all_to_apply = newly_accepted + stuck_accepted
     skill_store = None
     if all_to_apply:
+        applied_ids: list[str] = []
         try:
             started_at = time.monotonic()
             policy_store = PolicyStore()
-            pending_ids = set(all_to_apply)
-            pv = next((
-                version for version in policy_store.list_versions("lesson_policy")
-                if version.status == "active"
-                and pending_ids.issubset(set(
-                    json.loads(version.policy_json).get("accepted_lesson_ids") or []
-                ))
-            ), None)
-            if pv is None:
-                pv = policy_store.create_version(
-                    policy_type="lesson_policy",
-                    policy={
-                        "accepted_lesson_ids": all_to_apply,
-                        "reviewed_at": datetime.now(timezone.utc).isoformat(),
-                        "basis": "settled outcomes, last 30d, 24h horizon",
-                    },
-                    created_by="lesson_reviewer",
+            from aletheia.storage import repositories as repo
+
+            with repo.transaction(immediate=True):
+                accepted_ids = []
+                for lesson_id in all_to_apply:
+                    current = store.get(lesson_id)
+                    if current is not None and current.status == "accepted":
+                        accepted_ids.append(lesson_id)
+                pending_ids = set(accepted_ids)
+                pv = None
+                versions = (
+                    policy_store.list_versions("lesson_policy")
+                    if accepted_ids else []
                 )
-            outputs.append(f"policy_version:{pv.policy_version_id}:{len(all_to_apply)}_applied")
-            artifact_refs.append({"artifact_type": "policy_version", "artifact_id": pv.policy_version_id})
-            log_tool(run_id, "apply_lessons_to_policy", "observe", True,
-                     output=f"{pv.policy_version_id}:{len(all_to_apply)}",
-                     duration_ms=elapsed_ms(started_at))
+                for version in versions:
+                    version_ids = set(
+                        json.loads(version.policy_json).get("accepted_lesson_ids") or []
+                    )
+                    if version.status != "active" or not pending_ids.issubset(version_ids):
+                        continue
+                    current_lessons = [store.get(lesson_id) for lesson_id in version_ids]
+                    if all(
+                        lesson is not None
+                        and lesson.status in {"accepted", "applied"}
+                        for lesson in current_lessons
+                    ):
+                        pv = version
+                        break
+                if pv is None and accepted_ids:
+                    pv = policy_store.create_version(
+                        policy_type="lesson_policy",
+                        policy={
+                            "accepted_lesson_ids": accepted_ids,
+                            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                            "basis": "settled outcomes, last 30d, 24h horizon",
+                        },
+                        created_by="lesson_reviewer",
+                    )
+                if pv is not None:
+                    applied_ids = [
+                        lesson_id for lesson_id in accepted_ids
+                        if store.mark_applied(lesson_id, pv.policy_version_id)
+                    ]
+            if pv is not None:
+                outputs.append(
+                    f"policy_version:{pv.policy_version_id}:{len(applied_ids)}_applied"
+                )
+                artifact_refs.append({
+                    "artifact_type": "policy_version",
+                    "artifact_id": pv.policy_version_id,
+                })
+                log_tool(
+                    run_id,
+                    "apply_lessons_to_policy",
+                    "observe",
+                    True,
+                    output=f"{pv.policy_version_id}:{len(applied_ids)}",
+                    duration_ms=elapsed_ms(started_at),
+                )
         except Exception as e:
             errors.append(f"policy_version_create_failed:{e}")
             pv = None
@@ -439,10 +486,13 @@ async def run_lesson_reviewer(
             from aletheia.learning.skills import SkillStore
 
             skill_store = SkillStore()
-            for lid in all_to_apply:
+            for lid in applied_ids:
                 lesson = store.get(lid)
-                if not lesson:
-                    errors.append(f"lesson_missing:{lid}")
+                if (
+                    not lesson
+                    or lesson.status != "applied"
+                    or lesson.applied_policy_version != pv.policy_version_id
+                ):
                     continue
                 try:
                     started_at = time.monotonic()
@@ -466,10 +516,6 @@ async def run_lesson_reviewer(
                 except Exception as e:
                     errors.append(f"skill_create_failed:{lid}:{e}")
                     continue
-                try:
-                    store.mark_applied(lid, pv.policy_version_id)
-                except Exception as e:
-                    errors.append(f"mark_applied_failed:{lid}:{e}")
 
     from aletheia.learning.skills import SkillStore
 

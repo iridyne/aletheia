@@ -1,11 +1,15 @@
 """Lesson store — persists trade lessons from agent experience."""
 
 import json
+import logging
 from datetime import datetime, timezone
 
+from aletheia.storage import repositories as repo
 from aletheia.storage.event_store import get_event_store, make_event
 from aletheia.storage.models import PSLesson, new_id
 from aletheia.storage.sqlite import get_db
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:
@@ -94,44 +98,75 @@ class LessonStore:
         ).fetchone()
         return int(row[0] or 0), row[1]
 
-    def accept(self, lesson_id: str) -> None:
+    def _transition(
+        self,
+        lesson_id: str,
+        *,
+        expected_status: str,
+        status: str,
+        event_type: str,
+        updates: dict[str, str] | None = None,
+    ) -> bool:
+        db = get_db()
+        had_outer_transaction = db.in_transaction
+        values = {"status": status, **(updates or {})}
+        assignments = ", ".join(f"{column} = ?" for column in values)
+        event = make_event(
+            event_type,
+            "lesson",
+            lesson_id,
+            payload={"status": status, **(updates or {})},
+            idempotency_key=(
+                f"lesson-transition:{lesson_id}:{expected_status}:{status}"
+            ),
+        )
+        with repo.transaction(immediate=True):
+            cursor = db.execute(
+                f"UPDATE ps_lessons SET {assignments} "
+                "WHERE lesson_id = ? AND status = ?",
+                (*values.values(), lesson_id, expected_status),
+            )
+            if cursor.rowcount != 1:
+                return False
+            get_event_store().append(event)
+        if not had_outer_transaction:
+            try:
+                get_event_store().append(event)
+            except Exception:
+                logger.exception("lesson event JSONL mirror scheduling failed")
+        return True
+
+    def accept(self, lesson_id: str) -> bool:
         """Move a lesson from proposed to accepted; stamps guard timestamps."""
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
         activated_at = now.isoformat()
         dry_run_until = (now + timedelta(hours=24)).isoformat()
         expires_at = (now + timedelta(days=30)).isoformat()
-        db = get_db()
-        was_in_tx = db.in_transaction
-        db.execute(
-            "UPDATE ps_lessons SET status = 'accepted',"
-            " activated_at = ?, dry_run_until = ?, expires_at = ?"
-            " WHERE lesson_id = ?",
-            (activated_at, dry_run_until, expires_at, lesson_id),
+        return self._transition(
+            lesson_id,
+            expected_status="proposed",
+            status="accepted",
+            event_type="LESSON_ACCEPTED",
+            updates={
+                "activated_at": activated_at,
+                "dry_run_until": dry_run_until,
+                "expires_at": expires_at,
+            },
         )
-        if not was_in_tx:
-            db.commit()
-        get_event_store().append(make_event(
-            "LESSON_ACCEPTED", "lesson", lesson_id,
-            payload={"status": "accepted"},
-        ))
 
-    def reject(self, lesson_id: str) -> None:
+    def reject(self, lesson_id: str, *, expected_status: str = "proposed") -> bool:
         """Mark a lesson as rejected."""
-        db = get_db()
-        was_in_tx = db.in_transaction
-        db.execute(
-            "UPDATE ps_lessons SET status = 'rejected' WHERE lesson_id = ?",
-            (lesson_id,),
+        if expected_status == "rejected":
+            return False
+        return self._transition(
+            lesson_id,
+            expected_status=expected_status,
+            status="rejected",
+            event_type="LESSON_REJECTED",
         )
-        if not was_in_tx:
-            db.commit()
-        get_event_store().append(make_event(
-            "LESSON_REJECTED", "lesson", lesson_id,
-            payload={"status": "rejected"},
-        ))
 
-    def mark_applied(self, lesson_id: str, policy_version_id: str) -> None:
+    def mark_applied(self, lesson_id: str, policy_version_id: str) -> bool:
         """Stamp the policy version a lesson influenced and move it to 'applied'.
 
         Closes the lesson→policy chain: an accepted lesson that has been folded
@@ -139,31 +174,21 @@ class LessonStore:
         content.lesson_chain doctor probe (applied_policy_version IS NOT NULL)
         reflects a real influence, not a stub.
         """
-        db = get_db()
-        was_in_tx = db.in_transaction
-        db.execute(
-            "UPDATE ps_lessons SET applied_policy_version = ?, status = 'applied' "
-            "WHERE lesson_id = ?",
-            (policy_version_id, lesson_id),
+        return self._transition(
+            lesson_id,
+            expected_status="accepted",
+            status="applied",
+            event_type="LESSON_APPLIED",
+            updates={"applied_policy_version": policy_version_id},
         )
-        if not was_in_tx:
-            db.commit()
-        get_event_store().append(make_event(
-            "LESSON_APPLIED", "lesson", lesson_id,
-            payload={"status": "applied", "policy_version_id": policy_version_id},
-        ))
 
-    def archive(self, lesson_id: str) -> None:
+    def archive(self, lesson_id: str, *, expected_status: str = "proposed") -> bool:
         """Mark a lesson as archived (superseded)."""
-        db = get_db()
-        was_in_tx = db.in_transaction
-        db.execute(
-            "UPDATE ps_lessons SET status = 'archived' WHERE lesson_id = ?",
-            (lesson_id,),
+        if expected_status == "archived":
+            return False
+        return self._transition(
+            lesson_id,
+            expected_status=expected_status,
+            status="archived",
+            event_type="LESSON_ARCHIVED",
         )
-        if not was_in_tx:
-            db.commit()
-        get_event_store().append(make_event(
-            "LESSON_ARCHIVED", "lesson", lesson_id,
-            payload={"status": "archived"},
-        ))

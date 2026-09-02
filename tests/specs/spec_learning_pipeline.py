@@ -610,6 +610,81 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
     assert LessonStore().get(lesson.lesson_id).status == "proposed"
 
 
+async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
+    import aletheia.agents.lesson_reviewer as lr
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.learning.skills import SkillStore
+    from aletheia.policies.store import PolicyStore
+
+    store = LessonStore()
+    lesson = store.create("stale review", "trade_case_study", "case-stale")
+    monkeypatch.setattr(
+        lr,
+        "_fetch_evidence",
+        lambda _lesson: {
+            "aggregate": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
+            "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
+        },
+    )
+
+    async def reject_while_judging(*_args, **_kwargs):
+        store.reject(lesson.lesson_id)
+        return "accept", "stale acceptance", False
+
+    monkeypatch.setattr(lr, "_judge", reject_while_judging)
+
+    await lr.run_lesson_reviewer(run_id="test")
+
+    assert store.get(lesson.lesson_id).status == "rejected"
+    assert PolicyStore().list_versions("lesson_policy") == []
+    assert SkillStore().get_by_source_lesson_id(lesson.lesson_id) is None
+
+
+async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
+    import aletheia.agents.lesson_reviewer as lr
+    import aletheia.policies.store as policy_module
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.learning.skills import SkillStore
+    from aletheia.storage.sqlite import get_db
+
+    store = LessonStore()
+    lesson = store.create("handoff race", "trade_case_study", "case-handoff")
+    store.accept(lesson.lesson_id)
+    monkeypatch.setattr(
+        lr,
+        "_fetch_evidence",
+        lambda _lesson: {
+            "aggregate": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
+            "exact_scope": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
+        },
+    )
+    real_policy_store = policy_module.PolicyStore
+
+    class RejectBeforePolicyStore:
+        def __init__(self):
+            db = get_db()
+            db.execute(
+                "UPDATE ps_lessons SET status='rejected' WHERE lesson_id=?",
+                (lesson.lesson_id,),
+            )
+            db.commit()
+            self.delegate = real_policy_store()
+
+        def list_versions(self, policy_type):
+            return self.delegate.list_versions(policy_type)
+
+        def create_version(self, **kwargs):
+            return self.delegate.create_version(**kwargs)
+
+    monkeypatch.setattr(policy_module, "PolicyStore", RejectBeforePolicyStore)
+
+    await lr.run_lesson_reviewer(run_id="test")
+
+    assert store.get(lesson.lesson_id).status == "rejected"
+    assert real_policy_store().list_versions("lesson_policy") == []
+    assert SkillStore().get_by_source_lesson_id(lesson.lesson_id) is None
+
+
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
     import aletheia.agents.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore

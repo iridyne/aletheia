@@ -284,6 +284,57 @@ class TestLessonStoreStateMachine:
         assert fetched.status == "archived"
         _teardown()
 
+    def test_terminal_lesson_cannot_be_reaccepted_or_applied(
+        self, tmp_path, monkeypatch,
+    ):
+        _setup_test_db(tmp_path, monkeypatch)
+        from aletheia.storage.event_store import get_event_store
+
+        store = LessonStore()
+        rejected = store.create("Rejected lesson", "dreaming_agent", "r1")
+        assert store.reject(rejected.lesson_id) is True
+        assert store.reject(
+            rejected.lesson_id, expected_status="rejected"
+        ) is False
+
+        assert store.accept(rejected.lesson_id) is False
+        assert store.mark_applied(rejected.lesson_id, "pv-stale") is False
+        assert store.get(rejected.lesson_id).status == "rejected"
+        assert [
+            event.event_type
+            for event in get_event_store().list_by_aggregate(
+                "lesson", rejected.lesson_id
+            )
+        ] == ["LESSON_CREATED", "LESSON_REJECTED"]
+        _teardown()
+
+    def test_lesson_transition_rolls_back_when_event_insert_fails(
+        self, tmp_path, monkeypatch,
+    ):
+        _setup_test_db(tmp_path, monkeypatch)
+        from aletheia.storage.event_store import get_event_store
+
+        store = LessonStore()
+        lesson = store.create("Atomic lesson", "dreaming_agent", "r1")
+        event_store = get_event_store()
+        original_write = event_store._write_db
+
+        def fail_accept_event(event):
+            if event.event_type == "LESSON_ACCEPTED":
+                raise RuntimeError("injected event insert failure")
+            return original_write(event)
+
+        monkeypatch.setattr(event_store, "_write_db", fail_accept_event)
+        with pytest.raises(RuntimeError, match="injected event insert failure"):
+            store.accept(lesson.lesson_id)
+
+        assert store.get(lesson.lesson_id).status == "proposed"
+        assert [
+            event.event_type
+            for event in event_store.list_by_aggregate("lesson", lesson.lesson_id)
+        ] == ["LESSON_CREATED"]
+        _teardown()
+
 
 # ---------------------------------------------------------------------------
 # SkillStore — create + permission enforcement
