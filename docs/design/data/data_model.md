@@ -211,7 +211,7 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `runtime_cost_events` | Physical LLM/tool/data cost attempts | call_id, attempt_index, provider/model/tool, opportunity/decision/proposal IDs when explicitly known, usage, price snapshot, cost status |
 | `llm_context_artifacts` | Content-free selected-context manifest | logical_call_id, caller, evaluation pair/arm/fixture, kind, stable_id, freshness, rendered_chars |
 | `llm_context_pair_reviews` | Aggregate-only blinded Learning B review | pair/fixture IDs, control/treatment call IDs, quality/grounded-use/harm scores, verdict |
-| `audit_events` | System-wide SQLite audit authority plus opt-in funding JSONL delivery state | actor, source, event_type, entity_id, before/after (JSON), nullable jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at |
+| `audit_events` | System-wide SQLite audit authority plus opt-in funding/Candidate-authority JSONL delivery state | actor, source, event_type, entity_id, before/after (JSON), nullable jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at |
 | `settings` | Runtime configuration store | key, value |
 | `runtime_registry` | Service/process registry | service_name, pid, started_at, health |
 | `runtime_checkpoints` | Long-running task progress | task_id, checkpoint_data (JSON), progress_pct |
@@ -222,7 +222,8 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `aletheia_schema_migrations` | Immutable per-database proof that one named migration implementation completed successfully | migration_id, checksum, schema_version, applied_at, duration_ms |
 
 `audit_events` 的四个 JSONL delivery 字段是 nullable opt-in 状态：`NULL`
-表示 unmanaged，不等于 `mirrored`。只有新发生的 funding settlement/correction audit
+表示 unmanaged，不等于 `mirrored`。只有新发生的 funding settlement/correction 或
+Candidate authority admission/rollback audit
 在同一业务 transaction 内写入 `pending`；普通与历史 audit 保持 `NULL`，migration
 不猜测旧 JSONL 是否已经存在。partial index 按
 `(jsonl_mirror_status, timestamp, id)` 支持对 `pending/failed` 行进行有界、oldest-first

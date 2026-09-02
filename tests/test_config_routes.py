@@ -964,6 +964,96 @@ async def test_candidate_selection_rollback_restores_target_when_audit_fails(
     assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
 
 
+@pytest.mark.anyio
+async def test_candidate_selection_rollback_recovers_config_when_sqlite_commit_fails(
+    client, monkeypatch,
+):
+    from contextlib import contextmanager
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import UniverseConfig
+    from aletheia.storage import repositories as repo
+
+    cfg = load_config()
+    cfg.universe = UniverseConfig.model_validate({
+        **cfg.universe.model_dump(mode="json"),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
+    })
+    save_config(cfg)
+    real_transaction = repo.transaction
+    first = True
+
+    @contextmanager
+    def fail_first_commit(*, immediate=False, savepoint=False):
+        nonlocal first
+        should_fail = first
+        first = False
+        with real_transaction(immediate=immediate, savepoint=savepoint):
+            yield
+            if should_fail:
+                raise OSError("sqlite commit failed")
+
+    monkeypatch.setattr(repo, "transaction", fail_first_commit)
+    response = await client.post(
+        "/api/settings/universe/candidate-selection/rollback",
+        json={"reason": "owner requested rollback", "confirm_rollback": True},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "candidate_selection_rollback_audit_failed"
+    restored = load_config().universe
+    assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
+    assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
+    assert repo.candidate_selection_epoch_is_admitted(
+        "candidate-selection-utility:active"
+    ) is False
+
+
+def test_candidate_selection_transition_journal_recovers_after_process_exit():
+    from aletheia.config.loader import get_data_dir, load_config, save_config
+    from aletheia.config.schema import UniverseConfig
+    from aletheia.storage.models import AuditEvent
+    from aletheia.universe.candidate_selection_authority import (
+        recover_candidate_selection_authority_transition,
+        stage_candidate_selection_authority_transition,
+    )
+
+    cfg = load_config()
+    target = UniverseConfig.model_validate({
+        **cfg.universe.model_dump(mode="json"),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
+    })
+    legacy = UniverseConfig.model_validate({
+        **target.model_dump(mode="json"),
+        "candidate_selection_policy": "legacy_total_score_v1",
+        "candidate_selection_policy_epoch": None,
+    })
+    cfg.universe = target
+    save_config(cfg)
+    event = AuditEvent(
+        actor="human",
+        source="dashboard",
+        event_type="candidate_selection_authority_rolled_back",
+        entity_type="universe_config",
+        entity_id="candidate-selection-utility:active",
+    )
+    stage_candidate_selection_authority_transition(
+        audit_event_id=event.id,
+        before=target,
+        after=legacy,
+    )
+    cfg.universe = legacy
+    save_config(cfg)
+
+    assert recover_candidate_selection_authority_transition() is True
+    restored = load_config().universe
+    assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
+    assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
+    assert not (get_data_dir() / "candidate_selection_authority_transition.json").exists()
+
+
 def test_candidate_authority_audit_jsonl_uses_committed_outbox(monkeypatch):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent

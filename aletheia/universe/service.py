@@ -949,6 +949,11 @@ class UniverseService:
         Returns list of dicts with at minimum: symbol, scanner_family, total_score,
         snapshot_id, member_id, ttl_sec, expires_at, execution_eligible.
         """
+        from aletheia.universe.candidate_selection_authority import (
+            recover_candidate_selection_authority_transition,
+        )
+
+        recover_candidate_selection_authority_transition()
         cfg = load_config()
 
         try:
@@ -1019,6 +1024,11 @@ class UniverseService:
         from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.signal_emitter import _infer_direction
 
+        from aletheia.universe.candidate_selection_authority import (
+            recover_candidate_selection_authority_transition,
+        )
+
+        recover_candidate_selection_authority_transition()
         cfg = load_config()
 
         # Settle any overdue forward outcomes before producing new ones.

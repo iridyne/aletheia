@@ -154,15 +154,26 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     if training_cutoff is None:
         report["blocking_reasons"] = ["estimator_training_support_not_met"]
         return report
-    batches = [
-        dict(row) for row in repo.get_db().execute(
-            "SELECT * FROM universe_twin_shadow_batches WHERE record_version=? "
-            "AND policy_epoch_id=? AND julianday(captured_at)>=julianday(?) "
-            "AND julianday(captured_at)<=julianday(?) "
-            "ORDER BY captured_at, scanner_run_id",
-            (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff, now),
-        ).fetchall()
-    ]
+    batches = []
+    prefix_days: set[date] = set()
+    rows = repo.get_db().execute(
+        "SELECT * FROM universe_twin_shadow_batches WHERE record_version=? "
+        "AND policy_epoch_id=? AND julianday(captured_at)>=julianday(?) "
+        "AND julianday(captured_at)<=julianday(?) "
+        "ORDER BY captured_at, scanner_run_id",
+        (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff, now),
+    )
+    for row in rows:
+        batch = dict(row)
+        batches.append(batch)
+        captured = _parse_time(batch.get("captured_at"))
+        if captured is not None:
+            prefix_days.add(captured.date())
+        if (
+            len(batches) >= _MIN_COMPLETE_CLUSTERS
+            and _longest_days(prefix_days) >= _MIN_CONSECUTIVE_DAYS
+        ):
+            break
     report["expected_cluster_n"] = len(batches)
     if not batches:
         report["blocking_reasons"] = ["no_post_freeze_clusters"]

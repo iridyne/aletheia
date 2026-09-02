@@ -3073,6 +3073,11 @@ def update_universe_config(req: UniverseConfigUpdate):
 def get_candidate_selection_status():
     """Read the configured authority and its exact prospective qualification."""
 
+    from aletheia.universe.candidate_selection_authority import (
+        recover_candidate_selection_authority_transition,
+    )
+
+    recover_candidate_selection_authority_transition()
     return _candidate_selection_status(load_config())
 
 
@@ -3084,93 +3089,98 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
         TARGET_CANDIDATE_POLICY,
         candidate_selection_authority_block_reason,
         candidate_selection_overlap_block_reason,
+        recover_candidate_selection_authority_transition,
+        stage_candidate_selection_authority_transition,
     )
     from aletheia.universe.candidate_selection_evaluation import (
         evaluate_candidate_selection_policy,
     )
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
-    from aletheia.files.jsonl import write_audit
-
-    with repo.transaction(immediate=True):
-        cfg = load_config()
-        overlap_block_reason = candidate_selection_overlap_block_reason()
-        if overlap_block_reason is not None:
-            raise HTTPException(409, overlap_block_reason)
-        try:
-            qualification = evaluate_candidate_selection_policy()
-        except Exception as exc:
-            raise HTTPException(
-                503,
-                detail={
-                    "code": "candidate_selection_qualification_unavailable",
-                    "message": "Candidate Selection qualification evidence is unavailable.",
-                },
-            ) from exc
-        if str(qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
-            raise HTTPException(409, "candidate_selection_policy_epoch_changed")
-        proposed = UniverseConfig.model_validate({
-            **cfg.universe.model_dump(mode="json"),
-            "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
-            "candidate_selection_policy_epoch": req.expected_policy_epoch,
-        })
-        block_reason = candidate_selection_authority_block_reason(
-            cfg.model_copy(update={"universe": proposed}),
-            qualification,
-            require_admission_record=False,
-        )
-        if block_reason is not None:
-            raise HTTPException(409, block_reason)
-        admitted: dict[str, Any] = {}
-
-        def apply_admission(latest) -> bool:
-            latest_overlap = candidate_selection_overlap_block_reason()
-            if latest_overlap is not None:
-                raise HTTPException(409, latest_overlap)
-            latest_qualification = evaluate_candidate_selection_policy()
-            if str(latest_qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+    recover_candidate_selection_authority_transition()
+    try:
+        with repo.transaction(immediate=True):
+            cfg = load_config()
+            overlap_block_reason = candidate_selection_overlap_block_reason()
+            if overlap_block_reason is not None:
+                raise HTTPException(409, overlap_block_reason)
+            try:
+                qualification = evaluate_candidate_selection_policy()
+            except Exception as exc:
+                raise HTTPException(
+                    503,
+                    detail={
+                        "code": "candidate_selection_qualification_unavailable",
+                        "message": "Candidate Selection qualification evidence is unavailable.",
+                    },
+                ) from exc
+            if str(qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
                 raise HTTPException(409, "candidate_selection_policy_epoch_changed")
-            latest_before = latest.universe.model_dump(mode="json")
-            latest_proposed = UniverseConfig.model_validate({
-                **latest_before,
+            proposed = UniverseConfig.model_validate({
+                **cfg.universe.model_dump(mode="json"),
                 "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
                 "candidate_selection_policy_epoch": req.expected_policy_epoch,
             })
-            latest_block_reason = candidate_selection_authority_block_reason(
-                latest.model_copy(update={"universe": latest_proposed}),
-                latest_qualification,
+            block_reason = candidate_selection_authority_block_reason(
+                cfg.model_copy(update={"universe": proposed}),
+                qualification,
                 require_admission_record=False,
             )
-            if latest_block_reason is not None:
-                raise HTTPException(409, latest_block_reason)
-            event = AuditEvent(
-                actor="human",
-                source="dashboard",
-                event_type="candidate_selection_authority_admitted",
-                entity_type="universe_config",
-                entity_id=req.expected_policy_epoch,
-                before_state=json.dumps(latest_before, sort_keys=True),
-                after_state=json.dumps(latest_proposed.model_dump(mode="json"), sort_keys=True),
-                message=f"Candidate Selection Utility admitted: {req.reason}",
-            )
-            repo.insert_audit_event_outbox(event)
-            latest.universe = latest_proposed
-            admitted["cfg"] = latest
-            return True
+            if block_reason is not None:
+                raise HTTPException(409, block_reason)
+            def apply_admission(latest) -> bool:
+                latest_overlap = candidate_selection_overlap_block_reason()
+                if latest_overlap is not None:
+                    raise HTTPException(409, latest_overlap)
+                latest_qualification = evaluate_candidate_selection_policy()
+                if str(latest_qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+                    raise HTTPException(409, "candidate_selection_policy_epoch_changed")
+                latest_before = latest.universe.model_dump(mode="json")
+                latest_proposed = UniverseConfig.model_validate({
+                    **latest_before,
+                    "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+                    "candidate_selection_policy_epoch": req.expected_policy_epoch,
+                })
+                latest_block_reason = candidate_selection_authority_block_reason(
+                    latest.model_copy(update={"universe": latest_proposed}),
+                    latest_qualification,
+                    require_admission_record=False,
+                )
+                if latest_block_reason is not None:
+                    raise HTTPException(409, latest_block_reason)
+                event = AuditEvent(
+                    actor="human",
+                    source="dashboard",
+                    event_type="candidate_selection_authority_admitted",
+                    entity_type="universe_config",
+                    entity_id=req.expected_policy_epoch,
+                    before_state=json.dumps(latest_before, sort_keys=True),
+                    after_state=json.dumps(latest_proposed.model_dump(mode="json"), sort_keys=True),
+                    message=f"Candidate Selection Utility admitted: {req.reason}",
+                )
+                stage_candidate_selection_authority_transition(
+                    audit_event_id=event.id,
+                    before=latest.universe,
+                    after=latest_proposed,
+                )
+                repo.insert_audit_event_outbox(event)
+                latest.universe = latest_proposed
+                return True
 
-        try:
             mutate_config(apply_admission)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                500,
-                detail={
-                    "code": "candidate_selection_admission_audit_failed",
-                    "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
-                },
-            ) from exc
-        cfg = admitted["cfg"]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        recover_candidate_selection_authority_transition()
+        raise HTTPException(
+            500,
+            detail={
+                "code": "candidate_selection_admission_audit_failed",
+                "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
+            },
+        ) from exc
+    recover_candidate_selection_authority_transition()
+    cfg = load_config()
     return {
         **_candidate_selection_status(cfg),
         "audit_mirror_status": _mirror_candidate_selection_authority_audits(),
@@ -3181,47 +3191,56 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
 def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
     """Explicitly restore legacy Candidate authority without rewriting evidence."""
 
-    from aletheia.universe.candidate_selection_authority import LEGACY_CANDIDATE_POLICY
+    from aletheia.universe.candidate_selection_authority import (
+        LEGACY_CANDIDATE_POLICY,
+        recover_candidate_selection_authority_transition,
+        stage_candidate_selection_authority_transition,
+    )
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import AuditEvent
 
-    with repo.transaction(immediate=True):
-        rolled_back: dict[str, Any] = {}
+    recover_candidate_selection_authority_transition()
+    try:
+        with repo.transaction(immediate=True):
+            def apply_rollback(latest) -> bool:
+                before = latest.universe.model_dump(mode="json")
+                previous_epoch = latest.universe.candidate_selection_policy_epoch
+                proposed = UniverseConfig.model_validate({
+                    **before,
+                    "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
+                    "candidate_selection_policy_epoch": None,
+                })
+                event = AuditEvent(
+                    actor="human",
+                    source="dashboard",
+                    event_type="candidate_selection_authority_rolled_back",
+                    entity_type="universe_config",
+                    entity_id=previous_epoch,
+                    before_state=json.dumps(before, sort_keys=True),
+                    after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
+                    message=f"Candidate Selection Utility rolled back: {req.reason}",
+                )
+                stage_candidate_selection_authority_transition(
+                    audit_event_id=event.id,
+                    before=latest.universe,
+                    after=proposed,
+                )
+                repo.insert_audit_event_outbox(event)
+                latest.universe = proposed
+                return True
 
-        def apply_rollback(latest) -> bool:
-            before = latest.universe.model_dump(mode="json")
-            previous_epoch = latest.universe.candidate_selection_policy_epoch
-            proposed = UniverseConfig.model_validate({
-                **before,
-                "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
-                "candidate_selection_policy_epoch": None,
-            })
-            event = AuditEvent(
-                actor="human",
-                source="dashboard",
-                event_type="candidate_selection_authority_rolled_back",
-                entity_type="universe_config",
-                entity_id=previous_epoch,
-                before_state=json.dumps(before, sort_keys=True),
-                after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
-                message=f"Candidate Selection Utility rolled back: {req.reason}",
-            )
-            repo.insert_audit_event_outbox(event)
-            latest.universe = proposed
-            rolled_back["cfg"] = latest
-            return True
-
-        try:
             mutate_config(apply_rollback)
-        except Exception as exc:
-            raise HTTPException(
-                500,
-                detail={
-                    "code": "candidate_selection_rollback_audit_failed",
-                    "message": "Candidate Selection authority was unchanged because rollback audit persistence failed.",
-                },
-            ) from exc
-        cfg = rolled_back["cfg"]
+    except Exception as exc:
+        recover_candidate_selection_authority_transition()
+        raise HTTPException(
+            500,
+            detail={
+                "code": "candidate_selection_rollback_audit_failed",
+                "message": "Candidate Selection authority was unchanged because rollback audit persistence failed.",
+            },
+        ) from exc
+    recover_candidate_selection_authority_transition()
+    cfg = load_config()
     return {
         **_candidate_selection_status(cfg),
         "audit_mirror_status": _mirror_candidate_selection_authority_audits(),

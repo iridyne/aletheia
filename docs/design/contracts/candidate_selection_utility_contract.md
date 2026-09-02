@@ -70,7 +70,7 @@ paired capacity-normalized net Utility, a positive one-sided 95% lower bound,
 and preregistered loss-rate, MAE p95, CVaR5, cost, concentration, and catastrophic
 tail gates. A later cluster cannot replace an incomplete cluster in that frozen
 prefix. The look's coverage and exclusions freeze at that same stopping
-cluster, so later pending outcomes cannot rewrite its verdict. A selected-arm
+cluster, so later batches are not loaded or allowed to rewrite its verdict. A selected-arm
 outcome without finite MAE or fee, spread/slippage, and funding cost evidence
 leaves its cluster incomplete. Negative,
 neutral, insufficient, unavailable, and invalid are valid
@@ -92,7 +92,11 @@ does not mutate authority. The generic Universe configuration endpoint cannot
 change the protected policy fields. The owner admission endpoint accepts only
 the exact positive epoch, refuses an overlapping Paper Universe-calibration
 authority, and persists an audit event under the same writer permit as the
-configuration transition. Target refresh publication revalidates that exact
+configuration transition. Because SQLite and the atomically replaced config
+file cannot share one physical transaction, a durable transition journal is
+written before the config replacement. Recovery holds the SQLite writer permit
+and restores the before-state when the audit did not commit, or confirms the
+after-state when it did, before deleting the journal. Target refresh publication revalidates that exact
 configured epoch under the shared permit, so a failed/compensated admission
 cannot publish a stale target snapshot. The same exclusion applies in reverse:
 Universe-family Learning admission and later Paper progression refuse to run

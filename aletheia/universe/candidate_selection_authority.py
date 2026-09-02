@@ -2,14 +2,104 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from typing import Mapping
 
+from aletheia.config.loader import get_data_dir, mutate_config
 from aletheia.config.schema import UniverseConfig
 
 
 LEGACY_CANDIDATE_POLICY = "legacy_total_score_v1"
 TARGET_CANDIDATE_POLICY = "candidate_selection_utility_v1"
 _PAPER_STAGES = frozenset({"paper_10", "paper_25", "paper_50", "paper_active"})
+_TRANSITION_JOURNAL = "candidate_selection_authority_transition.json"
+
+
+def _transition_state(universe: UniverseConfig) -> dict[str, str | None]:
+    return {
+        "candidate_selection_policy": universe.candidate_selection_policy,
+        "candidate_selection_policy_epoch": universe.candidate_selection_policy_epoch,
+    }
+
+
+def _sync_transition_directory(path: object) -> None:
+    if os.name == "nt":
+        return
+    directory_fd = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def stage_candidate_selection_authority_transition(
+    *,
+    audit_event_id: str,
+    before: UniverseConfig,
+    after: UniverseConfig,
+) -> None:
+    """Durably record how to recover the config around the SQLite commit."""
+
+    path = get_data_dir() / _TRANSITION_JOURNAL
+    payload = {
+        "version": "candidate_selection_authority_transition.v1",
+        "audit_event_id": audit_event_id,
+        "before": _transition_state(before),
+        "after": _transition_state(after),
+    }
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _sync_transition_directory(path.parent)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def recover_candidate_selection_authority_transition() -> bool:
+    """Resolve an interrupted config/audit transition from committed SQLite truth."""
+
+    path = get_data_dir() / _TRANSITION_JOURNAL
+    if not path.exists():
+        return False
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction(immediate=True):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("version") != "candidate_selection_authority_transition.v1":
+            raise RuntimeError("candidate_selection_transition_journal_invalid")
+        event_id = str(payload.get("audit_event_id") or "")
+        committed = repo.get_db().execute(
+            "SELECT 1 FROM audit_events WHERE id=? LIMIT 1", (event_id,),
+        ).fetchone()
+        desired = payload.get("after" if committed else "before")
+        if not isinstance(desired, dict):
+            raise RuntimeError("candidate_selection_transition_journal_invalid")
+
+        def reconcile(cfg: object) -> bool:
+            current = cfg.universe
+            proposed = UniverseConfig.model_validate({
+                **current.model_dump(mode="json"),
+                "candidate_selection_policy": desired.get("candidate_selection_policy"),
+                "candidate_selection_policy_epoch": desired.get(
+                    "candidate_selection_policy_epoch"
+                ),
+            })
+            if proposed == current:
+                return False
+            cfg.universe = proposed
+            return True
+
+        mutate_config(reconcile)
+        path.unlink()
+        _sync_transition_directory(path.parent)
+    return True
 
 
 def candidate_selection_policy_identity(
@@ -183,4 +273,6 @@ __all__ = [
     "learning_candidate_selection_overlap_block_reason",
     "candidate_selection_overlap_block_reason",
     "candidate_selection_authority_block_reason",
+    "recover_candidate_selection_authority_transition",
+    "stage_candidate_selection_authority_transition",
 ]

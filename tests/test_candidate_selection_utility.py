@@ -898,7 +898,7 @@ async def test_candidate_selection_shadow_skips_learning_controlled_legacy_arm(
     ) == 0
 
 
-def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
+def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monkeypatch):
     import json
     from datetime import datetime, timedelta, timezone
 
@@ -1213,12 +1213,21 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission():
     assert repo.insert_universe_twin_shadow_bundle(
         late_batch, late_records, outcomes=late_outcomes, min_interval_sec=0,
     ) == 2
+    listed_scanner_runs = []
+    list_records = repo.list_universe_twin_shadow_records
+
+    def track_record_reads(scanner_run_id):
+        listed_scanner_runs.append(scanner_run_id)
+        return list_records(scanner_run_id)
+
+    monkeypatch.setattr(repo, "list_universe_twin_shadow_records", track_record_reads)
     frozen = evaluate_candidate_selection_policy(
         as_of_at=(start + timedelta(days=13)).isoformat(),
     )
     assert frozen["verdict"] == "positive", frozen
     assert frozen["fixed_look_cluster_n"] == 50
     assert frozen["full_arm_outcome_coverage"] == 1.0
+    assert "fixed-look-late-pending" not in listed_scanner_runs
 
     repo.get_db().execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
