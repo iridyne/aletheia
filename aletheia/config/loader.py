@@ -183,6 +183,24 @@ _OPERATOR_MODE_MIGRATION = {
     "Full": "Auto",
 }
 
+_REMOVED_AGENT_CONFIG_KEYS = frozenset(
+    {
+        "ai_entry_hypothesis_enabled",
+        "ai_entry_hypothesis_activated_at",
+    }
+)
+
+
+def _migrate_removed_agent_config_keys(raw: dict) -> bool:
+    """Remove only agent keys removed by the grounded-entry migration."""
+    agent = raw.get("agent")
+    if not isinstance(agent, dict):
+        return False
+    removed = _REMOVED_AGENT_CONFIG_KEYS.intersection(agent)
+    for key in removed:
+        del agent[key]
+    return bool(removed)
+
 
 def operator_shell_process_active() -> bool:
     """Return whether the durable PID belongs to the current TS operator shell.
@@ -424,6 +442,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
             return cfg.model_copy(deep=True)
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        removed_agent_keys = _migrate_removed_agent_config_keys(raw)
         operator_section_present = isinstance(raw.get("operator"), dict)
         webhook = raw.get("webhook")
         webhook_migrated = (
@@ -467,7 +486,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
                     "AletheiaConfig", safe_errors, hide_input=True
                 ) from None
             raise
-        changed = webhook_migrated
+        changed = webhook_migrated or removed_agent_keys
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))
