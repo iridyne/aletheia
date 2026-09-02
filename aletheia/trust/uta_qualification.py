@@ -16,7 +16,7 @@ class UTAQualificationError(RuntimeError):
         self.reason_code = reason_code
 
 
-def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
+def uta_profile_qualified(execution_mode: str, cfg, *, adapter=None) -> tuple[bool, str]:
     path = get_data_dir() / "qualifications" / f"uta-{execution_mode}.json"
     try:
         artifact = json.loads(path.read_text(encoding="utf-8"))
@@ -34,7 +34,9 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
     if artifact.get("uta_contract_version") != UTA_CONTRACT_VERSION:
         return False, "qualification_contract_mismatch"
     try:
-        identity = create_uta_adapter(execution_mode, cfg).identity
+        identity = (
+            adapter if adapter is not None else create_uta_adapter(execution_mode, cfg)
+        ).identity
     except Exception:
         return False, "qualification_account_unavailable"
     expected = {
@@ -66,10 +68,13 @@ def uta_profile_qualified(execution_mode: str, cfg) -> tuple[bool, str]:
     return True, "qualified"
 
 
-def require_uta_mutation_qualification(execution_mode: str, cfg=None) -> None:
+def require_uta_mutation_qualification(execution_mode: str, cfg=None, *, adapter=None) -> None:
     cfg = cfg or load_config()
     if cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
         raise UTAQualificationError("uta_mutation_boundary_inactive")
-    qualified, reason = uta_profile_qualified(execution_mode, cfg)
+    if adapter is None:
+        qualified, reason = uta_profile_qualified(execution_mode, cfg)
+    else:
+        qualified, reason = uta_profile_qualified(execution_mode, cfg, adapter=adapter)
     if not qualified:
         raise UTAQualificationError(reason)

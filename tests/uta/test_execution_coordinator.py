@@ -33,7 +33,7 @@ def _setup_db(tmp_path, monkeypatch):
     run_migrations()
     monkeypatch.setattr(
         "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        lambda _mode: None,
+        lambda _mode, **_kwargs: None,
     )
     return conn
 
@@ -308,6 +308,43 @@ def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeyp
 
     assert caught.value.reason_code == "qualification_code_mismatch"
     assert repo.list_orders(limit=10) == []
+
+
+def test_entry_sends_through_the_adapter_that_was_qualified(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    proposal_id, risk_id = "proposal-qualified-adapter", "risk-qualified-adapter"
+    _authority(proposal_id, risk_id)
+    qualified = []
+    sent = []
+
+    async def submit(command):
+        sent.append(command.expected_account)
+        return _ack(command)
+
+    qualified_adapter = _Adapter(submit)
+    sending_adapter = _Adapter(submit)
+    sending_adapter.identity = UTAAccountIdentity(
+        **{
+            **sending_adapter.identity.__dict__,
+            "credential_generation": 2,
+        }
+    )
+
+    def require_qualification(_mode, adapter=None):
+        qualified.append((adapter or qualified_adapter).identity)
+
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.require_uta_mutation_qualification",
+        require_qualification,
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.create_uta_adapter",
+        lambda _mode: sending_adapter,
+    )
+
+    _execute(proposal_id, risk_id)
+
+    assert sent == qualified[-1:]
 
 
 def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):

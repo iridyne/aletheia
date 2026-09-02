@@ -61,6 +61,12 @@ def test_uta_qualification_is_bound_to_exact_sha_and_identity(tmp_path, monkeypa
     from aletheia.trust.uta_qualification import uta_profile_qualified
 
     assert uta_profile_qualified("binance_testnet", object()) == (True, "qualified")
+    rotated = SimpleNamespace(
+        identity=identity.model_copy(update={"credential_generation": 4})
+    )
+    assert uta_profile_qualified(
+        "binance_testnet", object(), adapter=rotated
+    ) == (False, "qualification_identity_mismatch")
 
     monkeypatch.setattr("aletheia.trust.uta_qualification.is_worktree_dirty", lambda: True)
     assert uta_profile_qualified("binance_testnet", object()) == (
