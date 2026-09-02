@@ -9,7 +9,20 @@ from typing import Any
 from aletheia.learning.registry import LEARNING_PATHS
 
 
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 def _unmeasurable_open_experiments() -> list[dict[str, Any]]:
+    if _lab_authority():
+        return []
     from aletheia.storage.sqlite import get_db
 
     supported = {
@@ -128,6 +141,14 @@ def refreeze_redundant_universe_family_shadows(
     dry_run: bool = True,
 ) -> dict[str, Any]:
     """Durably stop UFC Shadow scopes while one exact Paper trial continues."""
+    if _lab_authority():
+        return {
+            "dry_run": dry_run,
+            "keep_experiment_id": keep_experiment_id,
+            "refrozen_experiments": 0,
+            "refrozen_hypotheses": 0,
+            "status": "canonical_lab_authority",
+        }
     rows = _redundant_universe_family_shadows(keep_experiment_id)
     summary = {
         "dry_run": dry_run,

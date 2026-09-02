@@ -61,6 +61,8 @@ class BackupManifest:
         profile: str = "online",
         sqlite_identity: str | None = None,
         lab_sqlite_identity: str | None = None,
+        lab_checkpoint_identity: str | None = None,
+        experiment_authority_source: str | None = None,
         audit_head_hash: str = _GENESIS_HASH,
         audit_inventory: list[dict[str, object]] | None = None,
         checkpoint_identity: str | None = None,
@@ -74,6 +76,8 @@ class BackupManifest:
         self.profile = profile
         self.sqlite_identity = sqlite_identity
         self.lab_sqlite_identity = lab_sqlite_identity
+        self.lab_checkpoint_identity = lab_checkpoint_identity
+        self.experiment_authority_source = experiment_authority_source
         self.audit_head_hash = audit_head_hash
         self.audit_inventory = audit_inventory or []
         self.checkpoint_identity = checkpoint_identity
@@ -91,6 +95,8 @@ class BackupManifest:
             "recovery_eligible": self.profile == "authoritative",
             "sqlite_identity": self.sqlite_identity,
             "lab_sqlite_identity": self.lab_sqlite_identity,
+            "lab_checkpoint_identity": self.lab_checkpoint_identity,
+            "experiment_authority_source": self.experiment_authority_source,
             "audit_head_hash": self.audit_head_hash,
             "audit_inventory": self.audit_inventory,
             "checkpoint_identity": self.checkpoint_identity,
@@ -190,6 +196,8 @@ class BackupService:
 
             sqlite_identity: str | None = None
             lab_sqlite_identity: str | None = None
+            lab_checkpoint_identity: str | None = None
+            experiment_authority_source: str | None = None
             audit_head_hash = _GENESIS_HASH
             audit_inventory: list[dict[str, object]] = []
 
@@ -224,18 +232,51 @@ class BackupService:
                         file_count += 1
                         total_bytes += dst.stat().st_size
 
+                        # A Lab-authority backup must carry the durable cutover
+                        # source in the same Main snapshot. Missing state stays
+                        # unavailable and is rejected below for recovery use.
+                        import sqlite3
+
+                        check = sqlite3.connect(str(db_path))
+                        try:
+                            row = check.execute(
+                                "SELECT authority_source FROM observation_authority_state "
+                                "WHERE state_key='experiment_authority'"
+                            ).fetchone()
+                            experiment_authority_source = str(row[0]) if row else None
+                        except sqlite3.Error:
+                            experiment_authority_source = None
+                        finally:
+                            check.close()
+
                     # Observation Lab is an independently-owned durable store. Keep
                     # its SQLite snapshot and cold archive files in the same managed
                     # bundle so a recovery checkpoint cannot silently rewind Main only.
                     lab_root = self._data_dir / "observation-lab"
                     lab_db = lab_root / "lab.db"
                     if lab_db.exists():
-                        dst_lab = staging / "observation-lab" / "lab.db"
-                        dst_lab.parent.mkdir(parents=True, exist_ok=True)
-                        self._snapshot_sqlite_db(lab_db, dst_lab)
-                        lab_sqlite_identity = sha256_file(dst_lab)
-                        file_count += 1
-                        total_bytes += dst_lab.stat().st_size
+                        from aletheia.observation_lab.db import lab_writer_lock
+
+                        with lab_writer_lock():
+                            dst_lab = staging / "observation-lab" / "lab.db"
+                            dst_lab.parent.mkdir(parents=True, exist_ok=True)
+                            self._snapshot_sqlite_db(lab_db, dst_lab)
+                            lab_sqlite_identity = sha256_file(dst_lab)
+                            file_count += 1
+                            total_bytes += dst_lab.stat().st_size
+                            import sqlite3
+
+                            lab_check = sqlite3.connect(str(lab_db))
+                            try:
+                                row = lab_check.execute(
+                                    "SELECT joint_fingerprint FROM joint_checkpoints "
+                                    "ORDER BY recorded_at DESC, checkpoint_id DESC LIMIT 1"
+                                ).fetchone()
+                                lab_checkpoint_identity = str(row[0]) if row else None
+                            except sqlite3.Error:
+                                lab_checkpoint_identity = None
+                            finally:
+                                lab_check.close()
 
                     # The audit copy must be made while holding the same lock as the
                     # writer. Its inventory and head are recorded below as the exact
@@ -283,20 +324,29 @@ class BackupService:
                     # replay the same terminal result instead of relying on Main.
                     archives_dir = lab_root / "archives"
                     if archives_dir.exists():
-                        dst_archives = staging / "observation-lab" / "archives"
-                        for item in archives_dir.rglob("*"):
-                            if item.is_file() and not _should_exclude(item):
-                                rel = item.relative_to(archives_dir)
-                                dst = dst_archives / rel
-                                dst.parent.mkdir(parents=True, exist_ok=True)
-                                shutil.copy2(item, dst)
-                                file_count += 1
-                                total_bytes += item.stat().st_size
+                        from aletheia.observation_lab.db import lab_writer_lock
+
+                        with lab_writer_lock():
+                            dst_archives = staging / "observation-lab" / "archives"
+                            for item in archives_dir.rglob("*"):
+                                if item.is_file() and not _should_exclude(item):
+                                    rel = item.relative_to(archives_dir)
+                                    dst = dst_archives / rel
+                                    dst.parent.mkdir(parents=True, exist_ok=True)
+                                    shutil.copy2(item, dst)
+                                    file_count += 1
+                                    total_bytes += item.stat().st_size
             finally:
                 if write_lock_acquired:
                     from aletheia.storage.sqlite import release_write_lock
 
                     release_write_lock()
+
+            if profile == "authoritative" and experiment_authority_source == "lab":
+                if lab_sqlite_identity is None:
+                    raise RuntimeError("authoritative_lab_backup_requires_lab_db")
+                if lab_checkpoint_identity is None:
+                    raise RuntimeError("authoritative_lab_backup_requires_joint_checkpoint")
 
             # Copy config with credential redaction — never raw-copy (#1175).
             from aletheia.config.redact import redact_config_dict
@@ -353,6 +403,8 @@ class BackupService:
                 "profile": profile,
                 "sqlite_identity": sqlite_identity,
                 "lab_sqlite_identity": lab_sqlite_identity,
+                "lab_checkpoint_identity": lab_checkpoint_identity,
+                "experiment_authority_source": experiment_authority_source,
                 "audit_head_hash": audit_head_hash,
                 "audit_inventory": audit_inventory,
             }
@@ -371,6 +423,8 @@ class BackupService:
                 profile=profile,
                 sqlite_identity=sqlite_identity,
                 lab_sqlite_identity=lab_sqlite_identity,
+                lab_checkpoint_identity=lab_checkpoint_identity,
+                experiment_authority_source=experiment_authority_source,
                 audit_head_hash=audit_head_hash,
                 audit_inventory=audit_inventory,
                 checkpoint_identity=checkpoint_identity,

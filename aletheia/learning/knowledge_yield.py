@@ -78,12 +78,34 @@ def build_knowledge_yield_report(
     *, window_start: str, window_end: str, path_id: str | None = None,
 ) -> KnowledgeYieldReportV1:
     """Measure conversion by compatible contract identity; never pool unlike metrics."""
-    from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
-
     start = _instant(window_start)
     end = _instant(window_end)
     if start is None or end is None or end <= start:
         raise ValueError("Knowledge Yield requires a valid increasing UTC window")
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            return KnowledgeYieldReportV1(
+                window_start=window_start,
+                window_end=window_end,
+                generation_cost_availability="unavailable",
+                current_economic_knowledge_n=0,
+                slices=[],
+            )
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        if "no such table: observation_authority_state" not in str(exc):
+            return KnowledgeYieldReportV1(
+                window_start=window_start,
+                window_end=window_end,
+                generation_cost_availability="unavailable",
+                current_economic_knowledge_n=0,
+                slices=[],
+            )
+    from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
+
     start_us = iso_instant_us(window_start)
     end_us = iso_instant_us(window_end)
     assert start_us is not None and end_us is not None

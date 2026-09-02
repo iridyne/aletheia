@@ -91,6 +91,17 @@ def resolve_learning_authority(
         )
 
     try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            return blocked("canonical_lab_authority")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        if "no such table: observation_authority_state" not in str(exc):
+            return blocked("experiment_authority_unavailable")
+
+    try:
         global_reason = global_learning_refreeze_reason()
         if global_reason is not None:
             return blocked(global_reason.split(":", 1)[0])

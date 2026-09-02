@@ -197,10 +197,19 @@ def _verify_checkpoint_manifest(
     audit_head_hash = manifest.get("audit_head_hash")
     inventory = manifest.get("audit_inventory")
     checkpoint_identity = manifest.get("checkpoint_identity")
+    lab_checkpoint_identity = manifest.get("lab_checkpoint_identity")
+    authority_source_raw = manifest.get("experiment_authority_source")
+    # Backward-compatible authoritative backups predate the durable cutover
+    # row; they are legacy-authority checkpoints, never Lab-authority ones.
+    authority_source = authority_source_raw or "legacy"
 
     if manifest.get("recovery_eligible") is not True:
         result.valid = False
         result.errors.append("authoritative checkpoint must advertise recovery_eligible=true")
+
+    if authority_source_raw is not None and authority_source not in {"legacy", "lab"}:
+        result.valid = False
+        result.errors.append("authoritative checkpoint is missing a valid experiment authority source")
 
     if not isinstance(sqlite_identity, str) or not re.fullmatch(r"[0-9a-f]{64}", sqlite_identity):
         result.valid = False
@@ -224,6 +233,30 @@ def _verify_checkpoint_manifest(
         elif not lab_db.exists() or hashlib.sha256(lab_db.read_bytes()).hexdigest() != lab_sqlite_identity:
             result.valid = False
             result.errors.append("authoritative checkpoint lab_sqlite_identity does not match lab.db")
+    elif authority_source == "lab":
+        result.valid = False
+        result.errors.append("Lab-authoritative checkpoint is missing lab_sqlite_identity")
+
+    if authority_source == "lab":
+        if not isinstance(lab_checkpoint_identity, str) or not _HEX_RE.match(lab_checkpoint_identity):
+            result.valid = False
+            result.errors.append("Lab-authoritative checkpoint is missing lab_checkpoint_identity")
+        else:
+            lab_db = bundle_dir / "observation-lab" / "lab.db"
+            try:
+                import sqlite3
+
+                with sqlite3.connect(str(lab_db)) as connection:
+                    row = connection.execute(
+                        "SELECT joint_fingerprint FROM joint_checkpoints "
+                        "ORDER BY recorded_at DESC, checkpoint_id DESC LIMIT 1"
+                    ).fetchone()
+                if row is None or row[0] != lab_checkpoint_identity:
+                    result.valid = False
+                    result.errors.append("Lab-authoritative checkpoint identity does not match lab checkpoint")
+            except (OSError, sqlite3.Error):
+                result.valid = False
+                result.errors.append("Lab-authoritative checkpoint lab checkpoint is unreadable")
 
     if not isinstance(audit_head_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", audit_head_hash):
         result.valid = False
@@ -289,6 +322,8 @@ def _verify_checkpoint_manifest(
         "profile": "authoritative",
         "sqlite_identity": sqlite_identity,
         "lab_sqlite_identity": lab_sqlite_identity,
+        "lab_checkpoint_identity": lab_checkpoint_identity,
+        "experiment_authority_source": authority_source_raw,
         "audit_head_hash": audit_head_hash,
         "audit_inventory": inventory,
     }

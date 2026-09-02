@@ -148,6 +148,23 @@ def test_db_error_must_not_return_none():
             repo.min_open_experiment_exposure_at()
 
 
+def test_guarded_retention_skips_deletion_when_authority_is_unavailable(monkeypatch):
+    """Retention must not fall back to legacy deletion on a bad cutover read."""
+    def unavailable():
+        raise repo.ExperimentStateReadError("unavailable")
+
+    monkeypatch.setattr(repo, "_canonical_lab_authority", unavailable)
+    guarded = (
+        (repo.prune_filter_candidate_outcomes, {"min_experiment_started_at": None}),
+        (repo.prune_universe_forward_outcomes, {"min_experiment_started_at": None}),
+        (repo.prune_universe_members, {"min_experiment_started_at": None}),
+        (repo.prune_universe_snapshots, {"min_experiment_started_at": None}),
+        (repo.prune_filter_shadow_evaluations, {}),
+        (repo.prune_filter_shadow_experiments, {}),
+    )
+    assert all(pruner(days=1, **kwargs) == 0 for pruner, kwargs in guarded)
+
+
 def _run_cleanup_with_guard_spies(tmp_path, monkeypatch, floor_result):
     from aletheia.agent_runtime import scheduler
     from aletheia.config.schema import AletheiaConfig
@@ -236,4 +253,3 @@ def test_scheduler_unavailable_floor_skips_guarded_prunes_and_continues(
     assert guarded_calls == []
     assert later_calls == ["agent_shell_heartbeats"]
     assert any(event["code"] == "cleanup_experiment_state_read_failed" for event in emitted)
-

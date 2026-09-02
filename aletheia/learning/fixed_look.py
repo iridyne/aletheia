@@ -32,6 +32,17 @@ AUTHORITY_ALPHA = 0.025
 _PAPER_STAGES = frozenset({"paper_10", "paper_25", "paper_50", "paper_active"})
 
 
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 class InferenceContractError(RuntimeError):
     """A prospective inference invariant cannot be satisfied."""
 
@@ -53,6 +64,9 @@ def register_fixed_look_decision(
     behavior_contract_hash: str,
 ) -> LearningInferenceDecision:
     """Persist one immutable plan before a paper experiment gathers exposure."""
+
+    if _lab_authority():
+        raise InferenceContractError("observation_lab_authority_required")
 
     if experiment.stage not in _PAPER_STAGES:
         raise InferenceContractError("fixed-look inference requires a paper stage")
@@ -148,6 +162,9 @@ def get_fixed_look_decision(experiment_id: str) -> LearningInferenceDecision | N
 def freeze_fixed_look_cutoff(experiment_id: str) -> LearningInferenceDecision:
     """Freeze the earliest qualifying exposure prefix exactly once."""
 
+    if _lab_authority():
+        raise InferenceContractError("observation_lab_authority_required")
+
     decision = get_fixed_look_decision(experiment_id)
     if decision is None:
         raise InferenceContractError("inference_contract_unavailable")
@@ -211,6 +228,9 @@ def cutoff_assignment_unit_keys(decision: LearningInferenceDecision) -> tuple[st
 def consume_fixed_look_verdict(verdict: LearningContributionVerdict) -> bool:
     """Atomically bind the first exact confirmatory verdict to its cutoff."""
 
+    if _lab_authority():
+        raise InferenceContractError("observation_lab_authority_required")
+
     if inference_authority_shape_reason(verdict.model_dump()) is not None:
         raise InferenceContractError("confirmatory verdict inference is malformed")
     with transaction(immediate=True):
@@ -270,6 +290,9 @@ def inference_authority_shape_reason(verdict: dict[str, Any]) -> str | None:
 def inference_authority_reason(verdict: dict[str, Any]) -> str | None:
     """Require a consumed durable decision before a positive can grant authority."""
 
+    if _lab_authority():
+        return "canonical_lab_authority"
+
     shape_reason = inference_authority_shape_reason(verdict)
     if shape_reason is not None:
         return shape_reason
@@ -319,6 +342,9 @@ def inference_collection_reason(
     target_horizon: str,
 ) -> str | None:
     """Require the current Paper stage to own an exact prospective plan."""
+
+    if _lab_authority():
+        return "canonical_lab_authority"
 
     decision = get_fixed_look_decision(experiment.experiment_id)
     if decision is None:

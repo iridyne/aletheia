@@ -262,6 +262,16 @@ def build_experiment_cohorts(
     inference.  Filtering happens before outcomes or integrity counters are
     resolved, so later rows cannot change an already-declared fixed look.
     """
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            return []
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        if "no such table: observation_authority_state" not in str(exc):
+            return []
     evaluation_as_of = (
         datetime.now(timezone.utc)
         if as_of_at is None

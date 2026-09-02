@@ -49,6 +49,9 @@ class JointCheckpoint:
     lab_schema_count: int
     lab_state_fingerprint: str
     checkpoint_ledger_fingerprint: str
+    main_outbox_high_watermark: int
+    main_outbox_pending_count: int
+    main_outbox_fingerprint: str
     joint_fingerprint: str
     notes: str | None = None
 
@@ -89,6 +92,25 @@ def _read_app_migration_state() -> tuple[str, int]:
         return ("<empty>", 0)
     head = str(rows[0][0])
     return (head, len(rows))
+
+
+def _read_app_outbox_state() -> tuple[int, int, str]:
+    """Return the durable Main receipt cut included in a joint checkpoint."""
+    from aletheia.storage.sqlite import get_db
+
+    try:
+        rows = get_db().execute(
+            "SELECT sequence, receipt_id, manifest_hash, acknowledged_at "
+            "FROM observation_delivery_outbox ORDER BY sequence"
+        ).fetchall()
+    except Exception:
+        return (-1, -1, "<unavailable>")
+    pending = sum(1 for row in rows if row[3] is None)
+    watermark = int(rows[-1][0]) if rows else 0
+    fingerprint = hashlib.sha256(
+        _canonical_json([tuple(row) for row in rows]).encode("utf-8")
+    ).hexdigest()
+    return watermark, pending, fingerprint
 
 
 def _active_manifest_hashes(now: str | None = None) -> tuple[str, ...]:
@@ -205,6 +227,9 @@ def _fingerprint(
     lab_schema_count: int,
     lab_state_fingerprint: str,
     checkpoint_ledger_fingerprint: str,
+    main_outbox_high_watermark: int,
+    main_outbox_pending_count: int,
+    main_outbox_fingerprint: str,
 ) -> str:
     payload = {
         "app_migration_head": app_migration_head,
@@ -214,6 +239,9 @@ def _fingerprint(
         "lab_schema_count": int(lab_schema_count),
         "lab_state_fingerprint": lab_state_fingerprint,
         "checkpoint_ledger_fingerprint": checkpoint_ledger_fingerprint,
+        "main_outbox_high_watermark": int(main_outbox_high_watermark),
+        "main_outbox_pending_count": int(main_outbox_pending_count),
+        "main_outbox_fingerprint": main_outbox_fingerprint,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
@@ -226,6 +254,7 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
     the ledger.
     """
     head, count = _read_app_migration_state()
+    outbox_watermark, outbox_pending, outbox_fingerprint = _read_app_outbox_state()
     with _lab_read_snapshot():
         hashes = _active_manifest_hashes()
         lab_head, lab_count = _lab_schema_state()
@@ -239,6 +268,9 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
         lab_schema_count=lab_count,
         lab_state_fingerprint=lab_state,
         checkpoint_ledger_fingerprint=ledger_state,
+        main_outbox_high_watermark=outbox_watermark,
+        main_outbox_pending_count=outbox_pending,
+        main_outbox_fingerprint=outbox_fingerprint,
     )
     return JointCheckpoint(
         checkpoint_id=uuid.uuid4().hex,
@@ -251,6 +283,9 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
         lab_schema_count=lab_count,
         lab_state_fingerprint=lab_state,
         checkpoint_ledger_fingerprint=ledger_state,
+        main_outbox_high_watermark=outbox_watermark,
+        main_outbox_pending_count=outbox_pending,
+        main_outbox_fingerprint=outbox_fingerprint,
         joint_fingerprint=fingerprint,
         notes=notes,
     )
@@ -275,7 +310,8 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
         "checkpoint_id, recorded_at, app_migration_head, app_migration_count, "
         "active_manifest_hashes, active_manifest_count, joint_fingerprint, notes"
         ", lab_schema_head, lab_schema_count, lab_state_fingerprint, "
-        "checkpoint_ledger_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "checkpoint_ledger_fingerprint, main_outbox_high_watermark, main_outbox_pending_count, "
+        "main_outbox_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             checkpoint.checkpoint_id,
             checkpoint.recorded_at,
@@ -289,6 +325,9 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
             checkpoint.lab_schema_count,
             checkpoint.lab_state_fingerprint,
             checkpoint.checkpoint_ledger_fingerprint,
+            checkpoint.main_outbox_high_watermark,
+            checkpoint.main_outbox_pending_count,
+            checkpoint.main_outbox_fingerprint,
         ),
     )
 
@@ -313,6 +352,9 @@ def latest_joint_checkpoint() -> JointCheckpoint | None:
         lab_schema_count=int(row["lab_schema_count"] or 0),
         lab_state_fingerprint=str(row["lab_state_fingerprint"] or "<legacy>"),
         checkpoint_ledger_fingerprint=str(row["checkpoint_ledger_fingerprint"] or "<legacy>"),
+        main_outbox_high_watermark=int(row["main_outbox_high_watermark"] if row["main_outbox_high_watermark"] is not None else -1),
+        main_outbox_pending_count=int(row["main_outbox_pending_count"] if row["main_outbox_pending_count"] is not None else -1),
+        main_outbox_fingerprint=str(row["main_outbox_fingerprint"] or "<legacy>"),
         joint_fingerprint=row["joint_fingerprint"],
         notes=row["notes"],
     )
@@ -330,6 +372,17 @@ def verify_joint_checkpoint() -> CheckpointVerification:
     """
     current = compute_joint_checkpoint()
     last = latest_joint_checkpoint()
+    if (
+        current.main_outbox_high_watermark < 0
+        or current.main_outbox_pending_count < 0
+        or current.main_outbox_fingerprint == "<unavailable>"
+    ):
+        return CheckpointVerification(
+            ok=False,
+            last=last,
+            current_fingerprint=current.joint_fingerprint,
+            reason="main_outbox_unavailable",
+        )
     if last is None:
         return CheckpointVerification(
             ok=True,
@@ -355,6 +408,7 @@ def verify_joint_checkpoint() -> CheckpointVerification:
             f"{current.active_manifest_count}) lab_schema({last.lab_schema_head}/"
             f"{last.lab_schema_count}→{current.lab_schema_head}/"
             f"{current.lab_schema_count}) lab_state({last.lab_state_fingerprint}→"
-            f"{current.lab_state_fingerprint})"
+            f"{current.lab_state_fingerprint}) outbox({last.main_outbox_high_watermark}→"
+            f"{current.main_outbox_high_watermark})"
         ),
     )

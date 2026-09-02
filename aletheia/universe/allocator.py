@@ -442,7 +442,10 @@ def compute_total_score(
                 suppress_shadow_if_paper_active=True,
                 exposed_at=outcome_entry_ts,
                 outcome_seeds=outcome_seeds,
-                require_outcome_seed=bool(candidate_key),
+                # Require the atomic seed only when this call actually built
+                # one.  A candidate key alone is not proof that venue/price
+                # facts were valid enough to construct a seed.
+                require_outcome_seed=bool(outcome_seeds),
                 deferred_exposure_writes=deferred_exposure_writes,
             )
             opportunity = influence.value

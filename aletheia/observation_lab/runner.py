@@ -217,8 +217,76 @@ def _save_checkpoint(summary: dict[str, Any]) -> None:
 def register_builtin_handlers() -> None:
     """Register every built-in durable Observation Window handler."""
     from aletheia.universe.discovery_benchmark import register_observation_handler
+    from datetime import datetime, timezone
+
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler,
+        ObservationProgress,
+        register_handler,
+        registered_handlers,
+    )
+    from aletheia.observation_lab.canonical import (
+        register_treatment_adapter,
+        registered_treatment_adapters,
+    )
+    from aletheia.learning.experiments import _ObservationNumericAdapter
 
     register_observation_handler()
+
+    def _canonical_progress(window: dict[str, Any]) -> ObservationProgress:
+        try:
+            due = datetime.fromisoformat(
+                str(window.get("finalize_not_before") or "").replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            can_finalize = datetime.now(timezone.utc) >= due
+        except (TypeError, ValueError, OverflowError):
+            can_finalize = False
+        return ObservationProgress(
+            summary={"status": "collecting", "handler": window.get("kind")},
+            can_finalize=can_finalize,
+        )
+
+    def _canonical_capture(window: dict[str, Any], event: dict[str, Any]) -> ObservationProgress:
+        return ObservationProgress(
+            summary={"status": "captured", "event_keys": sorted(event)},
+        )
+
+    def _canonical_finalize(window: dict[str, Any]) -> dict[str, Any]:
+        return {"status": "finalized", "handler": window.get("kind")}
+
+    def _canonical_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    for kind in (
+        "filter_shadow",
+        "universe_family_calibration",
+        "momentum_entry_geometry",
+        "ranker_case_score",
+    ):
+        key = (kind, "canonical-v1")
+        if key not in registered_handlers():
+            register_handler(ObservationHandler(
+                kind=kind,
+                version=key[1],
+                normalize_spec=lambda spec: dict(spec),
+                capture=_canonical_capture,
+                advance=_canonical_progress,
+                finalize=_canonical_finalize,
+                retention_claims=_canonical_claims,
+            ))
+
+    for path_id in (
+        "universe_family_calibration",
+        "momentum_entry_geometry",
+        "ranker_case_score",
+    ):
+        key = (f"learning.numeric:{path_id}", "v1")
+        if key not in registered_treatment_adapters():
+            register_treatment_adapter(_ObservationNumericAdapter(
+                adapter_id=key[0],
+                adapter_version=key[1],
+                behavior_dimension=path_id,
+            ))
 def _durable_observation_windows() -> dict[str, Any]:
     register_builtin_handlers()
     from aletheia.observation_lab.kernel import advance_windows
@@ -233,6 +301,14 @@ def _register_default_windows() -> None:
     subsystems until each pass executes.
     """
     def _filter_shadow_evaluate() -> dict[str, Any]:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            return {
+                "status": "canonical_lab_authority",
+                "frozen_units_captured": 0,
+                "evaluation": {"skipped": True, "reason": "canonical_lab_authority"},
+            }
         from aletheia.counterfactual.filter_experiments import (
             capture_frozen_units_for,
             evaluate_active_shadow_experiments,

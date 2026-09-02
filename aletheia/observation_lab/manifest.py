@@ -40,6 +40,13 @@ from typing import Any
 
 
 _HASH_EXCLUDED_FIELDS = frozenset({"manifest_id", "created_at"})
+_V2_FIELDS = frozenset({
+    "manifest_contract_version",
+    "effect_mode",
+    "assignment_namespace_key",
+    "assignment_hash_version",
+    "behavior_policy_epoch_ref",
+})
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,11 @@ class ExecutionManifest:
     unavailable_fallback: str
     owner_admission_ref: str | None
     created_at: str
+    manifest_contract_version: str = "execution-manifest/v1"
+    effect_mode: str = "observe_only"
+    assignment_namespace_key: str | None = None
+    assignment_hash_version: str = "sha256-prefix16/0xffffffffffffffff"
+    behavior_policy_epoch_ref: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         """Flat dict shaped for SQL binding. JSON-encodes container fields."""
@@ -98,6 +110,11 @@ class ExecutionManifest:
             "deterministic_baseline_json": _canonical_json(self.deterministic_baseline),
             "unavailable_fallback": self.unavailable_fallback,
             "owner_admission_ref": self.owner_admission_ref,
+            "manifest_contract_version": self.manifest_contract_version,
+            "effect_mode": self.effect_mode,
+            "assignment_namespace_key": self.assignment_namespace_key,
+            "assignment_hash_version": self.assignment_hash_version,
+            "behavior_policy_epoch_ref": self.behavior_policy_epoch_ref,
             "created_at": self.created_at,
         }
 
@@ -116,11 +133,15 @@ class ManifestResolution:
 
 def _canonical_json(value: Any) -> str:
     """Same shape used by ``hypothesis_fingerprint`` — sort keys, no spaces."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str, allow_nan=False,
+    )
 
 
 def _compute_manifest_hash(payload: dict[str, Any]) -> str:
     material = {k: v for k, v in payload.items() if k not in _HASH_EXCLUDED_FIELDS}
+    if payload.get("manifest_contract_version", "execution-manifest/v1") == "execution-manifest/v1":
+        material = {k: v for k, v in material.items() if k not in _V2_FIELDS}
     # The builder computes the address before filling this self-reference.
     material["manifest_hash"] = ""
     return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
@@ -180,6 +201,11 @@ def build_manifest(
     unavailable_fallback: str,
     effective_until: str | None = None,
     owner_admission_ref: str | None = None,
+    manifest_contract_version: str = "execution-manifest/v2",
+    effect_mode: str = "observe_only",
+    assignment_namespace_key: str | None = None,
+    assignment_hash_version: str = "sha256-prefix16/2^64",
+    behavior_policy_epoch_ref: str | None = None,
 ) -> ExecutionManifest:
     """Construct an ExecutionManifest with a content-addressed hash.
 
@@ -193,6 +219,17 @@ def build_manifest(
         raise ValueError(f"unknown composability_contract: {composability_contract}")
     if unavailable_fallback not in {"baseline", "exclude"}:
         raise ValueError(f"unknown unavailable_fallback: {unavailable_fallback}")
+    if manifest_contract_version not in {"execution-manifest/v1", "execution-manifest/v2"}:
+        raise ValueError(f"unknown manifest_contract_version: {manifest_contract_version}")
+    if effect_mode not in {"observe_only", "paper_treatment"}:
+        raise ValueError(f"unknown effect_mode: {effect_mode}")
+    if assignment_hash_version not in {
+        "sha256-prefix16/0xffffffffffffffff",
+        "sha256-prefix16/2^64",
+    }:
+        raise ValueError(f"unknown assignment_hash_version: {assignment_hash_version}")
+    if manifest_contract_version == "execution-manifest/v2" and assignment_namespace_key is None:
+        assignment_namespace_key = observation_id
     # Validate the interval but preserve the caller's spelling in the
     # content-addressed payload. Existing manifests may use either ``Z`` or
     # ``+00:00``; rewriting a valid legacy spelling would break publish
@@ -222,6 +259,11 @@ def build_manifest(
         "deterministic_baseline": dict(deterministic_baseline),
         "unavailable_fallback": unavailable_fallback,
         "owner_admission_ref": owner_admission_ref,
+        "manifest_contract_version": manifest_contract_version,
+        "effect_mode": effect_mode,
+        "assignment_namespace_key": assignment_namespace_key,
+        "assignment_hash_version": assignment_hash_version,
+        "behavior_policy_epoch_ref": behavior_policy_epoch_ref,
         "created_at": _now(),
     }
     manifest_hash = _compute_manifest_hash(fields)
@@ -237,26 +279,11 @@ class ManifestIntegrityError(ValueError):
     """Persisted manifest state violates the immutable wire contract."""
 
 
-def publish_manifest(manifest: ExecutionManifest) -> bool:
-    """Idempotently persist one manifest to lab.db.
-
-    Returns True on first publish, False when the same ``manifest_hash``
-    already exists (semantically identical content — silent no-op). Raises
-    ``ManifestGenerationConflict`` when a **different** manifest already
-    occupies the same ``(observation_id, generation)`` — the caller must
-    bump ``generation`` for a semantic change.
-    """
-    from aletheia.observation_lab.db import get_lab_db
-
-    _validated_interval(
-        manifest.effective_from, manifest.effective_until,
-    )
-    if manifest.manifest_hash != _manifest_content_hash(manifest):
-        raise ManifestIntegrityError(
-            f"manifest {manifest.manifest_id} content does not match manifest_hash"
-        )
-
-    db = get_lab_db()
+def _publish_manifest_into(manifest: ExecutionManifest, db) -> bool:
+    if manifest.effect_mode == "paper_treatment" and not manifest.owner_admission_ref:
+        raise ManifestIntegrityError("paper_treatment_requires_owner_admission")
+    if manifest.manifest_contract_version == "execution-manifest/v2" and not manifest.assignment_namespace_key:
+        raise ManifestIntegrityError("manifest_assignment_namespace_required")
     existing = db.execute(
         "SELECT manifest_hash FROM execution_manifests "
         "WHERE observation_id=? AND generation=?",
@@ -264,7 +291,7 @@ def publish_manifest(manifest: ExecutionManifest) -> bool:
     ).fetchone()
     if existing is not None:
         if existing["manifest_hash"] == manifest.manifest_hash:
-            return False  # Same content — silent no-op.
+            return False
         raise ManifestGenerationConflict(
             f"observation {manifest.observation_id} generation "
             f"{manifest.generation} already published with a different hash"
@@ -279,10 +306,42 @@ def publish_manifest(manifest: ExecutionManifest) -> bool:
     return True
 
 
+def publish_manifest(
+    manifest: ExecutionManifest,
+    *,
+    db=None,
+) -> bool:
+    """Idempotently persist one manifest to lab.db.
+
+    Returns True on first publish, False when the same ``manifest_hash``
+    already exists (semantically identical content — silent no-op). Raises
+    ``ManifestGenerationConflict`` when a **different** manifest already
+    occupies the same ``(observation_id, generation)`` — the caller must
+    bump ``generation`` for a semantic change.
+    """
+    from aletheia.observation_lab.db import lab_transaction
+
+    _validated_interval(
+        manifest.effective_from, manifest.effective_until,
+    )
+    if manifest.manifest_hash != _manifest_content_hash(manifest):
+        raise ManifestIntegrityError(
+            f"manifest {manifest.manifest_id} content does not match manifest_hash"
+        )
+
+    if db is not None and not db.in_transaction:
+        raise RuntimeError("manifest_requires_lab_transaction")
+    if db is not None and db.in_transaction:
+        return _publish_manifest_into(manifest, db)
+    with lab_transaction(immediate=True) as connection:
+        return _publish_manifest_into(manifest, connection)
+
+
 def load_active_manifests(
     *,
     now: str | None = None,
     interference_key: str | None = None,
+    db=None,
 ) -> list[ExecutionManifest]:
     """Return manifests whose effective interval covers ``now``.
 
@@ -302,7 +361,7 @@ def load_active_manifests(
     if interference_key is not None:
         clauses.append("interference_key = ?")
         params.append(interference_key)
-    rows = get_lab_db().execute(
+    rows = (db or get_lab_db()).execute(
         f"SELECT * FROM execution_manifests WHERE {' AND '.join(clauses)} "
         "ORDER BY effective_from, manifest_id" if clauses else
         "SELECT * FROM execution_manifests ORDER BY effective_from, manifest_id",
@@ -351,6 +410,14 @@ def _row_to_manifest(row: dict[str, Any]) -> ExecutionManifest:
         unavailable_fallback=row["unavailable_fallback"],
         owner_admission_ref=row.get("owner_admission_ref"),
         created_at=row["created_at"],
+        manifest_contract_version=row.get("manifest_contract_version") or "execution-manifest/v1",
+        effect_mode=row.get("effect_mode") or "observe_only",
+        assignment_namespace_key=row.get("assignment_namespace_key"),
+        assignment_hash_version=(
+            row.get("assignment_hash_version")
+            or "sha256-prefix16/0xffffffffffffffff"
+        ),
+        behavior_policy_epoch_ref=row.get("behavior_policy_epoch_ref"),
     )
 
 
@@ -422,21 +489,111 @@ def resolve_treatment(
             behavior_changed=False,
         )
 
-    material = f"{manifest.observation_id}:{manifest.assignment_salt}:{assignment_key}"
-    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
-    # Same bucketing scheme learning.experiments.stable_assignment uses so
-    # future Lab-native cohorts assign identically to legacy Learning cohorts
-    # when the salt is preserved.
-    fraction = int(digest[:16], 16) / float(1 << 64)
-    assignment = "treatment" if fraction < manifest.allocation_pct else "control"
+    if manifest.manifest_contract_version not in {
+        "execution-manifest/v1", "execution-manifest/v2",
+    }:
+        return ManifestResolution(
+            applied=False,
+            assignment="unassigned",
+            manifest_id=manifest.manifest_id,
+            manifest_hash=manifest.manifest_hash,
+            payload=dict(manifest.deterministic_baseline),
+            reason="manifest_contract_unsupported",
+            behavior_changed=False,
+        )
+    if manifest.effect_mode not in {"observe_only", "paper_treatment"}:
+        return ManifestResolution(
+            applied=False,
+            assignment="unassigned",
+            manifest_id=manifest.manifest_id,
+            manifest_hash=manifest.manifest_hash,
+            payload=dict(manifest.deterministic_baseline),
+            reason="effect_mode_unsupported",
+            behavior_changed=False,
+        )
+    if manifest.effect_mode == "paper_treatment" and not manifest.owner_admission_ref:
+        return ManifestResolution(
+            applied=False,
+            assignment="unassigned",
+            manifest_id=manifest.manifest_id,
+            manifest_hash=manifest.manifest_hash,
+            payload=dict(manifest.deterministic_baseline),
+            reason="owner_admission_unavailable",
+            behavior_changed=False,
+        )
+    if manifest.manifest_contract_version == "execution-manifest/v2":
+        if not manifest.assignment_namespace_key:
+            return ManifestResolution(
+                applied=False,
+                assignment="unassigned",
+                manifest_id=manifest.manifest_id,
+                manifest_hash=manifest.manifest_hash,
+                payload=dict(manifest.deterministic_baseline),
+                reason="assignment_namespace_unavailable",
+                behavior_changed=False,
+            )
+        if manifest.control_payload != manifest.deterministic_baseline:
+            return ManifestResolution(
+                applied=False,
+                assignment="unassigned",
+                manifest_id=manifest.manifest_id,
+                manifest_hash=manifest.manifest_hash,
+                payload=dict(manifest.deterministic_baseline),
+                reason="control_baseline_mismatch",
+                behavior_changed=False,
+            )
 
-    payload = (
+    if manifest.assignment_hash_version not in {
+        "sha256-prefix16/0xffffffffffffffff", "sha256-prefix16/2^64",
+    }:
+        return ManifestResolution(
+            applied=False,
+            assignment="unassigned",
+            manifest_id=manifest.manifest_id,
+            manifest_hash=manifest.manifest_hash,
+            payload=dict(manifest.deterministic_baseline),
+            reason="assignment_hash_version_unsupported",
+            behavior_changed=False,
+        )
+    try:
+        allocation_pct = float(manifest.allocation_pct)
+        if not 0.0 <= allocation_pct <= 1.0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return ManifestResolution(
+            applied=False,
+            assignment="unassigned",
+            manifest_id=manifest.manifest_id,
+            manifest_hash=manifest.manifest_hash,
+            payload=dict(manifest.deterministic_baseline),
+            reason="allocation_unavailable",
+            behavior_changed=False,
+        )
+
+    namespace = manifest.assignment_namespace_key or manifest.observation_id
+    material = f"{namespace}:{manifest.assignment_salt}:{assignment_key}"
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    denominator = (
+        float(0xFFFFFFFFFFFFFFFF)
+        if manifest.assignment_hash_version == "sha256-prefix16/0xffffffffffffffff"
+        else float(1 << 64)
+    )
+    fraction = int(digest[:16], 16) / denominator
+    assignment = "treatment" if fraction < allocation_pct else "control"
+
+    selected_payload = (
         dict(manifest.treatment_payload)
         if assignment == "treatment"
         else dict(manifest.control_payload)
     )
+    payload = (
+        dict(manifest.deterministic_baseline)
+        if manifest.effect_mode == "observe_only"
+        else selected_payload
+    )
     behavior_changed = (
-        assignment == "treatment"
+        manifest.effect_mode == "paper_treatment"
+        and assignment == "treatment"
         and payload != manifest.deterministic_baseline
         and payload != manifest.control_payload
     )
@@ -446,6 +603,10 @@ def resolve_treatment(
         manifest_id=manifest.manifest_id,
         manifest_hash=manifest.manifest_hash,
         payload=payload,
-        reason=f"applied:{assignment}",
+        reason=(
+            f"observe_only:{assignment}"
+            if manifest.effect_mode == "observe_only"
+            else f"applied:{assignment}"
+        ),
         behavior_changed=behavior_changed,
     )

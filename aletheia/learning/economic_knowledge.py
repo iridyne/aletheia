@@ -10,6 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 class EconomicKnowledgeFactV1(BaseModel):
     """One reproducible qualification; never a second lifecycle authority."""
 
@@ -72,6 +83,12 @@ def _assess_economic_knowledge(
     require_current_cost_model: bool,
 ) -> EconomicKnowledgeAssessmentV1:
     """Qualify one consumed confirmatory verdict without writing projected truth."""
+    if _lab_authority():
+        return EconomicKnowledgeAssessmentV1(
+            verdict_id=verdict_id,
+            status="unavailable",
+            reasons=["canonical_lab_authority"],
+        )
     from aletheia.storage.sqlite import get_db
 
     row = get_db().execute(
@@ -228,6 +245,8 @@ def _project_economic_knowledge(
 ) -> list[EconomicKnowledgeFactV1]:
     from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
 
+    if _lab_authority():
+        return []
     db = get_db()
     register_instant_us(db)
     as_of_us = iso_instant_us(as_of) if as_of is not None else None
@@ -274,6 +293,8 @@ def current_disqualification_reasons(
     as_of: str | None = None,
 ) -> list[str]:
     """Return canonical death/refreeze facts, optionally before an exclusive cutoff."""
+    if _lab_authority():
+        return ["canonical_lab_authority"]
     from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
 
     db = get_db()

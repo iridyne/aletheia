@@ -247,6 +247,53 @@ def test_missing_handler_fails_closed_for_runner_status_and_retention(tmp_path, 
         reset_lab_db()
 
 
+def test_finalization_publishes_immutable_lab_result_with_source_cut(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler,
+        ObservationProgress,
+        finalize_window,
+        register_handler,
+        start_window,
+    )
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    reset_lab_db()
+    register_handler(ObservationHandler(
+        kind="result-window",
+        version="v1",
+        normalize_spec=lambda spec: spec,
+        capture=None,
+        advance=lambda _window: ObservationProgress(summary={"ready": True}, can_finalize=True),
+        finalize=lambda _window: {"verdict": "neutral", "reason": "no economic claim"},
+        retention_claims=lambda _window: (),
+    ), replace=True)
+    window = start_window(
+        observation_id="result-window",
+        kind="result-window",
+        handler_version="v1",
+        slot_key="result-slot",
+        authority_mode="observe_only",
+        spec={"contract": "v1"},
+        started_at=_utc(),
+        collect_until=_utc(2),
+        finalize_not_before=_utc(3),
+    )
+    finalize_window(
+        window["observation_id"], window["generation"],
+        now=_utc(4), output=tmp_path / "result.json.gz",
+    )
+    result = get_lab_db().execute(
+        "SELECT verdict, disposition, source_cutoff, evaluation_id FROM observation_results "
+        "WHERE observation_id='result-window'"
+    ).fetchone()
+    assert tuple(result)[:2] == ("neutral", "finalized")
+    assert '"main_import_contiguous_sequence":null' in result["source_cutoff"]
+    assert result["evaluation_id"]
+    reset_lab_db()
+
+
 def test_runner_checkpoint_mismatch_is_diagnostic_only(tmp_path, monkeypatch):
     from types import SimpleNamespace
 

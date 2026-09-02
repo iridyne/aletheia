@@ -83,12 +83,28 @@ _ADAPTER_CAUSAL_IDENTITY: dict[str, dict[str, Any]] = {
 _FROZEN_REBUILD_ADAPTERS: frozenset[str] = frozenset({"ranker_confidence_gate"})
 
 
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        # A pre-V2 database has no cutover row; every other failure is a deny.
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 def _adapter_causal_identity_hash(filter_name: str) -> str | None:
     """Hex-digest hash of the adapter's declared causal identity vector."""
     identity = _ADAPTER_CAUSAL_IDENTITY.get(filter_name)
     if identity is None:
         return None
     return hashlib.sha256(_json(identity).encode("utf-8")).hexdigest()
+
+
+def _hash_spec(spec: dict[str, Any]) -> str:
+    return hashlib.sha256(_json(spec).encode("utf-8")).hexdigest()
 
 
 def register_replay_ready_experiments(
@@ -154,6 +170,24 @@ def register_replay_ready_experiments(
             # None for adapters that opt out of Lab identity semantics (Phase 2 migration).
             "adapter_identity_hash": _adapter_causal_identity_hash(scope["filter_name"]),
         }
+        if _lab_authority():
+            from aletheia.observation_lab.canonical import register_observation_spec
+
+            register_observation_spec(
+                {
+                    **scope,
+                    "control": control_param,
+                    "treatment": treatment_param,
+                    "min_samples": record["min_samples"],
+                    "min_coverage": record["min_coverage"],
+                    "min_edge_delta_pct": record["min_edge_delta_pct"],
+                },
+                actor="learning_replay",
+                source_hash=_hash_spec(replay),
+                started_at=timestamp,
+            )
+            summary["registered"] += 1
+            continue
         if repo.insert_filter_shadow_experiment(record):
             summary["registered"] += 1
         else:
@@ -224,6 +258,16 @@ def register_observation_from_spec(
         raise ValueError(f"spec is missing required field(s): {missing}")
 
     timestamp = _iso(now)
+    if _lab_authority():
+        from aletheia.observation_lab.canonical import register_observation_spec
+
+        return str(register_observation_spec(
+            spec,
+            actor="learning_replay",
+            source_hash=_hash_spec(spec),
+            started_at=timestamp,
+        )["observation_id"])
+
     scope = {
         "filter_name": str(spec["filter_name"]),
         "filter_version": str(spec.get("filter_version") or ""),
@@ -317,6 +361,8 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
 
     Idempotent. Returns the number of freshly-inserted units.
     """
+    if _lab_authority():
+        return 0
     filter_name = str(experiment.get("filter_name") or "")
     if filter_name not in _FROZEN_REBUILD_ADAPTERS:
         return 0

@@ -65,6 +65,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "learning_measurement_startup_catchup",
     "learning_lifecycle_audit_reconciler",
     "universe_scanner_audit_reconciler",
+    "observation_lab_bridge",
 }
 
 # Market snapshot collection cadence. Exposed as a module constant so consumers
@@ -152,6 +153,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "learning_lifecycle_controller": 60.0,
     "learning_lifecycle_audit_reconciler": 30.0,
     "universe_scanner_audit_reconciler": 15.0,
+    "observation_lab_bridge": 30.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -1528,6 +1530,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         "interval", minutes=5, id="universe_scanner_audit_reconciler",
         misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=5),
+    )
+    _scheduler.add_job(
+        _guarded("observation_lab_bridge", _run_observation_lab_bridge),
+        "interval", minutes=1, id="observation_lab_bridge",
+        misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
+        next_run_time=datetime.now() + timedelta(minutes=1),
     )
     # Independent outcome settler — settles overdue forward-outcome rows that feed
     # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
@@ -3720,6 +3728,53 @@ def _run_filter_controller_observe():
     except Exception as e:
         logger.warning("filter_controller_observe job failed: %s", e)
         _record_job_failure("filter_controller_observe", str(e))
+
+
+def _run_observation_lab_bridge() -> None:
+    """Drain Main delivery receipts and mirror Lab audit intents.
+
+    This transport job owns no Experiment decisions; it only advances the
+    durable cross-store bridge and reports unavailable state for operators.
+    """
+    try:
+        from aletheia.config.loader import get_data_dir
+
+        if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
+            # The compatibility scheduler must not create a Lab database on a
+            # legacy-only install merely by running its health job.
+            return
+        from aletheia.observation_lab.canonical import (
+            compact_finalized_generations,
+            import_delivery_receipts,
+            mirror_lab_audit_outbox,
+            prune_observation_delivery_outbox,
+        )
+
+        imported = import_delivery_receipts(limit=500)
+        mirrored = mirror_lab_audit_outbox(limit=500)
+        pruned = prune_observation_delivery_outbox()
+        compacted = compact_finalized_generations(limit=10)
+        if not imported.get("available", False) and imported.get("reason") not in {
+            "lab_unavailable", "outbox_unavailable",
+        }:
+            _record_job_failure("observation_lab_bridge", str(imported.get("reason")))
+        if not mirrored.get("available", False) and mirrored.get("reason") != "lab_unavailable":
+            _record_job_failure("observation_lab_bridge", str(mirrored.get("reason")))
+        logger.info(
+            "observation_lab_bridge: imported=%s mirrored=%s pending=%s",
+            imported.get("processed", 0), mirrored.get("processed", 0),
+            imported.get("backlog_count", 0),
+        )
+        if not pruned.get("available", False):
+            _record_job_failure("observation_lab_bridge", str(pruned.get("reason")))
+        if compacted.get("skipped"):
+            _record_job_failure(
+                "observation_lab_bridge",
+                f"compaction_skipped:{compacted['skipped']}",
+            )
+    except Exception as e:
+        logger.warning("observation_lab_bridge job failed: %s", e)
+        _record_job_failure("observation_lab_bridge", str(e))
 
 
 def _run_health_check():

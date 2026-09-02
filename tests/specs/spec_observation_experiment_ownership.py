@@ -51,6 +51,7 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/observation_lab/db.py",
     "aletheia/observation_lab/exposure.py",
     "aletheia/observation_lab/runner.py",
+    "aletheia/observation_lab/migration.py",
     "aletheia/server/routes/analytics.py",
     "aletheia/server/routes/data.py",
     "aletheia/server/routes/settings.py",
