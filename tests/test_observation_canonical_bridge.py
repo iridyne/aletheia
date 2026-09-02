@@ -648,6 +648,57 @@ def test_retention_claim_cannot_invent_unbound_source_identity():
         )
 
 
+def test_evaluation_source_cutoff_rejects_unstructured_text():
+    from aletheia.observation_lab.canonical import record_observation_evaluation
+    from aletheia.observation_lab.db import get_lab_db
+
+    get_lab_db().execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('cutoff-shape', 'test', 'v1', 1, 'slot-cutoff-shape', 'observe_only', 'active', '{}', "
+        "'cutoff-shape-spec', '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00', "
+        "'2026-01-03T00:00:00+00:00')"
+    )
+    with pytest.raises(ValueError, match="source_cutoff_invalid"):
+        record_observation_evaluation(
+            observation_id="cutoff-shape", generation=1,
+            evaluation_kind="monitoring", source_cutoff="moving-main-rows",
+            input_fingerprint="input", exposure_fingerprint="exposure",
+            outcome_fingerprint="outcome", result={"verdict": "hold"},
+            verdict="hold", disposition="monitoring",
+        )
+
+
+def test_evaluation_source_cutoff_cannot_run_ahead_of_import_cursor():
+    from aletheia.observation_lab.canonical import record_observation_evaluation
+    from aletheia.observation_lab.db import get_lab_db
+
+    db = get_lab_db()
+    db.execute(
+        "INSERT INTO observation_windows "
+        "(observation_id, kind, handler_version, generation, slot_key, authority_mode, status, "
+        "spec_json, spec_hash, started_at, collect_until, finalize_not_before) "
+        "VALUES ('cutoff-ahead', 'test', 'v1', 1, 'slot-cutoff-ahead', 'observe_only', 'active', '{}', "
+        "'cutoff-ahead-spec', '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00', "
+        "'2026-01-03T00:00:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO observation_import_cursors "
+        "(source_name, contiguous_sequence, retry_sequences_json, updated_at) "
+        "VALUES ('main', 2, '[]', '2026-01-01T00:00:00+00:00')"
+    )
+    with pytest.raises(ValueError, match="source_cutoff_ahead_of_import"):
+        record_observation_evaluation(
+            observation_id="cutoff-ahead", generation=1,
+            evaluation_kind="monitoring",
+            source_cutoff='{"main_import_contiguous_sequence":3}',
+            input_fingerprint="input", exposure_fingerprint="exposure",
+            outcome_fingerprint="outcome", result={"verdict": "hold"},
+            verdict="hold", disposition="monitoring",
+        )
+
+
 def test_lab_audit_outbox_mirrors_idempotently(monkeypatch, tmp_path):
     from aletheia.files import jsonl
     from aletheia.observation_lab.canonical import (

@@ -620,11 +620,14 @@ def _finalize_window(
             )
 
             cursor = db.execute(
-                "SELECT contiguous_sequence FROM observation_import_cursors "
-                "WHERE source_name='main'"
+                "SELECT contiguous_sequence, source_checkpoint_fingerprint "
+                "FROM observation_import_cursors WHERE source_name='main'"
             ).fetchone()
             source_cutoff = _json({
                 "main_import_contiguous_sequence": int(cursor[0]) if cursor else None,
+                "source_checkpoint_fingerprint": (
+                    str(cursor[1]) if cursor and cursor[1] else None
+                ),
                 "collect_until": window["collect_until"],
             })
             exposure_rows = [

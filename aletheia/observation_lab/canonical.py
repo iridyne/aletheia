@@ -88,6 +88,75 @@ def _text(value: object, field: str) -> str:
     return result
 
 
+def _normalise_source_cutoff(
+    value: object,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> str:
+    """Validate the immutable Main source cut used by one Evaluation.
+
+    The Lab evaluator may only publish a structured cut.  The short
+    ``main:sequence=N`` spelling remains a compatibility input, but is
+    canonicalised before persistence.  When a Main import cursor is available
+    in the same Lab transaction, a cut ahead of that cursor is impossible
+    evidence and is rejected rather than silently treating moving outcomes as
+    part of a fixed look.
+    """
+    text = _text(value, "source_cutoff")
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("source_cutoff_invalid") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("source_cutoff_invalid")
+    else:
+        prefix = "main:sequence="
+        if not text.startswith(prefix):
+            raise ValueError("source_cutoff_invalid")
+        raw_sequence = text[len(prefix):].strip()
+        if not raw_sequence or not raw_sequence.isdigit():
+            raise ValueError("source_cutoff_invalid")
+        payload = {"main_import_contiguous_sequence": int(raw_sequence)}
+
+    if "main_import_contiguous_sequence" not in payload:
+        raise ValueError("source_cutoff_watermark_required")
+    sequence = payload["main_import_contiguous_sequence"]
+    if sequence is not None and (
+        isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0
+    ):
+        raise ValueError("source_cutoff_watermark_invalid")
+    collect_until = payload.get("collect_until")
+    if collect_until is not None:
+        payload["collect_until"] = _utc_text(str(collect_until), "source_cutoff_collect_until")
+    checkpoint_fingerprint = payload.get("source_checkpoint_fingerprint")
+    if checkpoint_fingerprint is not None:
+        checkpoint_fingerprint = _text(
+            checkpoint_fingerprint, "source_checkpoint_fingerprint"
+        )
+        if len(checkpoint_fingerprint) != 64 or any(
+            char not in "0123456789abcdef" for char in checkpoint_fingerprint
+        ):
+            raise ValueError("source_cutoff_checkpoint_invalid")
+        payload["source_checkpoint_fingerprint"] = checkpoint_fingerprint
+
+    if connection is not None and sequence is not None:
+        try:
+            cursor = connection.execute(
+                "SELECT contiguous_sequence, source_checkpoint_fingerprint "
+                "FROM observation_import_cursors WHERE source_name='main'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            cursor = None
+        if cursor is not None and int(sequence) > int(cursor[0] or 0):
+            raise ValueError("source_cutoff_ahead_of_import")
+        # The cursor is monotonic.  A confirmatory evaluation may be retried
+        # after later receipts advance it, so a historical checkpoint identity
+        # must remain valid rather than being compared with the newest cursor.
+
+    return _json(payload)
+
+
 def _lab_write(db: sqlite3.Connection | None, writer):
     """Run one Lab mutation in the caller transaction when one exists."""
     if db is not None and db.in_transaction:
@@ -300,6 +369,7 @@ def record_observation_evaluation(
     """Append an immutable evaluation with an explicit source cut."""
     if evaluation_kind not in {"monitoring", "confirmatory"}:
         raise ValueError("invalid_evaluation_kind")
+    source_cutoff = _normalise_source_cutoff(source_cutoff)
     for value, field in (
         (source_cutoff, "source_cutoff"), (input_fingerprint, "input_fingerprint"),
         (exposure_fingerprint, "exposure_fingerprint"), (outcome_fingerprint, "outcome_fingerprint"),
@@ -311,6 +381,9 @@ def record_observation_evaluation(
     created_at = _utc_text(created_at, "created_at") if created_at else _now()
 
     def _write(connection: sqlite3.Connection) -> str:
+        # Validate against the same Lab snapshot that stores the evaluation;
+        # this prevents a caller from declaring a future Main watermark.
+        _normalise_source_cutoff(source_cutoff, connection=connection)
         _require_generation_root(connection, observation_id, int(generation))
         existing = connection.execute(
             "SELECT * FROM observation_evaluations WHERE observation_id=? AND generation=? "
@@ -366,6 +439,7 @@ def record_observation_result(
         (disposition, "disposition"),
     ):
         _text(value, field)
+    source_cutoff = _normalise_source_cutoff(source_cutoff)
     result_json = _json(dict(result))
     fingerprint = _hash({
         "observation_id": observation_id,
@@ -382,6 +456,7 @@ def record_observation_result(
     created_at = _utc_text(created_at, "created_at") if created_at else _now()
 
     def _write(connection: sqlite3.Connection) -> str:
+        _normalise_source_cutoff(source_cutoff, connection=connection)
         root = connection.execute(
             "SELECT spec_hash FROM observation_windows WHERE observation_id=? AND generation=?",
             (observation_id, int(generation)),
