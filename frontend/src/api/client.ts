@@ -2615,6 +2615,11 @@ export const api = {
 	) =>
 		post<{
 			closed?: boolean;
+			status?: string;
+			order_id?: string;
+			close_order_id?: string;
+			exchange_order_id?: string;
+			already_pending?: boolean;
 			pending_limit_exit?: boolean;
 			position_id: string;
 			close_reason?: string;

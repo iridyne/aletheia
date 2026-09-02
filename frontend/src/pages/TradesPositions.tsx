@@ -82,6 +82,54 @@ export const pnlCell = (v: number | null | undefined) => {
 	);
 };
 
+type CloseResult = Awaited<ReturnType<typeof api.closePosition>>;
+
+export const closeResultQueryKeys = [
+	positionKeys.all,
+	["trades"],
+	positionKeys.reconciliation,
+	["portfolio"],
+] as const;
+
+export function closeResultNotice(
+	position: Pick<Position, "symbol" | "market_type">,
+	result: unknown,
+): { kind: "closed" | "pending" | "error"; message: string } {
+	const symbol = fmtSymbol(position.symbol, position.market_type);
+	const payload = result && typeof result === "object" ? result as Partial<CloseResult> : {};
+	if (payload.closed === true) return { kind: "closed", message: `${symbol} closed` };
+
+	const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+	const rawOrderId = payload.exchange_order_id || payload.order_id || payload.close_order_id;
+	const orderId = typeof rawOrderId === "string" && rawOrderId ? rawOrderId : undefined;
+	const detail = ` (${status || "status unavailable"}${orderId ? `, order ${orderId}` : ""})`;
+	if (payload.closed !== false) {
+		return { kind: "error", message: `${symbol} close result is ambiguous${detail}` };
+	}
+	if (status === "submission_rejected" || status === "cancelled" || status === "error") {
+		return { kind: "error", message: `${symbol} close was not accepted${detail}` };
+	}
+	if (status === "partially_filled") {
+		return {
+			kind: "pending",
+			message: `${symbol} close partially filled — residual exposure remains${detail}`,
+		};
+	}
+	if (status === "materialization_missing") {
+		return {
+			kind: "pending",
+			message: `${symbol} fill acknowledged — awaiting reconciliation${detail}`,
+		};
+	}
+	if (status === "pending" || status === "submitted") {
+		return {
+			kind: "pending",
+			message: `${symbol} close ${payload.already_pending === true ? "already pending" : "submitted"} — awaiting confirmation${detail}`,
+		};
+	}
+	return { kind: "error", message: `${symbol} close result is ambiguous${detail}` };
+}
+
 const marketBadge = (v: string) => (
 	<Badge tone={marketBadgeTone(v)}>
 		{isPerpMarket(v) ? "Perp" : humanize(v)}
@@ -313,14 +361,13 @@ function useManualClose(onSuccess?: () => void) {
 
 	const mutation = useMutation({
 		mutationFn: (position: Position) => api.closePosition(position.id),
-		onSuccess: (_data, position) => {
-			qc.invalidateQueries({ queryKey: positionKeys.all });
-			qc.invalidateQueries({ queryKey: ["trades"] });
-			toast(
-				"success",
-				`${fmtSymbol(position.symbol, position.market_type)} closed`,
-			);
-			onSuccess?.();
+		onSuccess: (data, position) => {
+			for (const queryKey of closeResultQueryKeys) {
+				qc.invalidateQueries({ queryKey });
+			}
+			const notice = closeResultNotice(position, data);
+			toast(notice.kind === "closed" ? "success" : notice.kind === "pending" ? "info" : "error", notice.message);
+			if (notice.kind === "closed") onSuccess?.();
 		},
 		onError: (err: any, position) => {
 			const detail = err?.message || "close failed";
