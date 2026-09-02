@@ -352,11 +352,41 @@ def test_do_start_applies_pending_migrations_before_service_and_readiness(tmp_pa
     assert events == ["migrate", "service_start", "readiness"]
 
 
+def test_session_start_checks_auto_reset_only_after_bootstrap(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    resets = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_check_circuit_break_auto_reset",
+        lambda: resets.append(True),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "bootstrap",
+        lambda: (_ for _ in ()).throw(RuntimeError("invalid config")),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid config"):
+        lifecycle.do_start(no_browser=True)
+
+    assert resets == []
+
+
 def test_machine_service_start_has_one_migration_owner_before_service(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle, service_control
 
     events: list[str] = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_check_circuit_break_auto_reset",
+        lambda: events.append("auto_reset"),
+    )
     monkeypatch.setattr(service_control, "is_machine_selected", lambda: True)
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(
@@ -381,7 +411,7 @@ def test_machine_service_start_has_one_migration_owner_before_service(tmp_path, 
     )
 
     assert lifecycle.do_start(no_browser=True) is True
-    assert events == ["migrate", "service_start", "readiness", "tunnel"]
+    assert events == ["auto_reset", "migrate", "service_start", "readiness", "tunnel"]
 
 
 def test_machine_service_start_exits_when_readiness_is_unproven(tmp_path, monkeypatch):
@@ -856,6 +886,7 @@ def test_spawn_circuit_breaker_disables_legacy_only_recovery(monkeypatch):
     from aletheia.files import jsonl
     from aletheia.gateway import autostart, lifecycle, service_control
 
+    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Darwin")
     now = _dt.datetime.now(_dt.timezone.utc)
     failures = [
         {
@@ -879,13 +910,17 @@ def test_spawn_circuit_breaker_disables_legacy_only_recovery(monkeypatch):
     )
     state_writes = []
     alerts = []
-    monkeypatch.setattr(lifecycle, "_write_circuit_break_state", lambda: state_writes.append(True))
+    monkeypatch.setattr(
+        lifecycle,
+        "_write_circuit_break_state",
+        lambda **kwargs: state_writes.append(kwargs),
+    )
     monkeypatch.setattr(lifecycle, "_notify_gateway_problem", lambda *args, **kwargs: alerts.append(args))
 
     lifecycle._check_spawn_circuit_breaker()
 
     assert disabled_sources == ["circuit_breaker"]
-    assert state_writes == [True]
+    assert state_writes == [{"recovery_owner": "legacy_macos"}]
     assert len(alerts) == 1
 
 
@@ -901,7 +936,14 @@ def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch)
     import datetime as _dt
     old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
     cb_path = tmp_path / "circuit_break.json"
-    cb_path.write_text(_json.dumps({"tripped_at": old_ts, "source": "circuit_breaker"}), encoding="utf-8")
+    cb_path.write_text(
+        _json.dumps({
+            "tripped_at": old_ts,
+            "source": "circuit_breaker",
+            "recovery_owner": "session",
+        }),
+        encoding="utf-8",
+    )
 
     autostart_enabled: list[str] = []
 
@@ -909,7 +951,13 @@ def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch)
     monkeypatch.setattr(
         _service_control,
         "status",
-        lambda: {"scope": "session", "installed": True, "enabled": False},
+        lambda: {
+            "scope": "session",
+            "installed": True,
+            "enabled": False,
+            "session": {"installed": True},
+            "machine": {"installed": False},
+        },
     )
     monkeypatch.setattr(
         _service_control,
@@ -940,8 +988,20 @@ def test_circuit_break_auto_reset_preserves_state_when_reenable_fails(
     old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
     cb_path = tmp_path / "circuit_break.json"
     cb_path.write_text(
-        _json.dumps({"tripped_at": old_ts, "source": "circuit_breaker"}),
+        _json.dumps({
+            "tripped_at": old_ts,
+            "source": "circuit_breaker",
+            "recovery_owner": "session",
+        }),
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "session": {"installed": True, "enabled": False},
+            "machine": {"installed": False, "enabled": False},
+        },
     )
     monkeypatch.setattr(
         service_control,
@@ -952,6 +1012,249 @@ def test_circuit_break_auto_reset_preserves_state_when_reenable_fails(
     lifecycle._check_circuit_break_auto_reset()
 
     assert cb_path.exists()
+
+
+def test_circuit_break_auto_reset_does_not_reinstall_removed_owner(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    import datetime as _dt
+    import json as _json
+
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(
+        _json.dumps({
+            "tripped_at": old_ts,
+            "source": "circuit_breaker",
+            "recovery_owner": "session",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "session": {"installed": False},
+            "machine": {"installed": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control,
+        "enable",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must not recreate an operator-removed recovery owner")
+        ),
+    )
+
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert not cb_path.exists()
+
+
+def test_circuit_break_auto_reset_does_not_replace_removed_legacy_owner(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart, lifecycle, service_control
+
+    import datetime as _dt
+    import json as _json
+
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(_json.dumps({
+        "tripped_at": old_ts,
+        "source": "circuit_breaker",
+        "recovery_owner": "legacy_macos",
+    }), encoding="utf-8")
+    monkeypatch.setattr(service_control, "status", lambda: {
+        "session": {"installed": False, "enabled": False},
+        "machine": {"installed": False, "enabled": False},
+    })
+    monkeypatch.setattr(autostart, "_legacy_launchd_present", lambda *, labels: [])
+    monkeypatch.setattr(
+        service_control,
+        "enable",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("removed legacy recovery must not be replaced")
+        ),
+    )
+
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert not cb_path.exists()
+
+
+def test_spawn_circuit_breaker_persists_partial_persistent_disable(
+    monkeypatch,
+):
+    import datetime as _dt
+
+    from aletheia.files import jsonl
+    from aletheia.gateway import lifecycle, service_control
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    monkeypatch.setattr(
+        jsonl,
+        "read_jsonl",
+        lambda _name: [
+            {
+                "event_type": "gateway_spawn_failed",
+                "ts": (now - _dt.timedelta(minutes=offset)).isoformat(),
+            }
+            for offset in (2, 1, 0)
+        ],
+    )
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {"enabled": True, "backend": "session"},
+    )
+    monkeypatch.setattr(
+        service_control,
+        "disable",
+        lambda *, source: {
+            "ok": False,
+            "reason": "legacy_launchd_cleanup_error",
+            "persistent_disabled": True,
+            "legacy_preserved": True,
+        },
+    )
+    state_writes = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_write_circuit_break_state",
+        lambda **kwargs: state_writes.append(kwargs),
+    )
+    alerts = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_notify_gateway_problem",
+        lambda *args, **kwargs: alerts.append(args),
+    )
+
+    lifecycle._check_spawn_circuit_breaker()
+
+    assert state_writes == [{"recovery_owner": "session"}]
+    assert "partially disabled" in alerts[0][0]
+
+
+def test_spawn_circuit_breaker_persists_indeterminate_windows_disable(monkeypatch):
+    import datetime as _dt
+
+    from aletheia.files import jsonl
+    from aletheia.gateway import lifecycle, service_control
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    monkeypatch.setattr(jsonl, "read_jsonl", lambda _name: [
+        {"event_type": "gateway_spawn_failed", "ts": (now - _dt.timedelta(minutes=n)).isoformat()}
+        for n in (2, 1, 0)
+    ])
+    states = iter([
+        {"enabled": True, "backend": service_control.WINDOWS_SERVICE_BACKEND},
+        {"machine": {"installed": True, "enabled": None}},
+    ])
+    monkeypatch.setattr(service_control, "status", lambda: next(states))
+    monkeypatch.setattr(
+        service_control,
+        "disable",
+        lambda *, source: {"ok": False, "reason": "elevation_timeout"},
+    )
+    writes = []
+    monkeypatch.setattr(lifecycle, "_write_circuit_break_state", lambda **kwargs: writes.append(kwargs))
+    monkeypatch.setattr(lifecycle, "_notify_gateway_problem", lambda *args, **kwargs: None)
+
+    lifecycle._check_spawn_circuit_breaker()
+
+    assert writes == [{"recovery_owner": service_control.WINDOWS_SERVICE_BACKEND}]
+
+
+@pytest.mark.parametrize(
+    "owner_fields",
+    ({}, {"recovery_owner": "windows-service"}),
+)
+def test_circuit_break_auto_reset_preserves_marker_when_owner_state_unknown(
+    tmp_path,
+    monkeypatch,
+    owner_fields,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    import datetime as _dt
+    import json as _json
+
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(
+        _json.dumps({
+            "tripped_at": old_ts,
+            "source": "circuit_breaker",
+            **owner_fields,
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "session": {"installed": False},
+            "machine": {"installed": None},
+        },
+    )
+    monkeypatch.setattr(
+        service_control,
+        "enable",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must not mutate an owner with unknown state")
+        ),
+    )
+
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert cb_path.exists()
+
+
+def test_circuit_break_auto_reset_clears_ownerless_marker_without_enabling(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle, service_control
+
+    import datetime as _dt
+    import json as _json
+
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
+    cb_path = tmp_path / "circuit_break.json"
+    cb_path.write_text(
+        _json.dumps({"tripped_at": old_ts, "source": "circuit_breaker"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        service_control,
+        "status",
+        lambda: {
+            "session": {"installed": True, "enabled": False},
+            "machine": {"installed": False, "enabled": False},
+        },
+    )
+    monkeypatch.setattr(
+        service_control,
+        "enable",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("ownerless marker must not select a recovery owner")
+        ),
+    )
+
+    lifecycle._check_circuit_break_auto_reset()
+
+    assert not cb_path.exists()
 
 
 def test_circuit_break_does_not_reset_within_window(tmp_path, monkeypatch):
