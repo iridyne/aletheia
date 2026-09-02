@@ -45,6 +45,7 @@ _VERSION = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\'](?:\s*#.*)?\s*$', 
 _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
+_SYSTEMCTL_TIMEOUT_SEC = 30
 _TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
 _RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
 _AUTO_DEPLOY_ROLE = "paper"
@@ -132,14 +133,21 @@ def _version_from_ref(ref: str) -> str:
     return match.group(1) if match else ""
 
 
-def _stable_tags(remote_tags: set[str]) -> dict[str, dict[str, Any]]:
+def _stable_tags(remote_tags: set[str]) -> dict[str, dict[str, Any]] | None:
     values: dict[str, dict[str, Any]] = {}
-    for tag in git_ops.tag_names():
+    local_tags = git_ops.tag_names()
+    if local_tags is None:
+        return None
+    if remote_tags and not set(local_tags).intersection(remote_tags):
+        return None
+    for tag in local_tags:
         if tag not in remote_tags:
             continue
         version = _semver(tag)
         commit = git_ops.tag_commit(tag)
-        if version and commit:
+        if version and not commit:
+            return None
+        if version:
             values[tag] = {"version": version, "sha": commit}
     return values
 
@@ -391,7 +399,13 @@ def _observer_hold_after_activation(
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None, timeout: int = 300) -> subprocess.CompletedProcess:
-    return subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, env=env, timeout=timeout)
+    env = _safe_env() if env is None else env
+    try:
+        return subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, 124, "", f"command exceeded {timeout}s")
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, "", str(exc))
 
 
 def _uv() -> str:
@@ -418,13 +432,19 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
         env = _safe_env()
         env["ALETHEIA_DATA_DIR"] = str(data_copy)
         check = (
-            "from aletheia.storage.migrations import apply_migrations, migration_status; "
-            "status=migration_status(); "
-            "apply_migrations() if not status['current'] else None; "
-            "from aletheia.update.packaged import validate_current_data; "
-            "assert validate_current_data()['ok']; "
-            "from aletheia.update.smoke import run_smoke_check; "
-            "assert run_smoke_check()['ok']"
+            "def _require(value, detail):\n"
+            "    if value is not True:\n"
+            "        raise RuntimeError(detail)\n"
+            "from aletheia.storage.migrations import apply_migrations, migration_status\n"
+            "status=migration_status()\n"
+            "if status.get('current') is not True:\n"
+            "    apply_migrations()\n"
+            "from aletheia.update.packaged import validate_current_data\n"
+            "validated=validate_current_data()\n"
+            "_require(validated.get('ok'), f'data_validation={validated!r}')\n"
+            "from aletheia.update.smoke import run_smoke_check\n"
+            "smoke=run_smoke_check()\n"
+            "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
         )
         result = _run([_uv(), "run", "--directory", str(worktree), "python", "-c", check], cwd=worktree, env=env)
         if result.returncode:
@@ -594,6 +614,8 @@ def run() -> dict[str, Any]:
         if remote_tags is None:
             return _failed(state, tag=None, sha=None, reason="remote_tag_discovery_failed")
         tags = _stable_tags(remote_tags)
+        if tags is None:
+            return _failed(state, tag=None, sha=None, reason="local_tag_discovery_failed")
         observed = dict(state.get("observed_tags") or {})
         moved = [tag for tag, info in tags.items() if tag in observed and observed[tag] != info["sha"]]
         if moved:
@@ -840,7 +862,20 @@ def _owned_unit_data_dir(path: Path) -> str:
 
 
 def _systemctl(*args: str) -> None:
-    result = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True,
+            text=True,
+            timeout=_SYSTEMCTL_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AutoUpdateError(
+            "systemd_user_operation_timeout",
+            f"systemctl --user {' '.join(args)} exceeded {_SYSTEMCTL_TIMEOUT_SEC}s",
+        ) from exc
+    except OSError as exc:
+        raise AutoUpdateError("systemd_user_operation_failed", str(exc)) from exc
     if result.returncode:
         raise AutoUpdateError("systemd_user_operation_failed", (result.stderr or result.stdout)[-500:])
 

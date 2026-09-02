@@ -20,20 +20,12 @@ from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops, target_fresh
-
-_SECRET_PREFIXES = (
-    "BITGET_",
-    "OKX_",
-    "BINANCE_",
-    "OPENAI_",
-    "ANTHROPIC_",
-    "LLM_",
-    "TELEGRAM_BOT_TOKEN",
-    "COINALYZE_",
-    "FRED_",
-)
+from aletheia.update.process_env import safe_env
 
 logger = logging.getLogger("aletheia.update.applier")
+
+_DEPENDENCY_SYNC_TIMEOUT_SEC = 300
+_NPM_COMMAND_TIMEOUT_SEC = 300
 
 
 def _packaged_module():
@@ -47,7 +39,7 @@ def _is_packaged() -> bool:
 
 
 def _safe_env() -> dict:
-    return {key: value for key, value in os.environ.items() if not key.startswith(_SECRET_PREFIXES)}
+    return safe_env()
 
 
 def update_progress() -> dict:
@@ -88,6 +80,12 @@ def check_for_update() -> dict:
     cur = git_ops.current_commit()
     remote = git_ops.remote_commit(branch)
     behind = git_ops.behind_count(branch)
+    if not cur or not remote or not isinstance(behind, int) or behind < 0:
+        return {
+            "ok": False,
+            "reason": "remote_state_unavailable",
+            "mode": "development",
+        }
     checked_at = datetime.now(timezone.utc).isoformat()
 
     # Never whole-save the snapshot loaded before network IO. Another process may
@@ -147,13 +145,24 @@ def _reinstall_deps() -> dict:
             capture_output=True,
             text=True,
             env=env,
+            timeout=_DEPENDENCY_SYNC_TIMEOUT_SEC,
             **_no_window_kwargs(),
         )
         if result.returncode == 0:
             return {"ok": True, "tool": "uv"}
     except FileNotFoundError:
-        pass
-    return {"ok": False, "reason": "update_dependency_sync_failed"}
+        return {"ok": False, "reason": "update_dependency_sync_failed", "detail": "uv unavailable"}
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "reason": "update_dependency_sync_timeout",
+            "detail": f"uv sync exceeded {_DEPENDENCY_SYNC_TIMEOUT_SEC}s",
+        }
+    return {
+        "ok": False,
+        "reason": "update_dependency_sync_failed",
+        "detail": (result.stderr or result.stdout or "uv sync failed").strip()[-500:],
+    }
 
 
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
@@ -196,10 +205,20 @@ def _run_npm(args: list[str], *, env: dict) -> subprocess.CompletedProcess | Non
                 capture_output=True,
                 text=True,
                 env=env,
+                timeout=_NPM_COMMAND_TIMEOUT_SEC,
                 **_no_window_kwargs(),
             )
         except FileNotFoundError:
             continue
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(
+                [command, *args],
+                124,
+                "",
+                f"npm {' '.join(args)} exceeded {_NPM_COMMAND_TIMEOUT_SEC}s",
+            )
+        except OSError as exc:
+            return subprocess.CompletedProcess([command, *args], 127, "", str(exc))
     return None
 
 
@@ -210,6 +229,7 @@ def _install_frontend_deps() -> dict:
     return {
         "ok": result.returncode == 0,
         "reason": "npm_ci_failed" if result.returncode else None,
+        "detail": (getattr(result, "stderr", "") or getattr(result, "stdout", "")).strip()[-500:],
     }
 
 
@@ -223,7 +243,11 @@ def _build_frontend(frontend_tree: str) -> dict:
         return {"ok": False, "reason": "npm_unavailable"}
     if result.returncode or not (_STAGED_DASHBOARD_STATIC / "index.html").is_file():
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
-        return {"ok": False, "reason": "frontend_build_failed"}
+        return {
+            "ok": False,
+            "reason": "frontend_build_failed",
+            "detail": (getattr(result, "stderr", "") or getattr(result, "stdout", "")).strip()[-500:],
+        }
 
     validated = target_fresh.validate_dashboard_artifacts(
         _STAGED_DASHBOARD_STATIC,
@@ -287,6 +311,12 @@ def _restart_gateway() -> dict:
             timeout=90,
             **_no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "reason": "gateway_restart_timeout",
+            "detail": "gateway restart exceeded 90s",
+        }
     except Exception as exc:
         return {"ok": False, "reason": type(exc).__name__}
     if result.returncode not in {0, 2}:
@@ -351,6 +381,33 @@ def _metadata_fields(result: dict | None) -> dict:
         "metadata_persisted": ok,
         "metadata_error": None if ok else (result.get("detail") or result.get("reason") or "unknown"),
     }
+
+
+def _record_update_failure(
+    old: str,
+    reason: str,
+    *,
+    attempted: str | None = None,
+    detail: str = "",
+    actual_head: str | None = None,
+) -> None:
+    """Persist one failure event before returning an unapplied update result."""
+    after = {"commit": attempted or ""}
+    if actual_head is not None:
+        after["actual_head"] = actual_head
+    detail = str(detail)[-1000:]
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "update_failed",
+            "entity_type": "system_update",
+            "entity_id": attempted or old or "unknown",
+            "before": {"commit": old},
+            "after": after,
+            "message": f"Update failed: {reason}" + (f": {detail}" if detail else ""),
+        }
+    )
 
 
 def _record_metadata_failure(commit: str, result: dict | None) -> None:
@@ -622,17 +679,19 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     if progress:
         progress("Fetching latest commits")
     old = git_ops.current_commit()
+    if not old:
+        _record_update_failure("", "current_commit_unavailable")
+        return {
+            "applied": False,
+            "reason": "current_commit_unavailable",
+            "mode": "development",
+        }
     pulled = git_ops.pull(branch)
     if not pulled.get("ok"):
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "update_failed",
-                "entity_type": "system_update",
-                "entity_id": old,
-                "message": f"Update failed: {pulled.get('reason')}",
-            }
+        _record_update_failure(
+            old,
+            pulled.get("reason", "pull_failed"),
+            detail=pulled.get("stderr") or "",
         )
         return {
             "applied": False,
@@ -643,8 +702,26 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
 
     new = pulled.get("remote_commit") or git_ops.current_commit()
     if not new:
+        _record_update_failure(old, "new_commit_unavailable")
         return {"applied": False, "reason": "new_commit_unavailable", "mode": "development"}
-    changed_files = git_ops.changed_files(old, new)
+    try:
+        changed_files = git_ops.changed_files(old, new)
+    except Exception as exc:
+        changed_files = None
+        changed_files_error = f"{type(exc).__name__}: {exc}"
+    else:
+        changed_files_error = "git diff --name-only failed"
+    if changed_files is None:
+        _record_update_failure(old, "changed_files_unavailable", attempted=new, detail=changed_files_error)
+        return _rollback_update(
+            old,
+            new,
+            python_deps_changed=False,
+            frontend_deps_changed=False,
+            restart=False,
+            failure_reason="changed_files_unavailable",
+            failure_detail=changed_files_error,
+        )
     python_deps_changed = bool({"pyproject.toml", "uv.lock"}.intersection(changed_files))
     frontend_deps_changed = _frontend_deps_changed(changed_files)
     frontend_changed = any(path.startswith("frontend/") for path in changed_files)
@@ -669,12 +746,34 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
 
         reset = git_ops.reset_hard(old)
         if not reset.get("ok"):
-            return {"applied": False, "reason": "schema_preflight_source_restore_failed", "mode": "development"}
+            # A single retry covers a transient Git/index lock without leaving the
+            # post-pull checkout unclassified indefinitely.
+            reset = git_ops.reset_hard(old)
+        if not reset.get("ok"):
+            actual_head = git_ops.current_commit() or ""
+            detail = reset.get("stderr") or reset.get("reason") or "hard reset failed"
+            _record_update_failure(
+                old,
+                "schema_preflight_source_restore_failed",
+                attempted=new,
+                detail=detail,
+                actual_head=actual_head,
+            )
+            return {
+                "applied": False,
+                "reason": "schema_preflight_source_restore_failed",
+                "message": f"Could not restore the pre-pull source checkout: {detail}",
+                "old_commit": old,
+                "attempted_commit": new,
+                "actual_head": actual_head,
+                "mode": "development",
+            }
         candidate = None
         try:
             preflight_backup = BackupService(get_data_dir()).create_backup(label="interactive_schema_preflight")
             candidate = _candidate_preflight(new, preflight_backup)
         except AutoUpdateError as exc:
+            _record_update_failure(old, exc.reason, attempted=new, detail=exc.detail)
             return {
                 "applied": False,
                 "reason": exc.reason,
@@ -682,6 +781,7 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 "mode": "development",
             }
         except Exception as exc:
+            _record_update_failure(old, "schema_preflight_failed", attempted=new, detail=type(exc).__name__)
             return {
                 "applied": False,
                 "reason": "schema_preflight_failed",
@@ -692,6 +792,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             _remove_candidate(candidate)
         advanced = git_ops.merge_fast_forward(new)
         if not advanced.get("ok"):
+            _record_update_failure(
+                old,
+                advanced.get("reason", "ff_only_rejected"),
+                attempted=new,
+                detail=advanced.get("stderr", ""),
+            )
             return {
                 "applied": False,
                 "reason": advanced.get("reason", "ff_only_rejected"),
@@ -711,6 +817,7 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 frontend_deps_changed=frontend_deps_changed,
                 restart=restart,
                 failure_reason=install.get("reason", "python_dependency_install_failed"),
+                failure_detail=install.get("detail"),
             )
         deps_reinstalled = True
     if restart and frontend_deps_changed:
@@ -725,6 +832,7 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 frontend_deps_changed=False,
                 restart=restart,
                 failure_reason=install["reason"],
+                failure_detail=install.get("detail"),
             )
     frontend_tree = git_ops.tree_hash(new, "frontend") if restart else ""
     dashboard_build_required = restart and _dashboard_build_required(frontend_tree)
@@ -740,6 +848,7 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 frontend_deps_changed=frontend_deps_changed,
                 restart=restart,
                 failure_reason=build["reason"],
+                failure_detail=build.get("detail"),
             )
 
     if not schema_changed:

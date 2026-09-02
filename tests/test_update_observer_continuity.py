@@ -322,17 +322,23 @@ def test_fresh_capture_parses_target_process_payload(monkeypatch):
 
     payload = _snapshot(disk_sha="new222", gateway_sha="new222")
     stdout = continuity._FRESH_CAPTURE_PREFIX + json.dumps(payload)
-    monkeypatch.setattr(
-        continuity.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
-    )
+    seen = {}
+
+    def fake_run(*args, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ALETHEIA_UPDATE_BEARER_TOKEN", "token")
+    monkeypatch.setattr(continuity.subprocess, "run", fake_run)
 
     result = continuity.capture_update_continuity_fresh()
 
     assert result["capture_available"] is True
     assert result["capture_source"] == "fresh_target_process"
     assert result["control"]["disk_sha"] == "new222"
+    assert "OPENAI_API_KEY" not in seen["env"]
+    assert "ALETHEIA_UPDATE_BEARER_TOKEN" not in seen["env"]
 
 
 def test_fresh_capture_failure_is_explicit(monkeypatch):
@@ -620,3 +626,34 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
 
     assert result["applied"] is False
     assert anchored == [], "checkpoint must not be re-anchored when apply fails"
+
+
+def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
+    import aletheia.observation_lab.checkpoint as obs_chkpt
+    from aletheia.update import applier, continuity
+
+    before = _snapshot()
+    after = _snapshot(disk_sha="new222", gateway_sha="new222")
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(continuity, "_gateway_status", lambda **_: after["gateway"])
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart, progress=None: {
+            "applied": True,
+            "mode": "development",
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        },
+    )
+    audits = []
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: audits.append((args, kwargs)))
+    monkeypatch.setattr(obs_chkpt, "compute_joint_checkpoint", lambda: (_ for _ in ()).throw(RuntimeError("db")))
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is True
+    assert "observation_checkpoint_reanchor_failed" in result["continuity"]["comparison"]["warnings"]
+    assert any(args[0] == "update_observer_checkpoint_reanchor_failed" for args, _kwargs in audits)
