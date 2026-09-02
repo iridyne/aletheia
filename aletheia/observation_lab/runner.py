@@ -132,6 +132,7 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
                 window.name, window.kind, exc, exc_info=True,
             )
             results[window.name] = {"status": "error", "error": repr(exc)[:400]}
+    _save_checkpoint(checkpoint_summary)
     return {
         "windows_run": len(ordered),
         "windows_errored": errored,
@@ -141,18 +142,17 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
 
 
 def _pass_checkpoint() -> dict[str, Any]:
-    """Verify + save the joint checkpoint at the start of one pass.
+    """Verify the joint checkpoint at the start of one pass.
 
-    Failure-isolated: the whole checkpoint step is one try/except so a
+    Saving happens after windows run, so expected append-only Lab evidence
+    produced by this pass is part of the checkpoint for the next pass rather
+    than being reported as restore drift. Failure-isolated: the whole
+    checkpoint step is one try/except so a
     broken ``aletheia_schema_migrations`` reader (or any other input to
     the fingerprint) never prevents the window pass from running.
     """
     try:
-        from aletheia.observation_lab.checkpoint import (
-            compute_joint_checkpoint,
-            save_joint_checkpoint,
-            verify_joint_checkpoint,
-        )
+        from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
 
         verdict = verify_joint_checkpoint()
         if not verdict.ok:
@@ -160,17 +160,27 @@ def _pass_checkpoint() -> dict[str, Any]:
                 "observation_lab.runner: joint checkpoint mismatch: %s",
                 verdict.reason,
             )
-        current = compute_joint_checkpoint()
-        save_joint_checkpoint(current)
+        current_fingerprint = getattr(verdict, "current_fingerprint", None)
+        if current_fingerprint is None:
+            # Compatibility with older test doubles/callers that only exposed
+            # ``ok``, ``reason`` and ``last``.
+            from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
+
+            current_fingerprint = compute_joint_checkpoint().joint_fingerprint
         return {
             "ok": bool(verdict.ok),
             "reason": verdict.reason,
-            "current_fingerprint": current.joint_fingerprint,
+            "current_fingerprint": current_fingerprint,
             "last_fingerprint": (
                 verdict.last.joint_fingerprint if verdict.last is not None else None
             ),
-            "active_manifest_count": current.active_manifest_count,
-            "app_migration_count": current.app_migration_count,
+            "active_manifest_count": (
+                len(verdict.last.active_manifest_hashes)
+                if verdict.last is not None and verdict.ok else None
+            ),
+            "app_migration_count": (
+                verdict.last.app_migration_count if verdict.last is not None and verdict.ok else None
+            ),
         }
     except Exception as exc:
         logger.warning(
@@ -178,6 +188,25 @@ def _pass_checkpoint() -> dict[str, Any]:
             exc, exc_info=True,
         )
         return {"ok": False, "reason": f"checkpoint_error:{exc!r}"[:400]}
+
+
+def _save_checkpoint(summary: dict[str, Any]) -> None:
+    """Persist the post-window Lab state without widening runner failures."""
+    try:
+        from aletheia.observation_lab.checkpoint import (
+            compute_joint_checkpoint,
+            save_joint_checkpoint,
+        )
+
+        current = compute_joint_checkpoint()
+        save_joint_checkpoint(current)
+        summary.update(
+            current_fingerprint=current.joint_fingerprint,
+            active_manifest_count=current.active_manifest_count,
+            app_migration_count=current.app_migration_count,
+        )
+    except Exception as exc:
+        summary.update(ok=False, reason=f"checkpoint_save_error:{exc!r}"[:400])
 
 
 def register_builtin_handlers() -> None:

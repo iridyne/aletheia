@@ -44,6 +44,10 @@ class JointCheckpoint:
     app_migration_count: int
     active_manifest_hashes: tuple[str, ...]
     active_manifest_count: int
+    lab_schema_head: str
+    lab_schema_count: int
+    lab_state_fingerprint: str
+    checkpoint_ledger_fingerprint: str
     joint_fingerprint: str
     notes: str | None = None
 
@@ -94,16 +98,109 @@ def _active_manifest_hashes(now: str | None = None) -> tuple[str, ...]:
     return tuple(sorted({m.manifest_hash for m in manifests}))
 
 
+def _lab_schema_state() -> tuple[str, int]:
+    from aletheia.observation_lab.db import get_lab_db
+
+    rows = get_lab_db().execute(
+        "SELECT migration_id FROM lab_schema_migrations ORDER BY rowid DESC"
+    ).fetchall()
+    if not rows:
+        return ("<empty>", 0)
+    return str(rows[0][0]), len(rows)
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {"__bytes__": value.hex()}
+    return value
+
+
+def _lab_state_fingerprint() -> str:
+    """Hash every Lab table except the checkpoint ledger itself.
+
+    The checkpoint row is intentionally excluded from this digest because it
+    records the digest. The separate ledger digest below covers prior rows in
+    a stable way, so saving a quiet checkpoint does not create self-drift.
+    """
+    from aletheia.observation_lab.db import get_lab_db
+
+    db = get_lab_db()
+    tables = db.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%' AND name <> 'joint_checkpoints' "
+        "ORDER BY name"
+    ).fetchall()
+    material: list[Any] = []
+    for table in tables:
+        name = str(table["name"])
+        columns = [
+            str(row["name"])
+            for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
+        ]
+        rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
+        encoded_rows = sorted(
+            [
+                [_json_value(row[column]) for column in columns]
+                for row in rows
+            ],
+            key=_canonical_json,
+        )
+        material.append({
+            "name": name,
+            "sql": table["sql"],
+            "columns": columns,
+            "rows": encoded_rows,
+        })
+    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+
+
+def _checkpoint_ledger_fingerprint(lab_state_fingerprint: str) -> str:
+    """Hash historical checkpoint rows while excluding the current state rows."""
+    from aletheia.observation_lab.db import get_lab_db
+
+    rows = get_lab_db().execute(
+        "SELECT checkpoint_id, app_migration_head, app_migration_count, "
+        "active_manifest_hashes, active_manifest_count, lab_schema_head, "
+        "lab_schema_count, lab_state_fingerprint, checkpoint_ledger_fingerprint, "
+        "joint_fingerprint FROM joint_checkpoints ORDER BY rowid"
+    ).fetchall()
+    material = [
+        {
+            "checkpoint_id": row["checkpoint_id"],
+            "app_migration_head": row["app_migration_head"],
+            "app_migration_count": row["app_migration_count"],
+            "active_manifest_hashes": row["active_manifest_hashes"],
+            "active_manifest_count": row["active_manifest_count"],
+            "lab_schema_head": row["lab_schema_head"],
+            "lab_schema_count": row["lab_schema_count"],
+            "lab_state_fingerprint": row["lab_state_fingerprint"],
+            "checkpoint_ledger_fingerprint": row["checkpoint_ledger_fingerprint"],
+            "joint_fingerprint": row["joint_fingerprint"],
+        }
+        for row in rows
+        if row["lab_state_fingerprint"] != lab_state_fingerprint
+    ]
+    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+
+
 def _fingerprint(
     *,
     app_migration_head: str,
     app_migration_count: int,
     active_manifest_hashes: tuple[str, ...],
+    lab_schema_head: str,
+    lab_schema_count: int,
+    lab_state_fingerprint: str,
+    checkpoint_ledger_fingerprint: str,
 ) -> str:
     payload = {
         "app_migration_head": app_migration_head,
         "app_migration_count": int(app_migration_count),
         "active_manifest_hashes": list(active_manifest_hashes),
+        "lab_schema_head": lab_schema_head,
+        "lab_schema_count": int(lab_schema_count),
+        "lab_state_fingerprint": lab_state_fingerprint,
+        "checkpoint_ledger_fingerprint": checkpoint_ledger_fingerprint,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
@@ -117,10 +214,17 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
     """
     head, count = _read_app_migration_state()
     hashes = _active_manifest_hashes()
+    lab_head, lab_count = _lab_schema_state()
+    lab_state = _lab_state_fingerprint()
+    ledger_state = _checkpoint_ledger_fingerprint(lab_state)
     fingerprint = _fingerprint(
         app_migration_head=head,
         app_migration_count=count,
         active_manifest_hashes=hashes,
+        lab_schema_head=lab_head,
+        lab_schema_count=lab_count,
+        lab_state_fingerprint=lab_state,
+        checkpoint_ledger_fingerprint=ledger_state,
     )
     return JointCheckpoint(
         checkpoint_id=uuid.uuid4().hex,
@@ -129,6 +233,10 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
         app_migration_count=count,
         active_manifest_hashes=hashes,
         active_manifest_count=len(hashes),
+        lab_schema_head=lab_head,
+        lab_schema_count=lab_count,
+        lab_state_fingerprint=lab_state,
+        checkpoint_ledger_fingerprint=ledger_state,
         joint_fingerprint=fingerprint,
         notes=notes,
     )
@@ -152,7 +260,8 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
         "INSERT INTO joint_checkpoints ("
         "checkpoint_id, recorded_at, app_migration_head, app_migration_count, "
         "active_manifest_hashes, active_manifest_count, joint_fingerprint, notes"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ", lab_schema_head, lab_schema_count, lab_state_fingerprint, "
+        "checkpoint_ledger_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             checkpoint.checkpoint_id,
             checkpoint.recorded_at,
@@ -162,6 +271,10 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
             checkpoint.active_manifest_count,
             checkpoint.joint_fingerprint,
             checkpoint.notes,
+            checkpoint.lab_schema_head,
+            checkpoint.lab_schema_count,
+            checkpoint.lab_state_fingerprint,
+            checkpoint.checkpoint_ledger_fingerprint,
         ),
     )
 
@@ -182,6 +295,10 @@ def latest_joint_checkpoint() -> JointCheckpoint | None:
         app_migration_count=int(row["app_migration_count"]),
         active_manifest_hashes=tuple(json.loads(row["active_manifest_hashes"])),
         active_manifest_count=int(row["active_manifest_count"]),
+        lab_schema_head=str(row["lab_schema_head"] or "<legacy>"),
+        lab_schema_count=int(row["lab_schema_count"] or 0),
+        lab_state_fingerprint=str(row["lab_state_fingerprint"] or "<legacy>"),
+        checkpoint_ledger_fingerprint=str(row["checkpoint_ledger_fingerprint"] or "<legacy>"),
         joint_fingerprint=row["joint_fingerprint"],
         notes=row["notes"],
     )
@@ -221,6 +338,9 @@ def verify_joint_checkpoint() -> CheckpointVerification:
             f"fingerprint_mismatch: app_head({last.app_migration_head}→"
             f"{current.app_migration_head}) count({last.app_migration_count}→"
             f"{current.app_migration_count}) manifests({last.active_manifest_count}→"
-            f"{current.active_manifest_count})"
+            f"{current.active_manifest_count}) lab_schema({last.lab_schema_head}/"
+            f"{last.lab_schema_count}→{current.lab_schema_head}/"
+            f"{current.lab_schema_count}) lab_state({last.lab_state_fingerprint}→"
+            f"{current.lab_state_fingerprint})"
         ),
     )

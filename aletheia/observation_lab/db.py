@@ -13,9 +13,11 @@ consequences:
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
@@ -25,7 +27,16 @@ _readonly_local = threading.local()
 _WRITE_LOCK = threading.RLock()
 
 
+def _schema_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
 _LAB_SCHEMA_SQL = (
+    "CREATE TABLE IF NOT EXISTS lab_schema_migrations ("
+    "migration_id TEXT PRIMARY KEY,"
+    "checksum TEXT NOT NULL,"
+    "applied_at TEXT NOT NULL"
+    ");"
     "CREATE TABLE IF NOT EXISTS filter_shadow_frozen_units ("
     "id TEXT PRIMARY KEY,"
     "experiment_id TEXT NOT NULL,"
@@ -110,6 +121,10 @@ _LAB_SCHEMA_SQL = (
     "app_migration_count INTEGER NOT NULL,"
     "active_manifest_hashes TEXT NOT NULL,"     # canonical json array
     "active_manifest_count INTEGER NOT NULL,"
+    "lab_schema_head TEXT,"
+    "lab_schema_count INTEGER,"
+    "lab_state_fingerprint TEXT,"
+    "checkpoint_ledger_fingerprint TEXT,"
     "joint_fingerprint TEXT NOT NULL,"          # sha256 over the whole shape
     "notes TEXT"
     ");"
@@ -216,6 +231,12 @@ _LAB_SCHEMA_SQL = (
     "CREATE TRIGGER IF NOT EXISTS trg_observation_units_no_delete "
     "BEFORE DELETE ON observation_units BEGIN "
     "SELECT RAISE(ABORT, 'observation_units is append-only'); END;"
+    "CREATE TRIGGER IF NOT EXISTS trg_execution_manifests_no_update "
+    "BEFORE UPDATE ON execution_manifests BEGIN "
+    "SELECT RAISE(ABORT, 'execution_manifests is append-only'); END;"
+    "CREATE TRIGGER IF NOT EXISTS trg_execution_manifests_no_delete "
+    "BEFORE DELETE ON execution_manifests BEGIN "
+    "SELECT RAISE(ABORT, 'execution_manifests is append-only'); END;"
 )
 
 
@@ -260,9 +281,41 @@ def get_lab_db() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_LAB_SCHEMA_SQL)
+    _ensure_lab_schema_ledger(conn)
     _local.conn = conn
     _local.path = target
     return conn
+
+
+def _ensure_lab_schema_ledger(conn: sqlite3.Connection) -> None:
+    """Record the materialized Lab schema without rewriting migration history."""
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(joint_checkpoints)").fetchall()
+    }
+    for name, ddl in (
+        ("lab_schema_head", "TEXT"),
+        ("lab_schema_count", "INTEGER"),
+        ("lab_state_fingerprint", "TEXT"),
+        ("checkpoint_ledger_fingerprint", "TEXT"),
+    ):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE joint_checkpoints ADD COLUMN {name} {ddl}")
+
+    checksum = hashlib.sha256(_LAB_SCHEMA_SQL.encode("utf-8")).hexdigest()
+    latest = conn.execute(
+        "SELECT migration_id, checksum FROM lab_schema_migrations "
+        "ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    if latest is None or latest["checksum"] != checksum:
+        next_number = conn.execute(
+            "SELECT COUNT(*) FROM lab_schema_migrations"
+        ).fetchone()[0] + 1
+        conn.execute(
+            "INSERT INTO lab_schema_migrations (migration_id, checksum, applied_at) "
+            "VALUES (?, ?, ?)",
+            (f"lab-v{next_number}", checksum, _schema_now()),
+        )
 
 
 @contextmanager

@@ -121,7 +121,13 @@ def _canonical_json(value: Any) -> str:
 
 def _compute_manifest_hash(payload: dict[str, Any]) -> str:
     material = {k: v for k, v in payload.items() if k not in _HASH_EXCLUDED_FIELDS}
+    # The builder computes the address before filling this self-reference.
+    material["manifest_hash"] = ""
     return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+
+
+def _manifest_content_hash(manifest: ExecutionManifest) -> str:
+    return _compute_manifest_hash(asdict(manifest))
 
 
 def _now() -> str:
@@ -247,6 +253,10 @@ def publish_manifest(manifest: ExecutionManifest) -> bool:
         normalized_from, normalized_until,
     ):
         raise ValueError("manifest effective interval is not canonical UTC")
+    if manifest.manifest_hash != _manifest_content_hash(manifest):
+        raise ManifestIntegrityError(
+            f"manifest {manifest.manifest_id} content does not match manifest_hash"
+        )
 
     db = get_lab_db()
     existing = db.execute(
@@ -304,6 +314,8 @@ def load_active_manifests(
     for row in rows:
         manifest = _row_to_manifest(dict(row))
         try:
+            if manifest.manifest_hash != _manifest_content_hash(manifest):
+                raise ValueError("manifest_hash does not match canonical content")
             start, end, _, _ = _validated_interval(
                 manifest.effective_from, manifest.effective_until,
             )

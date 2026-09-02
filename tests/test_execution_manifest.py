@@ -158,6 +158,8 @@ def test_load_active_manifests_respects_effective_interval():
 
 
 def test_load_active_manifests_reports_malformed_legacy_row():
+    from unittest.mock import patch
+
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.manifest import (
         ManifestIntegrityError,
@@ -168,16 +170,54 @@ def test_load_active_manifests_reports_malformed_legacy_row():
     manifest = _sample_manifest()
     publish_manifest(manifest)
     db = get_lab_db()
-    db.execute("PRAGMA ignore_check_constraints=ON")
-    db.execute(
-        "UPDATE execution_manifests SET effective_from='legacy-bad' "
-        "WHERE manifest_id=?",
+    row = dict(db.execute(
+        "SELECT * FROM execution_manifests WHERE manifest_id=?",
         (manifest.manifest_id,),
-    )
-    db.execute("PRAGMA ignore_check_constraints=OFF")
+    ).fetchone())
+    row["effective_from"] = "legacy-bad"
 
-    with pytest.raises(ManifestIntegrityError, match=manifest.manifest_id):
-        load_active_manifests(now="2026-08-19T12:00:00+00:00")
+    class _Rows:
+        def fetchall(self):
+            return [row]
+
+    class _ReadOnlyDb:
+        def execute(self, *_args):
+            return _Rows()
+
+    with patch("aletheia.observation_lab.db.get_lab_db", return_value=_ReadOnlyDb()):
+        with pytest.raises(ManifestIntegrityError, match=manifest.manifest_id):
+            load_active_manifests(now="2026-08-19T12:00:00+00:00")
+
+
+def test_load_active_manifests_reports_payload_hash_mismatch():
+    from unittest.mock import patch
+
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.manifest import (
+        ManifestIntegrityError,
+        load_active_manifests,
+        publish_manifest,
+    )
+
+    manifest = _sample_manifest()
+    publish_manifest(manifest)
+    row = dict(get_lab_db().execute(
+        "SELECT * FROM execution_manifests WHERE manifest_id=?",
+        (manifest.manifest_id,),
+    ).fetchone())
+    row["treatment_payload_json"] = "{\"multiplier\":9.9}"
+
+    class _Rows:
+        def fetchall(self):
+            return [row]
+
+    class _ReadOnlyDb:
+        def execute(self, *_args):
+            return _Rows()
+
+    with patch("aletheia.observation_lab.db.get_lab_db", return_value=_ReadOnlyDb()):
+        with pytest.raises(ManifestIntegrityError, match="manifest_hash"):
+            load_active_manifests(now="2026-08-19T12:00:00+00:00")
 
 
 def test_resolve_treatment_is_deterministic_and_arms_split_at_allocation():
