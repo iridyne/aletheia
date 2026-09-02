@@ -655,8 +655,8 @@ class TestRealizedPnlIsolation:
         assert summary["realized_pnl"] == 10.0
         assert summary["all_realized_pnl"] == 35.0
 
-    def test_realized_pnl_no_mode_returns_all(self, db):
-        """When no execution_mode is specified, all closed positions count."""
+    def test_local_account_default_keeps_realized_pnl_mode_scoped(self, db):
+        """The local account headline excludes closes from other modes."""
         now = datetime.now(timezone.utc)
         _insert_verified_closed_position(
             position_id="all-mode-paper", symbol="BTC/USDT",
@@ -671,7 +671,7 @@ class TestRealizedPnlIsolation:
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
         summary = compute_portfolio(execution_mode=None)
-        assert summary["realized_pnl"] == 35.0
+        assert summary["realized_pnl"] == 10.0
         assert summary["all_realized_pnl"] == 35.0
 
 

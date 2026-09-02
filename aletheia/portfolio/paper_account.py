@@ -155,12 +155,23 @@ def ensure_paper_account() -> None:
             )
 
 
-def get_paper_account(event_limit: int = 20) -> dict:
+def get_paper_account(
+    event_limit: int = 20,
+    *,
+    open_positions: list[dict] | None = None,
+) -> dict:
     from aletheia.storage.sqlite import read_snapshot
 
     ensure_paper_account()
     with read_snapshot():
-        positions = _open_local_positions()
+        positions = (
+            _open_local_positions()
+            if open_positions is None
+            else [
+                position for position in open_positions
+                if position.get("execution_mode") == "paper_internal"
+            ]
+        )
         cash = repo.get_paper_account_cash_balance()
         reserved = _reserved_margin_usdt(positions)
         unrealized = sum(float(position.get("unrealized_pnl") or 0.0) for position in positions)
