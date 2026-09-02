@@ -58,7 +58,8 @@ Exposure snapshot and exact Main outcome identities, then invokes the existing
 cohort and verdict algorithms in memory. It records only Lab Evaluation and
 Result rows; it never creates or reads legacy Experiment rows. Monitoring uses
 the descriptive look, while confirmatory evaluation requires a hash-valid,
-frozen Lab inference plan and its assignment-unit cutoff; a consumed plan
+frozen Lab inference plan, its assignment-unit cutoff, and a declared finite
+authority alpha; a consumed plan
 returns its already-bound Evaluation rather than recomputing history.
 
 ## Frozen legacy storage inventory
