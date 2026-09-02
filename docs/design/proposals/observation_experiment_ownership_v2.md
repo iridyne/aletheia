@@ -263,8 +263,13 @@ atomically persists that exact receipt in a durable retry set that is always
 drained before acknowledgement/pruning. Numeric gaps alone are not evidence
 gaps. A missing-receipt alarm requires a persisted source
 checkpoint/range/hash proving a committed receipt should exist. Restore checks
-use persisted checkpoint, watermark, retry state, and source identity. Main prunes only
-after Lab acknowledgement plus a safety grace. Capacity backpressure disables
+use persisted checkpoint, watermark, retry state, and source identity. Main may
+prune an acknowledged receipt only after the safety grace and after a verified,
+durable replay source covers that receipt: either an immutable receipt archive
+or a Lab backup checkpoint whose fingerprint covers the imported receipt range
+and row-level evidence. Before pruning is enabled, the Observation Lab backup
+contract and joint restore check must be extended to prove that coverage; an
+import acknowledgement alone is insufficient. Capacity backpressure disables
 Experiment treatments to baseline while ordinary Paper continues.
 
 Authenticated owner actions use the same durable bridge with a typed
@@ -273,10 +278,21 @@ Generation, expected Manifest/behavior-policy identity where relevant, reason,
 action time, audit identity, and dedup key. Lab imports idempotently and performs
 the lifecycle transition. Main never edits Lab lifecycle state directly.
 
+Accepting a safety-reducing action such as withdrawal, refreeze, or invalidation
+atomically persists its receipt and a deny tombstone for the matching Manifest
+or Generation in Main. The treatment resolver consults pending deny tombstones
+before every behavior decision and immediately falls back to baseline; it does
+not wait for the Lab importer, outbox capacity threshold, or audit mirroring.
+The tombstone is not lifecycle authority and cannot enable behavior. It remains
+until Lab has applied the canonical revocation and the resulting state and
+source receipt are covered by the verified replay/backup boundary. Rejected or
+conflicted actions keep the denial until an authenticated owner resolution is
+durably recorded.
+
 API acceptance of an owner-action receipt means `persisted/pending`, not
 `admitted`, `promoted`, or `refrozen`. Those states may be reported only after
 the Lab-applied transition is observable; stale/conflicted/rejected actions are
-reported honestly.
+reported honestly. Behavior-enabling actions have no Main-side fast path.
 
 ## 8. Evaluation, retention, archive, and audit
 
@@ -290,9 +306,12 @@ Retention claims are a derived, rebuildable index of canonical active
 Generation, Exposure, and pending-outcome state. A claim row cannot invent
 evidence authority. Release requires exact settlement, import, and archive
 proof. Unknown/corrupt claim state fails closed only for the affected domain.
-Before any Generation becomes Lab-authoritative, its T0 inputs must be frozen
-and outcomes exactly protected, or a proven sufficient temporary legacy guard
-must remain active.
+A Lab restore may not advertise an import watermark beyond row-level evidence
+covered by the restored checkpoint. If checkpoint, archived receipt range, and
+canonical rows disagree, startup fails closed and replays from the retained
+source rather than accepting the stale Lab state. Before any Generation becomes
+Lab-authoritative, its T0 inputs must be frozen and outcomes exactly protected,
+or a proven sufficient temporary legacy guard must remain active.
 
 Archive writing, hash verification/replay, and compact archived roots for new
 Lab Generations must exist before authority cutover. Cold eviction may remove
