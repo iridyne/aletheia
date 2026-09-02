@@ -39,6 +39,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     import aletheia.learning.lifecycle as lifecycle
     import aletheia.learning.models as learning_models
     import aletheia.learning.policy_epochs as policy_epochs
+    import aletheia.universe.allocator as allocator
     import aletheia.universe.filter_outcome_recorder as filter_settler
     from aletheia.config import loader, secrets
     from aletheia.config.schema import AletheiaConfig
@@ -98,6 +99,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     for module in (
         learning_models,
         policy_epochs,
+        allocator,
         contribution_runner,
         lifecycle,
         filter_settler,
