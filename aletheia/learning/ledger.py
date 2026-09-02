@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from aletheia.storage.repositories import (
     complete_outcome_economics_sql,
+    insert_filter_candidate_outcomes_batch,
     transaction,
 )
 from aletheia.storage.sqlite import get_db, register_instant_us
@@ -74,8 +75,9 @@ def insert_exposure(
     *,
     require_open_experiment_id: str | None = None,
     require_open_experiment_stage: str | None = None,
+    outcome_seeds: list | None = None,
 ) -> bool | None:
-    """Insert an exposure and activate its experiment in one transaction.
+    """Insert an exposure, its outcome identity, and activate the experiment atomically.
 
     Returns ``None`` when the optional lifecycle guard rejects the write, versus
     ``False`` for an accepted idempotent duplicate.
@@ -102,6 +104,7 @@ def insert_exposure(
             ):
                 return None
         inserted = insert_record("learning_exposures", record, ignore_duplicates=True)
+        insert_filter_candidate_outcomes_batch(outcome_seeds or [])
         db.execute(
             "UPDATE learning_experiments SET "
             "status=CASE WHEN status='registered' THEN 'active' ELSE status END, "
