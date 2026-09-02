@@ -89,6 +89,17 @@ def test_lab_v2_schema_and_authority_start_legacy():
     assert get_authority_source().source == "legacy"
 
 
+def test_missing_authority_row_fails_closed():
+    from aletheia.observation_lab.canonical import get_authority_source
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "DELETE FROM observation_authority_state WHERE state_key='experiment_authority'"
+    )
+    with pytest.raises(RuntimeError, match="authority_state_unavailable"):
+        get_authority_source()
+
+
 def test_lab_authority_resolves_and_imports_one_receipt():
     from aletheia.observation_lab.canonical import (
         import_delivery_receipts,

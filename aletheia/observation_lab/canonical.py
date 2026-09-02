@@ -734,7 +734,7 @@ def get_authority_source(*, db: sqlite3.Connection | None = None) -> AuthoritySo
         "FROM observation_authority_state WHERE state_key='experiment_authority'"
     ).fetchone()
     if row is None:
-        return AuthoritySource("legacy", "legacy-v1", "system", "state_unavailable", "")
+        raise RuntimeError("authority_state_unavailable")
     source = str(row[0])
     if source not in {"legacy", "lab"}:
         raise RuntimeError("invalid_experiment_authority_source")
@@ -742,6 +742,68 @@ def get_authority_source(*, db: sqlite3.Connection | None = None) -> AuthoritySo
     if not epoch:
         raise RuntimeError("invalid_experiment_authority_epoch")
     return AuthoritySource(source, epoch, str(row[2]), str(row[3]), str(row[4]))
+
+
+def _assert_lab_cutover_ready(connection: sqlite3.Connection) -> None:
+    """Refuse Lab authority until the legacy evidence boundary is proven.
+
+    An authority flip is a behavior boundary, not a configuration toggle.  A
+    fresh database has no legacy evidence to migrate; an existing database must
+    have an unchanged deterministic import checkpoint and no pending Main
+    receipts that could be interpreted by two different authorities.
+    """
+    from aletheia.observation_lab.db import get_lab_db, readonly_lab_db
+    from aletheia.storage.migrations import _LEGACY_EXPERIMENT_TABLES
+
+    try:
+        # Materialize/validate the canonical Lab schema before Main records the
+        # new source.  This is safe for a fresh install and keeps a missing Lab
+        # store from looking like a valid cutover.
+        get_lab_db()
+        pending = connection.execute(
+            "SELECT COUNT(*) FROM observation_delivery_outbox "
+            "WHERE acknowledged_at IS NULL"
+        ).fetchone()[0]
+    except (FileNotFoundError, OSError, sqlite3.Error) as exc:
+        raise RuntimeError("authority_cutover_lab_unavailable") from exc
+    if int(pending or 0):
+        raise RuntimeError("authority_cutover_pending_main_receipts")
+
+    counts: dict[str, int] = {}
+    for table in _LEGACY_EXPERIMENT_TABLES:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if exists is not None:
+            counts[table] = int(
+                connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] or 0
+            )
+    if not any(counts.values()):
+        return
+
+    # The import checkpoint is compared with a fresh read-only legacy snapshot;
+    # a changed row after import must block cutover rather than silently
+    # authorizing a stale Lab copy.
+    from aletheia.observation_lab.migration import plan_legacy_learning_migration
+
+    plan = plan_legacy_learning_migration()
+    if not plan.get("available"):
+        raise RuntimeError("authority_cutover_legacy_import_unavailable")
+    if any(
+        str(item.get("table")) != "strategy_experiments"
+        for item in plan.get("unprovable_rows", ())
+    ):
+        raise RuntimeError("authority_cutover_unprovable_legacy_evidence")
+    try:
+        with readonly_lab_db(allow_missing=True) as lab:
+            cursor = None if lab is None else lab.execute(
+                "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
+                "WHERE source_name='legacy_learning'"
+            ).fetchone()
+    except (FileNotFoundError, OSError, sqlite3.Error) as exc:
+        raise RuntimeError("authority_cutover_legacy_import_unavailable") from exc
+    if cursor is None or str(cursor[0] or "") != str(plan.get("plan_fingerprint") or ""):
+        raise RuntimeError("authority_cutover_legacy_import_checkpoint_missing")
 
 
 def set_authority_source(
@@ -758,6 +820,11 @@ def set_authority_source(
     reason = _text(reason, "reason")
 
     def _write(connection: sqlite3.Connection) -> AuthoritySource:
+        if source == "lab":
+            _assert_lab_cutover_ready(connection)
+        current = get_authority_source(db=connection)
+        if current.source == source:
+            return current
         epoch = f"{source}:{uuid.uuid4().hex}"
         updated = connection.execute(
             "UPDATE observation_authority_state SET authority_source=?, authority_epoch=?, "
@@ -805,6 +872,7 @@ class ObservationTreatmentDecision:
     generation: int | None = None
     manifest_id: str | None = None
     manifest_hash: str | None = None
+    active_manifest_snapshot: tuple[str, ...] = ()
     manifest_set_fingerprint: str | None = None
     revocation_snapshot_fingerprint: str | None = None
     authority_source: str | None = None
@@ -1626,6 +1694,7 @@ def _decision(
     applied: bool = False,
     behavior_changed: bool = False,
     manifest: ExecutionManifest | None = None,
+    active_manifest_snapshot: tuple[str, ...] | list[str] | None = None,
     manifest_set_fingerprint: str | None = None,
     revocation_snapshot_fingerprint: str | None = None,
     authority_source: str | None = None,
@@ -1642,6 +1711,7 @@ def _decision(
         generation=manifest.generation if manifest else None,
         manifest_id=manifest.manifest_id if manifest else None,
         manifest_hash=manifest.manifest_hash if manifest else None,
+        active_manifest_snapshot=tuple(active_manifest_snapshot or ()),
         manifest_set_fingerprint=manifest_set_fingerprint,
         revocation_snapshot_fingerprint=revocation_snapshot_fingerprint,
         authority_source=authority_source,
@@ -2244,7 +2314,8 @@ def _attach_receipt(
         outcome_seeds=outcome_seeds,
         outcome_source=outcome_source,
         resolution_reason=decision.reason,
-        active_manifest_snapshot=([decision.manifest_hash] if decision.manifest_hash else []),
+        active_manifest_snapshot=list(decision.active_manifest_snapshot)
+        or ([decision.manifest_hash] if decision.manifest_hash else []),
         manifest_set_fingerprint=decision.manifest_set_fingerprint,
         revocation_snapshot_fingerprint=decision.revocation_snapshot_fingerprint,
         authority_source=authority_source,
