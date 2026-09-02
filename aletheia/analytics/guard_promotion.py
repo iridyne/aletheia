@@ -318,6 +318,7 @@ def _persist_guard_promotion(
 ) -> None:
     """Persist the durable guard row and promotion event in one commit."""
     from aletheia.storage import repositories as repo
+    from aletheia.knowledge.manager import _index
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import transaction
 
@@ -327,6 +328,7 @@ def _persist_guard_promotion(
     }
     source_file_path = relative_knowledge_path(Path(source_path))
     with transaction(immediate=True):
+        active_item_id = None
         active_rows = repo._select_all(
             "knowledge_items",
             where="item_type = ? AND file_path = ?",
@@ -334,22 +336,29 @@ def _persist_guard_promotion(
             limit=1,
         )
         if active_rows:
+            active_item_id = active_rows[0]["id"]
             repo.update_knowledge_item(
-                active_rows[0]["id"],
+                active_item_id,
                 status="active",
                 title=active_meta.get("title") or active_path.stem,
                 **active_document,
             )
         elif not active_existing:
-            repo.insert_knowledge_item(
-                KnowledgeItem(
-                    item_type="trading_guard",
-                    title=active_meta.get("title") or active_path.stem,
-                    confidence="high_confidence",
-                    status="active",
-                    **active_document,
-                )
+            active_item = KnowledgeItem(
+                item_type="trading_guard",
+                title=active_meta.get("title") or active_path.stem,
+                confidence="high_confidence",
+                status="active",
+                **active_document,
             )
+            repo.insert_knowledge_item(active_item)
+            active_item_id = active_item.id
+
+        if active_item_id is not None:
+            active_item = KnowledgeItem.model_validate(
+                repo.get_knowledge_item(active_item_id)
+            )
+            _index(active_item, active_item.content or body)
 
         if source_path_is_candidate:
             candidate_rows = repo._select_all(

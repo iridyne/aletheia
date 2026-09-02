@@ -111,7 +111,7 @@ class TestGuardPromotionChain:
         guard_id = "manual-sol-momentum-block"
         candidate = create_guard_candidate(
             title="Owner guard: block SOL momentum",
-            content="Owner-authored block on SOL/USDT momentum longs.",
+            content="Owner-authored SolGuardFtsNeedle block on SOL/USDT momentum longs.",
             metadata={"guard_id": guard_id, "status": "candidate", "symbol": "SOL/USDT",
                       "scanner_family": "momentum", "direction": "long",
                       "enforcement": "blocking", "block_candidate": True,
@@ -139,6 +139,11 @@ class TestGuardPromotionChain:
         )
         assert len(active_rows) == 1
         active_row = active_rows[0]
+        indexed = e2e_db.execute(
+            "SELECT body FROM knowledge_fts WHERE item_id = ?", (active_row["id"],)
+        ).fetchone()
+        assert indexed is not None
+        assert "SolGuardFtsNeedle" in indexed["body"]
         active_path = resolve_knowledge_path(active_row["file_path"])
         assert active_path is not None
         metadata, body = parse_frontmatter(active_path)
