@@ -1794,7 +1794,7 @@ def test_binance_spot_and_perp_messages_are_normalized():
         sequence=2,
     )
     candle = parse_binance_message(
-        {"e": "kline", "E": 12, "s": "ETHUSDT", "k": {"o": "1", "h": "3", "l": "1", "c": "2", "v": "4"}},
+        {"e": "kline", "E": 12, "s": "ETHUSDT", "k": {"t": 9, "o": "1", "h": "3", "l": "1", "c": "2", "v": "4"}},
         instruments,
         market_type="perp",
         sequence=3,
@@ -1803,6 +1803,59 @@ def test_binance_spot_and_perp_messages_are_normalized():
     assert quote is not None and (quote.instrument, quote.bid, quote.ask) == (spot, 100, 101)
     assert trade is not None and (trade.instrument, trade.side) == (perp, "sell")
     assert candle is not None and candle.candle == (1, 3, 1, 2, 4)
+
+
+def test_binance_kline_updates_keep_one_open_candle_until_next_bar():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import parse_binance_message
+    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+    engine = TriggerEngine(
+        instrument=instrument,
+        direction="long",
+        breakout_level=100.0,
+        pullback_band=(99.5, 100.5),
+        entry_zone=(100.0, 100.5),
+        policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
+    )
+
+    def candle(event_time, bar_open, close, sequence):
+        return parse_binance_message(
+            {
+                "e": "kline",
+                "E": event_time,
+                "s": "BTCUSDT",
+                "k": {
+                    "t": bar_open,
+                    "o": "1",
+                    "h": "3",
+                    "l": "1",
+                    "c": str(close),
+                    "v": "4",
+                },
+            },
+            {instrument},
+            market_type="perp",
+            received_timestamp_ms=event_time,
+            sequence=sequence,
+        )
+
+    first = candle(61_000, 60_000, 2, 1)
+    second = candle(61_500, 60_000, 2.5, 2)
+    assert first is not None and second is not None
+    engine.observe(first)
+    engine.observe(second)
+    assert list(engine._closed_candles_1m) == []
+    assert engine._current_candle_1m["close"] == 2.5
+
+    third = candle(120_500, 120_000, 2.75, 3)
+    assert third is not None
+    engine.observe(third)
+    assert [(row["ts"], row["close"]) for row in engine._closed_candles_1m] == [
+        (60_000, 2.5)
+    ]
+    assert candle(121_000, 0, 2.75, 4) is None
 
 
 @pytest.mark.parametrize(
