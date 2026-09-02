@@ -142,8 +142,7 @@ class LessonStore:
         db = get_db()
         was_in_tx = db.in_transaction
         db.execute(
-            "UPDATE ps_lessons SET applied_policy_version = ?, status = 'applied',"
-            " dry_run_until = NULL "
+            "UPDATE ps_lessons SET applied_policy_version = ?, status = 'applied' "
             "WHERE lesson_id = ?",
             (policy_version_id, lesson_id),
         )
