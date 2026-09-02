@@ -654,7 +654,7 @@ class BinanceFastMarketStream:
                     response.raise_for_status()
                     payload = await response.json()
             except Exception:
-                break
+                continue
             book = self._books.get(instrument)
             if book is None:
                 return
