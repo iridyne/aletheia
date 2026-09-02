@@ -2624,11 +2624,22 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
         acknowledged: list[int] = []
         with lab_transaction(immediate=True) as lab:
             cursor = lab.execute(
-                "SELECT contiguous_sequence, retry_sequences_json FROM observation_import_cursors WHERE source_name=?",
+                "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json "
+                "FROM observation_import_cursors WHERE source_name=?",
                 (source_name,),
             ).fetchone()
             watermark = int(cursor[0]) if cursor else 0
             retry: list[int] = json.loads(cursor[1]) if cursor else []
+            try:
+                previous_checkpoint = json.loads(cursor[2]) if cursor and cursor[2] else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                previous_checkpoint = {}
+            receipt_chain = (
+                str(previous_checkpoint.get("receipt_chain_fingerprint"))
+                if isinstance(previous_checkpoint, dict)
+                and previous_checkpoint.get("receipt_chain_fingerprint")
+                else None
+            )
             rows = main.execute(
                 "SELECT * FROM observation_delivery_outbox WHERE sequence>? ORDER BY sequence LIMIT ?",
                 (watermark, max(1, min(int(limit), 1000))),
@@ -2677,6 +2688,11 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                             (str(row["receipt_id"]), "applied", None, None, None, None)
                         )
                         retry = [item for item in retry if item != watermark]
+                        receipt_chain = _hash({
+                            "prior": receipt_chain,
+                            "sequence": sequence,
+                            "receipt_id": str(row["receipt_id"]),
+                        })
                         processed += 1
                         continue
                     if kind in {"treatment", "capture"}:
@@ -2786,6 +2802,11 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                         )
                     watermark = sequence
                     acknowledged.append(watermark)
+                    receipt_chain = _hash({
+                        "prior": receipt_chain,
+                        "sequence": sequence,
+                        "receipt_id": str(row["receipt_id"]),
+                    })
                     retry = [item for item in retry if item != watermark]
                     processed += 1
                 except (ValueError, sqlite3.IntegrityError) as exc:
@@ -2818,6 +2839,11 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                     sequence = int(row["sequence"])
                     watermark = sequence
                     acknowledged.append(watermark)
+                    receipt_chain = _hash({
+                        "prior": receipt_chain,
+                        "sequence": sequence,
+                        "receipt_id": str(row["receipt_id"]),
+                    })
                     application_updates.append(
                         (
                             str(row["receipt_id"]), status, str(row["observation_id"]),
@@ -2842,6 +2868,7 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                 "contiguous_sequence": watermark,
                 "last_receipt_id": last_receipt_id,
                 "retry_sequences": retry,
+                "receipt_chain_fingerprint": receipt_chain,
             }
             checkpoint_json = _json(checkpoint)
             checkpoint_fingerprint = _hash(checkpoint)
