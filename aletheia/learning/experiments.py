@@ -373,6 +373,7 @@ def apply_numeric_treatment(
     exposed_at: str | None = None,
     outcome_seeds: list | None = None,
     require_outcome_seed: bool = False,
+    deferred_exposure_writes: list[dict] | None = None,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
     baseline_value = float(baseline)
@@ -468,6 +469,17 @@ def apply_numeric_treatment(
             baseline_value, False, "unassigned", f"hypothesis_{hypothesis.status}",
             hypothesis_id=hypothesis.hypothesis_id,
         )
+    if (
+        experiment.status == "registered"
+        and deferred_exposure_writes
+        and any(
+            write["record"].experiment_id == experiment.experiment_id
+            for write in deferred_exposure_writes
+        )
+    ):
+        # Match the transaction-visible activation that the first exposure
+        # formerly provided to later candidates in this same scanner attempt.
+        experiment = experiment.model_copy(update={"status": "active"})
     if require_outcome_seed and len(outcome_seeds or []) != 1:
         raise RuntimeError("learning_outcome_seed_unavailable")
     assignment = stable_assignment(experiment, assignment_key or candidate_key)
@@ -555,26 +567,25 @@ def apply_numeric_treatment(
         behavior_contract_hash=behavior_contract_hash,
         **({"exposed_at": exposed_at} if exposed_at is not None else {}),
     )
-    inserted = insert_exposure(
-        exposure,
-        require_open_experiment_id=experiment.experiment_id,
-        require_open_experiment_stage=experiment.stage,
-        outcome_seeds=outcome_seeds,
-    )
-    if inserted is None:
-        return InfluenceDecision(
-            baseline_value,
-            False,
-            "unassigned",
-            "experiment_closed_before_exposure",
-            hypothesis.hypothesis_id,
-            experiment.experiment_id,
-        )
-    if not inserted:
+    if deferred_exposure_writes is not None:
         stored = get_exposure_by_dedup_key(dedup_key)
         if stored:
             exposure = LearningExposure(**stored)
         else:
+            deferred_exposure_writes.append({
+                "record": exposure,
+                "require_open_experiment_id": experiment.experiment_id,
+                "require_open_experiment_stage": experiment.stage,
+                "outcome_seeds": outcome_seeds,
+            })
+    else:
+        inserted = insert_exposure(
+            exposure,
+            require_open_experiment_id=experiment.experiment_id,
+            require_open_experiment_stage=experiment.stage,
+            outcome_seeds=outcome_seeds,
+        )
+        if inserted is None:
             return InfluenceDecision(
                 baseline_value,
                 False,
@@ -583,6 +594,19 @@ def apply_numeric_treatment(
                 hypothesis.hypothesis_id,
                 experiment.experiment_id,
             )
+        if not inserted:
+            stored = get_exposure_by_dedup_key(dedup_key)
+            if stored:
+                exposure = LearningExposure(**stored)
+            else:
+                return InfluenceDecision(
+                    baseline_value,
+                    False,
+                    "unassigned",
+                    "experiment_closed_before_exposure",
+                    hypothesis.hypothesis_id,
+                    experiment.experiment_id,
+                )
     return InfluenceDecision(
         value, behavior_changed, assignment,
         (

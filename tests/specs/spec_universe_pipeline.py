@@ -53,6 +53,7 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     *,
     caller_owns_transaction=False,
     reuse_previous_snapshot=False,
+    seed_attempt_exposure=False,
 ):
     from tests.test_entry_logic import setup_env
 
@@ -188,9 +189,58 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         "aletheia.universe.scanners.run_all_scanners",
         lambda _row: scanner_result,
     )
+    attempt_exposure = None
+    attempt_experiment = None
+    if seed_attempt_exposure:
+        from aletheia.analytics.filter_evidence import build_candidate_outcomes
+        from aletheia.learning.ledger import insert_exposure
+        from tests.specs.spec_learning_ledger import (
+            _exposure,
+            _registered_experiment,
+        )
+
+        hypothesis, attempt_experiment = _registered_experiment(
+            "universe-attempt"
+        )
+        attempt_exposure = _exposure(
+            hypothesis,
+            attempt_experiment,
+            token="universe-attempt",
+            exposed_at="2026-09-02T00:00:00+00:00",
+        )
+
+        def compute_total_score(*_args, **kwargs):
+            outcome_seed = build_candidate_outcomes(
+                outcome_candidate_key=attempt_exposure.candidate_key,
+                venue="bitget",
+                symbol="BTC/USDT",
+                market_type="spot",
+                direction="long",
+                scanner_family="momentum",
+                regime_tag=None,
+                entry_price_usd=60_000.0,
+                entry_spread_bps=2.0,
+                funding_rate_at_entry=None,
+                entry_ts=attempt_exposure.exposed_at,
+                allocation_selected=None,
+                horizons=("4h",),
+            )
+            write = {
+                "record": attempt_exposure,
+                "outcome_seeds": outcome_seed,
+            }
+            deferred = kwargs.get("deferred_exposure_writes")
+            if deferred is None:
+                assert insert_exposure(**write)
+            else:
+                deferred.append(write)
+            return 70.0
+    else:
+        compute_total_score = lambda *_args, **_kwargs: 70.0
+
     monkeypatch.setattr(
         "aletheia.universe.allocator.compute_total_score",
-        lambda *_args, **_kwargs: 70.0,
+        compute_total_score,
     )
     monkeypatch.setattr(
         "aletheia.universe.allocator.get_family_multipliers", lambda **_kwargs: {}
@@ -222,6 +272,21 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
     )
+    persisted_attempt_batches = []
+    if seed_attempt_exposure:
+        persist_attempt_learning_exposures = (
+            service._persist_attempt_learning_exposures
+        )
+
+        def capture_attempt_learning_exposures(writes):
+            persisted_attempt_batches.append(len(writes))
+            persist_attempt_learning_exposures(writes)
+
+        monkeypatch.setattr(
+            service,
+            "_persist_attempt_learning_exposures",
+            capture_attempt_learning_exposures,
+        )
     if failure_kind == "scanner_completion":
         update_scanner_run = service.repo.update_universe_scanner_run
 
@@ -299,6 +364,22 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     assert failure_code in failed_run["errors"]
     assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
     assert experiment_outcome_registrations == [True]
+    if attempt_exposure is not None and attempt_experiment is not None:
+        assert persisted_attempt_batches == [1]
+        assert db.execute(
+            "SELECT COUNT(*) FROM learning_exposures WHERE exposure_id=?",
+            (attempt_exposure.exposure_id,),
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM filter_candidate_outcomes "
+            "WHERE outcome_candidate_key=?",
+            (attempt_exposure.candidate_key,),
+        ).fetchone()[0] == 0
+        experiment_row = db.execute(
+            "SELECT status,started_at FROM learning_experiments WHERE experiment_id=?",
+            (attempt_experiment.experiment_id,),
+        ).fetchone()
+        assert dict(experiment_row) == {"status": "registered", "started_at": None}
     if requalification_generation_id:
         requalification_after = repo.get_candidate_planning_generation(
             requalification_generation_id
@@ -396,6 +477,19 @@ def test_canonical_outcome_failure_cannot_complete_universe_decision(
         monkeypatch,
         "canonical_outcomes",
         reuse_previous_snapshot=reuse_previous_snapshot,
+    )
+
+
+@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
+def test_publication_failure_rolls_back_attempt_learning_activation(
+    tmp_path, monkeypatch, reuse_previous_snapshot
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path,
+        monkeypatch,
+        "canonical_outcomes",
+        reuse_previous_snapshot=reuse_previous_snapshot,
+        seed_attempt_exposure=True,
     )
 
 
