@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aletheia.learning.ledger import insert_experiment, insert_exposure, insert_hypothesis
@@ -466,3 +468,57 @@ def test_nonempty_lab_cutover_requires_and_records_complete_proof():
         proof["runtime_commit"],
         "backup-test",
     )
+
+
+def test_authority_cli_passes_the_same_proof_for_validated_rollback():
+    from typer.testing import CliRunner
+
+    from aletheia.cli.observe_cmd import observe_app
+    from aletheia.observation_lab.canonical import (
+        build_authority_cutover_proof,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+    )
+    from aletheia.observation_lab.migration import apply_legacy_learning_migration
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="cli-rollback-hypothesis",
+        fingerprint="cli-rollback-fingerprint",
+        cohort_id="cli-rollback-cohort",
+        path_id="ranker_case_score",
+        overlap_group="ranker",
+        source_type="test",
+        scope_json="{}",
+        action_json="{}",
+        consumer="test",
+        target_horizon="24h",
+    )
+    insert_hypothesis(hypothesis)
+    insert_experiment(LearningExperiment(
+        experiment_id="cli-rollback-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        stage="shadow",
+        assignment_salt="cli-rollback-salt",
+        started_at="2026-01-01T00:00:00+00:00",
+    ))
+    apply_legacy_learning_migration()
+    save_joint_checkpoint(compute_joint_checkpoint(notes="cli-rollback"))
+    proof = build_authority_cutover_proof(rollback_backup_identity="backup-cli")
+    set_authority_source(
+        "lab", actor="owner", reason="cli rollback setup", cutover_proof=proof,
+    )
+
+    result = CliRunner().invoke(
+        observe_app,
+        [
+            "set-experiment-authority", "legacy", "--reason", "validated rollback",
+            "--runtime-commit", proof["runtime_commit"],
+            "--rollback-backup-identity", "backup-cli", "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["authority_source"] == "legacy"

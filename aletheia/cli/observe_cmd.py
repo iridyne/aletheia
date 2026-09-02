@@ -802,20 +802,33 @@ def set_experiment_authority(
     """Atomically select exactly one durable Experiment authority source."""
     from aletheia.observation_lab.canonical import (
         build_authority_cutover_proof,
+        get_authority_source,
         set_authority_source,
     )
 
     try:
-        proof = (
-            build_authority_cutover_proof(
+        proof = None
+        rollback_proof = None
+        if source == "lab":
+            proof = build_authority_cutover_proof(
                 runtime_commit=runtime_commit,
                 rollback_backup_identity=rollback_backup_identity,
             )
-            if source == "lab"
-            else None
-        )
+        elif get_authority_source().source == "lab":
+            # Rollback uses the same immutable cut identity as cutover.  The
+            # canonical setter still validates the recorded proof, legacy
+            # tables, checkpoint, and backup identity before re-enabling the
+            # compatibility authority.
+            rollback_proof = build_authority_cutover_proof(
+                runtime_commit=runtime_commit,
+                rollback_backup_identity=rollback_backup_identity,
+            )
         state = set_authority_source(
-            source, actor="operator", reason=reason, cutover_proof=proof,
+            source,
+            actor="operator",
+            reason=reason,
+            cutover_proof=proof,
+            rollback_proof=rollback_proof,
         )
     except (RuntimeError, ValueError) as exc:
         typer.echo(f"authority change refused: {exc}", err=True)
