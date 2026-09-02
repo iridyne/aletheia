@@ -3272,24 +3272,36 @@ def _run_cleanup():
         # their own function before agent_shell_tasks fires. See
         # repositories.prune_agent_shell_sessions for the cascade impl.
         # ------------------------------------------------------------------
-        # Read experiment state for clean_window_cutoff guard. If this fails,
-        # skip the affected prunes rather than silently deleting protected data.
+        # Read the legacy experiment floor only while legacy owns authority.
+        # Lab-authoritative cleanup resolves exact source claims inside each
+        # prune function; consulting the old global floor here would retain
+        # unrelated Main telemetry and keep the retired engine on the hot path.
         experiment_floor_read_ok = False
         min_open_exp_at = None
         try:
-            min_open_exp_at = repo.min_open_experiment_exposure_at()
+            from aletheia.observation_lab.canonical import get_authority_source
+
+            lab_authority = get_authority_source().source == "lab"
+        except Exception as exc:
+            logger.debug("Cannot read Observation authority for cleanup: %s", exc)
+            lab_authority = False
+        if lab_authority:
             experiment_floor_read_ok = True
-        except repo.ExperimentStateReadError as e:
-            logger.warning("Cannot read experiment state for cleanup guard: %s", e)
-            from aletheia.infra.events import emit_infra_event
-            emit_infra_event(
-                severity="error",
-                source="scheduler",
-                code="cleanup_experiment_state_read_failed",
-                message=f"Skipping experiment-guarded prunes: {e}",
-                action="Check SQLite health and retry cleanup",
-                dedupe_sec=3600,
-            )
+        else:
+            try:
+                min_open_exp_at = repo.min_open_experiment_exposure_at()
+                experiment_floor_read_ok = True
+            except repo.ExperimentStateReadError as e:
+                logger.warning("Cannot read experiment state for cleanup guard: %s", e)
+                from aletheia.infra.events import emit_infra_event
+                emit_infra_event(
+                    severity="error",
+                    source="scheduler",
+                    code="cleanup_experiment_state_read_failed",
+                    message=f"Skipping experiment-guarded prunes: {e}",
+                    action="Check SQLite health and retry cleanup",
+                    dedupe_sec=3600,
+                )
         counts = {
             "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),

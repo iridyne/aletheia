@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import hashlib
+import json
 import logging
 import sqlite3
 import time
@@ -4236,15 +4237,70 @@ def retire_legacy_experiment_tables(
         if not lab_path.is_file():
             raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
         try:
-            with sqlite3.connect(str(lab_path)) as lab:
+            from aletheia.observation_lab.migration import plan_legacy_learning_migration
+
+            plan = plan_legacy_learning_migration()
+            if not plan.get("available"):
+                raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+            if any(
+                str(item.get("table")) != "strategy_experiments"
+                for item in plan.get("unprovable_rows", ())
+            ):
+                raise MigrationStateError("legacy_experiment_retirement_unprovable_rows")
+            with sqlite3.connect(
+                f"{lab_path.resolve().as_uri()}?mode=ro", uri=True
+            ) as lab:
+                lab.row_factory = sqlite3.Row
                 proof = lab.execute(
-                    "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
+                    "SELECT source_checkpoint_fingerprint, source_checkpoint_json "
+                    "FROM observation_import_cursors "
                     "WHERE source_name='legacy_learning'"
                 ).fetchone()
         except sqlite3.Error as exc:
             raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
-        if proof is None or not str(proof[0] or "").strip():
+        if proof is None or str(proof[0] or "") != str(plan.get("plan_fingerprint") or ""):
             raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+        try:
+            checkpoint = json.loads(proof[1] or "")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
+        if not isinstance(checkpoint, dict):
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+        if (
+            checkpoint.get("tables") != plan.get("legacy_tables")
+            or checkpoint.get("source_commit") != plan.get("source_commit")
+        ):
+            raise MigrationStateError("legacy_experiment_retirement_proof_mismatch")
+        # A matching cursor is necessary but not sufficient: prove that the
+        # Lab actually contains the projected rows and that every terminal
+        # generation has a verified archive root before deleting Main history.
+        expected = plan.get("estimated_lab_write_volume") or {}
+        try:
+            with sqlite3.connect(
+                f"{lab_path.resolve().as_uri()}?mode=ro", uri=True
+            ) as lab:
+                counts_in_lab = {
+                    "windows": int(lab.execute("SELECT COUNT(*) FROM observation_windows").fetchone()[0]),
+                    "contracts": int(lab.execute("SELECT COUNT(*) FROM observation_generation_contracts").fetchone()[0]),
+                    "exposures": int(lab.execute("SELECT COUNT(*) FROM observation_exposures").fetchone()[0]),
+                    "evaluations": int(lab.execute("SELECT COUNT(*) FROM observation_evaluations").fetchone()[0]),
+                    "nominations": int(lab.execute("SELECT COUNT(*) FROM observation_nominations").fetchone()[0]),
+                }
+                if any(
+                    counts_in_lab[key] < int(expected.get(key) or 0)
+                    for key in counts_in_lab
+                ):
+                    raise MigrationStateError("legacy_experiment_retirement_projection_incomplete")
+                missing_archives = lab.execute(
+                    "SELECT COUNT(*) FROM observation_windows w "
+                    "WHERE w.status IN ('finalized','invalidated','aborted') "
+                    "AND NOT EXISTS (SELECT 1 FROM observation_archives a "
+                    "WHERE a.observation_id=w.observation_id AND a.generation=w.generation)"
+                ).fetchone()[0]
+        except sqlite3.Error as exc:
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
+        if int(missing_archives or 0):
+            raise MigrationStateError("legacy_experiment_retirement_archive_missing")
 
     owns_transaction = not connection.in_transaction
     if not owns_transaction:
