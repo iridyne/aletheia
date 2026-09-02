@@ -995,16 +995,33 @@ async def settle_unsettled_paper_closes() -> dict:
     # untouched (no audit, no state change) so a genuinely lost row stays
     # churn-free — the give-up state is sticky against absence, reversible only
     # against real data.
+    cursor_row = get_db().execute(
+        "SELECT last_position_rowid FROM paper_funding_revival_cursor "
+        "WHERE queue_id='terminal_funding'"
+    ).fetchone()
+    revival_cursor = int(cursor_row["last_position_rowid"]) if cursor_row else 0
+    revival_query = """SELECT rowid AS _revival_rowid, * FROM positions
+                       WHERE status='closed' AND execution_mode='paper_internal'
+                         AND market_type='usdt_futures' AND realized_pnl IS NULL
+                         AND outcome_exclusion_reason = ? AND rowid > ?
+                       ORDER BY rowid ASC LIMIT ?"""
     terminal_rows = [
         dict(r) for r in get_db().execute(
-            """SELECT * FROM positions
-               WHERE status='closed' AND execution_mode='paper_internal'
-                 AND market_type='usdt_futures' AND realized_pnl IS NULL
-                 AND outcome_exclusion_reason = ?
-               ORDER BY rowid ASC LIMIT 50""",
-            (FUNDING_PERMANENTLY_UNRECOVERABLE,),
+            revival_query,
+            (FUNDING_PERMANENTLY_UNRECOVERABLE, revival_cursor, 50),
         ).fetchall()
     ]
+    if len(terminal_rows) < 50 and revival_cursor > 0:
+        terminal_rows.extend(
+            dict(r) for r in get_db().execute(
+                revival_query.replace("rowid > ?", "rowid <= ?"),
+                (
+                    FUNDING_PERMANENTLY_UNRECOVERABLE,
+                    revival_cursor,
+                    50 - len(terminal_rows),
+                ),
+            ).fetchall()
+        )
     for row in terminal_rows:
         position_id = str(row.get("id") or "")
         sym = str(row.get("symbol") or "")
@@ -1057,6 +1074,21 @@ async def settle_unsettled_paper_closes() -> dict:
                 sym, position_id, exc,
             )
             errors.append(f"{position_id}:revive: {exc}")
+
+    if terminal_rows:
+        with repo.transaction(immediate=True):
+            get_db().execute(
+                "INSERT INTO paper_funding_revival_cursor "
+                "(queue_id, last_position_rowid, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(queue_id) DO UPDATE SET "
+                "last_position_rowid=excluded.last_position_rowid, "
+                "updated_at=excluded.updated_at",
+                (
+                    "terminal_funding",
+                    int(terminal_rows[-1]["_revival_rowid"]),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
 
     # Second pass: positions where realized_pnl IS already set but the cash ledger
     # has no matching position_closed entry.  This happens when funding_cost is written

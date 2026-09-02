@@ -2334,6 +2334,83 @@ def test_paper_funding_settler_revives_terminal_row_once_backfill_lands(
     assert result2["errors"] == []
 
 
+def test_paper_funding_revival_rotates_past_stuck_prefix_after_reopen(
+    tmp_path, monkeypatch,
+):
+    """A durable bounded scan reaches row 51 after 50 terminal rows stay stuck."""
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import asyncio
+    from datetime import timedelta
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.portfolio.local_funding import LocalFundingResult
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import close_db, get_db
+
+    close_time = datetime.now(timezone.utc) - timedelta(hours=30)
+    for index in range(50):
+        _seed_stuck_paper_close(
+            position_id=f"pos-revival-stuck-{index:02d}",
+            symbol="ALLO/USDT",
+            closed_at=close_time,
+            outcome_exclusion_reason="funding_permanently_unrecoverable",
+        )
+    recoverable_id = "pos-revival-row-51"
+    _seed_stuck_paper_close(
+        position_id=recoverable_id,
+        symbol="FIL/USDT",
+        closed_at=close_time,
+        outcome_exclusion_reason="funding_permanently_unrecoverable",
+    )
+    _seed_null_close_event(recoverable_id, close_time.isoformat())
+
+    inspected: list[str] = []
+
+    def _fake_funding(row, *_args, **_kwargs):
+        position_id = str(row.get("id"))
+        inspected.append(position_id)
+        if position_id == recoverable_id:
+            return LocalFundingResult(
+                complete=True,
+                funding_cost=0.02,
+                funding_source="local_simulation",
+                evidence=_complete_recovered_funding(recoverable_id, cost=0.02),
+            )
+        return LocalFundingResult(
+            complete=False,
+            funding_cost=None,
+            funding_source="unavailable",
+            evidence={"reason": "unsupported_position"},
+        )
+
+    monkeypatch.setattr(
+        "aletheia.portfolio.local_funding.compute_local_funding",
+        _fake_funding,
+    )
+
+    first = asyncio.run(pa.settle_unsettled_paper_closes())
+    assert first["revived"] == 0
+    assert len(inspected) == 50
+    assert recoverable_id not in inspected
+
+    close_db()
+    inspected.clear()
+    second = asyncio.run(pa.settle_unsettled_paper_closes())
+
+    assert second["revived"] == 1
+    assert len(inspected) <= 50
+    assert recoverable_id in inspected
+    assert repo._select_one("positions", recoverable_id)[
+        "realized_pnl"
+    ] == pytest.approx(0.36)
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE entity_id=? "
+        "AND event_type='paper_position_funding_revived'",
+        (recoverable_id,),
+    ).fetchone()[0] == 1
+
+
 @spec_claim(
     SpecClaim(
         "PL-PCM-17",
