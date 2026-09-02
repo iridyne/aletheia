@@ -6,6 +6,7 @@ TradeProposal through evaluate_proposal and asserts on the resulting violations.
 """
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -180,6 +181,47 @@ def test_paper_internal_drawdown_evidence_is_unavailable():
 
     assert _portfolio_drawdown_assessment("paper_internal", cfg) == (1.0, False)
     assert assess_persona_distress(cfg) == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("newest_at", "available"),
+    [
+        ("fresh", True),
+        ("stale", False),
+        ("malformed", False),
+        ("future", False),
+        ("missing", False),
+    ],
+)
+def test_exchange_drawdown_requires_fresh_snapshot_time(
+    monkeypatch, newest_at, available
+):
+    from aletheia.risk.engine import _portfolio_drawdown_assessment
+
+    now = datetime.now(timezone.utc)
+    timestamps = {
+        "fresh": now.isoformat(),
+        "stale": (now - timedelta(minutes=16)).isoformat(),
+        "malformed": "not-an-instant",
+        "future": (now + timedelta(minutes=1)).isoformat(),
+        "missing": None,
+    }
+    monkeypatch.setattr(
+        "aletheia.portfolio.exchange_sync.active_broker_view_complete",
+        lambda: (True, "current"),
+    )
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.list_portfolio_snapshots",
+        lambda limit=50: [
+            {
+                "execution_mode": "exchange_account",
+                "total_value_usdt": "1000.0",
+                "snapshot_at": timestamps[newest_at],
+            }
+        ] * 3,
+    )
+
+    assert _portfolio_drawdown_assessment("okx_demo") == (1.0, available)
 
 
 def test_paper_internal_drawdown_ignores_local_notional_collapse(monkeypatch):

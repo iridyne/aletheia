@@ -73,6 +73,8 @@ _ESSENTIAL_JOBS: set[str] = {
 # can reference the same source of truth and stay in sync when the interval
 # changes here.
 MARKET_DATA_INTERVAL_MINUTES = 5
+PORTFOLIO_SNAPSHOT_INTERVAL_MINUTES = 10
+PORTFOLIO_SNAPSHOT_STALE_AFTER_SECONDS = 15 * 60
 
 _EQUITY_MARKET_TZ = "America/New_York"
 
@@ -1335,7 +1337,8 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=60, executor="io",
     )
     _scheduler.add_job(
-        _guarded("portfolio_snapshot", _run_portfolio_snapshot), "interval", minutes=10, id="portfolio_snapshot",
+        _guarded("portfolio_snapshot", _run_portfolio_snapshot), "interval",
+        minutes=PORTFOLIO_SNAPSHOT_INTERVAL_MINUTES, id="portfolio_snapshot",
         misfire_grace_time=120, executor="default",
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
