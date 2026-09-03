@@ -20,6 +20,10 @@ def setup_test_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    cfg = loader.load_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.allowed_chat_ids = [123]
+    loader.save_config(cfg)
 
 
 @pytest.mark.anyio
@@ -117,8 +121,13 @@ async def test_help_command(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_unauthorized_chat_rejected(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.telegram.allowed_chat_ids = [999]
+    save_config(cfg)
+
     bot = TelegramBot()
-    bot.allowed_chat_ids = {999}  # Only chat 999 allowed
     # Unauthorized chats get no reply at all (silent + audited), not an error string.
     resp = await bot.handle_message(123, "/status")
     assert resp is None
@@ -140,6 +149,65 @@ async def test_enabled_telegram_requires_allowed_chat_ids(tmp_path, monkeypatch)
     # status leak — the condition is audited instead.
     resp = await bot.handle_message(123, "/status")
     assert resp is None
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_authorization_tracks_current_config_after_startup(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}  # Startup snapshot.
+
+    # Warm this process's cache, then emulate another process writing config.
+    loader.load_config()
+    cache_before = loader._config_cache
+    raw = yaml.safe_load(loader.CONFIG_PATH.read_text(encoding="utf-8"))
+    raw["telegram"]["allowed_chat_ids"] = [456]
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+    )
+
+    assert await bot.handle_message(123, "/status") is None
+    assert loader._config_cache is cache_before
+    assert "Gateway" in await bot.handle_message(456, "/status")
+
+    raw["telegram"]["enabled"] = False
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+    )
+
+    assert await bot.handle_message(456, "/status") is None
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_authorization_reads_config_off_event_loop(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    import threading
+
+    import aletheia.telegram.bot as telegram
+
+    event_loop_thread = threading.get_ident()
+    reads = []
+    real_load_config = telegram.load_config
+
+    def tracked_load_config(**kwargs):
+        reads.append((threading.get_ident(), kwargs))
+        return real_load_config(**kwargs)
+
+    monkeypatch.setattr(telegram, "load_config", tracked_load_config)
+
+    assert "Gateway" in await telegram.TelegramBot().handle_message(123, "/status")
+    fresh_read_threads = [
+        thread for thread, kwargs in reads if kwargs.get("use_cache") is False
+    ]
+    assert fresh_read_threads and all(
+        thread != event_loop_thread for thread in fresh_read_threads
+    )
     reset_db()
 
 
