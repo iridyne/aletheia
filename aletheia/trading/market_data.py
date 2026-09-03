@@ -305,6 +305,12 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     return instruments
 
 
+def market_snapshot_target_groups(cfg) -> set[tuple[str, str]]:
+    """Return the venue/market-type groups this collector is responsible for."""
+    targets = _build_dynamic_instruments(cfg) + xstocks_instruments_from_config(cfg)
+    return {(target.exchange, target.market_type) for target in targets}
+
+
 async def collect_market_snapshots() -> dict:
     """Fetch a ticker for each observed instrument and persist a market snapshot.
 
@@ -381,6 +387,7 @@ async def collect_market_snapshots() -> dict:
             provider=ticker.provider or None,
         )
 
+    primary_written = 0
     try:
         for instrument in instruments:
             try:
@@ -391,7 +398,19 @@ async def collect_market_snapshots() -> dict:
                 errors.append(f"{instrument}: {e}")
                 logger.warning("Failed to fetch ticker %s: %s", instrument, e)
     finally:
-        await provider.close()
+        try:
+            if _pending_snaps:
+                primary_written = insert_market_snapshot_batch(_pending_snaps)
+                _pending_snaps.clear()
+            logger.info(
+                "market_data source finished venue=%s attempted=%d written=%d errors=%d",
+                primary_exchange,
+                len(instruments),
+                primary_written,
+                len(errors),
+            )
+        finally:
+            await provider.close()
 
     # xStocks: separate Bitget provider (no API key needed, ON-series tokens).
     # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
@@ -402,6 +421,8 @@ async def collect_market_snapshots() -> dict:
     if xstocks:
         xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
         listing_cache: dict[str, frozenset[str] | None] = {}
+        xstock_error_start = len(errors)
+        xstock_written = 0
         try:
             for instrument in xstocks:
                 try:
@@ -445,15 +466,25 @@ async def collect_market_snapshots() -> dict:
                         if _auto_remove_xstock(sym, exchange_name, consecutive):
                             _xstock_failure_counts.pop(sym, None)
         finally:
-            await xprovider.close()
+            try:
+                if _pending_snaps:
+                    xstock_written = insert_market_snapshot_batch(_pending_snaps)
+                    _pending_snaps.clear()
+                logger.info(
+                    "market_data source finished venue=bitget attempted=%d written=%d errors=%d",
+                    len(xstocks),
+                    xstock_written,
+                    len(errors) - xstock_error_start,
+                )
+            finally:
+                await xprovider.close()
 
-    # Single batch write: one write-lock acquisition for the entire cycle.
-    # Replaces N individual INSERT+COMMIT calls (one per ticker) with a single
-    # executemany transaction, reducing SQLite write-lock contention.
-    if _pending_snaps:
-        insert_market_snapshot_batch(_pending_snaps)
-
-    return {"collected": collected, "errors": errors}
+    return {
+        "attempted": len(instruments) + len(xstocks),
+        "written": len(collected),
+        "collected": collected,
+        "errors": errors,
+    }
 
 
 def latest_snapshot(symbol: str, market_type: str | None = None) -> dict | None:

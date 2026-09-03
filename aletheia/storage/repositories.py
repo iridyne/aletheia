@@ -6560,6 +6560,15 @@ def list_market_snapshots(
     )
 
 
+def latest_market_snapshot_groups() -> list[dict]:
+    """Return the newest persisted row timestamp for each physical source group."""
+    rows = get_db().execute(
+        "SELECT exchange, market_type, MAX(snapshot_at) AS snapshot_at "
+        "FROM market_snapshots GROUP BY exchange, market_type"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 # --- Portfolio Snapshots ---
 
 

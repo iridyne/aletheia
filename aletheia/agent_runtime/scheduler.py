@@ -2422,6 +2422,7 @@ def _run_daily_summary():
 
 
 def _run_market_data():
+    logger.info("market_data job started")
     try:
         from aletheia.trading.market_data import collect_market_snapshots
         result = _run_async_with_timeout("market_data", collect_market_snapshots())
@@ -2431,6 +2432,13 @@ def _run_market_data():
                 len(result["errors"]),
             )
             _record_job_failure("market_data", "market_data_reported_errors")
+        if isinstance(result, dict):
+            logger.info(
+                "market_data job finished attempted=%d written=%d errors=%d",
+                int(result.get("attempted") or 0),
+                int(result.get("written") or 0),
+                len(result.get("errors") or []),
+            )
     except TimeoutError:
         logger.warning(
             "market_data job timed out after %.0fs",
