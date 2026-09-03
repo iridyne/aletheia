@@ -1446,12 +1446,14 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     uses_external_exchange = load_config().exchange.paper_execution_mode != "paper_internal"
     if not uses_external_exchange:
         ensure_paper_account()
+    marked_positions = None
     if persist_marks:
-        mark_positions_to_market(persist=True)
+        marked_positions = mark_positions_to_market(persist=True)
     with read_snapshot():
         return _compute_portfolio(
             execution_mode=execution_mode,
             uses_external_exchange=uses_external_exchange,
+            positions=marked_positions,
         )
 
 
@@ -1459,12 +1461,14 @@ def _compute_portfolio(
     *,
     execution_mode: str | None,
     uses_external_exchange: bool,
+    positions: list[dict] | None = None,
 ) -> dict:
     """Aggregate open positions into a portfolio summary (marks to market first)."""
     selected_mode = execution_mode
     if selected_mode is None and not uses_external_exchange:
         selected_mode = "paper_internal"
-    positions = mark_positions_to_market(persist=False)
+    if positions is None:
+        positions = mark_positions_to_market(persist=False)
     if selected_mode:
         positions = [p for p in positions if p["execution_mode"] == selected_mode]
 
