@@ -109,7 +109,9 @@ async def test_analyzer_first_failure_schedules_retry_without_marking_analyzed(
 
     monkeypatch.setattr(news_analyzer, "llm_structured", fail_analysis)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=1) == 0
+    result = await news_analyzer.analyze_pending_news(batch_size=1)
+    assert result["analyzed"] == 0
+    assert result["retryable_failed"] == 1
     row = db.execute(
         "SELECT status, analyzed_at FROM news_items WHERE id='news-fail'"
     ).fetchone()
@@ -137,7 +139,9 @@ async def test_analyzer_second_due_failure_becomes_terminal_failed(tmp_path, mon
 
     monkeypatch.setattr(news_analyzer, "llm_structured", invalid_schema)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=1) == 0
+    result = await news_analyzer.analyze_pending_news(batch_size=1)
+    assert result["analyzed"] == 0
+    assert result["terminal_failed"] == 1
     row = db.execute(
         "SELECT status, analyzed_at FROM news_items WHERE id='news-retry'"
     ).fetchone()
@@ -165,7 +169,9 @@ async def test_analyzer_timeout_records_first_retry_attempt(tmp_path, monkeypatc
     monkeypatch.setattr(news_analyzer, "llm_structured", hang)
     monkeypatch.setattr(news_analyzer, "_ANALYSIS_ITEM_TIMEOUT_SEC", 0.01)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=1) == 0
+    result = await news_analyzer.analyze_pending_news(batch_size=1)
+    assert result["analyzed"] == 0
+    assert result["retryable_failed"] == 1
     row = db.execute(
         "SELECT status, analyzed_at FROM news_items WHERE id='news-timeout'"
     ).fetchone()
@@ -199,7 +205,8 @@ async def test_news_analyzer_disables_provider_reasoning(tmp_path, monkeypatch):
 
     monkeypatch.setattr(news_analyzer, "llm_structured", analyze)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=1) == 1
+    result = await news_analyzer.analyze_pending_news(batch_size=1)
+    assert result["analyzed"] == 1
     assert captured["caller"] == "news_analyzer.analysis"
     assert captured["reasoning_effort"] == "none"
 
@@ -236,7 +243,8 @@ async def test_analyzer_retry_waits_thirty_minutes(tmp_path, monkeypatch):
 
     monkeypatch.setattr(news_analyzer, "llm_structured", analyze)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=3) == 1
+    result = await news_analyzer.analyze_pending_news(batch_size=3)
+    assert result["analyzed"] == 1
     assert len(calls) == 1 and "Ethereum new" in calls[0]
     assert db.execute(
         "SELECT status FROM news_items WHERE id='retry-not-due'"
@@ -274,7 +282,8 @@ async def test_analyzer_fairly_interleaves_old_new_and_due_retry_rows(
 
     monkeypatch.setattr(news_analyzer, "llm_structured", analyze)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=3) == 3
+    result = await news_analyzer.analyze_pending_news(batch_size=3)
+    assert result["analyzed"] == 3
     assert order == ["Bitcoin retry old", "Ethereum new old", "Solana retry new"]
 
 
@@ -303,7 +312,8 @@ async def test_analyzer_persists_exact_entities_not_model_symbol_guesses(
 
     monkeypatch.setattr(news_analyzer, "llm_structured", analyze)
 
-    assert await news_analyzer.analyze_pending_news(batch_size=1) == 1
+    result = await news_analyzer.analyze_pending_news(batch_size=1)
+    assert result["analyzed"] == 1
     row = db.execute(
         "SELECT status, symbols_mentioned, relevance_score FROM news_items WHERE id='news-ok'"
     ).fetchone()
@@ -340,6 +350,96 @@ def test_news_analysis_is_an_independent_bounded_scheduler_job(monkeypatch):
 
     assert scheduler._ASYNC_JOB_TIMEOUT_SEC["news_analyze"] <= 120
     assert calls == ["news_analyze", 3]
+
+
+def test_news_fetch_scheduler_marks_all_feed_failure(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    failures = []
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(news=SimpleNamespace(enabled=True)),
+    )
+
+    def run_bounded(_job_id, awaitable):
+        awaitable.close()
+        return {
+            "attempted": 2,
+            "succeeded": 0,
+            "failed": 2,
+            "fetched": 0,
+            "new": 0,
+            "errors": ["one:RuntimeError"],
+        }
+
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_bounded)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+
+    scheduler._run_news_fetch()
+
+    assert failures == [("news_fetch", "all_feeds_failed")]
+
+
+def test_news_analysis_scheduler_marks_partial_failure(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    failures = []
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(
+            news=SimpleNamespace(enabled=True), runtime=SimpleNamespace(paused=False)
+        ),
+    )
+
+    def run_bounded(_job_id, awaitable):
+        awaitable.close()
+        return {
+            "attempted": 3,
+            "analyzed": 2,
+            "retryable_failed": 1,
+            "terminal_failed": 0,
+            "errors": ["analysis_retry"],
+        }
+
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_bounded)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+
+    scheduler._run_news_analyze()
+
+    assert failures == [("news_analyze", "partial_item_failure")]
+
+
+def test_news_analysis_scheduler_marks_unresolved_failure(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    failures = []
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(
+            news=SimpleNamespace(enabled=True), runtime=SimpleNamespace(paused=False)
+        ),
+    )
+
+    def run_bounded(_job_id, awaitable):
+        awaitable.close()
+        return {
+            "attempted": 1,
+            "analyzed": 0,
+            "retryable_failed": 0,
+            "terminal_failed": 0,
+            "unresolved_failed": 1,
+            "errors": ["analysis_state_unresolved"],
+        }
+
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_bounded)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+
+    scheduler._run_news_analyze()
+
+    assert failures == [("news_analyze", "all_items_failed")]
 
 
 def test_news_analysis_does_not_start_while_runtime_is_paused(monkeypatch):
@@ -436,7 +536,219 @@ async def test_news_fetch_reopens_connection_after_network_await(tmp_path, monke
         close_shared_thread_connection(),
     )
 
-    assert result == {"fetched": 1, "new": 1}
+    assert result == {
+        "attempted": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "fetched": 1,
+        "new": 1,
+        "errors": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_news_fetch_reports_all_feed_failures(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_collector
+    from aletheia.learning import opportunity_information_policy
+
+    feeds = [
+        SimpleNamespace(enabled=True, url="https://example.test/one", name="one", source="one"),
+        SimpleNamespace(enabled=True, url="https://example.test/two", name="two", source="two"),
+    ]
+    monkeypatch.setattr(
+        news_collector,
+        "load_config",
+        lambda: SimpleNamespace(news=SimpleNamespace(enabled=True, feeds=feeds)),
+    )
+    monkeypatch.setattr(
+        opportunity_information_policy,
+        "ensure_opportunity_information_policy_epoch",
+        lambda: None,
+    )
+
+    def unavailable(_url):
+        raise RuntimeError("upstream unavailable")
+
+    monkeypatch.setattr(news_collector, "_fetch_feed_sync", unavailable)
+
+    result = await news_collector.fetch_news_feeds()
+
+    assert result == {
+        "attempted": 2,
+        "succeeded": 0,
+        "failed": 2,
+        "fetched": 0,
+        "new": 0,
+        "errors": ["one:RuntimeError", "two:RuntimeError"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_news_fetch_preserves_valid_rows_in_partial_batch(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_collector
+    from aletheia.learning import opportunity_information_policy
+    from aletheia.storage.sqlite import get_db
+
+    feeds = [
+        SimpleNamespace(enabled=True, url="https://example.test/good", name="good", source="good"),
+        SimpleNamespace(enabled=True, url="https://example.test/bad", name="bad", source="bad"),
+    ]
+    monkeypatch.setattr(
+        news_collector,
+        "load_config",
+        lambda: SimpleNamespace(news=SimpleNamespace(enabled=True, feeds=feeds)),
+    )
+    monkeypatch.setattr(
+        opportunity_information_policy,
+        "ensure_opportunity_information_policy_epoch",
+        lambda: None,
+    )
+
+    def mixed(url):
+        if url.endswith("bad"):
+            raise RuntimeError("upstream unavailable")
+        return [{"id": "good-one", "title": "Bitcoin update", "link": "https://example.test/good-one"}]
+
+    monkeypatch.setattr(news_collector, "_fetch_feed_sync", mixed)
+
+    result = await news_collector.fetch_news_feeds()
+
+    assert result["attempted"] == 2
+    assert result["succeeded"] == 1
+    assert result["failed"] == 1
+    assert result["fetched"] == 1
+    assert result["new"] == 1
+    assert result["errors"] == ["bad:RuntimeError"]
+    assert get_db().execute("SELECT COUNT(*) FROM news_items").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_news_fetch_empty_success_is_not_failure(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_collector
+    from aletheia.learning import opportunity_information_policy
+
+    feeds = [
+        SimpleNamespace(enabled=True, url="https://example.test/one", name="one", source="one"),
+        SimpleNamespace(enabled=True, url="https://example.test/two", name="two", source="two"),
+    ]
+    monkeypatch.setattr(
+        news_collector,
+        "load_config",
+        lambda: SimpleNamespace(news=SimpleNamespace(enabled=True, feeds=feeds)),
+    )
+    monkeypatch.setattr(
+        opportunity_information_policy,
+        "ensure_opportunity_information_policy_epoch",
+        lambda: None,
+    )
+    monkeypatch.setattr(news_collector, "_fetch_feed_sync", lambda _url: [])
+
+    result = await news_collector.fetch_news_feeds()
+
+    assert result == {
+        "attempted": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "fetched": 0,
+        "new": 0,
+        "errors": [],
+    }
+
+
+def test_news_fetch_rejects_http_error_with_parseable_empty_body(monkeypatch):
+    from aletheia.data import news_collector
+
+    monkeypatch.setattr(
+        news_collector.feedparser,
+        "parse",
+        lambda _url: SimpleNamespace(bozo=False, entries=[], status=503),
+    )
+
+    with pytest.raises(RuntimeError, match="feed_http_error:503"):
+        news_collector._fetch_feed_sync("https://example.test/unavailable")
+
+
+def test_news_fetch_accepts_not_modified_response(monkeypatch):
+    from aletheia.data import news_collector
+
+    monkeypatch.setattr(
+        news_collector.feedparser,
+        "parse",
+        lambda _url: SimpleNamespace(bozo=False, entries=[], status=304),
+    )
+
+    assert news_collector._fetch_feed_sync("https://example.test/not-modified") == []
+
+
+@pytest.mark.asyncio
+async def test_news_analysis_counts_row_removed_in_flight_as_unresolved_failure(
+    tmp_path, monkeypatch
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_analyzer
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO news_items (id, title, source, summary, published_at, status) "
+        "VALUES ('removed-in-flight', 'Bitcoin update', 'fixture', '', "
+        "'2026-07-19T00:00:00Z', 'new')"
+    )
+    db.commit()
+
+    async def remove_selected_row(row, connection):
+        connection.execute("DELETE FROM news_items WHERE id = ?", (row["id"],))
+        connection.commit()
+        return False
+
+    monkeypatch.setattr(news_analyzer, "_analyze_single_row", remove_selected_row)
+
+    result = await news_analyzer.analyze_pending_news(batch_size=1)
+
+    assert result["attempted"] == 1
+    assert result["analyzed"] == 0
+    assert result["retryable_failed"] == 0
+    assert result["terminal_failed"] == 0
+    assert result["unresolved_failed"] == 1
+    assert result["errors"] == ["analysis_state_unresolved"]
+
+
+@pytest.mark.asyncio
+async def test_news_analysis_reports_partial_batch_failure(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.data import news_analyzer
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.executemany(
+        "INSERT INTO news_items (id, title, source, summary, published_at, status) "
+        "VALUES (?, ?, 'fixture', '', '2026-07-19T00:00:00Z', 'new')",
+        [("analysis-good", "Bitcoin update",), ("analysis-bad", "Ethereum update",)],
+    )
+    db.commit()
+
+    async def analyze(**kwargs):
+        if "Ethereum" in kwargs["user"]:
+            return None, "provider unavailable"
+        return {
+            "sentiment": "neutral",
+            "symbols": [],
+            "relevance": 0.7,
+            "impact": "No immediate impact.",
+        }, None
+
+    monkeypatch.setattr(news_analyzer, "llm_structured", analyze)
+
+    result = await news_analyzer.analyze_pending_news(batch_size=3)
+
+    assert result["attempted"] == 2
+    assert result["analyzed"] == 1
+    assert result["retryable_failed"] == 1
+    assert result["terminal_failed"] == 0
+    assert result["errors"] == ["analysis_retry"]
 
 
 def test_sync_blocked_analyzer_does_not_block_rss_timeout_lane(monkeypatch):
