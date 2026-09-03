@@ -296,6 +296,26 @@ def test_cutoff_at_in_registration_is_required():
         compile_qualification_verdict(registration=reg)
 
 
+@pytest.mark.parametrize(
+    "execution_mode",
+    ["bitget_demo", "okx_demo", "live", "unknown", " paper_internal", "PAPER_INTERNAL"],
+)
+def test_unsupported_execution_mode_fails_before_outcome_read(
+    monkeypatch, execution_mode,
+):
+    _patch_matching_identity(monkeypatch)
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_kwargs: pytest.fail("unsupported mode reached Outcome read"),
+    )
+
+    with pytest.raises(ValueError, match="execution_mode must be exactly paper_internal"):
+        compile_qualification_verdict(
+            registration={**_REGISTRATION, "execution_mode": execution_mode},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Temporal consistency enforcement tests
 # ---------------------------------------------------------------------------
