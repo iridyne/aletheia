@@ -502,15 +502,11 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             }
             if not required_outbox.issubset(outbox_columns):
                 raise sqlite3.Error("outbox_schema_unavailable")
-            mutable_columns = {
-                "acknowledged_at", "lab_application_status",
-                "lab_applied_observation_id", "lab_applied_generation",
-                "lab_applied_event_id", "lab_application_error", "lab_applied_at",
-            }
-            immutable_columns = [
-                str(row[1]) for row in outbox_schema
-                if str(row[1]) not in mutable_columns
-            ]
+            from aletheia.observation_lab.checkpoint import _OUTBOX_IDENTITY_COLUMNS
+
+            if not set(_OUTBOX_IDENTITY_COLUMNS).issubset(outbox_columns):
+                raise sqlite3.Error("outbox_identity_schema_unavailable")
+            immutable_columns = list(_OUTBOX_IDENTITY_COLUMNS)
             select_columns = [*immutable_columns, "acknowledged_at"]
             if "lab_application_status" in outbox_columns:
                 select_columns.append("lab_application_status")
@@ -541,6 +537,18 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
                 1 for row in outbox_rows if row["acknowledged_at"] is None
             )
             outbox_fingerprint = _sha256_json(outbox_state)
+            legacy_outbox_fingerprint = _sha256_json([
+                (
+                    row["sequence"], row["receipt_id"], row["manifest_hash"],
+                    row["acknowledged_at"],
+                )
+                for row in outbox_rows
+            ])
+            legacy_outbox_values = (
+                int(outbox_rows[-1]["sequence"]) if outbox_rows else 0,
+                outbox_pending,
+                legacy_outbox_fingerprint,
+            )
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         result.valid = False
         result.errors.append(
@@ -592,11 +600,10 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             checkpoint_row["main_outbox_pending_count"],
             checkpoint_row["main_outbox_fingerprint"],
         )
-        if checkpoint_values != (
-            outbox_watermark,
-            outbox_pending,
-            outbox_fingerprint,
-        ):
+        current_outbox_values = (
+            outbox_watermark, outbox_pending, outbox_fingerprint,
+        )
+        if checkpoint_values not in {current_outbox_values, legacy_outbox_values}:
             result.valid = False
             result.errors.append(
                 "Lab-authoritative outbox cut does not match joint checkpoint"

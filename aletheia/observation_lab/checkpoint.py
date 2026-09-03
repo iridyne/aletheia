@@ -50,15 +50,10 @@ _CHECKPOINT_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "payload_json",
     ),
 }
-_OUTBOX_MUTABLE_COLUMNS = frozenset({
-    "acknowledged_at",
-    "lab_application_status",
-    "lab_applied_observation_id",
-    "lab_applied_generation",
-    "lab_applied_event_id",
-    "lab_application_error",
-    "lab_applied_at",
-})
+# The outbox trigger makes the full receipt payload immutable. These three
+# columns are its stable transport identity; mutable Lab application state is
+# deliberately outside the pending frontier fingerprint.
+_OUTBOX_IDENTITY_COLUMNS = ("sequence", "receipt_id", "manifest_hash")
 
 
 @dataclass(frozen=True)
@@ -123,32 +118,32 @@ def _read_app_migration_state() -> tuple[str, int]:
 
 def _read_app_outbox_state(*, through_sequence: int | None = None) -> tuple[int, int, str]:
     """Return the logical watermark and pending transport frontier."""
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import read_snapshot
 
     try:
-        db = get_db()
-        immutable_columns = [
-            str(row[1])
-            for row in db.execute(
-                "PRAGMA table_info(observation_delivery_outbox)"
-            ).fetchall()
-            if str(row[1]) not in _OUTBOX_MUTABLE_COLUMNS
-        ]
-        if not immutable_columns:
-            raise sqlite3.Error("outbox_schema_unavailable")
-        sql = (
-            f"SELECT {', '.join(immutable_columns)} "
-            "FROM observation_delivery_outbox WHERE acknowledged_at IS NULL"
-        )
-        params: tuple[int, ...] = ()
-        if through_sequence is not None:
-            sql += " AND sequence<=?"
-            params = (int(through_sequence),)
-        rows = db.execute(f"{sql} ORDER BY sequence", params).fetchall()
-        sequence_row = db.execute(
-            "SELECT seq FROM sqlite_sequence WHERE name='observation_delivery_outbox'"
-        ).fetchone()
-        logical_watermark = int(sequence_row[0]) if sequence_row is not None else 0
+        with read_snapshot() as db:
+            columns = {
+                str(row[1])
+                for row in db.execute(
+                    "PRAGMA table_info(observation_delivery_outbox)"
+                ).fetchall()
+            }
+            if not set(_OUTBOX_IDENTITY_COLUMNS).issubset(columns):
+                raise sqlite3.Error("outbox_schema_unavailable")
+            sql = (
+                f"SELECT {', '.join(_OUTBOX_IDENTITY_COLUMNS)} "
+                "FROM observation_delivery_outbox WHERE acknowledged_at IS NULL"
+            )
+            params: tuple[int, ...] = ()
+            if through_sequence is not None:
+                sql += " AND sequence<=?"
+                params = (int(through_sequence),)
+            rows = db.execute(f"{sql} ORDER BY sequence", params).fetchall()
+            sequence_row = db.execute(
+                "SELECT seq FROM sqlite_sequence "
+                "WHERE name='observation_delivery_outbox'"
+            ).fetchone()
+            logical_watermark = int(sequence_row[0]) if sequence_row is not None else 0
     except Exception:
         return (-1, -1, "<unavailable>")
     watermark = (

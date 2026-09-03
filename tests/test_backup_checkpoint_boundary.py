@@ -111,6 +111,32 @@ def test_authoritative_outbox_cursor_cut_accepts_proven_retention_pruning(tmp_pa
     assert result.valid, result.errors
 
 
+def test_authoritative_outbox_cursor_cut_accepts_legacy_fingerprint(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    legacy_fingerprint = hashlib.sha256(
+        json.dumps(
+            [[1, "r1", "m1", "2026-01-01T00:00:00+00:00"]],
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    lab = sqlite3.connect(str(bundle / "observation-lab" / "lab.db"))
+    lab.execute(
+        "UPDATE joint_checkpoints SET main_outbox_fingerprint=?",
+        (legacy_fingerprint,),
+    )
+    lab.commit()
+    lab.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert result.valid, result.errors
+
+
 def test_authoritative_outbox_cursor_cut_rejects_acknowledged_row_ahead_of_cursor(tmp_path):
     from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
 

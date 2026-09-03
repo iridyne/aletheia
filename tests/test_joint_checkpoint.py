@@ -170,6 +170,63 @@ def test_pending_receipt_identity_change_is_structured_outbox_drift():
     assert verdict.mismatch_components == ("main_outbox",)
 
 
+def test_outbox_frontier_uses_one_sqlite_snapshot(monkeypatch, tmp_path):
+    import sqlite3
+
+    from aletheia.observation_lab.checkpoint import _read_app_outbox_state
+    from aletheia.storage import sqlite as sqlite_store
+
+    path = tmp_path / "snapshot.db"
+    reader = sqlite3.connect(path, isolation_level=None)
+    reader.row_factory = sqlite3.Row
+    reader.execute("PRAGMA journal_mode=WAL")
+    reader.execute(
+        "CREATE TABLE observation_delivery_outbox ("
+        "sequence INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, "
+        "manifest_hash TEXT, acknowledged_at TEXT)"
+    )
+    writer = sqlite3.connect(path, isolation_level=None)
+    inserted = False
+
+    def insert_between_frontier_reads(sql):
+        nonlocal inserted
+        if not inserted and sql.startswith("SELECT seq FROM sqlite_sequence"):
+            inserted = True
+            writer.execute(
+                "INSERT INTO observation_delivery_outbox "
+                "(receipt_id, manifest_hash) VALUES ('late', 'm')"
+            )
+
+    reader.set_trace_callback(insert_between_frontier_reads)
+    monkeypatch.setattr(sqlite_store, "get_db", lambda: reader)
+
+    first = _read_app_outbox_state()
+    second = _read_app_outbox_state()
+
+    assert first[:2] == (0, 0)
+    assert second[:2] == (1, 1)
+    writer.close()
+    reader.close()
+
+
+def test_outbox_frontier_rejects_incomplete_identity_schema(monkeypatch, tmp_path):
+    import sqlite3
+
+    from aletheia.observation_lab.checkpoint import _read_app_outbox_state
+    from aletheia.storage import sqlite as sqlite_store
+
+    db = sqlite3.connect(tmp_path / "incomplete.db", isolation_level=None)
+    db.execute(
+        "CREATE TABLE observation_delivery_outbox ("
+        "sequence INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, "
+        "acknowledged_at TEXT)"
+    )
+    monkeypatch.setattr(sqlite_store, "get_db", lambda: db)
+
+    assert _read_app_outbox_state() == (-1, -1, "<unavailable>")
+    db.close()
+
+
 def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
     from aletheia.observation_lab.canonical import append_delivery_receipt
     from aletheia.observation_lab.checkpoint import (
