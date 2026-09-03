@@ -180,7 +180,7 @@ def logs(
 
 @gateway_app.command()
 def pause():
-    """Pause all autonomous agent/trading jobs."""
+    """Pause new decisions/trading; keep essential protection and truth maintenance running."""
     from aletheia.gateway.lifecycle import do_pause
     do_pause()
 

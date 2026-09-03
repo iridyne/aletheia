@@ -660,6 +660,47 @@ def test_resume_api_sends_existing_remote_control_token(tmp_path, monkeypatch):
     assert seen["timeout"] == 30.0
 
 
+def test_pause_api_returns_live_projection_and_sends_control_token(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway import lifecycle
+
+    cfg = load_config()
+    cfg.remote_control.enabled = True
+    cfg.remote_control.require_token = True
+    save_config(cfg)
+    monkeypatch.setattr(
+        "aletheia.config.secrets.get_secret",
+        lambda key: "owner-token" if key == "remote_control_api_token" else None,
+    )
+    seen = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"paused":true,"mode":"layered_paused","message":"2 essential jobs continue"}'
+
+    def fake_open(request, *, timeout):
+        seen["url"] = request.full_url
+        seen["headers"] = dict(request.header_items())
+        seen["method"] = request.method
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(lifecycle, "_local_urlopen", fake_open)
+
+    assert lifecycle._post_gateway_pause_api(cfg)["mode"] == "layered_paused"
+    assert seen["url"].endswith("/api/gateway/pause")
+    assert seen["headers"]["X-aletheia-token"] == "owner-token"
+    assert seen["method"] == "POST"
+    assert seen["timeout"] == 30.0
+
+
 # --- Headless detection + safe echo ---
 
 def test_is_headless_false_on_posix(monkeypatch):
@@ -1337,3 +1378,37 @@ def test_do_resume_prefers_running_gateway_api(tmp_path, monkeypatch):
     lifecycle.do_resume()
 
     assert calls == ["api"]
+
+
+def test_do_pause_prefers_running_gateway_api(tmp_path, monkeypatch, capsys):
+    """CLI pause must acknowledge the scheduler state from the gateway process."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    from aletheia.agent_runtime import pause_ownership
+
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: True)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    calls = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_post_gateway_pause_api",
+        lambda cfg: calls.append("api") or {
+            "paused": True,
+            "mode": "layered_paused",
+            "message": "New decision/trading jobs are paused; 2 essential jobs continue.",
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pause_ownership,
+        "acquire_pause",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("local scheduler state must not be used")
+        ),
+    )
+
+    lifecycle.do_pause()
+
+    assert calls == ["api"]
+    assert "2 essential jobs continue" in capsys.readouterr().out

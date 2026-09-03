@@ -183,6 +183,36 @@ def acquire_pause(
         return lease
 
 
+def pause_acknowledgement(*, paused: bool = True) -> dict:
+    """Return one honest owner-facing pause projection from scheduler state."""
+    from aletheia.agent_runtime.scheduler import get_pause_state
+
+    state = get_pause_state()
+    mode = state.get("mode")
+    running_jobs = list(state.get("running_jobs") or []) if mode == "layered_paused" else []
+    if not paused:
+        message = "Gateway resumed; no pause is active."
+    elif mode == "layered_paused":
+        message = (
+            "New decision/trading jobs are paused; "
+            f"{len(running_jobs)} essential protection and truth-maintenance jobs continue."
+        )
+    elif mode == "blanket_paused":
+        message = "All scheduler jobs are paused; use resume to re-enable them."
+    elif mode == "stopped":
+        message = "Pause recorded; the in-process scheduler is not active."
+    else:
+        message = f"Pause recorded; scheduler mode is {mode or 'unknown'}."
+    return {
+        "paused": paused,
+        "mode": mode,
+        "pause_state": state,
+        "essential_jobs_running": running_jobs,
+        "essential_job_count": len(running_jobs),
+        "message": message,
+    }
+
+
 def release_pause(
     owner: str,
     *,
