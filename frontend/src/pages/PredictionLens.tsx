@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { PredictionMarket, PredictionStatus, PredictionObserverRun, PredictionClaim } from '../types'
+import type { PredictionMarket, PredictionStatus, PredictionObserverRun, PredictionClaim, PredictionPreferences } from '../types'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
@@ -330,24 +330,15 @@ function ObserverRunsTab({ runs, state }: { runs: PredictionObserverRun[]; state
 }
 
 // --- Preferences Tab ---
-function PreferencesTab() {
-  const qc = useQueryClient()
-  const { data: prefs } = useQuery({
-    queryKey: ['prediction-preferences'],
-    queryFn: api.getPredictionPreferences,
-  })
-  const [cats, setCats] = useState('')
-  const { toast } = useToast()
-  const updateMut = useMutation({
-    mutationFn: (categories: string[]) => api.updatePredictionPreferences({ categories }),
-    onSuccess: () => {
-      toast('success', 'Preferences saved')
-      qc.invalidateQueries({ queryKey: ['prediction-preferences'] })
-      qc.invalidateQueries({ queryKey: ['prediction-status'] })
-    },
-    onError: (e: any) => toast('error', `Save failed: ${e?.message || 'request failed'}`),
-  })
-
+function PreferencesTab({
+  prefs, cats, setCats, isSaving, saveCategories,
+}: {
+  prefs: PredictionPreferences | undefined
+  cats: string
+  setCats: (value: string) => void
+  isSaving: boolean
+  saveCategories: (categories: string[]) => void
+}) {
   const currentCats = prefs?.categories ?? []
 
   return (
@@ -367,21 +358,20 @@ function PreferencesTab() {
             placeholder="Add categories (comma-separated)"
             value={cats}
             onChange={e => setCats(e.target.value)}
+            disabled={isSaving}
             onKeyDown={e => {
-              if (e.key === 'Enter' && cats.trim()) {
+              if (e.key === 'Enter' && cats.trim() && !isSaving) {
                 const newCats = [...currentCats, ...cats.split(',').map(s => s.trim()).filter(Boolean)]
-                updateMut.mutate([...new Set(newCats)])
-                setCats('')
+                saveCategories([...new Set(newCats)])
               }
             }}
           />
           <Button
             variant="secondary"
-            disabled={!cats.trim() || updateMut.isPending}
+            disabled={!cats.trim() || isSaving}
             onClick={() => {
               const newCats = [...currentCats, ...cats.split(',').map(s => s.trim()).filter(Boolean)]
-              updateMut.mutate([...new Set(newCats)])
-              setCats('')
+              saveCategories([...new Set(newCats)])
             }}
           >
             Add
@@ -392,8 +382,8 @@ function PreferencesTab() {
             <Button
               variant="secondary"
               className="text-sm"
-              onClick={() => updateMut.mutate([])}
-              disabled={updateMut.isPending}
+              onClick={() => saveCategories([])}
+              disabled={isSaving}
             >
               Clear all categories
             </Button>
@@ -582,6 +572,7 @@ export default function PredictionLens() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = useState<Tab>('radar')
+  const [preferenceDraft, setPreferenceDraft] = useState('')
   const selectedMarketId = searchParams.get('market_id')?.trim() || null
 
   const statusQuery = useQuery({
@@ -612,6 +603,10 @@ export default function PredictionLens() {
     queryFn: api.getPredictionRuns,
     enabled: statusView.enabled === true,
   })
+  const preferencesQuery = useQuery({
+    queryKey: ['prediction-preferences'],
+    queryFn: api.getPredictionPreferences,
+  })
   const exactMarketQuery = useQuery({
     queryKey: ['prediction-market-detail', selectedMarketId],
     queryFn: () => api.getPredictionMarketDetail(selectedMarketId!),
@@ -638,6 +633,18 @@ export default function PredictionLens() {
     : 'Preferences'
 
   const { toast } = useToast()
+  const updatePreferences = useMutation({
+    mutationFn: (categories: string[]) => api.updatePredictionPreferences({ categories }),
+    onSuccess: result => {
+      qc.setQueryData<PredictionPreferences>(['prediction-preferences'], current =>
+        current ? { ...current, categories: result.categories } : current)
+      setPreferenceDraft('')
+      toast('success', 'Preferences saved')
+      qc.invalidateQueries({ queryKey: ['prediction-preferences'] })
+      qc.invalidateQueries({ queryKey: ['prediction-status'] })
+    },
+    onError: (e: any) => toast('error', `Save failed: ${e?.message || 'request failed'}`),
+  })
   const openMarket = (market: PredictionMarket) => {
     const next = new URLSearchParams(searchParams)
     next.set('market_id', market.market_id)
@@ -690,7 +697,13 @@ export default function PredictionLens() {
             { id: 'runs', label: 'Observer Runs', badge: runs.length > 0 ? runs.length : undefined,
               render: () => <ObserverRunsTab runs={runs} state={runsState} /> },
           ] : []),
-          { id: 'preferences', label: preferenceLabel, render: () => <PreferencesTab /> },
+          { id: 'preferences', label: preferenceLabel, render: () => <PreferencesTab
+            prefs={preferencesQuery.data}
+            cats={preferenceDraft}
+            setCats={setPreferenceDraft}
+            isSaving={updatePreferences.isPending}
+            saveCategories={categories => updatePreferences.mutate(categories)}
+          /> },
         ]) as TabDef[]}
       />
 

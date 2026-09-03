@@ -2407,7 +2407,7 @@ export const api = {
 	// #86 fix: backend is @router.patch("/preferences") (prediction.py:232),
 	// client was POSTing → 405 Method Not Allowed on every save. Use PATCH.
 	updatePredictionPreferences: (body: { categories?: string[] }) =>
-		fetchJson<any>("/prediction/preferences", {
+		fetchJson<{ status: string; categories: string[] }>("/prediction/preferences", {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
