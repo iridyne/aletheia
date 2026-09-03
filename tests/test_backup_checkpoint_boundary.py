@@ -137,6 +137,29 @@ def test_authoritative_outbox_cursor_cut_accepts_legacy_fingerprint(tmp_path):
     assert result.valid, result.errors
 
 
+def test_authoritative_outbox_cursor_cut_rejects_missing_sequence_watermark(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    app = sqlite3.connect(str(bundle / "app.db"))
+    app.executescript(
+        "ALTER TABLE observation_delivery_outbox RENAME TO old_outbox;"
+        "CREATE TABLE observation_delivery_outbox ("
+        "sequence INTEGER PRIMARY KEY, receipt_id TEXT, manifest_hash TEXT, "
+        "acknowledged_at TEXT);"
+        "INSERT INTO observation_delivery_outbox SELECT * FROM old_outbox;"
+        "DROP TABLE old_outbox;"
+    )
+    app.commit()
+    app.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert not result.valid
+    assert any("outbox cut is unreadable" in error for error in result.errors)
+
+
 def test_authoritative_outbox_cursor_cut_rejects_acknowledged_row_ahead_of_cursor(tmp_path):
     from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
 

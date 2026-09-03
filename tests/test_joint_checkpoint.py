@@ -227,6 +227,57 @@ def test_outbox_frontier_rejects_incomplete_identity_schema(monkeypatch, tmp_pat
     db.close()
 
 
+def test_runtime_verification_accepts_exact_legacy_outbox_fingerprint():
+    from dataclasses import replace
+
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        _fingerprint,
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-legacy-runtime",
+        candidate_key="candidate-legacy-runtime",
+        resolution_reason="adapter_unavailable",
+    )
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", receipt_id),
+    )
+    current = compute_joint_checkpoint()
+    assert current.legacy_main_outbox_state is not None
+    watermark, pending, fingerprint = current.legacy_main_outbox_state
+    legacy_joint_fingerprint = _fingerprint(
+        app_migration_head=current.app_migration_head,
+        app_migration_count=current.app_migration_count,
+        active_manifest_hashes=current.active_manifest_hashes,
+        lab_schema_head=current.lab_schema_head,
+        lab_schema_count=current.lab_schema_count,
+        lab_state_fingerprint=current.lab_state_fingerprint,
+        checkpoint_ledger_fingerprint=current.checkpoint_ledger_fingerprint,
+        main_outbox_high_watermark=watermark,
+        main_outbox_pending_count=pending,
+        main_outbox_fingerprint=fingerprint,
+    )
+    save_joint_checkpoint(replace(
+        current,
+        main_outbox_high_watermark=watermark,
+        main_outbox_pending_count=pending,
+        main_outbox_fingerprint=fingerprint,
+        joint_fingerprint=legacy_joint_fingerprint,
+    ))
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is True
+    assert verdict.reason == "legacy_main_outbox_fingerprint_match"
+
+
 def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
     from aletheia.observation_lab.canonical import append_delivery_receipt
     from aletheia.observation_lab.checkpoint import (

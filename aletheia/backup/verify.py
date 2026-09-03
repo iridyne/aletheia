@@ -522,17 +522,13 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             outbox_by_sequence = {
                 int(row["sequence"]): row for row in outbox_rows
             }
-            try:
-                sequence_row = app.execute(
-                    "SELECT seq FROM sqlite_sequence "
-                    "WHERE name='observation_delivery_outbox'"
-                ).fetchone()
-            except sqlite3.OperationalError:
-                sequence_row = None
-            outbox_watermark = (
-                int(sequence_row[0]) if sequence_row is not None
-                else (int(outbox_rows[-1]["sequence"]) if outbox_rows else 0)
-            )
+            sequence_row = app.execute(
+                "SELECT seq FROM sqlite_sequence "
+                "WHERE name='observation_delivery_outbox'"
+            ).fetchone()
+            if sequence_row is None and outbox_rows:
+                raise sqlite3.Error("outbox_sequence_watermark_unavailable")
+            outbox_watermark = int(sequence_row[0]) if sequence_row is not None else 0
             outbox_pending = sum(
                 1 for row in outbox_rows if row["acknowledged_at"] is None
             )
