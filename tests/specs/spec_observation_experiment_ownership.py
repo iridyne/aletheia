@@ -10,6 +10,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 _CONTRACT = "observation_experiment_ownership_v2"
+_CHECKPOINT_CONTRACT = "observation_lab_backup_contract"
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "aletheia"
 
@@ -245,6 +246,19 @@ def test_lab_runner_does_not_import_legacy_experiment_runtime():
         source = (_SRC / "observation_lab" / module).read_text(encoding="utf-8")
         assert "aletheia.learning.experiments" not in source
         assert "aletheia.learning.ledger" not in source
+
+
+@spec_claim(SpecClaim(
+    "OEO-S06", _CHECKPOINT_CONTRACT, "Runner-only transport progress", "L2a",
+    "Only the scheduled Lab runner may relax exact checkpoint matching for pending Main receipts.",
+))
+def test_only_lab_runner_accepts_main_outbox_progress():
+    callers = {
+        path
+        for path, source in _production_sources().items()
+        if "allow_main_outbox_progress=True" in source
+    }
+    assert callers == {"aletheia/observation_lab/runner.py"}
 
 
 @spec_claim(SpecClaim(

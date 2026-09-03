@@ -34,6 +34,9 @@ joint_fingerprint = sha256(canonical_json({
     "lab_state_fingerprint": <canonical schema + row digest for Lab tables>,
     "checkpoint_ledger_fingerprint": <canonical digest of prior checkpoint rows>,
     "active_manifest_hashes": <sorted, deduplicated list of active manifest_hash>,
+    "main_outbox_high_watermark": <largest durable Main receipt sequence>,
+    "main_outbox_pending_count": <unacknowledged Main receipt count>,
+    "main_outbox_fingerprint": <canonical digest of the durable Main receipt cut>,
 }))
 ```
 
@@ -53,12 +56,21 @@ Sorted + deduplicated so the fingerprint is order-independent. `canonical_json` 
 3. `ok=True, reason="fingerprint_match"` — no drift. Continue.
 4. `ok=False` — at least one input was restored to a different point than the others. The mismatch remains a durable diagnostic fact. Any behavior-bearing consumer must fail closed to its deterministic baseline; the v1 runner may continue observe-only collection and must not claim continuity verified or authorize a treatment from the mismatched state.
 
-## 4. Why the fingerprint uses only these three inputs
+The scheduled runner alone calls verification with
+`allow_main_outbox_progress=True`. It may additionally receive
+`ok=True, reason="main_outbox_append_only"` when every non-outbox input and the
+previously checkpointed Main prefix still match and every later receipt remains
+unacknowledged. The runner then imports those receipts and records the exact
+post-pass checkpoint. Backup, restore, authority cutover/rollback, CLI, update,
+and behavior-bearing consumers retain strict verification by default.
+
+## 4. Why the fingerprint uses these inputs
 
 - **App migration head + count** captures every schema-visible fact in `app.db`: a rollback that dropped a migration bumps the count down, and if the head changes, that's an application-level restore. A row-level rollback (data changed, schema unchanged) is invisible here — that's intentional, because production data is meant to change while schema stays put. When migrations move, the joint state must move together.
 - **Lab schema/state** captures the physical Lab contract and append-only evidence identities, including rows that a Lab-only restore could lose or replace. The runner records the post-window state, so expected append-only writes become the next verified checkpoint rather than perpetual false drift.
 - **Active manifest hashes** captures every treatment contract Main Runtime might be executing. Each loaded manifest is re-hashed from its canonical content before it can enter this set; payload-only mutation or a forged stored hash is an integrity failure.
 - **Checkpoint ledger** captures prior checkpoint identity without hashing the just-created current row, avoiding a self-referential fingerprint while still detecting removal or replacement of historical checkpoint rows.
+- **Main receipt cut** lets the scheduled runner distinguish recoverable pending transport progress from a changed checkpointed prefix. An acknowledged suffix without matching Lab progress is not recoverable append-only progress and remains a mismatch.
 
 ## 5. Blast radius on mismatch
 
@@ -76,4 +88,4 @@ Once `verify_joint_checkpoint().ok is False` returns:
 
 ## 7. Verification
 
-- `tests/test_joint_checkpoint.py` covers: fresh install (empty ledger), matching fingerprint on repeat, mismatch on manifest set change, mismatch on app or Lab-only state change, schema identity, manifest immutability, and save-idempotency.
+- `tests/test_joint_checkpoint.py` covers: fresh install (empty ledger), matching fingerprint on repeat, runner-only pending Main progress, rejection of acknowledged suffixes and changed prefixes, mismatch on manifest set change, mismatch on app or Lab-only state change, schema identity, manifest immutability, and save-idempotency.

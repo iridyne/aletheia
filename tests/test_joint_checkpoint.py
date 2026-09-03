@@ -48,7 +48,7 @@ def test_second_pass_with_no_state_change_verifies_match():
     assert verdict.reason == "fingerprint_match"
 
 
-def test_appended_main_receipt_preserves_checkpoint_continuity():
+def test_appended_main_receipt_requires_explicit_progress_mode():
     from aletheia.observation_lab.canonical import append_delivery_receipt
     from aletheia.observation_lab.checkpoint import (
         compute_joint_checkpoint,
@@ -64,8 +64,11 @@ def test_appended_main_receipt_preserves_checkpoint_continuity():
         resolution_reason="adapter_unavailable",
     )
 
-    verdict = verify_joint_checkpoint()
+    strict = verify_joint_checkpoint()
+    verdict = verify_joint_checkpoint(allow_main_outbox_progress=True)
 
+    assert strict.ok is False
+    assert "fingerprint_mismatch" in strict.reason
     assert verdict.ok is True
     assert verdict.reason == "main_outbox_append_only"
 
@@ -97,7 +100,34 @@ def test_appended_main_receipt_does_not_hide_checkpointed_prefix_change():
         resolution_reason="adapter_unavailable",
     )
 
-    verdict = verify_joint_checkpoint()
+    verdict = verify_joint_checkpoint(allow_main_outbox_progress=True)
+
+    assert verdict.ok is False
+    assert "fingerprint_mismatch" in verdict.reason
+
+
+def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-acknowledged-suffix",
+        candidate_key="candidate-acknowledged-suffix",
+        resolution_reason="adapter_unavailable",
+    )
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2026-09-03T00:00:00+00:00", receipt_id),
+    )
+
+    verdict = verify_joint_checkpoint(allow_main_outbox_progress=True)
 
     assert verdict.ok is False
     assert "fingerprint_mismatch" in verdict.reason

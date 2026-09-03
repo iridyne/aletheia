@@ -139,7 +139,7 @@ def _main_outbox_advanced_append_only(
     last: JointCheckpoint,
     current: JointCheckpoint,
 ) -> bool:
-    """Accept new receipts only when the previously checkpointed prefix is intact."""
+    """Accept pending receipts only when the checkpointed prefix is intact."""
     if current.main_outbox_high_watermark <= last.main_outbox_high_watermark:
         return False
     if (
@@ -155,11 +155,23 @@ def _main_outbox_advanced_append_only(
     prefix = _read_app_outbox_state(
         through_sequence=last.main_outbox_high_watermark
     )
-    return prefix == (
+    if prefix != (
         last.main_outbox_high_watermark,
         last.main_outbox_pending_count,
         last.main_outbox_fingerprint,
-    )
+    ):
+        return False
+    from aletheia.storage.sqlite import get_db
+
+    try:
+        acknowledged_suffix = get_db().execute(
+            "SELECT 1 FROM observation_delivery_outbox "
+            "WHERE sequence>? AND acknowledged_at IS NOT NULL LIMIT 1",
+            (last.main_outbox_high_watermark,),
+        ).fetchone()
+    except Exception:
+        return False
+    return acknowledged_suffix is None
 
 
 def _active_manifest_hashes(
@@ -447,12 +459,18 @@ def latest_joint_checkpoint() -> JointCheckpoint | None:
     )
 
 
-def verify_joint_checkpoint(*, create_lab: bool = True) -> CheckpointVerification:
+def verify_joint_checkpoint(
+    *,
+    create_lab: bool = True,
+    allow_main_outbox_progress: bool = False,
+) -> CheckpointVerification:
     """Compare current joint state against the latest stored checkpoint.
 
     Returns:
     - ``ok=True`` if the most recent stored fingerprint equals the freshly-
-      computed one, OR if the stored ledger is empty (first-ever pass).
+      computed one, or if the stored ledger is empty (first-ever pass).
+    - The scheduled runner may explicitly accept an intact checkpointed Main
+      prefix followed only by pending receipts, then import and checkpoint it.
     - ``ok=False`` with a typed reason otherwise. The caller MUST NOT
       silently proceed; failing closed on the affected Observations is
       the required response per new #1072 §"Storage and runtime boundary".
@@ -504,7 +522,9 @@ def verify_joint_checkpoint(*, create_lab: bool = True) -> CheckpointVerificatio
             current_fingerprint=current.joint_fingerprint,
             reason="fingerprint_match",
         )
-    if _main_outbox_advanced_append_only(last, current):
+    if allow_main_outbox_progress and _main_outbox_advanced_append_only(
+        last, current
+    ):
         return CheckpointVerification(
             ok=True,
             last=last,
