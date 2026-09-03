@@ -979,6 +979,90 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
     assert fill["execution_attempt_id"] == order["execution_attempt_id"]
 
 
+def test_paper_entry_plan_crash_replay_rechecks_receipt_expiry(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import (
+        build_entry_execution_receipt,
+        build_entry_plan_order_intent,
+    )
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.risk.policy import resolve_risk_policy
+
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+
+    resolved = resolve_risk_policy(load_config(), "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    now = datetime.now(timezone.utc)
+    proposal = build_entry_plan_order_intent(
+        plan,
+        bid=99.9,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+    )
+    repo.insert_trade_proposal(proposal)
+    receipt = build_entry_execution_receipt(
+        plan,
+        proposal,
+        bid=99.9,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        **_execution_receipt_kwargs(now, depth=False),
+    )
+    approved = evaluate_proposal(
+        proposal,
+        decision_role="authoritative",
+        execution_receipt=receipt,
+    )
+    assert approved.approved
+    assert repo.get_entry_risk_reservation(proposal.id) is not None
+    assert repo.get_order_for_entry_plan(plan.plan_id) is None
+
+    expired = receipt.model_copy(
+        update={"expires_at": (now - timedelta(seconds=1)).isoformat()}
+    )
+    expired = expired.model_copy(
+        update={
+            "receipt_hash": hashlib.sha256(expired.canonical_json().encode()).hexdigest()
+        }
+    )
+    replay = gateway.execute_existing_proposal(
+        proposal.id,
+        "paper_internal",
+        execution_receipt=expired,
+    )
+
+    assert replay["status"] == "attempt_rejected"
+    assert "entry_execution_receipt_stale" in replay["risk_violations"]
+    assert repo.get_order_for_entry_plan(plan.plan_id) is None
+    assert len(
+        [
+            row
+            for row in repo.list_risk_decisions(limit=20)
+            if row["proposal_id"] == proposal.id
+            and row["decision_role"] == "authoritative"
+        ]
+    ) == 1
+
+
 def test_paper_ioc_walks_only_visible_depth_and_cancels_remainder(monkeypatch):
     from aletheia.config.loader import load_config
     from aletheia.execution.entry_plan_execution import execute_entry_plan
