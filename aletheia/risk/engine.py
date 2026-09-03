@@ -1475,14 +1475,20 @@ def _evaluate_proposal_locked(
 
         # 12. Total live exposure limit (open positions + proposed notional).
         if proposal.price and proposal.quantity:
-            current_exposure = _current_live_exposure(
-                unresolved_entries,
-                pre_order_entries,
-            )
-            projected = current_exposure + (proposal.price * proposal.quantity)
-            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * capital_base
-            if live_exposure_cap > 0 and projected > live_exposure_cap:
-                violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
+            try:
+                current_exposure = _current_live_exposure(
+                    unresolved_entries,
+                    pre_order_entries,
+                )
+            except _InvalidAccountExposure as exc:
+                violations.append(_invalid_account_exposure_violation(exc))
+            else:
+                projected = current_exposure + (proposal.price * proposal.quantity)
+                live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * capital_base
+                if not math.isfinite(projected):
+                    violations.append("account_exposure_check_error:non_finite_projected_exposure")
+                elif live_exposure_cap > 0 and projected > live_exposure_cap:
+                    violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
 
         # 13. Keep the stop-loss loss cap as a hard safety guard. Proposal sizing
         # uses this same Risk-page percentage as the cost budget, but a wide stop
@@ -1553,22 +1559,28 @@ def _evaluate_proposal_locked(
         # be counted before the proposed notional; otherwise sequential entries can
         # each pass alone and exceed the configured portfolio boundary together.
         if proposal.price and proposal.quantity:
-            current_exposure = _current_account_exposure(
-                proposal.execution_mode,
-                unresolved_entries,
-                pre_order_entries,
-            )
-            projected = current_exposure + (proposal.price * proposal.quantity)
-            demo_exposure_cap = (
-                resolved_policy.policy.capital.max_total_exposure_pct
-                / 100.0
-                * capital_base
-            )
-            if demo_exposure_cap > 0 and projected > demo_exposure_cap:
-                violations.append(
-                    "max_total_demo_exposure_exceeded:"
-                    f"{projected}>{demo_exposure_cap}"
+            try:
+                current_exposure = _current_account_exposure(
+                    proposal.execution_mode,
+                    unresolved_entries,
+                    pre_order_entries,
                 )
+            except _InvalidAccountExposure as exc:
+                violations.append(_invalid_account_exposure_violation(exc))
+            else:
+                projected = current_exposure + (proposal.price * proposal.quantity)
+                demo_exposure_cap = (
+                    resolved_policy.policy.capital.max_total_exposure_pct
+                    / 100.0
+                    * capital_base
+                )
+                if not math.isfinite(projected):
+                    violations.append("account_exposure_check_error:non_finite_projected_exposure")
+                elif demo_exposure_cap > 0 and projected > demo_exposure_cap:
+                    violations.append(
+                        "max_total_demo_exposure_exceeded:"
+                        f"{projected}>{demo_exposure_cap}"
+                    )
 
         # 14b. Exchange-demo entry quality. Live #14 and paper_internal stay
         # unchanged. Open positions are not closed by these tokens.
@@ -2137,11 +2149,14 @@ def _current_account_exposure(
         ):
             continue
         try:
-            quantity = float(row.get("quantity") or 0.0)
-            price = float(row.get("current_price") or row.get("entry_price") or 0.0)
-            total += abs(quantity * price)
-        except (TypeError, ValueError):
-            continue
+            quantity, _entry_price, price, _leverage = (
+                _validated_position_exposure(row)
+            )
+        except _InvalidPositionExposure as exc:
+            raise _InvalidAccountExposure(row, exc.field_category) from None
+        total += abs(quantity * price)
+        if not math.isfinite(total):
+            raise _InvalidAccountExposure(row, "account_exposure")
     if unresolved_entries is None:
         unresolved_entries = _unresolved_entry_reservations()
     for entry in unresolved_entries:
@@ -2152,6 +2167,10 @@ def _current_account_exposure(
             # manufacture a numeric exposure from missing authority here.
             continue
         total += abs(entry.reserved_quantity * entry.price)
+        if not math.isfinite(total):
+            raise _InvalidAccountExposure(
+                {"id": entry.order_id}, "account_exposure"
+            )
     if pre_order_entries is None:
         pre_order_entries = _pre_order_entry_reservations()
     for entry in pre_order_entries:
@@ -2160,6 +2179,10 @@ def _current_account_exposure(
         if entry.price is None or entry.reserved_quantity is None:
             continue
         total += abs(entry.reserved_quantity * entry.price)
+        if not math.isfinite(total):
+            raise _InvalidAccountExposure(
+                {"id": entry.proposal_id}, "account_exposure"
+            )
     return total
 
 
@@ -2438,6 +2461,13 @@ class _InvalidPositionExposure(ValueError):
         super().__init__(field_category)
 
 
+class _InvalidAccountExposure(ValueError):
+    def __init__(self, position: dict, field_category: str) -> None:
+        self.position = position
+        self.field_category = field_category
+        super().__init__(field_category)
+
+
 def _validated_position_exposure(position: dict) -> tuple[float, float, float, float]:
     market_type = str(position.get("market_type") or "").strip().lower()
     if market_type not in {"spot", "usdt_futures"}:
@@ -2499,6 +2529,13 @@ def _invalid_position_exposure_violation(position: dict, field_category: str) ->
     return (
         "account_leverage_check_error:invalid_position_exposure:"
         f"position={_safe_position_id(position)}:field={field_category}"
+    )
+
+
+def _invalid_account_exposure_violation(exc: _InvalidAccountExposure) -> str:
+    return (
+        "account_exposure_check_error:invalid_position_exposure:"
+        f"position={_safe_position_id(exc.position)}:field={exc.field_category}"
     )
 
 

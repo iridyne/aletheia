@@ -207,6 +207,7 @@ def _evaluate_new_proposal(
     execution_mode: str,
     quantity: float = 0.1,
     price: float = 10.0,
+    decision_role: str = "preflight",
 ):
     import aletheia.risk.engine as eng
     from aletheia.storage import repositories as repo
@@ -223,7 +224,7 @@ def _evaluate_new_proposal(
         execution_mode=execution_mode,
     )
     repo.insert_trade_proposal(proposal)
-    return eng.evaluate_proposal(proposal, decision_role="preflight")
+    return eng.evaluate_proposal(proposal, decision_role=decision_role)
 
 
 @pytest.mark.parametrize("status", _UNRESOLVED_ENTRY_STATES)
@@ -490,6 +491,101 @@ def test_demo_exposure_gate_counts_open_positions_and_pre_order_reservations(
     )
 
     assert "max_total_demo_exposure_exceeded:101.0>100.0" in result.violations
+
+
+@pytest.mark.parametrize(
+    ("execution_mode", "field", "value"),
+    (
+        ("paper_internal", "quantity", "not-a-number"),
+        ("okx_demo", "quantity", 0.0),
+        ("bitget_live_limited", "current_price", "NaN"),
+        ("bitget_live_limited", "current_price", "Infinity"),
+    ),
+)
+def test_total_account_exposure_rejects_invalid_matching_open_position(
+    tmp_path, monkeypatch, execution_mode, field, value,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        id=f"position-invalid-{field}-{execution_mode}",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=10.0,
+        current_price=10.0,
+        execution_mode=execution_mode,
+        status="open",
+    )
+    repo.insert_position(position)
+    conn.execute(
+        f"UPDATE positions SET {field}=? WHERE id=?",
+        (value, position.id),
+    )
+
+    result = _evaluate_new_proposal(
+        suffix=f"invalid-{field}-{execution_mode}",
+        symbol="SOL/USDT",
+        execution_mode=execution_mode,
+        decision_role="authoritative",
+    )
+
+    assert (
+        "account_exposure_check_error:invalid_position_exposure:"
+        f"position={position.id}:field={field}"
+    ) in result.violations
+    decision = conn.execute(
+        "SELECT approved, decision_role FROM risk_decisions WHERE id=?",
+        (result.decision_id,),
+    ).fetchone()
+    assert tuple(decision) == (0, "authoritative")
+    assert conn.execute(
+        "SELECT COUNT(*) FROM orders WHERE proposal_id=?",
+        (f"proposal-new-uee-invalid-{field}-{execution_mode}",),
+    ).fetchone()[0] == 0
+
+
+def test_total_account_exposure_ignores_invalid_foreign_demo_pool(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        id="position-invalid-foreign-demo",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=10.0,
+        current_price=10.0,
+        execution_mode="okx_demo",
+        status="open",
+    )
+    repo.insert_position(position)
+    conn.execute(
+        "UPDATE positions SET quantity='not-a-number' WHERE id=?",
+        (position.id,),
+    )
+
+    result = _evaluate_new_proposal(
+        suffix="invalid-foreign-demo",
+        symbol="SOL/USDT",
+        execution_mode="paper_internal",
+    )
+
+    assert not any(
+        violation.startswith("account_exposure_check_error:")
+        for violation in result.violations
+    )
 
 
 @pytest.mark.parametrize(
