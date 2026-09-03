@@ -282,6 +282,14 @@ def get_unified_cached_state() -> Optional[dict]:
 
 def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
     """Generation/profile/boundary mismatch immediately revokes cache authority."""
+    scope_value = state.get("execution_modes")
+    if not isinstance(scope_value, (list, tuple)):
+        return False, "uta_scope_missing"
+    if any(not isinstance(mode, str) or not mode.strip() for mode in scope_value):
+        return False, "uta_scope_invalid"
+    execution_modes = tuple(dict.fromkeys(scope_value))
+    if len(execution_modes) != len(scope_value):
+        return False, "uta_scope_invalid"
     try:
         from aletheia.uta.manager import build_uta_registry, expected_cache_identity
 
@@ -289,6 +297,8 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
         registry = build_uta_registry(cfg)
         expected = {}
         for identity in registry.configured_identities():
+            if identity.execution_mode not in execution_modes:
+                continue
             boundary = cfg.exchange.uta_read_boundary_for(identity.execution_mode)
             expected[identity.execution_mode] = expected_cache_identity(
                 cfg, identity, boundary
@@ -300,6 +310,8 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
         for account in state.get("accounts", [])
         if isinstance(account, dict) and account.get("broker_id")
     }
+    if not set(observed).issubset(set(execution_modes)):
+        return False, "uta_account_scope_mismatch"
     if set(observed) != set(expected):
         return False, "uta_account_set_mismatch"
     for execution_mode, expected_identity in expected.items():
@@ -560,7 +572,10 @@ def sync_all_exchanges() -> Optional[dict]:
     stays warm for callers that haven't migrated to get_unified_cached_state() yet.
     Returns the serialised UnifiedState dict, or None on total failure.
     """
-    from aletheia.uta.manager import get_unified_state_sync
+    from aletheia.uta.manager import (
+        DEFAULT_UNIFIED_EXECUTION_MODES,
+        get_unified_state_sync,
+    )
 
     cfg = load_config()
     if cfg.exchange.uta_read_boundary_for("bitget_demo") != "uta_v1":
@@ -586,6 +601,11 @@ def sync_all_exchanges() -> Optional[dict]:
             "shadow_errors": getattr(unified, "shadow_errors", []),
             "connected_brokers": connected_brokers,
             "fetched_at": unified.fetched_at,
+            "execution_modes": list(getattr(
+                unified,
+                "execution_modes",
+                DEFAULT_UNIFIED_EXECUTION_MODES,
+            )),
         }
         payload["sync_status"] = _unified_sync_status(payload)
         payload["sync_complete"] = payload["sync_status"] == "ok"

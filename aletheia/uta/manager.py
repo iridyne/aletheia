@@ -44,6 +44,7 @@ class UnifiedState:
     shadow_errors: list[str] = field(default_factory=list)
     connected_brokers: list[str] = field(default_factory=list)
     fetched_at: str = ""
+    execution_modes: tuple[str, ...] = field(default_factory=tuple)
 
 
 def _profile_spec(cfg, execution_mode: str):
@@ -551,6 +552,7 @@ async def get_unified_state(
             total_unrealized_pnl=None,
             errors=["uta_registry_configuration_invalid"],
             fetched_at=fetched_at,
+            execution_modes=requested_modes,
         )
     configured_identities = tuple(
         identity
@@ -602,8 +604,12 @@ async def get_unified_state(
                     for execution_mode in missing_modes
                 ],
                 fetched_at=fetched_at,
+                execution_modes=requested_modes,
             )
-        return UnifiedState(0.0, 0.0, 0.0, fetched_at=fetched_at)
+        return UnifiedState(
+            0.0, 0.0, 0.0, fetched_at=fetched_at,
+            execution_modes=requested_modes,
+        )
     accounts = []
     positions = []
     errors = [
@@ -657,6 +663,7 @@ async def get_unified_state(
         shadow_errors=shadow_errors,
         connected_brokers=connected,
         fetched_at=fetched_at,
+        execution_modes=requested_modes,
     )
 
 
