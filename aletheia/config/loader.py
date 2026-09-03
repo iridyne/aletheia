@@ -534,12 +534,14 @@ def load_config(
             pass
         if changed and not persist_migrations:
             return cfg.model_copy(deep=True)
-        _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
+        if use_cache:
+            _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
         return cfg.model_copy(deep=True)
     cfg = AletheiaConfig()
     cfg.operator.loop_enabled = False
     _apply_runtime_operator_authority(cfg)
-    _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
+    if use_cache:
+        _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
     return cfg.model_copy(deep=True)
 
 

@@ -58,23 +58,17 @@ class TelegramBot:
         async with httpx_client(timeout=10) as client:
             await client.post(self._api_url("sendMessage"), json=payload)
 
-    def _is_authorized(self, chat_id: int) -> bool:
-        return self._authorization_error(chat_id) is None
-
-    def _authorization_error(self, chat_id: int) -> str | None:
-        cfg = load_config(use_cache=False)
-        if not cfg.telegram.enabled:
-            return "Telegram is disabled."
-        effective_allowed = set(cfg.telegram.allowed_chat_ids)
-        if not effective_allowed:
-            return "Telegram is enabled but no allowed_chat_ids are configured."
-        if chat_id not in effective_allowed:
-            return "Unauthorized."
-        return None
-
     async def handle_message(self, chat_id: int, text: str) -> str | None:
         """Handle a telegram command. Returns response text or None."""
-        auth_error = self._authorization_error(chat_id)
+        cfg = await asyncio.to_thread(load_config, use_cache=False)
+        if not cfg.telegram.enabled:
+            auth_error = "Telegram is disabled."
+        elif not cfg.telegram.allowed_chat_ids:
+            auth_error = "Telegram is enabled but no allowed_chat_ids are configured."
+        elif chat_id not in cfg.telegram.allowed_chat_ids:
+            auth_error = "Unauthorized."
+        else:
+            auth_error = None
         if auth_error:
             write_audit({
                 "actor": "telegram",
