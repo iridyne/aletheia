@@ -55,7 +55,7 @@ async def test_ccxt_boundary_reports_rejected_rows_as_partial(monkeypatch) -> No
         [2, 10, float("nan"), 9, 10.5, 1],
     ])
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: exchange)
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
     monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
 
     result = await _GET_OHLCV(provider, "BTC/USDT", limit=2, since=0)

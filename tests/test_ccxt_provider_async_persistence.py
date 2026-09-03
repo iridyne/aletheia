@@ -19,7 +19,7 @@ async def test_get_ohlcv_persists_outside_scheduler_event_loop(monkeypatch):
 
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
     fake_exchange = FakeExchange()
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: fake_exchange)
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: fake_exchange)
 
     event_loop_thread = threading.get_ident()
     persist_threads: list[int] = []
@@ -51,7 +51,7 @@ async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeyp
             return [[1, 10, 11, 9, 10.5, 100]]
 
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: FakeExchange())
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: FakeExchange())
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.record_venue_success",
         lambda _name: pytest.fail("observation fetch must not clear venue health"),
@@ -92,8 +92,8 @@ async def test_fallback_ohlcv_cache_keeps_actual_venue_identity(monkeypatch):
     primary = FakeExchange(fails=True)
     fallback = FakeExchange()
     provider = CCXTProvider(exchange="primary", fallback_exchange="fallback")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: primary)
-    monkeypatch.setattr(provider, "_ensure_fallback", lambda: fallback)
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: primary)
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: fallback)
     monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
 
     first = await _GET_OHLCV(provider, "BTC/USDT", timeframe="1h", limit=1)
@@ -135,7 +135,7 @@ async def test_fresh_ohlcv_bypasses_and_does_not_replace_cache(monkeypatch):
     )
     exchange = FakeExchange()
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: exchange)
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
     monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
 
     result = await _GET_OHLCV(
