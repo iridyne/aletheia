@@ -7,6 +7,7 @@ Operates on the repository that contains the installed source, NOT the data dir.
 
 import logging
 import os
+from pathlib import Path
 import shutil
 import subprocess
 
@@ -17,6 +18,20 @@ logger = logging.getLogger("aletheia.update.git")
 
 REPO_ROOT = _PROJECT_ROOT
 _GIT_TIMEOUT_SEC = 60
+_GIT_TIMEOUT_RETURN_CODE = 124
+_GIT_OS_ERROR_RETURN_CODE = 127
+_GIT_MUTATION_TIMEOUT_REASON = "git_mutation_timeout_reconciled"
+_GIT_MUTATION_UNKNOWN_REASON = "git_mutation_state_unknown"
+_GIT_OPERATION_PATHS = (
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "BISECT_HEAD",
+    "rebase-merge",
+    "rebase-apply",
+    "sequencer",
+    "index.lock",
+)
 
 
 def git_available() -> bool:
@@ -53,6 +68,87 @@ def is_repo() -> bool:
 def current_commit() -> str:
     r = _git("rev-parse", "HEAD")
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _is_interrupted(r: subprocess.CompletedProcess) -> bool:
+    return r.returncode == _GIT_OS_ERROR_RETURN_CODE or (
+        r.returncode == _GIT_TIMEOUT_RETURN_CODE
+        and (r.stderr or "").strip() == f"git command exceeded {_GIT_TIMEOUT_SEC}s"
+    )
+
+
+def _mutation_postconditions(target: str, *, before: str | None = None) -> dict:
+    actual = current_commit()
+    if not actual or actual != target:
+        return {
+            "ok": False,
+            "current_commit": actual,
+            "detail": "HEAD did not reach the requested target",
+        }
+    if before is not None:
+        if not before:
+            return {"ok": False, "current_commit": actual, "detail": "pre-mutation HEAD unavailable"}
+        ancestry = _git("merge-base", "--is-ancestor", before, target)
+        if ancestry.returncode != 0:
+            return {
+                "ok": False,
+                "current_commit": actual,
+                "detail": "target is not a descendant of the pre-mutation HEAD",
+            }
+    status = _git("status", "--porcelain")
+    if status.returncode != 0:
+        return {"ok": False, "current_commit": actual, "detail": "worktree state unavailable"}
+    if status.stdout.strip():
+        return {"ok": False, "current_commit": actual, "detail": "worktree is not clean"}
+    git_dir_result = _git("rev-parse", "--git-dir")
+    if git_dir_result.returncode != 0 or not git_dir_result.stdout.strip():
+        return {"ok": False, "current_commit": actual, "detail": "Git operation state unavailable"}
+    git_dir = Path(git_dir_result.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = REPO_ROOT / git_dir
+    for marker in _GIT_OPERATION_PATHS:
+        marker_path = git_dir / marker
+        if marker_path.exists():
+            return {
+                "ok": False,
+                "current_commit": actual,
+                "detail": f"Git operation state remains active: {marker}",
+            }
+    return {"ok": True, "current_commit": actual}
+
+
+def _reconcile_interrupted_mutation(
+    target: str,
+    result: subprocess.CompletedProcess,
+    *,
+    before: str | None = None,
+) -> dict:
+    proof = _mutation_postconditions(target, before=before)
+    if proof["ok"]:
+        return {
+            "ok": True,
+            "reason": _GIT_MUTATION_TIMEOUT_REASON,
+            "current_commit": proof["current_commit"],
+        }
+    return {
+        "ok": False,
+        "reason": _GIT_MUTATION_UNKNOWN_REASON,
+        "current_commit": proof.get("current_commit", ""),
+        "stderr": (result.stderr or "").strip(),
+        "detail": proof.get("detail", "mutation postconditions unavailable"),
+    }
+
+
+def _merge_to_target(target: str, *, before: str) -> dict:
+    r = _git("merge", "--ff-only", target)
+    if r.returncode != 0:
+        if _is_interrupted(r):
+            return _reconcile_interrupted_mutation(target, r, before=before)
+        return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
+    actual = current_commit()
+    if actual != target:
+        return {"ok": False, "reason": "source_not_at_target", "current_commit": actual}
+    return {"ok": True, "output": r.stdout.strip(), "current_commit": actual}
 
 
 def current_branch() -> str:
@@ -174,13 +270,7 @@ def version_at_ref(ref: str) -> str:
 
 def merge_fast_forward(target: str) -> dict:
     """Advance the source checkout to a previously pinned commit only."""
-    r = _git("merge", "--ff-only", target)
-    if r.returncode != 0:
-        return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
-    actual = current_commit()
-    if actual != target:
-        return {"ok": False, "reason": "source_not_at_target", "current_commit": actual}
-    return {"ok": True, "output": r.stdout.strip()}
+    return _merge_to_target(target, before=current_commit())
 
 
 def behind_count(branch: str = "master") -> int:
@@ -255,18 +345,10 @@ def pull(branch: str = "master") -> dict:
     if ahead:
         return {"ok": False, "reason": "local_ahead", "ahead_count": ahead}
 
-    r = _git("merge", "--ff-only", target)
-    if r.returncode != 0:
-        return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
-    current = current_commit()
-    if current != target:
-        return {
-            "ok": False,
-            "reason": "source_not_at_remote_head",
-            "current_commit": current,
-            "remote_commit": target,
-        }
-    return {"ok": True, "output": r.stdout.strip(), "remote_commit": target}
+    merged = _merge_to_target(target, before=current_commit())
+    if not merged.get("ok"):
+        return merged
+    return {**merged, "remote_commit": target}
 
 
 def reset_hard(commit: str) -> dict:
@@ -279,5 +361,7 @@ def reset_hard(commit: str) -> dict:
         return {"ok": False, "reason": "git_unavailable"}
     r = _git("reset", "--hard", commit)
     if r.returncode != 0:
+        if _is_interrupted(r):
+            return _reconcile_interrupted_mutation(commit, r)
         return {"ok": False, "reason": "reset_failed", "stderr": r.stderr.strip()}
     return {"ok": True, "output": r.stdout.strip()}

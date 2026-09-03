@@ -690,7 +690,10 @@ def run() -> dict[str, Any]:
             state = _write_state(state, phase="activating", status="running")
             merged = git_ops.merge_fast_forward(target)
             if not merged.get("ok"):
-                raise AutoUpdateError(merged.get("reason", "ff_only_rejected"), merged.get("stderr", ""))
+                raise AutoUpdateError(
+                    merged.get("reason", "ff_only_rejected"),
+                    merged.get("detail") or merged.get("stderr", ""),
+                )
             source_switched = True
             if not _install_source_dependencies():
                 raise AutoUpdateError("target_dependency_bind_failed")
@@ -729,6 +732,15 @@ def run() -> dict[str, Any]:
                 shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
                 if dependencies_synced:
                     _install_source_dependencies()
+                if exc.reason == "git_mutation_state_unknown":
+                    return _failed(
+                        state,
+                        tag=tag,
+                        sha=target,
+                        reason=exc.reason,
+                        detail=exc.detail,
+                        hold=True,
+                    )
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
                                hold=not recovery.get("ok"), blacklist=exc.reason not in _TRANSIENT_CANDIDATE_FAILURES)
