@@ -12,7 +12,7 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 1. **市场能力门**：交易所是否支持、数据是否新鲜、点差和成交额是否可执行。这些门不是 alpha 预测器。
 2. **方向假设门**：scanner、Observer 或 System Operator 是否给出做多/做空假设。没有事前方向就没有可归因净收益。
 3. **质量/排序门**：置信度、TTL、factor、guard、批次上限和冷却时间。这些才是主要负反馈对象。
-4. **安全/执行门**：风控、实盘锁、交易所精度和下单失败。这些只能报告，不允许因“错过收益”自动放宽。
+4. **安全/执行门**：风控、实盘锁、交易所精度和下单失败。这些硬门不得因“错过收益”自动放宽；authoritative Risk 的最终 filter/outcome evidence 是同一事务的必需写入，失败必须阻断执行。
 
 只保存终点拒绝会丢失前面已放行的关卡；只保存放行会没有对照组。因此必须记录一个候选在当次评估中实际经过的每一关，到首个拒绝为止。
 
@@ -256,7 +256,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
 | System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；direct model `skip` 有一次确认、typed adverse evidence 与 `operator_action_assessment`；遗留假动作是 retryable unavailable | 是，但不在有对照前改门槛 |
 | Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
-| Risk | 是 | `RiskDecision` 为权威，filter 记录只做统一索引 | 报告用，永不自动放宽 |
+| Risk | 是 | `RiskDecision` 与最终 filter/outcome evidence 在同一事务提交 | 证据失败回滚 authority，永不自动放宽 |
 | Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |
 
 每个 registry 项必须声明唯一 `authority_class`：`fact_or_execution`、

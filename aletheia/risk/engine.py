@@ -1690,17 +1690,15 @@ def _persist_risk_result(
     # Filter evidence is consumed as the final Risk verdict. Preflight rows stay
     # visible in risk_decisions but do not double-count the same candidate.
     if decision_role == "authoritative":
-        try:
-            from aletheia.analytics.filter_evidence import record_risk_filter_decision
+        from aletheia.analytics.filter_evidence import record_risk_filter_decision
 
-            record_risk_filter_decision(
-                proposal,
-                risk_decision_id=result.decision_id,
-                approved=approved,
-                violations=violations,
-            )
-        except Exception as evidence_error:
-            logger.warning("risk filter evidence unavailable: %s", evidence_error)
+        record_risk_filter_decision(
+            proposal,
+            risk_decision_id=result.decision_id,
+            approved=approved,
+            violations=violations,
+            raise_on_error=True,
+        )
 
     return result
 

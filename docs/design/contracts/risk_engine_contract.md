@@ -139,6 +139,8 @@ class RiskCheckResult:
 
 **契约**:每次评估**必须**持久化一条 `RiskDecision`(`engine.py:267-277`),无论批准或拒绝——这是因果链 `proposal→risk_decision→order` 的一环([trust §1.1](../../governance/policies/trust_and_change_control.md))。
 
+authoritative `RiskDecision` 的最终 Risk filter trace 与 canonical outcome seed 是同一事务中的必需证据；任一 evidence 写入失败必须回滚该 `RiskDecision` 及后续预留，Gateway 不得收到批准结果。preflight 仍是 advisory，不创建该最终 evidence。
+
 **权威快照契约**：交易所最小数量/步长对齐可以让 authoritative Risk 评估使用不同于原 Proposal 的
 `quantity`，并把实际评估量写入 `RiskDecision.evaluated_quantity`；除此之外，所有由原 Proposal
 `commit_hash` 覆盖的字段都必须与存储行完全一致。Risk 会把评估副本的 quantity 还原成存储值后重新
