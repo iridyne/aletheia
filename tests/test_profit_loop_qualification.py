@@ -47,6 +47,7 @@ def _make_outcomes(pnls: list[float], opened_at: str = "2026-01-02T00:00:00+00:0
             "opened_at": opened_at,
             "closed_at": (_BASE_DATE + timedelta(days=i)).isoformat(),
             "execution_mode": "paper_internal",
+            "runtime_session_id": "session-001",
             "status": "closed",
         }
         for i, pnl in enumerate(pnls)
@@ -54,17 +55,35 @@ def _make_outcomes(pnls: list[float], opened_at: str = "2026-01-02T00:00:00+00:0
 
 
 def _patch_outcomes(monkeypatch, pnls: list[float]) -> None:
-    outcomes = _make_outcomes(pnls)
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
+    _patch_rows(monkeypatch, _make_outcomes(pnls))
+
+
+def _complete_cohort(rows: list[dict]) -> oi_module.CompleteOutcomeCohort:
+    return oi_module.CompleteOutcomeCohort(
+        rows=tuple(rows),
+        assessments=tuple(
+            oi_module.OutcomeAssessment(eligible=True, reason="eligible")
+            for _row in rows
+        ),
+        source_raw_event_count=len(rows),
+        loaded_raw_event_count=len(rows),
+        cohort_complete=True,
+        cohort_state="available",
+        ordered_source_digest="cohort-digest",
+        identity={
+            "execution_mode": "paper_internal",
+            "runtime_session_id": None,
+            "closed_after": _REGISTRATION["registration_at"],
+            "closed_before": _REGISTRATION["cutoff_at"],
+        },
+    )
+
+
+def _patch_rows(monkeypatch, rows: list[dict]) -> None:
     monkeypatch.setattr(
         qual_module,
-        "build_outcome_cohort_summary",
-        lambda **_: {
-            "raw_event_count": len(outcomes),
-            "eligible_outcome_count": len(outcomes),
-            "excluded_outcome_count": 0,
-            "outcome_exclusion_reasons": {},
-        },
+        "read_complete_outcome_cohort",
+        lambda **_: _complete_cohort(rows),
     )
 
 
@@ -160,8 +179,7 @@ def test_present_invalid_concentration_cap_fails_before_outcome_read(
     def unexpected_read(**_kwargs):
         pytest.fail("invalid registration must fail before reading outcomes")
 
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", unexpected_read)
-    monkeypatch.setattr(qual_module, "build_outcome_cohort_summary", unexpected_read)
+    monkeypatch.setattr(qual_module, "read_complete_outcome_cohort", unexpected_read)
 
     with pytest.raises(ValueError, match=cap_key):
         compile_qualification_verdict(
@@ -270,17 +288,7 @@ def test_registration_at_after_cutoff_raises():
 
 def test_cli_command_emits_versioned_json(monkeypatch, tmp_path):
     outcomes = _make_outcomes([1.0] * 15 + [-0.5] * 5)
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
-    monkeypatch.setattr(
-        qual_module,
-        "build_outcome_cohort_summary",
-        lambda **_: {
-            "raw_event_count": len(outcomes),
-            "eligible_outcome_count": len(outcomes),
-            "excluded_outcome_count": 0,
-            "outcome_exclusion_reasons": {},
-        },
-    )
+    _patch_rows(monkeypatch, outcomes)
 
     reg_file = tmp_path / "registration.json"
     reg_file.write_text(json.dumps(_REGISTRATION), encoding="utf-8")
@@ -303,13 +311,7 @@ def test_cli_command_emits_versioned_json(monkeypatch, tmp_path):
 def test_cli_matching_optional_cutoff_accepted(monkeypatch, tmp_path):
     """--cutoff that matches registration['cutoff_at'] is accepted."""
     outcomes = _make_outcomes([1.0] * 5 + [-0.5] * 2)
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
-    monkeypatch.setattr(
-        qual_module,
-        "build_outcome_cohort_summary",
-        lambda **_: {"raw_event_count": len(outcomes), "eligible_outcome_count": len(outcomes),
-                     "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}},
-    )
+    _patch_rows(monkeypatch, outcomes)
     reg_file = tmp_path / "reg.json"
     reg_file.write_text(json.dumps(_REGISTRATION), encoding="utf-8")
 
@@ -364,23 +366,7 @@ def test_identity_filter_prevents_epoch_pooling(monkeypatch):
         for i in range(4)
     ]
 
-    def _mock_eligible(*, runtime_session_id=None, **_):
-        pool = epoch_a + epoch_b
-        if runtime_session_id is not None:
-            pool = [r for r in pool if r.get("runtime_session_id") == runtime_session_id]
-        return pool
-
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", _mock_eligible)
-    monkeypatch.setattr(
-        qual_module,
-        "build_outcome_cohort_summary",
-        lambda **kw: {
-            "raw_event_count": len(_mock_eligible(**kw)),
-            "eligible_outcome_count": len(_mock_eligible(**kw)),
-            "excluded_outcome_count": 0,
-            "outcome_exclusion_reasons": {},
-        },
-    )
+    _patch_rows(monkeypatch, epoch_a + epoch_b)
 
     result = compile_qualification_verdict(registration=_REGISTRATION)
     assert result["verdict"] == "minimum_profitable_loop_rejected"
@@ -408,17 +394,12 @@ def test_utc_equivalent_timestamps_all_included(monkeypatch):
             "opened_at": opened,
             "closed_at": f"2026-01-0{3 + i}T12:00:00+00:00",
             "execution_mode": "paper_internal",
+            "runtime_session_id": "session-001",
             "status": "closed",
         }
         for i, opened in enumerate(variants)
     ]
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
-    monkeypatch.setattr(
-        qual_module,
-        "build_outcome_cohort_summary",
-        lambda **_: {"raw_event_count": 3, "eligible_outcome_count": 3,
-                     "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}},
-    )
+    _patch_rows(monkeypatch, outcomes)
     result = compile_qualification_verdict(registration=_REGISTRATION)
     assert result["metrics"]["total_eligible_closes"] == 3
 
@@ -434,16 +415,11 @@ def test_positive_offset_before_registration_excluded(monkeypatch):
             "opened_at": "2025-12-31T22:00:00+03:00",  # UTC: 2025-12-31T19:00:00Z — before reg
             "closed_at": "2026-01-03T12:00:00+00:00",
             "execution_mode": "paper_internal",
+            "runtime_session_id": "session-001",
             "status": "closed",
         }
     ]
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
-    monkeypatch.setattr(
-        qual_module,
-        "build_outcome_cohort_summary",
-        lambda **_: {"raw_event_count": 1, "eligible_outcome_count": 1,
-                     "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}},
-    )
+    _patch_rows(monkeypatch, outcomes)
     result = compile_qualification_verdict(registration=_REGISTRATION)
     assert result["metrics"]["total_eligible_closes"] == 0
 
@@ -475,27 +451,182 @@ def test_loss_first_drawdown_from_zero_starting_equity(monkeypatch):
 # #1251 — Cohort truncation (10k cap)
 # ---------------------------------------------------------------------------
 
-def test_10001_rows_returns_insufficient_data(monkeypatch):
-    """If source_raw_event_count >= 10000 and loaded < source, return insufficient_data."""
-    # Simulate window summary reporting 10001 raw events
-    outcomes = _make_outcomes([1.0] * 5)
-
-    def _mock_eligible(**_):
-        return outcomes
-
-    def _mock_summary(**kw):
-        # window call (no runtime_session_id) reports 10001; identity call reports 5
-        if "runtime_session_id" not in kw:
-            return {"raw_event_count": 10001, "eligible_outcome_count": 10001,
-                    "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}}
-        return {"raw_event_count": 5, "eligible_outcome_count": 5,
-                "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}}
-
-    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", _mock_eligible)
-    monkeypatch.setattr(qual_module, "build_outcome_cohort_summary", _mock_summary)
+def test_unavailable_cohort_returns_hashed_insufficient_data(monkeypatch):
+    unavailable = oi_module.CompleteOutcomeCohort(
+        rows=(),
+        assessments=(),
+        source_raw_event_count=None,
+        loaded_raw_event_count=0,
+        cohort_complete=False,
+        cohort_state="unavailable",
+        ordered_source_digest=None,
+        identity={
+            "execution_mode": "paper_internal",
+            "runtime_session_id": None,
+            "closed_after": _REGISTRATION["registration_at"],
+            "closed_before": _REGISTRATION["cutoff_at"],
+        },
+    )
+    monkeypatch.setattr(
+        qual_module, "read_complete_outcome_cohort", lambda **_: unavailable
+    )
     result = compile_qualification_verdict(registration=_REGISTRATION)
     assert result["verdict"] == "insufficient_data"
-    assert result["funnel"]["source_raw_event_count"] == 10001
+    assert result["funnel"]["source_raw_event_count"] is None
+    assert result["funnel"]["cohort_complete"] is False
+    assert result["content_hash"]
+    stable = {
+        key: value
+        for key, value in result.items()
+        if key not in {"content_hash", "generated_at"}
+    }
+    from aletheia.storage.hashing import sha256_json
+
+    assert result["content_hash"] == sha256_json(stable)
+
+
+def test_loss_before_newest_10000_is_included_in_sqlite_qualification():
+    """The authority verdict must evaluate the complete registered cohort."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO opportunities (id, symbol, market) VALUES (?, ?, ?)",
+        ("cohort-opportunity", "BTC/USDT", "crypto"),
+    )
+    db.execute(
+        """
+        INSERT INTO trade_proposals (
+            id, opportunity_id, symbol, market_type, direction, execution_mode
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "cohort-proposal",
+            "cohort-opportunity",
+            "BTC/USDT",
+            "usdt_futures",
+            "long",
+            "paper_internal",
+        ),
+    )
+
+    opened_at = "2026-08-01T01:00:00+00:00"
+    start = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    pnls = [-10_000.0, *([1.0] * 6_000), *([-0.5] * 4_000)]
+    orders = []
+    positions = []
+    for index, pnl in enumerate(pnls):
+        position_id = f"cohort-position-{index:05d}"
+        order_id = f"cohort-order-{index:05d}"
+        closed_at = (start + timedelta(seconds=index * 10)).isoformat()
+        orders.append(
+            (
+                order_id,
+                "cohort-proposal",
+                "BTC/USDT",
+                "usdt_futures",
+                "long",
+                "market",
+                1_000.0,
+                100.0,
+                "paper_internal",
+                position_id,
+                "filled",
+                opened_at,
+            )
+        )
+        positions.append(
+            (
+                position_id,
+                "BTC/USDT",
+                "usdt_futures",
+                "long",
+                1_000.0,
+                100.0,
+                100.0 + pnl / 1_000.0,
+                pnl,
+                "paper_internal",
+                "cohort-proposal",
+                order_id,
+                "closed",
+                "verified_exit",
+                "strategy",
+                "local_fill",
+                1,
+                "local_fill",
+                1,
+                1,
+                "eligible",
+                "oi-v1",
+                0.0,
+                "local_simulation",
+                opened_at,
+                closed_at,
+                0.0,
+                0.0,
+                "cohort-opportunity",
+                "session-001",
+            )
+        )
+
+    db.executemany(
+        """
+        INSERT INTO orders (
+            id, proposal_id, symbol, market_type, direction, order_type,
+            quantity, price, execution_mode, position_id, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        orders,
+    )
+    db.executemany(
+        """
+        INSERT INTO positions (
+            id, symbol, market_type, direction, quantity, entry_price,
+            current_price, realized_pnl, execution_mode, proposal_id, order_id,
+            status, close_reason, close_category, entry_price_source,
+            entry_fill_verified, exit_price_source, exit_fill_verified,
+            outcome_eligible, outcome_exclusion_reason, outcome_semantics_version,
+            funding_cost, funding_source, opened_at, closed_at, entry_fee,
+            exit_fee, opportunity_id, runtime_session_id
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """,
+        positions,
+    )
+    db.commit()
+
+    from collections import Counter
+    from aletheia.analytics.outcome_integrity import (
+        assess_reportable_outcome,
+        raw_account_events,
+    )
+
+    loaded = raw_account_events(
+        execution_mode="paper_internal",
+        runtime_session_id="session-001",
+        closed_after="2026-08-01T00:00:00+00:00",
+        closed_before="2026-08-05T00:00:00+00:00",
+    )
+    reasons = Counter(assess_reportable_outcome(row).reason for row in loaded)
+    assert reasons == {"eligible": 10_000}
+
+    result = compile_qualification_verdict(
+        registration={
+            **_REGISTRATION,
+            "registration_at": "2026-08-01T00:00:00+00:00",
+            "cutoff_at": "2026-08-05T00:00:00+00:00",
+        },
+        starting_equity=100_000.0,
+    )
+
+    assert result["verdict"] == "minimum_profitable_loop_rejected", result
+    assert result["metrics"]["net_realized_pnl"] == -6_000.0
+    assert result["metrics"]["profit_factor"] == 0.5
+    assert result["funnel"]["source_raw_event_count"] == 10_001
+    assert result["funnel"]["loaded_raw_event_count"] == 10_001
+    assert result["funnel"]["cohort_complete"] is True
 
 
 # ---------------------------------------------------------------------------

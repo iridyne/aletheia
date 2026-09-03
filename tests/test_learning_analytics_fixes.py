@@ -8,6 +8,31 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def _complete_cohort(rows):
+    from aletheia.analytics.outcome_integrity import (
+        CompleteOutcomeCohort,
+        OutcomeAssessment,
+    )
+
+    return CompleteOutcomeCohort(
+        rows=tuple(rows),
+        assessments=tuple(
+            OutcomeAssessment(eligible=True, reason="eligible") for _row in rows
+        ),
+        source_raw_event_count=len(rows),
+        loaded_raw_event_count=len(rows),
+        cohort_complete=True,
+        cohort_state="available",
+        ordered_source_digest="cohort-digest",
+        identity={
+            "execution_mode": "paper_internal",
+            "runtime_session_id": None,
+            "closed_after": None,
+            "closed_before": None,
+        },
+    )
+
+
 class TestMemoRotationFixes:
     """#1263: Memo rotation abandons late outcomes."""
 
@@ -25,13 +50,15 @@ class TestMemoRotationFixes:
             "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
             "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
             "regime_playbook": [],
+            "cohort_complete": True,
+            "ordered_source_digest": "memo-cohort-digest",
         }
 
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item"), \
-             patch("aletheia.analytics.memo_effectiveness.eligible_strategy_outcomes") as mock_outcomes:
+             patch("aletheia.analytics.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
             mock_list.return_value = [{"id": "memo_old_123", "content": json.dumps(old_memo), "tags": "{}"}]
-            mock_outcomes.return_value = []
+            mock_cohort.return_value = _complete_cohort([])
 
             result_no_rotation = evaluate_prior_memo(for_rotation=False)
             assert result_no_rotation is None, "10-day-old memo should be rejected without for_rotation"
@@ -66,6 +93,8 @@ class TestMemoEffectivenessTradeFiltering:
             "execution_mode": "paper_internal",
             "execution_mode_status": "resolved",
             "regime_playbook": [{"regime": "bull", "direction": "long", "edge": "strong"}],
+            "cohort_complete": True,
+            "ordered_source_digest": "memo-cohort-digest",
         }
 
         trades = [
@@ -94,21 +123,23 @@ class TestMemoEffectivenessTradeFiltering:
 
         def _by_mode(*, execution_mode=None, **_):
             if execution_mode is None:
-                return trades
-            return [t for t in trades if t["execution_mode"] == execution_mode]
+                return _complete_cohort(trades)
+            return _complete_cohort(
+                [t for t in trades if t["execution_mode"] == execution_mode]
+            )
 
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item"), \
-             patch("aletheia.analytics.memo_effectiveness.eligible_strategy_outcomes") as mock_outcomes:
+             patch("aletheia.analytics.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
             mock_list.return_value = [{"id": "memo_123", "content": json.dumps(memo), "tags": "{}"}]
-            mock_outcomes.side_effect = _by_mode
+            mock_cohort.side_effect = _by_mode
 
             result = evaluate_prior_memo()
 
             assert result is not None
             # Only 2 paper_internal trades should be counted (live_simulation excluded)
             assert result["n_trades"] == 2, f"Expected 2 trades, got {result['n_trades']}"
-            mock_outcomes.assert_called_once_with(execution_mode="paper_internal")
+            mock_cohort.assert_called_once_with(execution_mode="paper_internal")
 
     def test_memo_trade_window_uses_absolute_instants_not_iso_text(self):
         """Offset-bearing opened_at values are compared as UTC instants."""
@@ -123,6 +154,8 @@ class TestMemoEffectivenessTradeFiltering:
             "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
             "execution_mode": "paper_internal",
             "execution_mode_status": "resolved",
+            "cohort_complete": True,
+            "ordered_source_digest": "memo-cohort-digest",
             "regime_playbook": [
                 {"regime": "bull", "direction": "long", "edge": "strong"}
             ],
@@ -166,13 +199,13 @@ class TestMemoEffectivenessTradeFiltering:
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item") as mock_update, \
              patch("aletheia.analytics.memo_effectiveness.is_current_outcome_artifact", return_value=True), \
-             patch("aletheia.analytics.memo_effectiveness.eligible_strategy_outcomes") as mock_outcomes:
+             patch("aletheia.analytics.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
             mock_list.return_value = [{
                 "id": "memo_time_123",
                 "content": json.dumps(memo),
                 "tags": "{}",
             }]
-            mock_outcomes.return_value = trades
+            mock_cohort.return_value = _complete_cohort(trades)
 
             result = evaluate_prior_memo()
 
@@ -235,9 +268,32 @@ class TestReasoningFeedbackRegimeTag:
                 "regime_tag": "bull",
             })
 
+        from aletheia.analytics.outcome_integrity import (
+            CompleteOutcomeCohort,
+            OutcomeAssessment,
+        )
+        cohort = CompleteOutcomeCohort(
+            rows=tuple(outcomes),
+            assessments=tuple(
+                OutcomeAssessment(eligible=True, reason="eligible")
+                for _outcome in outcomes
+            ),
+            source_raw_event_count=len(outcomes),
+            loaded_raw_event_count=len(outcomes),
+            cohort_complete=True,
+            cohort_state="available",
+            ordered_source_digest="cohort-digest",
+            identity={
+                "execution_mode": "paper_internal",
+                "runtime_session_id": None,
+                "closed_after": "2026-06-01T00:00:00Z",
+                "closed_before": None,
+            },
+        )
+
         with patch("aletheia.storage.sqlite.get_db", return_value=mock_db), \
-             patch("aletheia.analytics.reasoning_feedback.eligible_strategy_outcomes",
-                   return_value=outcomes), \
+             patch("aletheia.analytics.reasoning_feedback.read_complete_outcome_cohort",
+                   return_value=cohort), \
              patch("aletheia.analytics.learning_window.clean_window_cutoff",
                    return_value="2026-06-01T00:00:00Z"):
             # #1939: build_reasoning_feedback requires an execution_mode.

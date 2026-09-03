@@ -4,6 +4,27 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from unittest.mock import MagicMock
+
+
+def _unavailable_cohort():
+    from aletheia.analytics.outcome_integrity import CompleteOutcomeCohort
+
+    return CompleteOutcomeCohort(
+        rows=(),
+        assessments=(),
+        source_raw_event_count=None,
+        loaded_raw_event_count=0,
+        cohort_complete=False,
+        cohort_state="unavailable",
+        ordered_source_digest=None,
+        identity={
+            "execution_mode": "paper_internal",
+            "runtime_session_id": None,
+            "closed_after": None,
+            "closed_before": None,
+        },
+    )
 
 
 def _insert_closed(
@@ -303,3 +324,38 @@ def test_old_memo_and_reasoning_feedback_are_rejected():
     ))
     assert get_latest_memo() is None
     assert get_latest_reasoning_feedback() is None
+
+
+def test_memo_statistics_fail_closed_when_complete_cohort_is_unavailable(monkeypatch):
+    from aletheia.analytics import insight_synthesizer
+
+    monkeypatch.setattr(
+        insight_synthesizer,
+        "read_complete_outcome_cohort",
+        lambda **_: _unavailable_cohort(),
+    )
+    assert insight_synthesizer._gather_statistics(
+        30, execution_mode="paper_internal"
+    ) is None
+
+
+def test_reasoning_feedback_does_not_persist_an_unavailable_cohort(monkeypatch):
+    from aletheia.analytics import reasoning_feedback
+
+    db = MagicMock()
+    db.execute.return_value.fetchall.return_value = [{"proposal_id": "proposal-1"}]
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
+    monkeypatch.setattr(
+        reasoning_feedback,
+        "read_complete_outcome_cohort",
+        lambda **_: _unavailable_cohort(),
+    )
+
+    def unexpected_persist(_feedback):
+        raise AssertionError("unavailable cohort must not be persisted")
+
+    monkeypatch.setattr(reasoning_feedback, "_persist_feedback", unexpected_persist)
+
+    assert reasoning_feedback.build_reasoning_feedback(
+        execution_mode="paper_internal"
+    ) is None

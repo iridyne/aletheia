@@ -313,6 +313,55 @@ def test_raw_account_events_caps_the_latest_rows_then_restores_chronological_ord
     )
 
 
+@pytest.mark.parametrize("row_count", [9_999, 10_000, 10_001])
+def test_complete_outcome_cohort_has_no_10000_boundary_ambiguity(row_count):
+    from aletheia.analytics.outcome_integrity import read_complete_outcome_cohort
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    db.executemany(
+        """
+        INSERT INTO positions (
+            id, symbol, market_type, direction, quantity, entry_price,
+            execution_mode, status, closed_at
+        ) VALUES (?, 'BTC/USDT', 'spot', 'long', 1, 100,
+                  'paper_internal', 'closed', ?)
+        """,
+        (
+            (f"complete-{index:05d}", (start + timedelta(seconds=index)).isoformat())
+            for index in range(row_count)
+        ),
+    )
+    db.commit()
+
+    cohort = read_complete_outcome_cohort(execution_mode="paper_internal", db=db)
+
+    assert cohort.source_raw_event_count == row_count
+    assert cohort.loaded_raw_event_count == row_count
+    assert cohort.cohort_complete is True
+    assert cohort.ordered_source_digest
+
+
+def test_complete_outcome_cohort_preserves_read_failure_as_unavailable(monkeypatch):
+    import aletheia.analytics.outcome_integrity as outcome_integrity
+
+    def fail_read(**_filters):
+        raise RuntimeError("read failed")
+
+    monkeypatch.setattr(outcome_integrity, "raw_account_events", fail_read)
+
+    cohort = outcome_integrity.read_complete_outcome_cohort(
+        execution_mode="paper_internal"
+    )
+
+    assert cohort.source_raw_event_count is None
+    assert cohort.loaded_raw_event_count == 0
+    assert cohort.cohort_complete is False
+    assert cohort.cohort_state == "unavailable"
+    assert cohort.ordered_source_digest is None
+
+
 def test_raw_account_events_preserves_exact_subsecond_instants():
     from aletheia.analytics.outcome_integrity import raw_account_events
     from aletheia.storage.sqlite import get_db
