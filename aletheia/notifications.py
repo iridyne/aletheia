@@ -11,6 +11,7 @@ import logging
 import os
 import platform
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -23,6 +24,9 @@ _IS_WINDOWS = platform.system() == "Windows"
 # Message dedup: suppress identical messages within this window
 _DEDUP_WINDOW_SEC = 120.0
 _recent_messages: dict[str, float] = {}  # hash → monotonic timestamp
+_inflight_messages: set[str] = set()
+# ponytail: one global lock is enough at notification volume; shard by key if contention appears.
+_dedup_lock = threading.Lock()
 _DEDUP_MAX_ENTRIES = 200
 
 
@@ -73,20 +77,42 @@ def _is_dnd() -> bool:
         return False
 
 
-def _is_duplicate(message: str) -> bool:
-    """Return True if this message was sent within the dedup window."""
+def _dedup_key(message: str, recipient: int) -> str:
+    return hashlib.md5(f"{recipient}\0{message}".encode(), usedforsecurity=False).hexdigest()
+
+
+def _reserve_delivery(message: str, recipient: int) -> bool:
+    """Reserve a non-duplicate recipient/message pair for delivery."""
     now = time.monotonic()
-    key = hashlib.md5(message.encode(), usedforsecurity=False).hexdigest()
-    # Evict stale entries periodically
-    if len(_recent_messages) > _DEDUP_MAX_ENTRIES:
-        stale = [k for k, ts in _recent_messages.items() if now - ts > _DEDUP_WINDOW_SEC]
-        for k in stale:
-            del _recent_messages[k]
-    last_sent = _recent_messages.get(key)
-    if last_sent is not None and now - last_sent < _DEDUP_WINDOW_SEC:
+    key = _dedup_key(message, recipient)
+    with _dedup_lock:
+        if len(_recent_messages) > _DEDUP_MAX_ENTRIES:
+            stale = [
+                k
+                for k, ts in _recent_messages.items()
+                if now - ts > _DEDUP_WINDOW_SEC
+            ]
+            for stale_key in stale:
+                del _recent_messages[stale_key]
+        last_sent = _recent_messages.get(key)
+        if key in _inflight_messages or (
+            last_sent is not None and now - last_sent < _DEDUP_WINDOW_SEC
+        ):
+            return False
+        _inflight_messages.add(key)
         return True
-    _recent_messages[key] = now
-    return False
+
+
+def _mark_delivered(message: str, recipient: int) -> None:
+    key = _dedup_key(message, recipient)
+    with _dedup_lock:
+        _inflight_messages.discard(key)
+        _recent_messages[key] = time.monotonic()
+
+
+def _release_delivery(message: str, recipient: int) -> None:
+    with _dedup_lock:
+        _inflight_messages.discard(_dedup_key(message, recipient))
 
 
 def _send_telegram_alert(message: str, *, level: str = "warning",
@@ -103,8 +129,6 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
     suppress trade or summary notifications (Issue #407).
     """
     try:
-        if _is_duplicate(message):
-            return
         from aletheia.config.loader import load_config
         cfg = load_config()
         if not cfg.telegram.enabled:
@@ -125,14 +149,24 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
 
         async def _send_all():
             for chat_id in bot.allowed_chat_ids:
+                if not _reserve_delivery(message, chat_id):
+                    continue
+                delivered = False
                 try:
                     await bot.send_message(
                         chat_id,
                         f"⚠️ <b>Aletheia:</b> {safe_msg}",
                         parse_mode="HTML",
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Telegram delivery failed for chat_id=%s: %s", chat_id, type(exc).__name__)
+                else:
+                    delivered = True
+                finally:
+                    if delivered:
+                        _mark_delivered(message, chat_id)
+                    else:
+                        _release_delivery(message, chat_id)
 
         try:
             asyncio.get_running_loop()
