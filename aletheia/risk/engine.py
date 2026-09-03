@@ -1059,13 +1059,11 @@ def _evaluate_proposal_locked(
             violations.append(f"symbol_not_allowed:{proposal.symbol}")
 
     # 1b. Local paper has no exchange submission that can discover or reject an
-    # unusable price later.  The one authoritative Risk pass therefore requires
-    # the same exact-instrument, fail-closed mark used by protective closes:
-    # memory <=90s, or typed SQLite fallback <=120s.  Rechecking here prevents a
-    # Proposal prepared against a once-fresh mark from executing after it expires.
+    # unusable price later.  Each dispatch preflight and the initial authoritative
+    # Risk pass therefore require the same exact-instrument, fail-closed mark used
+    # by protective closes: memory <=90s, or typed SQLite fallback <=120s.
     if (
-        decision_role == "authoritative"
-        and proposal.source == "native"
+        proposal.source == "native"
         and proposal.execution_mode == "paper_internal"
     ):
         if proposal.entry_plan_id:

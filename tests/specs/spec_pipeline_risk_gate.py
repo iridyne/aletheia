@@ -686,6 +686,104 @@ def test_local_paper_price_matches_fresh_mark_before_broker_slippage(tmp_path, m
     assert fill["fill_price"] != mark
 
 
+@pytest.mark.parametrize(
+    ("changed_fact", "expected_violation"),
+    (
+        ("mark_unavailable", "paper_market_data_unavailable:binance:spot"),
+        ("mark_changed", "proposal_price_not_current_mark"),
+        ("opportunity_missing", "proposal_opportunity_not_found"),
+        ("opportunity_ambiguous", "proposal_opportunity_ambiguous"),
+    ),
+)
+def test_local_paper_crash_replay_rechecks_mutable_execution_facts(
+    tmp_path, monkeypatch, changed_fact, expected_violation,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution.gateway import execute_existing_proposal
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import (
+        Opportunity,
+        SerenityOpportunity,
+        SerenityTheme,
+        TradeProposal,
+    )
+
+    mark = {"value": 60_000.0}
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: mark["value"],
+    )
+    opportunity = Opportunity(
+        id=f"replay-{changed_fact}",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    repo.insert_opportunity(opportunity)
+    proposal = TradeProposal(
+        id=f"proposal-{changed_fact}",
+        opportunity_id=opportunity.id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60_000.0,
+        stop_price=58_000.0,
+        take_profit=64_000.0,
+        risk_reward=2.0,
+        execution_mode="paper_internal",
+        source="native",
+    )
+    repo.insert_trade_proposal(proposal)
+    approved = evaluate_proposal(proposal, decision_role="authoritative")
+    assert approved.approved
+    assert repo.get_entry_risk_reservation(proposal.id) is not None
+    assert repo.has_order_for_proposal(proposal.id) is False
+
+    if changed_fact == "mark_unavailable":
+        mark["value"] = None
+    elif changed_fact == "mark_changed":
+        mark["value"] = 61_000.0
+    elif changed_fact == "opportunity_missing":
+        db.execute("DELETE FROM opportunities WHERE id=?", (opportunity.id,))
+    else:
+        theme = SerenityTheme(id="theme-replay", name="replay ambiguity")
+        repo.insert_serenity_theme(theme)
+        repo.insert_serenity_opportunity(
+            SerenityOpportunity(
+                id=opportunity.id,
+                theme_id=theme.id,
+                symbol="BTC/USDT",
+                direction="long",
+                market_type="spot",
+            )
+        )
+
+    replay = execute_existing_proposal(proposal.id, "paper_internal")
+
+    assert replay["status"] == "rejected"
+    assert expected_violation in replay["risk_violations"]
+    assert repo.get_trade_proposal(proposal.id)["status"] == "rejected"
+    assert db.execute(
+        "SELECT COUNT(*) FROM risk_decisions WHERE proposal_id=? "
+        "AND decision_role='authoritative'",
+        (proposal.id,),
+    ).fetchone()[0] == 1
+    assert repo.has_order_for_proposal(proposal.id) is False
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
+        "WHERE o.proposal_id=?",
+        (proposal.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal.id,)
+    ).fetchone()[0] == 0
+
+
 @spec_claim(
     SpecClaim(
         "PL-RG-12", "pipeline_risk_gate", "§4 local paper complete entry plan", "L2c",
