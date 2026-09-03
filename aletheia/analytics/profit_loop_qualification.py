@@ -37,6 +37,7 @@ REQUIRED_REGISTRATION_KEYS: tuple[str, ...] = (
     "stopping_rule",
     "cost_model_id",
     "cutoff_at",
+    "max_drawdown_cap",
 )
 
 # Preregistered decision thresholds — must not be adjusted after cohort start.
@@ -73,6 +74,8 @@ def _resolve_registration_identity(
     ).fetchone()
     if epoch is None:
         return None, "policy_epoch_not_recorded"
+    if epoch["epoch_kind"] != "frozen_profit_loop_qualification":
+        return None, "policy_epoch_kind_mismatch"
     try:
         values = json.loads(epoch["effective_values_json"])
         raw_affected_paths = json.loads(epoch["affected_path_ids_json"])
@@ -89,8 +92,12 @@ def _resolve_registration_identity(
         return None, "policy_epoch_malformed"
     if rebuilt.epoch_hash != epoch["effective_values_hash"]:
         return None, "policy_epoch_hash_mismatch"
-    if "profit_loop_qualification" not in affected_paths:
+    if affected_paths != ("profit_loop_qualification",):
         return None, "policy_epoch_scope_mismatch"
+    if bool(epoch["safety_required"]):
+        return None, "policy_epoch_safety_mismatch"
+    if values.get("registration_hash") != sha256_json(registration):
+        return None, "registration_hash_mismatch"
     expected_values = {
         "deploy_sha": str(session["boot_commit"]),
         "runtime_session_id": str(session["session_id"]),
@@ -102,16 +109,36 @@ def _resolve_registration_identity(
     if any(values.get(key) != value for key, value in expected_values.items()):
         return None, "policy_epoch_identity_mismatch"
     epoch_started = _parse_utc(epoch["started_at"], field="policy_epoch.started_at")
+    epoch_created = _parse_utc(epoch["created_at"], field="policy_epoch.created_at")
     registration_started = _parse_utc(
         registration["registration_at"], field="registration_at"
     )
     cutoff = _parse_utc(registration["cutoff_at"], field="cutoff_at")
-    if epoch_started > registration_started:
-        return None, "policy_epoch_started_after_registration"
+    if epoch_started != registration_started:
+        return None, "registration_time_mismatch"
+    if epoch_created > registration_started:
+        return None, "registration_persisted_late"
     if epoch["ended_at"] and _parse_utc(
         epoch["ended_at"], field="policy_epoch.ended_at"
     ) < cutoff:
         return None, "policy_epoch_ended_before_cutoff"
+    prior_exposures = db.execute(
+        "SELECT opened_at FROM positions WHERE execution_mode=? "
+        "AND runtime_session_id=? AND producer_commit=? "
+        "AND behavior_fingerprint=?",
+        (
+            registration["execution_mode"],
+            session["session_id"],
+            session["boot_commit"],
+            session["behavior_fingerprint"],
+        ),
+    ).fetchall()
+    if any(
+        _parse_utc(row["opened_at"], field="position.opened_at")
+        <= registration_started
+        for row in prior_exposures
+    ):
+        return None, "registration_after_first_exposure"
 
     equivalent_sessions = {
         str(row["session_id"])
@@ -157,6 +184,10 @@ def _finalize_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     artifact["content_hash"] = sha256_json(artifact)
     artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
     return artifact
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _to_float(v: Any) -> float | None:
@@ -243,8 +274,7 @@ def compile_qualification_verdict(
                                 must be preregistered — supplying it only at CLI time
                                 is rejected to prevent optional stopping
         Optional keys:
-          - max_drawdown_cap    float 0–1; required for the drawdown gate to be
-                                enforced rather than recorded-only
+          - max_drawdown_cap    float 0–1; fixed hard drawdown gate
           - concentration_top1_cap   float (default 0.25)
           - concentration_top5_cap   float (default 0.50)
           - known_exclusions    list[str] of pre-declared integrity incidents
@@ -283,9 +313,25 @@ def compile_qualification_verdict(
     top5_cap = _registration_cap(
         registration, "concentration_top5_cap", _DEFAULT_CONCENTRATION_TOP5_CAP
     )
-    max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
+    max_drawdown_cap = _registration_cap(
+        registration, "max_drawdown_cap", 0.0
+    )
 
     registration_hash = sha256_json(registration)
+    if cut_dt > _utc_now():
+        return _finalize_artifact({
+            "contract_version": QUALIFICATION_CONTRACT_VERSION,
+            "verdict": "insufficient_data",
+            "registration": registration,
+            "registration_hash": registration_hash,
+            "metrics": {"reason": "cutoff_not_reached"},
+            "gates": {},
+            "funnel": {
+                "cohort_complete": False,
+                "cohort_state": "unavailable",
+            },
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        })
     try:
         identity, identity_reason = _resolve_registration_identity(registration)
     except Exception:
@@ -489,10 +535,10 @@ def compile_qualification_verdict(
             top5_conc,
             f"<= {top5_cap}",
         ),
-        "max_drawdown_bounded": (
-            _gate(max_dd is not None and max_dd <= max_drawdown_cap, max_dd, f"<= {max_drawdown_cap}")
-            if max_drawdown_cap is not None
-            else _gate(None, max_dd, "cap not preregistered — recorded only")
+        "max_drawdown_bounded": _gate(
+            max_dd is not None and max_dd <= max_drawdown_cap,
+            max_dd,
+            f"<= {max_drawdown_cap}",
         ),
     }
 
@@ -504,8 +550,7 @@ def compile_qualification_verdict(
         "concentration_top1",
         "concentration_top5",
     ]
-    if max_drawdown_cap is not None:
-        hard_gate_keys.append("max_drawdown_bounded")
+    hard_gate_keys.append("max_drawdown_bounded")
 
     failed_gates = [k for k in hard_gate_keys if gates[k]["pass"] is False]
 

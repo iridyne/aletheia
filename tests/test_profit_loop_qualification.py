@@ -16,6 +16,7 @@ from aletheia.analytics.profit_loop_qualification import (
     compile_qualification_verdict,
 )
 from aletheia.cli.inspect_cmd import inspect_app
+from aletheia.storage.hashing import sha256_json
 from typer.testing import CliRunner
 
 
@@ -241,12 +242,15 @@ def test_drawdown_gate_enforced_when_cap_registered(monkeypatch):
     assert result["verdict"] == "minimum_profitable_loop_rejected"
 
 
-def test_drawdown_gate_recorded_only_without_cap(monkeypatch):
-    _patch_outcomes(monkeypatch, [10.0, 5.0, -2.0, 8.0, 3.0])
+def test_drawdown_cap_is_required(monkeypatch):
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("incomplete registration must not read outcomes"),
+    )
     reg = {k: v for k, v in _REGISTRATION.items() if k != "max_drawdown_cap"}
-    result = compile_qualification_verdict(registration=reg)
-    # Gate is recorded but not enforced
-    assert result["gates"]["max_drawdown_bounded"]["pass"] is None
+    with pytest.raises(ValueError, match="max_drawdown_cap"):
+        compile_qualification_verdict(registration=reg)
 
 
 def test_artifact_is_hashed_and_reproducible(monkeypatch):
@@ -373,7 +377,11 @@ def test_cli_cutoff_mismatch_rejected(tmp_path):
 # Identity filter test (from #1145 fix)
 # ---------------------------------------------------------------------------
 
-def _persist_qualification_identity(*, equivalent_restart: bool = False) -> None:
+def _persist_qualification_identity(
+    *,
+    equivalent_restart: bool = False,
+    registration: dict = _REGISTRATION,
+) -> None:
     from aletheia.learning.policy_epochs import build_policy_epoch
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RuntimeSession
@@ -397,12 +405,13 @@ def _persist_qualification_identity(*, equivalent_restart: bool = False) -> None
             )
         )
     values = {
-        "deploy_sha": _REGISTRATION["deploy_sha"],
+        "deploy_sha": registration["deploy_sha"],
         "runtime_session_id": "session-001",
         "behavior_fingerprint": "behavior-001",
         "config_hash": "config-001",
-        "improvement_id": _REGISTRATION["improvement_id"],
-        "cost_model_id": _REGISTRATION["cost_model_id"],
+        "improvement_id": registration["improvement_id"],
+        "cost_model_id": registration["cost_model_id"],
+        "registration_hash": sha256_json(registration),
     }
     epoch = build_policy_epoch(
         "frozen_profit_loop_qualification",
@@ -415,13 +424,13 @@ def _persist_qualification_identity(*, equivalent_restart: bool = False) -> None
         "affected_path_ids_json, safety_required, started_at, created_at) "
         "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
         (
-            _REGISTRATION["policy_epoch_id"],
+            registration["policy_epoch_id"],
             epoch.epoch_kind,
             epoch.epoch_hash,
             json.dumps(epoch.effective_values, sort_keys=True),
             json.dumps(epoch.affected_path_ids),
-            "2025-12-31T00:00:00+00:00",
-            "2025-12-31T00:00:00+00:00",
+            registration["registration_at"],
+            registration["registration_at"],
         ),
     )
     get_db().commit()
@@ -554,12 +563,115 @@ def test_forged_registration_deploy_sha_fails_before_outcome_read(monkeypatch):
     assert result["metrics"]["reason"] == "deploy_sha_mismatch"
 
 
+def test_mutated_registration_fails_durable_hash_check_before_outcome_read(
+    monkeypatch,
+):
+    _persist_qualification_identity()
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("mutated registration must not read outcomes"),
+    )
+
+    result = compile_qualification_verdict(
+        registration={**_REGISTRATION, "concentration_top1_cap": 0.99}
+    )
+
+    assert result["verdict"] == "insufficient_data"
+    assert result["metrics"]["reason"] == "registration_hash_mismatch"
+
+
+def test_registration_after_first_exposure_fails_before_outcome_read(monkeypatch):
+    from aletheia.storage.sqlite import get_db
+
+    _persist_qualification_identity()
+    get_db().execute(
+        "INSERT INTO positions "
+        "(id, symbol, market_type, direction, quantity, entry_price, "
+        "execution_mode, runtime_session_id, producer_commit, "
+        "behavior_fingerprint, opened_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "pre-registration-position",
+            "BTC/USDT",
+            "spot",
+            "long",
+            1.0,
+            1.0,
+            _REGISTRATION["execution_mode"],
+            _REGISTRATION["runtime_session_id"],
+            _REGISTRATION["deploy_sha"],
+            "behavior-001",
+            "2025-12-31T23:59:59+00:00",
+        ),
+    )
+    get_db().commit()
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("late registration must not read outcomes"),
+    )
+
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+
+    assert result["verdict"] == "insufficient_data"
+    assert result["metrics"]["reason"] == "registration_after_first_exposure"
+
+
+def test_future_cutoff_cannot_emit_final_verdict(monkeypatch):
+    registration = {
+        **_REGISTRATION,
+        "cutoff_at": "2099-02-01T00:00:00+00:00",
+    }
+    _patch_matching_identity(monkeypatch)
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("pre-cutoff evaluation must not read outcomes"),
+    )
+
+    result = compile_qualification_verdict(registration=registration)
+
+    assert result["verdict"] == "insufficient_data"
+    assert result["metrics"]["reason"] == "cutoff_not_reached"
+
+
+@pytest.mark.parametrize(
+    "evaluated_at",
+    (
+        datetime.fromisoformat(_CUTOFF),
+        datetime.fromisoformat(_CUTOFF) + timedelta(microseconds=1),
+    ),
+)
+def test_cutoff_at_or_after_registered_instant_evaluates(monkeypatch, evaluated_at):
+    _patch_outcomes(monkeypatch, [1.0] * 15 + [-0.5] * 5)
+    monkeypatch.setattr(qual_module, "_utc_now", lambda: evaluated_at)
+
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+
+    assert result["verdict"] == "minimum_profitable_loop_proven"
+
+
+@pytest.mark.parametrize("invalid", [math.nan, math.inf, -0.01, 1.01])
+def test_invalid_drawdown_cap_fails_before_outcome_read(monkeypatch, invalid):
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("invalid registration must not read outcomes"),
+    )
+
+    with pytest.raises(ValueError, match="max_drawdown_cap"):
+        compile_qualification_verdict(
+            registration={**_REGISTRATION, "max_drawdown_cap": invalid}
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     (
         ("policy_epoch_id", "forged-epoch", "policy_epoch_not_recorded"),
-        ("improvement_id", "forged-improvement", "policy_epoch_identity_mismatch"),
-        ("cost_model_id", "forged-cost", "policy_epoch_identity_mismatch"),
+        ("improvement_id", "forged-improvement", "registration_hash_mismatch"),
+        ("cost_model_id", "forged-cost", "registration_hash_mismatch"),
     ),
 )
 def test_forged_registered_policy_identity_fails_closed(
@@ -695,7 +807,12 @@ def test_loss_before_newest_10000_is_included_in_sqlite_qualification():
     """The authority verdict must evaluate the complete registered cohort."""
     from aletheia.storage.sqlite import get_db
 
-    _persist_qualification_identity()
+    registration = {
+        **_REGISTRATION,
+        "registration_at": "2026-08-01T00:00:00+00:00",
+        "cutoff_at": "2026-08-05T00:00:00+00:00",
+    }
+    _persist_qualification_identity(registration=registration)
     db = get_db()
     db.execute(
         "INSERT INTO opportunities (id, symbol, market) VALUES (?, ?, ?)",
@@ -827,12 +944,7 @@ def test_loss_before_newest_10000_is_included_in_sqlite_qualification():
     assert reasons == {"eligible": 10_000}
 
     result = compile_qualification_verdict(
-        registration={
-            **_REGISTRATION,
-            "registration_at": "2026-08-01T00:00:00+00:00",
-            "cutoff_at": "2026-08-05T00:00:00+00:00",
-        },
-        starting_equity=100_000.0,
+        registration=registration, starting_equity=100_000.0
     )
 
     assert result["verdict"] == "minimum_profitable_loop_rejected", result
