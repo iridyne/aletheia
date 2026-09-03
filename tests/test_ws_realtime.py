@@ -82,6 +82,94 @@ async def test_realtime_hub_shares_one_sampler_pair_across_clients(monkeypatch):
     assert hub.regular_task is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["alert", "regular"])
+async def test_realtime_sampler_failure_closes_clients_and_clears_authority(tier):
+    from aletheia.server.routes import ws as ws_routes
+
+    class _Client:
+        def __init__(self):
+            self.close_calls = []
+
+        async def close(self, **kwargs):
+            self.close_calls.append(kwargs)
+
+    async def failing_sampler(_hub, _loop):
+        raise RuntimeError("sampler unavailable")
+
+    hub = ws_routes._RealtimeHub()
+    client = _Client()
+    hub.clients.add(client)
+    task = asyncio.create_task(
+        ws_routes._guarded_sampler_loop(
+            hub, asyncio.get_running_loop(), failing_sampler, tier
+        )
+    )
+    if tier == "alert":
+        hub.alert_task = task
+    else:
+        hub.regular_task = task
+
+    await task
+
+    assert client.close_calls == [
+        {"code": 1012, "reason": "realtime sampler failed"}
+    ]
+    assert not hub.clients
+    assert hub.alert_task is None
+    assert hub.regular_task is None
+
+
+@pytest.mark.asyncio
+async def test_realtime_sampler_failure_releases_lifecycle_before_client_close():
+    from aletheia.server.routes import ws as ws_routes
+
+    close_started = asyncio.Event()
+    release_close = asyncio.Event()
+
+    class _SlowClient:
+        async def close(self, **_kwargs):
+            close_started.set()
+            await release_close.wait()
+
+    hub = ws_routes._RealtimeHub()
+    hub.clients.add(_SlowClient())
+    failure_task = asyncio.create_task(hub.sampler_failed("regular"))
+    hub.regular_task = failure_task
+
+    await close_started.wait()
+    try:
+        assert not hub.lifecycle_lock.locked()
+    finally:
+        release_close.set()
+        await failure_task
+
+
+@pytest.mark.asyncio
+async def test_realtime_sampler_cancellation_does_not_report_failure(monkeypatch):
+    from aletheia.server.routes import ws as ws_routes
+
+    release = asyncio.Event()
+    failures = []
+
+    async def waiting_sampler(_hub, _loop):
+        await release.wait()
+
+    async def record_failure(tier):
+        failures.append(tier)
+
+    monkeypatch.setattr(ws_routes, "_alert_loop", waiting_sampler)
+    monkeypatch.setattr(ws_routes, "_regular_loop", waiting_sampler)
+    hub = ws_routes._RealtimeHub()
+    monkeypatch.setattr(hub, "sampler_failed", record_failure)
+
+    await hub.add(object())
+    await asyncio.sleep(0)
+    await hub.remove(next(iter(hub.clients)))
+
+    assert failures == []
+
+
 # ── WebSocket auth enforcement tests ─────────────────────────────────────────
 
 def _fake_fingerprints(queries):

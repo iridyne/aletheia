@@ -163,34 +163,66 @@ class _RealtimeHub:
         self.alert_task: asyncio.Task | None = None
         self.regular_task: asyncio.Task | None = None
         self.send_lock = asyncio.Lock()
+        self.lifecycle_lock = asyncio.Lock()
 
     async def add(self, ws: WebSocket) -> None:
-        self.clients.add(ws)
-        if self.alert_task is None or self.alert_task.done():
-            self.alert_task = asyncio.create_task(
-                _alert_loop(self, asyncio.get_running_loop()),
-                name="ws-alert-fingerprints",
-            )
-        if self.regular_task is None or self.regular_task.done():
-            self.regular_task = asyncio.create_task(
-                _regular_loop(self, asyncio.get_running_loop()),
-                name="ws-regular-fingerprints",
-            )
+        async with self.lifecycle_lock:
+            self.clients.add(ws)
+            loop = asyncio.get_running_loop()
+            if self.alert_task is None or self.alert_task.done():
+                self.alert_task = asyncio.create_task(
+                    _guarded_sampler_loop(self, loop, _alert_loop, "alert"),
+                    name="ws-alert-fingerprints",
+                )
+            if self.regular_task is None or self.regular_task.done():
+                self.regular_task = asyncio.create_task(
+                    _guarded_sampler_loop(self, loop, _regular_loop, "regular"),
+                    name="ws-regular-fingerprints",
+                )
 
     async def remove(self, ws: WebSocket) -> None:
-        self.clients.discard(ws)
-        if self.clients:
-            return
-        tasks = [
-            task
-            for task in (self.alert_task, self.regular_task)
-            if task is not None
-        ]
-        self.alert_task = None
-        self.regular_task = None
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        async with self.lifecycle_lock:
+            self.clients.discard(ws)
+            if self.clients:
+                return
+            tasks = [
+                task
+                for task in (self.alert_task, self.regular_task)
+                if task is not None
+            ]
+            self.alert_task = None
+            self.regular_task = None
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def sampler_failed(self, tier: str) -> None:
+        """Tear down admitted sockets when a sampler exits unexpectedly."""
+        async with self.lifecycle_lock:
+            current = asyncio.current_task()
+            expected = self.alert_task if tier == "alert" else self.regular_task
+            if expected is not current:
+                return
+
+            clients = tuple(self.clients)
+            sibling = self.regular_task if tier == "alert" else self.alert_task
+            self.clients.clear()
+            self.alert_task = None
+            self.regular_task = None
+            if sibling is not None:
+                sibling.cancel()
+
+        if sibling is not None:
+            await asyncio.gather(sibling, return_exceptions=True)
+        results = await asyncio.gather(
+            *(
+                client.close(code=1012, reason="realtime sampler failed")
+                for client in clients
+            ),
+            return_exceptions=True,
+        )
+        if any(isinstance(result, Exception) for result in results):
+            log.debug("failed to close realtime client after sampler failure")
 
     async def broadcast(self, payload: dict) -> None:
         async with self.send_lock:
@@ -202,6 +234,22 @@ class _RealtimeHub:
                     disconnected.append(client)
             for client in disconnected:
                 self.clients.discard(client)
+
+
+async def _guarded_sampler_loop(
+    hub: _RealtimeHub,
+    loop: asyncio.AbstractEventLoop,
+    sampler,
+    tier: str,
+) -> None:
+    """Keep sampler failures observable without treating deliberate cancel as one."""
+    try:
+        await sampler(hub, loop)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - the hub owns the failure boundary
+        log.exception("websocket %s sampler failed; tearing down realtime clients", tier)
+        await hub.sampler_failed(tier)
 
 
 _hub = _RealtimeHub()
