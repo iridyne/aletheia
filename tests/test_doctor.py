@@ -1206,6 +1206,36 @@ def test_collector_timestamp_error_is_reported_as_warning(monkeypatch):
     assert check.severity == "warn"
 
 
+def test_partial_collector_is_reported_as_attention(monkeypatch):
+    from aletheia.data import collector_health
+
+    monkeypatch.setattr(
+        collector_health,
+        "get_collector_health_report",
+        lambda: {
+            "status": "attention",
+            "recorded_count": 1,
+            "domain_count": 1,
+            "completed_count": 1,
+            "domains": [{
+                "domain": "macro",
+                "last_status": "partial",
+                "degraded": False,
+                "last_error_code": None,
+                "consecutive_problems": 0,
+                "overdue": False,
+            }],
+        },
+    )
+    report = dx.Report()
+
+    dx._probe_collector_health(report)
+
+    check = next(item for item in report.checks if item.name == "data.collectors")
+    assert check.severity == "info"
+    assert "attention=macro:partial" in check.detail
+
+
 def test_build_report_severities_reflect_known_empty_state(tmp_path, monkeypatch):
     """Beyond 'probes exist': on a fresh DB with a default config, the probes must
     report the CORRECT severities. Without this, a probe that always returns "ok"

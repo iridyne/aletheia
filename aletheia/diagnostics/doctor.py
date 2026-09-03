@@ -1124,6 +1124,11 @@ def _probe_collector_health(report: Report) -> None:
             "failed", "timed_out"
         }
     ]
+    attention_rows = [
+        row for row in domains if row.get("degraded") or row.get("last_status") in {
+            "failed", "timed_out", "partial", "empty"
+        }
+    ]
     inactive = [
         row["domain"] for row in domains
         if row.get("last_status") in {"disabled", "not_configured"}
@@ -1158,13 +1163,13 @@ def _probe_collector_health(report: Report) -> None:
             "inspect GET /api/market/collector-health and gateway errors; keep the 40s budget bounded",
         )
     elif status == "attention":
-        problems = ", ".join(
-            f"{row['domain']}:{row['last_status']}" for row in problem_rows
+        attention = ", ".join(
+            f"{row['domain']}:{row['last_status']}" for row in attention_rows
         )
         report.add(
             "data.collectors",
             "info",
-            f"{detail}; transient={problems}",
+            f"{detail}; attention={attention}",
         )
     else:
         report.add("data.collectors", "ok", detail)

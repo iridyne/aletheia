@@ -142,6 +142,33 @@ def test_collector_report_marks_overdue_domain_degraded(collector_db):
     assert report["status"] == "degraded"
 
 
+def test_collector_rollup_requires_success_without_partial_empty_or_never_run(
+    collector_db,
+):
+    from aletheia.data.collector_health import (
+        COLLECTOR_CADENCE_SEC,
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    record_collector_status("microstructure", "success", tick=1)
+    report = get_collector_health_report(connectivity_status={"state": "reachable"})
+    assert report["status"] == "initializing"
+
+    record_collector_status("derivatives", "partial", tick=1)
+    report = get_collector_health_report(connectivity_status={"state": "reachable"})
+    partial = next(row for row in report["domains"] if row["domain"] == "derivatives")
+    assert report["status"] == "attention"
+    assert partial["display_severity"] == "warning"
+    assert partial["consecutive_problems"] == 0
+
+    for domain in COLLECTOR_CADENCE_SEC:
+        record_collector_status(domain, "success", tick=2)
+    assert get_collector_health_report(
+        connectivity_status={"state": "reachable"}
+    )["status"] == "healthy"
+
+
 @pytest.mark.parametrize(
     "occurred_at,reason",
     [
@@ -240,7 +267,8 @@ def test_collector_timestamp_within_future_skew_is_fresh(collector_db):
 
     assert row["age_sec"] == 0
     assert row["degraded"] is False
-    assert report["status"] == "healthy"
+    assert row["last_status"] == "success"
+    assert report["status"] == "initializing"
 
 
 def test_result_classifier_distinguishes_empty_partial_and_not_configured():

@@ -1,6 +1,6 @@
 import type { CollectorHealthDomain, CollectorHealthReport } from '../types'
 
-const PROBLEM_STATUSES = new Set(['failed', 'timed_out', 'skipped_budget'])
+const PROBLEM_STATUSES = new Set(['failed', 'timed_out', 'skipped_budget', 'partial'])
 
 function fmtAge(sec: number | null): string {
   if (sec == null) return 'never'
@@ -40,7 +40,15 @@ function FullDetails({ health }: { health: CollectorHealthReport }) {
   const incident = health.infrastructure_incident
   const attributed = new Set(incident?.affected_domains ?? [])
   const independentProblems = problems.filter(d => !attributed.has(d.domain))
-  const healthyCount = sorted.length - problems.length
+  const healthyCount = sorted.filter(d => d.last_status === 'success').length
+  const emptyCount = sorted.filter(d => d.last_status === 'empty').length
+  const inactiveCount = sorted.filter(d => d.last_status === 'disabled' || d.last_status === 'not_configured').length
+  const neverRunCount = sorted.filter(d => d.last_status === 'never_run').length
+  const otherStates = [
+    emptyCount > 0 ? `${emptyCount} empty` : '',
+    inactiveCount > 0 ? `${inactiveCount} inactive` : '',
+    neverRunCount > 0 ? `${neverRunCount} never run` : '',
+  ].filter(Boolean)
   const incidentTone = 'yellow'
 
   return (
@@ -92,16 +100,28 @@ function FullDetails({ health }: { health: CollectorHealthReport }) {
           {healthyCount} healthy collector{healthyCount === 1 ? '' : 's'}
         </div>
       )}
+      {otherStates.length > 0 && (
+        <div className="chd-healthy-line">{otherStates.join(' · ')}</div>
+      )}
     </div>
   )
 }
 
 function CompactDetails({ health }: { health: CollectorHealthReport }) {
-  if (health.status === 'healthy' || health.status === 'initializing') {
+  if (health.status === 'initializing') {
     return (
       <div className="sp-row">
         <span className="sp-label">Collectors</span>
-        <span className="sp-value">{health.recorded_count}/{health.domain_count} healthy</span>
+        <span className="sp-value">initializing</span>
+      </div>
+    )
+  }
+  if (health.status === 'healthy') {
+    const healthyCount = health.domains.filter(d => d.last_status === 'success').length
+    return (
+      <div className="sp-row">
+        <span className="sp-label">Collectors</span>
+        <span className="sp-value">{healthyCount} healthy</span>
       </div>
     )
   }
