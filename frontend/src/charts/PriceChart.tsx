@@ -302,18 +302,14 @@ export default function PriceChart({
   const bucketsRef = useRef<ChartMarkerBucket[]>([])
   const profileLinesRef = useRef<IPriceLine[]>([])
   const levelLinesRef = useRef<IPriceLine[]>([])
-  const loadingOlderRef = useRef(false)
-  const exhaustedRef = useRef(false)
   const initializedRef = useRef(false)
   const isSyncingRangeRef = useRef(false)
   const markersRef = useRef(markers)
   const settingsRef = useRef(settings)
   const levelsRef = useRef(positionLevels)
-  const exchangeRef = useRef(exchange)
   const markerClickRef = useRef(onMarkerClick)
   const metaChangeRef = useRef(onMetaChange)
   const paneChartsRef = useRef<Map<SubchartIndicatorId, IChartApi>>(new Map())
-  exchangeRef.current = exchange
   markerClickRef.current = onMarkerClick
   metaChangeRef.current = onMetaChange
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
@@ -379,6 +375,8 @@ export default function PriceChart({
     const priceContainer = priceContainerRef.current
     if (!priceContainer) return
     let cancelled = false
+    let loadingOlder = false
+    let exhausted = false
     setStatus('loading')
     metaChangeRef.current?.(null)
     const startingSettings = settingsRef.current
@@ -425,8 +423,6 @@ export default function PriceChart({
 
     barsRef.current = []
     timesRef.current = new Set()
-    loadingOlderRef.current = false
-    exhaustedRef.current = false
     initializedRef.current = false
 
     const setAllData = () => {
@@ -442,13 +438,13 @@ export default function PriceChart({
       setBarRevision(revision => revision + 1)
     }
     const loadOlder = async () => {
-      if (loadingOlderRef.current || exhaustedRef.current || !initializedRef.current || !barsRef.current.length) return
-      loadingOlderRef.current = true
+      if (loadingOlder || exhausted || !initializedRef.current || !barsRef.current.length) return
+      loadingOlder = true
       try {
-        const rows = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, barsRef.current[0].time, exchangeRef.current, marketType)
+        const rows = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, barsRef.current[0].time, exchange, marketType)
         if (cancelled) return
         const fresh = (Array.isArray(rows) ? rows : []).filter(bar => !timesRef.current.has(bar.time))
-        if (!fresh.length) { exhaustedRef.current = true; return }
+        if (!fresh.length) { exhausted = true; return }
         for (const bar of fresh) timesRef.current.add(bar.time)
         const range = chart.timeScale().getVisibleLogicalRange()
         barsRef.current = [...fresh, ...barsRef.current].sort((a, b) => a.time - b.time)
@@ -457,13 +453,13 @@ export default function PriceChart({
       } catch {
         // A later scroll retries a transient history failure.
       } finally {
-        loadingOlderRef.current = false
+        loadingOlder = false
       }
     }
     const pollLatest = async () => {
       if (cancelled || !initializedRef.current || !barsRef.current.length) return
       try {
-        const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchangeRef.current)
+        const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchange)
         if (cancelled) return
         metaChangeRef.current?.(result.meta)
         for (const bar of result.candles.sort((a, b) => a.time - b.time)) {
@@ -479,7 +475,7 @@ export default function PriceChart({
     }
     void (async () => {
       try {
-        const result = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType, exchangeRef.current)
+        const result = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType, exchange)
         if (cancelled) return
         metaChangeRef.current?.(result.meta)
         if (!result.candles.length) { setStatus('empty'); return }
@@ -536,7 +532,7 @@ export default function PriceChart({
       bbMiddleRef.current = null
       bbLowerRef.current = null
     }
-  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, marketType, symbol, timeframe])
+  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, exchange, marketType, symbol, timeframe])
 
   useEffect(() => { markersRef.current = markers; applyMarkers() }, [applyMarkers, markers])
   useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [applyLevels, positionLevels])
