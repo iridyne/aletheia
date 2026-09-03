@@ -139,3 +139,27 @@ def test_runner_checkpoints_expected_append_only_window_writes(clean_registry):
 
     assert first["joint_checkpoint"]["ok"] is True
     assert second["joint_checkpoint"]["ok"] is True
+
+
+def test_runner_imports_receipts_appended_after_previous_checkpoint(clean_registry):
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        import_delivery_receipts,
+    )
+    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+
+    run_lab_windows()
+    append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-runner-receipt",
+        candidate_key="candidate-runner",
+        resolution_reason="adapter_unavailable",
+    )
+    register_window(LabWindow(name="delivery", kind="delivery", fn=import_delivery_receipts))
+
+    imported = run_lab_windows()
+    settled = run_lab_windows()
+
+    assert imported["joint_checkpoint"]["reason"] == "main_outbox_append_only"
+    assert imported["results"]["delivery"]["processed"] == 1
+    assert settled["joint_checkpoint"]["reason"] == "fingerprint_match"
