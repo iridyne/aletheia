@@ -29,12 +29,14 @@ The V1 chain is:
    duplicated or summed across mechanisms. Continuation uses Momentum as its
    typed primary source; Short Bias is diagnostic evidence rather than a
    correlated best-of authority.
-3. `universe-economic-utility/v1` compares mechanisms only within the same
+3. `universe-economic-utility/v2` compares mechanisms only within the same
    exact venue, market type, and direction in 4h cost-after percentage points.
-   It uses selected and dropped canonical outcomes, one
-   economic observation per instrument/direction/non-overlapping 4h UTC block,
-   `K=50` parent shrinkage, one independent-unit SE uncertainty
-   penalty, explicit minimum support, and fail-closed tail status.
+   It uses selected and dropped canonical outcomes, deduplicates exact outcome
+   identity, averages same-T0 symbols inside each mechanism/direction/venue/
+   market cohort, then greedily retains the earliest T0 clusters separated by
+   at least four hours. Those cross-sectional non-overlapping clusters are the
+   statistical units used by `K=50` parent shrinkage, one independent-unit SE
+   uncertainty penalty, explicit minimum support, and fail-closed tail status.
 4. `candidate-selection-utility/v1` chooses the highest available mechanism,
    never sums utilities, rejects unresolved Long/Short conflicts, applies
    `max(0.05, min_tradable_edge_pct)`, sorts admitted rows by Utility, and uses
@@ -64,34 +66,37 @@ and freezes a new cutoff instead of reusing incompatible training rows.
 Per-cell source fingerprints remain in
 each estimate for audit but do not make the epoch depend on the current
 Candidate composition. Later outcomes cannot change that estimator.
-Qualification consumes only post-cutoff clusters from the latest frozen policy
+Qualification v2 consumes only post-cutoff batches from the latest frozen policy
 epoch that existed at the requested as-of instant and uses the first
-outcome-independent fixed look whose earliest T0-ordered exposure prefix contains
-at least 50 clusters and seven consecutive UTC dates. That prefix must then have
-at least 50 complete clusters, 80% full-arm coverage, positive
+outcome-independent fixed look whose earliest greedily selected, non-overlapping
+T0 prefix contains at least 50 policy units and seven consecutive UTC dates.
+That prefix must then have at least 50 complete clusters, 80% full-arm coverage, positive
 paired capacity-normalized net Utility, a positive one-sided 95% lower bound,
 and preregistered loss-rate, MAE p95, CVaR5, cost, concentration, and catastrophic
 tail gates. A later cluster cannot replace an incomplete cluster in that frozen
 prefix. The look's coverage and exclusions freeze at that same stopping
 cluster, so later batches are not loaded or allowed to rewrite its verdict. A selected-arm
 outcome without finite MAE or fee, spread/slippage, and funding cost evidence
-leaves its cluster incomplete. Negative,
-neutral, insufficient, unavailable, and invalid are valid
-terminal/reporting states and grant no authority.
+leaves its cluster incomplete. Positive, negative, neutral, and invalid are
+terminal fixed-look states. Insufficient data continues collection. None grants
+authority without a positive result and explicit owner admission.
 
 Historical outcomes are indexed once per refresh and then looked up per
 Candidate/mechanism, making computation `O(history + candidates)` rather than
 re-scanning history per mechanism. Non-authoritative Shadow first checks the
-existing 55-minute persistence cadence, so a skipped capture does not load or
-aggregate historical outcomes. Record v2 stores compact row-local evidence and
-keeps shared policy/training fingerprints in the batch. For the 20-Candidate
-regression fixture this is 77,016 payload bytes/run, 27 runs/day, and 1.983 MiB/day;
-the rolling 30-day Twin window projects to 59.493 MiB. For an admitted epoch,
+Candidate Selection-specific four-hour evidence cadence, so a skipped capture
+does not load or aggregate historical outcomes. Production Candidate selection
+still computes on every Universe refresh. Record v3 and metric v2 identify the
+new sampling and independent-unit contract without reinterpreting v1/v2 rows.
+Capacity projection covers 20, 100, 250, and 500 denominator rows at six runs/day.
+For an admitted epoch,
 the immutable evidence prefix through its first admission audit and the global
-frozen training denominator remain protected. Later operational telemetry uses
-the ordinary 30-day window, so an active authority does not grow storage without
-bound. A protected epoch with no admission audit fails closed and retains all
-evidence.
+frozen training denominator remain protected. Any separately labelled
+post-admission operational telemetry uses the ordinary 30-day window; it cannot
+rewrite the fixed look. A protected epoch with no admission audit fails closed
+and retains all evidence. Once the first legal fixed look is positive, negative,
+neutral, or invalid, confirmatory capture for that epoch stops; insufficient
+data continues.
 
 The admitted epoch's evidence prefix, frozen training denominator, and linked
 canonical outcomes are retained for fixed-look replay rather than entering the
@@ -144,14 +149,18 @@ that intentionally empty snapshot. Reads preserve the empty Candidate set and
 do not replace it with legacy static fallback rows.
 
 Within a mechanism, usable Long and Short witnesses are an unresolved conflict
-and make that mechanism unavailable. Target allocation keeps the full
+and make that mechanism unavailable. Target allocation computes against the full
 instrument denominator but admits at most one preferred-market instrument per
-symbol thesis. On a change-suppressed target refresh, TTL renewal commits in the
-same publication transaction as required target evidence.
+symbol thesis. Its deterministic decision/input hash is the Candidate handoff's
+source hash and does not require a same-refresh sampled Twin row. On a
+change-suppressed target refresh, TTL renewal still commits in the publication
+transaction.
 
-An authoritative refresh writes the target selection evidence, canonical 4h
-outcomes, Candidate rows, Planning Generation handoffs, and scanner completion
-in one SQLite publication transaction. Candidate rows expose the target Utility
+An authoritative refresh computes the target selection on every refresh and
+writes Candidate rows, Planning Generation handoffs, and scanner completion in
+one SQLite publication transaction. It does not append another full-denominator
+confirmatory sample after the epoch has a terminal fixed look. Candidate rows
+expose the target Utility
 separately and retain `total_score` only as named legacy compatibility evidence.
 They also persist typed `opportunity_mechanism`, mechanism version, source
 component, source cutoff, and evidence hash fields; downstream code does not

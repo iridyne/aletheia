@@ -400,10 +400,35 @@ async def _persist_candidate_selection_shadow_nonfatal(
             "Candidate Selection Shadow skipped while Learning controls the legacy arm"
         )
         return 0
-    if not repo.universe_twin_shadow_capture_due(captured_at):
+    from aletheia.universe.candidate_selection_shadow import (
+        CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
+    )
+
+    if not repo.universe_twin_shadow_capture_due(
+        captured_at,
+        min_interval_sec=CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
+    ):
         return 0
 
     def build_and_persist() -> int:
+        from aletheia.universe.candidate_selection_authority import (
+            candidate_selection_policy_identity,
+        )
+        from aletheia.universe.candidate_selection_evaluation import (
+            evaluate_candidate_selection_policy,
+        )
+
+        qualification = evaluate_candidate_selection_policy(as_of_at=captured_at)
+        current_policy = candidate_selection_policy_identity(
+            cfg,
+            family_spread_tolerances=family_spread_tolerances,
+            family_spread_evidence=family_spread_evidence,
+        )
+        if (
+            qualification["verdict"] in {"positive", "negative", "neutral", "invalid"}
+            and qualification.get("selection_policy") == current_policy
+        ):
+            return 0
         bundle = _build_candidate_selection_bundle(
             population=population,
             scanner_run_id=scanner_run_id,
@@ -418,6 +443,7 @@ async def _persist_candidate_selection_shadow_nonfatal(
             bundle.batch,
             bundle.evidence,
             outcomes=bundle.outcomes,
+            min_interval_sec=CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
         )
 
     try:
@@ -1462,12 +1488,6 @@ class UniverseService:
                         now=now,
                     )
                     repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
-                    if candidate_selection_authority_bundle is not None:
-                        repo.insert_universe_twin_shadow_bundle(
-                            candidate_selection_authority_bundle.batch,
-                            candidate_selection_authority_bundle.evidence,
-                            outcomes=candidate_selection_authority_bundle.outcomes,
-                        )
                     repo.update_universe_scanner_run(
                         run.id,
                         status="completed",
@@ -1702,13 +1722,6 @@ class UniverseService:
                 # Register forward outcome tracking for all members with valid prices
                 repo.insert_forward_outcomes_batch(pending_outcomes)
                 repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
-                if candidate_selection_authority_bundle is not None:
-                    repo.insert_universe_twin_shadow_bundle(
-                        candidate_selection_authority_bundle.batch,
-                        candidate_selection_authority_bundle.evidence,
-                        outcomes=candidate_selection_authority_bundle.outcomes,
-                        min_interval_sec=0,
-                    )
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose

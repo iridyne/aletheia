@@ -209,7 +209,7 @@ def test_policy_identity_ignores_commit_but_rotates_semantic_contract(monkeypatc
     monkeypatch.setattr(
         authority,
         "candidate_selection_semantic_manifest",
-        lambda: {**original_manifest, "economic_estimator": "candidate-economic-utility-estimator/v3"},
+        lambda: {**original_manifest, "economic_estimator": "candidate-economic-utility-estimator/v4"},
     )
     assert candidate_selection_policy_identity(cfg) != commit_a
 
@@ -221,6 +221,44 @@ def test_overlapping_outcomes_do_not_inflate_independent_n():
 
     assert _estimate(overlapping).parent_independent_n == 1
     assert _estimate(non_overlapping).parent_independent_n == 3
+
+
+def test_independent_economic_units_cross_boundaries_symbols_and_order():
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    boundary = [
+        _outcome(0, entry_at=start + timedelta(hours=3, minutes=50)),
+        _outcome(1, entry_at=start + timedelta(hours=4, minutes=10)),
+    ]
+    same_t0 = [
+        {**_outcome(index + 10, entry_at=start), "symbol": symbol, "net_return_pct": value}
+        for index, (symbol, value) in enumerate(
+            (("BTC/USDT", 1.0), ("ETH/USDT", 2.0), ("SOL/USDT", 3.0), ("DOGE/USDT", 4.0))
+        )
+    ]
+    exact = [_outcome(index, entry_at=start + timedelta(hours=4 * index)) for index in range(3)]
+
+    assert _estimate(boundary).parent_independent_n == 1
+    assert _estimate(same_t0).parent_independent_n == 1
+    assert _estimate(exact).parent_independent_n == 3
+    forward = _estimate(exact + same_t0[1:])
+    reverse = _estimate(list(reversed(exact + same_t0[1:])))
+    assert forward == reverse
+
+
+def test_qualification_uses_same_non_overlapping_t0_rule():
+    from aletheia.universe.candidate_selection_evaluation import (
+        _independent_policy_batches,
+    )
+
+    def selected(*offsets: timedelta):
+        return _independent_policy_batches([
+            {"scanner_run_id": f"run-{index}", "captured_at": (datetime(2026, 8, 1, tzinfo=timezone.utc) + offset).isoformat()}
+            for index, offset in enumerate(offsets)
+        ])
+
+    assert len(selected(*(timedelta(hours=index) for index in range(4)))) == 1
+    assert len(selected(timedelta(hours=3, minutes=50), timedelta(hours=4, minutes=10))) == 1
+    assert len(selected(timedelta(), timedelta(hours=4), timedelta(hours=8))) == 3
 
 
 def test_frozen_cohort_index_matches_reference_estimator():
@@ -325,6 +363,7 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
     from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
 
     bundle, legacy = _authority_bundle()
+    assert repo.get_universe_twin_shadow_batch(bundle.batch.scanner_run_id) is None
     projected = target_candidates_from_bundle(bundle, legacy)
     assert projected
     candidate = projected[0]
@@ -375,17 +414,61 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
     assert persisted["opportunity_evidence_hash"] == candidate["opportunity_evidence_hash"]
 
 
-def test_candidate_storage_projection_is_cadence_bounded():
+@pytest.mark.parametrize("denominator_rows", [20, 100, 250, 500])
+def test_candidate_storage_projection_is_cadence_bounded(denominator_rows):
     from aletheia.universe.candidate_selection_shadow import (
         candidate_selection_storage_projection,
     )
 
     bundle, _legacy = _authority_bundle()
-    projection = candidate_selection_storage_projection(bundle.evidence)
+    projection = candidate_selection_storage_projection(
+        bundle.evidence[:1] * denominator_rows,
+    )
 
-    assert projection["rows_per_run"] == 20
-    assert projection["runs_per_day"] == 27
+    assert projection["rows_per_run"] == denominator_rows
+    assert projection["runs_per_day"] == 6
     assert projection["mib_per_30d"] == pytest.approx(
         projection["mib_per_day"] * 30,
     )
-    assert projection["mib_per_day"] < 2.0
+    assert projection["mib_per_day"] < 12.0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("verdict", ["positive", "negative", "neutral", "invalid"])
+async def test_terminal_candidate_qualification_stops_confirmatory_capture(monkeypatch, verdict):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe import (
+        candidate_selection_authority,
+        candidate_selection_evaluation,
+        service,
+    )
+
+    monkeypatch.setattr(
+        service.repo,
+        "universe_twin_shadow_capture_due",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        candidate_selection_evaluation,
+        "evaluate_candidate_selection_policy",
+        lambda **_kwargs: {"verdict": verdict, "selection_policy": {}},
+    )
+    monkeypatch.setattr(
+        candidate_selection_authority,
+        "candidate_selection_policy_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        service,
+        "_build_candidate_selection_bundle",
+        lambda **_kwargs: pytest.fail("terminal epoch must not append confirmatory evidence"),
+    )
+
+    assert await service._persist_candidate_selection_shadow_nonfatal(
+        population=[{}],
+        legacy_scored=[],
+        legacy_allocated=[],
+        scanner_run_id="terminal",
+        captured_at="2026-09-03T00:00:00+00:00",
+        cfg=AletheiaConfig(),
+    ) == 0

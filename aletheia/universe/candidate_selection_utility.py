@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Literal, Mapping, Sequence
 
 from aletheia.universe.candidate_eligibility import HardGateDecisionV1, canonical_fingerprint
-from aletheia.universe.economic_utility import EconomicUtilityEstimateV1
+from aletheia.universe.economic_utility import EconomicUtilityEstimateV2
 from aletheia.universe.opportunity_evidence import OpportunityEvidenceBundleV1
 
 
@@ -21,7 +21,7 @@ class CandidateSelectionUtilityV1:
     opportunity_evidence: OpportunityEvidenceBundleV1
     primary_mechanism: str | None
     primary_direction: Literal["long", "short"] | None
-    economic_estimates: tuple[EconomicUtilityEstimateV1, ...]
+    economic_estimates: tuple[EconomicUtilityEstimateV2, ...]
     economic_utility_pct: float | None
     utility_floor_pct: float
     admission_status: Literal[
@@ -38,7 +38,7 @@ def build_candidate_selection_utility(
     *,
     hard_gate: HardGateDecisionV1,
     opportunity_evidence: OpportunityEvidenceBundleV1,
-    economic_estimates: Sequence[EconomicUtilityEstimateV1],
+    economic_estimates: Sequence[EconomicUtilityEstimateV2],
     legacy_control: Mapping[str, object],
 ) -> CandidateSelectionUtilityV1:
     if hard_gate.candidate_key != opportunity_evidence.candidate_key:

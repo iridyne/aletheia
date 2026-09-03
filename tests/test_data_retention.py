@@ -709,7 +709,11 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
 
 @pytest.mark.parametrize(
     "record_version",
-    ["candidate-selection-utility-record/v1", "candidate-selection-utility-record/v2"],
+    [
+        "candidate-selection-utility-record/v1",
+        "candidate-selection-utility-record/v2",
+        "candidate-selection-utility-record/v3",
+    ],
 )
 def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay(record_version):
     from aletheia.storage import repositories as repo
