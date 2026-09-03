@@ -653,31 +653,41 @@ Prices, sizes, stop, target, leverage, expiry, slippage, timeout, and trigger
 parameters are deterministic code output; do not emit them.
 Return NO_PLAN with reason_code=INSUFFICIENT_EVIDENCE, CONFLICTING_SIGNALS,
 STALE_FACTS, or NO_VALID_TRIGGER when bounded facts do not support entry.""")
+    call_kwargs = {
+        "schema": EntryHypothesisV2 if is_v4 else EntryHypothesisV1 if is_v3 else _PlanIntentWireSchema,
+        "max_tokens": 768,
+        "provider": provider_name,
+        "fallback_to_defaults": False,
+        "context_symbol": str((context.get("candidate") or {}).get("symbol") or ""),
+        "context_artifacts": (
+            [{
+                "kind": "environment",
+                "stable_id": f"planning-generation:{planning_generation_id}",
+                "source": "candidate_planning_generations",
+                "selected_reason": "exact_grounded_entry_input",
+                "trust_class": "internal_fact",
+                "freshness_status": "fresh",
+                "observed_at": context.get("analysis_cutoff_at"),
+                "rendered_chars": len(json.dumps(context, sort_keys=True, default=str)),
+            }]
+            if is_v4 and planning_generation_id else None
+        ),
+        "reasoning_effort": "medium" if (is_v3 or is_v4) else "none",
+    }
+    prompt_payload = json.dumps(context, sort_keys=True, default=str)
     with inference_priority(InferencePriority.DEFAULT):
-        result, error = await llm_structured(
-            system_prompt,
-            json.dumps(context, sort_keys=True, default=str),
-            schema=EntryHypothesisV2 if is_v4 else EntryHypothesisV1 if is_v3 else _PlanIntentWireSchema,
-            max_tokens=768,
-            provider=provider_name,
-            fallback_to_defaults=False,
-            caller="agent_shell.entry_planner",
-            context_symbol=str((context.get("candidate") or {}).get("symbol") or ""),
-            context_artifacts=(
-                [{
-                    "kind": "environment",
-                    "stable_id": f"planning-generation:{planning_generation_id}",
-                    "source": "candidate_planning_generations",
-                    "selected_reason": "exact_grounded_entry_input",
-                    "trust_class": "internal_fact",
-                    "freshness_status": "fresh",
-                    "observed_at": context.get("analysis_cutoff_at"),
-                    "rendered_chars": len(json.dumps(context, sort_keys=True, default=str)),
-                }]
-                if is_v4 and planning_generation_id else None
-            ),
-            reasoning_effort="medium" if (is_v3 or is_v4) else "none",
-        )
+        if is_v4:
+            result, error = await llm_structured(
+                system_prompt, prompt_payload,
+                caller="agent_shell.entry_planner.v2",
+                **call_kwargs,
+            )
+        else:
+            result, error = await llm_structured(
+                system_prompt, prompt_payload,
+                caller="agent_shell.entry_planner",
+                **call_kwargs,
+            )
     if error:
         error_text = str(error)
         if "InferenceQueueFull" in error_text:

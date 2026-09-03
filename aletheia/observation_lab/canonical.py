@@ -1411,6 +1411,8 @@ class ObservationTreatmentDecision:
     generation: int | None = None
     manifest_id: str | None = None
     manifest_hash: str | None = None
+    behavior_contract_hash: str | None = None
+    behavior_policy_epoch_ref: str | None = None
     active_manifest_snapshot: tuple[str, ...] = ()
     manifest_set_fingerprint: str | None = None
     revocation_snapshot_fingerprint: str | None = None
@@ -2549,6 +2551,10 @@ def _decision(
         generation=manifest.generation if manifest else None,
         manifest_id=manifest.manifest_id if manifest else None,
         manifest_hash=manifest.manifest_hash if manifest else None,
+        behavior_contract_hash=manifest.behavior_contract_hash if manifest else None,
+        behavior_policy_epoch_ref=(
+            manifest.behavior_policy_epoch_ref if manifest else None
+        ),
         active_manifest_snapshot=tuple(active_manifest_snapshot or ()),
         manifest_set_fingerprint=manifest_set_fingerprint,
         revocation_snapshot_fingerprint=revocation_snapshot_fingerprint,
@@ -3015,6 +3021,8 @@ def resolve_observation_treatment(
                                             generation=manifest.generation,
                                             manifest_id=manifest.manifest_id,
                                             manifest_hash=manifest.manifest_hash,
+                                            behavior_contract_hash=manifest.behavior_contract_hash,
+                                            behavior_policy_epoch_ref=manifest.behavior_policy_epoch_ref,
                                             active_manifest_snapshot=snapshot_hashes,
                                             manifest_set_fingerprint=snapshot_fingerprint,
                                             revocation_snapshot_fingerprint=revocation_fingerprint,
@@ -3307,6 +3315,8 @@ def _attach_receipt(
         outcome_seeds=outcome_seeds,
         outcome_source=outcome_source,
         resolution_reason=decision.reason,
+        behavior_contract_hash=decision.behavior_contract_hash,
+        behavior_policy_epoch_ref=decision.behavior_policy_epoch_ref,
         active_manifest_snapshot=list(decision.active_manifest_snapshot)
         or ([decision.manifest_hash] if decision.manifest_hash else []),
         manifest_set_fingerprint=decision.manifest_set_fingerprint,

@@ -70,6 +70,12 @@ outcome owners. Its `as_of_at` is Planning T1. It excludes outcomes settled afte
 that cutoff, includes NO_PLAN/no-trigger/no-fill/open-at-cutoff denominator units,
 preserves code/model/prompt/profile/cost/market/mechanism/policy identity, and
 returns explicit unavailable evidence for insufficient or mixed cohorts.
+Filled units are anchored by the existing `filter_candidate_outcomes` owner at
+each actual Fill T0; Candidate-T0 4h outcomes are never re-anchored. Multiple
+fills are combined by fill notional. Profile evidence is either exact-profile or
+an explicit `mechanism-aware-grounded/v1` parent summary, and the historical
+cohort must match the current code, behavior, planner, mechanism, provider,
+model, prompt, profile-registry, market, and policy identities.
 
 Observation Lab owns one treatment: control is mechanism-aware Grounded Entry with
 the deterministic empty Learning context; treatment differs only by the bounded
@@ -77,6 +83,11 @@ Learning context. Candidate-selection epoch and all model/profile/compiler/Risk/
 execution facts are frozen, interference is declared, control is retained, and
 results are reported separately by mechanism, direction, and market type. No
 result grants Live, Risk, Gateway, credential, or capital authority.
+The registered `mechanism_entry_learning` measurement path uses Planning
+Generation as its statistical unit and the same generation ID in the treatment
+receipt; terminal non-entry units settle to zero after the 4h look, while filled
+units resolve only through their exact Fill outcomes. Unavailable treatment
+evidence is replaced with the deterministic empty context before model input.
 
 ## Rollback and non-goals
 

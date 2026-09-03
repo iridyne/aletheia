@@ -25,6 +25,7 @@ def test_only_declared_closed_loops_are_measurement_supported():
         "universe_family_calibration",
         "ranker_case_score",
         "momentum_entry_geometry",
+        "mechanism_entry_learning",
     }
     assert any(
         path.consumer_wired and not path.measurement_supported

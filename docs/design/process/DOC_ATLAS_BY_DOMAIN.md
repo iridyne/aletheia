@@ -101,8 +101,9 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
   历史交付证据；旧 `LEARNING_LOOP_AUDIT` 仅是历史证据。
 - **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
   append-only metric history, lifecycle recommendation, evaluator + catch-up and durable failure
-  identity. `universe_family_calibration` and `ranker_case_score` are the currently
-  measurement-supported paths; UFC is the only Paper-authority-capable path, while Ranker Case
+  identity. `universe_family_calibration`, `momentum_entry_geometry`,
+  `mechanism_entry_learning`, and `ranker_case_score` are the currently
+  measurement-supported paths; the first three are owner-gated Paper-capable, while Ranker Case
   remains Shadow-only with zero Ranker delta.
   Operator and other declared hooks return static fallback and write no exposure.
   The bounded `lco-v1` API summary and measured-path selector expose measured facts;

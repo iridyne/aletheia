@@ -932,7 +932,7 @@ def test_mechanism_aware_compiler_preserves_upstream_identity_without_numeric_ai
         candidate={"candidate_price": 100, "fact_refs": [f"candidate:{candidate.id}"]},
         candidate_opportunity_context=opportunity,
         inference_identity={
-            "caller": "agent_shell.entry_planner",
+            "caller": "agent_shell.entry_planner.v2",
             "prompt_version": "v2",
             "model_provider": "test",
         },
@@ -1367,8 +1367,36 @@ def test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt(monkey
     assert captured["provider"] == "deep-paid"
     assert captured["reasoning_effort"] == "none"
     assert captured["schema"] is _PlanIntentWireSchema
+    assert captured["caller"] == "agent_shell.entry_planner"
     assert "TRIGGERED + POST_ONLY_LIMIT" in captured["system"]
     assert "TRIGGERED + OPPOSING_BBO_IOC" in captured["system"]
+
+
+def test_system_operator_v2_uses_distinct_prompt_identity(monkeypatch):
+    from aletheia.trading.entry_analysis import EntryHypothesisV2
+
+    captured = {}
+
+    async def structured(_system, _user, **kwargs):
+        captured.update(kwargs)
+        return {
+            "decision": "NO_PLAN", "reason_code": "CONFLICTING_SIGNALS",
+            "mechanism": "reversal", "direction": "long",
+            "risk_tier": "NONE", "horizon": "NONE",
+        }, None
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    result = asyncio.run(system_operator_entry_planner({
+        "context_version": "entry-analysis-context/v2",
+        "planning_generation": {"id": "generation-v2"},
+        "candidate": {"symbol": "BTC/USDT"},
+    }, "deep-paid"))
+
+    assert result.decision == "NO_PLAN"
+    assert captured["caller"] == "agent_shell.entry_planner.v2"
+    assert captured["schema"] is EntryHypothesisV2
 
 
 def test_system_operator_canonicalizes_no_plan_execution_noise(monkeypatch):

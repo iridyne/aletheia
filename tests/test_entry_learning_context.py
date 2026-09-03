@@ -10,7 +10,7 @@ import pytest
 from aletheia.learning.entry_context import build_entry_learning_context
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
-    Fill, Order, Position, TradeProposal, UniverseForwardOutcome, UniverseMember,
+    Fill, FilterCandidateOutcome, Order, Position, TradeProposal, UniverseMember,
     UniverseSnapshot,
 )
 from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
@@ -59,10 +59,11 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
     )
     planner_input = json.dumps({
         "inference_identity": {
-            "caller": "agent_shell.entry_planner",
+            "caller": "agent_shell.entry_planner.v2",
             "prompt_version": "v2",
             "model_provider": "test",
         },
+        "entry_profiles": [],
     }, sort_keys=True, separators=(",", ":"))
     repo.execute_write(
         "UPDATE candidate_planning_generations SET producer_commit='commit-a',"
@@ -89,7 +90,7 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
         "finished_at,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
         "?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            call_id, "llm-inference/v1", "agent_shell.entry_planner", "entry-planner",
+            call_id, "llm-inference/v1", "agent_shell.entry_planner.v2", "entry-planner",
             "v2", "a" * 64, "b" * 64, "none", "none", "c" * 64,
             "EntryHypothesisV2", "d" * 64, "test", 0.0, 768, 0, "success",
             1, 1, 1, 0, 0, "test", "test-model", created_at, created_at, "{}",
@@ -108,7 +109,7 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
     )
     db.commit()
     record_context_artifacts(
-        run_id=None, caller="agent_shell.entry_planner", logical_call_id=call_id,
+        run_id=None, caller="agent_shell.entry_planner.v2", logical_call_id=call_id,
         symbol=symbol, observed_at=created_at,
         artifacts=[{
             "kind": "environment",
@@ -124,6 +125,13 @@ def _context(as_of_at: str):
     return build_entry_learning_context(
         as_of_at=as_of_at, mechanism="reversal", direction="long", market_type="perp",
         policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+        current_behavior_identity={
+            "producer_commit": "commit-a", "behavior_fingerprint": "behavior-a",
+            "planner_contract_version": "entry-planner/v4",
+            "mechanism_version": "reversal/v1", "model_provider": "test",
+            "model": "test-model", "prompt_version": "v2",
+            "entry_profile_registry_hash": hashlib.sha256(b"[]").hexdigest(),
+        },
     )
 
 
@@ -151,25 +159,25 @@ def _insert_plan(generation: dict, *, plan_id: str, status: str, mode: str) -> N
     )
 
 
-def _insert_forward_outcome(
-    generation: dict, *, outcome_id: str, settled_at: str,
-    entry_price: float = 100.0, exit_price: float = 110.0,
+def _insert_fill_outcome(
+    *, fill_id: str, outcome_id: str, settled_at: str,
+    entry_price: float, exit_price: float = 110.0,
 ) -> None:
-    candidate = repo.get_universe_member(generation["candidate_id"])
-    repo.insert_forward_outcome(UniverseForwardOutcome(
-        id=outcome_id, outcome_candidate_key=f"member:{generation['candidate_id']}",
-        member_id=generation["candidate_id"], snapshot_id=candidate["snapshot_id"],
+    directional = (exit_price - entry_price) / entry_price * 100
+    repo.insert_filter_candidate_outcomes_batch([FilterCandidateOutcome(
+        id=outcome_id, outcome_candidate_key=f"entry-fill:{fill_id}",
         symbol="BTC/USDT", venue="bitget", market_type="perp",
         scanner_family="mean_reversion", direction="long", horizon="4h",
-        entry_price_usd=entry_price, entry_ts="2026-09-01T00:00:00+00:00",
-        due_at="2026-09-01T04:00:00+00:00", settled_at=settled_at,
-        exit_price_usd=exit_price, directional_return_pct=(exit_price-entry_price),
+        allocation_selected=True, entry_price_usd=entry_price,
+        entry_ts="2026-09-01T00:03:00+00:00",
+        due_at="2026-09-01T04:03:00+00:00", settled_at=settled_at,
+        exit_price_usd=exit_price, directional_return_pct=directional,
         estimated_fee_pct=0.4, estimated_spread_slippage_pct=0.6,
-        estimated_funding_pct=0.0, net_return_pct=(exit_price-entry_price)-1.0,
-        min_tradable_edge_pct=0.2, mfe_pct=12.0, mae_pct=-3.0,
+        estimated_funding_pct=0.0, net_return_pct=directional-1.0,
+        min_tradable_edge_pct=0.2, mfe_pct=7.0, mae_pct=-2.0,
         settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
         cost_model_version="test-cost/v1", status="settled",
-    ))
+    )])
 
 
 def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units():
@@ -183,7 +191,13 @@ def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units(
     context = _context("2026-09-03T00:00:00+00:00")
 
     assert context.status == "observational"
-    assert context.support == {
+    assert {
+        key: context.support[key] for key in (
+            "independent_n", "distinct_symbols", "distinct_dates",
+            "complete_outcome_coverage", "evidence_ref_total",
+            "evidence_refs_truncated",
+        )
+    } == {
         "independent_n": 1, "distinct_symbols": 1, "distinct_dates": 1,
         "complete_outcome_coverage": 1.0,
         "evidence_ref_total": 3, "evidence_refs_truncated": False,
@@ -191,6 +205,112 @@ def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units(
     assert context.metrics["no_plan_rate"] == 1.0
     assert context.metrics["intent_to_treat_net_utility_pct"] == 0.0
     assert context.metrics["model_and_data_cost"] == 0.01
+
+
+def test_entry_learning_path_resolves_planning_generation_statistical_unit():
+    from aletheia.learning.cohorts import _load_exact_outcomes
+    from aletheia.learning.registry import get_learning_path
+
+    generation = _generation(created_at="2026-09-01T00:00:00+00:00")
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET status='no_plan',result_kind='no_plan',"
+        "completed_at='2026-09-01T00:01:00+00:00' WHERE id=?", (generation["id"],),
+    )
+
+    path = get_learning_path("mechanism_entry_learning")
+    outcomes = _load_exact_outcomes(
+        {generation["id"]}, "4h", path_id=path.path_id,
+        as_of_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    )
+
+    outcome, reason, *_ = outcomes[generation["id"]]
+    assert path.measurement_supported is True
+    assert path.statistical_unit == "planning_generation"
+    assert reason is None
+    assert outcome["net_return_pct"] == 0.0
+    assert outcome["_allocation_selected"] is False
+
+
+def test_entry_learning_cohort_evaluates_boolean_treatment_receipts():
+    from aletheia.learning.cohorts import build_experiment_cohorts
+    from aletheia.learning.models import LearningExperiment, LearningHypothesis
+
+    generations = [
+        _generation(
+            created_at=f"2026-09-01T00:0{index}:00+00:00",
+            symbol=f"ASSET{index}/USDT",
+        )
+        for index in range(2)
+    ]
+    for generation in generations:
+        repo.execute_write(
+            "UPDATE candidate_planning_generations SET status='no_plan',result_kind='no_plan',"
+            "completed_at='2026-09-01T00:10:00+00:00' WHERE id=?", (generation["id"],),
+        )
+    hypothesis = LearningHypothesis(
+        hypothesis_id="entry-learning-hypothesis", fingerprint="f" * 64,
+        behavior_contract_version="mechanism-entry-learning/v1",
+        fingerprint_schema_version=1, cohort_id="entry-learning-cohort",
+        path_id="mechanism_entry_learning", overlap_group="mechanism_entry_learning",
+        source_type="observation_lab", scope_json="{}", action_json="{}",
+        consumer="Entry hypothesis planner", target_horizon="4h", status="active",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
+    experiment = LearningExperiment(
+        experiment_id="entry-learning-experiment",
+        hypothesis_id=hypothesis.hypothesis_id, stage="paper_10",
+        assignment_salt="salt", allocation_pct=0.5, min_samples_per_arm=1,
+        min_market_days=0, primary_metric="entry-learning-metrics/v1",
+        promotion_gate_json="{}", harm_gate_json="{}", status="active",
+        started_at="2026-09-01T00:00:00+00:00",
+        created_at="2026-09-01T00:00:00+00:00",
+    )
+    rows = []
+    for index, (generation, assignment) in enumerate(zip(generations, ("control", "treatment"))):
+        changed = assignment == "treatment"
+        rows.append({
+            "experiment_id": experiment.experiment_id,
+            "hypothesis_id": hypothesis.hypothesis_id,
+            "path_id": hypothesis.path_id,
+            "assignment": assignment,
+            "assignment_unit_key": generation["id"],
+            "candidate_key": generation["id"],
+            "outcome_candidate_key": generation["id"],
+            "outcome_source": "fixed_horizon_candidate",
+            "outcome_contract_version": "entry-learning-outcome/v1",
+            "behavior_contract_hash": "behavior-contract",
+            "concurrent_policy_epoch": "epoch-1",
+            "experiment_stage": "paper_10",
+            "before_json": '{"include_learning_context":false}',
+            "after_json": (
+                '{"include_learning_context":true}' if changed
+                else '{"include_learning_context":false}'
+            ),
+            "manifest_json": json.dumps({
+                "authority_applied": changed,
+                "authority_reason": "applied" if changed else "control_assignment",
+                "behavior_changed": changed,
+                "behavior_change_reason": (
+                    "effective_treatment_delta" if changed else "control_assignment"
+                ),
+            }),
+            "exposed_at": f"2026-09-01T00:0{index}:00+00:00",
+            "code_commit": "commit-a",
+        })
+
+    cohorts = build_experiment_cohorts(
+        experiment.experiment_id,
+        as_of_at="2026-09-03T00:00:00+00:00",
+        _source_rows=rows,
+        _source_experiment=experiment,
+        _source_hypothesis=hypothesis,
+        _source_valid_policy_epochs={"epoch-1"},
+    )
+
+    assert len(cohorts) == 1
+    assert len(cohorts[0].samples) == 2
+    assert {sample.assignment for sample in cohorts[0].samples} == {"control", "treatment"}
 
 
 def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff():
@@ -216,8 +336,8 @@ def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff(
         opened_at="2026-09-01T00:03:00+00:00", closed_at="2026-09-04T00:00:00+00:00",
     )
     repo._insert("positions", position.model_dump())
-    _insert_forward_outcome(
-        generation, outcome_id="outcome-late",
+    _insert_fill_outcome(
+        fill_id="fill-late", outcome_id="outcome-late", entry_price=100,
         settled_at="2026-09-04T00:00:00+00:00",
     )
 
@@ -229,7 +349,35 @@ def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff(
     assert context.metrics["intent_to_treat_net_utility_pct"] is None
 
 
-def test_entry_learning_uses_fixed_4h_outcome_reanchored_to_actual_fill():
+def test_entry_fill_registers_exact_fixed_4h_outcome_seed():
+    generation = _generation(created_at="2026-09-01T00:00:00+00:00")
+    _insert_plan(generation, plan_id="plan-seed", status="ordered", mode="RESTING_MAKER")
+    order = Order(
+        id="order-seed", symbol="BTC/USDT", market_type="perp", direction="long",
+        order_type="limit", quantity=2, price=105, execution_mode="paper_internal",
+        entry_plan_id="plan-seed", status="filled", created_at="2026-09-01T00:02:00+00:00",
+        filled_at="2026-09-01T00:03:00+00:00",
+    )
+    repo._insert("orders", order.model_dump())
+
+    repo.insert_fill(Fill(
+        id="fill-seed", order_id=order.id, fill_price=105, fill_quantity=2,
+        filled_at="2026-09-01T00:03:00+00:00",
+    ))
+
+    row = repo.get_db().execute(
+        "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+        ("entry-fill:fill-seed",),
+    ).fetchone()
+    assert row is not None
+    assert row["entry_price_usd"] == 105
+    assert row["entry_ts"] == "2026-09-01T00:03:00.000000+00:00"
+    assert row["due_at"] == "2026-09-01T04:03:00+00:00"
+    assert row["horizon"] == "4h"
+    assert row["allocation_selected"] == 1
+
+
+def test_entry_learning_uses_fixed_4h_outcome_anchored_to_actual_fill():
     generation = _generation(created_at="2026-09-01T00:00:00+00:00")
     _insert_plan(generation, plan_id="plan-open", status="filled", mode="RESTING_MAKER")
     order = Order(
@@ -249,9 +397,9 @@ def test_entry_learning_uses_fixed_4h_outcome_reanchored_to_actual_fill():
         order_id=order.id, status="open", outcome_eligible=True,
         opened_at="2026-09-01T00:03:00+00:00",
     ).model_dump())
-    _insert_forward_outcome(
-        generation, outcome_id="outcome-open",
-        settled_at="2026-09-01T04:01:00+00:00",
+    _insert_fill_outcome(
+        fill_id="fill-open", outcome_id="outcome-open", entry_price=105,
+        settled_at="2026-09-01T04:03:00+00:00",
     )
 
     context = _context("2026-09-03T00:00:00+00:00")
@@ -260,9 +408,9 @@ def test_entry_learning_uses_fixed_4h_outcome_reanchored_to_actual_fill():
     assert context.metrics["intent_to_treat_net_utility_pct"] == pytest.approx(
         (110 - 105) / 105 * 100 - 1.0
     )
-    assert context.metrics["mfe_pct"] == pytest.approx((112 - 105) / 105 * 100)
-    assert context.metrics["mae_p95_pct"] == pytest.approx((105 - 97) / 105 * 100)
-    assert "universe-forward-outcome:outcome-open" in context.evidence_refs
+    assert context.metrics["mfe_pct"] == 7.0
+    assert context.metrics["mae_p95_pct"] == 2.0
+    assert "filter-candidate-outcome:outcome-open" in context.evidence_refs
 
 
 def test_entry_learning_triggered_proposal_failure_is_not_counted_as_no_trigger():
@@ -368,3 +516,27 @@ def test_entry_learning_treatment_freezes_epoch_and_changes_only_context_presenc
     ) == {"include_learning_context": True}
     manifest.behavior_policy_epoch_ref = "epoch-2"
     assert adapter.eligible(manifest, context) is False
+
+
+def test_entry_learning_treatment_receipt_uses_planning_generation_outcome_key(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.learning.entry_context import resolve_entry_learning_treatment
+
+    captured = {}
+
+    def resolve(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(payload={"include_learning_context": False})
+
+    monkeypatch.setattr(
+        "aletheia.observation_lab.canonical.resolve_observation_treatment", resolve,
+    )
+    resolve_entry_learning_treatment(
+        planning_generation_id="generation-1", mechanism="reversal", direction="long",
+        market_type="perp", policy="candidate_selection_utility_v1",
+        policy_epoch="epoch-1", as_of_at="2026-09-03T00:00:00+00:00",
+    )
+
+    assert captured["candidate_key"] == "generation-1"
+    assert captured["outcome_candidate_key"] == "generation-1"

@@ -220,6 +220,7 @@ def semantic_truth_failures() -> list[str]:
     expected_measured_paths = [
         "universe_family_calibration",
         "momentum_entry_geometry",
+        "mechanism_entry_learning",
         "ranker_case_score",
     ]
     if measured_paths != expected_measured_paths:
@@ -230,9 +231,9 @@ def semantic_truth_failures() -> list[str]:
 
     current_truth = {
         Path("docs/design/contracts/learning_contract.md"):
-            "UFC and Momentum geometry are Paper-authority-capable;",
+            "and mechanism Entry Learning are Paper-authority-capable;",
         Path("docs/product/experiments/EXPERIMENT_PROTOCOL.md"):
-            "`momentum_entry_geometry` are measurement-supported.",
+            "Mechanism Entry Learning uses Planning Generation as its ITT unit",
         Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
             "LN-08 | Learned guard generation and observation",
         Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):

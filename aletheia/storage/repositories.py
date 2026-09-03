@@ -3574,6 +3574,68 @@ def list_strategy_orders(
 
 def insert_fill(f: Fill) -> None:
     _insert("fills", _stamp_provenance(f.model_dump()))
+    try:
+        _seed_entry_fill_outcome(f)
+    except Exception as exc:
+        # The exchange Fill is the authoritative fact and must never be lost
+        # because its observational follow-up could not be registered.
+        _sqlite_logger.warning(
+            "entry fill outcome seed unavailable fill_id=%s error=%s",
+            f.id,
+            type(exc).__name__,
+        )
+
+
+def _seed_entry_fill_outcome(f: Fill) -> None:
+    """Register the existing fixed-horizon owner at the actual Fill T0."""
+
+    db = get_db()
+    owner = db.execute(
+        "SELECT o.entry_plan_id,ep.candidate_id,ep.venue,ep.symbol,"
+        "ep.market_type,ep.direction,um.scanner_family "
+        "FROM orders o JOIN entry_plans ep ON ep.id=o.entry_plan_id "
+        "LEFT JOIN universe_members um ON um.id=ep.candidate_id "
+        "WHERE o.id=? AND o.entry_plan_id IS NOT NULL AND o.close_reason IS NULL",
+        (f.order_id,),
+    ).fetchone()
+    if owner is None:
+        return
+    fill_time = datetime.fromisoformat(f.filled_at.replace("Z", "+00:00"))
+    if fill_time.tzinfo is None:
+        raise ValueError("entry_fill_time_timezone_required")
+    fill_at = fill_time.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    orderbook = db.execute(
+        "SELECT spread_bps FROM orderbook_snapshots WHERE symbol=? AND exchange=? "
+        "AND market_type=? AND julianday(observed_at)<=julianday(?) "
+        "ORDER BY julianday(observed_at) DESC,id DESC LIMIT 1",
+        (owner["symbol"], owner["venue"], owner["market_type"], fill_at),
+    ).fetchone()
+    funding = None
+    if owner["market_type"] == "perp":
+        funding = db.execute(
+            "SELECT funding_rate FROM funding_rate_snapshots WHERE symbol=? "
+            "AND exchange=? AND julianday(observed_at)<=julianday(?) "
+            "ORDER BY julianday(observed_at) DESC,id DESC LIMIT 1",
+            (owner["symbol"], owner["venue"], fill_at),
+        ).fetchone()
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
+
+    outcomes = build_candidate_outcomes(
+        outcome_candidate_key=f"entry-fill:{f.id}",
+        venue=str(owner["venue"]),
+        symbol=str(owner["symbol"]),
+        market_type=str(owner["market_type"]),
+        direction=str(owner["direction"]),
+        scanner_family=(str(owner["scanner_family"]) if owner["scanner_family"] else None),
+        regime_tag=None,
+        entry_price_usd=float(f.fill_price),
+        entry_spread_bps=(float(orderbook[0]) if orderbook is not None else None),
+        funding_rate_at_entry=(float(funding[0]) if funding is not None else None),
+        entry_ts=fill_at,
+        allocation_selected=True,
+        horizons=("4h",),
+    )
+    insert_filter_candidate_outcomes_batch(outcomes)
 
 
 def list_fills(limit: int = 100, order_id: str | None = None) -> list[dict]:

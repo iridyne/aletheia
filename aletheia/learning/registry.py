@@ -32,6 +32,8 @@ class LearningPath:
 
 RANKER_CASE_OUTCOME_CONTRACT_VERSION = "ranker-case-filter-candidate/v1"
 RANKER_CASE_METRIC_VERSION = "ranker_case_candidate_net_utility_v1"
+ENTRY_LEARNING_OUTCOME_CONTRACT_VERSION = "entry-learning-outcome/v1"
+ENTRY_LEARNING_METRIC_VERSION = "entry-learning-metrics/v1"
 
 
 def outcome_contract_version_for_path(path_id: str) -> str:
@@ -60,6 +62,16 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         outcome_contract_version=RANKER_CASE_OUTCOME_CONTRACT_VERSION,
         metric_version="momentum_geometry_candidate_net_utility_v1",
         statistical_unit="exact_momentum_candidate",
+    ),
+    LearningPath(
+        "mechanism_entry_learning", "bounded Entry outcome context", "Entry hypothesis planner",
+        "bounded Paper prompt context", ("prompt_advisory",),
+        "mechanism_entry_learning", "Fill-T0 fixed-4h Entry outcome",
+        "empty Entry Learning context", measurement_supported=True,
+        behavior_contract_version="mechanism-entry-learning/v1",
+        outcome_contract_version=ENTRY_LEARNING_OUTCOME_CONTRACT_VERSION,
+        metric_version=ENTRY_LEARNING_METRIC_VERSION,
+        statistical_unit="planning_generation",
     ),
     LearningPath(
         "observer_advisory_bundle", "knowledge router and trading memo", "market observer",

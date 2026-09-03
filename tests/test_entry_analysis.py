@@ -60,14 +60,17 @@ def _context_v2(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV2:
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-02T00:00:00Z", mechanism="reversal", direction="long",
             market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
-        ).model_copy(update={"evidence_refs": ("learning:1",)}),
+        ).model_copy(update={
+            "status": "observational", "evidence_refs": ("learning:1",),
+            "source_fingerprint": "e" * 64, "blocking_reasons": (),
+        }),
         candidate_opportunity_context={
             "opportunity": {
                 "primary_mechanism": "reversal", "direction": "long",
             },
         },
         inference_identity={
-            "caller": "agent_shell.entry_planner",
+            "caller": "agent_shell.entry_planner.v2",
             "prompt_version": "v2",
             "model_provider": "test",
         },
@@ -138,6 +141,36 @@ def test_v2_candidate_facts_include_bounded_primary_and_secondary_opportunity_ev
     })
 
     assert refs == ("opportunity:primary", "opportunity:secondary")
+
+
+def test_unavailable_treatment_learning_is_replaced_by_empty_baseline():
+    from types import SimpleNamespace
+
+    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_analysis import _bind_experimental_entry_learning_context
+
+    scope = {
+        "as_of_at": "2026-09-02T00:00:00Z", "mechanism": "reversal",
+        "direction": "long", "market_type": "perp",
+        "policy": "candidate_selection_utility_v1", "policy_epoch": "epoch-1",
+    }
+    unavailable = empty_entry_learning_context(**scope).model_copy(update={
+        "evidence_refs": ("must-not-reach-model",),
+        "metrics": {"intent_to_treat_net_utility_pct": 99.0},
+    })
+
+    result = _bind_experimental_entry_learning_context(
+        unavailable,
+        SimpleNamespace(
+            observation_id="obs", generation=1, manifest_hash="hash",
+            receipt_id="receipt", assignment="treatment",
+        ),
+        scope,
+    )
+
+    assert result.status == "unavailable"
+    assert result.evidence_refs == ()
+    assert result.metrics["intent_to_treat_net_utility_pct"] is None
 
 
 def test_v2_resting_maker_cannot_claim_bounded_urgent_execution():

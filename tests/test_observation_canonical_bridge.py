@@ -201,9 +201,12 @@ def test_lab_authority_resolves_and_imports_one_receipt():
     imported = import_delivery_receipts()
     assert imported["processed"] == 1
     row = get_lab_db().execute(
-        "SELECT source_receipt_id, applied, behavior_changed FROM observation_exposures"
+        "SELECT source_receipt_id, applied, behavior_changed,behavior_contract_hash,"
+        "behavior_policy_epoch_ref FROM observation_exposures"
     ).fetchone()
-    assert tuple(row) == (decision.receipt_id, 1, 1)
+    assert tuple(row) == (
+        decision.receipt_id, 1, 1, "behavior-hash", "policy:v1",
+    )
     claim = get_lab_db().execute(
         "SELECT source_ref, claim_domain, status FROM observation_retention_claims"
     ).fetchone()

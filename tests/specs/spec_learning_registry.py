@@ -31,7 +31,8 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     by_id = {path.path_id: path for path in LEARNING_PATHS}
     assert len(by_id) == len(LEARNING_PATHS)
     assert {
-        "universe_family_calibration",
+            "universe_family_calibration",
+            "mechanism_entry_learning",
         "observer_advisory_bundle",
         "ranker_case_score",
         "ranker_memo_score",
@@ -77,6 +78,7 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     assert fpt.overlap_group == "filter_parameter"
     assert supported_paper_influence_path_ids() == {
         "universe_family_calibration", "momentum_entry_geometry",
+        "mechanism_entry_learning",
     }
     assert by_id["operator_learning_bundle"].consumer_wired is True
     assert by_id["operator_learning_bundle"].measurement_supported is False

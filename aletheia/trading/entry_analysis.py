@@ -155,7 +155,7 @@ class EntryAnalysisContextV2(EntryAnalysisContextV1):
     @model_validator(mode="after")
     def _inference_identity_is_exact(self) -> "EntryAnalysisContextV2":
         if (
-            self.inference_identity.get("caller") != "agent_shell.entry_planner"
+            self.inference_identity.get("caller") != "agent_shell.entry_planner.v2"
             or self.inference_identity.get("prompt_version") != "v2"
             or not str(self.inference_identity.get("model_provider") or "").strip()
         ):
@@ -315,6 +315,8 @@ def validate_hypothesis_references(
         ):
             raise ValueError("hypothesis_opportunity_identity_mismatch")
         learning_refs = set(context.learning_context.evidence_refs)
+        if hypothesis.learning_evidence_refs and context.learning_context.status == "unavailable":
+            raise ValueError("hypothesis_learning_context_unavailable")
         if not set(hypothesis.learning_evidence_refs).issubset(learning_refs):
             raise ValueError("hypothesis_learning_ref_not_supplied")
     if hypothesis.decision == "NO_PLAN":
@@ -364,6 +366,31 @@ def validate_hypothesis_references(
         )
         if not set(hypothesis.supporting_fact_refs) & current_facts:
             raise ValueError("hypothesis_current_market_fact_required")
+
+
+def _bind_experimental_entry_learning_context(
+    learning_context: EntryLearningContextV1,
+    treatment: object,
+    learning_scope: dict[str, Any],
+) -> EntryLearningContextV1:
+    from aletheia.learning.entry_context import empty_entry_learning_context
+
+    if learning_context.status != "observational":
+        return empty_entry_learning_context(
+            **learning_scope,
+            reasons=learning_context.blocking_reasons,
+        )
+    return EntryLearningContextV1.model_validate({
+        **learning_context.model_dump(mode="json"),
+        "status": "experimental",
+        "experiment_identity": {
+            "observation_id": getattr(treatment, "observation_id", None),
+            "generation": getattr(treatment, "generation", None),
+            "manifest_hash": getattr(treatment, "manifest_hash", None),
+            "receipt_id": getattr(treatment, "receipt_id", None),
+            "assignment": getattr(treatment, "assignment", None),
+        },
+    })
 
 
 def build_entry_analysis_context(
@@ -676,22 +703,27 @@ def build_entry_analysis_context(
             planning_generation_id=str(generation["id"]), **learning_scope,
         )
         if treatment.payload.get("include_learning_context") is True:
+            from aletheia.config.loader import load_config
+
+            provider_config = load_config().models.providers.get(str(model_provider))
+            current_behavior_identity = {
+                "producer_commit": str(generation.get("producer_commit") or ""),
+                "behavior_fingerprint": str(generation.get("behavior_fingerprint") or ""),
+                "planner_contract_version": str(generation.get("planner_contract_version") or ""),
+                "mechanism_version": str(generation.get("mechanism_version") or ""),
+                "model_provider": str(model_provider),
+                "model": str(getattr(provider_config, "model", "") or ""),
+                "prompt_version": "v2",
+                "entry_profile_registry_hash": fingerprint(profiles),
+            }
             learning_context = build_entry_learning_context(
                 **learning_scope,
                 exclude_generation_id=str(generation["id"]),
+                current_behavior_identity=current_behavior_identity,
             )
-            if learning_context.status == "observational":
-                learning_context = EntryLearningContextV1.model_validate({
-                    **learning_context.model_dump(mode="json"),
-                    "status": "experimental",
-                    "experiment_identity": {
-                        "observation_id": treatment.observation_id,
-                        "generation": treatment.generation,
-                        "manifest_hash": treatment.manifest_hash,
-                        "receipt_id": treatment.receipt_id,
-                        "assignment": treatment.assignment,
-                    },
-                })
+            learning_context = _bind_experimental_entry_learning_context(
+                learning_context, treatment, learning_scope,
+            )
         else:
             learning_context = empty_entry_learning_context(
                 **learning_scope,
@@ -748,7 +780,7 @@ def build_entry_analysis_context(
     if opportunity_context is not None:
         context_fields["candidate_opportunity_context"] = opportunity_context.model_dump(mode="json")
         context_fields["inference_identity"] = {
-            "caller": "agent_shell.entry_planner",
+            "caller": "agent_shell.entry_planner.v2",
             "prompt_version": "v2",
             "model_provider": str(model_provider),
         }

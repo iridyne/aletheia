@@ -63,6 +63,18 @@ The generic `grounded-anchor-resting-maker/v1` and
 required facts/anchors/timeframes, compiler and TriggerSpec identity, and
 freshness. They may reuse deterministic geometry because geometry is not the
 Alpha source. Historical Momentum profile/experiment identities are unchanged.
+
+`entry-learning-context/v1` uses planning generation as its independent unit.
+NO_PLAN, no-trigger, and no-fill terminal units contribute zero ITT utility only
+after the 4h look; filled units use cost-complete `filter_candidate_outcomes`
+registered at each exact Fill T0 and aggregated by fill notional. Candidate-T0
+forward outcomes are context only and are never re-anchored as Entry outcomes.
+The cohort must match the current code, behavior, planner, mechanism, provider,
+model, prompt, profile-registry, market, and policy identities. Profile results
+are explicitly an exact profile or the declared `mechanism-aware-grounded/v1`
+parent summary. Any unavailable or mixed evidence is replaced by the deterministic
+empty context before inference. Observation Lab measures this path under
+`mechanism_entry_learning` with the same planning-generation outcome key.
 An unsupported mechanism, currently Information/Catalyst, has no visible
 Profile and reaches `NO_PLAN` without a model call.
 

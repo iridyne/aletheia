@@ -50,99 +50,69 @@ def _bounded_evidence(refs: list[str]) -> tuple[tuple[str, ...], int, bool]:
 
 def _filled_unit_outcome(
     db, *, row: dict[str, Any], position: dict[str, Any], cutoff: datetime,
-) -> tuple[float, float | None, float | None, str] | tuple[None, None, None, str]:
-    """Return one fixed-4h Entry outcome, re-anchored to its actual fill price."""
+) -> tuple[float, float, float, tuple[str, ...]] | tuple[None, None, None, str]:
+    """Return the notional-weighted fixed-4h outcome of exact entry Fills."""
 
-    outcomes = [dict(item) for item in db.execute(
-        "SELECT * FROM universe_forward_outcomes WHERE member_id=? AND horizon='4h' "
-        "AND venue=? AND symbol=? AND market_type=? AND LOWER(direction)=LOWER(?) "
-        "ORDER BY entry_ts,id",
-        (
-            row["plan_candidate_id"], row["venue"], row["symbol"],
-            row["market_type"], row["direction"],
-        ),
+    if not bool(position.get("outcome_eligible")):
+        return None, None, None, "entry_learning_position_outcome_incomplete"
+    fills = [dict(item) for item in db.execute(
+        "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?) "
+        "ORDER BY filled_at,id",
+        (position["order_id"], cutoff.isoformat()),
     ).fetchall()]
-    if len(outcomes) != 1:
+    if not fills:
         return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
-    outcome = outcomes[0]
-    try:
-        due_at = _instant(outcome["due_at"])
-        settled_at = _instant(outcome["settled_at"])
-    except (TypeError, ValueError):
-        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
-    if outcome.get("status") != "settled" or due_at > cutoff or settled_at > cutoff:
-        return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
-
     from aletheia.analytics.outcome_semantics import validated_outcome_economics
 
-    economics = validated_outcome_economics(outcome)
-    if economics is None:
-        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
-    try:
-        entry_price = float(position["entry_price"])
-        quantity = abs(float(position["quantity"]))
-    except (TypeError, ValueError):
-        return None, None, None, "entry_learning_position_outcome_invalid"
-    if (
-        not math.isfinite(entry_price) or entry_price <= 0
-        or not math.isfinite(quantity) or quantity <= 0
-        or not bool(position.get("outcome_eligible"))
-    ):
-        return None, None, None, "entry_learning_position_outcome_incomplete"
-
-    closed_at = None
-    if position.get("status") == "closed" and position.get("closed_at"):
+    weighted: list[tuple[float, float, float, float, str]] = []
+    for fill in fills:
+        outcomes = [dict(item) for item in db.execute(
+            "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=? "
+            "AND horizon='4h' AND venue=? AND symbol=? AND market_type=? "
+            "AND LOWER(direction)=LOWER(?) ORDER BY id",
+            (
+                f"entry-fill:{fill['id']}", row["venue"], row["symbol"],
+                row["market_type"], row["direction"],
+            ),
+        ).fetchall()]
+        if len(outcomes) != 1:
+            return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
+        outcome = outcomes[0]
         try:
-            closed_at = _instant(position["closed_at"])
+            due_at = _instant(outcome["due_at"])
+            settled_at = _instant(outcome["settled_at"])
+            filled_at = _instant(fill["filled_at"])
+            entry_at = _instant(outcome["entry_ts"])
+            notional = abs(float(fill["fill_price"]) * float(fill["fill_quantity"]))
         except (TypeError, ValueError):
-            return None, None, None, "entry_learning_position_outcome_invalid"
-    if closed_at is not None and closed_at <= due_at:
+            return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
+        if outcome.get("status") != "settled" or due_at > cutoff or settled_at > cutoff:
+            return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
+        economics = validated_outcome_economics(outcome)
+        if (
+            economics is None or entry_at != filled_at
+            or not math.isfinite(notional) or notional <= 0
+        ):
+            return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
         try:
-            realized = float(position["realized_pnl"])
+            mfe = float(outcome["mfe_pct"])
+            mae = float(outcome["mae_pct"])
         except (TypeError, ValueError):
-            return None, None, None, "entry_learning_position_outcome_invalid"
-        if not math.isfinite(realized):
-            return None, None, None, "entry_learning_position_outcome_invalid"
-        return realized / (quantity * entry_price) * 100.0, None, None, str(outcome["id"])
-
-    try:
-        candidate_entry = float(outcome["entry_price_usd"])
-        exit_price = float(outcome["exit_price_usd"])
-        candidate_mfe = float(outcome["mfe_pct"])
-        candidate_mae = float(outcome["mae_pct"])
-    except (TypeError, ValueError):
-        return None, None, None, "entry_learning_fixed_horizon_path_invalid"
-    if (
-        not all(math.isfinite(value) for value in (
-            candidate_entry, exit_price, candidate_mfe, candidate_mae,
-        ))
-        or candidate_entry <= 0 or exit_price <= 0
-        or candidate_mfe < 0 or candidate_mae > 0
-    ):
-        return None, None, None, "entry_learning_fixed_horizon_path_invalid"
-    direction = str(row["direction"]).lower()
-    if direction == "long":
-        high = candidate_entry * (1.0 + candidate_mfe / 100.0)
-        low = candidate_entry * (1.0 + candidate_mae / 100.0)
-        directional = (exit_price - entry_price) / entry_price * 100.0
-        mfe = max(0.0, (high - entry_price) / entry_price * 100.0)
-        mae = min(0.0, (low - entry_price) / entry_price * 100.0)
-    elif direction == "short":
-        low = candidate_entry * (1.0 - candidate_mfe / 100.0)
-        high = candidate_entry * (1.0 - candidate_mae / 100.0)
-        directional = (entry_price - exit_price) / entry_price * 100.0
-        mfe = max(0.0, (entry_price - low) / entry_price * 100.0)
-        mae = min(0.0, (entry_price - high) / entry_price * 100.0)
-    else:
-        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
-    utility = (
-        directional - economics["estimated_fee_pct"]
-        - economics["estimated_spread_slippage_pct"]
-        - economics["estimated_funding_pct"]
+            return None, None, None, "entry_learning_fixed_horizon_path_invalid"
+        utility = economics.get("net_return_pct")
+        if (
+            utility is None or not math.isfinite(mfe) or not math.isfinite(mae)
+            or mfe < 0 or mae > 0
+        ):
+            return None, None, None, "entry_learning_fixed_horizon_path_invalid"
+        weighted.append((notional, utility, mfe, mae, str(outcome["id"])))
+    total_notional = sum(item[0] for item in weighted)
+    return (
+        sum(item[0] * item[1] for item in weighted) / total_notional,
+        sum(item[0] * item[2] for item in weighted) / total_notional,
+        sum(item[0] * item[3] for item in weighted) / total_notional,
+        tuple(item[4] for item in weighted),
     )
-    if not all(math.isfinite(value) for value in (utility, mfe, mae)):
-        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
-    return utility, mfe, mae, str(outcome["id"])
 
 
 def _planning_inference_evidence(
@@ -162,7 +132,7 @@ def _planning_inference_evidence(
     calls = [dict(row) for row in db.execute(
         "SELECT DISTINCT c.* FROM llm_context_artifacts a "
         "JOIN llm_inference_calls c ON c.logical_call_id=a.logical_call_id "
-        "WHERE a.stable_id=? AND a.caller='agent_shell.entry_planner' "
+        "WHERE a.stable_id=? AND a.caller='agent_shell.entry_planner.v2' "
         "AND c.finished_at IS NOT NULL AND julianday(c.finished_at)<=julianday(?) "
         "ORDER BY c.started_at,c.logical_call_id",
         (f"planning-generation:{generation_id}", cutoff.isoformat()),
@@ -339,6 +309,7 @@ def resolve_entry_learning_treatment(
         adapter_id=adapter.adapter_id,
         adapter_version=adapter.adapter_version,
         candidate_key=planning_generation_id,
+        outcome_candidate_key=planning_generation_id,
         context=context,
         baseline=adapter.deterministic_baseline(context),
         now=as_of_at,
@@ -379,6 +350,7 @@ def empty_entry_learning_context(
 def build_entry_learning_context(
     *, as_of_at: str, mechanism: str, direction: str, market_type: str,
     policy: str, policy_epoch: str | None, exclude_generation_id: str = "",
+    current_behavior_identity: dict[str, str] | None = None,
 ) -> EntryLearningContextV1:
     """Project existing planning/execution owners; never creates or updates evidence."""
 
@@ -425,6 +397,14 @@ def build_entry_learning_context(
     mfes: list[float] = []
     captures: list[float] = []
     invalid_reasons: set[str] = set()
+    current_identity = current_behavior_identity or {}
+    required_current_identity = (
+        "producer_commit", "behavior_fingerprint", "planner_contract_version",
+        "mechanism_version", "model_provider", "model", "prompt_version",
+        "entry_profile_registry_hash",
+    )
+    if not all(current_identity.get(key) for key in required_current_identity):
+        invalid_reasons.add("entry_learning_current_behavior_identity_unavailable")
     for raw in rows:
         row = dict(raw)
         try:
@@ -436,13 +416,14 @@ def build_entry_learning_context(
         dates.add(created.date().isoformat())
         evidence_refs.append(f"planning-generation:{row['id']}")
         planner_input = str(row.get("planner_input_json") or "")
+        frozen: dict[str, Any] = {}
         try:
             frozen = json.loads(planner_input)
             inference = frozen["inference_identity"]
             if (
                 hashlib.sha256(planner_input.encode()).hexdigest()
                 != row.get("planner_input_hash")
-                or inference.get("caller") != "agent_shell.entry_planner"
+                or inference.get("caller") != "agent_shell.entry_planner.v2"
                 or inference.get("prompt_version") != "v2"
                 or not inference.get("model_provider")
             ):
@@ -457,6 +438,7 @@ def build_entry_learning_context(
             str(row.get("mechanism_version") or "unavailable"),
             str(inference.get("model_provider") or "unavailable"),
             str(inference.get("prompt_version") or "unavailable"),
+            _fingerprint(frozen.get("entry_profiles") or []),
         ))
         call_identities, inference_cost, inference_refs, inference_reasons = (
             _planning_inference_evidence(
@@ -560,14 +542,16 @@ def build_entry_learning_context(
             invalid_reasons.add("entry_learning_position_missing")
             continue
         position = dict(position)
-        utility, mfe, mae, outcome_id = _filled_unit_outcome(
+        utility, mfe, mae, outcome_ids = _filled_unit_outcome(
             db, row=row, position=position, cutoff=cutoff,
         )
         if utility is None:
-            invalid_reasons.add(outcome_id)
+            invalid_reasons.add(str(outcome_ids))
             continue
         evidence_refs.append(f"position:{position['id']}")
-        evidence_refs.append(f"universe-forward-outcome:{outcome_id}")
+        evidence_refs.extend(
+            f"filter-candidate-outcome:{outcome_id}" for outcome_id in outcome_ids
+        )
         complete += 1
         utilities.append(utility)
         if mfe is not None and mae is not None:
@@ -578,14 +562,33 @@ def build_entry_learning_context(
 
     total = len(rows)
     coverage = complete / total
-    if len(identity_values) != 1:
+    expected_identity = {
+        (
+            str(current_identity.get("producer_commit") or "unavailable"),
+            str(current_identity.get("behavior_fingerprint") or "unavailable"),
+            str(current_identity.get("planner_contract_version") or "unavailable"),
+            str(current_identity.get("mechanism_version") or "unavailable"),
+            str(current_identity.get("model_provider") or "unavailable"),
+            str(current_identity.get("prompt_version") or "unavailable"),
+            str(current_identity.get("entry_profile_registry_hash") or "unavailable"),
+        )
+    }
+    if identity_values != expected_identity:
         invalid_reasons.add("entry_learning_mixed_identity")
-    if len(inference_identities) != 1:
+    if (
+        len(inference_identities) != 1
+        or any(
+            identity[:3] != (
+                str(current_identity.get("model_provider") or "unavailable"),
+                str(current_identity.get("model") or "unavailable"),
+                str(current_identity.get("prompt_version") or "unavailable"),
+            )
+            for identity in inference_identities
+        )
+    ):
         invalid_reasons.add("entry_learning_mixed_model_identity")
     if len(inference_costs) != total:
         invalid_reasons.add("entry_learning_model_data_cost_unavailable")
-    if len(profile_identities) > 1:
-        invalid_reasons.add("entry_learning_mixed_profile_identity")
     if complete != total:
         invalid_reasons.add("entry_learning_incomplete_outcomes")
     scope = {
@@ -596,6 +599,9 @@ def build_entry_learning_context(
     support = {
         "independent_n": total, "distinct_symbols": len(symbols),
         "distinct_dates": len(dates), "complete_outcome_coverage": coverage,
+        "entry_profile_scope": "parent_summary",
+        "entry_profile_identities": [list(item) for item in sorted(profile_identities)],
+        "current_behavior_identity": dict(sorted(current_identity.items())),
     }
     bounded_refs, evidence_ref_total, evidence_refs_truncated = _bounded_evidence(
         evidence_refs
