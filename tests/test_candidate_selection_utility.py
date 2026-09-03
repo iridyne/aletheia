@@ -422,6 +422,38 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
     assert harmful_tail.economic_utility_pct is None
 
 
+def test_economic_utility_support_uses_only_retained_clusters():
+    from aletheia.universe.economic_utility import estimate_economic_utility
+
+    rows = [{**row, "symbol": "BTC/USDT"} for row in _outcomes()]
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    for index, symbol in enumerate(("ETH/USDT", "SOL/USDT", "DOGE/USDT", "XRP/USDT")):
+        rows.append({
+            **rows[index],
+            "outcome_candidate_key": f"candidate-selection-utility:v1:overlap-{index}:long",
+            "scanner_run_id": f"overlap-{index}",
+            "entry_ts": (start + timedelta(hours=4 * index, minutes=10)).isoformat(),
+            "settled_at": (start + timedelta(hours=4 * (index + 1), minutes=10)).isoformat(),
+            "symbol": symbol,
+        })
+
+    estimate = estimate_economic_utility(
+        candidate_key="candidate-economic",
+        mechanism_id="continuation",
+        direction="long",
+        venue="okx",
+        market_type="spot",
+        strength_percentile=0.9,
+        outcomes=rows,
+        source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=rows[0]["cost_assumptions"],
+    )
+
+    assert estimate.parent_independent_n == 60
+    assert estimate.child_independent_n == 25
+    assert estimate.estimate_status == "unavailable"
+
+
 def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed():
     from aletheia.universe.candidate_eligibility import evaluate_hard_gate
     from aletheia.universe.candidate_selection_utility import (

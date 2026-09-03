@@ -78,7 +78,7 @@ def select_non_overlapping_t0_clusters(
 
 def _independent_values(
     rows: Sequence[Mapping[str, object]],
-) -> tuple[list[float], list[float]]:
+) -> tuple[list[float], list[float], list[Mapping[str, object]]]:
     """Collapse same-T0 symbols, then greedily select non-overlapping 4h units."""
 
     grouped: dict[str, list[Mapping[str, object]]] = {}
@@ -98,6 +98,9 @@ def _independent_values(
                     if all(_finite(row.get("mae_pct")) is not None for row in values)
                     else None
                 ),
+                "symbols": frozenset(
+                    str(row["symbol"]) for row in values if row.get("symbol")
+                ),
             }
             for cluster_t0, values in grouped.items()
         ],
@@ -109,7 +112,7 @@ def _independent_values(
         for cluster in clusters
         if cluster["mae_pct"] is not None
     ]
-    return net_values, mae_values
+    return net_values, mae_values, clusters
 
 
 @dataclass(frozen=True)
@@ -211,13 +214,13 @@ def build_economic_utility_cohort_index(
             and row.get("cost_model_version") == COST_MODEL_VERSION
             and row.get("scanner_run_id")
         ]
-        parent_values, _ = _independent_values(complete)
+        parent_values, _, parent_clusters = _independent_values(complete)
         child_values: dict[int, tuple[float, ...]] = {}
         child_mae: dict[int, tuple[float, ...]] = {}
         child_raw_min: dict[int, float | None] = {}
         for quintile in range(1, 6):
             rows = [row for row in complete if row.get("strength_quintile") == quintile]
-            values, maes = _independent_values(rows)
+            values, maes, _ = _independent_values(rows)
             if any(_finite(row.get("mae_pct")) is None for row in rows):
                 maes = []
             child_values[quintile] = tuple(values)
@@ -257,9 +260,15 @@ def build_economic_utility_cohort_index(
             child_mae,
             child_raw_min,
             frozenset(
-                entry.date() for row in complete if (entry := parse_utc_instant(row.get("entry_ts"))) is not None
+                entry.date()
+                for cluster in parent_clusters
+                if (entry := parse_utc_instant(cluster.get("cluster_t0"))) is not None
             ),
-            frozenset(str(row.get("symbol")) for row in complete if row.get("symbol")),
+            frozenset(
+                symbol
+                for cluster in parent_clusters
+                for symbol in cluster.get("symbols", ())
+            ),
             len(complete) / len(parent_rows) if parent_rows else 0.0,
             next(iter(edges)) if len(edges) == 1 else None,
             canonical_fingerprint(source_material) if complete else None,

@@ -443,6 +443,14 @@ async def test_terminal_candidate_qualification_stops_confirmatory_capture(monke
         service,
     )
 
+    evaluations = 0
+    policy = {}
+
+    def evaluate(**_kwargs):
+        nonlocal evaluations
+        evaluations += 1
+        return {"verdict": verdict, "selection_policy": dict(policy)}
+
     monkeypatch.setattr(
         service.repo,
         "universe_twin_shadow_capture_due",
@@ -451,24 +459,38 @@ async def test_terminal_candidate_qualification_stops_confirmatory_capture(monke
     monkeypatch.setattr(
         candidate_selection_evaluation,
         "evaluate_candidate_selection_policy",
-        lambda **_kwargs: {"verdict": verdict, "selection_policy": {}},
+        evaluate,
     )
     monkeypatch.setattr(
         candidate_selection_authority,
         "candidate_selection_policy_identity",
-        lambda *_args, **_kwargs: {},
+        lambda *_args, **_kwargs: dict(policy),
     )
     monkeypatch.setattr(
         service,
         "_build_candidate_selection_bundle",
         lambda **_kwargs: pytest.fail("terminal epoch must not append confirmatory evidence"),
     )
+    monkeypatch.setattr(service, "_terminal_candidate_selection_policy_fingerprint", None)
 
+    for captured_at in ("2026-09-03T00:00:00+00:00", "2026-09-03T04:00:00+00:00"):
+        assert await service._persist_candidate_selection_shadow_nonfatal(
+            population=[{}],
+            legacy_scored=[],
+            legacy_allocated=[],
+            scanner_run_id="terminal",
+            captured_at=captured_at,
+            cfg=AletheiaConfig(),
+        ) == 0
+    assert evaluations == 1
+
+    policy["epoch"] = 2
     assert await service._persist_candidate_selection_shadow_nonfatal(
         population=[{}],
         legacy_scored=[],
         legacy_allocated=[],
-        scanner_run_id="terminal",
-        captured_at="2026-09-03T00:00:00+00:00",
+        scanner_run_id="new-policy",
+        captured_at="2026-09-03T08:00:00+00:00",
         cfg=AletheiaConfig(),
     ) == 0
+    assert evaluations == 2
