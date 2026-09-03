@@ -7,7 +7,10 @@ Covers:
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 
 def _make_row(
@@ -40,6 +43,19 @@ def _make_row(
         "symbol": symbol,
         "market_type": market_type,
     }
+
+
+def _complete_cohort(rows: list[dict]) -> SimpleNamespace:
+    return SimpleNamespace(
+        rows=tuple(rows),
+        assessments=tuple(
+            SimpleNamespace(eligible=True, reason="eligible") for _row in rows
+        ),
+        source_raw_event_count=len(rows),
+        loaded_raw_event_count=len(rows),
+        cohort_complete=True,
+        cohort_state="available",
+    )
 
 # ---------------------------------------------------------------------------
 # #1259 — Regime Performance canonical states
@@ -157,23 +173,55 @@ def test_r_multiple_no_proxy_risk():
 # #1254 — Truncation metadata
 # ---------------------------------------------------------------------------
 
-def test_cohort_complete_false_when_10000_rows():
-    """cohort_complete is False when 10,000 rows loaded (may be truncated)."""
-    assert (10_000 < 10_000) is False
+@pytest.mark.parametrize("source_count", [9_999, 10_000])
+def test_trade_insights_exact_boundary_is_complete(source_count):
+    import aletheia.analytics.outcome_integrity as oi
+    from aletheia.analytics import trade_insights
+
+    rows = [_make_row()] * source_count
+    with (
+        patch.object(oi, "read_complete_outcome_cohort", return_value=_complete_cohort(rows)),
+        patch(
+            "aletheia.analytics.trade_insights._r_multiple_distribution",
+            return_value={
+                "bins": [],
+                "eligible_r_multiple_count": 0,
+                "unavailable_r_multiple_count": 0,
+                "unavailability_reasons": {},
+            },
+        ),
+    ):
+        result = trade_insights.build_trade_insights()
+
+    assert result["source_raw_count"] == source_count
+    assert result["loaded_raw_count"] == source_count
+    assert result["omitted_count"] == 0
+    assert result["cohort_complete"] is True
 
 
-def test_cohort_complete_true_when_fewer_rows():
-    """cohort_complete is True when loaded_count < 10,000."""
-    assert (42 < 10_000) is True
-
-
-def test_cohort_metadata_keys_present():
-    """build_trade_insights includes required truncation metadata keys."""
+def test_trade_insights_uses_exact_raw_total_despite_eligibility_exclusion():
     import aletheia.analytics.outcome_integrity as oi
 
-    fake_rows = [
-        _make_row(id=f"p{i}", closed_at=f"2026-07-2{i}T10:00:00+00:00") for i in range(3)
+    raw_rows = [
+        _make_row(
+            id=f"p{i}",
+            realized_pnl=-10_000.0 if i == 0 else 1.0,
+            closed_at="2026-06-23T00:00:00+00:00" if i == 0 else "2026-07-15T10:00:00+00:00",
+        )
+        for i in range(10_001)
     ]
+    assessments = [
+        SimpleNamespace(eligible=i != 1, reason="eligible" if i != 1 else "administrative_close")
+        for i in range(10_001)
+    ]
+    complete = SimpleNamespace(
+        rows=tuple(raw_rows),
+        assessments=tuple(assessments),
+        source_raw_event_count=10_001,
+        loaded_raw_event_count=10_001,
+        cohort_complete=True,
+        cohort_state="available",
+    )
     fake_r_dist: dict = {
         "bins": [],
         "eligible_r_multiple_count": 0,
@@ -182,9 +230,7 @@ def test_cohort_metadata_keys_present():
     }
 
     with (
-        patch.object(oi, "eligible_strategy_outcomes", return_value=fake_rows),
-        patch.object(oi, "raw_account_events", return_value=fake_rows),
-        patch.object(oi, "build_outcome_cohort_summary", return_value={}),
+        patch.object(oi, "read_complete_outcome_cohort", return_value=complete),
         patch(
             "aletheia.analytics.trade_insights._r_multiple_distribution",
             return_value=fake_r_dist,
@@ -193,16 +239,17 @@ def test_cohort_metadata_keys_present():
         from aletheia.analytics import trade_insights
         result = trade_insights.build_trade_insights()
 
-    assert "source_total_raw_events" in result
-    assert "loaded_count" in result
-    assert "cohort_complete" in result
-    assert "loaded_from" in result
-    assert "loaded_through" in result
-    assert result["loaded_count"] == 3
-    assert result["cohort_complete"] is True
-    assert result["source_total_raw_events"] == 3
-    assert result["loaded_from"] == fake_rows[0]["closed_at"]
-    assert result["loaded_through"] == fake_rows[-1]["closed_at"]
+    assert result["source_raw_count"] == 10_001
+    assert result["loaded_raw_count"] == 10_000
+    assert result["loaded_count"] == 9_999
+    assert result["omitted_count"] == 1
+    assert result["cohort_complete"] is False
+    assert result["loaded_from"] == raw_rows[1]["closed_at"]
+    assert result["loaded_through"] == raw_rows[-1]["closed_at"]
+    assert result["raw_event_count"] == 10_001
+    assert result["eligible_outcome_count"] == 10_000
+    assert result["excluded_outcome_count"] == 1
+    assert result["equity_curve"][0]["pnl"] == 1.0
 
     # #2061 wire contract: r_multiple_distribution MUST be a list (not the raw dict)
     assert isinstance(result["r_multiple_distribution"], list), (
@@ -267,9 +314,7 @@ def test_temporal_trade_insight_buckets_exclude_naive_and_malformed_times():
     }
 
     with (
-        patch.object(oi, "eligible_strategy_outcomes", return_value=rows),
-        patch.object(oi, "raw_account_events", return_value=rows),
-        patch.object(oi, "build_outcome_cohort_summary", return_value={}),
+        patch.object(oi, "read_complete_outcome_cohort", return_value=_complete_cohort(rows)),
         patch(
             "aletheia.analytics.trade_insights._r_multiple_distribution",
             return_value=fake_r_dist,
@@ -354,9 +399,7 @@ def test_r_multiple_distribution_wire_shape_is_list():
     }
 
     with (
-        patch.object(oi, "eligible_strategy_outcomes", return_value=fake_rows),
-        patch.object(oi, "raw_account_events", return_value=fake_rows),
-        patch.object(oi, "build_outcome_cohort_summary", return_value={}),
+        patch.object(oi, "read_complete_outcome_cohort", return_value=_complete_cohort(fake_rows)),
         patch(
             "aletheia.analytics.trade_insights._r_multiple_distribution",
             return_value=fake_r_dist,
@@ -390,9 +433,7 @@ def test_r_multiple_distribution_meta_all_keys_present():
     }
 
     with (
-        patch.object(oi, "eligible_strategy_outcomes", return_value=[]),
-        patch.object(oi, "raw_account_events", return_value=[]),
-        patch.object(oi, "build_outcome_cohort_summary", return_value={}),
+        patch.object(oi, "read_complete_outcome_cohort", return_value=_complete_cohort([])),
         patch(
             "aletheia.analytics.trade_insights._r_multiple_distribution",
             return_value=fake_r_dist,
