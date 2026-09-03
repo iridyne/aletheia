@@ -14,6 +14,7 @@ import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDrawer'
 import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../components/ui'
+import { DataStateMessage } from '../components/DataState'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
 import { fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 import type { Candidate, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
@@ -130,15 +131,19 @@ function InstrumentDialog({ open, id, children, onClose }: {
   </div>
 }
 
-function SignalsTab({ onInstrumentSelect }: { onInstrumentSelect: (instrument: MarketInstrument) => void }) {
-  const { data: opportunities = [], isLoading } = useQuery({
+export function SignalsTab({ onInstrumentSelect }: { onInstrumentSelect: (instrument: MarketInstrument) => void }) {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['opportunities'], queryFn: api.getOpportunities, refetchInterval: 60_000,
   })
+  const opportunities = (data ?? []) as Opportunity[]
   const rows = opportunities.filter(opportunity => opportunity.asset_class === 'crypto' || !opportunity.asset_class)
     .sort((a, b) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0))
-  if (isLoading) return <p className="text-muted text-sm">Loading signals…</p>
-  if (!rows.length) return <p className="hint">No active signals — market observer has not run yet or no opportunities are open.</p>
-  return <Card><CardHeader title="AI Market Signals" /><TableWrap><table>
+  if (isLoading && !data) return <DataStateMessage state="loading" message="Loading signals…" />
+  if (isError && !data) return <DataStateMessage state="unavailable" message="Market signals unavailable. The read failed; this is not an empty result." />
+  if (isError && data && !rows.length) return <DataStateMessage state="stale" message="Market signals are stale. The failed latest read cannot confirm an empty market." />
+  return <>
+    {isError && data && <DataStateMessage state="stale" message="Market signals are stale. Retained rows may not reflect the latest read." />}
+    {!rows.length ? <p className="hint">No active signals — market observer has not run yet or no opportunities are open.</p> : <Card><CardHeader title="AI Market Signals" /><TableWrap><table>
     <thead><tr><th>Symbol</th><th>Direction</th><th>Score</th><th>Confidence</th><th>Source</th><th>Thesis</th></tr></thead>
     <tbody>{rows.slice(0, 30).map(opportunity => <tr
       key={opportunity.id}
@@ -152,21 +157,27 @@ function SignalsTab({ onInstrumentSelect }: { onInstrumentSelect: (instrument: M
       <td className="text-muted">{opportunity.source_agent || '—'}</td>
       <td className="td-ellipsis" title={opportunity.thesis || ''}>{opportunity.thesis || '—'}</td>
     </tr>)}</tbody>
-  </table></TableWrap></Card>
+  </table></TableWrap></Card>}
+  </>
 }
 
-function NewsTab() {
-  const { data: news = [], isLoading } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews(20), refetchInterval: 120_000 })
-  if (isLoading) return <p className="text-muted text-sm">Loading news…</p>
-  if (!news.length) return <p className="hint">News ingestion not configured — add news sources in Settings or create items manually.</p>
-  return <div className="news-feed">{news.map((item: MarketNewsItem) => {
+export function NewsTab() {
+  const { data, isLoading, isError } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews(20), refetchInterval: 120_000 })
+  const news = (data ?? []) as MarketNewsItem[]
+  if (isLoading && !data) return <DataStateMessage state="loading" message="Loading news…" />
+  if (isError && !data) return <DataStateMessage state="unavailable" message="News data unavailable. The read failed; this is not an unconfigured source." />
+  if (isError && data && !news.length) return <DataStateMessage state="stale" message="News data is stale. The failed latest read cannot confirm source configuration." />
+  return <>
+    {isError && data && <DataStateMessage state="stale" message="News data is stale. Retained rows may not reflect the latest read." />}
+    {!news.length ? <p className="hint">News ingestion not configured — add news sources in Settings or create items manually.</p> : <div className="news-feed">{news.map((item: MarketNewsItem) => {
     const sentiment = item.sentiment || 'neutral'
     return <div key={item.id} className="news-item">
       <div className="news-item-head"><span className="news-item-title">{item.title}</span><Badge tone={sentiment === 'positive' ? 'green' : sentiment === 'negative' ? 'red' : 'blue'}>{sentiment}</Badge></div>
       <div className="news-item-meta">{item.source && <span className="news-item-source">{item.source}</span>}{item.published_at && <span className="mono news-item-ts">{fmtTimestamp(item.published_at)}</span>}</div>
       {item.summary && <p className="news-item-summary">{item.summary}</p>}
     </div>
-  })}</div>
+  })}</div>}
+  </>
 }
 
 function PredictionsTab() {

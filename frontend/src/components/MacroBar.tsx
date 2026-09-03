@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { DataStateMessage } from './DataState'
 import { fmtNum, fmtSigned } from '../lib/format'
 
 const REGIME_TONE: Record<string, string> = {
@@ -32,13 +33,34 @@ function MacroCell({ label, value, change, suffix = '' }: {
 }
 
 export default function MacroBar() {
-  const { data } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['macro'],
     queryFn: api.getMacro,
     refetchInterval: 60_000,
     staleTime: 30_000,
   })
 
+  if (isError && !data) {
+    return (
+      <div className="macro-bar macro-bar-pending">
+        <DataStateMessage state="unavailable" message="Macro data unavailable. The read failed; this is not an empty result." />
+      </div>
+    )
+  }
+  if (isLoading && !data) {
+    return (
+      <div className="macro-bar macro-bar-pending">
+        <span className="macro-bar-hint">Macro data pending — collector initializing</span>
+      </div>
+    )
+  }
+  if (isError && data && (!data.available || !data.data)) {
+    return (
+      <div className="macro-bar macro-bar-pending">
+        <DataStateMessage state="stale" message="Macro data is stale. The latest read failed, so cached availability cannot be confirmed." />
+      </div>
+    )
+  }
   if (!data?.available || !data?.data) {
     return (
       <div className="macro-bar macro-bar-pending">
@@ -52,6 +74,7 @@ export default function MacroBar() {
 
   return (
     <div className="macro-bar" role="status" aria-label="Global macro indicators">
+      {isError && <DataStateMessage state="stale" message="Macro data is stale. Retained values may not reflect the latest read." />}
       <span className={`macro-regime ${REGIME_TONE[regime] || 'macro-regime-neutral'}`}>
         {REGIME_LABEL[regime] || regime.toUpperCase()}
       </span>
