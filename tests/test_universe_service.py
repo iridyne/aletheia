@@ -143,6 +143,8 @@ def test_fallback_when_disabled(svc, disabled_cfg):
     assert members[0]["symbol"] == "BTC/USDT"
     assert members[0]["scanner_family"] == "core"
     assert members[0]["snapshot_id"] is None
+    assert members[0]["candidate_selection_policy"] == "legacy_total_score_v1"
+    assert members[0]["candidate_selection_utility_pct"] is None
 
 
 def test_fallback_when_no_snapshot(svc, enabled_cfg):
@@ -161,6 +163,33 @@ def test_fallback_when_snapshot_empty(svc, enabled_cfg):
                 members = svc.get_current_universe()
     assert len(members) == 3
     assert members[0]["scanner_family"] == "core"
+
+
+def test_target_snapshot_empty_is_intentional_no_fill(svc, enabled_cfg):
+    enabled_cfg.universe = UniverseConfig(
+        enabled=True,
+        fallback_symbols=["BTC/USDT"],
+        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy_epoch="candidate-selection-utility:epoch",
+    )
+    snap = {
+        "id": "snap-target-empty",
+        "status": "active",
+        "policy_id": "candidate-selection-utility:epoch",
+    }
+    with (
+        patch("aletheia.universe.service.load_config", return_value=enabled_cfg),
+        patch("aletheia.universe.service.repo.get_active_universe_snapshot", return_value=snap),
+        patch("aletheia.universe.service.repo.list_universe_members", return_value=[]),
+    ):
+        assert svc.get_current_universe() == []
+
+        enabled_cfg.universe = UniverseConfig.model_validate({
+            **enabled_cfg.universe.model_dump(mode="json"),
+            "candidate_selection_policy": "legacy_total_score_v1",
+            "candidate_selection_policy_epoch": None,
+        })
+        assert svc.get_current_universe() == []
 
 
 def test_returns_active_members(svc, enabled_cfg):
@@ -422,12 +451,19 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
             "status": "complete",
             "asset_class": "equity",
         },
+        "candidate_selection_utility_pct": 1.25,
     }
 
     for field, value in variants.items():
         changed = deepcopy(base)
         changed[0][field] = value
         assert _member_fingerprint(changed, "risk_on") != baseline, field
+
+    assert _member_fingerprint(
+        [], "risk_on", policy_id="legacy_total_score_v1",
+    ) != _member_fingerprint(
+        [], "risk_on", policy_id="candidate-selection-utility:epoch",
+    )
 
 
 def test_previous_snapshot_fingerprint_reads_frozen_semantic_payload(monkeypatch):

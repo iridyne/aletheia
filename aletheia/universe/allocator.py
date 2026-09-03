@@ -563,6 +563,37 @@ def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[
     return quota
 
 
+def decorate_universe_candidates(
+    candidates: list[dict],
+    cfg: UniverseConfig,
+) -> list[dict]:
+    """Apply the shared execution and risk projection to selected candidates."""
+
+    for item in candidates:
+        item["ttl_sec"] = cfg.entry_ttl_sec
+        symbol = item.get("symbol", "")
+        has_live_price = has_fresh_market_snapshot(
+            symbol,
+            item.get("market_type", "spot"),
+            exchange=item.get("venue"),
+        )
+        if not has_live_price:
+            logger.warning(
+                "no_live_price_for_symbol: %s — execution_eligible set to False",
+                symbol,
+            )
+        item["execution_eligible"] = has_live_price
+        risk_flags = []
+        if item.get("late_entry_penalty", 0) > 15:
+            risk_flags.append("late_entry")
+        if item.get("crowding_risk", 0) > 10:
+            risk_flags.append("crowded")
+        if (item.get("spread_bps") or 0) > 20:
+            risk_flags.append("wide_spread")
+        item["risk_flags"] = risk_flags
+    return candidates
+
+
 def allocate_universe(
     scored: list[dict],
     cfg: UniverseConfig,
@@ -666,35 +697,7 @@ def allocate_universe(
     final = final[:max_total]
 
     if decorate_selected:
-        for item in final:
-            family = item.get("scanner_family", "momentum")
-            item["ttl_sec"] = cfg.entry_ttl_sec
-
-            # Guard: only mark execution_eligible if there is live price data within the
-            # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
-            # reach the Trading Decision daemon as tradeable but fail silently at proposal submission.
-            _sym = item.get("symbol", "")
-            _has_live_price = has_fresh_market_snapshot(
-                _sym,
-                item.get("market_type", "spot"),
-                exchange=item.get("venue"),
-            )
-
-            if not _has_live_price:
-                logger.warning(
-                    "no_live_price_for_symbol: %s — execution_eligible set to False", _sym
-                )
-            item["execution_eligible"] = _has_live_price
-
-            # Risk flags
-            risk_flags = []
-            if item.get("late_entry_penalty", 0) > 15:
-                risk_flags.append("late_entry")
-            if item.get("crowding_risk", 0) > 10:
-                risk_flags.append("crowded")
-            if (item.get("spread_bps") or 0) > 20:
-                risk_flags.append("wide_spread")
-            item["risk_flags"] = risk_flags
+        decorate_universe_candidates(final, cfg)
 
     if log_result:
         logger.info(

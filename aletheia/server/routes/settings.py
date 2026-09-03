@@ -62,6 +62,15 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 
 
+def _mutate_config_with_candidate_publication_permit(mutator):
+    """Serialize frozen Candidate identity writes with snapshot publication."""
+
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction(immediate=True):
+        return mutate_config(mutator)
+
+
 def _notify_ranker_config_change() -> None:
     """Wake Ranker after a committed config mutation that changes eligibility."""
     try:
@@ -454,6 +463,7 @@ def get_settings() -> SettingsResponse:
 
 @router.post("/trading-mandate")
 def set_trading_mandate(req: TradingMandateRequest):
+    from aletheia.files.jsonl import write_audit
     from aletheia.trading.trading_mandate import TradingMandateConfig, resolve_trading_mandate
 
     candidate = TradingMandateConfig.model_validate(
@@ -481,7 +491,6 @@ def set_trading_mandate(req: TradingMandateRequest):
     mutate_config(mutator)
     cfg = load_config()
     after = _trading_mandate_view(cfg)
-    from aletheia.files.jsonl import write_audit
 
     write_audit({
         "actor": "human",
@@ -797,7 +806,7 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         changed = old != cfg.exchange.model_dump(mode="json")
         return True
 
-    mutate_config(mutator)
+    _mutate_config_with_candidate_publication_permit(mutator)
     cfg = load_config()
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
@@ -872,7 +881,7 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
         }
         return True
 
-    mutate_config(mutator)
+    _mutate_config_with_candidate_publication_permit(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human", "source": "dashboard",
@@ -1029,16 +1038,23 @@ class FastTriggerConfigUpdate(SettingsRequest):
 async def update_fast_trigger_config(req: FastTriggerConfigUpdate):
     """Persist bounded trigger authority and apply its watcher state immediately."""
 
-    cfg = load_config()
-    old = cfg.fast_trigger.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    cfg.fast_trigger = _validated_settings_section(
-        FastTriggerConfig,
-        old,
-        updates,
-        name="FastTriggerConfig",
-    )
-    save_config(cfg)
+    persisted: dict[str, Any] = {}
+
+    def apply_update(cfg) -> bool:
+        old = cfg.fast_trigger.model_dump(mode="json")
+        cfg.fast_trigger = _validated_settings_section(
+            FastTriggerConfig,
+            old,
+            updates,
+            name="FastTriggerConfig",
+        )
+        persisted.update({"cfg": cfg, "old": old})
+        return bool(updates)
+
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
     from aletheia.files.jsonl import write_audit
 
     write_audit({
@@ -1746,12 +1762,19 @@ class RegimeConfigUpdate(SettingsRequest):
 
 @router.post("/regime")
 def update_regime_config(req: RegimeConfigUpdate):
-    cfg = load_config()
-    old = cfg.regime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.regime, field, value)
-    save_config(cfg)
+    persisted: dict[str, Any] = {}
+
+    def apply_update(cfg) -> bool:
+        old = cfg.regime.model_dump(mode="json")
+        for field, value in updates.items():
+            setattr(cfg.regime, field, value)
+        persisted.update({"cfg": cfg, "old": old})
+        return bool(updates)
+
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "regime_config_changed",
                  "entity_type": "regime_config", "before": old,
@@ -2624,7 +2647,10 @@ async def update_trading_config(req: TradingConfigUpdate):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         setattr(cfg.trading, field, value)
 
-    save_config(cfg)
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction(immediate=True):
+        save_config(cfg)
     old_rollout_enabled = bool(old.get("persona_progressive_unlock_enabled")) and bool(
         old.get("persona_sizing_enabled")
     )
@@ -2748,26 +2774,39 @@ def update_market_data_config(req: MarketDataConfigUpdate):
         validated_updates[field] = value
 
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
-    next_data_exchange = str(
-        validated_updates.get("ccxt_exchange", cfg.market_data.ccxt_exchange),
-    )
-    alignment = exchange_alignment_for_values(
-        paper_execution_mode=cfg.exchange.paper_execution_mode,
-        data_exchange=next_data_exchange,
-        configured_exchange=cfg.exchange.name,
-    )
-    if (
-        "ccxt_exchange" in validated_updates
-        and next_data_exchange != cfg.market_data.ccxt_exchange
-    ):
-        _require_exchange_divergence_confirmation(
-            alignment, req.confirm_exchange_divergence,
+
+    persisted: dict[str, Any] = {}
+
+    def apply_update(latest) -> bool:
+        latest_old = latest.market_data.model_dump(mode="json")
+        next_data_exchange = str(
+            validated_updates.get("ccxt_exchange", latest.market_data.ccxt_exchange),
         )
+        latest_alignment = exchange_alignment_for_values(
+            paper_execution_mode=latest.exchange.paper_execution_mode,
+            data_exchange=next_data_exchange,
+            configured_exchange=latest.exchange.name,
+        )
+        if (
+            "ccxt_exchange" in validated_updates
+            and next_data_exchange != latest.market_data.ccxt_exchange
+        ):
+            _require_exchange_divergence_confirmation(
+                latest_alignment, req.confirm_exchange_divergence,
+            )
+        for field, value in validated_updates.items():
+            setattr(latest.market_data, field, value)
+        persisted.update({
+            "cfg": latest,
+            "old": latest_old,
+            "alignment": latest_alignment,
+        })
+        return bool(validated_updates)
 
-    for field, value in validated_updates.items():
-        setattr(cfg.market_data, field, value)
-
-    save_config(cfg)
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
+    alignment = persisted["alignment"]
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "market_data_config_changed",
                  "entity_type": "market_data_config", "before": old,
@@ -2804,6 +2843,112 @@ class UniverseConfigUpdate(SettingsRequest):
     family_quota_by_regime: Optional[dict[str, dict[str, float]]] = None
 
 
+class CandidateSelectionAdmissionRequest(SettingsRequest):
+    expected_policy_epoch: str
+    reason: str
+    confirm_admission: Literal[True]
+
+    @field_validator("expected_policy_epoch")
+    @classmethod
+    def _non_empty_epoch(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("expected_policy_epoch must not be empty")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def _bounded_reason(cls, value: str) -> str:
+        normalized = " ".join(str(value).split())
+        if len(normalized) < 8:
+            raise ValueError("reason must be at least 8 characters")
+        return normalized[:200]
+
+
+class CandidateSelectionRollbackRequest(SettingsRequest):
+    reason: str
+    confirm_rollback: Literal[True]
+
+    @field_validator("reason")
+    @classmethod
+    def _bounded_reason(cls, value: str) -> str:
+        normalized = " ".join(str(value).split())
+        if len(normalized) < 8:
+            raise ValueError("reason must be at least 8 characters")
+        return normalized[:200]
+
+
+def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
+    from aletheia.universe.candidate_selection_authority import (
+        TARGET_CANDIDATE_POLICY,
+        candidate_selection_authority_block_reason,
+        candidate_selection_overlap_block_reason,
+    )
+    from aletheia.universe.candidate_selection_evaluation import (
+        evaluate_candidate_selection_policy,
+    )
+
+    try:
+        qualification = evaluate_candidate_selection_policy()
+        evaluation_available = True
+        evaluation_error = None
+    except Exception as exc:
+        qualification = {
+            "verdict": "unavailable",
+            "promotion_eligible": False,
+            "policy_epoch_id": None,
+            "blocking_reasons": ["qualification_read_unavailable"],
+            "invalid_reasons": [],
+        }
+        evaluation_available = False
+        evaluation_error = type(exc).__name__
+    block_reason = candidate_selection_authority_block_reason(cfg, qualification)
+    configured_target = cfg.universe.candidate_selection_policy == TARGET_CANDIDATE_POLICY
+    overlap_block_reason = candidate_selection_overlap_block_reason()
+    qualification_epoch = str(qualification.get("policy_epoch_id") or "")
+    if configured_target:
+        admission_block_reason = block_reason
+    elif not qualification_epoch:
+        admission_block_reason = "candidate_selection_qualification_not_positive"
+    else:
+        proposed = UniverseConfig.model_validate({
+            **cfg.universe.model_dump(mode="json"),
+            "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+            "candidate_selection_policy_epoch": qualification_epoch,
+        })
+        admission_block_reason = candidate_selection_authority_block_reason(
+            cfg.model_copy(update={"universe": proposed}),
+            qualification,
+            require_admission_record=False,
+        )
+    admission_block_reason = overlap_block_reason or admission_block_reason
+    if configured_target:
+        block_reason = overlap_block_reason or block_reason
+    return {
+        "configured_policy": cfg.universe.candidate_selection_policy,
+        "configured_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
+        "authority_enabled": configured_target and block_reason is None,
+        "authority_block_reason": block_reason,
+        "admission_block_reason": admission_block_reason,
+        "evaluation_available": evaluation_available,
+        "evaluation_error": evaluation_error,
+        "qualification": qualification,
+    }
+
+
+def _mirror_candidate_selection_authority_audits() -> str:
+    from aletheia.storage import repositories as repo
+
+    try:
+        mirrored = repo.reconcile_audit_event_outbox((
+            "candidate_selection_authority_admitted",
+            "candidate_selection_authority_rolled_back",
+        ))
+    except Exception:
+        mirrored = False
+    return "mirrored" if mirrored else "pending"
+
+
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "refresh_interval_min": (1, 60),
     "max_candidates": (5, 100),
@@ -2824,6 +2969,27 @@ def update_universe_config(req: UniverseConfigUpdate):
     cfg = load_config()
     old = cfg.universe.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
+    identity_fields = {
+        "max_candidates", "min_volume_24h_usdt", "max_spread_bps",
+        "min_depth_10bps_usd", "blacklist", "explore_ratio", "family_quota",
+        "family_quota_by_regime", "scanner_weights",
+    }
+    changed_identity_fields = sorted(
+        field for field in identity_fields
+        if field in updates and updates[field] != old.get(field)
+    )
+    if (
+        cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
+        and changed_identity_fields
+    ):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "candidate_selection_policy_identity_frozen",
+                "message": "Restore legacy selection before changing frozen Candidate policy inputs.",
+                "fields": changed_identity_fields,
+            },
+        )
     next_soft = int(updates.get("entry_ttl_sec", old["entry_ttl_sec"]))
     next_hard = int(
         updates.get(
@@ -2877,13 +3043,52 @@ def update_universe_config(req: UniverseConfigUpdate):
             value = cleaned
         normalized_updates[field] = value
 
-    try:
-        replacement = UniverseConfig.model_validate({**old, **normalized_updates})
-    except ValidationError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    cfg.universe = replacement
+    persisted: dict[str, Any] = {}
 
-    save_config(cfg)
+    def apply_update(latest) -> bool:
+        latest_old = latest.universe.model_dump(mode="json")
+        latest_changed_identity_fields = sorted(
+            field for field in identity_fields
+            if field in normalized_updates
+            and normalized_updates[field] != latest_old.get(field)
+        )
+        if (
+            latest.universe.candidate_selection_policy
+            == "candidate_selection_utility_v1"
+            and latest_changed_identity_fields
+        ):
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "candidate_selection_policy_identity_frozen",
+                    "message": "Restore legacy selection before changing frozen Candidate policy inputs.",
+                    "fields": latest_changed_identity_fields,
+                },
+            )
+        latest_soft = int(normalized_updates.get("entry_ttl_sec", latest_old["entry_ttl_sec"]))
+        latest_hard = int(normalized_updates.get(
+            "candidate_max_continuous_age_sec",
+            latest_old["candidate_max_continuous_age_sec"],
+        ))
+        if latest_hard < latest_soft:
+            raise HTTPException(
+                400,
+                "candidate_max_continuous_age_sec must be >= entry_ttl_sec",
+            )
+        try:
+            replacement = UniverseConfig.model_validate({
+                **latest_old,
+                **normalized_updates,
+            })
+        except ValidationError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        latest.universe = replacement
+        persisted.update({"cfg": latest, "old": latest_old})
+        return bool(normalized_updates)
+
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
 
     # IntervalTrigger is immutable once added — a saved refresh_interval_min only
     # takes effect at the next gateway restart unless the live job is rescheduled.
@@ -2900,6 +3105,184 @@ def update_universe_config(req: UniverseConfigUpdate):
     if normalized_updates:
         _notify_ranker_config_change()
     return {"updated": normalized_updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
+
+
+@router.get("/universe/candidate-selection")
+def get_candidate_selection_status():
+    """Read the configured authority and its exact prospective qualification."""
+
+    from aletheia.universe.candidate_selection_authority import (
+        recover_candidate_selection_authority_transition,
+    )
+
+    recover_candidate_selection_authority_transition()
+    return _candidate_selection_status(load_config())
+
+
+@router.post("/universe/candidate-selection/admit")
+def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
+    """Owner-only positive-qualification transition to target Candidate authority."""
+
+    from aletheia.universe.candidate_selection_authority import (
+        TARGET_CANDIDATE_POLICY,
+        candidate_selection_authority_block_reason,
+        candidate_selection_overlap_block_reason,
+        recover_candidate_selection_authority_transition,
+        stage_candidate_selection_authority_transition,
+    )
+    from aletheia.universe.candidate_selection_evaluation import (
+        evaluate_candidate_selection_policy,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+    recover_candidate_selection_authority_transition()
+    try:
+        with repo.transaction(immediate=True):
+            cfg = load_config()
+            overlap_block_reason = candidate_selection_overlap_block_reason()
+            if overlap_block_reason is not None:
+                raise HTTPException(409, overlap_block_reason)
+            try:
+                qualification = evaluate_candidate_selection_policy()
+            except Exception as exc:
+                raise HTTPException(
+                    503,
+                    detail={
+                        "code": "candidate_selection_qualification_unavailable",
+                        "message": "Candidate Selection qualification evidence is unavailable.",
+                    },
+                ) from exc
+            if str(qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+                raise HTTPException(409, "candidate_selection_policy_epoch_changed")
+            proposed = UniverseConfig.model_validate({
+                **cfg.universe.model_dump(mode="json"),
+                "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+                "candidate_selection_policy_epoch": req.expected_policy_epoch,
+            })
+            block_reason = candidate_selection_authority_block_reason(
+                cfg.model_copy(update={"universe": proposed}),
+                qualification,
+                require_admission_record=False,
+            )
+            if block_reason is not None:
+                raise HTTPException(409, block_reason)
+            def apply_admission(latest) -> bool:
+                latest_overlap = candidate_selection_overlap_block_reason()
+                if latest_overlap is not None:
+                    raise HTTPException(409, latest_overlap)
+                latest_qualification = evaluate_candidate_selection_policy()
+                if str(latest_qualification.get("policy_epoch_id") or "") != req.expected_policy_epoch:
+                    raise HTTPException(409, "candidate_selection_policy_epoch_changed")
+                latest_before = latest.universe.model_dump(mode="json")
+                latest_proposed = UniverseConfig.model_validate({
+                    **latest_before,
+                    "candidate_selection_policy": TARGET_CANDIDATE_POLICY,
+                    "candidate_selection_policy_epoch": req.expected_policy_epoch,
+                })
+                latest_block_reason = candidate_selection_authority_block_reason(
+                    latest.model_copy(update={"universe": latest_proposed}),
+                    latest_qualification,
+                    require_admission_record=False,
+                )
+                if latest_block_reason is not None:
+                    raise HTTPException(409, latest_block_reason)
+                event = AuditEvent(
+                    actor="human",
+                    source="dashboard",
+                    event_type="candidate_selection_authority_admitted",
+                    entity_type="universe_config",
+                    entity_id=req.expected_policy_epoch,
+                    before_state=json.dumps(latest_before, sort_keys=True),
+                    after_state=json.dumps(latest_proposed.model_dump(mode="json"), sort_keys=True),
+                    message=f"Candidate Selection Utility admitted: {req.reason}",
+                )
+                stage_candidate_selection_authority_transition(
+                    audit_event_id=event.id,
+                    before=latest.universe,
+                    after=latest_proposed,
+                )
+                repo.insert_audit_event_outbox(event)
+                latest.universe = latest_proposed
+                return True
+
+            mutate_config(apply_admission)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        recover_candidate_selection_authority_transition()
+        raise HTTPException(
+            500,
+            detail={
+                "code": "candidate_selection_admission_audit_failed",
+                "message": "Candidate Selection authority remained on legacy because audit persistence failed.",
+            },
+        ) from exc
+    recover_candidate_selection_authority_transition()
+    cfg = load_config()
+    return {
+        **_candidate_selection_status(cfg),
+        "audit_mirror_status": _mirror_candidate_selection_authority_audits(),
+    }
+
+
+@router.post("/universe/candidate-selection/rollback")
+def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
+    """Explicitly restore legacy Candidate authority without rewriting evidence."""
+
+    from aletheia.universe.candidate_selection_authority import (
+        LEGACY_CANDIDATE_POLICY,
+        recover_candidate_selection_authority_transition,
+        stage_candidate_selection_authority_transition,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import AuditEvent
+
+    recover_candidate_selection_authority_transition()
+    try:
+        with repo.transaction(immediate=True):
+            def apply_rollback(latest) -> bool:
+                before = latest.universe.model_dump(mode="json")
+                previous_epoch = latest.universe.candidate_selection_policy_epoch
+                proposed = UniverseConfig.model_validate({
+                    **before,
+                    "candidate_selection_policy": LEGACY_CANDIDATE_POLICY,
+                    "candidate_selection_policy_epoch": None,
+                })
+                event = AuditEvent(
+                    actor="human",
+                    source="dashboard",
+                    event_type="candidate_selection_authority_rolled_back",
+                    entity_type="universe_config",
+                    entity_id=previous_epoch,
+                    before_state=json.dumps(before, sort_keys=True),
+                    after_state=json.dumps(proposed.model_dump(mode="json"), sort_keys=True),
+                    message=f"Candidate Selection Utility rolled back: {req.reason}",
+                )
+                stage_candidate_selection_authority_transition(
+                    audit_event_id=event.id,
+                    before=latest.universe,
+                    after=proposed,
+                )
+                repo.insert_audit_event_outbox(event)
+                latest.universe = proposed
+                return True
+
+            mutate_config(apply_rollback)
+    except Exception as exc:
+        recover_candidate_selection_authority_transition()
+        raise HTTPException(
+            500,
+            detail={
+                "code": "candidate_selection_rollback_audit_failed",
+                "message": "Candidate Selection authority was unchanged because rollback audit persistence failed.",
+            },
+        ) from exc
+    recover_candidate_selection_authority_transition()
+    cfg = load_config()
+    return {
+        **_candidate_selection_status(cfg),
+        "audit_mirror_status": _mirror_candidate_selection_authority_audits(),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ def _settings(
     return SimpleNamespace(
         agent=SimpleNamespace(autonomous_learning=True),
         runtime=SimpleNamespace(paused=False),
+        universe=SimpleNamespace(candidate_selection_policy="legacy_total_score_v1"),
         learning=SimpleNamespace(
             contribution_evaluation_enabled=True,
             lifecycle_automation_enabled=automation,
@@ -344,8 +345,8 @@ def _configure(monkeypatch, cfg):
     import aletheia.learning.lifecycle as lifecycle
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
 
-    monkeypatch.setattr(authority, "load_config", lambda: cfg)
-    monkeypatch.setattr(lifecycle, "load_config", lambda: cfg)
+    monkeypatch.setattr(authority, "load_config", lambda **_kwargs: cfg)
+    monkeypatch.setattr(lifecycle, "load_config", lambda **_kwargs: cfg)
     monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
     synthetic_contract = lambda **kwargs: build_behavior_contract_hash(
@@ -932,6 +933,66 @@ def test_protected_trial_admission_rejects_stale_expected_epoch(monkeypatch):
     assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
 
 
+def test_universe_learning_admission_is_blocked_by_candidate_target_authority(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
+    )
+    cfg = _settings(automation=True, paper=True, paths=[hypothesis.path_id])
+    cfg.universe.candidate_selection_policy = "candidate_selection_utility_v1"
+    _configure(monkeypatch, cfg)
+    import aletheia.learning.lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="attempt overlapping authority",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "learning_overlapping_candidate_selection_authority"
+
+
+def test_universe_learning_admission_rechecks_candidate_authority_under_writer_permit(
+    monkeypatch,
+):
+    from contextlib import contextmanager
+
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
+    )
+    cfg = _settings(automation=True, paper=True, paths=[hypothesis.path_id])
+    _configure(monkeypatch, cfg)
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(lifecycle, "_policy_epoch", lambda _path_id: "epoch-a")
+    real_transaction = lifecycle.transaction
+
+    @contextmanager
+    def competing_candidate_transition(*, immediate=False, savepoint=False):
+        assert immediate is True
+        with real_transaction(immediate=immediate, savepoint=savepoint):
+            cfg.universe.candidate_selection_policy = "candidate_selection_utility_v1"
+            yield
+
+    monkeypatch.setattr(lifecycle, "transaction", competing_candidate_transition)
+    result = lifecycle._execute_trial_admission(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        expected_policy_epoch="epoch-a",
+        reason="attempt concurrent paper admission",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "learning_overlapping_candidate_selection_authority"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
+
+
 @pytest.mark.parametrize(
     ("settings", "expected_reason"),
     [
@@ -944,6 +1005,7 @@ def test_protected_trial_admission_rejects_stale_expected_epoch(monkeypatch):
             SimpleNamespace(
                 agent=SimpleNamespace(autonomous_learning=True),
                 runtime=SimpleNamespace(paused=False),
+                universe=SimpleNamespace(candidate_selection_policy="legacy_total_score_v1"),
                 learning=SimpleNamespace(
                     contribution_evaluation_enabled=False,
                     lifecycle_automation_enabled=True,
@@ -1205,6 +1267,22 @@ def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeyp
 
     assert result.action == "hold"
     assert result.reason == "no_current_stage_measurement"
+
+
+def test_universe_learning_paper_progression_is_blocked_by_candidate_target_authority(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    _consume_confirmatory(
+        hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
+    )
+    cfg = _settings(automation=True, paper=True, paths=[hypothesis.path_id])
+    cfg.universe.candidate_selection_policy = "candidate_selection_utility_v1"
+    _configure(monkeypatch, cfg)
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.action == "hold"
+    assert result.reason == "learning_overlapping_candidate_selection_authority"
 
 
 def test_lifecycle_retry_is_idempotent_and_does_not_duplicate_successor(monkeypatch):

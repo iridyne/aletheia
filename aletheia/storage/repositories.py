@@ -480,6 +480,90 @@ def insert_audit_event_once(event: AuditEvent) -> bool:
         tuple(data.values()),
     )
     return cursor.rowcount == 1
+
+
+def insert_audit_event_outbox(event: AuditEvent) -> None:
+    """Persist an audit fact and enroll its JSONL mirror in the same transaction."""
+
+    db = get_db()
+    if not db.in_transaction:
+        raise RuntimeError("audit outbox enrollment requires a transaction")
+    if not insert_audit_event_once(event):
+        raise RuntimeError("audit outbox identity conflict")
+    db.execute(
+        "UPDATE audit_events SET jsonl_mirror_status='pending', "
+        "jsonl_attempt_count=0, jsonl_last_error_class=NULL, "
+        "jsonl_mirrored_at=NULL WHERE id=?",
+        (event.id,),
+    )
+
+
+def reconcile_audit_event_outbox(
+    event_types: Sequence[str],
+    *,
+    limit: int = 100,
+) -> bool:
+    """Retry committed audit JSONL mirrors; return whether the backlog drained."""
+
+    kinds = tuple(dict.fromkeys(str(value) for value in event_types if value))
+    if not kinds:
+        return True
+    placeholders = ",".join("?" for _ in kinds)
+    rows = get_db().execute(
+        "SELECT id, timestamp, actor, source, event_type, entity_type, entity_id, "
+        "before_state, after_state, message FROM audit_events WHERE "
+        f"event_type IN ({placeholders}) AND jsonl_mirror_status IN ('pending','failed') "
+        "ORDER BY timestamp, id LIMIT ?",
+        (*kinds, min(max(int(limit), 1), 100)),
+    ).fetchall()
+    if not rows:
+        return True
+
+    def state(value: object) -> object:
+        try:
+            return json.loads(str(value)) if value is not None else None
+        except (TypeError, ValueError):
+            return str(value)
+
+    events = [{
+        "id": row["id"],
+        "timestamp": row["timestamp"],
+        "actor": row["actor"],
+        "source": row["source"],
+        "event_type": row["event_type"],
+        "entity_type": row["entity_type"],
+        "entity_id": row["entity_id"],
+        "before": state(row["before_state"]),
+        "after": state(row["after_state"]),
+        "message": row["message"],
+    } for row in rows]
+    error_class = None
+    try:
+        from aletheia.files.jsonl import write_audits_deduplicated
+
+        mirrored = write_audits_deduplicated(events, lock_timeout_sec=1.0)
+    except Exception as exc:
+        mirrored = set()
+        error_class = type(exc).__name__
+    now = datetime.now(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        for event in events:
+            audit_id = str(event["id"])
+            success = audit_id in mirrored
+            get_db().execute(
+                "UPDATE audit_events SET jsonl_mirror_status=?, "
+                "jsonl_attempt_count=COALESCE(jsonl_attempt_count,0)+1, "
+                "jsonl_last_error_class=?, jsonl_mirrored_at=? WHERE id=?",
+                (
+                    "mirrored" if success else "failed",
+                    None if success else error_class or "incomplete_mirror",
+                    now if success else None,
+                    audit_id,
+                ),
+            )
+    return len(mirrored) == len(events)
+
+
 def has_audit_event(*, event_type: str, entity_id: str) -> bool:
     row = (
         get_db()
@@ -490,6 +574,28 @@ def has_audit_event(*, event_type: str, entity_id: str) -> bool:
         .fetchone()
     )
     return row is not None
+
+
+def candidate_selection_epoch_is_admitted(policy_epoch_id: str) -> bool:
+    """Return whether the epoch's latest committed authority transition admits it."""
+
+    row = get_db().execute(
+        "SELECT event_type FROM audit_events WHERE event_type IN ("
+        "'candidate_selection_authority_admitted', "
+        "'candidate_selection_authority_rolled_back') AND (entity_id=? OR "
+        "CASE WHEN event_type='candidate_selection_authority_admitted' "
+        "AND json_valid(after_state) THEN json_extract(after_state, "
+        "'$.candidate_selection_policy_epoch') END=? OR "
+        "CASE WHEN event_type='candidate_selection_authority_rolled_back' "
+        "AND json_valid(before_state) THEN json_extract(before_state, "
+        "'$.candidate_selection_policy_epoch') END=?) "
+        "ORDER BY timestamp DESC, rowid DESC LIMIT 1",
+        (policy_epoch_id, policy_epoch_id, policy_epoch_id),
+    ).fetchone()
+    return bool(
+        row
+        and row["event_type"] == "candidate_selection_authority_admitted"
+    )
 
 
 def list_audit_events(
@@ -6953,6 +7059,8 @@ def _prune_filter_candidate_outcomes_batches(
     cutoff: str,
     retention_days: int,
     protected_refs: tuple[str, ...] = (),
+    configured_candidate_epoch: str | None = None,
+    candidate_policy_available: bool = True,
     batch_size: int = 5_000,
 ) -> int:
     db = get_db()
@@ -6964,11 +7072,51 @@ def _prune_filter_candidate_outcomes_batches(
         pending_rows: list = []
         pending_by_horizon: dict[str, int] = {}
         with transaction():
+            candidate_clause = (
+                "AND (COALESCE(scanner_family, '') <> 'candidate_selection_utility' "
+                "OR outcome_candidate_key NOT IN ("
+                "SELECT j.value FROM universe_twin_shadow_records r "
+                "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
+                "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
+                "WHERE b.record_version='candidate-selection-utility-record/v1' "
+                "AND (b.policy_epoch_id IN ("
+                "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
+                "UNION SELECT ? WHERE ? IS NOT NULL "
+                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted') OR b.captured_at <= ("
+                "SELECT MAX(json_extract(policy_json, '$.estimator_training_cutoff')) "
+                "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
+                "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
+                "UNION SELECT ? WHERE ? IS NOT NULL "
+                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted'))))) "
+                if candidate_policy_available else
+                "AND COALESCE(scanner_family, '') <> 'candidate_selection_utility' "
+            )
+            params: tuple[object, ...] = (
+                (
+                    cutoff,
+                    scan_after,
+                    configured_candidate_epoch, configured_candidate_epoch,
+                    configured_candidate_epoch, configured_candidate_epoch,
+                    size,
+                )
+                if candidate_policy_available else (cutoff, scan_after, size)
+            )
             scanned_rows = db.execute(
                 "SELECT rowid, id, horizon, status, outcome_candidate_key "
-                "FROM filter_candidate_outcomes WHERE entry_ts < ? AND rowid > ? "
+                "FROM filter_candidate_outcomes "
+                f"WHERE entry_ts < ? AND rowid > ? {candidate_clause} "
                 "ORDER BY rowid LIMIT ?",
-                (cutoff, scan_after, size),
+                params,
             ).fetchall()
             if scanned_rows:
                 scan_after = int(scanned_rows[-1][0])
@@ -7159,6 +7307,24 @@ class ExperimentStateReadError(Exception):
 _AUTO_EXPERIMENT_FLOOR = object()
 
 
+def _candidate_selection_retention_state() -> tuple[bool, str | None]:
+    """Return whether policy state is readable and its configured target epoch."""
+
+    try:
+        from aletheia.config.loader import load_config
+
+        universe = load_config(persist_migrations=False).universe
+    except Exception:
+        return False, None
+    epoch = (
+        str(universe.candidate_selection_policy_epoch)
+        if universe.candidate_selection_policy == "candidate_selection_utility_v1"
+        and universe.candidate_selection_policy_epoch
+        else None
+    )
+    return True, epoch
+
+
 def min_open_experiment_exposure_at() -> str | None:
     """Return the earliest durable exposure of an active open experiment.
 
@@ -7344,6 +7510,9 @@ def prune_filter_candidate_outcomes(
                 value for value in (min_experiment_started_at, observation_floor) if value
             )
         cutoff = _effective_cutoff(days, min_experiment_started_at)
+    candidate_policy_available, configured_candidate_epoch = (
+        _candidate_selection_retention_state()
+    )
 
     # A row still 'pending' at the cutoff was never measured, and deleting it
     # leaves nothing behind that says so: every coverage aggregation matches
@@ -7360,6 +7529,8 @@ def prune_filter_candidate_outcomes(
         cutoff=cutoff,
         retention_days=days,
         protected_refs=protected_refs,
+        configured_candidate_epoch=configured_candidate_epoch,
+        candidate_policy_available=candidate_policy_available,
     )
 
 
@@ -8066,6 +8237,77 @@ def _validate_universe_twin_prospective_bundle(
 ) -> None:
     """Reject partial or internally inconsistent prospective identities."""
 
+    if batch.record_version == "candidate-selection-utility-record/v1":
+        authority_applied = bool(batch.promotion_eligible)
+        try:
+            batch_blockers = json.loads(batch.blocking_reasons_json)
+        except (TypeError, ValueError):
+            raise ValueError("candidate_selection_blocking_reasons_invalid") from None
+        if not isinstance(batch_blockers, list) or bool(batch_blockers) == authority_applied:
+            raise ValueError("candidate_selection_authority_blocking_state_invalid")
+        if any(item.shadow_authority_applied != authority_applied for item in evidence):
+            raise ValueError("candidate_selection_authority_state_mixed")
+        if any(item.promotion_eligible != authority_applied for item in evidence):
+            raise ValueError("candidate_selection_record_promotion_state_invalid")
+        expected_keys: set[str] = set()
+        expected_allocations: dict[str, bool] = {}
+        for item in evidence:
+            for field in (
+                "experiment_id", "policy_epoch_id", "behavior_contract_hash",
+                "primary_horizon", "outcome_contract_version", "metric_version",
+            ):
+                if getattr(item, field) != getattr(batch, field):
+                    raise ValueError("candidate_selection_shadow_identity_mismatch")
+            try:
+                payload = json.loads(item.compact_output_json)
+                keys = payload["outcome_candidate_keys"]
+                contract = payload["evidence_contract"]
+                target_selected = payload["target_selected"]
+                primary_direction = payload["candidate_selection"]["primary_direction"]
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("candidate_selection_shadow_contract_invalid") from None
+            if not isinstance(target_selected, bool):
+                raise ValueError("candidate_selection_target_selection_invalid")
+            if item.shadow_pessimistic_selected is not target_selected:
+                raise ValueError("candidate_selection_target_selection_mismatch")
+            expected_assigned = target_selected if authority_applied else None
+            if item.assigned_policy_selected is not expected_assigned:
+                raise ValueError("candidate_selection_assigned_selection_mismatch")
+            if contract.get("outcome_contract_version") != "candidate-selection-utility-outcome/v1":
+                raise ValueError("candidate_selection_shadow_outcome_contract_invalid")
+            if contract.get("behavior_contract_hash") != batch.behavior_contract_hash:
+                raise ValueError("candidate_selection_behavior_contract_mismatch")
+            if contract.get("policy_epoch_id") != batch.policy_epoch_id:
+                raise ValueError("candidate_selection_policy_epoch_mismatch")
+            if contract.get("shadow_authority_applied") is not authority_applied:
+                raise ValueError("candidate_selection_authority_contract_mismatch")
+            if contract.get("promotion_eligible") is not authority_applied:
+                raise ValueError("candidate_selection_promotion_contract_mismatch")
+            if not isinstance(keys, dict) or set(keys) - {"long", "short"}:
+                raise ValueError("candidate_selection_shadow_outcome_keys_invalid")
+            expected_keys.update(str(value) for value in keys.values())
+            for direction, value in keys.items():
+                expected_allocations[str(value)] = bool(
+                    target_selected and direction == primary_direction
+                )
+        actual_keys = {str(row.get("outcome_candidate_key") or "") for row in outcome_rows}
+        if actual_keys != expected_keys or "" in actual_keys:
+            raise ValueError("candidate_selection_shadow_full_denominator_mismatch")
+        if any(
+            row.get("horizon") != "4h"
+            or row.get("scanner_family") != "candidate_selection_utility"
+            or row.get("entry_ts") != batch.captured_at
+            for row in outcome_rows
+        ):
+            raise ValueError("candidate_selection_shadow_outcome_identity_invalid")
+        if any(
+            bool(row.get("allocation_selected"))
+            != expected_allocations[str(row.get("outcome_candidate_key") or "")]
+            for row in outcome_rows
+        ):
+            raise ValueError("candidate_selection_target_outcome_allocation_mismatch")
+        return
+
     prospective_markers = (
         "experiment_id",
         "policy_epoch_id",
@@ -8166,7 +8408,10 @@ def insert_universe_twin_shadow_bundle(
     if any(item.captured_at != batch.captured_at for item in evidence):
         raise ValueError("universe_twin_shadow_capture_time_mismatch")
     _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
-    if batch.experiment_id is not None:
+    if (
+        batch.experiment_id is not None
+        and batch.record_version != "candidate-selection-utility-record/v1"
+    ):
         outcome_by_key = {str(row["outcome_candidate_key"]): row for row in outcome_rows}
         if len(outcome_by_key) != len(outcome_rows):
             raise ValueError("universe_twin_shadow_duplicate_outcome_identity")
@@ -9341,7 +9586,9 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
         .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
-            "um.execution_eligible, um.expires_at AS candidate_expires_at "
+            "um.execution_eligible, um.expires_at AS candidate_expires_at, "
+            "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
+            "um.candidate_selection_utility_pct "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
@@ -9366,6 +9613,8 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
             "um.execution_eligible, um.expires_at AS candidate_expires_at, "
+            "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
+            "um.candidate_selection_utility_pct, "
             "ep.id AS active_entry_plan_id, ep.status AS active_entry_plan_status "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
@@ -10525,11 +10774,37 @@ def list_open_universe_twin_outcome_candidate_keys() -> set[str]:
             "AND b.policy_epoch_id IS NOT NULL "
             "AND o.status='pending' "
             "AND r.outcome_candidate_key IS NOT NULL "
-            "AND r.primary_horizon IS NOT NULL"
+            "AND r.primary_horizon IS NOT NULL "
+            "UNION "
+            "SELECT DISTINCT o.outcome_candidate_key, o.horizon AS primary_horizon "
+            "FROM filter_candidate_outcomes o "
+            "WHERE o.status='pending' "
+            "AND o.scanner_family='candidate_selection_utility'"
         )
         .fetchall()
     )
     return {f"{row['outcome_candidate_key']}:{row['primary_horizon']}" for row in rows}
+
+
+def candidate_selection_cost_assumptions(outcome_candidate_key: str) -> dict | None:
+    """Return the immutable capture-time costs linked to one Candidate outcome."""
+
+    row = get_db().execute(
+        "SELECT json_extract(r.compact_output_json, '$.evidence_contract.cost_assumptions') "
+        "FROM universe_twin_shadow_records r "
+        "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
+        "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
+        "WHERE b.record_version='candidate-selection-utility-record/v1' "
+        "AND j.value=? LIMIT 1",
+        (outcome_candidate_key,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        value = json.loads(str(row[0]))
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 _PRIORITY_SCAN_BATCH_ROWS = 2000
@@ -11012,7 +11287,12 @@ def _calibration_source_lineage(
     return result
 
 
-def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
+def filter_pressure_stats(
+    *,
+    cost_model_version: str,
+    cutoff: str | None = None,
+    settled_through: str | None = None,
+) -> list[dict]:
     """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
 
     These rows come from risk/PI filter stages that run after scanner assignment, so
@@ -11022,7 +11302,8 @@ def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
     from aletheia.analytics.learning_window import clean_window_cutoff
 
     db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    cutoff = cutoff or clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
@@ -11040,15 +11321,24 @@ def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
+        f"{settled_clause}"
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
         "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cost_model_version, cutoff),
+        (
+            (cost_model_version, cutoff, settled_through)
+            if settled_through is not None else (cost_model_version, cutoff)
+        ),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
+def family_spread_tolerance_stats(
+    *,
+    cost_model_version: str,
+    cutoff: str | None = None,
+    settled_through: str | None = None,
+) -> list[dict]:
     """Per-family spread sensitivity from settled universe forward outcomes.
 
     Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
@@ -11058,7 +11348,8 @@ def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
     from aletheia.analytics.learning_window import clean_window_cutoff
 
     db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    cutoff = cutoff or clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    settled_clause = "AND settled_at <= ? " if settled_through is not None else ""
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
@@ -11078,10 +11369,14 @@ def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
+        f"{settled_clause}"
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
         "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cost_model_version, cutoff),
+        (
+            (cost_model_version, cutoff, settled_through)
+            if settled_through is not None else (cost_model_version, cutoff)
+        ),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -12195,15 +12490,19 @@ def prune_runtime_sessions(days: int = 90) -> int:
     """Prune finished runtime_sessions older than ``days`` (by started_at).
 
     Only rows with ``ended_at IS NOT NULL`` are eligible so a still-running boot
-    is never removed. Provenance fields on audit-chain rows (runtime_session_id)
-    become dangling FK-less references but the referenced row was fully consumed
-    at write time — audit reconstruction does not require the session record.
+    is never removed. Sessions referenced by retained Candidate qualification
+    outcomes remain durable because replay still verifies their attestation.
+    Other FK-less audit references were fully consumed at write time.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
     cur = execute_write(
-        "DELETE FROM runtime_sessions WHERE ended_at IS NOT NULL AND started_at < ?",
+        "DELETE FROM runtime_sessions WHERE ended_at IS NOT NULL AND started_at < ? "
+        "AND NOT EXISTS (SELECT 1 FROM filter_candidate_outcomes o "
+        "WHERE o.scanner_family='candidate_selection_utility' AND ("
+        "o.producer_runtime_session_id=runtime_sessions.session_id OR "
+        "o.settlement_runtime_session_id=runtime_sessions.session_id))",
         (cutoff,),
     )
     if not was_in_tx:
@@ -12501,12 +12800,39 @@ def prune_universe_twin_shadow_evidence(
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
+    candidate_policy_available, configured_candidate_epoch = (
+        _candidate_selection_retention_state()
+    )
     with transaction(immediate=True):
         deleted = 0
-        run_rows = db.execute(
-            "SELECT scanner_run_id FROM universe_twin_shadow_batches WHERE captured_at < ?",
-            (cutoff,),
-        ).fetchall()
+        if candidate_policy_available:
+            run_rows = db.execute(
+                "WITH protected_epochs(policy_epoch_id) AS ("
+                "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
+                "UNION SELECT ? WHERE ? IS NOT NULL "
+                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted'), "
+                "training(cutoff) AS (SELECT MAX(json_extract(policy_json, "
+                "'$.estimator_training_cutoff')) FROM universe_twin_shadow_batches "
+                "WHERE policy_epoch_id IN protected_epochs) "
+                "SELECT scanner_run_id FROM universe_twin_shadow_batches, training "
+                "WHERE captured_at < ? AND ("
+                "record_version <> 'candidate-selection-utility-record/v1' OR "
+                "(COALESCE(policy_epoch_id, '') NOT IN protected_epochs "
+                "AND (training.cutoff IS NULL OR captured_at > training.cutoff)))",
+                (configured_candidate_epoch, configured_candidate_epoch, cutoff),
+            ).fetchall()
+        else:
+            run_rows = db.execute(
+                "SELECT scanner_run_id FROM universe_twin_shadow_batches "
+                "WHERE captured_at < ? "
+                "AND record_version <> 'candidate-selection-utility-record/v1'",
+                (cutoff,),
+            ).fetchall()
         run_ids = [str(row[0]) for row in run_rows]
         if run_ids:
             placeholders = ", ".join("?" for _ in run_ids)

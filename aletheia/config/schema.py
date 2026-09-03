@@ -1588,9 +1588,29 @@ class UniverseConfig(BaseModel):
     # Frozen hard ceiling for one continuously compatible Candidate attention
     # identity. Completed re-selection may extend the soft lease, never this age.
     candidate_max_continuous_age_sec: int = Field(default=3600, ge=300, le=86_400)
+    # Candidate authority is changed only by the protected Settings admission
+    # boundary. Direct config edits cannot bypass the runtime qualification check.
+    candidate_selection_policy: Literal[
+        "legacy_total_score_v1", "candidate_selection_utility_v1"
+    ] = "legacy_total_score_v1"
+    candidate_selection_policy_epoch: str | None = None
     # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
     emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
+
+    @model_validator(mode="after")
+    def _validate_candidate_selection_authority(self):
+        if (
+            self.candidate_selection_policy == "candidate_selection_utility_v1"
+            and not str(self.candidate_selection_policy_epoch or "").strip()
+        ):
+            raise ValueError("candidate_selection_policy_epoch is required for target authority")
+        if (
+            self.candidate_selection_policy == "legacy_total_score_v1"
+            and self.candidate_selection_policy_epoch is not None
+        ):
+            raise ValueError("legacy candidate selection cannot carry a target policy epoch")
+        return self
 
     @field_validator("family_quota", "family_quota_by_regime", mode="before")
     @classmethod

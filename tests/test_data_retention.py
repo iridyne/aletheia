@@ -698,16 +698,64 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
     assert deleted2 == 0, (
         "clean_window_cutoff must preserve rows an open experiment still needs"
     )
-
-    db = get_db()
     remaining = {
         r[0]
-        for r in db.execute(
+        for r in get_db().execute(
             "SELECT outcome_candidate_key FROM filter_candidate_outcomes"
         ).fetchall()
     }
     assert remaining == {"k-100d", "k-60d", "k-10d"}
 
+
+def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.repositories import prune_filter_candidate_outcomes
+    from aletheia.storage.models import AuditEvent
+
+    _seed_filter_candidate_outcome(key="candidate-selection-retained", entry_ts=_iso(100))
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET scanner_family='candidate_selection_utility' "
+        "WHERE outcome_candidate_key='candidate-selection-retained'"
+    )
+    db.execute(
+        "INSERT INTO universe_twin_shadow_batches "
+        "(scanner_run_id, record_version, authority_behavior_version, "
+        "shadow_behavior_version, allocation_replay_contract, policy_epoch_id, "
+        "feature_source_fingerprint, metric_version, allocator_random_state_json, "
+        "policy_json, allocation_context_json, candidate_count, promotion_eligible, "
+        "blocking_reasons_json, batch_hash, captured_at) VALUES "
+        "('candidate-retention-run', 'candidate-selection-utility-record/v1', "
+        "'legacy', 'target', 'replay', 'admitted-epoch', 'features', 'metric', "
+        "'null', '{}', '{}', 1, 0, '[]', 'batch-hash', ?)",
+        (_iso(100),),
+    )
+    db.execute(
+        "INSERT INTO universe_twin_shadow_records "
+        "(id, scanner_run_id, candidate_key, candidate_index, symbol, market_type, "
+        "authority_total_score, shadow_authority_applied, promotion_eligible, "
+        "shadow_valid, compact_output_json, input_json, record_hash, captured_at) "
+        "VALUES ('candidate-retention-record', 'candidate-retention-run', 'candidate', "
+        "0, 'BTC/USDT', 'perp', 1, 1, 1, 1, ?, '{}', 'record-hash', ?)",
+        (
+            '{"outcome_candidate_keys":{"long":"candidate-selection-retained"}}',
+            _iso(100),
+        ),
+    )
+    repo.insert_audit_event(AuditEvent(
+        actor="human",
+        source="dashboard",
+        event_type="candidate_selection_authority_admitted",
+        entity_type="universe_config",
+        entity_id="admitted-epoch",
+    ))
+    db.commit()
+
+    assert prune_filter_candidate_outcomes(days=30) == 0
+    assert db.execute(
+        "SELECT 1 FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='candidate-selection-retained'"
+    ).fetchone()
 
 def test_dropping_unmeasured_filter_outcomes_is_recorded_in_the_audit_chain():
     """Evidence deleted before it was ever measured must not vanish silently.
@@ -1213,7 +1261,11 @@ def test_prune_serenity_evidence_and_run_events(invariant_baseline):
 
 
 def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
-    from aletheia.storage.repositories import prune_runtime_sessions
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.storage.repositories import (
+        insert_filter_candidate_outcomes_batch,
+        prune_runtime_sessions,
+    )
 
     db = get_db()
     db.execute(
@@ -1234,7 +1286,26 @@ def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
         "VALUES ('rs-young', 'rt', ?, ?, 1)",
         (_iso(10), _iso(9)),
     )
+    db.execute(
+        "INSERT INTO runtime_sessions "
+        "(session_id, runtime_id, started_at, ended_at, shutdown_clean) "
+        "VALUES ('rs-candidate-evidence', 'rt', ?, ?, 1)",
+        (_iso(120), _iso(60)),
+    )
     db.commit()
+    insert_filter_candidate_outcomes_batch([FilterCandidateOutcome(
+        outcome_candidate_key="candidate-selection-runtime-retention",
+        venue="bitget",
+        symbol="BTC/USDT",
+        direction="long",
+        scanner_family="candidate_selection_utility",
+        horizon="4h",
+        entry_price_usd=100.0,
+        entry_ts=_iso(120),
+        due_at=_iso(119),
+        producer_runtime_session_id="rs-candidate-evidence",
+        settlement_runtime_session_id="rs-candidate-evidence",
+    )])
 
     assert prune_runtime_sessions(days=30) == 1
     remaining = {
@@ -1246,6 +1317,7 @@ def test_prune_runtime_sessions_ignores_open_sessions(invariant_baseline):
     assert "rs-open" in remaining
     assert "rs-old" not in remaining
     assert "rs-young" in remaining
+    assert "rs-candidate-evidence" in remaining
     _assert_invariants_preserved(*invariant_baseline)
 
 

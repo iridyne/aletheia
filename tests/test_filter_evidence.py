@@ -193,6 +193,37 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     assert shadow_row["resolved_at"]
 
 
+def test_candidate_settlement_uses_capture_time_costs(monkeypatch):
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+
+    outcome = _due_filter_outcome("candidate-selection-utility:v1:frozen-costs:long")
+    outcome.scanner_family = "candidate_selection_utility"
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+    monkeypatch.setattr(
+        repo,
+        "candidate_selection_cost_assumptions",
+        lambda _key: {
+            "execution_fee_pct": 0.10,
+            "slippage_bps": 0.0,
+            "fallback_spread_bps": 99.0,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        _settling_observations(),
+    )
+
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=1)) == 1
+    row = repo.get_db().execute(
+        "SELECT net_return_pct FROM filter_candidate_outcomes WHERE id=?",
+        (outcome.id,),
+    ).fetchone()
+    # Entry spread is observed (10 bps), so fallback is irrelevant: 2% gross,
+    # 0.20% round-trip fee, and 0.10% spread cost.
+    assert row["net_return_pct"] == pytest.approx(1.70)
+
+
 def _due_filter_outcome(key, *, horizon="24h", hours_ago=25):
     """A canonical outcome whose 24h horizon is already past due."""
     from aletheia.storage.models import FilterCandidateOutcome

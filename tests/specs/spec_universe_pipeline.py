@@ -70,6 +70,27 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
     cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
     cfg.exchange.preferred_market_type = "spot"
     cfg.market_data.ccxt_exchange = "bitget"
+    if failure_kind == "candidate_authority_evidence":
+        from aletheia.universe.candidate_selection_authority import (
+            candidate_selection_policy_identity,
+        )
+
+        from aletheia.config.schema import UniverseConfig
+
+        cfg.universe = UniverseConfig.model_validate({
+            **cfg.universe.model_dump(mode="json"),
+            "candidate_selection_policy": "candidate_selection_utility_v1",
+            "candidate_selection_policy_epoch": "candidate-selection-utility:test",
+        })
+        from aletheia.storage.models import AuditEvent
+
+        repo.insert_audit_event(AuditEvent(
+            actor="human",
+            source="dashboard",
+            event_type="candidate_selection_authority_admitted",
+            entity_type="universe_config",
+            entity_id=cfg.universe.candidate_selection_policy_epoch,
+        ))
 
     feature = {
         "asset_id": "asset-emission-retry",
@@ -97,6 +118,14 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         "liquidity_score": 90.0,
         "ttl_sec": 3600,
     }]
+    fingerprint_members = allocated
+    if failure_kind == "candidate_authority_evidence":
+        fingerprint_members = [{
+            **allocated[0],
+            "candidate_selection_policy": "candidate_selection_utility_v1",
+            "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
+            "candidate_selection_utility_pct": 1.0,
+        }]
     previous = UniverseSnapshot(
         id="previous-healthy-universe",
         market_type="crypto",
@@ -106,7 +135,15 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             json.dumps(
                 {
                     "information_policy_epoch": service.POLICY_EPOCH_LABEL,
-                    "member_fingerprint": service._member_fingerprint(allocated, None),
+                        "member_fingerprint": service._member_fingerprint(
+                            fingerprint_members,
+                            None,
+                            policy_id=(
+                                str(cfg.universe.candidate_selection_policy_epoch)
+                                if failure_kind == "candidate_authority_evidence"
+                                else "legacy_total_score_v1"
+                            ),
+                        ),
                 }
             )
             if reuse_previous_snapshot
@@ -126,6 +163,9 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         scanner_direction="long",
         expires_at="2099-01-01T00:00:00+00:00",
     ))
+    previous_member_expires_at = repo.get_universe_member(
+        "previous-healthy-member"
+    )["expires_at"]
     requalification_generation_id = None
     requalification_before = None
     if failure_kind == "scanner_completion":
@@ -162,6 +202,8 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
         if failure_kind == "forward_outcomes"
         else "canonical_outcomes_registration_failed"
         if failure_kind == "canonical_outcomes"
+        else "candidate_selection_authority_evidence_failed"
+        if failure_kind == "candidate_authority_evidence"
         else f"candidate_planning_generation_{failure_kind}_failed"
     )
 
@@ -287,7 +329,47 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             "_persist_attempt_learning_exposures",
             capture_attempt_learning_exposures,
         )
-    if failure_kind == "scanner_completion":
+    if failure_kind == "candidate_authority_evidence":
+        bundle = type("AuthorityBundle", (), {
+            "batch": type("Batch", (), {"policy_epoch_id": cfg.universe.candidate_selection_policy_epoch})(),
+            "evidence": (),
+            "outcomes": (),
+        })()
+        monkeypatch.setattr(
+            "aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy",
+            lambda **_kwargs: {
+                "verdict": "positive",
+                "promotion_eligible": True,
+                "policy_epoch_id": cfg.universe.candidate_selection_policy_epoch,
+                "selection_policy": candidate_selection_policy_identity(cfg),
+                "blocking_reasons": [],
+                "invalid_reasons": [],
+            },
+        )
+        monkeypatch.setattr(service, "_build_candidate_selection_bundle", lambda **_kwargs: bundle)
+        monkeypatch.setattr(
+            "aletheia.universe.candidate_selection_shadow.target_candidates_from_bundle",
+            lambda *_args, **_kwargs: [{
+                **allocated[0],
+                "candidate_selection_policy": "candidate_selection_utility_v1",
+                "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
+                "candidate_selection_utility_pct": 1.0,
+            }],
+        )
+        monkeypatch.setattr(
+            "aletheia.universe.candidate_selection_shadow.target_admitted_identity_keys",
+            lambda *_args, **_kwargs: {("bitget", "BTC/USDT", "spot", "momentum", "long")},
+        )
+        monkeypatch.setattr(
+            "aletheia.universe.allocator.decorate_universe_candidates",
+            lambda *_args: None,
+        )
+        monkeypatch.setattr(
+            service.repo,
+            "insert_universe_twin_shadow_bundle",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(failure_code)),
+        )
+    elif failure_kind == "scanner_completion":
         update_scanner_run = service.repo.update_universe_scanner_run
 
         def fail_scanner_completion(run_id, **kwargs):
@@ -351,6 +433,10 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             "snapshot_id": previous.id,
         })
     assert [dict(row) for row in members] == expected_members
+    if reuse_previous_snapshot:
+        assert repo.get_universe_member("previous-healthy-member")["expires_at"] == (
+            previous_member_expires_at
+        )
     failed_run = db.execute(
         "SELECT status,snapshot_id,errors FROM universe_scanner_runs "
         "ORDER BY rowid DESC LIMIT 1"
@@ -490,6 +576,18 @@ def test_publication_failure_rolls_back_attempt_learning_activation(
         "canonical_outcomes",
         reuse_previous_snapshot=reuse_previous_snapshot,
         seed_attempt_exposure=True,
+    )
+
+
+@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
+def test_candidate_authority_evidence_failure_cannot_publish_target_snapshot(
+    tmp_path, monkeypatch, reuse_previous_snapshot,
+):
+    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
+        tmp_path,
+        monkeypatch,
+        "candidate_authority_evidence",
+        reuse_previous_snapshot=reuse_previous_snapshot,
     )
 
 

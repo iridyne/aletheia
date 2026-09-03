@@ -156,6 +156,9 @@ Twin batches and records use the fixed `universe_scanner_runs_days` retention,
 currently 30 days. Their linked canonical candidate outcomes use the existing
 `filter_candidate_outcomes` retention and settlement paths. Because this is not
 a Learning exposure cohort, no Learning clean-window extension is inferred.
+Candidate Selection Utility is the explicit exception: an admitted epoch, its
+frozen training denominator, and their canonical outcomes remain durable so
+the fixed look can be replayed without substituting a later surviving prefix.
 
 Rollback is removal of the non-authoritative prospective builder or closure of
 its policy epoch. Existing step snapshots and historical evidence are not

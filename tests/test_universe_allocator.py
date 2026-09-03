@@ -10,6 +10,7 @@ from aletheia.universe.allocator import (
     compute_direction_exhaustion_signal,
     compute_late_entry_penalty,
     compute_total_score,
+    decorate_universe_candidates,
     get_family_multipliers,
 )
 
@@ -189,6 +190,16 @@ def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatc
 
     assert seen == [("BTC/USDT", "perp", "okx")]
     assert result[0]["execution_eligible"] is False
+
+
+def test_target_selection_uses_shared_execution_and_risk_decoration(cfg, monkeypatch):
+    item = _scored_item("TARGET/USDT", "momentum", 80, venue="okx")
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.has_fresh_market_snapshot",
+        lambda *_args, **_kwargs: False,
+    )
+
+    assert decorate_universe_candidates([item], cfg)[0]["execution_eligible"] is False
 
 
 def test_late_entry_penalty_extreme_return():
@@ -556,11 +567,12 @@ def test_filter_advisor_reads_only_current_cost_model(monkeypatch):
 
     assert get_family_spread_tolerances() == {}
     assert get_family_filter_pressure_summary() == []
-    assert calls == [
-        ("spread", {"cost_model_version": COST_MODEL_VERSION}),
-        ("pressure", {"cost_model_version": COST_MODEL_VERSION}),
-        ("pressure", {"cost_model_version": COST_MODEL_VERSION}),
-    ]
+    assert [name for name, _kwargs in calls] == ["spread", "pressure", "pressure"]
+    assert all(kwargs["cost_model_version"] == COST_MODEL_VERSION for _, kwargs in calls)
+    assert "cutoff" in calls[0][1]
+    assert calls[1][1]["cutoff"] == calls[0][1]["cutoff"]
+    assert calls[1][1]["settled_through"] == calls[0][1]["settled_through"]
+    assert "cutoff" not in calls[2][1]
 
 
 def test_get_family_multipliers_insufficient_samples(monkeypatch):

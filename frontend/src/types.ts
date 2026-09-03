@@ -819,6 +819,9 @@ export interface Candidate {
   symbol: string
   rank: number
   total_score: number
+  candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1'
+  candidate_selection_policy_epoch: string | null
+  candidate_selection_utility_pct: number | null
   opportunity_score: number | null
   tradability_score: number | null
   liquidity_score: number | null
@@ -925,6 +928,9 @@ export interface CandidateAttention {
   attention_terminal_reason: string | null
   rank: number | null
   total_score: number | null
+  candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1' | null
+  candidate_selection_policy_epoch: string | null
+  candidate_selection_utility_pct: number | null
   entry_price_usd: number | null
   liquidity_score: number | null
   spread_bps: number | null
@@ -945,6 +951,9 @@ export interface CandidateWorkbenchRow {
   market_type: 'spot' | 'perp'
   rank: number
   total_score: number
+  candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1'
+  candidate_selection_policy_epoch: string | null
+  candidate_selection_utility_pct: number | null
   scanner_family: string | null
   scanner_direction: 'long' | 'short' | null
   inclusion_reason: string | null

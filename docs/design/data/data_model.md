@@ -211,7 +211,7 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `runtime_cost_events` | Physical LLM/tool/data cost attempts | call_id, attempt_index, provider/model/tool, opportunity/decision/proposal IDs when explicitly known, usage, price snapshot, cost status |
 | `llm_context_artifacts` | Content-free selected-context manifest | logical_call_id, caller, evaluation pair/arm/fixture, kind, stable_id, freshness, rendered_chars |
 | `llm_context_pair_reviews` | Aggregate-only blinded Learning B review | pair/fixture IDs, control/treatment call IDs, quality/grounded-use/harm scores, verdict |
-| `audit_events` | System-wide SQLite audit authority plus opt-in funding JSONL delivery state | actor, source, event_type, entity_id, before/after (JSON), nullable jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at |
+| `audit_events` | System-wide SQLite audit authority plus opt-in funding/Candidate-authority JSONL delivery state | actor, source, event_type, entity_id, before/after (JSON), nullable jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at |
 | `settings` | Runtime configuration store | key, value |
 | `runtime_registry` | Service/process registry | service_name, pid, started_at, health |
 | `runtime_checkpoints` | Long-running task progress | task_id, checkpoint_data (JSON), progress_pct |
@@ -222,7 +222,8 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `aletheia_schema_migrations` | Immutable per-database proof that one named migration implementation completed successfully | migration_id, checksum, schema_version, applied_at, duration_ms |
 
 `audit_events` 的四个 JSONL delivery 字段是 nullable opt-in 状态：`NULL`
-表示 unmanaged，不等于 `mirrored`。只有新发生的 funding settlement/correction audit
+表示 unmanaged，不等于 `mirrored`。只有新发生的 funding settlement/correction 或
+Candidate authority admission/rollback audit
 在同一业务 transaction 内写入 `pending`；普通与历史 audit 保持 `NULL`，migration
 不猜测旧 JSONL 是否已经存在。partial index 按
 `(jsonl_mirror_status, timestamp, id)` 支持对 `pending/failed` 行进行有界、oldest-first
@@ -268,11 +269,11 @@ Opportunity rows and not an executable queue.
 | `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` | asset_id, ts, 15m RSI/ATR/return/range-in-ATR, 1h RSI/ATR/returns, 4h RSI/ATR/BB width/volume ratio, bb_squeeze, derivatives fields |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
-| `universe_members` | Candidate assets in a universe snapshot; legacy physical name | snapshot_id, symbol, market_type, rank, score, scanner_direction |
+| `universe_members` | Candidate assets in a universe snapshot; legacy physical name | snapshot_id, symbol, market_type, rank, total_score (legacy compatibility), candidate_selection_policy, candidate_selection_policy_epoch, candidate_selection_utility_pct, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
-| `universe_twin_shadow_batches` | Non-authoritative prospective continuous-score comparison, sampled at most once per 55min | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, scanner-run assignment arm/propensity/coefficient, control/treatment policy, 4h outcome contract, allocator replay state, blockers, batch_hash |
-| `universe_twin_shadow_records` | Compact complete-batch step/point/pessimistic comparison and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, ranks, all three selections, assignment identity, assigned-policy selection, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
+| `universe_twin_shadow_batches` | Versioned prospective comparison evidence; Candidate Selection Utility reuses it for Shadow and atomic admitted-authority records | scanner_run_id, experiment/policy epoch/behavior/source/metric identities, 4h outcome contract, blockers, promotion/authority state, batch_hash |
+| `universe_twin_shadow_records` | Compact complete-population alternate-policy evidence and exact outcome linkage | scanner_run_id, candidate_index, candidate/feature/asset/instrument ids, legacy/target/assigned selections, authority state, outcome_candidate_key, compact output JSON, allowlisted replay input JSON, record_hash |
 
 ### G-bis. Opportunity Filter Evidence (6 tables)
 
@@ -534,7 +535,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `agent_shell_tasks` | 14d completed / 30d failed+cancelled; exempt `running`/`pending` | `prune_agent_shell_tasks` (new, cascade) |
 | `agent_shell_sessions` | 14d (30d if session has proposal/report/daily_summary artifact) | `prune_agent_shell_sessions` (new, cascade — children first) |
 | `agent_shell_commands` | 14d | `prune_agent_shell_commands` (new) |
-| `runtime_sessions` | 90d (configurable 1–90) | `prune_runtime_sessions` (new) |
+| `runtime_sessions` | 90d (configurable 1–90); rows referenced by retained Candidate qualification outcomes are protected | `prune_runtime_sessions` (new) |
 | `serenity_evidence` / `serenity_run_events` | 60d | `prune_serenity_evidence` (new) / `prune_serenity_run_events` (new) |
 | `backtest_runs` / `backtest_trades` | 60d (parent cascade) | `prune_backtest_runs` (new, cascade) |
 | `opportunities` (open) | 48h → `expired` | existing |

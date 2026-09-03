@@ -71,6 +71,12 @@ function evidenceLabel(value?: string | null) {
   }
 }
 
+function selectionMetric(row: Pick<CandidateWorkbenchRow, 'candidate_selection_policy' | 'candidate_selection_utility_pct' | 'total_score'> | CandidateAttention) {
+  return row.candidate_selection_policy === 'candidate_selection_utility_v1'
+    ? `Utility ${row.candidate_selection_utility_pct == null ? '—' : `${fmtNum(row.candidate_selection_utility_pct)}%`}`
+    : `Legacy score ${row.total_score ?? '—'}`
+}
+
 // Calibration compatibility: by_cohort_horizon rows remain isolated by
 // row.direction and row.market_type across the owner-facing projection.
 const planColumns = [
@@ -95,7 +101,7 @@ const candidateColumns = [
     cell: info => <strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong>,
   }),
   candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why selected' }),
-  candidateCol.accessor(row => `Rank ${row.rank ?? '—'} · Score ${row.total_score ?? '—'} · Liquidity ${row.liquidity_score ?? '—'} · Spread ${row.spread_bps ?? '—'} bps`, { id: 'quality', header: 'Score / market quality' }),
+  candidateCol.accessor(row => `Rank ${row.rank ?? '—'} · ${selectionMetric(row)} · Liquidity ${row.liquidity_score ?? '—'} · Spread ${row.spread_bps ?? '—'} bps`, { id: 'quality', header: 'Selection metric / market quality' }),
   candidateCol.accessor(row => `${humanize(row.status)} · ${humanize(row.attention_status)}`, { id: 'state', header: 'Planning / attention' }),
   candidateCol.accessor('last_requalified_at', { header: 'Last requalified', cell: info => fmtTimestamp(info.getValue()) }),
   candidateCol.accessor(row => `${fmtTimestamp(row.soft_expires_at)} / ${fmtTimestamp(row.hard_expires_at)}`, { id: 'deadlines', header: 'Soft / hard deadline' }),
@@ -107,7 +113,7 @@ const currentCandidateColumns = [
     header: 'Candidate',
     cell: info => <><strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
   }),
-  currentCandidateCol.accessor(row => `Rank ${row.rank} · Score ${fmtNum(row.total_score)} · ${humanize(row.scanner_family)}`, { id: 'source', header: 'Source / rank' }),
+  currentCandidateCol.accessor(row => `Rank ${row.rank} · ${selectionMetric(row)} · ${humanize(row.scanner_family)}`, { id: 'source', header: 'Source / rank' }),
   currentCandidateCol.accessor(row => row.execution_eligible ? 'Eligible' : 'Blocked', {
     id: 'eligible', header: 'Planning eligible', cell: info => <Badge tone={info.row.original.execution_eligible ? 'green' : 'red'}>{info.getValue()}</Badge>,
   }),
@@ -385,7 +391,9 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
       <DrawerSection label="Candidate evidence">
         <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family ?? currentCandidate?.scanner_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason ?? currentCandidate?.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />
-        <DrawerField label="Score" value={detail.data?.member.total_score} />
+        <DrawerField label="Selection policy" value={humanize(detail.data?.member.candidate_selection_policy)} mono />
+        <DrawerField label="Candidate utility" value={detail.data?.member.candidate_selection_utility_pct == null ? 'Not applicable' : `${fmtNum(detail.data.member.candidate_selection_utility_pct)}%`} />
+        <DrawerField label="Legacy score (compatibility)" value={detail.data?.member.total_score} />
         <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />
         <DrawerField label="Execution eligible" value={detail.data?.member.execution_eligible == null ? 'Unavailable' : detail.data.member.execution_eligible ? 'Yes' : 'No'} />
         <DrawerField label="Risk flags" value={evidenceLabel(detail.data?.member.risk_flags)} />

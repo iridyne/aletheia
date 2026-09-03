@@ -1644,6 +1644,27 @@ class UniverseMember(BaseModel):
     execution_eligible: bool = True
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
+    candidate_selection_policy: Literal[
+        "legacy_total_score_v1", "candidate_selection_utility_v1"
+    ] = "legacy_total_score_v1"
+    candidate_selection_policy_epoch: str | None = None
+    candidate_selection_utility_pct: float | None = None
+
+    @model_validator(mode="after")
+    def _validate_candidate_selection_evidence(self):
+        target = self.candidate_selection_policy == "candidate_selection_utility_v1"
+        if target and (
+            not str(self.candidate_selection_policy_epoch or "").strip()
+            or self.candidate_selection_utility_pct is None
+            or not math.isfinite(self.candidate_selection_utility_pct)
+        ):
+            raise ValueError("target Candidate selection evidence is incomplete")
+        if not target and (
+            self.candidate_selection_policy_epoch is not None
+            or self.candidate_selection_utility_pct is not None
+        ):
+            raise ValueError("legacy Candidate cannot carry target selection evidence")
+        return self
 
 
 Candidate = UniverseMember

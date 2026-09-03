@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 logger = logging.getLogger("aletheia.regime")
+REGIME_DETECTOR_BEHAVIOR_VERSION = "regime-detector/v1"
 
 REGIME_BULL = "bull"
 REGIME_BEAR = "bear"
