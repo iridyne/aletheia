@@ -153,7 +153,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         paper_authority_supported=False,
         behavior_contract_version="candidate-selection-utility/v1",
         outcome_contract_version="candidate-selection-utility-outcome/v1",
-        metric_version="candidate-selection-utility-net-return-4h/v1",
+        metric_version="candidate-selection-utility-net-return-4h/v2",
         statistical_unit="complete_scanner_run",
     ),
     LearningPath(

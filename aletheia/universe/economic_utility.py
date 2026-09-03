@@ -1,9 +1,9 @@
-"""Transparent 4h cost-after Candidate utility on independent UTC blocks."""
+"""Transparent 4h cost-after Candidate utility on independent T0 clusters."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 from numbers import Real
 from statistics import mean, stdev
@@ -15,9 +15,11 @@ from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
-ECONOMIC_UTILITY_VERSION = "universe-economic-utility/v1"
-ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v2"
+ECONOMIC_UTILITY_VERSION = "universe-economic-utility/v2"
+ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v3"
 CANDIDATE_SELECTION_OUTCOME_VERSION = "candidate-selection-utility-outcome/v1"
+INDEPENDENT_UNIT_VERSION = "scanner-t0-cross-section-nonoverlap-4h/v1"
+INDEPENDENT_UNIT_INTERVAL = timedelta(hours=4)
 _SHRINKAGE_K = 50
 _TAIL_HARM_FLOOR_PCT = -15.0
 
@@ -50,39 +52,62 @@ def _cost_assumptions(value: Mapping[str, object] | None) -> dict[str, float] | 
     return result if all(math.isfinite(item) for item in result.values()) else None
 
 
-def _utc_block(entry_at: datetime) -> str:
-    entry_at = entry_at.astimezone(timezone.utc)
-    return entry_at.replace(
-        hour=(entry_at.hour // 4) * 4,
-        minute=0,
-        second=0,
-        microsecond=0,
-    ).isoformat()
+def select_non_overlapping_t0_clusters(
+    clusters: Sequence[Mapping[str, object]],
+    *,
+    t0_field: str,
+) -> list[Mapping[str, object]]:
+    """Select the deterministic earliest prefix of non-overlapping 4h exposures."""
+
+    ordered = sorted(
+        (
+            (t0, str(cluster.get("scanner_run_id") or ""), cluster)
+            for cluster in clusters
+            if (t0 := parse_utc_instant(cluster.get(t0_field))) is not None
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    selected: list[Mapping[str, object]] = []
+    last_t0: datetime | None = None
+    for t0, _run_id, cluster in ordered:
+        if last_t0 is None or t0 >= last_t0 + INDEPENDENT_UNIT_INTERVAL:
+            selected.append(cluster)
+            last_t0 = t0
+    return selected
 
 
 def _independent_values(
     rows: Sequence[Mapping[str, object]],
 ) -> tuple[list[float], list[float]]:
-    """Collapse repeated windows into instrument/direction/non-overlapping 4h units."""
+    """Collapse same-T0 symbols, then greedily select non-overlapping 4h units."""
 
-    grouped: dict[tuple[str, str, str, str, str], list[Mapping[str, object]]] = {}
+    grouped: dict[str, list[Mapping[str, object]]] = {}
     for row in rows:
         entry = parse_utc_instant(row.get("entry_ts"))
         if entry is None:
             continue
-        key = (
-            str(row.get("venue") or ""),
-            str(row.get("market_type") or "spot"),
-            str(row.get("symbol") or ""),
-            str(row.get("direction") or ""),
-            _utc_block(entry),
-        )
-        grouped.setdefault(key, []).append(row)
-    net_values = [mean(float(row["net_return_pct"]) for row in values) for _, values in sorted(grouped.items())]
+        grouped.setdefault(entry.astimezone(timezone.utc).isoformat(), []).append(row)
+    clusters = select_non_overlapping_t0_clusters(
+        [
+            {
+                "cluster_t0": cluster_t0,
+                "scanner_run_id": min(str(row.get("scanner_run_id") or "") for row in values),
+                "net_return_pct": mean(float(row["net_return_pct"]) for row in values),
+                "mae_pct": (
+                    max(abs(float(row["mae_pct"])) for row in values)
+                    if all(_finite(row.get("mae_pct")) is not None for row in values)
+                    else None
+                ),
+            }
+            for cluster_t0, values in grouped.items()
+        ],
+        t0_field="cluster_t0",
+    )
+    net_values = [float(cluster["net_return_pct"]) for cluster in clusters]
     mae_values = [
-        max(abs(float(row["mae_pct"])) for row in values)
-        for _, values in sorted(grouped.items())
-        if all(_finite(row.get("mae_pct")) is not None for row in values)
+        float(cluster["mae_pct"])
+        for cluster in clusters
+        if cluster["mae_pct"] is not None
     ]
     return net_values, mae_values
 
@@ -166,6 +191,12 @@ def build_economic_utility_cohort_index(
         previous = by_cohort.setdefault(key, {}).get(identity)
         if previous is not None and any(previous.get(field) != row.get(field) for field in comparable):
             invalid.add(key)
+            by_cohort[key][identity] = min(
+                (previous, row),
+                key=lambda item: canonical_fingerprint({
+                    field: item.get(field) for field in comparable
+                }),
+            )
             continue
         by_cohort[key].setdefault(identity, row)
 
@@ -187,6 +218,8 @@ def build_economic_utility_cohort_index(
         for quintile in range(1, 6):
             rows = [row for row in complete if row.get("strength_quintile") == quintile]
             values, maes = _independent_values(rows)
+            if any(_finite(row.get("mae_pct")) is None for row in rows):
+                maes = []
             child_values[quintile] = tuple(values)
             child_mae[quintile] = tuple(maes)
             child_raw_min[quintile] = min(
@@ -200,6 +233,8 @@ def build_economic_utility_cohort_index(
                 {
                     "outcome_candidate_key": row.get("outcome_candidate_key"),
                     "scanner_run_id": row.get("scanner_run_id"),
+                    "entry_ts": row.get("entry_ts"),
+                    "symbol": row.get("symbol"),
                     "net_return_pct": row.get("net_return_pct"),
                     "mae_pct": row.get("mae_pct"),
                     "estimated_fee_pct": row.get("estimated_fee_pct"),
@@ -242,8 +277,8 @@ class TailEvidenceV1:
 
 
 @dataclass(frozen=True)
-class EconomicUtilityEstimateV1:
-    version: Literal["universe-economic-utility/v1"]
+class EconomicUtilityEstimateV2:
+    version: Literal["universe-economic-utility/v2"]
     candidate_key: str
     mechanism_id: str
     direction: Literal["long", "short"]
@@ -282,7 +317,7 @@ def estimate_economic_utility(
     source_cutoff_at: str | None = None,
     cost_assumptions: Mapping[str, object] | None = None,
     cohort_index: EconomicUtilityCohortIndex | None = None,
-) -> EconomicUtilityEstimateV1:
+) -> EconomicUtilityEstimateV2:
     if not math.isfinite(strength_percentile) or not 0 <= strength_percentile <= 1:
         raise ValueError("strength_percentile_out_of_range")
     quintile = min(5, int(strength_percentile * 5) + 1)
@@ -320,7 +355,7 @@ def estimate_economic_utility(
         worst_count = max(1, math.ceil(len(child_values) * 0.05))
         raw_min = summary.child_raw_min.get(quintile) if summary else None
         tail = TailEvidenceV1(
-            min(child_values),
+            raw_min,
             mean(sorted(child_values)[:worst_count]),
             _percentile(child_mae, 0.95),
             "harm" if raw_min is not None and raw_min < _TAIL_HARM_FLOOR_PCT else "clear",
@@ -341,7 +376,7 @@ def estimate_economic_utility(
         status, expected, standard_error, utility = "unavailable", None, None, None
     cohort = {
         "version": ECONOMIC_UTILITY_VERSION,
-        "independent_unit": "instrument_direction_4h_utc_block/v1",
+        "independent_unit": INDEPENDENT_UNIT_VERSION,
         "mechanism_id": mechanism_id,
         "direction": direction,
         "venue": venue,
@@ -355,7 +390,7 @@ def estimate_economic_utility(
     }
     estimator = {
         "version": ECONOMIC_ESTIMATOR_VERSION,
-        "independent_unit": "instrument_direction_4h_utc_block/v1",
+        "independent_unit": INDEPENDENT_UNIT_VERSION,
         "shrinkage_k": _SHRINKAGE_K,
         "uncertainty_multiplier": 1.0,
         "parent_min_clusters": 50,
@@ -365,7 +400,7 @@ def estimate_economic_utility(
         "minimum_coverage": 0.80,
         "tail_harm_floor_pct": _TAIL_HARM_FLOOR_PCT,
     }
-    return EconomicUtilityEstimateV1(
+    return EconomicUtilityEstimateV2(
         ECONOMIC_UTILITY_VERSION,
         candidate_key,
         mechanism_id,
@@ -395,9 +430,12 @@ __all__ = [
     "CANDIDATE_SELECTION_OUTCOME_VERSION",
     "ECONOMIC_ESTIMATOR_VERSION",
     "ECONOMIC_UTILITY_VERSION",
+    "INDEPENDENT_UNIT_INTERVAL",
+    "INDEPENDENT_UNIT_VERSION",
     "EconomicUtilityCohortIndex",
-    "EconomicUtilityEstimateV1",
+    "EconomicUtilityEstimateV2",
     "TailEvidenceV1",
     "build_economic_utility_cohort_index",
     "estimate_economic_utility",
+    "select_non_overlapping_t0_clusters",
 ]

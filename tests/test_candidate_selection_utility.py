@@ -201,8 +201,8 @@ def _outcomes(count: int = 60):
             "strength_quintile": 5 if index < 25 else 4,
             "horizon": "4h",
             "status": "settled",
-            "entry_ts": (start + timedelta(days=index % 12, hours=index)).isoformat(),
-            "settled_at": (start + timedelta(days=index % 12, hours=index + 4)).isoformat(),
+            "entry_ts": (start + timedelta(hours=4 * index)).isoformat(),
+            "settled_at": (start + timedelta(hours=4 * (index + 1))).isoformat(),
             "symbol": f"COIN{index % 6}/USDT",
             "net_return_pct": 1.0 if index < 25 else 0.2,
             "mae_pct": -0.5,
@@ -382,6 +382,28 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
     )
     assert unavailable_tail.estimate_status == "unavailable"
     assert unavailable_tail.tail_evidence.status == "unavailable"
+
+    skipped_missing_tail = {
+        **_outcomes()[0],
+        "outcome_candidate_key": "candidate-selection-utility:v1:overlap-missing-mae:long",
+        "scanner_run_id": "overlap-missing-mae",
+        "entry_ts": "2026-07-01T00:10:00+00:00",
+        "settled_at": "2026-07-01T04:10:00+00:00",
+        "mae_pct": None,
+    }
+    overlap_unavailable = estimate_economic_utility(
+        candidate_key="candidate-economic",
+        mechanism_id="continuation",
+        direction="long",
+        venue="okx",
+        market_type="spot",
+        strength_percentile=0.9,
+        outcomes=[*_outcomes(), skipped_missing_tail],
+        source_cutoff_at="2026-09-02T00:00:00+00:00",
+        cost_assumptions=cost_assumptions,
+    )
+    assert overlap_unavailable.estimate_status == "unavailable"
+    assert overlap_unavailable.tail_evidence.status == "unavailable"
 
     catastrophic = [dict(row) for row in _outcomes()]
     catastrophic[0]["net_return_pct"] = -20.0
@@ -1021,6 +1043,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
                     "behavior_contract_hash": behavior_hash,
                     "policy_epoch_id": policy_epoch,
                     "outcome_contract_version": CANDIDATE_SELECTION_OUTCOME_VERSION,
+                    "evidence_sampling_contract": "candidate-selection-evidence-cadence/v2",
                 },
             }
             records.append(UniverseTwinShadowEvidence(
@@ -1101,7 +1124,10 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
                 "universe": {"max_candidates": 2},
                 "selection_policy": {"semantic_manifest": {"estimator": "v2"}},
             }),
-            allocation_context_json="{}",
+            allocation_context_json=json.dumps({
+                "evidence_sampling_contract": "candidate-selection-evidence-cadence/v2",
+                "minimum_interval_sec": 4 * 60 * 60,
+            }),
             candidate_count=2,
             blocking_reasons_json='["owner_admission_required"]',
             batch_hash=f"batch-{index:02d}".ljust(64, "0"),
@@ -1231,6 +1257,8 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
     )
     assert report["verdict"] == "positive", report
     assert report["policy_epoch_id"] == policy_epoch
+    assert report["raw_scanner_run_n"] == 50
+    assert report["independent_policy_unit_n"] == 50
     assert report["expected_cluster_n"] == 50
     assert report["qualification_eligible"] is True
     assert report["promotion_eligible"] is True
@@ -1290,6 +1318,8 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
         as_of_at=(start + timedelta(days=13)).isoformat(),
     )
     assert frozen["verdict"] == "positive", frozen
+    assert frozen["raw_scanner_run_n"] == 52
+    assert frozen["independent_policy_unit_n"] == 52
     assert frozen["fixed_look_cluster_n"] == 50
     assert frozen["full_arm_outcome_coverage"] == 1.0
     assert "fixed-look-late-pending" not in listed_scanner_runs

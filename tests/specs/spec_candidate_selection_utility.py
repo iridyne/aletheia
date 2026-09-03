@@ -73,7 +73,7 @@ def test_opportunity_evidence_has_four_non_summed_mechanisms():
 
 
 @spec_claim(SpecClaim(
-    "CSU-S03", _CONTRACT, "EconomicUtilityEstimateV1", "L2a",
+    "CSU-S03", _CONTRACT, "EconomicUtilityEstimateV2", "L2a",
     "Actionable economic estimates use only frozen 4h cost-after clustered evidence with uncertainty and tail status.",
     status="implemented",
 ))
@@ -81,7 +81,7 @@ def test_economic_utility_contract_is_frozen_and_cost_after():
     from aletheia.universe.economic_utility import ECONOMIC_ESTIMATOR_VERSION
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
-    assert ECONOMIC_ESTIMATOR_VERSION == "candidate-economic-utility-estimator/v2"
+    assert ECONOMIC_ESTIMATOR_VERSION == "candidate-economic-utility-estimator/v3"
     assert COST_MODEL_VERSION == "v1"
 
 

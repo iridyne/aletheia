@@ -30,8 +30,10 @@ from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
 from aletheia.universe.twin_persistence import TwinShadowBundle
 
 
-CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v2"
-CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v1"
+CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v3"
+CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v2"
+CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION = "candidate-selection-evidence-cadence/v2"
+CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC = 4 * 60 * 60
 _MAX_OUTPUT_BYTES = 32 * 1024
 
 
@@ -358,6 +360,7 @@ def build_candidate_selection_shadow_bundle(
                 "promotion_eligible": qualified,
                 "blocking_reasons": blocking_reasons,
                 "outcome_contract_version": CANDIDATE_SELECTION_OUTCOME_VERSION,
+                "evidence_sampling_contract": CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION,
                 "behavior_contract_hash": behavior_contract_hash,
                 "policy_epoch_id": policy_epoch_id,
                 "estimator_training_cutoff": effective_training_cutoff,
@@ -404,6 +407,7 @@ def build_candidate_selection_shadow_bundle(
         "candidate_keys": [item.candidate_key for item in evidence_rows],
         "record_hashes": [item.record_hash for item in evidence_rows],
         "outcome_keys": sorted(outcomes_by_key),
+        "evidence_sampling_contract": CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION,
     }
     batch = UniverseTwinShadowBatch(
         scanner_run_id=scanner_run_id,
@@ -430,6 +434,8 @@ def build_candidate_selection_shadow_bundle(
         }),
         allocation_context_json=_json({
             "same_t0_population": True,
+            "evidence_sampling_contract": CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION,
+            "minimum_interval_sec": CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
             "legacy_rollback": True,
             "authority_policy": (
                 "candidate_selection_utility_v1" if authority_applied else "legacy_total_score_v1"
@@ -447,7 +453,7 @@ def build_candidate_selection_shadow_bundle(
 def candidate_selection_storage_projection(
     evidence: Sequence[UniverseTwinShadowEvidence],
     *,
-    min_interval_sec: int = 55 * 60,
+    min_interval_sec: int = CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
 ) -> dict[str, int | float]:
     """Project the persisted Candidate row payload at the enforced Shadow cadence."""
 
@@ -723,6 +729,8 @@ def target_admitted_identity_keys(
 
 
 __all__ = [
+    "CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION",
+    "CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC",
     "CANDIDATE_SELECTION_RECORD_VERSION", "build_candidate_selection_shadow_bundle",
     "candidate_selection_training_cutoff",
     "candidate_selection_frozen_family_spread_control",

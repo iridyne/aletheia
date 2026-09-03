@@ -1,4 +1,4 @@
-"""Read-only fixed-look qualification for Candidate Selection Utility V1."""
+"""Read-only fixed-look qualification for Candidate Selection Utility."""
 
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ from aletheia.universe.candidate_selection_shadow import (
     CANDIDATE_SELECTION_RECORD_VERSION,
     candidate_selection_training_cutoff,
 )
+from aletheia.universe.economic_utility import select_non_overlapping_t0_clusters
 
 
-CANDIDATE_SELECTION_QUALIFICATION_VERSION = "candidate-selection-utility-qualification/v1"
+CANDIDATE_SELECTION_QUALIFICATION_VERSION = "candidate-selection-utility-qualification/v2"
 _MIN_COMPLETE_CLUSTERS = 50
 _MIN_CONSECUTIVE_DAYS = 7
 _MIN_FULL_ARM_COVERAGE = 0.80
@@ -64,6 +65,18 @@ def _longest_days(days: set[date]) -> int:
         longest = max(longest, current)
         previous = day
     return longest
+
+
+def _independent_policy_batches(
+    batches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        dict(batch)
+        for batch in select_non_overlapping_t0_clusters(
+            batches,
+            t0_field="captured_at",
+        )
+    ]
 
 
 def _rows_for_keys(keys: set[str]) -> dict[str, dict[str, Any]]:
@@ -132,6 +145,8 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         "policy_epoch_id": policy_epoch_id,
         "selection_policy": None,
         "expected_cluster_n": 0,
+        "raw_scanner_run_n": 0,
+        "independent_policy_unit_n": 0,
         "complete_cluster_n": 0,
         "fixed_look_cluster_n": 0,
         "consecutive_eligible_utc_days": 0,
@@ -150,17 +165,19 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     if training_cutoff is None:
         report["blocking_reasons"] = ["estimator_training_support_not_met"]
         return report
-    batches = []
-    prefix_days: set[date] = set()
-    rows = repo.get_db().execute(
+    raw_batches = [dict(row) for row in repo.get_db().execute(
         "SELECT * FROM universe_twin_shadow_batches WHERE record_version=? "
         "AND policy_epoch_id=? AND julianday(captured_at)>=julianday(?) "
         "AND julianday(captured_at)<=julianday(?) "
         "ORDER BY captured_at, scanner_run_id",
         (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff, now),
-    )
-    for row in rows:
-        batch = dict(row)
+    ).fetchall()]
+    report["raw_scanner_run_n"] = len(raw_batches)
+    independent_batches = _independent_policy_batches(raw_batches)
+    report["independent_policy_unit_n"] = len(independent_batches)
+    batches = []
+    prefix_days: set[date] = set()
+    for batch in independent_batches:
         batches.append(batch)
         captured = _parse_time(batch.get("captured_at"))
         if captured is not None:
