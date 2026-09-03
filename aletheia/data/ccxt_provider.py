@@ -154,7 +154,7 @@ class CCXTProvider:
         # Injected aiohttp sessions we own and must close (one per ccxt client).
         self._sessions: list = []
 
-    def _client(self, name: str):
+    def _client(self, name: str, **options):
         # Build via the managed factory (aletheia.net.make_ccxt), which injects a
         # proxy-aware aiohttp session using aiohttp's OS-resolver (getaddrinfo)
         # instead of the c-ares AsyncResolver that aiohttp auto-selects when aiodns
@@ -163,16 +163,28 @@ class CCXTProvider:
         # session (own_session=False) and close it in close().
         from aletheia.net import make_ccxt
 
-        exchange, session = make_ccxt(name)
+        exchange, session = make_ccxt(name, **options)
         self._sessions.append(session)
         return _install_market_id_guard(exchange, name)
 
-    def _ensure_primary(self):
+    def _ensure_primary(self, market_type: str | None = None):
+        if self._primary_name == "binance" and market_type in {"perp", "futures"}:
+            if getattr(self, "_primary_perp", None) is None:
+                self._primary_perp = self._client(
+                    "binanceusdm", options={"defaultType": "swap"}
+                )
+            return self._primary_perp
         if self._primary is None:
             self._primary = self._client(self._primary_name)
         return self._primary
 
-    def _ensure_fallback(self):
+    def _ensure_fallback(self, market_type: str | None = None):
+        if self._fallback_name == "binance" and market_type in {"perp", "futures"}:
+            if getattr(self, "_fallback_perp", None) is None:
+                self._fallback_perp = self._client(
+                    "binanceusdm", options={"defaultType": "swap"}
+                )
+            return self._fallback_perp
         if self._fallback is None:
             self._fallback = self._client(self._fallback_name)
         return self._fallback
@@ -185,15 +197,18 @@ class CCXTProvider:
         # mutating shared state across concurrent calls on the same exchange client.
         _is_perp = market_type == "perp"
         last_err: Exception | None = None
-        for name, ensure in (
+        attempts = (
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
-        ):
+        )
+        for index, (name, ensure) in enumerate(attempts):
+            if index and name == self._primary_name:
+                continue
             if not is_venue_available(name):
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
             try:
-                exchange = ensure()
+                exchange = ensure(market_type)
                 _prev_type = exchange.options.get("defaultType") if _is_perp else None
                 if _is_perp:
                     exchange.options["defaultType"] = "swap"
@@ -408,13 +423,18 @@ class CCXTProvider:
         """
         import asyncio as _aio
 
-        for attr in ("_primary", "_fallback"):
-            client = getattr(self, attr)
+        closed: set[int] = set()
+        for attr in ("_primary", "_fallback", "_primary_perp", "_fallback_perp"):
+            client = getattr(self, attr, None)
             if client is not None:
+                if id(client) in closed:
+                    setattr(self, attr, None)
+                    continue
                 try:
                     await _aio.wait_for(client.close(), timeout=5.0)
                 except (Exception, _aio.CancelledError):  # noqa: BLE001
                     pass
+                closed.add(id(client))
                 setattr(self, attr, None)
         for session in self._sessions:
             try:

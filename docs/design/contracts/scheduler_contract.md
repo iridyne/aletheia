@@ -285,6 +285,11 @@ outstanding 容量都固定为 16，不再为每次调用创建 executor
   `macro` 25s（context lane，wave 并发，deadline 55s）。
 - `market_data` 与 `price_feed` 即使保留了同轮成功抓取，只要返回 `errors` 非空，就分别以
   `market_data_reported_errors` / `price_feed_reported_errors` 登记任务失败；空观察列表且 `errors=[]` 仍是合法成功。
+  Binance 永续行情使用只访问 USD-M API 的 `binanceusdm` 物理客户端，但持久化 venue 仍为
+  logical `binance`；相同 logical venue 不作为自己的 fallback 重复 bootstrap。主行情和 xStock
+  各自在来源阶段结束时批量落库，因此后续来源失败或总任务取消不会丢弃已成功抓取的快照。
+  `/api/health` 按当前调度目标的 `venue + market_type` 集合取最差持久化新鲜度，并把滞后来源编码为
+  `market_data_stale:<age>:source=<venue>/<market_type>`；任一无关 provider 成功或其它来源的新行都不能掩盖它。
 - `exchange_sync.sync_all_exchanges()` 的公开契约规定 `None` 是所有账户视图均失败，scheduler 以
   `exchange_sync_total_failure` 登记失败；非空统一视图若带有账户级 `errors`，则保留已成功账户并以
   `exchange_sync_reported_errors` 登记部分失败。只有没有错误的统一视图（包括合法空结构）才可清零健康计数。

@@ -1,5 +1,7 @@
 """Phase 3 tests: scheduler, market data, LLM-backed agents, tool logging."""
 
+import asyncio
+
 import pytest
 from unittest.mock import patch, AsyncMock
 
@@ -239,6 +241,49 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
         for error in result["errors"]
     )
     assert repo.list_market_snapshots() == []
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Ticker
+
+    cfg = load_config()
+    cfg.market_data.observed_xstocks = []
+    cfg.market_data.observed_stock_tokens = []
+    save_config(cfg)
+
+    class _Provider:
+        calls = 0
+
+        async def get_ticker(self, instrument):
+            self.calls += 1
+            if self.calls == 2:
+                raise asyncio.CancelledError
+            return Ticker(
+                symbol=instrument.symbol,
+                last_price=60_000.0,
+                volume_24h=123.0,
+                change_pct_24h=1.5,
+                provider=instrument.exchange,
+            )
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_kw: _Provider())
+
+    from aletheia.trading.market_data import collect_market_snapshots
+
+    with pytest.raises(asyncio.CancelledError):
+        await collect_market_snapshots()
+
+    snapshots = repo.list_market_snapshots()
+    assert len(snapshots) == 1
+    assert snapshots[0]["price"] == 60_000.0
     reset_db()
 
 

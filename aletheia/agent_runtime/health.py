@@ -115,14 +115,49 @@ def _market_data_stale_minutes(cfg) -> float | None:
     """
     if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
         return None
-    from aletheia.storage.repositories import list_market_snapshots
-    rows = list_market_snapshots(limit=1)
+    from aletheia.storage.repositories import latest_market_snapshot_groups
+    from aletheia.trading.market_data import market_snapshot_target_groups
+
+    targets = market_snapshot_target_groups(cfg)
+    rows = latest_market_snapshot_groups()
     if not rows:
         return float("inf")  # scheduler active but snapshot never collected
-    snapshot_at = rows[0].get("snapshot_at")
-    if not snapshot_at:
-        return float("inf")
-    return _timestamp_age_minutes(snapshot_at)
+    by_group = {
+        (str(row.get("exchange") or ""), str(row.get("market_type") or "")): row.get("snapshot_at")
+        for row in rows
+    }
+    ages = [
+        _timestamp_age_minutes(by_group[group]) if by_group.get(group) else float("inf")
+        for group in targets
+    ]
+    if not ages:
+        ages = [
+            _timestamp_age_minutes(row["snapshot_at"])
+            for row in rows
+            if row.get("snapshot_at")
+        ]
+    return max(ages, default=float("inf"))
+
+
+def _market_data_stale_sources(cfg) -> list[tuple[str, str, float]]:
+    """Return stale target groups so health can attribute partial-source gaps."""
+    if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
+        return []
+    from aletheia.storage.repositories import latest_market_snapshot_groups
+    from aletheia.trading.market_data import market_snapshot_target_groups
+
+    targets = market_snapshot_target_groups(cfg)
+    latest = {
+        (str(row.get("exchange") or ""), str(row.get("market_type") or "")): row.get("snapshot_at")
+        for row in latest_market_snapshot_groups()
+    }
+    stale = []
+    for venue, market_type in sorted(targets):
+        timestamp = latest.get((venue, market_type))
+        age = _timestamp_age_minutes(timestamp) if timestamp else float("inf")
+        if age > cfg.health.market_data_max_staleness_min:
+            stale.append((venue, market_type, age))
+    return stale
 
 
 def _mo_ran_in_current_session() -> bool:
@@ -325,7 +360,15 @@ def compute_health() -> dict:
             else:
                 initializing.append("market_data_initializing")
         elif stale_min > cfg.health.market_data_max_staleness_min:
-            issues.append(f"market_data_stale:{stale_min:.0f}min")
+            stale_sources = _market_data_stale_sources(cfg)
+            if stale_sources:
+                for venue, market_type, age in stale_sources:
+                    age_label = "missing" if math.isinf(age) else f"{age:.0f}min"
+                    issues.append(
+                        f"market_data_stale:{age_label}:source={venue}/{market_type}"
+                    )
+            else:
+                issues.append(f"market_data_stale:{stale_min:.0f}min")
 
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")

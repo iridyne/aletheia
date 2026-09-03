@@ -44,6 +44,7 @@ def setup_env(tmp_path, monkeypatch):
         lambda: {"status": "completed", "latest_run_age_min": 5.0},
     )
     monkeypatch.setattr(health, "_market_data_stale_minutes", lambda cfg: 5.0)
+    monkeypatch.setattr(health, "_market_data_stale_sources", lambda cfg: [])
     return real_market_stale
 
 
@@ -292,9 +293,25 @@ def test_health_no_alert_when_healthy(tmp_path, monkeypatch):
 def _add_snapshot(snapshot_at):
     from aletheia.storage.models import MarketSnapshot
     from aletheia.storage.repositories import insert_market_snapshot
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=100.0)
+    snap = MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="perp",
+        exchange="binance",
+        price=100.0,
+    )
     snap.snapshot_at = snapshot_at
     insert_market_snapshot(snap)
+
+
+def _restore_market_probe(monkeypatch, health, real_fn):
+    from aletheia.trading import market_data
+
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    monkeypatch.setattr(
+        market_data,
+        "market_snapshot_target_groups",
+        lambda _cfg: {("binance", "perp")},
+    )
 
 
 def _isoformat_minutes_ago(minutes):
@@ -315,7 +332,7 @@ def test_future_market_data_is_degraded(tmp_path, monkeypatch):
 
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     _add_snapshot((datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat())
 
     h = health.compute_health()
@@ -329,7 +346,7 @@ def test_small_future_market_clock_skew_is_tolerated(tmp_path, monkeypatch):
 
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     _add_snapshot((datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat())
 
     h = health.compute_health()
@@ -340,11 +357,49 @@ def test_small_future_market_clock_skew_is_tolerated(tmp_path, monkeypatch):
 def test_stale_market_data_flagged(tmp_path, monkeypatch):
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     _add_snapshot(_isoformat_minutes_ago(120))  # 2h old, far past 30m default
     h = health.compute_health()
     assert h["healthy"] is False
     assert any("market_data_stale" in i for i in h["issues"])
+
+
+def test_market_data_staleness_names_lagging_source_group(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.agent_runtime import health
+    real_stale = health._market_data_stale_minutes
+    real_sources = health._market_data_stale_sources
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import MarketSnapshot
+    from aletheia.trading import market_data
+
+    fresh = MarketSnapshot(
+        symbol="RNVDA/USDT", market_type="spot", exchange="bitget", price=100.0
+    )
+    stale = MarketSnapshot(
+        symbol="BTC/USDT", market_type="perp", exchange="binance", price=60_000.0
+    )
+    fresh.snapshot_at = datetime.now(timezone.utc).isoformat()
+    stale.snapshot_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    repo.insert_market_snapshot_batch([fresh, stale])
+    monkeypatch.setattr(
+        market_data,
+        "market_snapshot_target_groups",
+        lambda _cfg: {("bitget", "spot"), ("binance", "perp")},
+    )
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_stale)
+    monkeypatch.setattr(health, "_market_data_stale_sources", real_sources)
+
+    result = health.compute_health()
+
+    assert result["status"] == "degraded"
+    assert any(
+        issue.endswith("source=binance/perp")
+        for issue in result["issues"]
+        if issue.startswith("market_data_stale:")
+    )
+    assert not any("source=bitget/spot" in issue for issue in result["issues"])
 
 
 def test_stale_market_data_not_flagged_when_paused(tmp_path, monkeypatch):
@@ -352,7 +407,7 @@ def test_stale_market_data_not_flagged_when_paused(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.runtime.paused = True; save_config(cfg)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     _add_snapshot(_isoformat_minutes_ago(120))
     h = health.compute_health()
     # Paused means data is expected to stop updating — must not false-alarm.
@@ -363,7 +418,7 @@ def test_no_snapshots_is_not_stale(tmp_path, monkeypatch):
     import time
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     # Pin _process_start_time to now so uptime is always well within the warmup
     # window regardless of how long the test process has been running.
     monkeypatch.setattr(health, "_process_start_time", time.monotonic())
@@ -641,7 +696,7 @@ def test_market_data_never_collected_is_initializing_within_warmup(tmp_path, mon
     import time
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     # Fresh process: uptime is well below the staleness threshold.
     monkeypatch.setattr(health, "_process_start_time", time.monotonic())
     # No snapshots in DB.
@@ -657,7 +712,7 @@ def test_market_data_never_collected_becomes_degraded_after_deadline(tmp_path, m
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
     from aletheia.config.loader import load_config
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    _restore_market_probe(monkeypatch, health, real_fn)
     # Pin process start time far in the past so deadline is exceeded.
     threshold_sec = load_config().health.market_data_max_staleness_min * 60
     monkeypatch.setattr(health, "_process_start_time", time.monotonic() - threshold_sec - 60)
@@ -915,7 +970,7 @@ def test_fresh_boot_before_probes_is_initializing(tmp_path, monkeypatch):
     real_market_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
     # Restore real staleness fn to simulate fresh boot with no snapshot.
-    monkeypatch.setattr(health, "_market_data_stale_minutes", real_market_fn)
+    _restore_market_probe(monkeypatch, health, real_market_fn)
     monkeypatch.setattr(health, "_process_start_time", time.monotonic())  # just started
     monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: None)  # no probe yet
     monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: False)  # no MO run yet

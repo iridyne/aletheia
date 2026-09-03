@@ -85,7 +85,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             self.closed = False
             self.instances.append(self)
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, _market_type=None):
             return self.exchange
 
         async def close(self):
@@ -170,7 +170,7 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
             self.closed = False
             self.instances.append(self)
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, _market_type=None):
             return self.exchange
 
         async def close(self):

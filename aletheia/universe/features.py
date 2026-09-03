@@ -1037,7 +1037,7 @@ async def collect_features(
             perp_provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
             providers.append(perp_provider)
             try:
-                perp_exchange = perp_provider._ensure_primary()
+                perp_exchange = perp_provider._ensure_primary("perp")
                 perp_exchange.options["defaultType"] = "swap"
                 await perp_exchange.load_markets()
             except Exception as exc:

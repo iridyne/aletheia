@@ -111,7 +111,7 @@ class _FixtureCCXTProvider:
         self.fallback_exchange = fallback_exchange
         self.exchange = _FixtureExchange()
 
-    def _ensure_primary(self):
+    def _ensure_primary(self, _market_type=None):
         return self.exchange
 
     async def get_ticker(self, instrument):

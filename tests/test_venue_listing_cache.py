@@ -312,6 +312,64 @@ class TestCcxtProviderPerpDefaultType:
     # (conftest.py autouse fixture that replaces CCXTProvider.get_ticker with a stub).
     # We need to run the real get_ticker code to verify defaultType handling.
     pytestmark = pytest.mark.real_network
+
+    @pytest.mark.asyncio
+    async def test_binance_perp_uses_usdm_client(self):
+        from aletheia.data.ccxt_provider import CCXTProvider
+
+        provider = CCXTProvider(exchange="binance", fallback_exchange="binance")
+        client = MagicMock()
+        client.options = {"defaultType": "swap"}
+        created = []
+
+        async def fetch_ticker(_symbol):
+            return {
+                "last": 65_000.0,
+                "quoteVolume": 1e9,
+                "percentage": 1.5,
+            }
+
+        client.fetch_ticker = fetch_ticker
+
+        def make_client(name, **options):
+            created.append((name, options))
+            return client
+
+        provider._client = make_client
+
+        ticker = await provider.get_ticker(
+            InstrumentId(exchange="binance", symbol="BTC/USDT", market_type=MARKET_PERP)
+        )
+
+        assert ticker.provider == "binance"
+        assert created == [("binanceusdm", {"options": {"defaultType": "swap"}})]
+
+    @pytest.mark.asyncio
+    async def test_same_venue_is_not_retried_as_its_own_fallback(self):
+        from aletheia.data.ccxt_provider import CCXTProvider
+
+        exchange_mock = MagicMock()
+        exchange_mock.options = {}
+        calls = 0
+
+        async def fail_fetch(_symbol):
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("bootstrap failed")
+
+        exchange_mock.fetch_ticker = fail_fetch
+        provider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+        provider._primary = exchange_mock
+
+        with (
+            patch("aletheia.data.venue_health.is_venue_available", return_value=True),
+            pytest.raises(RuntimeError, match="bootstrap failed"),
+        ):
+            await provider.get_ticker(
+                InstrumentId(exchange="bitget", symbol="BTC/USDT", market_type=MARKET_PERP)
+            )
+
+        assert calls == 1
     @pytest.mark.asyncio
     async def test_perp_sets_defaulttype_swap(self):
         """get_ticker for a perp InstrumentId must set defaultType=swap before fetch."""

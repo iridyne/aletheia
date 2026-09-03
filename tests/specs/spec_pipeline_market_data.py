@@ -219,6 +219,46 @@ def test_market_data_stale_snapshot_triggers_risk_violation(tmp_path, monkeypatc
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "PL-MD-06", "pipeline_market_data", "§3 source_freshness", "L2b",
+        "Runtime health uses the least-fresh scheduled venue/market-type group "
+        "and identifies that source instead of trusting an unrelated fresh row",
+    ),
+)
+def test_health_attributes_partial_source_staleness(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.health import (
+        _market_data_stale_minutes,
+        _market_data_stale_sources,
+    )
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading import market_data
+
+    _insert_fresh_snapshot(conn, "RNVDA/USDT", age_seconds=0, market_type="spot")
+    conn.execute(
+        "UPDATE market_snapshots SET exchange='bitget' WHERE symbol='RNVDA/USDT'"
+    )
+    _insert_fresh_snapshot(
+        conn, "BTC/USDT", age_seconds=7_200, market_type="perp"
+    )
+    conn.execute(
+        "UPDATE market_snapshots SET exchange='binance' WHERE symbol='BTC/USDT'"
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        market_data,
+        "market_snapshot_target_groups",
+        lambda _cfg: {("bitget", "spot"), ("binance", "perp")},
+    )
+    cfg = AletheiaConfig()
+
+    assert _market_data_stale_minutes(cfg) > 119
+    assert _market_data_stale_sources(cfg) == [
+        ("binance", "perp", pytest.approx(120, abs=1))
+    ]
+
+
 # ---------------------------------------------------------------------------
 # PL-MD-05  L2b  xstock_infra_event: one event per consecutive-failure window
 # MD-1 drift fixed: write_audit called once at the 3rd consecutive failure
