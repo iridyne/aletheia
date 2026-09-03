@@ -50,7 +50,8 @@ operational-need gate：owner 在确认需要更新 Runtime 后运行一次 GitH
 Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该批次：
 
 1. `Prepare and tag releases` 以 `operational_need=true` 生成一个候选 PR，但不自动
-   启动 CI。需要远程全量验证时，由 owner 在候选分支上显式运行 `Aletheia CI`；
+   启动 CI。只有 owner 在当前任务中明确要求远程 CI，才可在候选分支运行
+   `Aletheia CI`；发布、部署或“完整验证”的表述本身不构成授权。
    验证通过后由 trusted auto-merge 自动合并。普通 release-bearing PR 不会各自产生
    一个产品版本。
 2. 合并后的 follow-up 自动创建不可变 `vX.Y.Z` Tag 和 GitHub Release。

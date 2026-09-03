@@ -27,13 +27,12 @@ Use `uv run` for Python. macOS is development/control only; do not infer Fedora
 runtime state or start a local Gateway unless explicitly requested. Fedora is the
 operational verification target. Windows is not a validation fallback.
 
-Use the repository-native `scripts/ci_plan.py`, `scripts/ci_preflight.py`, and
-`scripts/ci_local.py` before publishing a CI-triggering PR; do not hand-select
-CI depth. Prefer configured self-hosted CI, and use isolated credential-free
-Fedora testing only when a complete suite cannot wait. Let ordinary Ready PRs
-accumulate; release/tag work requires explicit operational need. For pending CI,
-inspect checks, runner/queue state, and failing logs once, then monitor
-non-blockingly at intervals up to 30 minutes.
+Remote GitHub CI is manual-only. Never dispatch, start, or rerun it unless the
+owner explicitly requests remote CI in the current task; release, deployment,
+merge, or broad-verification intent does not imply that permission. Use focused
+local tests by default. `scripts/ci_plan.py`, `scripts/ci_preflight.py`, and
+`scripts/ci_local.py` are local validators and do not authorize a GitHub workflow.
+If owner-requested CI is pending, inspect it once and monitor non-blockingly.
 
 Before opening or resetting an Observation/qualification window after a merged
 behavior or evidence change, deploy the exact merged commit to Fedora, restart

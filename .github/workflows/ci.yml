@@ -1,7 +1,8 @@
 # Manual validation only.
 # Ordinary pull requests do not trigger remote tests. Agents are responsible
 # for running relevant repository tests during development. This workflow is
-# reserved for explicit Live/Release/full-validation requests.
+# reserved for an explicit current owner request for remote CI; Live, release,
+# deployment, merge, or broad-validation intent alone does not authorize it.
 
 name: Aletheia CI
 
