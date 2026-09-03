@@ -792,23 +792,35 @@ def capture_update_continuity_until_settled(
     timeout_sec: float = _POSTFLIGHT_SETTLE_TIMEOUT_SEC,
     poll_sec: float = _POSTFLIGHT_POLL_SEC,
 ) -> dict[str, Any]:
-    """Wait for Gateway readiness, then capture target structural evidence once."""
+    """Wait for Gateway readiness, then capture target structural evidence.
+
+    The updater process may still have pre-pull config modules loaded.  Probe
+    readiness through the target-fresh capture so a target schema/config change
+    cannot make the old loader report a running Gateway as unavailable.
+    """
     started = time.monotonic()
     deadline = started + max(0.0, float(timeout_sec))
     poll = max(0.1, float(poll_sec))
     gateway_started = time.monotonic()
-    if deadline <= gateway_started:
-        gateway = {"available": False, "health_status": None}
+    remaining = deadline - gateway_started
+    if remaining > 0:
+        after = capture_update_continuity_fresh(timeout_sec=min(20.0, remaining))
+        gateway = after.get("gateway") if isinstance(after, dict) else None
+        gateway = gateway if isinstance(gateway, dict) else {"available": False, "health_status": None}
     else:
-        gateway = _gateway_status(timeout_sec=deadline - gateway_started)
+        after = _unavailable_fresh_snapshot("target_postflight_projection_unavailable")
+        gateway = {"available": False, "health_status": None}
     while not _postflight_settled({"gateway": gateway}, target):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         time.sleep(min(poll, remaining))
-        if deadline - time.monotonic() <= 0:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             break
-        gateway = _gateway_status(timeout_sec=max(0.001, deadline - time.monotonic()))
+        after = capture_update_continuity_fresh(timeout_sec=min(20.0, remaining))
+        gateway = after.get("gateway") if isinstance(after, dict) else None
+        gateway = gateway if isinstance(gateway, dict) else {"available": False, "health_status": None}
     gateway_done = time.monotonic()
 
     remaining = deadline - gateway_done
