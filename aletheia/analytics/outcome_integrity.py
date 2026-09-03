@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
+CURRENT_PAPER_FILL_MODEL_VERSION = "paper-order-fill/v1"
 
 ClosureCategory = Literal["strategy", "administrative", "maintenance", "unknown"]
 
@@ -31,6 +32,7 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "maintenance_close",
     "not_marked_eligible",
     "unverified_entry_fill",
+    "unverified_paper_fill_model",
     "unverified_exit_fill",
     "unverified_exit_price_source",
     "unknown_close_category",
@@ -447,12 +449,43 @@ def assess_reportable_outcome(
     assessment = assess_position_closure(row, db=db)
     if not assessment.eligible:
         return assessment
+    if (
+        _normalize(row.get("execution_mode")) == "paper_internal"
+        and _paper_fill_model_version(row, db=db)
+        != CURRENT_PAPER_FILL_MODEL_VERSION
+    ):
+        return replace(
+            assessment,
+            eligible=False,
+            reason="unverified_paper_fill_model",
+        )
     from aletheia.analytics.learning_window import assess_outcome_window
 
     window_reason = assess_outcome_window(row)
     if window_reason != "eligible":
         return replace(assessment, eligible=False, reason=window_reason)
     return assessment
+
+
+def _paper_fill_model_version(row: dict[str, Any], *, db: Any = None) -> str:
+    if "_paper_fill_model_version" in row:
+        return _normalize(row.get("_paper_fill_model_version"))
+    order_id = str(row.get("order_id") or "").strip()
+    if not order_id:
+        return ""
+    try:
+        if db is None:
+            from aletheia.storage.sqlite import get_db
+
+            db = get_db()
+        fill = db.execute(
+            "SELECT paper_fill_model_version FROM fills WHERE order_id=? "
+            "ORDER BY filled_at, id LIMIT 1",
+            (order_id,),
+        ).fetchone()
+    except Exception:
+        return ""
+    return _normalize(fill["paper_fill_model_version"] if fill else None)
 
 
 def raw_account_events(
@@ -505,6 +538,13 @@ def raw_account_events(
         """
         SELECT recent.* FROM (
         SELECT p.*,
+               (
+                   SELECT f.paper_fill_model_version
+                   FROM fills f
+                   WHERE f.order_id = p.order_id
+                   ORDER BY aletheia_instant_us(f.filled_at), f.id
+                   LIMIT 1
+               ) AS _paper_fill_model_version,
                CASE WHEN EXISTS (
                    SELECT 1
                    FROM orders o

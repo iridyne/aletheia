@@ -51,8 +51,12 @@ const workbench: EntryWorkbenchResponse = {
       time_in_force: 'POST_ONLY', price_rule: 'EXACT_LIMIT', max_wait_sec: 60,
       partial_fill_policy: 'KEEP_PARTIAL_CANCEL_REMAINDER', evidence_refs: ['feature:snapshot-1'],
       expected_horizon_hours: 4, max_notional: 100, max_risk_pct: 0.25, max_leverage: 2,
-      required_permission: 'Paper', execution_account_mode: 'bitget_demo', risk_policy_id: 'demo-v1', risk_policy_revision: 1,
+      required_permission: 'Paper', execution_account_mode: 'paper_internal', risk_policy_id: 'demo-v1', risk_policy_revision: 1,
     },
+    monitoring_state: 'degraded',
+    monitoring_evidence_json: JSON.stringify({ channels: { quote: { state: 'ready', reason: null }, trade: { state: 'degraded', reason: 'channel_event_stale' } } }),
+    monitoring_evidence_hash: 'c'.repeat(64),
+    funding_readiness: { ready: false, reason: 'exact_schedule_missing', venue: 'bitget', symbol: 'AVAX/USDT', market_type: 'perp' },
     lineage: {
       order: { id: 'order-1', exchange_order_id: 'exchange-1', status: 'submitted', quantity: 1, position_id: 'position-1' },
       fills: { count: 1, quantity: 0.5, latest_at: '2026-08-28T00:30:00Z' },
@@ -110,6 +114,9 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Entry Plans')
     expect(html).toContain('Planning Queue')
     expect(html).toContain('Planning History')
+    expect(html).toContain('Fast monitoring:')
+    expect(html).toContain('trade: Channel Event Stale')
+    expect(html).toContain('funding Exact Schedule Missing')
     expect(html).not.toContain('Manual Review')
   })
 

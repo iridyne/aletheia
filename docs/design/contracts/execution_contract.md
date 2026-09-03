@@ -131,6 +131,9 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 - open/partial Paper Order 在重启后保持 unresolved authority；旧 generation 不补造 downtime Fill。
   exact quote/trade readiness 建立新 matching generation 后才恢复消费新事件，并留下 monitoring-gap
   事实。一个真实 Trade event 在全部本地 eligible Orders 间只可消费一次，按价格后时间/id 排序。
+- Central outcome eligibility 从 entry Fill 读取 `paper_fill_model_version`，只接纳
+  `paper-order-fill/v1` 的 `paper_internal` Position。旧 instant-fill 或缺失 identity 的记录保留为
+  raw event，并以 `unverified_paper_fill_model` 排除，不能与新模型汇总成同一经济 cohort。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 

@@ -866,6 +866,20 @@ export interface EntryPlan {
   updated_at: string
   terminal_at: string | null
   terminal_reason: string | null
+  monitoring_state?: 'queued' | 'warming' | 'ready' | 'degraded' | 'unavailable' | null
+  monitoring_evidence_json?: string | null
+  monitoring_evidence_hash?: string | null
+  funding_readiness?: {
+    ready: boolean
+    reason: string | null
+    venue?: string
+    symbol?: string
+    market_type?: string
+    snapshot_id?: string
+    source_observed_at?: string | null
+    acquired_at?: string | null
+    next_funding_time?: string
+  }
   contract_valid: boolean
   lineage?: {
     order: { id: string; exchange_order_id: string | null; status: string; quantity: number; position_id: string | null } | null
