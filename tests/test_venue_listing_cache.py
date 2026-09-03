@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+from aletheia.data.symbols import InstrumentId, MARKET_FUTURES, MARKET_PERP, MARKET_SPOT
 from aletheia.data.venue_listing_cache import (
     _CACHE,
     _CACHE_LOCK,
@@ -462,3 +462,104 @@ class TestCcxtProviderPerpDefaultType:
 
         # Pre-existing "spot" value must be restored
         assert exchange_mock.options.get("defaultType") == "spot"
+
+    @pytest.mark.parametrize("market_type", [MARKET_PERP, MARKET_FUTURES])
+    @pytest.mark.asyncio
+    async def test_binance_derivative_ohlcv_uses_usdm_swap_client(self, market_type):
+        from aletheia.data.ccxt_provider import CCXTProvider
+
+        provider = CCXTProvider(exchange="binance", fallback_exchange="binance")
+        client = MagicMock()
+        client.options = {"defaultType": "swap"}
+        created = []
+        observed = []
+
+        async def fetch_ohlcv(_symbol, **kwargs):
+            observed.append((client.options.get("defaultType"), kwargs))
+            return [[1, 10, 11, 9, 10.5, 100]]
+
+        client.fetch_ohlcv = fetch_ohlcv
+        provider._client = lambda name, **options: created.append((name, options)) or client
+
+        result = await provider.get_ohlcv(
+            InstrumentId("binance", "BTC/USDT", market_type),
+            timeframe="5m", limit=1, since=123, _persist_result=False,
+        )
+
+        assert result[0].exchange == "binance"
+        assert created == [("binanceusdm", {"options": {"defaultType": "swap"}})]
+        assert observed == [("swap", {"timeframe": "5m", "since": 123, "limit": 1})]
+
+    @pytest.mark.parametrize("venue", ["bitget", "bybit"])
+    @pytest.mark.asyncio
+    async def test_perp_ohlcv_restores_defaulttype_after_success(self, venue):
+        from aletheia.data.ccxt_provider import CCXTProvider
+
+        client = MagicMock()
+        client.options = {"defaultType": "spot"}
+
+        async def fetch_ohlcv(_symbol, **_kwargs):
+            assert client.options["defaultType"] == "swap"
+            return [[1, 10, 11, 9, 10.5, 100]]
+
+        client.fetch_ohlcv = fetch_ohlcv
+        provider = CCXTProvider(venue, venue)
+        provider._primary = client
+
+        result = await provider.get_ohlcv(
+            InstrumentId(venue, "BTC/USDT", MARKET_PERP),
+            limit=1, since=0, _persist_result=False,
+        )
+
+        assert result.attempts[0].provider == venue
+        assert client.options == {"defaultType": "spot"}
+
+    @pytest.mark.asyncio
+    async def test_perp_ohlcv_restores_absent_defaulttype_after_cancel(self):
+        from aletheia.data.ccxt_provider import CCXTProvider
+
+        client = MagicMock()
+        client.options = {}
+
+        async def fetch_ohlcv(_symbol, **_kwargs):
+            assert client.options["defaultType"] == "swap"
+            raise asyncio.CancelledError
+
+        client.fetch_ohlcv = fetch_ohlcv
+        provider = CCXTProvider("bitget", "bybit")
+        provider._primary = client
+
+        with pytest.raises(asyncio.CancelledError):
+            await provider.get_ohlcv(
+                InstrumentId("bitget", "BTC/USDT", MARKET_PERP),
+                limit=1, since=0, _persist_result=False,
+            )
+
+        assert "defaultType" not in client.options
+
+    @pytest.mark.asyncio
+    async def test_spot_ohlcv_keeps_defaulttype_and_same_venue_attempts_once(self):
+        from aletheia.data.ccxt_provider import CCXTProvider
+
+        client = MagicMock()
+        client.options = {}
+        calls = 0
+
+        async def fetch_ohlcv(_symbol, **_kwargs):
+            nonlocal calls
+            calls += 1
+            assert "defaultType" not in client.options
+            raise RuntimeError("bootstrap failed")
+
+        client.fetch_ohlcv = fetch_ohlcv
+        provider = CCXTProvider("bitget", "bitget")
+        provider._primary = client
+
+        with pytest.raises(RuntimeError, match="bootstrap failed") as exc_info:
+            await provider.get_ohlcv(
+                InstrumentId("bitget", "BTC/USDT", MARKET_SPOT),
+                limit=1, since=0, _persist_result=False,
+            )
+
+        assert calls == 1
+        assert [attempt.provider for attempt in exc_info.value.ohlcv_attempts] == ["bitget"]

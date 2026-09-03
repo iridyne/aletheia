@@ -34,6 +34,7 @@ when a later fetch fails; persistence failures never propagate.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import logging
 import time
 from typing import Any
@@ -189,13 +190,25 @@ class CCXTProvider:
             self._fallback = self._client(self._fallback_name)
         return self._fallback
 
+    @contextmanager
+    def _market_type_context(self, exchange, market_type: str):
+        """Temporarily select the physical derivatives API for one request."""
+        if market_type not in {"perp", "futures"}:
+            yield exchange
+            return
+        had_default_type = "defaultType" in exchange.options
+        previous_default_type = exchange.options.get("defaultType")
+        exchange.options["defaultType"] = "swap"
+        try:
+            yield exchange
+        finally:
+            if had_default_type:
+                exchange.options["defaultType"] = previous_default_type
+            else:
+                exchange.options.pop("defaultType", None)
+
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker:
         ccxt_symbol, canon, market_type = _resolve_ccxt_symbol(symbol)
-        # For perp instruments ccxt requires defaultType="swap" so that Bitget/Bybit
-        # route fetch_ticker to the futures endpoint instead of the spot
-        # instruments-info endpoint.  We set and restore per-call to avoid
-        # mutating shared state across concurrent calls on the same exchange client.
-        _is_perp = market_type == "perp"
         last_err: Exception | None = None
         attempts = (
             (self._primary_name, self._ensure_primary),
@@ -209,17 +222,8 @@ class CCXTProvider:
                 continue
             try:
                 exchange = ensure(market_type)
-                _prev_type = exchange.options.get("defaultType") if _is_perp else None
-                if _is_perp:
-                    exchange.options["defaultType"] = "swap"
-                try:
+                with self._market_type_context(exchange, market_type):
                     raw = await exchange.fetch_ticker(ccxt_symbol)
-                finally:
-                    if _is_perp:
-                        if _prev_type is None:
-                            exchange.options.pop("defaultType", None)
-                        else:
-                            exchange.options["defaultType"] = _prev_type
                 ticker = Ticker(
                     symbol=canon,
                     last_price=_required_ticker_field(
@@ -269,10 +273,12 @@ class CCXTProvider:
 
         last_err: Exception | None = None
         attempts: list[OHLCVAttempt] = []
-        for name, ensure in (
+        for index, (name, ensure) in enumerate((
             (self._primary_name, self._ensure_primary),
             (self._fallback_name, self._ensure_fallback),
-        ):
+        )):
+            if index and name == self._primary_name:
+                continue
             if use_cache and since is None and name != self._primary_name:
                 cached = cache.get(
                     canon, timeframe, limit,
@@ -284,9 +290,11 @@ class CCXTProvider:
                 last_err = VenueCoolingDownError(f"market-data venue cooling down: {name}")
                 continue
             try:
-                raw = await ensure().fetch_ohlcv(
-                    ccxt_symbol, timeframe=timeframe, since=since, limit=limit
-                )
+                exchange = ensure(mkt)
+                with self._market_type_context(exchange, mkt):
+                    raw = await exchange.fetch_ohlcv(
+                        ccxt_symbol, timeframe=timeframe, since=since, limit=limit
+                    )
                 parsed = [
                     parse_ohlcv_candle(row, provider="ccxt", exchange=name)
                     for row in raw

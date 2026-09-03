@@ -76,8 +76,8 @@ async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
             return {"last": 1, "quoteVolume": 0.0, "percentage": 0.0}
 
     provider = CCXTProvider("binance", "bybit")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: BannedExchange())
-    monkeypatch.setattr(provider, "_ensure_fallback", lambda: HealthyExchange())
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: BannedExchange())
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: HealthyExchange())
 
     assert (await _GET_TICKER(provider, "BTC/USDT")).provider == "bybit"
     assert (await _GET_TICKER(provider, "ETH/USDT")).provider == "bybit"
@@ -104,8 +104,8 @@ async def test_ccxt_rejects_invalid_ticker_before_recording_success(monkeypatch)
             return {"last": 2.0, "quoteVolume": 0.0, "percentage": 0.0}
 
     provider = CCXTProvider("binance", "bybit")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: InvalidExchange())
-    monkeypatch.setattr(provider, "_ensure_fallback", lambda: HealthyExchange())
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: InvalidExchange())
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: HealthyExchange())
 
     ticker = await _GET_TICKER(provider, "BTC/USDT")
 
@@ -120,8 +120,8 @@ async def test_ccxt_all_invalid_tickers_are_unavailable(monkeypatch):
             return {"last": float("inf"), "quoteVolume": 1.0, "percentage": 0.0}
 
     provider = CCXTProvider("binance", "bybit")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: InvalidExchange())
-    monkeypatch.setattr(provider, "_ensure_fallback", lambda: InvalidExchange())
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: InvalidExchange())
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: InvalidExchange())
 
     with pytest.raises(ValueError, match="ticker last_price"):
         await _GET_TICKER(provider, "BTC/USDT")
@@ -152,8 +152,8 @@ async def test_ccxt_all_invalid_ohlcv_keeps_venue_cooling_until_valid_data(monke
 
     primary = PrimaryExchange()
     provider = CCXTProvider("binance", "bybit")
-    monkeypatch.setattr(provider, "_ensure_primary", lambda: primary)
-    monkeypatch.setattr(provider, "_ensure_fallback", lambda: FallbackExchange())
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: primary)
+    monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: FallbackExchange())
     monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
 
     result = await _GET_OHLCV(provider, "BTC/USDT", limit=1, since=0)
