@@ -1050,6 +1050,9 @@ def _evaluate_proposal_locked(
 
     # 1. Symbol filter (whitelist or blacklist mode, single list)
     sym_canonical = to_canonical(proposal.symbol)
+    _base_asset, _separator, quote_asset = sym_canonical.partition("/")
+    if quote_asset != "USDT":
+        violations.append(f"unsupported_trading_quote_asset:{quote_asset}")
     filter_set = {to_canonical(s) for s in risk.symbol_list}
     if risk.symbol_filter_mode == "blacklist":
         if sym_canonical in filter_set:
