@@ -342,7 +342,7 @@ def provider_source_time(
 
     acquired_at = acquired_at.astimezone(timezone.utc)
     if parsed > acquired_at + MAX_FUTURE_SKEW:
-        return None, "future"
+        return parsed.isoformat(), "future"
     return parsed.isoformat(), "provided"
 
 

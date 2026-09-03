@@ -94,14 +94,19 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     assert fresh_row(persisted, "funding", now=acquired_at) is None
 
     future_ms = int((acquired_at + timedelta(minutes=6)).timestamp() * 1000)
-    for raw, expected_status in (
-        ({"fundingRate": 0.0001}, "missing"),
-        ({"fundingRate": 0.0001, "timestamp": "bad"}, "invalid"),
-        ({"fundingRate": 0.0001, "timestamp": future_ms}, "future"),
+    for raw, expected_status, expected_source_time in (
+        ({"fundingRate": 0.0001}, "missing", None),
+        ({"fundingRate": 0.0001, "timestamp": "bad"}, "invalid", None),
+        (
+            {"fundingRate": 0.0001, "timestamp": future_ms},
+            "future",
+            (acquired_at + timedelta(minutes=6)).isoformat(),
+        ),
     ):
         snapshot = mod._parse_funding("SOL/USDT", "okx", raw)
         assert snapshot is not None
         assert snapshot.source_time_status == expected_status
+        assert snapshot.source_observed_at == expected_source_time
         assert fresh_row(snapshot.model_dump(), "funding", now=acquired_at) is None
 
     sq.close_db()
