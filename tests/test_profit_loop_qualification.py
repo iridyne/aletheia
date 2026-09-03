@@ -79,7 +79,37 @@ def _complete_cohort(rows: list[dict]) -> oi_module.CompleteOutcomeCohort:
     )
 
 
+def _patch_matching_identity(monkeypatch) -> None:
+    identity = {
+        "deploy_sha": _REGISTRATION["deploy_sha"],
+        "runtime_session_id": _REGISTRATION["runtime_session_id"],
+        "behavior_fingerprint": "behavior-001",
+        "config_hash": "config-001",
+        "policy_epoch_id": _REGISTRATION["policy_epoch_id"],
+        "improvement_id": _REGISTRATION["improvement_id"],
+        "cost_model_id": _REGISTRATION["cost_model_id"],
+        "equivalent_runtime_session_ids": {"session-001"},
+    }
+    monkeypatch.setattr(
+        qual_module,
+        "_resolve_registration_identity",
+        lambda _registration: (identity, None),
+    )
+
+
 def _patch_rows(monkeypatch, rows: list[dict]) -> None:
+    _patch_matching_identity(monkeypatch)
+    rows = [
+        {
+            "producer_commit": _REGISTRATION["deploy_sha"],
+            "behavior_fingerprint": "behavior-001",
+            "closed_runtime_session_id": row.get("runtime_session_id"),
+            "closed_producer_commit": _REGISTRATION["deploy_sha"],
+            "closed_behavior_fingerprint": "behavior-001",
+            **row,
+        }
+        for row in rows
+    ]
     monkeypatch.setattr(
         qual_module,
         "read_complete_outcome_cohort",
@@ -343,6 +373,60 @@ def test_cli_cutoff_mismatch_rejected(tmp_path):
 # Identity filter test (from #1145 fix)
 # ---------------------------------------------------------------------------
 
+def _persist_qualification_identity(*, equivalent_restart: bool = False) -> None:
+    from aletheia.learning.policy_epochs import build_policy_epoch
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RuntimeSession
+    from aletheia.storage.sqlite import get_db
+
+    for session_id, commit, fingerprint, config in (
+        ("session-001", _REGISTRATION["deploy_sha"], "behavior-001", "config-001"),
+        *(
+            (("session-restart", _REGISTRATION["deploy_sha"], "behavior-001", "config-001"),)
+            if equivalent_restart
+            else ()
+        ),
+        ("session-other", "different-commit", "different-behavior", "different-config"),
+    ):
+        repo.insert_runtime_session(
+            RuntimeSession(
+                session_id=session_id,
+                boot_commit=commit,
+                behavior_fingerprint=fingerprint,
+                config_hash=config,
+            )
+        )
+    values = {
+        "deploy_sha": _REGISTRATION["deploy_sha"],
+        "runtime_session_id": "session-001",
+        "behavior_fingerprint": "behavior-001",
+        "config_hash": "config-001",
+        "improvement_id": _REGISTRATION["improvement_id"],
+        "cost_model_id": _REGISTRATION["cost_model_id"],
+    }
+    epoch = build_policy_epoch(
+        "frozen_profit_loop_qualification",
+        values,
+        affected_path_ids=("profit_loop_qualification",),
+    )
+    get_db().execute(
+        "INSERT INTO learning_policy_epochs "
+        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
+        "affected_path_ids_json, safety_required, started_at, created_at) "
+        "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+        (
+            _REGISTRATION["policy_epoch_id"],
+            epoch.epoch_kind,
+            epoch.epoch_hash,
+            json.dumps(epoch.effective_values, sort_keys=True),
+            json.dumps(epoch.affected_path_ids),
+            "2025-12-31T00:00:00+00:00",
+            "2025-12-31T00:00:00+00:00",
+        ),
+    )
+    get_db().commit()
+
+
 def test_identity_filter_prevents_epoch_pooling(monkeypatch):
     """Two profitable epochs in the same window: only the registered one contributes."""
     epoch_a = [
@@ -373,6 +457,127 @@ def test_identity_filter_prevents_epoch_pooling(monkeypatch):
     assert result["metrics"]["total_eligible_closes"] == 4
     assert result["metrics"]["net_realized_pnl"] < 0
     assert result["funnel"]["identity_mismatched_count"] == 6
+
+
+def test_closing_producer_mismatch_cannot_enter_registered_cohort(monkeypatch):
+    rows = [
+        {
+            "realized_pnl": 1.0,
+            "opened_at": "2026-01-02T00:00:00+00:00",
+            "closed_at": f"2026-01-0{3 + index}T12:00:00+00:00",
+            "execution_mode": "paper_internal",
+            "runtime_session_id": "session-001",
+            "producer_commit": _REGISTRATION["deploy_sha"],
+            "behavior_fingerprint": "behavior-001",
+            "closed_runtime_session_id": closed_session,
+            "closed_producer_commit": closed_commit,
+            "closed_behavior_fingerprint": closed_fingerprint,
+        }
+        for index, (closed_session, closed_commit, closed_fingerprint) in enumerate(
+            (
+                ("session-001", _REGISTRATION["deploy_sha"], "behavior-001"),
+                ("session-other", "different-commit", "different-behavior"),
+            )
+        )
+    ]
+    _patch_rows(monkeypatch, rows)
+
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+
+    assert result["metrics"]["total_eligible_closes"] == 1
+    assert result["funnel"]["identity_mismatched_count"] == 1
+
+
+def test_missing_closing_producer_identity_is_excluded_visibly(monkeypatch):
+    [row] = _make_outcomes([1.0])
+    row["closed_runtime_session_id"] = None
+    _patch_rows(monkeypatch, [row])
+
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+
+    assert result["verdict"] == "insufficient_data"
+    assert result["funnel"]["identity_mismatch_reasons"] == {
+        "closing_runtime_session_missing": 1
+    }
+
+
+def test_registration_identity_is_resolved_from_durable_runtime_and_policy(monkeypatch):
+    _persist_qualification_identity(equivalent_restart=True)
+    rows = [
+        {
+            "realized_pnl": 1.0,
+            "opened_at": "2026-01-02T00:00:00+00:00",
+            "closed_at": f"2026-01-0{3 + index}T12:00:00+00:00",
+            "execution_mode": "paper_internal",
+            "runtime_session_id": "session-001",
+            "producer_commit": _REGISTRATION["deploy_sha"],
+            "behavior_fingerprint": "behavior-001",
+            "closed_runtime_session_id": closed_session,
+            "closed_producer_commit": closed_commit,
+            "closed_behavior_fingerprint": closed_fingerprint,
+        }
+        for index, (closed_session, closed_commit, closed_fingerprint) in enumerate(
+            (
+                ("session-restart", _REGISTRATION["deploy_sha"], "behavior-001"),
+                ("session-other", "different-commit", "different-behavior"),
+            )
+        )
+    ]
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: _complete_cohort(rows),
+    )
+
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+
+    assert result["metrics"]["total_eligible_closes"] == 1
+    assert result["funnel"]["identity_mismatch_reasons"] == {
+        "closing_runtime_session_mismatch": 1
+    }
+    assert result["funnel"]["cohort_identity"]["policy_epoch_id"] == "epoch-001"
+
+
+def test_forged_registration_deploy_sha_fails_before_outcome_read(monkeypatch):
+    _persist_qualification_identity()
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("unresolved registration must not read outcomes"),
+    )
+
+    result = compile_qualification_verdict(
+        registration={**_REGISTRATION, "deploy_sha": "forged"}
+    )
+
+    assert result["verdict"] == "insufficient_data"
+    assert result["metrics"]["reason"] == "deploy_sha_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    (
+        ("policy_epoch_id", "forged-epoch", "policy_epoch_not_recorded"),
+        ("improvement_id", "forged-improvement", "policy_epoch_identity_mismatch"),
+        ("cost_model_id", "forged-cost", "policy_epoch_identity_mismatch"),
+    ),
+)
+def test_forged_registered_policy_identity_fails_closed(
+    monkeypatch, field, value, reason
+):
+    _persist_qualification_identity()
+    monkeypatch.setattr(
+        qual_module,
+        "read_complete_outcome_cohort",
+        lambda **_: pytest.fail("unresolved registration must not read outcomes"),
+    )
+
+    result = compile_qualification_verdict(
+        registration={**_REGISTRATION, field: value}
+    )
+
+    assert result["verdict"] == "insufficient_data"
+    assert result["metrics"]["reason"] == reason
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +657,7 @@ def test_loss_first_drawdown_from_zero_starting_equity(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_unavailable_cohort_returns_hashed_insufficient_data(monkeypatch):
+    _patch_matching_identity(monkeypatch)
     unavailable = oi_module.CompleteOutcomeCohort(
         rows=(),
         assessments=(),
@@ -489,6 +695,7 @@ def test_loss_before_newest_10000_is_included_in_sqlite_qualification():
     """The authority verdict must evaluate the complete registered cohort."""
     from aletheia.storage.sqlite import get_db
 
+    _persist_qualification_identity()
     db = get_db()
     db.execute(
         "INSERT INTO opportunities (id, symbol, market) VALUES (?, ?, ?)",
@@ -566,6 +773,11 @@ def test_loss_before_newest_10000_is_included_in_sqlite_qualification():
                 0.0,
                 "cohort-opportunity",
                 "session-001",
+                _REGISTRATION["deploy_sha"],
+                "behavior-001",
+                "session-001",
+                _REGISTRATION["deploy_sha"],
+                "behavior-001",
             )
         )
 
@@ -587,10 +799,12 @@ def test_loss_before_newest_10000_is_included_in_sqlite_qualification():
             entry_fill_verified, exit_price_source, exit_fill_verified,
             outcome_eligible, outcome_exclusion_reason, outcome_semantics_version,
             funding_cost, funding_source, opened_at, closed_at, entry_fee,
-            exit_fee, opportunity_id, runtime_session_id
+            exit_fee, opportunity_id, runtime_session_id, producer_commit,
+            behavior_fingerprint, closed_runtime_session_id,
+            closed_producer_commit, closed_behavior_fingerprint
         ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
         positions,

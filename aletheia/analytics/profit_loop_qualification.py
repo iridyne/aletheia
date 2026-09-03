@@ -10,6 +10,7 @@ cutoff_at only at evaluation time is rejected to prevent optional stopping.
 """
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timezone
 from aletheia.analytics.profit_gradient_evidence import _parse_utc, _iso
@@ -42,6 +43,114 @@ REQUIRED_REGISTRATION_KEYS: tuple[str, ...] = (
 _DEFAULT_CONCENTRATION_TOP1_CAP = 0.25
 _DEFAULT_CONCENTRATION_TOP5_CAP = 0.50
 _MIN_ELIGIBLE_DAYS = 2
+
+
+def _resolve_registration_identity(
+    registration: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Resolve preregistered labels to existing durable runtime/policy owners."""
+
+    from aletheia.learning.policy_epochs import build_policy_epoch
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    session = db.execute(
+        "SELECT session_id, boot_commit, config_hash, behavior_fingerprint "
+        "FROM runtime_sessions WHERE session_id=?",
+        (str(registration["runtime_session_id"]),),
+    ).fetchone()
+    if session is None:
+        return None, "runtime_session_not_recorded"
+    required_session = ("boot_commit", "config_hash", "behavior_fingerprint")
+    if any(not str(session[key] or "").strip() for key in required_session):
+        return None, "runtime_session_identity_incomplete"
+    if str(session["boot_commit"]) != str(registration["deploy_sha"]):
+        return None, "deploy_sha_mismatch"
+
+    epoch = db.execute(
+        "SELECT * FROM learning_policy_epochs WHERE epoch_id=?",
+        (str(registration["policy_epoch_id"]),),
+    ).fetchone()
+    if epoch is None:
+        return None, "policy_epoch_not_recorded"
+    try:
+        values = json.loads(epoch["effective_values_json"])
+        raw_affected_paths = json.loads(epoch["affected_path_ids_json"])
+        if not isinstance(values, dict) or not isinstance(raw_affected_paths, list):
+            raise ValueError
+        affected_paths = tuple(str(path) for path in raw_affected_paths)
+        rebuilt = build_policy_epoch(
+            str(epoch["epoch_kind"]),
+            values,
+            affected_path_ids=affected_paths,
+            safety_required=bool(epoch["safety_required"]),
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None, "policy_epoch_malformed"
+    if rebuilt.epoch_hash != epoch["effective_values_hash"]:
+        return None, "policy_epoch_hash_mismatch"
+    if "profit_loop_qualification" not in affected_paths:
+        return None, "policy_epoch_scope_mismatch"
+    expected_values = {
+        "deploy_sha": str(session["boot_commit"]),
+        "runtime_session_id": str(session["session_id"]),
+        "behavior_fingerprint": str(session["behavior_fingerprint"]),
+        "config_hash": str(session["config_hash"]),
+        "improvement_id": str(registration["improvement_id"]),
+        "cost_model_id": str(registration["cost_model_id"]),
+    }
+    if any(values.get(key) != value for key, value in expected_values.items()):
+        return None, "policy_epoch_identity_mismatch"
+    epoch_started = _parse_utc(epoch["started_at"], field="policy_epoch.started_at")
+    registration_started = _parse_utc(
+        registration["registration_at"], field="registration_at"
+    )
+    cutoff = _parse_utc(registration["cutoff_at"], field="cutoff_at")
+    if epoch_started > registration_started:
+        return None, "policy_epoch_started_after_registration"
+    if epoch["ended_at"] and _parse_utc(
+        epoch["ended_at"], field="policy_epoch.ended_at"
+    ) < cutoff:
+        return None, "policy_epoch_ended_before_cutoff"
+
+    equivalent_sessions = {
+        str(row["session_id"])
+        for row in db.execute(
+            "SELECT session_id FROM runtime_sessions WHERE boot_commit=? "
+            "AND config_hash=? AND behavior_fingerprint=?",
+            (
+                session["boot_commit"],
+                session["config_hash"],
+                session["behavior_fingerprint"],
+            ),
+        ).fetchall()
+    }
+    return {
+        **expected_values,
+        "policy_epoch_id": str(epoch["epoch_id"]),
+        "equivalent_runtime_session_ids": equivalent_sessions,
+    }, None
+
+
+def _outcome_identity_mismatch_reason(
+    row: dict[str, Any], identity: dict[str, Any]
+) -> str | None:
+    if row.get("runtime_session_id") != identity["runtime_session_id"]:
+        return "opening_runtime_session_mismatch"
+    if row.get("producer_commit") != identity["deploy_sha"]:
+        return "opening_deploy_sha_mismatch"
+    if row.get("behavior_fingerprint") != identity["behavior_fingerprint"]:
+        return "opening_behavior_fingerprint_mismatch"
+    closed_session = row.get("closed_runtime_session_id")
+    if not closed_session:
+        return "closing_runtime_session_missing"
+    if closed_session not in identity["equivalent_runtime_session_ids"]:
+        return "closing_runtime_session_mismatch"
+    if row.get("closed_producer_commit") != identity["deploy_sha"]:
+        return "closing_deploy_sha_mismatch"
+    if row.get("closed_behavior_fingerprint") != identity["behavior_fingerprint"]:
+        return "closing_behavior_fingerprint_mismatch"
+    return None
 
 
 def _finalize_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -176,13 +285,33 @@ def compile_qualification_verdict(
     )
     max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
 
+    registration_hash = sha256_json(registration)
+    try:
+        identity, identity_reason = _resolve_registration_identity(registration)
+    except Exception:
+        identity, identity_reason = None, "registration_identity_unavailable"
+    if identity is None:
+        return _finalize_artifact({
+            "contract_version": QUALIFICATION_CONTRACT_VERSION,
+            "verdict": "insufficient_data",
+            "registration": registration,
+            "registration_hash": registration_hash,
+            "metrics": {"reason": identity_reason},
+            "gates": {},
+            "funnel": {
+                "cohort_complete": False,
+                "cohort_state": "unavailable",
+                "identity_mismatch_reasons": {str(identity_reason): 1},
+            },
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        })
+
     # One complete window read supplies identity, exclusions, and economics.
     cohort = read_complete_outcome_cohort(
         execution_mode=execution_mode,
         closed_after=registration_at,
         closed_before=cutoff_at,
     )
-    registration_hash = sha256_json(registration)
     if not cohort.cohort_complete:
         return _finalize_artifact({
             "contract_version": QUALIFICATION_CONTRACT_VERSION,
@@ -202,11 +331,16 @@ def compile_qualification_verdict(
             "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         })
 
-    target_pairs = [
-        (row, assessment)
-        for row, assessment in zip(cohort.rows, cohort.assessments, strict=True)
-        if row.get("runtime_session_id") == runtime_session_id
-    ]
+    target_pairs: list[tuple[dict[str, Any], Any]] = []
+    identity_mismatch_reasons: dict[str, int] = {}
+    for row, assessment in zip(cohort.rows, cohort.assessments, strict=True):
+        reason = _outcome_identity_mismatch_reason(row, identity)
+        if reason is None:
+            target_pairs.append((row, assessment))
+        else:
+            identity_mismatch_reasons[reason] = (
+                identity_mismatch_reasons.get(reason, 0) + 1
+            )
     registered_pairs: list[tuple[dict[str, Any], Any]] = []
     try:
         for row, assessment in target_pairs:
@@ -246,7 +380,6 @@ def compile_qualification_verdict(
                 exclusion_reasons.get(assessment.reason, 0) + 1
             )
     source_raw_count = len(registered_rows)
-    loaded_raw_count = len(registered_rows)
     ordered_source_digest = sha256_json(registered_rows)
 
     # ------------------------------------------------------------------
@@ -302,16 +435,23 @@ def compile_qualification_verdict(
         "cohort_filtered_count": len(ordered_pnls),
         "pre_policy_excluded_count": len(target_pairs) - len(registered_pairs),
         "identity_mismatched_count": len(cohort.rows) - len(target_pairs),
+        "identity_mismatch_reasons": dict(sorted(identity_mismatch_reasons.items())),
         "outcome_exclusion_reasons": dict(sorted(exclusion_reasons.items())),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
-        "source_raw_event_count": source_raw_count,
-        "loaded_raw_event_count": loaded_raw_count,
+        "source_raw_event_count": cohort.source_raw_event_count,
+        "loaded_raw_event_count": cohort.loaded_raw_event_count,
         "cohort_complete": True,
         "cohort_state": cohort.cohort_state,
         "ordered_source_digest": ordered_source_digest,
         "cohort_identity": {
             **cohort.identity,
             "runtime_session_id": runtime_session_id,
+            "deploy_sha": identity["deploy_sha"],
+            "behavior_fingerprint": identity["behavior_fingerprint"],
+            "config_hash": identity["config_hash"],
+            "policy_epoch_id": identity["policy_epoch_id"],
+            "improvement_id": identity["improvement_id"],
+            "cost_model_id": identity["cost_model_id"],
             "opened_after": registration_at,
         },
     }
