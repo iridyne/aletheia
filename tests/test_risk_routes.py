@@ -73,6 +73,46 @@ async def test_kill_switch_activate_and_release(client):
 
 
 @pytest.mark.anyio
+async def test_brake_audit_failure_preserves_directional_safety(client, monkeypatch):
+    from aletheia.risk import kill_switch
+
+    monkeypatch.setattr(kill_switch, "write_audit", lambda _event: False)
+
+    engaged = await client.post(
+        "/api/risk/brakes/demo",
+        json={"active": True, "reason": "forced audit outage"},
+    )
+    assert engaged.status_code == 200
+    assert engaged.json()["demo_active"] is True
+    assert engaged.json()["audit_status"] == "degraded_retry_required"
+
+    released = await client.post(
+        "/api/risk/brakes/demo",
+        json={"active": False, "confirm_release": True},
+    )
+    assert released.status_code == 503
+    assert released.json()["detail"]["error"] == "audit_write_failed"
+    assert kill_switch.is_active("demo") is True
+
+
+@pytest.mark.anyio
+async def test_brake_release_fails_closed_when_audit_is_unavailable(client, monkeypatch):
+    from aletheia.risk import kill_switch
+
+    kill_switch.activate(reason="setup", actor="human", scope="demo")
+    monkeypatch.setattr(kill_switch, "write_audit", lambda _event: False)
+
+    released = await client.post(
+        "/api/risk/brakes/demo",
+        json={"active": False, "confirm_release": True},
+    )
+
+    assert released.status_code == 503
+    assert released.json()["detail"]["error"] == "audit_write_failed"
+    assert kill_switch.is_active("demo") is True
+
+
+@pytest.mark.anyio
 async def test_mode_brakes_are_independent_from_global_kill_switch(client):
     engaged = await client.post(
         "/api/risk/brakes/demo",
@@ -82,6 +122,7 @@ async def test_mode_brakes_are_independent_from_global_kill_switch(client):
     assert engaged.json() == {
         "scope": "demo",
         "active": True,
+        "audit_status": "mirrored",
         "global_active": False,
         "demo_active": True,
         "live_active": False,
