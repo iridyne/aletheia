@@ -289,10 +289,12 @@ def compile_qualification_verdict(
             "all fields including cutoff_at must be preregistered before outcome inspection"
         )
 
+    execution_mode = str(registration["execution_mode"])
+    if execution_mode != "paper_internal":
+        raise ValueError("execution_mode must be exactly paper_internal")
     cutoff_at = str(registration["cutoff_at"])
     registration_at = str(registration["registration_at"])
     runtime_session_id = str(registration["runtime_session_id"])
-    execution_mode = str(registration["execution_mode"])
 
     # Temporal consistency: registration must precede the declared stopping rule.
     reg_dt = _parse_utc(registration_at, field="registration_at")
