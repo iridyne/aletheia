@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import SRC from './RiskControls.tsx?raw'
 import { fmtSymbol } from '../lib/format'
-import { classifyRiskPolicyMode, marketTypesFromOpenPositions, openPositionRows, preferPerpMarketType } from './RiskControls'
+import { classifyRiskPolicyMode, marketTypesFromOpenPositions, openPositionRows, portfolioPositionRows, preferPerpMarketType } from './RiskControls'
 
 describe('RiskControls trust-path mutations', () => {
   it('fails closed when authoritative reads are unavailable', () => {
@@ -81,5 +81,18 @@ describe('RiskControls trust-path mutations', () => {
     ])).toEqual({})
 
     expect(openPositionRows([...spotOpenPerpClosed].reverse()).map(p => p.market_type)).toEqual(['spot'])
+  })
+
+  it('uses only positions carrying the portfolio execution-mode identity', () => {
+    const mixed = [
+      { id: 'paper', status: 'open', execution_mode: 'paper_internal' },
+      { id: 'okx', status: 'open', execution_mode: 'okx_demo' },
+    ]
+    expect(portfolioPositionRows({
+      execution_mode: 'okx_demo',
+      execution_mode_status: 'resolved',
+      positions: mixed,
+    })).toEqual([mixed[1]])
+    expect(portfolioPositionRows({ positions: mixed })).toBeNull()
   })
 })

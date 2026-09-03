@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import { fmtNum, fmtSigned } from '../lib/format'
-import { positionFreshness, positionKeys } from '../lib/queryKeys'
 
 export default function AccountSnapshot() {
   const navigate = useNavigate()
@@ -12,13 +11,15 @@ export default function AccountSnapshot() {
     isError: portfolioError,
     dataUpdatedAt: portfolioUpdatedAt,
   } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  const { data: positions, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
-
-  const positionsUnavailable = positionsError && positions == null
-  const openPositions = positions ? positions.filter(p => p.status === 'open') : []
-
   const p = portfolio as any
   const portfolioAvailable = p != null
+  const positionScopeAvailable = p?.execution_mode_status === 'resolved'
+    && typeof p?.execution_mode === 'string'
+    && p.execution_mode.trim() !== ''
+  const openPositionsRaw = p?.positions_count == null ? null : Number(p.positions_count)
+  const openPositions = positionScopeAvailable && Number.isFinite(openPositionsRaw)
+    ? openPositionsRaw
+    : null
   const cachedPortfolioAgeSec = portfolioAvailable && portfolioUpdatedAt > 0
     ? Math.max(0, Math.round((Date.now() - portfolioUpdatedAt) / 1000))
     : null
@@ -86,8 +87,8 @@ export default function AccountSnapshot() {
       />
       <MetricTile
         label="Open Positions"
-        value={positionsUnavailable ? 'not available' : openPositions.length}
-        tone={openPositions.length > 0 ? 'neutral' : 'muted'}
+        value={openPositions ?? 'not available'}
+        tone={openPositions != null && openPositions > 0 ? 'neutral' : 'muted'}
         onClick={() => navigate('/trades')}
       />
     </div>
