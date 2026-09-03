@@ -707,16 +707,22 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
     assert remaining == {"k-100d", "k-60d", "k-10d"}
 
 
-def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
+@pytest.mark.parametrize(
+    "record_version",
+    ["candidate-selection-utility-record/v1", "candidate-selection-utility-record/v2"],
+)
+def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay(record_version):
     from aletheia.storage import repositories as repo
     from aletheia.storage.repositories import prune_filter_candidate_outcomes
     from aletheia.storage.models import AuditEvent
 
     _seed_filter_candidate_outcome(key="candidate-selection-retained", entry_ts=_iso(100))
+    _seed_filter_candidate_outcome(key="candidate-selection-post-admission", entry_ts=_iso(40))
     db = get_db()
     db.execute(
         "UPDATE filter_candidate_outcomes SET scanner_family='candidate_selection_utility' "
-        "WHERE outcome_candidate_key='candidate-selection-retained'"
+        "WHERE outcome_candidate_key IN "
+        "('candidate-selection-retained', 'candidate-selection-post-admission')"
     )
     db.execute(
         "INSERT INTO universe_twin_shadow_batches "
@@ -725,10 +731,10 @@ def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
         "feature_source_fingerprint, metric_version, allocator_random_state_json, "
         "policy_json, allocation_context_json, candidate_count, promotion_eligible, "
         "blocking_reasons_json, batch_hash, captured_at) VALUES "
-        "('candidate-retention-run', 'candidate-selection-utility-record/v1', "
+        "('candidate-retention-run', ?, "
         "'legacy', 'target', 'replay', 'admitted-epoch', 'features', 'metric', "
         "'null', '{}', '{}', 1, 0, '[]', 'batch-hash', ?)",
-        (_iso(100),),
+        (record_version, _iso(100)),
     )
     db.execute(
         "INSERT INTO universe_twin_shadow_records "
@@ -742,7 +748,33 @@ def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
             _iso(100),
         ),
     )
+    db.execute(
+        "INSERT INTO universe_twin_shadow_batches "
+        "(scanner_run_id, record_version, authority_behavior_version, "
+        "shadow_behavior_version, allocation_replay_contract, policy_epoch_id, "
+        "feature_source_fingerprint, metric_version, allocator_random_state_json, "
+        "policy_json, allocation_context_json, candidate_count, promotion_eligible, "
+        "blocking_reasons_json, batch_hash, captured_at) VALUES "
+        "('candidate-post-admission-run', ?, "
+        "'legacy', 'target', 'replay', 'admitted-epoch', 'features', 'metric', "
+        "'null', '{}', '{}', 1, 0, '[]', 'post-batch-hash', ?)",
+        (record_version, _iso(40)),
+    )
+    db.execute(
+        "INSERT INTO universe_twin_shadow_records "
+        "(id, scanner_run_id, candidate_key, candidate_index, symbol, market_type, "
+        "authority_total_score, shadow_authority_applied, promotion_eligible, "
+        "shadow_valid, compact_output_json, input_json, record_hash, captured_at) "
+        "VALUES ('candidate-post-admission-record', 'candidate-post-admission-run', "
+        "'post-candidate', 0, 'BTC/USDT', 'perp', 1, 1, 1, 1, ?, '{}', "
+        "'post-record-hash', ?)",
+        (
+            '{"outcome_candidate_keys":{"long":"candidate-selection-post-admission"}}',
+            _iso(40),
+        ),
+    )
     repo.insert_audit_event(AuditEvent(
+        timestamp=_iso(50),
         actor="human",
         source="dashboard",
         event_type="candidate_selection_authority_admitted",
@@ -751,11 +783,15 @@ def test_candidate_selection_outcomes_are_retained_for_fixed_look_replay():
     ))
     db.commit()
 
-    assert prune_filter_candidate_outcomes(days=30) == 0
+    assert prune_filter_candidate_outcomes(days=30) == 1
     assert db.execute(
         "SELECT 1 FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key='candidate-selection-retained'"
     ).fetchone()
+    assert db.execute(
+        "SELECT 1 FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='candidate-selection-post-admission'"
+    ).fetchone() is None
 
 def test_dropping_unmeasured_filter_outcomes_is_recorded_in_the_audit_chain():
     """Evidence deleted before it was ever measured must not vanish silently.

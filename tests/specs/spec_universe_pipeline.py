@@ -125,6 +125,11 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             "candidate_selection_policy": "candidate_selection_utility_v1",
             "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
             "candidate_selection_utility_pct": 1.0,
+            "opportunity_mechanism": "continuation",
+            "opportunity_mechanism_version": "continuation/v1",
+            "opportunity_source_component": "momentum",
+            "opportunity_source_cutoff_at": "2026-09-03T00:00:00+00:00",
+            "opportunity_evidence_hash": "a" * 64,
         }]
     previous = UniverseSnapshot(
         id="previous-healthy-universe",
@@ -354,6 +359,11 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
                 "candidate_selection_policy": "candidate_selection_utility_v1",
                 "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
                 "candidate_selection_utility_pct": 1.0,
+                "opportunity_mechanism": "continuation",
+                "opportunity_mechanism_version": "continuation/v1",
+                "opportunity_source_component": "momentum",
+                "opportunity_source_cutoff_at": "2026-09-03T00:00:00+00:00",
+                "opportunity_evidence_hash": "a" * 64,
             }],
         )
         monkeypatch.setattr(

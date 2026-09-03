@@ -112,6 +112,7 @@ def candidate_selection_policy_identity(
     if not isinstance(universe, UniverseConfig):
         raise TypeError("candidate_selection_universe_config_required")
     identity: dict[str, object] = {
+        "semantic_manifest": candidate_selection_semantic_manifest(),
         "max_candidates": universe.max_candidates,
         "min_volume_24h_usdt": universe.min_volume_24h_usdt,
         "max_spread_bps": universe.max_spread_bps,
@@ -174,18 +175,37 @@ def candidate_selection_policy_identity(
             "behavior_version": REGIME_DETECTOR_BEHAVIOR_VERSION,
             **cfg.regime.model_dump(mode="json"),
         }
-    try:
-        from aletheia.agent_runtime.runtime_session import current_provenance
-
-        provenance = current_provenance()
-    except Exception:
-        provenance = {}
-    if provenance.get("producer_commit") and provenance.get("behavior_fingerprint"):
-        identity["runtime_identity"] = {
-            "producer_commit": provenance["producer_commit"],
-            "behavior_fingerprint": provenance["behavior_fingerprint"],
-        }
     return identity
+
+
+def candidate_selection_semantic_manifest() -> dict[str, str]:
+    """Version only the code contracts that can change Candidate economics."""
+
+    from aletheia.universe.candidate_eligibility import (
+        HARD_GATE_POLICY_VERSION,
+        HARD_GATE_VERSION,
+    )
+    from aletheia.universe.candidate_selection_utility import (
+        CANDIDATE_SELECTION_UTILITY_VERSION,
+    )
+    from aletheia.universe.continuous_scoring import CONTINUOUS_SCORER_BEHAVIOR_VERSION
+    from aletheia.universe.economic_utility import (
+        CANDIDATE_SELECTION_OUTCOME_VERSION,
+        ECONOMIC_ESTIMATOR_VERSION,
+    )
+    from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    return {
+        "hard_gate": HARD_GATE_VERSION,
+        "hard_gate_policy": HARD_GATE_POLICY_VERSION,
+        "opportunity_evidence": OPPORTUNITY_EVIDENCE_VERSION,
+        "continuous_scoring": CONTINUOUS_SCORER_BEHAVIOR_VERSION,
+        "economic_estimator": ECONOMIC_ESTIMATOR_VERSION,
+        "outcome_contract": CANDIDATE_SELECTION_OUTCOME_VERSION,
+        "cost_model": COST_MODEL_VERSION,
+        "candidate_selection": CANDIDATE_SELECTION_UTILITY_VERSION,
+    }
 
 
 def learning_candidate_selection_overlap_block_reason(
@@ -276,6 +296,7 @@ def candidate_selection_authority_block_reason(
 __all__ = [
     "LEGACY_CANDIDATE_POLICY",
     "TARGET_CANDIDATE_POLICY",
+    "candidate_selection_semantic_manifest",
     "candidate_selection_policy_identity",
     "learning_candidate_selection_overlap_block_reason",
     "candidate_selection_overlap_block_reason",

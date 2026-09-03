@@ -149,8 +149,10 @@ def test_opportunity_evidence_maps_mechanisms_without_summing_short_bias():
         source_cutoff_at="2026-09-02T00:00:00+00:00",
     )
     continuation = next(item for item in conflict.mechanisms if item.mechanism_id == "continuation")
-    assert continuation.applicability == "unavailable"
-    assert continuation.reason_codes == ("mechanism_direction_conflict",)
+    assert continuation.applicability == "applicable"
+    assert continuation.direction == "long"
+    assert continuation.source_component_id == "momentum"
+    assert "diagnostic_component:short_bias:short" in continuation.reason_codes
 
 
 def test_within_run_percentile_requires_twenty_and_average_ranks_ties():
@@ -209,7 +211,7 @@ def _outcomes(count: int = 60):
             "estimated_fee_pct": 0.1,
             "estimated_spread_slippage_pct": 0.1,
             "estimated_funding_pct": 0.0,
-            "mechanism_behavior_version": "universe-opportunity-evidence/v1",
+            "mechanism_behavior_version": "universe-opportunity-evidence/v2",
             "outcome_contract_version": "candidate-selection-utility-outcome/v1",
             "cost_assumptions": {
                 "execution_fee_pct": 0.06,
@@ -482,7 +484,7 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator():
     assert loaded
     assert {
         row["mechanism_behavior_version"] for row in loaded
-    } == {"universe-opportunity-evidence/v1"}
+    } == {"universe-opportunity-evidence/v2"}
     assert {
         row["outcome_contract_version"] for row in loaded
     } == {"candidate-selection-utility-outcome/v1"}
@@ -643,7 +645,9 @@ def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
     assert selected == ["OTHER/USDT"]
 
 
-def test_shadow_retains_full_supported_multi_mechanism_record():
+def test_shadow_compacts_supported_multi_mechanism_record():
+    import json
+
     historical = [
         {
             **row,
@@ -689,7 +693,12 @@ def test_shadow_retains_full_supported_multi_mechanism_record():
         historical_outcomes=historical,
     )
     assert len(bundle.evidence) == 20
-    assert max(len(row.compact_output_json.encode()) for row in bundle.evidence) > 8 * 1024
+    payload = json.loads(bundle.evidence[0].compact_output_json)
+    assert {
+        item["mechanism_id"]
+        for item in payload["candidate_selection"]["opportunity_evidence"]["mechanisms"]
+    } == {"continuation", "reversal", "positioning_forced_flow", "information_catalyst"}
+    assert max(len(row.compact_output_json.encode()) for row in bundle.evidence) < 6 * 1024
 
 
 def test_candidate_selection_authority_requires_qualification_and_projects_target():
@@ -971,9 +980,22 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
         boot_commit="candidate-deployed-commit",
         behavior_fingerprint="candidate-runtime-behavior",
     ))
+    repo.insert_runtime_session(RuntimeSession(
+        session_id="candidate-runtime-after-nonsemantic-deploy",
+        boot_commit="candidate-unrelated-deploy-commit",
+        behavior_fingerprint="candidate-runtime-behavior",
+    ))
     for index in range(50):
         captured = start + timedelta(hours=index * 4)
         run_id = f"fixed-look-{index:02d}"
+        runtime_session_id = (
+            "candidate-runtime-after-nonsemantic-deploy"
+            if index >= 25 else "candidate-runtime"
+        )
+        runtime_commit = (
+            "candidate-unrelated-deploy-commit"
+            if index >= 25 else "candidate-deployed-commit"
+        )
         records = []
         outcomes = []
         for candidate_index, (target_selected, legacy_selected, net) in enumerate(
@@ -1053,11 +1075,11 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
                 settlement_price_source="horizon_ohlcv",
                 settlement_lag_sec=60.0,
                 cost_model_version="v1",
-                producer_runtime_session_id="candidate-runtime",
-                producer_commit="candidate-deployed-commit",
+                producer_runtime_session_id=runtime_session_id,
+                producer_commit=runtime_commit,
                 producer_behavior_fingerprint="candidate-runtime-behavior",
-                settlement_runtime_session_id="candidate-runtime",
-                settlement_producer_commit="candidate-deployed-commit",
+                settlement_runtime_session_id=runtime_session_id,
+                settlement_producer_commit=runtime_commit,
                 settlement_behavior_fingerprint="candidate-runtime-behavior",
                 status="settled",
             ))
@@ -1077,12 +1099,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
             allocator_random_state_json="null",
             policy_json=json.dumps({
                 "universe": {"max_candidates": 2},
-                "selection_policy": {
-                    "runtime_identity": {
-                        "producer_commit": "candidate-deployed-commit",
-                        "behavior_fingerprint": "candidate-runtime-behavior",
-                    },
-                },
+                "selection_policy": {"semantic_manifest": {"estimator": "v2"}},
             }),
             allocation_context_json="{}",
             candidate_count=2,
@@ -1204,7 +1221,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
         "WHERE outcome_candidate_key=?",
         (
             outcomes[0].settled_at,
-            outcomes[0].producer_commit,
+            "candidate-deployed-commit",
             "candidate-selection-utility:v1:fixed-look-00:0:long",
         ),
     )
@@ -1218,6 +1235,10 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
     assert report["qualification_eligible"] is True
     assert report["promotion_eligible"] is True
     assert report["owner_admission_required"] is True
+    assert report["runtime_provenance"]["producer_commits"] == [
+        "candidate-deployed-commit",
+        "candidate-unrelated-deploy-commit",
+    ]
 
     late_captured = start + timedelta(days=12)
     late_records = []

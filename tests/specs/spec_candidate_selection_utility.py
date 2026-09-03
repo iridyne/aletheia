@@ -81,7 +81,7 @@ def test_economic_utility_contract_is_frozen_and_cost_after():
     from aletheia.universe.economic_utility import ECONOMIC_ESTIMATOR_VERSION
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
-    assert ECONOMIC_ESTIMATOR_VERSION == "candidate-economic-utility-estimator/v1"
+    assert ECONOMIC_ESTIMATOR_VERSION == "candidate-economic-utility-estimator/v2"
     assert COST_MODEL_VERSION == "v1"
 
 

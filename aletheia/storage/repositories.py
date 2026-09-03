@@ -66,6 +66,10 @@ from aletheia.storage.sqlite import (
 )
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
+_CANDIDATE_SELECTION_RECORD_VERSIONS = frozenset({
+    "candidate-selection-utility-record/v1",
+    "candidate-selection-utility-record/v2",
+})
 _sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
 _retention_metrics_lock = threading.Lock()
 _retention_metrics: dict[str, dict[str, float | int]] = {}
@@ -7149,20 +7153,33 @@ def _prune_filter_candidate_outcomes_batches(
                 "SELECT j.value FROM universe_twin_shadow_records r "
                 "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
                 "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
-                "WHERE b.record_version='candidate-selection-utility-record/v1' "
-                "AND (b.policy_epoch_id IN ("
+                "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
+                "'candidate-selection-utility-record/v2') "
+                "AND ((b.policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
+                "'candidate-selection-utility-record/v2') "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
                 "json_valid(after_state) THEN json_extract(after_state, "
                 "'$.candidate_selection_policy_epoch') END) FROM audit_events "
-                "WHERE event_type='candidate_selection_authority_admitted') OR b.captured_at <= ("
+                "WHERE event_type='candidate_selection_authority_admitted') AND ("
+                "NOT EXISTS (SELECT 1 FROM audit_events admitted WHERE "
+                "admitted.event_type='candidate_selection_authority_admitted' AND "
+                "COALESCE(NULLIF(admitted.entity_id, ''), CASE WHEN "
+                "json_valid(admitted.after_state) THEN json_extract(admitted.after_state, "
+                "'$.candidate_selection_policy_epoch') END)=b.policy_epoch_id) OR "
+                "b.captured_at <= (SELECT MIN(admitted.timestamp) FROM audit_events admitted WHERE "
+                "admitted.event_type='candidate_selection_authority_admitted' AND "
+                "COALESCE(NULLIF(admitted.entity_id, ''), CASE WHEN "
+                "json_valid(admitted.after_state) THEN json_extract(admitted.after_state, "
+                "'$.candidate_selection_policy_epoch') END)=b.policy_epoch_id))) OR b.captured_at <= ("
                 "SELECT MAX(json_extract(policy_json, '$.estimator_training_cutoff')) "
                 "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
+                "'candidate-selection-utility-record/v2') "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -8323,7 +8340,7 @@ def _validate_universe_twin_prospective_bundle(
 ) -> None:
     """Reject partial or internally inconsistent prospective identities."""
 
-    if batch.record_version == "candidate-selection-utility-record/v1":
+    if batch.record_version in _CANDIDATE_SELECTION_RECORD_VERSIONS:
         authority_applied = bool(batch.promotion_eligible)
         try:
             batch_blockers = json.loads(batch.blocking_reasons_json)
@@ -8496,7 +8513,7 @@ def insert_universe_twin_shadow_bundle(
     _validate_universe_twin_prospective_bundle(batch, evidence, outcome_rows)
     if (
         batch.experiment_id is not None
-        and batch.record_version != "candidate-selection-utility-record/v1"
+        and batch.record_version not in _CANDIDATE_SELECTION_RECORD_VERSIONS
     ):
         outcome_by_key = {str(row["outcome_candidate_key"]): row for row in outcome_rows}
         if len(outcome_by_key) != len(outcome_rows):
@@ -9674,7 +9691,9 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
             "um.execution_eligible, um.expires_at AS candidate_expires_at, "
             "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
-            "um.candidate_selection_utility_pct "
+            "um.candidate_selection_utility_pct, um.opportunity_mechanism, "
+            "um.opportunity_mechanism_version, um.opportunity_source_component, "
+            "um.opportunity_source_cutoff_at, um.opportunity_evidence_hash "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
@@ -9700,7 +9719,9 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
             "um.execution_eligible, um.expires_at AS candidate_expires_at, "
             "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
-            "um.candidate_selection_utility_pct, "
+            "um.candidate_selection_utility_pct, um.opportunity_mechanism, "
+            "um.opportunity_mechanism_version, um.opportunity_source_component, "
+            "um.opportunity_source_cutoff_at, um.opportunity_evidence_hash, "
             "ep.id AS active_entry_plan_id, ep.status AS active_entry_plan_status "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
@@ -10921,7 +10942,8 @@ def candidate_selection_cost_assumptions(outcome_candidate_key: str) -> dict | N
         "FROM universe_twin_shadow_records r "
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
         "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
-        "WHERE b.record_version='candidate-selection-utility-record/v1' "
+        "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
+        "'candidate-selection-utility-record/v2') "
         "AND j.value=? LIMIT 1",
         (outcome_candidate_key,),
     ).fetchone()
@@ -12947,30 +12969,37 @@ def prune_universe_twin_shadow_evidence(
         deleted = 0
         if candidate_policy_available:
             run_rows = db.execute(
-                "WITH protected_epochs(policy_epoch_id) AS ("
+                "WITH admissions(policy_epoch_id, admitted_at) AS ("
+                "SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
+                "json_valid(after_state) THEN json_extract(after_state, "
+                "'$.candidate_selection_policy_epoch') END), MIN(timestamp) FROM audit_events "
+                "WHERE event_type='candidate_selection_authority_admitted' GROUP BY 1), "
+                "protected_epochs(policy_epoch_id) AS ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
-                "WHERE record_version='candidate-selection-utility-record/v1' "
+                "WHERE record_version IN ('candidate-selection-utility-record/v1', "
+                "'candidate-selection-utility-record/v2') "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
-                "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
-                "json_valid(after_state) THEN json_extract(after_state, "
-                "'$.candidate_selection_policy_epoch') END) FROM audit_events "
-                "WHERE event_type='candidate_selection_authority_admitted'), "
+                "UNION SELECT policy_epoch_id FROM admissions), "
                 "training(cutoff) AS (SELECT MAX(json_extract(policy_json, "
                 "'$.estimator_training_cutoff')) FROM universe_twin_shadow_batches "
                 "WHERE policy_epoch_id IN protected_epochs) "
-                "SELECT scanner_run_id FROM universe_twin_shadow_batches, training "
-                "WHERE captured_at < ? AND ("
-                "record_version <> 'candidate-selection-utility-record/v1' OR "
-                "(COALESCE(policy_epoch_id, '') NOT IN protected_epochs "
-                "AND (training.cutoff IS NULL OR captured_at > training.cutoff)))",
+                "SELECT b.scanner_run_id FROM universe_twin_shadow_batches b CROSS JOIN training "
+                "LEFT JOIN admissions a ON a.policy_epoch_id=b.policy_epoch_id "
+                "WHERE b.captured_at < ? AND ("
+                "b.record_version NOT IN ('candidate-selection-utility-record/v1', "
+                "'candidate-selection-utility-record/v2') OR "
+                "((training.cutoff IS NULL OR b.captured_at > training.cutoff) AND ("
+                "COALESCE(b.policy_epoch_id, '') NOT IN protected_epochs OR "
+                "(a.admitted_at IS NOT NULL AND b.captured_at > a.admitted_at))))",
                 (configured_candidate_epoch, configured_candidate_epoch, cutoff),
             ).fetchall()
         else:
             run_rows = db.execute(
                 "SELECT scanner_run_id FROM universe_twin_shadow_batches "
                 "WHERE captured_at < ? "
-                "AND record_version <> 'candidate-selection-utility-record/v1'",
+                "AND record_version NOT IN ('candidate-selection-utility-record/v1', "
+                "'candidate-selection-utility-record/v2')",
                 (cutoff,),
             ).fetchall()
         run_ids = [str(row[0]) for row in run_rows]

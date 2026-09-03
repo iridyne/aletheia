@@ -12,12 +12,14 @@ from aletheia.storage.models import UniverseTwinShadowBatch, UniverseTwinShadowE
 from aletheia.universe.candidate_eligibility import canonical_fingerprint, evaluate_hard_gate
 from aletheia.universe.candidate_selection_utility import (
     CANDIDATE_SELECTION_UTILITY_VERSION,
+    CandidateSelectionUtilityV1,
     build_candidate_selection_utility,
     select_admitted_candidates,
 )
 from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
 from aletheia.universe.economic_utility import (
     CANDIDATE_SELECTION_OUTCOME_VERSION,
+    build_economic_utility_cohort_index,
     estimate_economic_utility,
 )
 from aletheia.universe.opportunity_evidence import (
@@ -28,7 +30,7 @@ from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
 from aletheia.universe.twin_persistence import TwinShadowBundle
 
 
-CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v1"
+CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v2"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v1"
 _MAX_OUTPUT_BYTES = 32 * 1024
 
@@ -61,6 +63,47 @@ def _safe_feature(feature: Mapping[str, object]) -> dict[str, object]:
         for key, value in feature.items()
         if not str(key).startswith("_") and isinstance(value, (str, int, float, bool, type(None)))
     }
+
+
+def _compact_candidate_selection(
+    decision: CandidateSelectionUtilityV1,
+) -> dict[str, object]:
+    """Keep immutable decision evidence while moving shared/raw detail out of every row."""
+
+    value = decision.as_dict()
+    value["hard_gate"] = {
+        key: item for key, item in value["hard_gate"].items()
+        if key not in {
+            "candidate_key", "checks", "evaluated_at", "input_fingerprint",
+            "policy_fingerprint",
+        }
+    }
+    opportunity = {
+        key: item for key, item in value["opportunity_evidence"].items()
+        if key not in {"candidate_key", "context", "feature_snapshot_id", "instrument"}
+    }
+    opportunity["mechanisms"] = [
+        {
+            key: item for key, item in mechanism.items()
+            if key not in {"evidence_group_ids", "evidence_refs"}
+            and item not in (None, [], ())
+        }
+        for mechanism in opportunity["mechanisms"]
+    ]
+    value["opportunity_evidence"] = opportunity
+    value["economic_estimates"] = [
+        {
+            key: item for key, item in estimate.items()
+            if key not in {
+                "candidate_key", "horizon", "market_type", "uncertainty_penalty_pct",
+                "venue", "version",
+            }
+        }
+        for estimate in value["economic_estimates"]
+    ]
+    value.pop("candidate_key", None)
+    value.pop("record_fingerprint", None)
+    return value
 
 
 def _training_outcome_fingerprint(
@@ -118,6 +161,11 @@ def build_candidate_selection_shadow_bundle(
         **dict(frozen_selection_policy.get("cost_assumptions") or {}),
         "fallback_spread_bps": universe_config.max_spread_bps,
     }
+    cohort_index = build_economic_utility_cohort_index(
+        historical_outcomes,
+        source_cutoff_at=captured_at,
+        cost_assumptions=cost_assumptions,
+    )
     scored = {_identity(item): item for item in legacy_scored}
     selected = {_identity(item) for item in legacy_allocated}
     gates = []
@@ -158,9 +206,7 @@ def build_candidate_selection_shadow_bundle(
                     venue=str(evidence.instrument["venue"]),
                     market_type=str(evidence.instrument["market_type"]),
                     strength_percentile=mechanism.within_run_percentile,
-                    outcomes=historical_outcomes,
-                    source_cutoff_at=captured_at,
-                    cost_assumptions=cost_assumptions,
+                    cohort_index=cohort_index,
                 ))
         decision = build_candidate_selection_utility(
             hard_gate=gate,
@@ -304,7 +350,7 @@ def build_candidate_selection_shadow_bundle(
         }
         material = {
             "record_version": CANDIDATE_SELECTION_RECORD_VERSION,
-            "candidate_selection": decision.as_dict(),
+            "candidate_selection": _compact_candidate_selection(decision),
             "target_selected": decision.candidate_key in target_selected_keys,
             "outcome_candidate_keys": outcome_keys,
             "evidence_contract": {
@@ -315,8 +361,6 @@ def build_candidate_selection_shadow_bundle(
                 "behavior_contract_hash": behavior_contract_hash,
                 "policy_epoch_id": policy_epoch_id,
                 "estimator_training_cutoff": effective_training_cutoff,
-                "training_outcome_fingerprint": training_outcome_fingerprint,
-                "source_outcome_fingerprints": available_source_fingerprints,
                 "cost_assumptions": cost_assumptions,
             },
         }
@@ -398,6 +442,30 @@ def build_candidate_selection_shadow_bundle(
         captured_at=captured_at,
     )
     return TwinShadowBundle(batch, tuple(evidence_rows), tuple(outcomes_by_key[key] for key in sorted(outcomes_by_key)))
+
+
+def candidate_selection_storage_projection(
+    evidence: Sequence[UniverseTwinShadowEvidence],
+    *,
+    min_interval_sec: int = 55 * 60,
+) -> dict[str, int | float]:
+    """Project the persisted Candidate row payload at the enforced Shadow cadence."""
+
+    if min_interval_sec <= 0:
+        raise ValueError("candidate_selection_storage_interval_invalid")
+    bytes_per_run = sum(
+        len(row.compact_output_json.encode("utf-8")) + len(row.input_json.encode("utf-8"))
+        for row in evidence
+    )
+    runs_per_day = math.ceil(86_400 / min_interval_sec)
+    mib_per_day = bytes_per_run * runs_per_day / (1024 * 1024)
+    return {
+        "rows_per_run": len(evidence),
+        "bytes_per_run": bytes_per_run,
+        "runs_per_day": runs_per_day,
+        "mib_per_day": mib_per_day,
+        "mib_per_30d": mib_per_day * 30,
+    }
 
 
 def load_candidate_selection_outcomes(
@@ -584,11 +652,9 @@ def target_candidates_from_bundle(
                 item for item in decision["opportunity_evidence"]["mechanisms"]
                 if item["mechanism_id"] == decision["primary_mechanism"]
             )
-            family_reason = next(
-                reason for reason in mechanism["reason_codes"]
-                if str(reason).startswith("projected_from:")
-            )
-            family = str(family_reason).split(":", 1)[1]
+            family = str(mechanism["source_component_id"])
+            if not family:
+                raise ValueError("candidate_selection_source_component_invalid")
             utility = float(decision["economic_utility_pct"])
         except (KeyError, StopIteration, TypeError, ValueError) as exc:
             raise ValueError("candidate_selection_target_projection_invalid") from exc
@@ -601,6 +667,11 @@ def target_candidates_from_bundle(
             "candidate_selection_utility_pct": utility,
             "candidate_selection_policy": "candidate_selection_utility_v1",
             "candidate_selection_policy_epoch": bundle.batch.policy_epoch_id,
+            "opportunity_mechanism": decision["primary_mechanism"],
+            "opportunity_mechanism_version": mechanism["mechanism_version"],
+            "opportunity_source_component": family,
+            "opportunity_source_cutoff_at": decision["opportunity_evidence"]["source_cutoff_at"],
+            "opportunity_evidence_hash": decision["opportunity_evidence"]["mechanism_set_fingerprint"],
             "reasons": source_reasons + [
                 f"candidate_selection_utility:{utility:.6f}",
                 f"primary_mechanism:{decision['primary_mechanism']}",
@@ -632,10 +703,9 @@ def target_admitted_identity_keys(
                 item for item in decision["opportunity_evidence"]["mechanisms"]
                 if item["mechanism_id"] == decision["primary_mechanism"]
             )
-            family = next(
-                str(reason).split(":", 1)[1] for reason in mechanism["reason_codes"]
-                if str(reason).startswith("projected_from:")
-            )
+            family = str(mechanism["source_component_id"])
+            if not family:
+                raise ValueError("candidate_selection_source_component_invalid")
             identities.add((
                 str(instrument["venue"]),
                 str(instrument["symbol"]),
@@ -655,4 +725,5 @@ __all__ = [
     "load_candidate_selection_outcomes",
     "target_candidates_from_bundle",
     "target_admitted_identity_keys",
+    "candidate_selection_storage_projection",
 ]

@@ -360,7 +360,9 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
         build_candidate_selection_shadow_bundle,
     )
 
-    old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    pre_admission = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    admitted_at = (datetime.now(timezone.utc) - timedelta(days=50)).isoformat()
+    post_admission = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
     feature = _feature()
     legacy = [{
         **feature,
@@ -369,7 +371,7 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
         "total_score": 50.0,
     }]
     bundle = build_candidate_selection_shadow_bundle(
-        [feature], scanner_run_id="candidate-selection-audit-retained", captured_at=old,
+        [feature], scanner_run_id="candidate-selection-audit-retained", captured_at=pre_admission,
         universe_config=UniverseConfig(max_candidates=1), legacy_scored=legacy,
         legacy_allocated=legacy,
         action_route_reasons={("feature-1", "binance", "perp", "BTC/USDT"): None},
@@ -378,11 +380,24 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
     repo.insert_universe_twin_shadow_bundle(
         bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
     )
+    post_bundle = build_candidate_selection_shadow_bundle(
+        [feature], scanner_run_id="candidate-selection-post-admission", captured_at=post_admission,
+        universe_config=UniverseConfig(max_candidates=1), legacy_scored=legacy,
+        legacy_allocated=legacy,
+        action_route_reasons={("feature-1", "binance", "perp", "BTC/USDT"): None},
+        historical_outcomes=(),
+    )
+    repo.insert_universe_twin_shadow_bundle(
+        post_bundle.batch, post_bundle.evidence, outcomes=post_bundle.outcomes,
+        min_interval_sec=0,
+    )
     repo.get_db().execute(
-        "UPDATE universe_twin_shadow_batches SET policy_epoch_id='admitted-epoch' "
-        "WHERE scanner_run_id='candidate-selection-audit-retained'"
+        "UPDATE universe_twin_shadow_batches SET policy_epoch_id='admitted-epoch', "
+        "policy_json='{}' WHERE scanner_run_id IN "
+        "('candidate-selection-audit-retained', 'candidate-selection-post-admission')"
     )
     repo.insert_audit_event(AuditEvent(
+        timestamp=admitted_at,
         actor="human",
         source="dashboard",
         event_type="candidate_selection_authority_admitted",
@@ -391,8 +406,9 @@ def test_admission_audit_protects_evidence_after_rollback() -> None:
     ))
     repo.get_db().commit()
 
-    assert repo.prune_universe_twin_shadow_evidence(days=30) == 0
+    assert repo.prune_universe_twin_shadow_evidence(days=30) == 2
     assert repo.get_universe_twin_shadow_batch("candidate-selection-audit-retained")
+    assert repo.get_universe_twin_shadow_batch("candidate-selection-post-admission") is None
 
 
 def test_task5_payload_does_not_invent_experiment_identity() -> None:

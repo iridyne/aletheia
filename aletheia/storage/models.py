@@ -1665,19 +1665,33 @@ class UniverseMember(BaseModel):
     ] = "legacy_total_score_v1"
     candidate_selection_policy_epoch: str | None = None
     candidate_selection_utility_pct: float | None = None
+    opportunity_mechanism: str | None = None
+    opportunity_mechanism_version: str | None = None
+    opportunity_source_component: str | None = None
+    opportunity_source_cutoff_at: str | None = None
+    opportunity_evidence_hash: str | None = Field(default=None, min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def _validate_candidate_selection_evidence(self):
         target = self.candidate_selection_policy == "candidate_selection_utility_v1"
+        mechanism_evidence = (
+            self.opportunity_mechanism,
+            self.opportunity_mechanism_version,
+            self.opportunity_source_component,
+            self.opportunity_source_cutoff_at,
+            self.opportunity_evidence_hash,
+        )
         if target and (
             not str(self.candidate_selection_policy_epoch or "").strip()
             or self.candidate_selection_utility_pct is None
             or not math.isfinite(self.candidate_selection_utility_pct)
+            or any(not str(value or "").strip() for value in mechanism_evidence)
         ):
             raise ValueError("target Candidate selection evidence is incomplete")
         if not target and (
             self.candidate_selection_policy_epoch is not None
             or self.candidate_selection_utility_pct is not None
+            or any(value is not None for value in mechanism_evidence)
         ):
             raise ValueError("legacy Candidate cannot carry target selection evidence")
         return self
