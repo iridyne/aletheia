@@ -8,7 +8,6 @@ import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { deriveMasterState } from '../lib/systemState'
-import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import { safeErrorText } from '../lib/mutationErrors'
 
 /** Extract a human-readable error from a fetch/mutation failure. */
@@ -23,6 +22,18 @@ export function openPositionRows(positions: unknown): Record<string, unknown>[] 
       return String((p as Record<string, unknown>).status || '').toLowerCase() === 'open'
     })
     : []
+}
+
+export function portfolioPositionRows(portfolio: unknown): Record<string, unknown>[] | null {
+  if (typeof portfolio !== 'object' || !portfolio) return null
+  const value = portfolio as Record<string, unknown>
+  const mode = typeof value.execution_mode === 'string' ? value.execution_mode.trim() : ''
+  if (value.execution_mode_status !== 'resolved' || !mode || !Array.isArray(value.positions)) return null
+  return value.positions.filter((position): position is Record<string, unknown> => (
+    typeof position === 'object'
+    && position != null
+    && position.execution_mode === mode
+  ))
 }
 
 export function marketTypesFromOpenPositions(positions: unknown): Record<string, Set<string>> {
@@ -73,17 +84,10 @@ export default function RiskControls() {
   const { data: boundaries, isPending: boundariesPending, isError: boundariesError } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
   const { data: killSwitch, isLoading: ksLoading, isError: ksError } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: portfolio, isPending: portfolioPending, isError: portfolioError } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  // Open positions supply the market type per symbol so the exposure list can render the
-  // spot/derivative convention (perp → no slash, spot → slash) via fmtSymbol. We MUST wait
-  // for positions to load before rendering the exposure list — otherwise the dict is empty,
-  // fmtSymbol can't tell perp from spot, and the rule says "never guess": it falls back to
-  // the canonical (slashed) form, briefly displaying "ETH/USDT" for a USDT-perp until the
-  // positions query settles. That violates the immutable owner rule (CLAUDE.md 2026-06-26).
-  const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
   // 24h pipeline counts — surfaces "the system IS guarding" in the healthy state.
   // Refetches every 60s; the underlying SQL is a single COUNT GROUP BY so it's cheap.
   const { data: funnel, isPending: funnelPending, isError: funnelError } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })
-  const exposureLoading = (portfolioPending && !portfolio) || (positionsPending && !positions)
+  const exposureLoading = portfolioPending && !portfolio
 
   // Inline error state — the brakes-console levers are trust-critical, so a silent
   // mutation failure is the worst-case (operator THINKS they halted trading but didn't).
@@ -160,8 +164,9 @@ export default function RiskControls() {
   // is currently symbol-only (#52 deferred, coupled with market_type
   // migration), so this is a display-honesty best-effort until the
   // backend groups by (symbol, market_type).
-  const openPositions = openPositionRows(positions)
-  const marketTypesForSymbol = marketTypesFromOpenPositions(positions)
+  const portfolioPositions = portfolioPositionRows(portfolio)
+  const openPositions = openPositionRows(portfolioPositions)
+  const marketTypesForSymbol = marketTypesFromOpenPositions(portfolioPositions)
   const marketTypeBySymbol: Record<string, string> = Object.fromEntries(
     Object.entries(marketTypesForSymbol).map(([sym, types]) => [sym, preferPerpMarketType(types)])
   )
@@ -188,7 +193,9 @@ export default function RiskControls() {
   const equity = Number((portfolio as Record<string, unknown> | undefined)?.exchange_equity_usdt) || Number((portfolio as Record<string, unknown> | undefined)?.total_value_usdt) || 0
   const positionsCountValue = (portfolio as Record<string, unknown> | undefined)?.positions_count
   const positionsCountRaw = positionsCountValue == null ? null : Number(positionsCountValue)
-  const positionsCount = positionsCountRaw != null && Number.isFinite(positionsCountRaw) ? positionsCountRaw : openPositions.length
+  const positionsCount = portfolioPositions != null && positionsCountRaw != null && Number.isFinite(positionsCountRaw)
+    ? positionsCountRaw
+    : null
   const posCap = Number(capPositions?.max_open_positions) || null
   const marginCap = Number(capCapital?.max_position_margin_usdt) || null
   const dailyLossPct = Number(capLoss?.max_daily_loss_pct) || null
@@ -201,7 +208,7 @@ export default function RiskControls() {
   const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
   const todayLoss = todayPnl == null ? null : todayPnl < 0 ? Math.abs(todayPnl) : 0
   // Derive margin (pledged cash) per position: notional / leverage. Spot leverage = 1.
-  const largestMargin = openPositions.reduce((m, p) => {
+  const largestMargin = portfolioPositions == null ? null : openPositions.reduce((m, p) => {
     const pObj = p as {status?: unknown, quantity?: unknown, current_price?: unknown, entry_price?: unknown, leverage?: unknown}
     const qty = Math.abs(Number(pObj.quantity) || 0)
     const px  = Number(pObj.current_price) || Number(pObj.entry_price) || 0
@@ -454,8 +461,8 @@ export default function RiskControls() {
           />
           {exposureLoading ? (
             <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
-          ) : portfolioError || positionsError ? (
-            <DataStateMessage state="unavailable" message="Live exposure unavailable. Portfolio or positions read failed." />
+          ) : portfolioError || portfolioPositions == null ? (
+            <DataStateMessage state="unavailable" message="Live exposure unavailable. Portfolio position scope is unavailable." />
           ) : exposure.length > 0 ? (
             <>
               <ul className="exposure-list">

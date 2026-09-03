@@ -59,7 +59,7 @@ VALID_KNOWLEDGE_TYPES = {
 
 # --- In-process result caches (avoids re-computing expensive aggregations on every poll) ---
 _portfolio_cache_lock = threading.Lock()
-_portfolio_cache: "tuple[float, dict] | None" = None
+_portfolio_cache: "tuple[str, float, dict] | None" = None
 
 _equity_history_cache_lock = threading.Lock()
 _equity_history_cache: "dict[tuple, tuple[float, dict]]" = {}
@@ -1292,16 +1292,23 @@ def get_positions():
 @router.get("/portfolio")
 def get_portfolio():
     _ensure_db()
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
     global _portfolio_cache
+    execution_mode = resolve_selected_execution_mode()
+    if execution_mode is None:
+        raise HTTPException(status_code=503, detail="execution_mode_unresolved")
     now = time.monotonic()
     with _portfolio_cache_lock:
         if _portfolio_cache is not None:
-            ts, cached = _portfolio_cache
-            if now - ts < 30.0:
+            cached_mode, ts, cached = _portfolio_cache
+            if cached_mode == execution_mode and now - ts < 30.0:
                 return cached
-    result = compute_portfolio(execution_mode=None)
+    result = compute_portfolio(execution_mode=execution_mode)
+    result["execution_mode"] = execution_mode
+    result["execution_mode_status"] = "resolved"
     with _portfolio_cache_lock:
-        _portfolio_cache = (now, result)
+        _portfolio_cache = (execution_mode, now, result)
     return result
 
 

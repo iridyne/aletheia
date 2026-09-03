@@ -680,8 +680,7 @@ async def test_portfolio_endpoint(client, monkeypatch):
     from aletheia.data import price_feed
     from aletheia.config.loader import load_config, save_config
 
-    # The endpoint's all-mode projection follows the configured account mode.
-    # Select Bitget demo explicitly so this external position is in scope.
+    # Select Bitget demo explicitly so only that account mode is in scope.
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
@@ -699,12 +698,44 @@ async def test_portfolio_endpoint(client, monkeypatch):
 
     repo.insert_position(Position(symbol="SOLUSDT", market_type="spot", direction="long",
                                   quantity=10.0, entry_price=150.0, execution_mode="bitget_demo"))
+    repo.insert_position(Position(symbol="BTCUSDT", market_type="spot", direction="long",
+                                  quantity=1.0, entry_price=60_000.0, execution_mode="paper_internal"))
     repo.insert_market_snapshot(MarketSnapshot(symbol="SOLUSDT", market_type="spot", price=160.0, exchange="bitget"))
     resp = await client.get("/api/portfolio")
     assert resp.status_code == 200
     data = resp.json()
+    assert data["execution_mode"] == "bitget_demo"
+    assert data["execution_mode_status"] == "resolved"
     assert data["positions_count"] == 1
+    assert [position["execution_mode"] for position in data["positions"]] == ["bitget_demo"]
     assert data["unrealized_pnl"] == 100.0  # (160-150)*10
+
+
+@pytest.mark.anyio
+async def test_portfolio_cache_is_bound_to_resolved_execution_mode(client, monkeypatch):
+    import aletheia.analytics.execution_mode as execution_mode_module
+    import aletheia.server.routes.data as data_routes
+
+    modes = iter(("paper_internal", "okx_demo", None))
+    monkeypatch.setattr(
+        execution_mode_module,
+        "resolve_selected_execution_mode",
+        lambda: next(modes),
+    )
+    monkeypatch.setattr(
+        data_routes,
+        "compute_portfolio",
+        lambda execution_mode: {"positions_count": 0, "positions": []},
+    )
+
+    first = await client.get("/api/portfolio")
+    second = await client.get("/api/portfolio")
+    unresolved = await client.get("/api/portfolio")
+
+    assert first.json()["execution_mode"] == "paper_internal"
+    assert second.json()["execution_mode"] == "okx_demo"
+    assert unresolved.status_code == 503
+    assert unresolved.json()["detail"] == "execution_mode_unresolved"
 
 
 @pytest.mark.anyio
