@@ -11,7 +11,7 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     SerenityResearchRun, SerenityRunEvent, SerenityUserProfile,
-    SerenityProfileSnapshot, SerenityFeedbackEvent, SerenityTheme,
+    SerenityProfileSnapshot, SerenityFeedbackEvent, SerenityTheme, SerenityOpportunity,
 )
 
 
@@ -176,6 +176,78 @@ async def test_create_run_idempotency(client):
     assert resp2.json().get("deduplicated") is True
 
 
+@pytest.mark.anyio
+async def test_dismiss_theme_cascades_beyond_first_200_opportunities(client):
+    theme = SerenityTheme(name="large cascade", status="active")
+    repo.insert_serenity_theme(theme)
+    active_ids = []
+    for index in range(201):
+        opportunity = SerenityOpportunity(
+            theme_id=theme.id,
+            symbol=f"TEST{index}/USDT",
+            direction="long",
+            status="active",
+            asset_class="crypto",
+        )
+        repo.insert_serenity_opportunity(opportunity)
+        active_ids.append(opportunity.id)
+    reviewed = SerenityOpportunity(
+        theme_id=theme.id,
+        symbol="REVIEWED/USDT",
+        direction="long",
+        status="reviewed",
+        asset_class="crypto",
+    )
+    repo.insert_serenity_opportunity(reviewed)
+
+    response = await client.patch(
+        f"/api/serenity/themes/{theme.id}/status",
+        json={"status": "dismissed"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["affected_opportunities"] == 201
+    remaining = repo.get_db().execute(
+        "SELECT count(*) FROM serenity_opportunities WHERE theme_id=? AND status='active'",
+        (theme.id,),
+    ).fetchone()[0]
+    assert remaining == 0
+    assert repo.get_serenity_opportunity(reviewed.id)["status"] == "reviewed"
+    from aletheia.portfolio import position_manager
+    for opportunity_id in (active_ids[0], active_ids[-1]):
+        assert position_manager._thesis_invalidated({
+            "trade_school": "serenity",
+            "opportunity_id": opportunity_id,
+        }) is True
+
+
+@pytest.mark.anyio
+async def test_theme_cascade_failure_rolls_back_parent(client, monkeypatch):
+    theme = SerenityTheme(name="atomic cascade", status="active")
+    repo.insert_serenity_theme(theme)
+    repo.insert_serenity_opportunity(SerenityOpportunity(
+        theme_id=theme.id,
+        symbol="TEST/USDT",
+        direction="long",
+        status="active",
+        asset_class="crypto",
+    ))
+
+    def fail_child_update(*args, **kwargs):
+        raise RuntimeError("injected child update failure")
+
+    monkeypatch.setattr(repo, "transition_active_serenity_opportunities_for_theme", fail_child_update)
+    with pytest.raises(RuntimeError, match="injected child update failure"):
+        repo.transition_serenity_theme_status(
+            theme.id,
+            status="dismissed",
+            updated_at="2026-09-03T00:00:00+00:00",
+        )
+
+    assert repo.get_serenity_theme(theme.id)["status"] == "active"
+    assert repo.list_serenity_opportunities(theme_id=theme.id)[0]["status"] == "active"
+
+
 # --- List Runs ---
 
 @pytest.mark.anyio
@@ -333,9 +405,16 @@ async def test_theme_status_update(client):
     })
     assert resp.status_code == 200
     assert resp.json()["status"] == "watching"
+    assert resp.json()["affected_opportunities"] == 0
 
     updated = repo.get_serenity_theme(theme.id)
     assert updated["status"] == "watching"
+
+
+@pytest.mark.anyio
+async def test_theme_status_missing(client):
+    resp = await client.patch("/api/serenity/themes/missing/status", json={"status": "dismissed"})
+    assert resp.status_code == 404
 
 
 @pytest.mark.anyio
