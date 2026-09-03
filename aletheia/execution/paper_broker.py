@@ -1,6 +1,7 @@
 """Paper broker — simulates order fills for paper/demo trading."""
 
 from typing import Any
+import hashlib
 import json
 import math
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from aletheia.storage.repositories import (
     insert_fill,
     insert_position,
     update_position,
+    transaction,
 )
 from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
 
@@ -75,13 +77,15 @@ def execute_paper_order(
     order_tactic: str | None = None,
     time_in_force: str | None = None,
     post_only: bool | None = None,
+    execution_receipt=None,
 ) -> dict:
-    """Execute a paper order: create order, fill, and position.
+    """Create a local Paper Order and materialize only evidenced execution.
 
     The protective stop_price and take_profit from the approved Proposal are
     recorded on a newly-opened position. Averaging into the same Proposal preserves
     its original stop/TP; a different Proposal always gets a separate lineage.
     """
+    proposal = None
     if execution_mode == "paper_internal" and order_type != "market":
         if not entry_plan_id:
             raise ValueError("paper_internal_market_only")
@@ -105,6 +109,149 @@ def execute_paper_order(
 
     fill_price = _apply_slippage(price, direction, slippage_bps)
     filled_at = datetime.now(timezone.utc).isoformat()
+
+    if entry_plan_id:
+        from aletheia.execution.paper_execution import (
+            PAPER_FILL_MODEL_VERSION,
+            EntryExecutionReceiptV1,
+            consume_known_depth,
+        )
+
+        receipt = EntryExecutionReceiptV1.model_validate(execution_receipt)
+        receipt.validate_now()
+        if (
+            receipt.proposal_id != proposal_id
+            or receipt.entry_plan_id != entry_plan_id
+            or receipt.instrument.symbol != symbol
+        ):
+            raise ValueError("paper_execution_receipt_identity_mismatch")
+        evidence = {
+            "model_version": PAPER_FILL_MODEL_VERSION,
+            "attempt_id": receipt.attempt_id,
+            "receipt_hash": receipt.receipt_hash,
+            "stream_generation_id": receipt.stream_generation_id,
+            "subscription_generation_id": receipt.subscription_generation_id,
+        }
+        order = Order(
+            proposal_id=proposal_id,
+            risk_decision_id=risk_decision_id,
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            reference_price=(receipt.quote.ask if direction in ("long", "buy") else receipt.quote.bid),
+            reference_price_source="entry_execution_receipt/v1",
+            execution_mode=execution_mode,
+            status="pending",
+            source=source,
+            entry_plan_id=entry_plan_id,
+            order_tactic=order_tactic,
+            time_in_force=time_in_force,
+            post_only=post_only,
+            requested_liquidity="maker" if post_only is True else "taker",
+            attempt_id=receipt.attempt_id,
+            receipt_hash=receipt.receipt_hash,
+            paper_fill_model_version=PAPER_FILL_MODEL_VERSION,
+            paper_execution_evidence=json.dumps(evidence, sort_keys=True, separators=(",", ":")),
+        )
+        if order_tactic == "POST_ONLY_LIMIT":
+            with transaction(immediate=True):
+                insert_order(order)
+            return {
+                "order_id": order.id,
+                "fill_id": None,
+                "position_id": None,
+                "fill_price": None,
+                "fill_quantity": 0.0,
+                "entry_plan_status": None,
+            }
+
+        depth_fill = consume_known_depth(
+            direction=direction,
+            quantity=quantity,
+            limit_price=price,
+            depth=receipt.depth,
+        )
+        if depth_fill.quantity <= 0 or depth_fill.vwap is None:
+            evidence.update({"outcome": "no_known_liquidity", "levels": []})
+            order.status = "cancelled"
+            order.error_reason = "paper_ioc_known_depth_unavailable"
+            order.paper_execution_evidence = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+            with transaction(immediate=True):
+                insert_order(order)
+            return {
+                "order_id": order.id,
+                "fill_id": None,
+                "position_id": None,
+                "fill_price": None,
+                "fill_quantity": 0.0,
+                "entry_plan_status": "cancelled",
+                "terminal_reason": "paper_ioc_known_depth_unavailable",
+                "terminal_evidence": evidence,
+            }
+        fill_price = depth_fill.vwap
+        evidence.update({
+            "outcome": "full" if depth_fill.quantity + 1e-12 >= quantity else "partial_cancelled",
+            "levels": [list(level) for level in depth_fill.levels],
+            "known_filled_quantity": depth_fill.quantity,
+        })
+        evidence_json = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+        order.status = "filled" if depth_fill.quantity + 1e-12 >= quantity else "cancelled"
+        order.filled_at = filled_at
+        order.error_reason = None if order.status == "filled" else "paper_ioc_remainder_cancelled"
+        order.paper_execution_evidence = evidence_json
+        fill = Fill(
+            order_id=order.id,
+            fill_price=fill_price,
+            fill_quantity=depth_fill.quantity,
+            fee=depth_fill.quantity * fill_price * fee_rate,
+            filled_at=filled_at,
+            paper_fill_model_version=PAPER_FILL_MODEL_VERSION,
+            paper_execution_evidence=evidence_json,
+            paper_execution_evidence_hash=hashlib.sha256(evidence_json.encode()).hexdigest(),
+            public_event_id=(
+                f"depth:{receipt.instrument.venue}:{receipt.instrument.market_type}:"
+                f"{receipt.depth.exchange_timestamp_ms}:{receipt.depth.sequence}"
+            ),
+        )
+        position_id, filled_take_profit = _materialize_paper_entry(
+            order=order,
+            fill=fill,
+            proposal_id=proposal_id,
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+            quantity=depth_fill.quantity,
+            requested_price=price,
+            fill_price=fill_price,
+            fee_rate=fee_rate,
+            execution_mode=execution_mode,
+            strategy_id=strategy_id,
+            stop_price=stop_price,
+            take_profit=take_profit,
+            leverage=leverage,
+            opportunity_id=opportunity_id,
+            trade_school=trade_school,
+            attribution_snapshot=attribution_snapshot,
+            paper_fill_model_version=PAPER_FILL_MODEL_VERSION,
+        )
+        return {
+            "order_id": order.id,
+            "fill_id": fill.id,
+            "position_id": position_id,
+            "fill_price": fill_price,
+            "fill_quantity": depth_fill.quantity,
+            "entry_plan_status": "filled" if order.status == "filled" else "cancelled",
+            "terminal_reason": None if order.status == "filled" else "paper_ioc_remainder_cancelled",
+            "terminal_evidence": evidence,
+            "_notification_payload": {
+                "symbol": symbol, "direction": direction, "quantity": depth_fill.quantity,
+                "fill_price": fill_price, "position_id": position_id, "execution_mode": execution_mode,
+                "stop_price": stop_price, "take_profit_price": filled_take_profit,
+            },
+        }
 
     order = Order(
         proposal_id=proposal_id,
@@ -155,6 +302,7 @@ def execute_paper_order(
         opportunity_id=opportunity_id,
         trade_school=trade_school,
         attribution_snapshot=attribution_snapshot,
+        paper_fill_model_version=None,
     )
 
     result = {
@@ -200,13 +348,16 @@ def _materialize_paper_entry(
     opportunity_id: str | None,
     trade_school: str,
     attribution_snapshot: dict[str, Any] | str | None,
+    paper_fill_model_version: str | None = None,
+    persist_order: bool = True,
 ) -> tuple[str, float | None]:
     """Commit the local Order, Fill, Position, and cash event atomically."""
     from aletheia.storage import repositories as repo
 
     filled_take_profit: float | None = None
     with repo.transaction(immediate=True):
-        insert_order(order)
+        if persist_order:
+            insert_order(order)
         insert_fill(fill)
         existing = _find_open_position(
             symbol,
@@ -227,6 +378,8 @@ def _materialize_paper_entry(
                 "entry_price": new_entry,
                 "current_price": fill_price,
             }
+            if paper_fill_model_version is not None:
+                update_kwargs["paper_fill_model_version"] = paper_fill_model_version
             existing_lev = existing.get("leverage")
             if existing_lev and existing_lev > 1:
                 update_kwargs["liquidation_price"] = _liq_price(
@@ -328,6 +481,7 @@ def _materialize_paper_entry(
                 ),
                 entry_price_source="local_fill",
                 entry_fill_verified=True,
+                paper_fill_model_version=paper_fill_model_version,
                 opened_at=fill.filled_at,
                 trade_school=trade_school,
             )
@@ -350,6 +504,177 @@ def _materialize_paper_entry(
         # original opening leg, while later Orders no longer become orphan facts.
         update_order(order.id, position_id=position_id)
     return position_id, filled_take_profit
+
+
+def match_open_paper_orders(event) -> list[dict]:
+    """Apply one exact trade event once across eligible resting Paper Orders."""
+
+    if (
+        event.event_type != "trade"
+        or event.side not in {"buy", "sell"}
+        or event.price is None
+        or event.size is None
+        or not math.isfinite(float(event.price))
+        or not math.isfinite(float(event.size))
+        or float(event.price) <= 0
+        or float(event.size) <= 0
+        or int(event.exchange_timestamp_ms) < 0
+        or int(event.received_timestamp_ms) < 0
+        or int(event.sequence) < 0
+    ):
+        return []
+    from aletheia.config.loader import load_config
+    from aletheia.execution.paper_execution import (
+        PAPER_FILL_MODEL_VERSION,
+        exact_public_event_id,
+    )
+    from aletheia.storage import repositories as repo
+
+    event_id = exact_public_event_id(event)
+    fee_pct, _, _ = validate_execution_costs(
+        execution_fee_pct=load_config().trading.execution_fee_pct,
+        slippage_bps=0.0,
+    )
+    fee_rate = fee_pct / 100.0
+    results: list[dict] = []
+    with repo.transaction(immediate=True):
+        already_used = repo.get_db().execute(
+            "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity FROM fills WHERE public_event_id=?",
+            (event_id,),
+        ).fetchone()
+        remaining_liquidity = max(0.0, float(event.size) - float(already_used["quantity"] or 0.0))
+        if remaining_liquidity <= 0:
+            return []
+        rows = repo.get_db().execute(
+            "SELECT o.* FROM orders o WHERE o.execution_mode='paper_internal' "
+            "AND o.order_tactic='POST_ONLY_LIMIT' AND o.status IN ('pending','partially_filled') "
+            "AND o.symbol=? AND o.market_type=? ORDER BY o.created_at ASC, o.id ASC",
+            (
+                event.instrument.symbol,
+                "usdt_futures" if event.instrument.market_type == "perp" else "spot",
+            ),
+        ).fetchall()
+        candidates = []
+        for raw in rows:
+            order = dict(raw)
+            receipt_row = repo.get_entry_execution_receipt(str(order.get("attempt_id") or ""))
+            try:
+                receipt = json.loads(str(receipt_row["receipt_json"])) if receipt_row else {}
+                instrument = receipt.get("instrument") or {}
+                placed_at = datetime.fromisoformat(str(order["created_at"]).replace("Z", "+00:00"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                instrument.get("venue") != event.instrument.exchange
+                or instrument.get("symbol") != event.instrument.symbol
+                or instrument.get("market_type") != event.instrument.market_type
+                or int(event.received_timestamp_ms) <= int(placed_at.timestamp() * 1000)
+            ):
+                continue
+            price = float(order["price"])
+            qualifies = (
+                event.side == "sell" and order["direction"] in {"long", "buy"} and float(event.price) < price
+            ) or (
+                event.side == "buy" and order["direction"] in {"short", "sell"} and float(event.price) > price
+            )
+            if qualifies:
+                candidates.append(order)
+        candidates.sort(
+            key=lambda order: (
+                -float(order["price"]) if event.side == "sell" else float(order["price"]),
+                str(order["created_at"]),
+                str(order["id"]),
+            )
+        )
+        for order in candidates:
+            if remaining_liquidity <= 0:
+                break
+            used = repo.get_db().execute(
+                "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity FROM fills WHERE order_id=?",
+                (order["id"],),
+            ).fetchone()
+            remaining_order = max(0.0, float(order["quantity"]) - float(used["quantity"] or 0.0))
+            fill_quantity = min(remaining_order, remaining_liquidity)
+            if fill_quantity <= 0:
+                continue
+            proposal = repo.get_trade_proposal(str(order["proposal_id"]))
+            if proposal is None:
+                continue
+            evidence = {
+                "model_version": PAPER_FILL_MODEL_VERSION,
+                "rule": "strict_opposite_aggressor_trade_through",
+                "public_event_id": event_id,
+                "event_price": float(event.price),
+                "event_size": float(event.size),
+                "event_side": event.side,
+                "event_sequence": int(event.sequence),
+                "event_exchange_timestamp_ms": int(event.exchange_timestamp_ms),
+                "event_received_timestamp_ms": int(event.received_timestamp_ms),
+                "allocated_quantity": fill_quantity,
+            }
+            evidence_json = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+            filled_at = datetime.fromtimestamp(event.received_timestamp_ms / 1000, tz=timezone.utc).isoformat()
+            fill = Fill(
+                order_id=order["id"],
+                fill_price=float(order["price"]),
+                fill_quantity=fill_quantity,
+                fee=fill_quantity * float(order["price"]) * fee_rate,
+                filled_at=filled_at,
+                paper_fill_model_version=PAPER_FILL_MODEL_VERSION,
+                paper_execution_evidence=evidence_json,
+                paper_execution_evidence_hash=hashlib.sha256(evidence_json.encode()).hexdigest(),
+                public_event_id=event_id,
+            )
+            order_model = Order.model_validate(order)
+            position_id, take_profit = _materialize_paper_entry(
+                order=order_model,
+                fill=fill,
+                proposal_id=proposal["id"],
+                symbol=proposal["symbol"],
+                market_type=proposal["market_type"],
+                direction=proposal["direction"],
+                quantity=fill_quantity,
+                requested_price=float(order["price"]),
+                fill_price=float(order["price"]),
+                fee_rate=fee_rate,
+                execution_mode="paper_internal",
+                strategy_id=proposal.get("strategy_id"),
+                stop_price=proposal.get("stop_price"),
+                take_profit=proposal.get("take_profit"),
+                leverage=proposal.get("leverage"),
+                opportunity_id=proposal.get("opportunity_id"),
+                trade_school=proposal.get("trade_school") or "short_term",
+                attribution_snapshot=proposal.get("attribution_snapshot"),
+                paper_fill_model_version=PAPER_FILL_MODEL_VERSION,
+                persist_order=False,
+            )
+            remaining_after = remaining_order - fill_quantity
+            if remaining_after <= max(1e-12, float(order["quantity"]) * 1e-9):
+                repo.update_order(order["id"], status="filled", filled_at=filled_at)
+                repo.release_entry_risk_reservation(proposal["id"])
+                status = "filled"
+            else:
+                repo.update_order(order["id"], status="partially_filled")
+                repo.retain_entry_risk_reservation_quantity(proposal["id"], remaining_after)
+                status = "partially_filled"
+            plan = repo.get_entry_plan(str(order["entry_plan_id"]))
+            if plan is not None and plan["status"] != status:
+                expected = "ordered" if status == "partially_filled" else plan["status"]
+                if not repo.transition_entry_plan(
+                    str(order["entry_plan_id"]),
+                    expected_status=expected,
+                    status=status,
+                    order_id=order["id"],
+                    evidence=evidence if status == "filled" else None,
+                ):
+                    raise RuntimeError("paper_entry_plan_fill_transition_failed")
+            results.append({
+                "order_id": order["id"], "fill_id": fill.id, "position_id": position_id,
+                "fill_price": float(order["price"]), "fill_quantity": fill_quantity,
+                "status": status, "take_profit_price": take_profit,
+            })
+            remaining_liquidity -= fill_quantity
+    return results
 
 
 def _existing_paper_close(position_id: str) -> tuple[dict | None, dict | None]:
@@ -435,8 +760,55 @@ def close_paper_position(
     cfg = load_config()
     fee_rate, slippage_bps = _paper_close_costs(row, cfg)
     close_side = "sell" if row["direction"] in ("long", "buy") else "buy"
-    fill_price = _apply_slippage(mark, close_side, slippage_bps)
     quantity = float(row["quantity"])
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.execution.paper_execution import (
+        PAPER_FILL_MODEL_VERSION,
+        PAPER_PROTECTIVE_FALLBACK_VERSION,
+        consume_known_depth,
+        paper_market_state,
+    )
+
+    execution_evidence: dict[str, Any]
+    fill_model = PAPER_PROTECTIVE_FALLBACK_VERSION
+    fill_price = _apply_slippage(mark, close_side, slippage_bps)
+    try:
+        venue = str(cfg.market_data.ccxt_exchange or "").strip().lower()
+        instrument = InstrumentId.from_parts(
+            venue,
+            row["symbol"],
+            "perp" if row["market_type"] == "usdt_futures" else "spot",
+        )
+        snapshot = paper_market_state.snapshot(instrument, ttl_ms=5_000)
+        depth_fill = consume_known_depth(
+            direction="short" if close_side == "sell" else "long",
+            quantity=quantity,
+            limit_price=1e-300 if close_side == "sell" else 1e300,
+            depth=snapshot.depth,
+        )
+        if depth_fill.quantity + 1e-12 >= quantity and depth_fill.vwap is not None:
+            fill_price = depth_fill.vwap
+            fill_model = PAPER_FILL_MODEL_VERSION
+            execution_evidence = {
+                "model_version": fill_model,
+                "source": "known_public_depth",
+                "receipt_snapshot_version": snapshot.version,
+                "stream_generation_id": snapshot.stream_generation_id,
+                "subscription_generation_id": snapshot.subscription_generation_id,
+                "levels": [list(level) for level in depth_fill.levels],
+            }
+        else:
+            raise ValueError("known_depth_insufficient_for_protective_exit")
+    except Exception as exc:
+        execution_evidence = {
+            "model_version": fill_model,
+            "source": "public_mark_with_configured_slippage",
+            "precision": "reduced",
+            "reason": str(exc).split(":", 1)[0] or type(exc).__name__,
+        }
+    execution_evidence_json = json.dumps(
+        execution_evidence, sort_keys=True, separators=(",", ":")
+    )
     fee = round(quantity * fill_price * fee_rate, 8)
     filled_at = datetime.now(timezone.utc).isoformat()
 
@@ -457,6 +829,8 @@ def close_paper_position(
         status="filled",
         created_at=filled_at,
         filled_at=filled_at,
+        paper_fill_model_version=fill_model,
+        paper_execution_evidence=execution_evidence_json,
     )
     close_fill = Fill(
         id=f"paper-close:{position_id}:{filled_at}",
@@ -465,6 +839,11 @@ def close_paper_position(
         fill_quantity=quantity,
         fee=fee,
         filled_at=filled_at,
+        paper_fill_model_version=fill_model,
+        paper_execution_evidence=execution_evidence_json,
+        paper_execution_evidence_hash=hashlib.sha256(
+            execution_evidence_json.encode()
+        ).hexdigest(),
     )
 
     funding_kwargs: dict[str, Any] = {}
@@ -522,6 +901,15 @@ def close_paper_position(
     def _materialize_close() -> None:
         insert_order(close_order)
         insert_fill(close_fill)
+        outcome_fill_model = (
+            fill_model
+            if fill_model != PAPER_FILL_MODEL_VERSION
+            else row.get("paper_fill_model_version")
+        )
+        update_position(
+            position_id,
+            paper_fill_model_version=outcome_fill_model,
+        )
 
     try:
         result = close_position(

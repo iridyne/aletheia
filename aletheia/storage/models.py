@@ -556,6 +556,8 @@ class RiskDecision(_Provenanced):
     policy_id: str | None = None
     policy_revision: int | None = None
     policy_hash: str | None = None
+    attempt_id: str | None = None
+    receipt_hash: str | None = None
     message: str | None = None
     created_at: str = Field(default_factory=_utcnow)
 
@@ -585,6 +587,10 @@ class Order(_Provenanced):
     time_in_force: str | None = None
     post_only: bool | None = None
     requested_liquidity: str | None = None
+    attempt_id: str | None = None
+    receipt_hash: str | None = None
+    paper_fill_model_version: str | None = None
+    paper_execution_evidence: str | None = None
     # Direct Position identity for close Orders and for entry Orders after local
     # materialization.  It removes the ambiguous proposal/symbol guesswork when
     # an averaging leg or delayed exchange fill is reconciled later.
@@ -617,6 +623,10 @@ class Fill(_Provenanced):
     # Venue/private-fill evidence only. NULL means unavailable, never inferred
     # from limit/post-only request intent.
     realized_liquidity: str | None = None
+    paper_fill_model_version: str | None = None
+    paper_execution_evidence: str | None = None
+    paper_execution_evidence_hash: str | None = None
+    public_event_id: str | None = None
     filled_at: str = Field(default_factory=_utcnow)
 
 
@@ -674,6 +684,7 @@ class Position(_Provenanced):
     close_category: str = "unknown"
     entry_price_source: str = "unavailable"
     entry_fill_verified: bool = False
+    paper_fill_model_version: str | None = None
     exit_price_source: str = "unavailable"
     exit_fill_verified: bool = False
     outcome_eligible: bool = False
@@ -1748,6 +1759,7 @@ class EntryPlanRecord(_Provenanced):
     updated_at: str = Field(default_factory=_utcnow)
     terminal_at: str | None = None
     terminal_reason: str | None = None
+    terminal_evidence: str | None = None
 
 
 class UniverseSetup(_Provenanced):

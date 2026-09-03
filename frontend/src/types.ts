@@ -866,6 +866,7 @@ export interface EntryPlan {
   updated_at: string
   terminal_at: string | null
   terminal_reason: string | null
+  terminal_evidence?: string | null
   contract_valid: boolean
   lineage?: {
     order: { id: string; exchange_order_id: string | null; status: string; quantity: number; position_id: string | null } | null
@@ -986,6 +987,28 @@ export interface EntryWorkbenchResponse {
   }
   summary: { active_entry_plans: number; needs_planning: number; expiring_soon: number } | null
   entry_plans: EntryPlan[] | null
+  monitoring: {
+    running: boolean
+    reason: string | null
+    watched_setups: number
+    watched_entry_plan_ids: string[]
+    monitoring: Array<{
+      state: 'queued' | 'warming' | 'ready' | 'degraded'
+      instrument: { venue: string; symbol: string; market_type: 'spot' | 'perp' }
+      stream_generation_id: string | null
+      subscription_generation_id: string | null
+      required_channels: string[]
+      channels: Record<string, {
+        state: 'warming' | 'ready' | 'degraded'
+        last_exchange_at: number | null
+        last_received_at: number | null
+        last_sequence: number | null
+        reason: string | null
+      }>
+      updated_at: string
+      funding: { state: string; reason: string | null }
+    }> | null
+  } | null
   current_candidates: CandidateWorkbenchRow[] | null
   candidate_attention: CandidateAttention[] | null
 }

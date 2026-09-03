@@ -55,6 +55,9 @@ class _ScheduledSnapshot:
     funding_rate: float
     scheduled_at: datetime
     observed_at: datetime
+    source_observed_at: datetime | None = None
+    acquired_at: datetime | None = None
+    source_time_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,8 @@ def _load_scheduled_snapshots(symbol: str, *, through: datetime) -> list[_Schedu
 
     rows = get_db().execute(
         """
-        SELECT id, symbol, exchange, funding_rate, next_funding_time, observed_at
+        SELECT id, symbol, exchange, funding_rate, next_funding_time, observed_at,
+               source_observed_at, acquired_at, source_time_status
         FROM funding_rate_snapshots
         WHERE symbol=? AND next_funding_time IS NOT NULL
         ORDER BY observed_at ASC, rowid ASC
@@ -121,6 +125,9 @@ def _load_scheduled_snapshots(symbol: str, *, through: datetime) -> list[_Schedu
             funding_rate=rate,
             scheduled_at=scheduled_at,
             observed_at=observed_at,
+            source_observed_at=_parse_utc(row.get("source_observed_at")),
+            acquired_at=_parse_utc(row.get("acquired_at")),
+            source_time_status=str(row.get("source_time_status") or "") or None,
         ))
     return result
 
@@ -430,9 +437,25 @@ def _incomplete(
 def has_fresh_local_funding_schedule(
     symbol: str,
     *,
+    venue: str | None = None,
     as_of: str | datetime | None = None,
 ) -> bool:
     """Return whether entry has a fresh, persisted next-settlement anchor."""
+
+    return local_funding_schedule_readiness(
+        symbol,
+        venue=venue,
+        as_of=as_of,
+    )["state"] == "ready"
+
+
+def local_funding_schedule_readiness(
+    symbol: str,
+    *,
+    venue: str | None,
+    as_of: str | datetime | None = None,
+) -> dict[str, Any]:
+    """Return exact producer-backed funding readiness without inventing zero."""
 
     if as_of is None:
         instant = datetime.now(timezone.utc)
@@ -440,16 +463,32 @@ def has_fresh_local_funding_schedule(
         instant = as_of.astimezone(timezone.utc) if as_of.tzinfo else None
     else:
         instant = _parse_utc(as_of)
-    if instant is None:
-        return False
+    exact_venue = str(venue or "").strip().lower()
+    if instant is None or not exact_venue:
+        return {"state": "unavailable", "reason": "funding_identity_invalid"}
     rows = _load_scheduled_snapshots(symbol, through=instant)
-    candidates = [
-        row
-        for row in rows
-        if row.observed_at <= instant < row.scheduled_at
-        and instant - row.observed_at <= _MAX_OBSERVATION_GAP
-    ]
-    return bool(candidates)
+    exact = [row for row in rows if row.exchange == exact_venue]
+    if not exact:
+        return {"state": "unavailable", "reason": "funding_exact_schedule_missing"}
+    latest = max(exact, key=lambda row: row.observed_at)
+    evidence = {
+        "venue": exact_venue,
+        "symbol": symbol,
+        "snapshot_id": latest.id,
+        "observed_at": _as_iso(latest.observed_at),
+        "next_funding_time": _as_iso(latest.scheduled_at),
+    }
+    if (
+        latest.source_time_status != "provided"
+        or latest.source_observed_at is None
+        or latest.acquired_at is None
+    ):
+        return {**evidence, "state": "unavailable", "reason": "funding_source_provenance_unavailable"}
+    if latest.observed_at > instant or latest.scheduled_at <= instant:
+        return {**evidence, "state": "unavailable", "reason": "funding_settlement_not_future"}
+    if instant - latest.observed_at > _MAX_OBSERVATION_GAP:
+        return {**evidence, "state": "degraded", "reason": "funding_schedule_stale"}
+    return {**evidence, "state": "ready", "reason": None}
 
 
 def _compute_local_funding_with_entry_fills(

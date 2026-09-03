@@ -33,6 +33,28 @@ def _active_entry_plan_projections(limit: int) -> list[dict]:
     return items
 
 
+def _fast_monitoring_projection() -> dict:
+    from aletheia.agent_runtime.fast_trigger_watch import fast_trigger_watch_status
+    from aletheia.portfolio.local_funding import local_funding_schedule_readiness
+
+    status = fast_trigger_watch_status()
+    instruments = []
+    for item in status.get("monitoring") or []:
+        projected = dict(item)
+        instrument = projected.get("instrument") or {}
+        projected["funding"] = (
+            local_funding_schedule_readiness(
+                str(instrument.get("symbol") or ""),
+                venue=str(instrument.get("venue") or ""),
+            )
+            if instrument.get("market_type") == "perp"
+            else {"state": "not_applicable", "reason": None}
+        )
+        instruments.append(projected)
+    status["monitoring"] = instruments if "monitoring" in status else None
+    return status
+
+
 def _entry_plan_lineage(row: dict) -> dict:
     order = repo.get_order(row.get("order_id")) if row.get("order_id") else None
     if order is None:
@@ -74,6 +96,7 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
         "universe": None,
         "summary": None,
         "entry_plans": None,
+        "monitoring": None,
         "current_candidates": None,
         "candidate_attention": None,
     }
@@ -120,6 +143,7 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
     readers = {
         "summary": lambda: repo.get_entry_workbench_summary(),
         "entry_plans": lambda: _active_entry_plan_projections(limit),
+        "monitoring": _fast_monitoring_projection,
         "current_candidates": lambda: (
             repo.list_current_candidate_workbench(active_snapshot_id)
             if active_snapshot_id

@@ -163,6 +163,7 @@ export default function Universe() {
   const workbenchUnavailable = workbench.isError && !data
   const summary = data?.summary
   const plans = data?.entry_plans
+  const monitoring = data?.monitoring
   const currentCandidates = data?.current_candidates
   const candidates = data?.candidate_attention
   const stageCounts = useMemo(() => {
@@ -296,6 +297,25 @@ export default function Universe() {
       {operatorStatus.isPending ? 'Checking planning health…' : operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
     </Card>
 
+    <Card className="entry-workbench-notice" aria-label="Fast monitoring evidence">
+      <strong>Fast monitoring:</strong>{' '}
+      {monitoring == null
+        ? 'not available.'
+        : monitoring.monitoring == null
+          ? `${monitoring.running ? 'running' : 'stopped'} · ${humanize(monitoring.reason)}`
+          : monitoring.monitoring.length === 0
+            ? 'no subscribed instruments.'
+            : monitoring.monitoring.map(item => {
+              const gaps = Object.entries(item.channels)
+                .filter(([, channel]) => channel.state !== 'ready')
+                .map(([name, channel]) => `${name}: ${humanize(channel.reason ?? channel.state)}`)
+              const funding = item.instrument.market_type === 'perp'
+                ? ` · funding ${humanize(item.funding.reason ?? item.funding.state)}`
+                : ''
+              return `${item.instrument.venue} ${fmtSymbol(item.instrument.symbol)} ${item.instrument.market_type}: ${humanize(item.state)}${gaps.length ? ` (${gaps.join(', ')})` : ''}${funding}`
+            }).join(' · ')}
+    </Card>
+
     {workbenchUnavailable ? <Card role="alert">Entry Workbench is unavailable. Summary counts and rows are not inferred.</Card> : null}
 
     {data?.universe.fallback_instruments.length ? <Card className="entry-workbench-notice">
@@ -325,6 +345,7 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
         <DrawerField label="Side" value={humanize(plan.direction)} />
         <DrawerField label="Contract" value={plan.contract_valid ? 'Validated' : 'Invalid'} />
         <DrawerField label="Status" value={humanize(plan.status)} />
+        <DrawerField label="Terminal evidence" value={plan.terminal_evidence ?? 'Not applicable'} mono />
         <DrawerField label="Expiry / countdown" value={expiryLabel(plan.plan?.expires_at)} />
       </DrawerSection>
       <DrawerSection label="Entry Geometry">

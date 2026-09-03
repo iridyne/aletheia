@@ -76,6 +76,7 @@ def _insert_closed(
             "close_category": "strategy",
             "entry_price_source": "local_fill",
             "entry_fill_verified": True,
+            "paper_fill_model_version": "paper-order-fill/v1",
             "exit_price_source": "local_fill",
             "exit_fill_verified": True,
             "entry_fee": 0.0,

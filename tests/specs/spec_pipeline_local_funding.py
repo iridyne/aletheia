@@ -54,13 +54,17 @@ def _iso_ms(hour: int, minute: int = 0, millisecond: int = 0) -> str:
 def _snapshot(*, rate: float, target_hour: int, observed_hour: int, observed_minute: int):
     from aletheia.storage import repositories as repo
 
+    observed = _iso(observed_hour, observed_minute)
     repo.insert_funding_rate_snapshot({
         "symbol": "BTC/USDT",
         "exchange": "okx",
         "funding_rate": rate,
         "funding_rate_annualized": rate * 3 * 365,
         "next_funding_time": _iso(target_hour),
-        "observed_at": _iso(observed_hour, observed_minute),
+        "source_observed_at": observed,
+        "acquired_at": observed,
+        "source_time_status": "provided",
+        "observed_at": observed,
     })
 
 
@@ -73,6 +77,9 @@ def _snapshot_at(*, rate: float, target: str, observed: str):
         "funding_rate": rate,
         "funding_rate_annualized": rate * 3 * 365,
         "next_funding_time": target,
+        "source_observed_at": observed,
+        "acquired_at": observed,
+        "source_time_status": "provided",
         "observed_at": observed,
     })
 
@@ -739,10 +746,17 @@ def test_local_funding_entry_schedule_requires_fresh_primary_snapshot(
         "observed_at": _iso(0, 10),
     })
 
-    assert has_fresh_local_funding_schedule("BTC/USDT", as_of=_iso(0, 30)) is False
+    assert has_fresh_local_funding_schedule(
+        "BTC/USDT", venue="okx", as_of=_iso(0, 30)
+    ) is False
 
     _snapshot(rate=0.0001, target_hour=4, observed_hour=0, observed_minute=29)
-    assert has_fresh_local_funding_schedule("BTC/USDT", as_of=_iso(0, 30)) is True
+    assert has_fresh_local_funding_schedule(
+        "BTC/USDT", venue="okx", as_of=_iso(0, 30)
+    ) is True
+    assert has_fresh_local_funding_schedule(
+        "BTC/USDT", venue="binance", as_of=_iso(0, 30)
+    ) is False
 
 
 @spec_claim(

@@ -101,8 +101,76 @@ def test_entry_plan_execution_reuses_canonical_gateway():
     source = inspect.getsource(entry_plan_execution.execute_entry_plan)
     assert "get_trade_proposal_by_entry_plan" in source
     assert "execute_existing_proposal" in source
+    assert "execution_market_snapshot" in source
     assert "evaluate_proposal" not in source
     assert "BitgetClient" not in source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S11",
+        "execution_contract",
+        "§3.0a Paper execution receipt",
+        "L2a",
+        "One short-lived receipt binds exact public facts to canonical Risk, Gateway and Order authority without changing Proposal identity.",
+        status="implemented",
+    )
+)
+def test_paper_entry_receipt_is_attempt_scoped_and_gateway_owned():
+    from aletheia.execution.gateway import execute_existing_proposal
+    from aletheia.execution.paper_execution import EntryExecutionReceiptV1
+    from aletheia.storage.models import Order, RiskDecision, TradeProposal
+
+    assert "execution_market_snapshot" in inspect.signature(execute_existing_proposal).parameters
+    assert {"attempt_id", "proposal_id", "entry_plan_id", "receipt_hash"} <= set(
+        EntryExecutionReceiptV1.model_fields
+    )
+    assert {"attempt_id", "receipt_hash"} <= set(RiskDecision.model_fields)
+    assert {"attempt_id", "receipt_hash", "paper_fill_model_version"} <= set(Order.model_fields)
+    assert "receipt_hash" not in TradeProposal.model_fields
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S12",
+        "execution_contract",
+        "§3.0a paper-order-fill/v1",
+        "L2a",
+        "IOC consumes bounded known depth while Maker placement remains open until a later strict opposite-aggressor trade-through with one event budget.",
+        status="implemented",
+    )
+)
+def test_paper_fill_model_has_bounded_ioc_and_later_maker_paths():
+    from aletheia.execution.paper_broker import execute_paper_order, match_open_paper_orders
+
+    ioc = inspect.getsource(execute_paper_order)
+    maker = inspect.getsource(match_open_paper_orders)
+    assert "consume_known_depth" in ioc
+    assert 'order_tactic == "POST_ONLY_LIMIT"' in ioc
+    assert "strict_opposite_aggressor_trade_through" in maker
+    assert "remaining_liquidity" in maker
+    assert "retain_entry_risk_reservation_quantity" in maker
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S13",
+        "entry_plan_contract",
+        "Exact monitoring readiness and recoverable capacity",
+        "L2a",
+        "Fast Monitoring watches all active Plans, exposes per-instrument channel readiness, and persists bounded terminal evidence without a destructive Plan-count cap.",
+        status="implemented",
+    )
+)
+def test_fast_monitoring_capacity_is_non_destructive_and_operator_visible():
+    from aletheia.agent_runtime.fast_trigger_watch import _load_entry_plan_watchers
+    from aletheia.server.routes.universe import get_entry_workbench
+
+    watcher = inspect.getsource(_load_entry_plan_watchers)
+    route = inspect.getsource(get_entry_workbench)
+    assert "list_watchable_entry_plans, None" in watcher
+    assert "entry_plan_monitoring_capacity_unavailable" not in watcher
+    assert '"monitoring": _fast_monitoring_projection' in route
 
 
 @spec_claim(

@@ -96,11 +96,10 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
   只接受有限的 `0..200` bps。canonical config load、Settings mutation 与 Paper
   broker 使用同一范围；非法 restored/manual config 必须在 Order、Fill、Position、
   cash event 或 ExitPlan 写入前失败，不能生成 favorable slippage、负 fee 或乐观零成本。
-- 本地纸面入场通常只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
-  普通 `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单。唯一例外是
-  `§3.0a` 的持久 Entry Plan → Proposal → Risk 权威链所拥有的 bounded Limit Order Intent；
-  Paper broker 立即模拟成交并保留 requested tactic，但不得写 maker `realized_liquidity` 或声称
-  Post-Only queue fidelity。交易所 demo/testnet 仍按各自 adapter 能力使用 limit。
+- 本地纸面普通 Proposal 仍只允许既有 market-style 路径；持久 Entry Plan 的 bounded Limit
+  是唯一例外。它必须携带 `EntryExecutionReceiptV1`，并复用公共 FastMarketStream 的精确
+  venue/symbol/physical-market quote、trade、Depth5 和 candle 事实。缺失、过期、断序或 generation
+  不匹配时不创建 Order/Fill；不允许退回 symbol-only mark 或私有账户数据。
 - 入场价只来自配置行情 venue 的同 canonical symbol、同物理 `spot/perp` 新鲜精确 mark；内存
   mark 必须小于 90 秒，SQLite 精确回退不得超过 120 秒。跨 venue、跨 spot/perp、symbol-only
   或 stale row 都不能建立 Proposal，pending 留待后续重试。
@@ -113,17 +112,27 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 - `RESTING_MAKER` 与 Triggered Maker 必须逐层传递 `post_only=true`、
   `time_in_force=post_only` 和 exact limit price。venue/profile 无法表达时返回
   capability unavailable；普通 GTC Limit 永远不是 Maker。
-- Urgent Taker 默认是 opposing-BBO IOC Limit：long 使用 latest exact ask，short 使用 latest
-  exact bid。`max_slippage_bps` 与 `worst_price` 任一越界都拒绝，不得 chase；Market order 不在
-  V1 authority 中。
-- Risk reservation 必须在 Order 持久化和 exchange submission 之前存在。Order 与 Entry Plan
-  `risk_reserved → ordered` 在同一 SQLite writer transaction 中前进。
+- Urgent Taker 的 Proposal price 是 Plan 冻结的 IOC 最差可执行边界。当前 opposing BBO、
+  `max_slippage_bps`、`worst_price` 与 Entry Zone 任一越界都拒绝；成交只顺序消耗 receipt 中
+  边界以内的已知对手 Depth5，按 VWAP full/partial fill，并立即取消未知 remainder；depth 已表达
+  price impact，不再叠加固定 slippage。
+- Risk reservation 必须在 Order 持久化前存在。Paper open/partial Order 保留未成交数量的同一
+  reservation，直到 Fill、cancel、expiry 或 error 才释放；重启只恢复这份 durable authority，
+  不推测停机期间成交。
 - Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，
   随后持锁重读 private Fill/Order。full Fill 赢得竞态；partial Fill 保留真实 Position，并允许取消
   remainder；request-side `requested_liquidity` 不能冒充 `realized_liquidity`。
-- `paper_internal` 可验证 plan、trigger、Risk 和 deterministic Order Intent，但其 immediate-fill
-  模型不能证明 Post-Only queue 或 maker fill。真实 tactic qualification 使用 deterministic fake
-  adapter tests 与 Bitget Demo private evidence。
+- `paper-order-fill/v1` 的 Post-Only placement 只写 open Order，不写 Fill/Position。后续精确的
+  opposite-aggressor Trade 必须严格穿过 limit，Fill 固定在 limit，数量受 Order remainder 与该
+  Trade 尚未被本地 Paper Orders 消耗的 size 双重限制；本地 price/time priority 只防重复消费，
+  不声称外部 queue position，`realized_liquidity` 仍 unavailable。
+- 创建 Order 时复用 active `universe_registry` 的 exact instrument、`min_notional`、price/amount
+  precision；规则缺失或 inactive 为 unavailable。Entry/ordinary exit 在 depth 可用时共用
+  `paper-order-fill/v1`；保护性退出缺 depth 时保留既有 public-mark fail-safe，但显式标记
+  `paper-protective-fallback/v1`，不得与新模型 cohort 混合。
+- Central outcome eligibility 只接纳 `paper_fill_model_version=paper-order-fill/v1` 的
+  `paper_internal` Position。旧 instant-fill 或缺失 identity 的记录仍保留为 raw event，并以
+  `unverified_paper_fill_model` 排除，不能与新模型汇总成同一经济 cohort。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 

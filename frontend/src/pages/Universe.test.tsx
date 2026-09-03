@@ -28,6 +28,7 @@ const workbench: EntryWorkbenchResponse = {
     entry_plans: { available: true, stale: false },
     current_candidates: { available: true, stale: false },
     candidate_attention: { available: true, stale: false },
+    monitoring: { available: true, stale: false },
   },
   universe: {
     enabled: true,
@@ -44,7 +45,7 @@ const workbench: EntryWorkbenchResponse = {
     version: 'entry-plan/v1', venue: 'bitget', symbol: 'AVAX/USDT', market_type: 'perp', direction: 'long',
     execution_mode: 'RESTING_MAKER', status: 'waiting', order_id: null, plan_hash: 'b'.repeat(64),
     created_at: '2026-08-28T00:00:00Z', updated_at: '2026-08-28T00:00:00Z', terminal_at: null,
-    terminal_reason: null, contract_valid: true, plan: {
+    terminal_reason: null, terminal_evidence: null, contract_valid: true, plan: {
       thesis: 'bounded continuation', scenario: 'retrace', entry_zone: [100, 101], invalidation_price: 98,
       stop_price: 98, target_price: 105, expires_at: '2026-08-28T01:00:00Z', limit_price: 100,
       trigger_spec_id: null, trigger_spec_version: null, order_tactic: 'POST_ONLY_LIMIT',
@@ -59,6 +60,20 @@ const workbench: EntryWorkbenchResponse = {
       position: { id: 'position-1', status: 'open', quantity: 0.5, entry_price: 100 },
     },
   }],
+  monitoring: {
+    running: true, reason: null, watched_setups: 1, watched_entry_plan_ids: ['plan-1'],
+    monitoring: [{
+      state: 'degraded', instrument: { venue: 'binance', symbol: 'BTC/USDT', market_type: 'perp' },
+      stream_generation_id: 'stream-1', subscription_generation_id: 'subscription-1',
+      required_channels: ['quote', 'trade', 'depth'], updated_at: '2026-08-28T00:00:00Z',
+      channels: {
+        quote: { state: 'ready', last_exchange_at: 1, last_received_at: 1, last_sequence: 1, reason: null },
+        trade: { state: 'degraded', last_exchange_at: 1, last_received_at: 1, last_sequence: 1, reason: 'event_stale' },
+        depth: { state: 'ready', last_exchange_at: 1, last_received_at: 1, last_sequence: 1, reason: null },
+      },
+      funding: { state: 'unavailable', reason: 'funding_schedule_missing' },
+    }],
+  },
   current_candidates: [{
     id: 'candidate-1', snapshot_id: 'snapshot-1234', asset_id: 'asset-1', venue: 'binance',
     symbol: 'BTC/USDT', market_type: 'perp', rank: 1, total_score: 88,
@@ -110,6 +125,9 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Entry Plans')
     expect(html).toContain('Planning Queue')
     expect(html).toContain('Planning History')
+    expect(html).toContain('Fast monitoring:')
+    expect(html).toContain('trade: Event Stale')
+    expect(html).toContain('funding Funding Schedule Missing')
     expect(html).not.toContain('Manual Review')
   })
 

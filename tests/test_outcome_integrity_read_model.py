@@ -25,6 +25,7 @@ def _closed_row(**overrides) -> dict:
         "funding_source": "local_simulation",
         "realized_pnl": 25.0,
         "execution_mode": "paper_internal",
+        "paper_fill_model_version": "paper-order-fill/v1",
         "opportunity_id": "opportunity-1",
         "proposal_id": "proposal-1",
         "order_id": "order-1",
@@ -72,6 +73,17 @@ def test_verified_structured_strategy_close_is_eligible():
     assert assessment.outcome_key == "position:position-1"
     assert assessment.net_return_pct == pytest.approx(0.5)
     assert assessment.evidence_source == "structured"
+
+
+def test_legacy_paper_fill_model_is_not_in_the_current_economic_cohort():
+    from aletheia.analytics.outcome_integrity import assess_position_closure
+
+    assessment = assess_position_closure(
+        _closed_row(paper_fill_model_version=None)
+    )
+
+    assert assessment.eligible is False
+    assert assessment.reason == "unverified_paper_fill_model"
 
 
 @pytest.mark.parametrize(
@@ -198,6 +210,7 @@ def test_explicit_read_models_partition_closed_positions():
         "symbol": "BTC/USDT", "market_type": "usdt_futures", "direction": "long",
         "quantity": 0.1, "entry_price": 50_000.0, "realized_pnl": 10.0,
         "execution_mode": "paper_internal", "status": "closed",
+        "paper_fill_model_version": "paper-order-fill/v1",
     }
     eligible_opportunity, eligible_proposal, eligible_order = _insert_entry_chain(
         position_id="eligible",

@@ -24,6 +24,7 @@ from aletheia.storage.repositories import (
     get_trade_proposal,
     has_order_for_proposal,
     insert_trade_proposal,
+    insert_entry_execution_receipt,
     insert_proposal_execution_claim,
     proposal_execution_claim_owned,
     release_entry_risk_reservation,
@@ -274,7 +275,12 @@ def submit_proposal(
     return execute_existing_proposal(proposal.id, execution_mode)
 
 
-def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_internal") -> dict:
+def execute_existing_proposal(
+    proposal_id: str,
+    execution_mode: str = "paper_internal",
+    *,
+    execution_market_snapshot=None,
+) -> dict:
     """Atomically claim and execute one stored proposal without rewriting intent.
 
     The Proposal's execution mode is part of its hash-covered immutable intent.
@@ -285,6 +291,8 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
     owner_token: str | None = None
     reconciliation_result: dict | None = None
     reconciliation_transition: tuple[str, str, str] | None = None
+    execution_receipt = None
+    validated_execution_snapshot = None
 
     with transaction(immediate=True):
         row = get_trade_proposal(proposal_id)
@@ -329,6 +337,38 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
                 "proposal_id": proposal.id,
                 "message": "Only native Proposals may enter execution; no order was created.",
             }
+        if (
+            proposal.execution_mode == "paper_internal"
+            and proposal.entry_plan_id
+            and execution_market_snapshot is None
+        ):
+            return {
+                "status": "unavailable",
+                "reason_code": "entry_execution_receipt_unavailable",
+                "proposal_id": proposal.id,
+                "message": "Fresh exact public market evidence is unavailable; no order was created.",
+            }
+        if proposal.execution_mode == "paper_internal" and proposal.entry_plan_id:
+            from aletheia.execution.paper_execution import (
+                EntryExecutionMarketSnapshotV1,
+                paper_market_state,
+            )
+
+            try:
+                validated_execution_snapshot = EntryExecutionMarketSnapshotV1.model_validate(
+                    execution_market_snapshot
+                )
+                validated_execution_snapshot.validate_now()
+                paper_market_state.validate_snapshot_generation(
+                    validated_execution_snapshot
+                )
+            except (TypeError, ValueError) as exc:
+                return {
+                    "status": "unavailable",
+                    "reason_code": str(exc).split(":", 1)[0],
+                    "proposal_id": proposal.id,
+                    "message": "Fresh exact public market evidence is unavailable; no order was created.",
+                }
         if proposal.status not in {"pending", "approved", "executing"}:
             return {
                 "status": proposal.status,
@@ -401,6 +441,22 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
                     "proposal_id": proposal.id,
                     "message": ("Proposal execution was claimed concurrently; no new order was created."),
                 }
+            if proposal.execution_mode == "paper_internal" and proposal.entry_plan_id:
+                from aletheia.execution.paper_execution import (
+                    EntryExecutionReceiptV1,
+                    paper_market_state,
+                )
+
+                snapshot = validated_execution_snapshot
+                paper_market_state.validate_snapshot_generation(snapshot)
+                execution_receipt = EntryExecutionReceiptV1.create(
+                    snapshot,
+                    attempt_id=owner_token,
+                    proposal_id=proposal.id,
+                    entry_plan_id=proposal.entry_plan_id,
+                )
+                execution_receipt.validate_now(now)
+                insert_entry_execution_receipt(execution_receipt)
             if proposal.status in {"pending", "approved"}:
                 update_trade_proposal(proposal.id, status="executing")
             proposal.status = "executing"
@@ -429,7 +485,11 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
 
     try:
         try:
-            return _execute_proposal(proposal, execution_claim_token=owner_token)
+            return _execute_proposal(
+                proposal,
+                execution_claim_token=owner_token,
+                execution_receipt=execution_receipt,
+            )
         except ProposalIntegrityError as exc:
             return _terminal_execution_error(
                 proposal,
@@ -453,12 +513,24 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
                 # Risk allowance in every working set. Known no-Order terminal
                 # states release it too. Ambiguous states deliberately retain the
                 # reservation so a crash cannot reopen capacity.
-                if has_order_for_proposal(proposal.id) or stored_status in {
+                if stored_status in {
                     "rejected",
                     "error",
-                    "executed",
                 }:
                     release_entry_risk_reservation(proposal.id)
+                elif stored_status == "executed":
+                    from aletheia.storage import repositories as _repo
+
+                    order = _repo.get_db().execute(
+                        "SELECT status, entry_plan_id FROM orders WHERE proposal_id=? "
+                        "ORDER BY rowid ASC LIMIT 1",
+                        (proposal.id,),
+                    ).fetchone()
+                    if order is not None and (
+                        order["entry_plan_id"] is None
+                        or order["status"] in {"filled", "cancelled", "error"}
+                    ):
+                        release_entry_risk_reservation(proposal.id)
                 release_proposal_execution_claim(proposal.id, owner_token)
         except Exception as release_error:
             logger.warning(
@@ -468,7 +540,12 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
             )
 
 
-def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
+def cancel_entry_plan_order(
+    plan_id: str,
+    *,
+    reason: str,
+    evidence: dict | None = None,
+) -> dict:
     """Cancel through Gateway; a concurrently materialized Fill always wins."""
 
     from aletheia.execution.bitget_broker import cancel_entry_order
@@ -483,7 +560,42 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     order = repo.get_order(plan.get("order_id")) if plan.get("order_id") else None
     if order is None:
         order = repo.get_order_for_entry_plan(plan_id)
-    if order is None or not order.get("exchange_order_id"):
+    if order is None:
+        return {"status": "not_cancellable", "entry_plan_id": plan_id}
+    if order.get("execution_mode") == "paper_internal":
+        with repo.transaction(immediate=True):
+            fresh_order = repo.get_order(order["id"])
+            fresh_plan = repo.get_entry_plan(plan_id)
+            filled = repo.get_db().execute(
+                "SELECT COALESCE(SUM(fill_quantity), 0) AS quantity FROM fills WHERE order_id=?",
+                (order["id"],),
+            ).fetchone()
+            if float(filled["quantity"] or 0.0) + 1e-12 >= float(order["quantity"]):
+                if fresh_plan and fresh_plan["status"] != "filled":
+                    repo.transition_entry_plan(
+                        plan_id,
+                        expected_status=fresh_plan["status"],
+                        status="filled",
+                        reason="fill_won_cancel_race",
+                    )
+                repo.release_entry_risk_reservation(str(order["proposal_id"]))
+                return {"status": "filled", "entry_plan_id": plan_id}
+            if fresh_order and fresh_order.get("status") in {"pending", "partially_filled"}:
+                repo.update_order(order["id"], status="cancelled", error_reason=reason)
+            if fresh_plan and fresh_plan["status"] not in terminal:
+                repo.transition_entry_plan(
+                    plan_id,
+                    expected_status=fresh_plan["status"],
+                    status="cancelled",
+                    reason=reason,
+                    evidence={
+                        "paper_fill_model_version": "paper-order-fill/v1",
+                        **(evidence or {}),
+                    },
+                )
+            repo.release_entry_risk_reservation(str(order["proposal_id"]))
+        return {"status": "cancelled", "entry_plan_id": plan_id}
+    if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
     if order.get("execution_mode") != "bitget_demo":
         return {"status": "capability_unavailable", "entry_plan_id": plan_id}
@@ -614,6 +726,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                 expected_status=fresh_plan["status"],
                 status="cancelled",
                 reason=reason,
+                evidence=evidence,
             )
     return {"status": "cancelled", "entry_plan_id": plan_id}
 
@@ -1449,10 +1562,33 @@ def _notify_committed_paper_fill(result: dict) -> None:
         pass
 
 
+def process_paper_market_event(event) -> list[dict]:
+    """Gateway-owned transition from one public fact to local Fill/Position state."""
+
+    from aletheia.execution.paper_broker import match_open_paper_orders
+
+    results = match_open_paper_orders(event)
+    for result in results:
+        _notify_committed_paper_fill({
+            "_notification_payload": {
+                "symbol": event.instrument.symbol,
+                "direction": "long" if event.side == "sell" else "short",
+                "quantity": result["fill_quantity"],
+                "fill_price": result["fill_price"],
+                "position_id": result["position_id"],
+                "execution_mode": "paper_internal",
+                "stop_price": None,
+                "take_profit_price": result.get("take_profit_price"),
+            }
+        })
+    return results
+
+
 def _execute_proposal(
     proposal: TradeProposal,
     *,
     execution_claim_token: str | None = None,
+    execution_receipt=None,
 ) -> dict:
     """Run risk and execution for an already-created proposal."""
     try:
@@ -1470,15 +1606,21 @@ def _execute_proposal(
                 proposal.id,
                 proposal.commit_hash,
                 proposal.quantity,
+                receipt_hash=getattr(execution_receipt, "receipt_hash", None),
             )
             if existing_authority is not None:
                 preflight_result = evaluate_proposal(
                     proposal,
                     decision_role="preflight",
+                    execution_receipt=execution_receipt,
                 )
                 if not preflight_result.approved:
                     return _reject_for_risk(proposal, preflight_result)
-            risk_result = evaluate_proposal(proposal, decision_role="authoritative")
+            risk_result = evaluate_proposal(
+                proposal,
+                decision_role="authoritative",
+                execution_receipt=execution_receipt,
+            )
             execution_proposal = proposal
         else:
             # Exchange-bound orders retain a fresh preflight hard gate before
@@ -1642,6 +1784,7 @@ def _execute_proposal(
                     order_tactic=execution_proposal.order_tactic,
                     time_in_force=execution_proposal.time_in_force,
                     post_only=execution_proposal.post_only,
+                    execution_receipt=execution_receipt,
                 )
                 _stamp_exit_intent(result, proposal)
                 update_trade_proposal(proposal.id, status="executed")
@@ -1655,13 +1798,17 @@ def _execute_proposal(
                         order_id=result["order_id"],
                     ):
                         raise RuntimeError("paper_entry_plan_order_transition_failed")
-                    if not entry_repo.transition_entry_plan(
-                        execution_proposal.entry_plan_id,
-                        expected_status="ordered",
-                        status="filled",
-                        order_id=result["order_id"],
-                    ):
-                        raise RuntimeError("paper_entry_plan_fill_transition_failed")
+                    target = result.get("entry_plan_status")
+                    if target in {"partially_filled", "filled", "cancelled"}:
+                        if not entry_repo.transition_entry_plan(
+                            execution_proposal.entry_plan_id,
+                            expected_status="ordered",
+                            status=target,
+                            order_id=result["order_id"],
+                            reason=result.get("terminal_reason"),
+                            evidence=result.get("terminal_evidence"),
+                        ):
+                            raise RuntimeError("paper_entry_plan_fill_transition_failed")
             _notify_committed_paper_fill(result)
             _write_post_commit_audit(
                 {
@@ -1673,7 +1820,7 @@ def _execute_proposal(
                     "before": {"status": proposal.status},
                     "after": {"status": "executed"},
                     "message": (
-                        f"Paper order filled: {execution_proposal.symbol} "
+                        f"Paper order accepted: {execution_proposal.symbol} "
                         f"{execution_proposal.direction} "
                         f"{execution_proposal.quantity or 0.0}@"
                         f"{execution_proposal.price or 0.0}"

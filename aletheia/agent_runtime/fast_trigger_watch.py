@@ -17,6 +17,10 @@ from aletheia.storage.models import (
 )
 from aletheia.trading.entry_plan import EntryPlan
 from aletheia.trading.momentum_trigger import MomentumTriggerEngineV2
+from aletheia.execution.paper_execution import (
+    mark_open_order_monitoring_gap,
+    paper_market_state,
+)
 from aletheia.universe.fast_stream import (
     fast_market_data_unavailability_reason,
     fast_market_stream_for_config,
@@ -420,6 +424,7 @@ def _invalidate_pre_order_entry_plan(
     reason: str,
     now: datetime,
     terminal_status: str = "invalidated",
+    evidence: dict | None = None,
 ) -> str:
     """Invalidate before Order creation and release stale pre-Order authority."""
 
@@ -457,6 +462,7 @@ def _invalidate_pre_order_entry_plan(
             expected_status=expected_status,
             status=terminal_status,
             reason=reason,
+            evidence=evidence,
             now=now,
         ):
             return "stale"
@@ -478,12 +484,19 @@ async def _terminalize_entry_plan(
     reason: str,
     cancel_entry_plan_order,
     now: datetime,
+    evidence: dict | None = None,
 ) -> str:
+    cancel_kwargs = {"reason": reason}
+    if evidence is not None:
+        import inspect
+
+        if "evidence" in inspect.signature(cancel_entry_plan_order).parameters:
+            cancel_kwargs["evidence"] = evidence
     if row["status"] in {"ordered", "partially_filled"}:
         result = await asyncio.to_thread(
             cancel_entry_plan_order,
             row["id"],
-            reason=reason,
+            **cancel_kwargs,
         )
         return str(result.get("status") or "cancel_pending")
     outcome = await asyncio.to_thread(
@@ -492,13 +505,14 @@ async def _terminalize_entry_plan(
         expected_status=row["status"],
         terminal_status=status,
         reason=reason,
+        evidence=evidence,
         now=now,
     )
     if outcome == "order_present":
         result = await asyncio.to_thread(
             cancel_entry_plan_order,
             row["id"],
-            reason=reason,
+            **cancel_kwargs,
         )
         return str(result.get("status") or "cancel_pending")
     return outcome
@@ -522,7 +536,6 @@ async def _load_entry_plan_watchers(
 
     plans: dict[str, EntryPlan] = {}
     engines: dict[str, TriggerEngine | MomentumTriggerEngineV2] = {}
-    monitoring_limit = int(cfg.fast_trigger.max_setups)
     now = datetime.now(timezone.utc)
     for row in await asyncio.to_thread(repo.list_watchable_entry_plans, None):
         payload = str(row["plan_json"])
@@ -605,10 +618,35 @@ async def _load_entry_plan_watchers(
                 plans[plan.plan_id] = plan
             continue
         if datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00")) <= now:
+            instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+            readiness = paper_market_state.readiness(instrument)
+            if row["status"] in {"ordered", "partially_filled"}:
+                expiry_reason = (
+                    "expired_during_monitoring_gap"
+                    if readiness["stream_generation_id"] == "unavailable"
+                    else "maker_order_unfilled_until_expiry"
+                )
+            elif readiness["state"] != "ready":
+                unavailable = next(
+                    (
+                        channel
+                        for channel, item in readiness["channels"].items()
+                        if item["state"] != "ready"
+                    ),
+                    None,
+                )
+                expiry_reason = (
+                    f"monitoring_channel_unavailable:{unavailable}"
+                    if unavailable
+                    else "monitoring_never_ready"
+                )
+            else:
+                expiry_reason = "trigger_not_reached:expired"
             outcome = await _terminalize_entry_plan(
                 row,
                 status="expired",
-                reason="entry_plan_expired",
+                reason=expiry_reason,
+                evidence=readiness,
                 cancel_entry_plan_order=cancel_entry_plan_order,
                 now=now,
             )
@@ -644,24 +682,16 @@ async def _load_entry_plan_watchers(
                 if (now - placed_at).total_seconds() >= plan.max_wait_sec:
                     from aletheia.execution.gateway import cancel_entry_plan_order
 
-                    await asyncio.to_thread(
-                        cancel_entry_plan_order,
-                        plan.plan_id,
-                        reason="entry_plan_maker_timeout",
-                    )
+                    cancel_kwargs = {"reason": "maker_order_unfilled_until_expiry"}
+                    if all(hasattr(plan, field) for field in ("venue", "symbol", "market_type")):
+                        import inspect
+
+                        if "evidence" in inspect.signature(cancel_entry_plan_order).parameters:
+                            cancel_kwargs["evidence"] = paper_market_state.readiness(
+                                InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
+                            )
+                    await asyncio.to_thread(cancel_entry_plan_order, plan.plan_id, **cancel_kwargs)
                     continue
-        if len(plans) >= monitoring_limit:
-            outcome = await _terminalize_entry_plan(
-                row,
-                status="invalidated",
-                reason="entry_plan_monitoring_capacity_unavailable",
-                cancel_entry_plan_order=cancel_entry_plan_order,
-                now=now,
-            )
-            if _entry_plan_outcome_is_unresolved(outcome):
-                # Never abandon unresolved execution authority at the cap.
-                plans[plan.plan_id] = plan
-            continue
         plans[plan.plan_id] = plan
         if _is_momentum_v2_trigger_plan(plan):
             shadow_state = await _shadow_plan_terminal_state(plan.plan_id)
@@ -825,12 +855,15 @@ async def _watch_loop(cfg) -> None:
             plans, plan_engines = await _load_entry_plan_watchers(cfg)
             instruments = _watched_instruments(engines, plan_engines, plans)
             await stream.connect(instruments)
+            paper_market_state.begin_stream(instruments)
+            await asyncio.to_thread(mark_open_order_monitoring_gap)
             await stream.set_instruments(instruments)
             _status = {
                 "running": True,
                 "reason": None,
                 "watched_setups": len(setups) + len(plans),
-                "watched_entry_plan_ids": list(plans.keys())[: int(cfg.fast_trigger.max_setups)],
+                "watched_entry_plan_ids": list(plans.keys()),
+                "monitoring": paper_market_state.projection(),
             }
             iterator = stream.events().__aiter__()
             subscribed = instruments
@@ -858,10 +891,6 @@ async def _watch_loop(cfg) -> None:
                         fresh_plan_engines,
                         fresh_plans,
                     )
-                    if {
-                        item.market_type for item in fresh_instruments
-                    } != {item.market_type for item in subscribed}:
-                        break
                     if fresh_instruments != subscribed:
                         if event_task is not None:
                             if event_task.done():
@@ -874,18 +903,16 @@ async def _watch_loop(cfg) -> None:
                                 await asyncio.gather(event_task, return_exceptions=True)
                             event_task = None
                         await stream.set_instruments(fresh_instruments)
+                        paper_market_state.set_instruments(fresh_instruments)
                         subscribed = fresh_instruments
-                        # A subscription generation change invalidates every
-                        # rolling quote/trade/depth window; re-warm from empty.
-                        fresh_setups, fresh_engines = await _load_watchers(cfg)
-                        fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg)
                     setups, engines = fresh_setups, fresh_engines
                     plans, plan_engines = fresh_plans, fresh_plan_engines
                     if stream.health().subscriptions_confirmed:
                         for engine in (*engines.values(), *plan_engines.values()):
                             engine.confirm_subscription()
                     _status["watched_setups"] = len(setups) + len(plans)
-                    _status["watched_entry_plan_ids"] = list(plans.keys())[: int(cfg.fast_trigger.max_setups)]
+                    _status["watched_entry_plan_ids"] = list(plans.keys())
+                    _status["monitoring"] = paper_market_state.projection()
                     next_watcher_reload = now + _WATCHER_RELOAD_INTERVAL_SEC
                 if not done:
                     continue
@@ -895,6 +922,12 @@ async def _watch_loop(cfg) -> None:
                     break
                 finally:
                     event_task = None
+                paper_market_state.observe(event)
+                _status["monitoring"] = paper_market_state.projection()
+                if event.event_type == "trade":
+                    from aletheia.execution.gateway import process_paper_market_event
+
+                    await asyncio.to_thread(process_paper_market_event, event)
                 if stream.health().subscriptions_confirmed:
                     for engine in (*engines.values(), *plan_engines.values()):
                         engine.confirm_subscription()
@@ -905,6 +938,11 @@ async def _watch_loop(cfg) -> None:
                             continue
                         row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
                         if row is None:
+                            continue
+                        if (
+                            getattr(plan, "execution_account_mode", None) == "paper_internal"
+                            and paper_market_state.readiness(instrument)["state"] != "ready"
+                        ):
                             continue
                         if _is_momentum_v2_trigger_plan(plan):
                             continue
@@ -933,6 +971,14 @@ async def _watch_loop(cfg) -> None:
                             from aletheia.execution.entry_plan_execution import execute_entry_plan
 
                             try:
+                                snapshot = (
+                                    paper_market_state.snapshot(
+                                        instrument,
+                                        ttl_ms=getattr(plan, "trigger_freshness_ms", None) or 2_000,
+                                    )
+                                    if getattr(plan, "execution_account_mode", None) == "paper_internal"
+                                    else None
+                                )
                                 await asyncio.to_thread(
                                     execute_entry_plan,
                                     plan_id,
@@ -944,13 +990,24 @@ async def _watch_loop(cfg) -> None:
                                     source_observed_at=datetime.fromtimestamp(
                                         event.exchange_timestamp_ms / 1000, tz=timezone.utc
                                     ).isoformat(),
+                                    execution_market_snapshot=snapshot,
                                 )
                             except ValueError as exc:
-                                if str(exc) != "post_only_would_cross_bbo":
+                                if str(exc) != "post_only_would_cross_bbo" and not str(exc).startswith(
+                                    "paper_monitoring_channel_unavailable:"
+                                ):
                                     raise
                         elif row["status"] in {"triggered", "risk_reserved"}:
                             from aletheia.execution.entry_plan_execution import execute_entry_plan
 
+                            snapshot = (
+                                paper_market_state.snapshot(
+                                    instrument,
+                                    ttl_ms=getattr(plan, "trigger_freshness_ms", None) or 2_000,
+                                )
+                                if getattr(plan, "execution_account_mode", None) == "paper_internal"
+                                else None
+                            )
                             await asyncio.to_thread(
                                 execute_entry_plan,
                                 plan_id,
@@ -964,6 +1021,7 @@ async def _watch_loop(cfg) -> None:
                                     event.exchange_timestamp_ms / 1000,
                                     tz=timezone.utc,
                                 ).isoformat(),
+                                execution_market_snapshot=snapshot,
                             )
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
@@ -993,6 +1051,16 @@ async def _watch_loop(cfg) -> None:
                     if ready is not None:
                         from aletheia.execution.entry_plan_execution import execute_entry_plan
 
+                        if (
+                            plan.execution_account_mode == "paper_internal"
+                            and paper_market_state.readiness(engine.instrument)["state"] != "ready"
+                        ):
+                            continue
+                        snapshot = paper_market_state.snapshot(
+                            engine.instrument,
+                            ttl_ms=plan.trigger_freshness_ms or 2_000,
+                            trigger_evidence=ready.entry_trigger,
+                        )
                         await asyncio.to_thread(
                             execute_entry_plan,
                             plan_id,
@@ -1007,6 +1075,7 @@ async def _watch_loop(cfg) -> None:
                                 tz=timezone.utc,
                             ).isoformat(),
                             trigger_evidence=ready.entry_trigger,
+                            execution_market_snapshot=snapshot,
                         )
                 for setup_id, engine in tuple(engines.items()):
                     if engine.instrument != event.instrument:

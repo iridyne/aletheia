@@ -6,7 +6,7 @@ import pytest
 
 from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Fill, Order, RiskDecision, UniverseMember, UniverseSnapshot
+from aletheia.storage.models import Fill, Order, RiskDecision, UniverseAsset, UniverseMember, UniverseSnapshot
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
 
 
@@ -58,9 +58,9 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         max_requotes=0,
         partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
         max_slippage_bps=None if maker else 10,
-        worst_price=None if maker else 101.2,
+        worst_price=None if maker else 101,
         max_notional=100,
-        max_risk_pct=0.25,
+        max_risk_pct=0.5,
         max_leverage=2,
         required_permission="Paper",
         execution_account_mode=account_mode,
@@ -68,6 +68,46 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         risk_policy_revision=1,
         risk_policy_hash="risk-hash",
         behavior_version="entry-planner/v1",
+    )
+
+
+def _paper_snapshot(now: datetime, *, asks=((100.05, 10),)):
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.execution.paper_execution import (
+        paper_market_state,
+    )
+    from aletheia.universe.fast_stream import FastMarketEvent
+
+    timestamp_ms = int(now.timestamp() * 1_000)
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+    paper_market_state.begin_stream({instrument})
+    for event in (
+        FastMarketEvent(
+            event_type="quote", instrument=instrument,
+            exchange_timestamp_ms=timestamp_ms, received_timestamp_ms=timestamp_ms,
+            sequence=1, bid=100, ask=100.05,
+        ),
+        FastMarketEvent(
+            event_type="trade", instrument=instrument,
+            exchange_timestamp_ms=timestamp_ms, received_timestamp_ms=timestamp_ms,
+            sequence=1, price=100, size=1, side="sell",
+        ),
+        FastMarketEvent(
+            event_type="depth", instrument=instrument,
+            exchange_timestamp_ms=timestamp_ms, received_timestamp_ms=timestamp_ms,
+            sequence=1, bids=((100, 10),), asks=asks,
+        ),
+        FastMarketEvent(
+            event_type="candle", instrument=instrument,
+            exchange_timestamp_ms=timestamp_ms, received_timestamp_ms=timestamp_ms,
+            sequence=1, candle=(100, 101, 99, 100.5, 10),
+        ),
+    ):
+        paper_market_state.observe(event)
+    return paper_market_state.snapshot(
+        instrument,
+        ttl_ms=2_000,
+        now=now,
     )
 
 
@@ -204,7 +244,7 @@ def test_urgent_entry_uses_exact_opposing_bbo_ioc():
         source_observed_at=source_at,
     )
     assert proposal.order_type == "limit"
-    assert proposal.price == 100.05
+    assert proposal.price == 101
     assert proposal.time_in_force == "ioc"
     assert proposal.post_only is False
     evidence = json.loads(proposal.attribution_snapshot)
@@ -588,6 +628,17 @@ def _persist_waiting_plan(
     tactic="OPPOSING_BBO_IOC",
     plan_updates=None,
 ) -> EntryPlan:
+    repo.insert_universe_asset(
+        UniverseAsset(
+            id="asset-btc",
+            venue="bitget",
+            symbol="BTC/USDT",
+            market_type="perp",
+            min_notional=1,
+            price_precision=2,
+            amount_precision=6,
+        )
+    )
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_snapshot(snapshot)
     candidate = UniverseMember(
@@ -822,7 +873,7 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
         tactic=tactic,
     )
 
-    def approve(proposal, *, decision_role):
+    def approve(proposal, *, decision_role, execution_receipt=None):
         decision = RiskDecision(
             proposal_id=proposal.id,
             approved=True,
@@ -831,6 +882,8 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
             evaluated_quantity=proposal.quantity,
             proposal_commit_hash=proposal.commit_hash,
             proposal_execution_mode=proposal.execution_mode,
+            attempt_id=getattr(execution_receipt, "attempt_id", None),
+            receipt_hash=getattr(execution_receipt, "receipt_hash", None),
         )
         repo.insert_risk_decision(decision)
         return SimpleNamespace(
@@ -849,6 +902,7 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
         observed_at=now.isoformat(),
         source_observed_at=now.isoformat(),
         now=now,
+        execution_market_snapshot=_paper_snapshot(now),
     )
     assert result["status"] == "executed", result
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
@@ -859,11 +913,18 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
     assert order["time_in_force"] == expected_tif
     assert order["post_only"] == expected_post_only
     assert order["requested_liquidity"] == requested_liquidity
-    assert repo.list_fills(order_id=order["id"])[0]["realized_liquidity"] is None
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    fills = repo.list_fills(order_id=order["id"])
+    if tactic == "POST_ONLY_LIMIT":
+        assert fills == []
+        assert order["status"] == "pending"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+    else:
+        assert fills[0]["paper_fill_model_version"] == "paper-order-fill/v1"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
 
 
-def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
+def test_paper_maker_limit_different_from_mark_passes_real_risk_and_rests(monkeypatch):
+    from aletheia.risk import engine
     from aletheia.config.loader import load_config
     from aletheia.data import price_feed
     from aletheia.portfolio import local_funding
@@ -871,9 +932,17 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
     from aletheia.execution.entry_plan_execution import execute_entry_plan
 
     cfg = load_config()
+    cfg = cfg.model_copy(
+        update={
+            "market_data": cfg.market_data.model_copy(update={"ccxt_exchange": "bitget"})
+        }
+    )
+    monkeypatch.setattr(engine, "load_config", lambda: cfg)
     resolved = resolve_risk_policy(cfg, "paper_internal")
     plan = _persist_waiting_plan(
         account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
         plan_updates={
             "max_notional": 10.0,
             "risk_policy_id": resolved.policy.policy_id,
@@ -884,7 +953,7 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
     monkeypatch.setattr(
         price_feed,
         "get_fresh_price_for_protective_close",
-        lambda *_args, **_kwargs: 100.05,
+        lambda *_args, **_kwargs: 100.5,
     )
     monkeypatch.setattr(
         local_funding,
@@ -900,10 +969,15 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
         observed_at=now.isoformat(),
         source_observed_at=now.isoformat(),
         now=now,
+        execution_market_snapshot=_paper_snapshot(now),
     )
 
     assert result["status"] == "executed", result
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    order = repo.get_order(result["order_id"])
+    assert order["status"] == "pending"
+    assert order["price"] == 100
+    assert repo.list_fills(order_id=order["id"]) == []
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
 
 def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
     from aletheia.execution import gateway
@@ -937,7 +1011,7 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
         leverage=proposal.leverage,
     )
 
-    def approve(proposal, *, decision_role):
+    def approve(proposal, *, decision_role, execution_receipt=None):
         decision = RiskDecision(
             proposal_id=proposal.id,
             approved=True,
@@ -946,6 +1020,8 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
             evaluated_quantity=proposal.quantity,
             proposal_commit_hash=proposal.commit_hash,
             proposal_execution_mode=proposal.execution_mode,
+            attempt_id=getattr(execution_receipt, "attempt_id", None),
+            receipt_hash=getattr(execution_receipt, "receipt_hash", None),
         )
         repo.insert_risk_decision(decision)
         return SimpleNamespace(
@@ -961,7 +1037,11 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
         raise RuntimeError("paper broker failed")
 
     monkeypatch.setattr(gateway, "execute_paper_order", fail_paper_order)
-    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+    result = gateway.execute_existing_proposal(
+        proposal.id,
+        "paper_internal",
+        execution_market_snapshot=_paper_snapshot(now),
+    )
 
     assert result["status"] == "error"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "failed"

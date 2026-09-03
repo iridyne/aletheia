@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v63"
+SCHEMA_VERSION = "aletheia-sqlite-v64"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3328,6 +3328,45 @@ _CANDIDATE_SELECTION_UTILITY_COLUMNS = (
 )
 _CANDIDATE_SELECTION_UTILITY_CHECKSUM = hashlib.sha256(
     (repr(_CANDIDATE_SELECTION_UTILITY_COLUMNS) + "\ncandidate_selection_utility_v1").encode("utf-8")
+).hexdigest()
+
+_PAPER_EXECUTION_V64_COLUMNS = (
+    ("attempt_id", "risk_decisions", "TEXT"),
+    ("receipt_hash", "risk_decisions", "TEXT"),
+    ("attempt_id", "orders", "TEXT"),
+    ("receipt_hash", "orders", "TEXT"),
+    ("paper_fill_model_version", "orders", "TEXT"),
+    ("paper_execution_evidence", "orders", "TEXT"),
+    ("paper_fill_model_version", "fills", "TEXT"),
+    ("paper_execution_evidence", "fills", "TEXT"),
+    ("paper_execution_evidence_hash", "fills", "TEXT"),
+    ("public_event_id", "fills", "TEXT"),
+    ("paper_fill_model_version", "positions", "TEXT"),
+    ("terminal_evidence", "entry_plans", "TEXT"),
+)
+_PAPER_EXECUTION_V64_SQL = """
+CREATE TABLE IF NOT EXISTS entry_execution_receipts (
+    attempt_id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL REFERENCES trade_proposals(id) ON DELETE CASCADE,
+    entry_plan_id TEXT NOT NULL REFERENCES entry_plans(id),
+    receipt_hash TEXT NOT NULL UNIQUE,
+    receipt_json TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_entry_execution_receipts_proposal
+ON entry_execution_receipts(proposal_id, created_at DESC);
+DROP INDEX IF EXISTS idx_risk_authoritative_snapshot_v2;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot_v3
+ON risk_decisions(
+    proposal_id, proposal_commit_hash, evaluated_quantity, policy_hash,
+    COALESCE(receipt_hash, '')
+)
+WHERE decision_role='authoritative';
+"""
+_PAPER_EXECUTION_V64_CHECKSUM = hashlib.sha256(
+    (repr(_PAPER_EXECUTION_V64_COLUMNS) + _PAPER_EXECUTION_V64_SQL).encode("utf-8")
 ).hexdigest()
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
@@ -5960,6 +5999,7 @@ MigrationProgressCallback = Callable[[MigrationProgressEvent], None]
 
 _MIGRATION_DESCRIPTIONS = {
     _LEGACY_BASELINE_ID: "legacy schema, indexes, and idempotent backfills",
+    "20260903_0063_paper_execution_v64": "evidence-backed local Paper order lifecycle",
     "20260806_0002_startup_dataset_boundary_v3": "startup indexes and one-time FTS rebuild",
     "20260806_0003_capacity_guardrails_v4": "capacity indexes and cleanup lookup",
     "20260806_0004_pending_outcome_partial_index_v5": "pending-outcome partial index",
@@ -6884,6 +6924,54 @@ def _apply_candidate_selection_utility_v63(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_paper_execution_v64(db: sqlite3.Connection) -> None:
+    """Add bounded attempt/fill evidence without reinterpreting historical fills."""
+
+    savepoint = "paper_execution_v64"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        for column, table, column_type in _PAPER_EXECUTION_V64_COLUMNS:
+            if not db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone():
+                continue
+            existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+        tables = {
+            str(row[0])
+            for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if {"trade_proposals", "entry_plans"} <= tables:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS entry_execution_receipts ("
+                "attempt_id TEXT PRIMARY KEY,"
+                "proposal_id TEXT NOT NULL REFERENCES trade_proposals(id) ON DELETE CASCADE,"
+                "entry_plan_id TEXT NOT NULL REFERENCES entry_plans(id),"
+                "receipt_hash TEXT NOT NULL UNIQUE, receipt_json TEXT NOT NULL,"
+                "captured_at TEXT NOT NULL, expires_at TEXT NOT NULL,"
+                "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entry_execution_receipts_proposal "
+                "ON entry_execution_receipts(proposal_id, created_at DESC)"
+            )
+        if "risk_decisions" in tables:
+            db.execute("DROP INDEX IF EXISTS idx_risk_authoritative_snapshot_v2")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot_v3 "
+                "ON risk_decisions(proposal_id, proposal_commit_hash, evaluated_quantity, "
+                "policy_hash, COALESCE(receipt_hash, '')) WHERE decision_role='authoritative'"
+            )
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except Exception:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
+    db.execute("PRAGMA optimize")
+
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -7477,6 +7565,12 @@ _MIGRATIONS = (
         checksum=_CANDIDATE_SELECTION_UTILITY_CHECKSUM,
         schema_version="aletheia-sqlite-v63",
         apply=_apply_candidate_selection_utility_v63,
+    ),
+    MigrationStep(
+        migration_id="20260903_0063_paper_execution_v64",
+        checksum=_PAPER_EXECUTION_V64_CHECKSUM,
+        schema_version="aletheia-sqlite-v64",
+        apply=_apply_paper_execution_v64,
     ),
 )
 

@@ -143,13 +143,23 @@ def build_entry_plan_order_intent(
     else:
         if plan.max_slippage_bps is None or plan.worst_price is None:
             raise ValueError("entry_plan_taker_bounds_required")
-        price = opposing_bbo_price(
+        opposing = opposing_bbo_price(
             direction=plan.direction,
             bid=bid,
             ask=ask,
             max_slippage_bps=float(plan.max_slippage_bps),
-            worst_price=plan.worst_price,
+            worst_price=None,
         )
+        if not plan.entry_zone[0] <= opposing <= plan.entry_zone[1]:
+            raise ValueError("entry_price_outside_plan_zone")
+        if (plan.direction == "long" and opposing > plan.worst_price) or (
+            plan.direction == "short" and opposing < plan.worst_price
+        ):
+            raise ValueError("bbo_worst_price_exceeded")
+        # The IOC price is the immutable executable ceiling/floor.  The broker
+        # may consume several known depth levels up to it; using only the top BBO
+        # here would incorrectly discard visible liquidity inside Plan bounds.
+        price = float(plan.worst_price)
         time_in_force = "ioc"
         post_only = False
 
@@ -226,6 +236,7 @@ def execute_entry_plan(
     observed_at: str,
     source_observed_at: str,
     trigger_evidence: dict | None = None,
+    execution_market_snapshot=None,
     now: datetime | None = None,
 ) -> dict:
     """Idempotently submit one approved plan through the existing Gateway."""
@@ -241,11 +252,58 @@ def execute_entry_plan(
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 
+    if plan.execution_account_mode == "paper_internal":
+        from aletheia.execution.paper_execution import EntryExecutionMarketSnapshotV1
+
+        snapshot = EntryExecutionMarketSnapshotV1.model_validate(execution_market_snapshot)
+        expected_market = "perp" if plan.market_type == "perp" else "spot"
+        if (
+            snapshot.instrument.venue != plan.venue
+            or snapshot.instrument.symbol != plan.symbol
+            or snapshot.instrument.market_type != expected_market
+        ):
+            raise ValueError("entry_execution_snapshot_identity_mismatch")
+        bid, ask = snapshot.quote.bid, snapshot.quote.ask
+        observed_at = datetime.fromtimestamp(
+            snapshot.quote.received_timestamp_ms / 1000,
+            tz=timezone.utc,
+        ).isoformat()
+        source_observed_at = datetime.fromtimestamp(
+            snapshot.quote.exchange_timestamp_ms / 1000,
+            tz=timezone.utc,
+        ).isoformat()
+    else:
+        snapshot = None
+
     existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
     if existing is not None:
         from aletheia.execution.gateway import execute_existing_proposal
 
-        return execute_existing_proposal(existing["id"], existing["execution_mode"])
+        if snapshot is not None and snapshot.trigger_evidence_hash is None:
+            try:
+                stored_trigger = json.loads(
+                    str(existing.get("attribution_snapshot") or "{}")
+                ).get("entry_trigger")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                stored_trigger = None
+            if stored_trigger is not None:
+                trigger_hash = hashlib.sha256(
+                    json.dumps(
+                        stored_trigger,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode()
+                ).hexdigest()
+                snapshot = snapshot.model_copy(
+                    update={"trigger_evidence_hash": trigger_hash}
+                )
+
+        return execute_existing_proposal(
+            existing["id"],
+            existing["execution_mode"],
+            execution_market_snapshot=snapshot,
+        )
 
     proposal = build_entry_plan_order_intent(
         plan,
@@ -256,6 +314,19 @@ def execute_entry_plan(
         trigger_evidence=trigger_evidence,
         now=now,
     )
+    if snapshot is not None:
+        from aletheia.execution.paper_execution import normalize_paper_order
+
+        normalized_price, normalized_quantity = normalize_paper_order(
+            venue=plan.venue,
+            symbol=plan.symbol,
+            market_type=plan.market_type,
+            price=float(proposal.price or 0.0),
+            quantity=float(proposal.quantity or 0.0),
+        )
+        proposal = proposal.model_copy(
+            update={"price": normalized_price, "quantity": normalized_quantity}
+        )
     if plan.execution_mode == "TRIGGERED" and row["status"] == "waiting":
         if not repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered", now=now):
             return {"status": "already_claimed", "entry_plan_id": plan.plan_id}
@@ -272,4 +343,8 @@ def execute_entry_plan(
 
     from aletheia.execution.gateway import execute_existing_proposal
 
-    return execute_existing_proposal(proposal.id, proposal.execution_mode)
+    return execute_existing_proposal(
+        proposal.id,
+        proposal.execution_mode,
+        execution_market_snapshot=snapshot,
+    )

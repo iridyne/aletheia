@@ -70,10 +70,13 @@ Planning Generation. A legacy generation claimed from stale eligibility is
 completed as terminal `NO_PLAN` with
 `EXECUTION_VENUE_UNAVAILABLE:<stable-reason>` before any provider call.
 
-If a plan becomes unmonitorable, Fast Monitoring makes the loss explicit:
-pre-order states are invalidated with a reason; `ordered` and
-`partially_filled` states request cancellation through Gateway reconciliation.
-Fast Monitoring status exposes the bounded IDs it actually watches.
+Live readiness is separate from static `execution_eligible`: every exact
+instrument exposes queued/warming/ready/degraded/unavailable state plus per-channel
+timestamps, sequence and reason. Spot and USD-M lanes fail independently; delta
+subscription changes preserve unchanged instrument state. All active Plans share
+subscriptions by `InstrumentId`; the old Plan-count cap may not invalidate valid
+Plans. Terminalization persists a bounded specific monitoring/trigger/maker reason
+and evidence, exposed by Workbench/API.
 
 ## PlanIntent authority and failure semantics
 
@@ -145,7 +148,7 @@ when an `ordered` or `partially_filled` plan has a durable Order and measures
 from `orders.created_at`.
 
 At the plan's positive `max_wait_sec` bound, Fast Monitoring calls
-`Gateway.cancel_entry_plan_order(..., reason="entry_plan_maker_timeout")`.
+`Gateway.cancel_entry_plan_order(..., reason="maker_order_unfilled_until_expiry")`.
 Local timeout never claims cancellation success. Gateway reconciliation
 preserves partial Fill/Position evidence and cancel-pending ambiguity when venue
 truth is unavailable. A Triggered Maker waiting for its trigger has no running

@@ -2741,6 +2741,34 @@ def get_proposal_execution_claim(proposal_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def insert_entry_execution_receipt(receipt) -> None:
+    """Persist one immutable, bounded execution-attempt receipt."""
+
+    payload = receipt.model_dump(mode="json")
+    execute_write(
+        "INSERT INTO entry_execution_receipts "
+        "(attempt_id,proposal_id,entry_plan_id,receipt_hash,receipt_json,captured_at,expires_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            receipt.attempt_id,
+            receipt.proposal_id,
+            receipt.entry_plan_id,
+            receipt.receipt_hash,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            receipt.captured_at,
+            receipt.expires_at,
+        ),
+    )
+
+
+def get_entry_execution_receipt(attempt_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM entry_execution_receipts WHERE attempt_id=?",
+        (attempt_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_entry_risk_reservation(proposal_id: str) -> dict | None:
     """Return one durable pre-Order Risk allowance, if present."""
     row = (
@@ -2837,6 +2865,19 @@ def release_entry_risk_reservation(proposal_id: str) -> bool:
     )
     if not was_in_tx:
         db.commit()
+    return cur.rowcount == 1
+
+
+def retain_entry_risk_reservation_quantity(proposal_id: str, quantity: float) -> bool:
+    """Retain exactly the unfilled portion of an open Paper Order."""
+
+    value = float(quantity)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("entry Risk reservation remainder must be positive")
+    cur = execute_write(
+        "UPDATE entry_risk_reservations SET quantity=? WHERE proposal_id=?",
+        (value, proposal_id),
+    )
     return cur.rowcount == 1
 
 
@@ -2990,12 +3031,15 @@ def get_authoritative_risk_decision(
     proposal_commit_hash: str | None,
     evaluated_quantity: float | None,
     policy_hash: str | None = None,
+    receipt_hash: str | None = None,
 ) -> dict | None:
     """Return the authoritative decision for one immutable evaluated snapshot."""
     policy_clause = "AND policy_hash IS ?" if policy_hash is not None else ""
+    receipt_clause = "AND receipt_hash IS ?"
     params = [proposal_id, proposal_commit_hash, evaluated_quantity]
     if policy_hash is not None:
         params.append(policy_hash)
+    params.append(receipt_hash)
     row = (
         get_db()
         .execute(
@@ -3007,6 +3051,7 @@ def get_authoritative_risk_decision(
           AND proposal_commit_hash IS ?
           AND evaluated_quantity IS ?
           {policy_clause}
+          {receipt_clause}
         ORDER BY rowid ASC
         LIMIT 1
         """,
@@ -3033,6 +3078,7 @@ def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
             d.proposal_commit_hash,
             d.evaluated_quantity,
             d.policy_hash,
+            d.receipt_hash,
         )
         if existing is not None:
             return existing, False
@@ -3110,6 +3156,24 @@ def _validate_native_entry_order_snapshot(
         raise ValueError("native entry Order Proposal integrity check failed")
     if decision.get("proposal_commit_hash") != stored_hash:
         raise ValueError("native entry Order RiskDecision snapshot is stale")
+    if stored.entry_plan_id and stored.execution_mode == "paper_internal":
+        attempt_id = str(data.get("attempt_id") or "")
+        receipt_hash = str(data.get("receipt_hash") or "")
+        if (
+            not attempt_id
+            or not receipt_hash
+            or decision.get("attempt_id") != attempt_id
+            or decision.get("receipt_hash") != receipt_hash
+        ):
+            raise ValueError("native Paper Entry Order lacks matching execution receipt")
+        receipt = get_entry_execution_receipt(attempt_id)
+        if (
+            receipt is None
+            or receipt.get("proposal_id") != stored.id
+            or receipt.get("entry_plan_id") != stored.entry_plan_id
+            or receipt.get("receipt_hash") != receipt_hash
+        ):
+            raise ValueError("native Paper Entry Order receipt linkage is invalid")
 
     try:
         evaluated_quantity = float(decision.get("evaluated_quantity"))
@@ -9647,7 +9711,8 @@ def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
             "pg.attempt_count, pg.attention_status, pg.soft_expires_at, "
             "pg.hard_expires_at, pg.attention_terminal_reason, "
             "ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
-            "ep.terminal_reason AS entry_plan_terminal_reason "
+            "ep.terminal_reason AS entry_plan_terminal_reason, "
+            "ep.terminal_evidence AS entry_plan_terminal_evidence "
             "FROM universe_members um "
             "JOIN universe_registry ur ON ur.id=um.asset_id "
             "LEFT JOIN candidate_planning_generations pg "
@@ -9729,7 +9794,11 @@ def list_watchable_entry_plans(limit: int | None = 100) -> list[dict]:
     return _select_all(
         "entry_plans",
         where=("status IN ('waiting','triggered','risk_reserved','ordered','partially_filled')"),
-        order="created_at ASC",
+        order=(
+            "CASE status WHEN 'partially_filled' THEN 0 WHEN 'ordered' THEN 0 "
+            "WHEN 'risk_reserved' THEN 1 WHEN 'triggered' THEN 2 ELSE 3 END, "
+            "json_extract(plan_json, '$.expires_at') ASC, created_at ASC, id ASC"
+        ),
         limit=limit,
     )
 
@@ -9792,6 +9861,7 @@ def transition_entry_plan(
     status: str,
     order_id: str | None = None,
     reason: str | None = None,
+    evidence: dict | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Monotonic lifecycle CAS; terminal plans cannot revive."""
@@ -9804,13 +9874,14 @@ def transition_entry_plan(
     terminal = status in {"filled", "invalidated", "expired", "cancelled", "failed"}
     updated = execute_write(
         "UPDATE entry_plans SET status=?, order_id=COALESCE(?, order_id), updated_at=?, "
-        "terminal_at=?, terminal_reason=? WHERE id=? AND status=?",
+        "terminal_at=?, terminal_reason=?, terminal_evidence=? WHERE id=? AND status=?",
         (
             status,
             order_id,
             timestamp,
             timestamp if terminal else None,
             reason if terminal else None,
+            json.dumps(evidence, sort_keys=True, separators=(",", ":")) if terminal and evidence is not None else None,
             plan_id,
             expected_status,
         ),

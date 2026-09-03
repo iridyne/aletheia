@@ -9,6 +9,7 @@ import math
 import os
 import time
 from typing import Literal, Protocol
+from uuid import uuid4
 
 import aiohttp
 from pydantic import BaseModel, ConfigDict
@@ -26,6 +27,8 @@ class FastMarketEvent(BaseModel):
     exchange_timestamp_ms: int
     received_timestamp_ms: int
     sequence: int
+    event_id: str | None = None
+    subscription_generation_id: str | None = None
     bid: float | None = None
     ask: float | None = None
     price: float | None = None
@@ -149,6 +152,11 @@ def parse_bitget_message(
             "exchange_timestamp_ms": ts,
             "received_timestamp_ms": received,
             "sequence": sequence,
+            "event_id": (
+                str(row.get("tradeId") or row.get("tradeIdStr") or "") or None
+                if channel == "trade" and isinstance(row, dict)
+                else None
+            ),
         }
         if channel == "ticker" and isinstance(row, dict):
             bid = _positive(row.get("bidPr") or row.get("bid1Price"))
@@ -191,6 +199,7 @@ class BitgetFastMarketStream:
         self._health = FastStreamHealth()
         self._ping_task: asyncio.Task | None = None
         self._pong_event: asyncio.Event | None = None
+        self._subscription_generation_id: str | None = None
 
     async def connect(self, instruments: set[InstrumentId] | None = None) -> None:
         if self._ws is not None and not self._ws.closed:
@@ -205,6 +214,7 @@ class BitgetFastMarketStream:
             raise
         self._confirmed.clear()
         self._health = FastStreamHealth(connected=True)
+        self._subscription_generation_id = uuid4().hex
         self._pong_event = asyncio.Event()
         self._ping_task = asyncio.create_task(self._ping_loop(), name="bitget-fast-stream-ping")
 
@@ -244,24 +254,38 @@ class BitgetFastMarketStream:
             raise RuntimeError("fast_trigger_stream_not_connected:bitget")
         if any(item.exchange != "bitget" for item in instruments):
             raise ValueError("fast_trigger_stream_venue_mismatch:bitget")
-        previous = self._instruments
-        if previous:
+        previous = set(self._instruments)
+        added = set(instruments) - previous
+        removed = previous - set(instruments)
+        if removed:
             await self._ws.send_json(
                 {
                     "op": "unsubscribe",
-                    "args": [_bitget_arg(item, channel) for item in previous for channel in _CHANNELS],
+                    "args": [_bitget_arg(item, channel) for item in removed for channel in _CHANNELS],
                 }
             )
         self._instruments = set(instruments)
-        self._confirmed.clear()
-        if instruments:
+        removed_acks = {
+            (value["instType"], value["channel"], value["instId"])
+            for item in removed
+            for value in (_bitget_arg(item, channel) for channel in _CHANNELS)
+        }
+        self._confirmed.difference_update(removed_acks)
+        if added:
             await self._ws.send_json(
                 {
                     "op": "subscribe",
-                    "args": [_bitget_arg(item, channel) for item in instruments for channel in _CHANNELS],
+                    "args": [_bitget_arg(item, channel) for item in added for channel in _CHANNELS],
                 }
             )
-        self._health = self._health.model_copy(update={"subscriptions_confirmed": False})
+        expected = {
+            (value["instType"], value["channel"], value["instId"])
+            for item in self._instruments
+            for value in (_bitget_arg(item, channel) for channel in _CHANNELS)
+        }
+        self._health = self._health.model_copy(
+            update={"subscriptions_confirmed": bool(expected) and expected <= self._confirmed}
+        )
 
     def _record_ack(self, payload: dict) -> None:
         if payload.get("event") != "subscribe" or not isinstance(payload.get("arg"), dict):
@@ -300,7 +324,9 @@ class BitgetFastMarketStream:
                 self._record_ack(payload)
                 self._health = self._health.model_copy(update={"last_received_at_ms": received})
                 for event in parse_bitget_message(payload, self._instruments, received_timestamp_ms=received):
-                    yield event
+                    yield event.model_copy(
+                        update={"subscription_generation_id": self._subscription_generation_id}
+                    )
             elif message.type in {
                 aiohttp.WSMsgType.CLOSE,
                 aiohttp.WSMsgType.CLOSED,
@@ -394,6 +420,11 @@ def parse_binance_message(
         "exchange_timestamp_ms": exchange_ts,
         "received_timestamp_ms": received,
         "sequence": sequence,
+        "event_id": (
+            str(message.get("a"))
+            if event_name == "aggTrade" and message.get("a") is not None
+            else None
+        ),
     }
     if event_name in {"24hrTicker", "bookTicker"}:
         bid = _finite(message.get("b"), positive=True)
@@ -582,6 +613,9 @@ class BinanceFastMarketStream:
         self._health = FastStreamHealth()
         self._request_id = 0
         self._pending_acks: set[int] = set()
+        self._pending_ack_lanes: dict[int, str] = {}
+        self._lane_reasons: dict[str, str] = {}
+        self._lane_generations: dict[str, str] = {}
         self._sequences: dict[tuple[InstrumentId, str], int] = {}
 
     async def connect(self, instruments: set[InstrumentId] | None = None) -> None:
@@ -607,6 +641,7 @@ class BinanceFastMarketStream:
                     continue
                 ws = await self._session.ws_connect(endpoint, heartbeat=30, proxy=websocket_proxy)
                 self._sockets[market_type] = ws
+                self._lane_generations[market_type] = uuid4().hex
                 self._reader_tasks.append(asyncio.create_task(self._read_socket(market_type, ws)))
         except Exception:
             await self.close()
@@ -632,23 +667,60 @@ class BinanceFastMarketStream:
             return
         self._request_id += 1
         request_id = self._request_id
+        socket = self._sockets.get(market_type)
+        if socket is None:
+            raise RuntimeError(f"fast_trigger_stream_lane_unavailable:binance:{market_type}")
         self._pending_acks.add(request_id)
-        await self._sockets[market_type].send_json({"method": method, "params": params, "id": request_id})
+        self._pending_ack_lanes[request_id] = market_type
+        await socket.send_json({"method": method, "params": params, "id": request_id})
 
     async def set_instruments(self, instruments: set[InstrumentId]) -> None:
         if not self._sockets:
             raise RuntimeError("fast_trigger_stream_not_connected:binance")
         if any(item.exchange != "binance" or item.market_type not in {"spot", "perp"} for item in instruments):
             raise ValueError("fast_trigger_stream_venue_mismatch:binance")
-        previous = self._instruments
-        self._pending_acks.clear()
+        previous = set(self._instruments)
+        added = set(instruments) - previous
+        removed = previous - set(instruments)
+        required_market_types = {item.market_type for item in instruments}
+        opened_lanes: set[str] = set()
+        apply_proxy_env()
+        configured_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        websocket_proxy = configured_proxy if str(configured_proxy or "").lower().startswith(("http://", "https://")) else None
+        for market_type in required_market_types - set(self._sockets):
+            if self._session is None:
+                raise RuntimeError("fast_trigger_stream_not_connected:binance")
+            ws = await self._session.ws_connect(
+                self._endpoints[market_type], heartbeat=30, proxy=websocket_proxy
+            )
+            self._sockets[market_type] = ws
+            self._lane_generations[market_type] = uuid4().hex
+            self._reader_tasks.append(asyncio.create_task(self._read_socket(market_type, ws)))
+            opened_lanes.add(market_type)
         for market_type in ("spot", "perp"):
-            await self._request(market_type, "UNSUBSCRIBE", self._streams(previous, market_type))
+            if market_type in self._sockets:
+                await self._request(market_type, "UNSUBSCRIBE", self._streams(removed, market_type))
         self._instruments = set(instruments)
-        self._books = {item: _SpotBook() for item in instruments if item.market_type == "spot"}
+        for item in removed:
+            self._books.pop(item, None)
+            for key in [key for key in self._sequences if key[0] == item]:
+                self._sequences.pop(key, None)
+        for item in added:
+            if item.market_type == "spot":
+                self._books[item] = _SpotBook()
         for market_type in ("spot", "perp"):
-            await self._request(market_type, "SUBSCRIBE", self._streams(instruments, market_type))
-        for instrument in self._books:
+            if market_type in self._sockets:
+                lane_added = (
+                    {item for item in instruments if item.market_type == market_type}
+                    if market_type in opened_lanes
+                    else added
+                )
+                await self._request(market_type, "SUBSCRIBE", self._streams(lane_added, market_type))
+        for instrument in added | {
+            item for item in instruments if item.market_type in opened_lanes
+        }:
+            if instrument.market_type != "spot":
+                continue
             task = asyncio.create_task(self._load_spot_snapshot(instrument))
             self._snapshot_tasks.add(task)
             task.add_done_callback(self._snapshot_tasks.discard)
@@ -674,12 +746,8 @@ class BinanceFastMarketStream:
             if book.last_update_id is not None:
                 self._refresh_confirmation()
                 return
-        self._health = self._health.model_copy(
-            update={"subscriptions_confirmed": False, "reason": "fast_trigger_spot_depth_snapshot_failed:binance"}
-        )
-        spot_ws = self._sockets.get("spot")
-        if spot_ws is not None:
-            await spot_ws.close()
+        self._lane_reasons["spot"] = "fast_trigger_spot_depth_snapshot_failed:binance"
+        self._refresh_confirmation()
 
     def _next_sequence(self, instrument: InstrumentId, event_type: str) -> int:
         key = (instrument, event_type)
@@ -688,10 +756,32 @@ class BinanceFastMarketStream:
         return value
 
     def _refresh_confirmation(self) -> None:
-        spot_synced = all(book.synced for book in self._books.values())
-        confirmed = bool(self._instruments) and not self._pending_acks and spot_synced
+        active_lanes = {item.market_type for item in self._instruments}
+        lane_confirmed = {}
+        for lane in active_lanes:
+            pending = any(
+                self._pending_ack_lanes.get(request_id, lane) == lane
+                for request_id in self._pending_acks
+            )
+            spot_synced = lane != "spot" or all(
+                book.synced for item, book in self._books.items() if item.market_type == "spot"
+            )
+            lane_connected = lane in self._sockets or (not self._sockets and self._health.connected)
+            lane_confirmed[lane] = lane_connected and not pending and spot_synced
+        confirmed = any(lane_confirmed.values())
+        reason = None if confirmed else next(
+            (self._lane_reasons[lane] for lane in active_lanes if lane in self._lane_reasons),
+            self._health.reason,
+        )
         self._health = self._health.model_copy(
-            update={"subscriptions_confirmed": confirmed, "reason": None if confirmed else self._health.reason}
+            update={
+                # Direct reader tests and the short interval between connect and
+                # socket registration retain the explicit connection fact.  The
+                # reader's finally block clears it when the last lane closes.
+                "connected": bool(self._sockets) or self._health.connected,
+                "subscriptions_confirmed": confirmed,
+                "reason": reason,
+            }
         )
 
     async def _read_socket(self, market_type: str, ws: aiohttp.ClientWebSocketResponse) -> None:
@@ -709,14 +799,12 @@ class BinanceFastMarketStream:
                 request_id = payload.get("id")
                 if type(request_id) is int and request_id in self._pending_acks:
                     if "error" in payload:
-                        self._health = self._health.model_copy(
-                            update={
-                                "subscriptions_confirmed": False,
-                                "reason": "fast_trigger_subscription_rejected:binance",
-                            }
-                        )
+                        self._lane_reasons[market_type] = "fast_trigger_subscription_rejected:binance"
+                        self._refresh_confirmation()
                     elif "result" in payload and payload["result"] is None:
-                        self._pending_acks.remove(request_id)
+                        self._pending_acks.discard(request_id)
+                        self._pending_ack_lanes.pop(request_id, None)
+                        self._lane_reasons.pop(market_type, None)
                         self._refresh_confirmation()
                     continue
                 instrument = _binance_instrument(payload.get("s"), market_type, self._instruments)
@@ -737,13 +825,40 @@ class BinanceFastMarketStream:
                     sequence=self._next_sequence(instrument, event_type),
                 )
                 if event is not None:
+                    event = event.model_copy(
+                        update={
+                            "subscription_generation_id": self._lane_generations.get(market_type)
+                        }
+                    )
                     self._health = self._health.model_copy(update={"last_received_at_ms": received})
                     await self._queue.put(event)
         finally:
-            self._health = self._health.model_copy(
-                update={"connected": False, "subscriptions_confirmed": False, "reason": "fast_trigger_stream_disconnected:binance"}
-            )
-            await self._queue.put(None)
+            if self._sockets.get(market_type) is ws:
+                self._sockets.pop(market_type, None)
+                self._lane_generations.pop(market_type, None)
+                stale_acks = {
+                    request_id
+                    for request_id, lane in self._pending_ack_lanes.items()
+                    if lane == market_type
+                }
+                self._pending_acks.difference_update(stale_acks)
+                for request_id in stale_acks:
+                    self._pending_ack_lanes.pop(request_id, None)
+                if market_type == "spot":
+                    for item, book in self._books.items():
+                        if item.market_type == "spot":
+                            book.reset()
+                self._lane_reasons[market_type] = "fast_trigger_stream_disconnected:binance"
+                self._refresh_confirmation()
+                if not self._sockets:
+                    self._health = self._health.model_copy(
+                        update={
+                            "connected": False,
+                            "subscriptions_confirmed": False,
+                            "reason": "fast_trigger_stream_disconnected:binance",
+                        }
+                    )
+                    await self._queue.put(None)
 
     async def _handle_spot_depth(self, instrument: InstrumentId, payload: dict, received: int) -> None:
         book = self._books.get(instrument)
@@ -811,6 +926,7 @@ class BinanceFastMarketStream:
         for ws in self._sockets.values():
             await ws.close()
         self._sockets.clear()
+        self._lane_generations.clear()
         if self._session is not None:
             await self._session.close()
             self._session = None

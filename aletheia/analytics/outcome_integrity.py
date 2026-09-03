@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
+CURRENT_PAPER_FILL_MODEL_VERSION = "paper-order-fill/v1"
 
 ClosureCategory = Literal["strategy", "administrative", "maintenance", "unknown"]
 
@@ -31,6 +32,7 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "maintenance_close",
     "not_marked_eligible",
     "unverified_entry_fill",
+    "unverified_paper_fill_model",
     "unverified_exit_fill",
     "unverified_exit_price_source",
     "unknown_close_category",
@@ -341,6 +343,15 @@ def assess_position_closure(
         row.get("entry_price_source")
     ) not in _VERIFIED_EXIT_PRICE_SOURCES:
         return _assessment_from_closure(closure, reason="unverified_entry_fill")
+
+    if (
+        _normalize(row.get("execution_mode")) == "paper_internal"
+        and _normalize(row.get("paper_fill_model_version"))
+        != CURRENT_PAPER_FILL_MODEL_VERSION
+    ):
+        return _assessment_from_closure(
+            closure, reason="unverified_paper_fill_model"
+        )
 
     if not row.get("closed_at"):
         return _assessment_from_closure(closure, reason="missing_close_time")

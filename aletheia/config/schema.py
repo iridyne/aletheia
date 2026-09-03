@@ -1648,10 +1648,10 @@ class UniverseConfig(BaseModel):
 
 
 class FastTriggerConfig(BaseModel):
-    """Bounded Momentum trigger; the safe default observes without executing."""
+    """Public monitoring control; canonical Risk/Gateway own order authority."""
 
-    # Shadow prewarms/records the trigger path without granting order authority;
-    # execution remains an explicit opt-in.
+    # Compatibility for legacy Setup observations. Current Entry Plans use this
+    # only to enable public monitoring; it is not a second execution permission.
     mode: Literal["off", "shadow", "execute"] = "shadow"
     max_setups: int = Field(default=10, ge=1, le=10)
     authorization_ttl_minutes: int = Field(default=60, ge=1, le=60)

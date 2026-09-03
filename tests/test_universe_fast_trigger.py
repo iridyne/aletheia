@@ -1224,7 +1224,7 @@ async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
 
     assert plans == {}
     assert engines == {}
-    assert cancellations == [("triggered-maker", "entry_plan_maker_timeout")]
+    assert cancellations == [("triggered-maker", "maker_order_unfilled_until_expiry")]
 
 
 @pytest.mark.asyncio
@@ -1969,7 +1969,7 @@ async def test_binance_spot_snapshot_retries_transient_failure():
 
 
 @pytest.mark.asyncio
-async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync():
+async def test_binance_dual_socket_subscription_health_is_lane_isolated():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
 
@@ -1996,7 +1996,7 @@ async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync(
     assert stream.health().subscriptions_confirmed is False
     stream._pending_acks.clear()
     stream._refresh_confirmation()
-    assert stream.health().subscriptions_confirmed is False
+    assert stream.health().subscriptions_confirmed is True
     book = _SpotBook()
     book.synced = True
     stream._books[spot] = book
@@ -2625,11 +2625,8 @@ async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
     watched, _ = await watch._load_entry_plan_watchers(cfg)
 
     assert requested_limits == [None]
-    assert len(watched) == 10
-    assert cancellations == [
-        ("plan-10", "entry_plan_maker_timeout"),
-        ("plan-11", "entry_plan_monitoring_capacity_unavailable"),
-    ]
+    assert len(watched) == 11
+    assert cancellations == [("plan-10", "maker_order_unfilled_until_expiry")]
 
 
 

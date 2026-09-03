@@ -5033,6 +5033,7 @@ def _get_derivative_symbols(instruments) -> list[str]:
     any other candidate-producing surface.
     """
     from aletheia.data.symbols import to_canonical
+    from aletheia.trading.entry_plan import EntryPlan
 
     result = [item.symbol for item in instruments]
     try:
@@ -5050,6 +5051,16 @@ def _get_derivative_symbols(instruments) -> list[str]:
                 result.append(to_canonical(position["symbol"]))
             except ValueError:
                 continue
+        for row in repo.list_watchable_entry_plans(limit=None):
+            try:
+                plan = EntryPlan.model_validate_json(row["plan_json"])
+            except Exception:
+                continue
+            if (
+                plan.execution_account_mode == "paper_internal"
+                and plan.market_type == "perp"
+            ):
+                result.append(to_canonical(plan.symbol))
     except Exception:
         pass
 
