@@ -73,6 +73,37 @@ def test_target_fresh_metadata_helper_passes_only_commit_and_data_root(monkeypat
     assert kwargs["env"]["SENTINEL"] == "kept"
 
 
+def test_target_fresh_reanchors_checkpoint_with_target_modules(monkeypatch, tmp_path):
+    from aletheia.update import target_fresh
+
+    seen = {}
+
+    def run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout=target_fresh._RESULT_PREFIX + '{"ok": true, "reason": "fingerprint_match"}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(target_fresh.subprocess, "run", run)
+    result = target_fresh.reanchor_joint_checkpoint(
+        project_root=tmp_path / "checkout",
+        data_dir=tmp_path / "data",
+        env={"SENTINEL": "kept"},
+        python_executable="python-test",
+    )
+
+    assert result["ok"] is True
+    assert "compute_joint_checkpoint" in seen["command"][2]
+    assert "save_joint_checkpoint" in seen["command"][2]
+    assert "verify_joint_checkpoint" in seen["command"][2]
+    assert seen["kwargs"]["cwd"] == str(tmp_path / "checkout")
+    assert seen["kwargs"]["env"]["ALETHEIA_DATA_DIR"] == str(tmp_path / "data")
+    assert seen["kwargs"]["env"]["SENTINEL"] == "kept"
+
+
 def test_target_fresh_smoke_loads_target_smoke_module(monkeypatch, tmp_path):
     from aletheia.update import target_fresh
 

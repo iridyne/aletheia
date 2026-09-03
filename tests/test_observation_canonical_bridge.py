@@ -777,6 +777,9 @@ def test_generation_contract_fixed_look_lifecycle_claim_and_archive(tmp_path):
     release_retention_claim(claim, proof_fingerprint="archive-v1", reason="archived")
     archive = write_generation_archive("obs-v2", 1, archive_root=str(tmp_path))
     assert verify_generation_archive(archive["archive_id"])["available"] is True
+    retry = write_generation_archive("obs-v2", 1, archive_root=str(tmp_path))
+    assert retry["archive_id"] == archive["archive_id"]
+    assert retry["archive_sha256"] == archive["archive_sha256"]
     assert db.execute(
         "SELECT status, consumed_evaluation_id FROM observation_inference_plans WHERE plan_id=?",
         (plan_id,),
