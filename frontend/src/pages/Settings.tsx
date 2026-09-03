@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams, useBlocker } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { useConfirm } from '../components/ui'
 import PageHeader from '../components/PageHeader'
@@ -168,6 +168,7 @@ function parseTab(value: string | null): Tab | null {
 export default function Settings() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: status, isPending: statusPending, refetch: refetchStatus } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: settings, dataUpdatedAt: settingsUpdatedAt, isPending: settingsPending, refetch: refetchSettings } = useQuery({
@@ -186,6 +187,7 @@ export default function Settings() {
   const dirtyRef = useRef<Set<string>>(new Set())
   const touchedRef = useRef(false)
   const touchedControlsRef = useRef<Set<HTMLElement>>(new Set())
+  const navigationConfirmPending = useRef(false)
   const [isTouched, setIsTouched] = useState(false)
   const [preciseDirtyCount, setPreciseDirtyCount] = useState(0)
   const [draftEpoch, setDraftEpoch] = useState(0)
@@ -228,9 +230,6 @@ export default function Settings() {
     // already server-controlled and therefore settle to the same snapshot.
     setDraftEpoch(epoch => epoch + 1)
   }
-
-  const blocker = useBlocker(() => shouldBlockNavigation(dirtyRef.current.size, touchedRef.current))
-  const blockerConfirmPending = useRef(false)
 
   useEffect(() => {
     try {
@@ -330,8 +329,7 @@ export default function Settings() {
   }, [settingsUpdatedAt])
 
   // Warn before a hard reload / tab close / cross-origin navigation.
-  // useBlocker (below) cannot cover this case ("does not handle hard-reloads or
-  // cross-origin navigations").
+  // The in-app link guard below cannot cover hard reloads or tab close.
   useEffect(() => {
     if (!shouldBlockNavigation(dirtyRef.current.size, isTouched)) return
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
@@ -339,21 +337,43 @@ export default function Settings() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [isTouched, preciseDirtyCount])
 
-  // Block in-app SPA navigation when there are unsaved changes.
+  // BrowserRouter has no data-router blocker. Capture ordinary same-origin link
+  // navigation before React Router handles it, then continue through useNavigate
+  // only after the existing application confirmation resolves.
   useEffect(() => {
-    if (blocker.state !== 'blocked' || blockerConfirmPending.current) return
-    blockerConfirmPending.current = true
-    void confirm({
-      title: 'Discard unsaved changes?',
-      description: 'You have unsaved changes. Leave Settings and discard them?',
-      confirmLabel: 'Leave and discard',
-      variant: 'warning',
-    }).then(approved => {
-      blockerConfirmPending.current = false
-      if (approved) blocker.proceed()
-      else blocker.reset()
-    })
-  }, [blocker, confirm])
+    if (!shouldBlockNavigation(dirtyRef.current.size, isTouched)) return
+    const onDocumentClick = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented || event.button !== 0 || event.metaKey
+        || event.ctrlKey || event.shiftKey || event.altKey
+      ) return
+      const target = event.target instanceof Element ? event.target : null
+      const link = target?.closest<HTMLAnchorElement>('a[href]')
+      if (!link || link.target === '_blank' || link.hasAttribute('download')) return
+      const destination = new URL(link.href, window.location.href)
+      if (
+        destination.origin !== window.location.origin
+        || destination.href === window.location.href
+      ) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (navigationConfirmPending.current) return
+      navigationConfirmPending.current = true
+      void confirm({
+        title: 'Discard unsaved changes?',
+        description: 'You have unsaved changes. Leave Settings and discard them?',
+        confirmLabel: 'Leave and discard',
+        variant: 'warning',
+      }).then(approved => {
+        navigationConfirmPending.current = false
+        if (!approved) return
+        clearDirty()
+        navigate(`${destination.pathname}${destination.search}${destination.hash}`)
+      })
+    }
+    document.addEventListener('click', onDocumentClick, true)
+    return () => document.removeEventListener('click', onDocumentClick, true)
+  }, [confirm, isTouched, navigate, preciseDirtyCount])
 
   // `slug` is set when navigation came from a search result, so the deep-link
   // effect above can scroll to that section instead of leaving the operator at

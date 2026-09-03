@@ -2,24 +2,19 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BrowserRouter } from 'react-router-dom'
+
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn() }))
 
 vi.mock('@tanstack/react-query', () => ({
   useQuery: vi.fn(),
   useQueryClient: vi.fn(() => ({})),
 }))
-vi.mock('react-router-dom', () => ({
-  useSearchParams: vi.fn(() => [new URLSearchParams(), vi.fn()]),
-  useBlocker: vi.fn(() => ({ state: 'unblocked' })),
-}))
 vi.mock('../api/client', () => ({
   api: { getStatus: vi.fn(), getSettings: vi.fn() },
 }))
+vi.mock('../components/ui', () => ({ useConfirm: () => confirmMock }))
 vi.mock('../components/PageHeader', () => ({ default: () => null }))
-vi.mock('../features/settings/dirtyGuard', () => ({
-  hasUncontrolledDraft: () => false,
-  isFallbackDraftControl: () => false,
-  shouldBlockNavigation: () => false,
-}))
 
 // Section stubs — must supply id/title/tab/searchTerms consumed by SETTINGS_INDEX
 vi.mock('../features/settings/model-providers/modelProviderState', () => ({
@@ -46,7 +41,9 @@ vi.mock('../features/settings/tabs/ExecutionTab', () => ({
   TRADING_MODE_SECTION:        { id: 'trading-mode',        title: 'Trading Mode',       tab: 'execution', description: '', searchTerms: [] },
 }))
 vi.mock('../features/settings/tabs/AgentModelsTab', () => ({
-  AgentModelsTab: () => null,
+  AgentModelsTab: ({ onDirty }: { onDirty: (id: string, dirty: boolean) => void }) => (
+    <button data-testid="mark-dirty" onClick={() => onDirty('test-draft', true)}>Mark dirty</button>
+  ),
   INFERENCE_ADMISSION_SECTION: { id: 'inference-admission', title: 'Inference Admission', tab: 'agent', description: '', searchTerms: [] },
   LEARNING_SECTION:            { id: 'learning',            title: 'Learning',            tab: 'agent', description: '', searchTerms: [] },
   LLM_COST_SECTION:            { id: 'llm-cost',            title: 'LLM Cost',            tab: 'agent', description: '', searchTerms: [] },
@@ -82,6 +79,8 @@ vi.mock('../features/settings/tabs/RiskTab', () => ({
 import { useQuery } from '@tanstack/react-query'
 import Settings from './Settings'
 
+const settingsPage = <BrowserRouter><Settings /></BrowserRouter>
+
 type QueryResult = { data: unknown; isPending: boolean; isError: boolean; refetch: ReturnType<typeof vi.fn> }
 
 function setup(statusQ: QueryResult, settingsQ: QueryResult) {
@@ -104,6 +103,7 @@ describe('Settings load-state availability (issue #1185)', () => {
 
   beforeEach(() => {
     Object.defineProperty(window, 'localStorage', { value: storageMock, writable: true, configurable: true })
+    confirmMock.mockResolvedValue(false)
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -120,7 +120,7 @@ describe('Settings load-state availability (issue #1185)', () => {
       { data: undefined, isPending: true,  isError: false, refetch: vi.fn() },
       { data: undefined, isPending: true,  isError: false, refetch: vi.fn() },
     )
-    await act(async () => root.render(<Settings />))
+    await act(async () => root.render(settingsPage))
     expect(container.querySelector('.skeleton')).toBeTruthy()
     expect(container.querySelector('.settings-load-error')).toBeNull()
   })
@@ -130,7 +130,7 @@ describe('Settings load-state availability (issue #1185)', () => {
       { data: undefined,  isPending: false, isError: true,  refetch: vi.fn() },
       { data: undefined,  isPending: false, isError: false, refetch: vi.fn() },
     )
-    await act(async () => root.render(<Settings />))
+    await act(async () => root.render(settingsPage))
     expect(container.querySelector('.settings-load-error')).toBeTruthy()
     expect(container.querySelector('.skeleton')).toBeNull()
     expect(container.textContent).toContain('System status')
@@ -141,7 +141,7 @@ describe('Settings load-state availability (issue #1185)', () => {
       { data: okStatus,  isPending: false, isError: false, refetch: vi.fn() },
       { data: undefined, isPending: false, isError: true,  refetch: vi.fn() },
     )
-    await act(async () => root.render(<Settings />))
+    await act(async () => root.render(settingsPage))
     expect(container.querySelector('.settings-load-error')).toBeTruthy()
     expect(container.querySelector('.skeleton')).toBeNull()
     expect(container.textContent).toContain('Settings configuration')
@@ -154,7 +154,7 @@ describe('Settings load-state availability (issue #1185)', () => {
       { data: undefined, isPending: false, isError: true, refetch: refetchStatus },
       { data: undefined, isPending: false, isError: true, refetch: refetchSettings },
     )
-    await act(async () => root.render(<Settings />))
+    await act(async () => root.render(settingsPage))
     const retryBtn = container.querySelector<HTMLButtonElement>('button')
     expect(retryBtn?.textContent?.trim()).toBe('Retry')
     await act(async () => { retryBtn?.click() })
@@ -169,9 +169,30 @@ describe('Settings load-state availability (issue #1185)', () => {
       { data: okStatus,   isPending: false, isError: true, refetch: vi.fn() },
       { data: okSettings, isPending: false, isError: true, refetch: vi.fn() },
     )
-    await act(async () => root.render(<Settings />))
+    await act(async () => root.render(settingsPage))
     expect(container.querySelector('.settings-shell')).toBeTruthy()
     expect(container.querySelector('.skeleton')).toBeNull()
     expect(container.querySelector('.settings-load-error')).toBeNull()
+  })
+
+  it('renders under BrowserRouter and blocks dirty in-app link navigation', async () => {
+    setup(
+      { data: okStatus, isPending: false, isError: false, refetch: vi.fn() },
+      { data: okSettings, isPending: false, isError: false, refetch: vi.fn() },
+    )
+    await act(async () => root.render(settingsPage))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="mark-dirty"]')?.click()
+    })
+    const link = document.createElement('a')
+    link.href = '/portfolio'
+    document.body.appendChild(link)
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+
+    await act(async () => { link.dispatchEvent(click) })
+
+    expect(confirmMock).toHaveBeenCalledOnce()
+    expect(click.defaultPrevented).toBe(true)
+    link.remove()
   })
 })
