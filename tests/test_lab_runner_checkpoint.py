@@ -80,9 +80,10 @@ def test_runner_reports_mismatch_on_manifest_change(clean_registry):
     assert second["joint_checkpoint"]["ok"] is False
     assert "fingerprint_mismatch" in second["joint_checkpoint"]["reason"]
 
-    # But it also SAVES the new fingerprint, so a third pass reads clean again.
+    # An unresolved mismatch must not be promoted to a new trusted baseline.
     third = run_lab_windows()
-    assert third["joint_checkpoint"]["ok"] is True
+    assert third["joint_checkpoint"]["ok"] is False
+    assert third["joint_checkpoint"]["save_skipped"] == "unresolved_checkpoint_mismatch"
 
 
 def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):
@@ -110,3 +111,31 @@ def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):
     assert summary["windows_run"] == 1
     assert summary["joint_checkpoint"]["ok"] is False
     assert "checkpoint_error" in summary["joint_checkpoint"]["reason"]
+
+
+def test_runner_checkpoints_expected_append_only_window_writes(clean_registry):
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+
+    counter = {"n": 0}
+
+    def _append_evidence():
+        counter["n"] += 1
+        get_lab_db().execute(
+            "INSERT INTO ufc_shadow_equivalence ("
+            "id, observation_id, experiment_id, cohort_key, checked_at, matched"
+            ") VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                f"append-{counter['n']}", "obs", "exp", "cohort",
+                f"2026-09-02T00:00:0{counter['n']}+00:00", 1,
+            ),
+        )
+        return {"status": "ok"}
+
+    register_window(LabWindow(name="append", kind="test", fn=_append_evidence))
+
+    first = run_lab_windows()
+    second = run_lab_windows()
+
+    assert first["joint_checkpoint"]["ok"] is True
+    assert second["joint_checkpoint"]["ok"] is True

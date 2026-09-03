@@ -65,6 +65,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "learning_measurement_startup_catchup",
     "learning_lifecycle_audit_reconciler",
     "universe_scanner_audit_reconciler",
+    "observation_lab_bridge",
 }
 
 # Market snapshot collection cadence. Exposed as a module constant so consumers
@@ -152,6 +153,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "learning_lifecycle_controller": 60.0,
     "learning_lifecycle_audit_reconciler": 30.0,
     "universe_scanner_audit_reconciler": 15.0,
+    "observation_lab_bridge": 30.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -1187,6 +1189,17 @@ def _initial_learning_evaluator_run_time(
     return min(durable_due, default_run)
 
 
+def _observation_lab_owns_experiment_cycle() -> bool:
+    """Keep Main's legacy evaluator/lifecycle jobs out of Lab authority mode."""
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except Exception as exc:  # fail closed on an unreadable authority boundary
+        logger.warning("Observation experiment authority unavailable at scheduler startup: %s", exc)
+        return True
+
+
 def _run_pricing_reference_refresh() -> None:
     try:
         from aletheia.economics.pricing_sync import start_pricing_refresh
@@ -1529,6 +1542,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=5),
     )
+    _scheduler.add_job(
+        _guarded("observation_lab_bridge", _run_observation_lab_bridge),
+        "interval", minutes=1, id="observation_lab_bridge",
+        misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
+        next_run_time=datetime.now() + timedelta(minutes=1),
+    )
     # Independent outcome settler — settles overdue forward-outcome rows that feed
     # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
     # so the attribution chain keeps ticking even when the universe scan is off.
@@ -1558,41 +1577,44 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
     )
-    # AT-01 evaluator is measurement-only and remains available while autonomous
-    # Learning is disabled or layered pause is active.  Lifecycle control is a
-    # separate autonomous job and is stopped by the shared Learning gate.
-    _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
-    _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
-        _learning_interval,
-    )
-    _scheduler.add_job(
-        _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
-        "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
-        misfire_grace_time=300, max_instances=1, coalesce=True,
-        executor="learning_measurement",
-        next_run_time=_learning_evaluator_initial_run,
-    )
-    _scheduler.add_job(
-        _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
-        "date", run_date=datetime.now() + timedelta(minutes=2),
-        id="learning_measurement_startup_catchup", misfire_grace_time=None,
-        executor="learning_measurement",
-    )
-    _scheduler.add_job(
-        _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
-        "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
-        misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=4),
-    )
-    _scheduler.add_job(
-        _guarded(
-            "learning_lifecycle_audit_reconciler",
-            _run_learning_lifecycle_audit_reconciler,
-        ),
-        "interval", minutes=5, id="learning_lifecycle_audit_reconciler",
-        misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=5),
-    )
+    # AT-01 evaluator/lifecycle jobs remain a legacy compatibility lane only.
+    # Once Lab is authoritative, the observation bridge/runner owns this cycle;
+    # registering the old jobs would leave two lifecycle authorities in Main.
+    if not _observation_lab_owns_experiment_cycle():
+        _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
+        _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
+            _learning_interval,
+        )
+        _scheduler.add_job(
+            _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
+            "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
+            misfire_grace_time=300, max_instances=1, coalesce=True,
+            executor="learning_measurement",
+            next_run_time=_learning_evaluator_initial_run,
+        )
+        _scheduler.add_job(
+            _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
+            "date", run_date=datetime.now() + timedelta(minutes=2),
+            id="learning_measurement_startup_catchup", misfire_grace_time=None,
+            executor="learning_measurement",
+        )
+        _scheduler.add_job(
+            _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
+            "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
+            misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
+            next_run_time=datetime.now() + timedelta(minutes=4),
+        )
+        _scheduler.add_job(
+            _guarded(
+                "learning_lifecycle_audit_reconciler",
+                _run_learning_lifecycle_audit_reconciler,
+            ),
+            "interval", minutes=5, id="learning_lifecycle_audit_reconciler",
+            misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
+            next_run_time=datetime.now() + timedelta(minutes=5),
+        )
+    else:
+        logger.info("legacy Learning evaluator/lifecycle jobs skipped: Lab owns experiment cycle")
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
     # a consumed primary-venue deadline.
@@ -3250,24 +3272,36 @@ def _run_cleanup():
         # their own function before agent_shell_tasks fires. See
         # repositories.prune_agent_shell_sessions for the cascade impl.
         # ------------------------------------------------------------------
-        # Read experiment state for clean_window_cutoff guard. If this fails,
-        # skip the affected prunes rather than silently deleting protected data.
+        # Read the legacy experiment floor only while legacy owns authority.
+        # Lab-authoritative cleanup resolves exact source claims inside each
+        # prune function; consulting the old global floor here would retain
+        # unrelated Main telemetry and keep the retired engine on the hot path.
         experiment_floor_read_ok = False
         min_open_exp_at = None
         try:
-            min_open_exp_at = repo.min_open_experiment_exposure_at()
+            from aletheia.observation_lab.canonical import get_authority_source
+
+            lab_authority = get_authority_source().source == "lab"
+        except Exception as exc:
+            logger.debug("Cannot read Observation authority for cleanup: %s", exc)
+            lab_authority = False
+        if lab_authority:
             experiment_floor_read_ok = True
-        except repo.ExperimentStateReadError as e:
-            logger.warning("Cannot read experiment state for cleanup guard: %s", e)
-            from aletheia.infra.events import emit_infra_event
-            emit_infra_event(
-                severity="error",
-                source="scheduler",
-                code="cleanup_experiment_state_read_failed",
-                message=f"Skipping experiment-guarded prunes: {e}",
-                action="Check SQLite health and retry cleanup",
-                dedupe_sec=3600,
-            )
+        else:
+            try:
+                min_open_exp_at = repo.min_open_experiment_exposure_at()
+                experiment_floor_read_ok = True
+            except repo.ExperimentStateReadError as e:
+                logger.warning("Cannot read experiment state for cleanup guard: %s", e)
+                from aletheia.infra.events import emit_infra_event
+                emit_infra_event(
+                    severity="error",
+                    source="scheduler",
+                    code="cleanup_experiment_state_read_failed",
+                    message=f"Skipping experiment-guarded prunes: {e}",
+                    action="Check SQLite health and retry cleanup",
+                    dedupe_sec=3600,
+                )
         counts = {
             "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
@@ -3720,6 +3754,53 @@ def _run_filter_controller_observe():
     except Exception as e:
         logger.warning("filter_controller_observe job failed: %s", e)
         _record_job_failure("filter_controller_observe", str(e))
+
+
+def _run_observation_lab_bridge() -> None:
+    """Drain Main delivery receipts and mirror Lab audit intents.
+
+    This transport job owns no Experiment decisions; it only advances the
+    durable cross-store bridge and reports unavailable state for operators.
+    """
+    try:
+        from aletheia.config.loader import get_data_dir
+
+        if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
+            # The compatibility scheduler must not create a Lab database on a
+            # legacy-only install merely by running its health job.
+            return
+        from aletheia.observation_lab.canonical import (
+            compact_finalized_generations,
+            import_delivery_receipts,
+            mirror_lab_audit_outbox,
+            prune_observation_delivery_outbox,
+        )
+
+        imported = import_delivery_receipts(limit=500)
+        mirrored = mirror_lab_audit_outbox(limit=500)
+        pruned = prune_observation_delivery_outbox()
+        compacted = compact_finalized_generations(limit=10)
+        if not imported.get("available", False) and imported.get("reason") not in {
+            "lab_unavailable", "outbox_unavailable",
+        }:
+            _record_job_failure("observation_lab_bridge", str(imported.get("reason")))
+        if not mirrored.get("available", False) and mirrored.get("reason") != "lab_unavailable":
+            _record_job_failure("observation_lab_bridge", str(mirrored.get("reason")))
+        logger.info(
+            "observation_lab_bridge: imported=%s mirrored=%s pending=%s",
+            imported.get("processed", 0), mirrored.get("processed", 0),
+            imported.get("backlog_count", 0),
+        )
+        if not pruned.get("available", False):
+            _record_job_failure("observation_lab_bridge", str(pruned.get("reason")))
+        if compacted.get("skipped"):
+            _record_job_failure(
+                "observation_lab_bridge",
+                f"compaction_skipped:{compacted['skipped']}",
+            )
+    except Exception as e:
+        logger.warning("observation_lab_bridge job failed: %s", e)
+        _record_job_failure("observation_lab_bridge", str(e))
 
 
 def _run_health_check():

@@ -30,6 +30,21 @@ def _rolling_cutoff(hours: int) -> tuple[int, str]:
     return hours_i, cutoff.isoformat()
 
 
+def _lab_experiment_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except (AttributeError, TypeError):
+        # Read-only test doubles can lack ``fetchone``; preserve their legacy
+        # projection semantics without treating that as Lab authority.
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 def _decision_policy_context(db) -> tuple[dict | None, list[dict]]:
     rows = [
         dict(row)
@@ -2068,6 +2083,62 @@ def _compute_learning_contribution():
     """
     from aletheia.storage.sqlite import get_db
     from aletheia.learning.control import get_learning_job_health, job_health_view
+
+    if _lab_experiment_authority():
+        from aletheia.learning.read_models import build_learning_contribution_projection
+        from aletheia.observation_lab.canonical import observation_bridge_health
+
+        projection = build_learning_contribution_projection(limit=100)
+        items = projection.get("items", []) if projection.get("availability") != "unavailable" else []
+        exposures_by_path = [
+            {
+                "path_id": item.get("path_id"),
+                "exposure_n": item.get("samples", {}).get("raw_exposures"),
+                "experiment_count": 1,
+                "latest_exposed_at": item.get("data_freshness", {}).get("last_evaluated_at"),
+            }
+            for item in items
+        ]
+        by_verdict: dict[str, int] = {}
+        for item in items:
+            verdict = item.get("measurement", {}).get("state")
+            if verdict in {"positive", "negative", "neutral", "invalid", "insufficient_data"}:
+                by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+        lab_available = projection.get("availability") != "unavailable"
+        return {
+            "exposures_by_path": exposures_by_path,
+            "verdicts": {
+                "total": sum(by_verdict.values()) if lab_available else None,
+                "by_verdict": [
+                    {"verdict": verdict, "n": count}
+                    for verdict, count in sorted(by_verdict.items())
+                ],
+                **({"query_error": "canonical_lab_projection_unavailable"} if not lab_available else {}),
+            },
+            "experiments_by_stage": [
+                {"stage": item.get("stage"), "n": 1}
+                for item in items
+            ],
+            "lifecycle_event_n": sum(
+                1 for item in items
+                if item.get("lifecycle", {}).get("latest_event")
+            ) if lab_available else None,
+            "authority_applied": {
+                "treatment_n": sum(
+                    item.get("samples", {}).get("exposed_treatment_units", 0) for item in items
+                ) if lab_available else None,
+                "applied_n": sum(
+                    item.get("samples", {}).get("exposed_authority_applied_treatment_units", 0) for item in items
+                ) if lab_available else None,
+                "applied_rate": None,
+            },
+            "job_health": projection.get("operations", {}).get("job_health", {}) if lab_available else {},
+            "legacy_query_errors": {
+                "canonical_lab_authority": "legacy_experiment_projection_disabled",
+            },
+            "bridge": observation_bridge_health(),
+            **projection,
+        }
 
     db = get_db()
     legacy_query_errors: dict[str, str] = {}

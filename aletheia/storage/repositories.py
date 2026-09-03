@@ -70,6 +70,21 @@ _sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
 _retention_metrics_lock = threading.Lock()
 _retention_metrics: dict[str, dict[str, float | int]] = {}
 
+
+def _canonical_lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except sqlite3.OperationalError as exc:
+        if "no such table: observation_authority_state" in str(exc):
+            return False
+        raise ExperimentStateReadError("experiment authority state unavailable") from exc
+    except FileNotFoundError:
+        return False
+    except RuntimeError as exc:
+        raise ExperimentStateReadError("experiment authority state invalid") from exc
+
 _PHYSICAL_PROTECTION_MARKETS = {
     "spot": "spot",
     "perp": "perp",
@@ -6937,24 +6952,37 @@ def _prune_filter_candidate_outcomes_batches(
     *,
     cutoff: str,
     retention_days: int,
+    protected_refs: tuple[str, ...] = (),
     batch_size: int = 5_000,
 ) -> int:
     db = get_db()
     total = 0
     size = max(1, int(batch_size))
+    scan_after = 0
     while True:
         started = time.monotonic()
         pending_rows: list = []
         pending_by_horizon: dict[str, int] = {}
         with transaction():
-            rows = db.execute(
+            scanned_rows = db.execute(
                 "SELECT rowid, id, horizon, status, outcome_candidate_key "
-                "FROM filter_candidate_outcomes "
-                "WHERE entry_ts < ? ORDER BY rowid LIMIT ?",
-                (cutoff, size),
+                "FROM filter_candidate_outcomes WHERE entry_ts < ? AND rowid > ? "
+                "ORDER BY rowid LIMIT ?",
+                (cutoff, scan_after, size),
             ).fetchall()
-            if not rows:
+            if scanned_rows:
+                scan_after = int(scanned_rows[-1][0])
+            rows = list(scanned_rows)
+            if protected_refs:
+                protected = set(protected_refs)
+                rows = [
+                    row for row in rows
+                    if str(row[1]) not in protected and str(row[4]) not in protected
+                ]
+            if not scanned_rows:
                 break
+            if not rows:
+                continue
             pending_rows = [row for row in rows if row[3] == "pending"]
             if pending_rows:
                 event = _filter_outcome_loss_event(
@@ -6988,7 +7016,7 @@ def _prune_filter_candidate_outcomes_batches(
                 cutoff,
                 " ".join(f"{k}={v}" for k, v in sorted(pending_by_horizon.items())),
             )
-        if len(rows) < size or deleted == 0:
+        if len(scanned_rows) < size and deleted == 0:
             break
     return total
 
@@ -7137,6 +7165,10 @@ def min_open_experiment_exposure_at() -> str | None:
     Raises:
         ExperimentStateReadError: If the query fails and state cannot be proven.
     """
+    if _canonical_lab_authority():
+        # The Lab claim ledger is the only Experiment-retention authority after
+        # cutover; legacy rows are historical evidence and cannot widen Main TTL.
+        return None
     db = get_db()
     try:
         row = db.execute(
@@ -7155,6 +7187,8 @@ def min_open_experiment_exposure_at() -> str | None:
 
 def _resolve_experiment_floor(value: str | None | object) -> str | None:
     if value is _AUTO_EXPERIMENT_FLOOR:
+        if _canonical_lab_authority():
+            return None
         return min_open_experiment_exposure_at()
     return cast(str | None, value)
 
@@ -7168,6 +7202,79 @@ def _observation_retention_floor(domain: str) -> str | None:
     if not state["available"]:
         raise ExperimentStateReadError("Observation retention claims unavailable")
     return state["claims"].get(domain)
+
+
+def _active_observation_claim_refs(domain: str) -> tuple[str, ...]:
+    """Return exact protected source identities for Lab-authoritative cleanup."""
+    from aletheia.observation_lab.db import readonly_lab_db
+    from aletheia.observation_lab.canonical import _validate_retention_claim_source
+
+    refs: list[str] = []
+    try:
+        with readonly_lab_db() as lab:
+            aliases = {domain}
+            if domain.endswith("outcomes"):
+                aliases.update({"outcome", "outcomes"})
+            aliases = tuple(sorted(aliases))
+            placeholders = ",".join("?" for _ in aliases)
+            rows = lab.execute(
+                "SELECT * FROM observation_retention_claims WHERE status='active' "
+                f"AND (claim_domain IN ({placeholders}) OR source_kind IN ({placeholders})) ORDER BY source_ref",
+                (*aliases, *aliases),
+            ).fetchall()
+            for row in rows:
+                try:
+                    _validate_retention_claim_source(
+                        lab,
+                        observation_id=str(row["observation_id"]),
+                        generation=int(row["generation"]),
+                        source_kind=str(row["source_kind"]),
+                        source_ref=str(row["source_ref"]),
+                        source_hash=str(row["source_hash"]),
+                    )
+                except (ValueError, sqlite3.Error) as exc:
+                    raise ExperimentStateReadError(
+                        f"Observation retention claim unavailable: {exc}"
+                    ) from exc
+                if row["source_ref"]:
+                    refs.append(str(row["source_ref"]))
+    except Exception as exc:
+        raise ExperimentStateReadError(
+            f"Failed to query exact Observation retention claims: {exc}"
+        ) from exc
+    return tuple(refs)
+
+
+def _protected_universe_outcome_ids(
+    db,
+    refs: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Resolve exact Lab claim refs to outcome/member/snapshot identities."""
+    if not refs:
+        return (), ()
+    # SQLite's bound-variable limit is commonly 999. A claim set larger than
+    # that is unusual; retaining this cleanup batch is safer than truncating
+    # protection and deleting a claimed source underneath an active window.
+    if len(refs) > 900:
+        return ("__claim_set_too_large__",), ("__claim_set_too_large__",)
+    placeholders = ",".join("?" for _ in refs)
+    rows = db.execute(
+        "SELECT id, member_id, snapshot_id, outcome_candidate_key FROM universe_forward_outcomes "
+        f"WHERE id IN ({placeholders}) OR outcome_candidate_key IN ({placeholders})",
+        (*refs, *refs),
+    ).fetchall()
+    matched = {
+        str(value)
+        for row in rows
+        for value in (row[0], row[3])
+        if value
+    }
+    if any(ref not in matched for ref in refs):
+        return ("__claim_source_unavailable__",), ("__claim_source_unavailable__",)
+    return (
+        tuple(str(row[1]) for row in rows if row[1]),
+        tuple(str(row[2]) for row in rows if row[2]),
+    )
 
 
 def _effective_cutoff(
@@ -7215,13 +7322,28 @@ def prune_filter_candidate_outcomes(
     open experiment still needs for its paired cohort — the effective cutoff is
     the OLDER of ``now - days`` and the earliest open-experiment start.
     """
-    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-    observation_floor = _observation_retention_floor("filter_candidate_outcomes")
-    if observation_floor:
-        min_experiment_started_at = min(
-            value for value in (min_experiment_started_at, observation_floor) if value
-        )
-    cutoff = _effective_cutoff(days, min_experiment_started_at)
+    try:
+        lab_authority = _canonical_lab_authority()
+    except ExperimentStateReadError:
+        return 0
+    protected_refs: tuple[str, ...] = ()
+    if lab_authority:
+        # Once Lab owns the generation, exact source identities are the only
+        # protection needed; an experiment-wide date floor would retain
+        # unrelated telemetry and hide missing claim state.
+        try:
+            protected_refs = _active_observation_claim_refs("filter_candidate_outcomes")
+        except ExperimentStateReadError:
+            return 0
+        cutoff = _effective_cutoff(days, None)
+    else:
+        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
+        observation_floor = _observation_retention_floor("filter_candidate_outcomes")
+        if observation_floor:
+            min_experiment_started_at = min(
+                value for value in (min_experiment_started_at, observation_floor) if value
+            )
+        cutoff = _effective_cutoff(days, min_experiment_started_at)
 
     # A row still 'pending' at the cutoff was never measured, and deleting it
     # leaves nothing behind that says so: every coverage aggregation matches
@@ -7237,6 +7359,7 @@ def prune_filter_candidate_outcomes(
     return _prune_filter_candidate_outcomes_batches(
         cutoff=cutoff,
         retention_days=days,
+        protected_refs=protected_refs,
     )
 
 
@@ -9938,7 +10061,9 @@ def insert_filter_decision_batch(batch) -> bool:
     return bool(cur.rowcount)
 
 
-def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
+def insert_filter_candidate_outcomes_batch(
+    outcomes: list, *, db: sqlite3.Connection | None = None,
+) -> int:
     """Register fixed-horizon candidate outcomes without duplicating a candidate.
 
     Uses an upsert so that a later call carrying a definitive allocation_selected
@@ -9952,17 +10077,23 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
     rows = [_filter_outcome_insert_payload(outcome) for outcome in outcomes]
     columns = list(rows[0])
     placeholders = ", ".join("?" for _ in columns)
-    db = get_db()
-    before = db.total_changes
-    with transaction():
-        execute_many_write(
-            f"INSERT INTO filter_candidate_outcomes ({', '.join(columns)}) VALUES ({placeholders})"
-            " ON CONFLICT(id) DO UPDATE SET"
-            " allocation_selected = COALESCE(excluded.allocation_selected,"
-            "                                filter_candidate_outcomes.allocation_selected)",
-            [[row[column] for column in columns] for row in rows],
-        )
-    return db.total_changes - before
+    connection = db or get_db()
+    statement = (
+        f"INSERT INTO filter_candidate_outcomes ({', '.join(columns)}) VALUES ({placeholders})"
+        " ON CONFLICT(id) DO UPDATE SET"
+        " allocation_selected = COALESCE(excluded.allocation_selected,"
+        "                                filter_candidate_outcomes.allocation_selected)"
+    )
+    values = [[row[column] for column in columns] for row in rows]
+    before = connection.total_changes
+    if db is not None:
+        if not connection.in_transaction:
+            raise RuntimeError("outcome_seed_connection_requires_transaction")
+        connection.executemany(statement, values)
+    else:
+        with transaction():
+            execute_many_write(statement, values)
+    return connection.total_changes - before
 
 _UNIVERSE_DISCOVERY_BATCH_COLUMNS = (
     "id", "dedup_key", "run_id", "candidate_kind", "filter_name", "stage",
@@ -10653,6 +10784,8 @@ def latest_controller_run_id() -> str | None:
 
 def insert_filter_shadow_experiment(experiment: dict) -> bool:
     """Insert an immutable prospective plan, returning False for a duplicate key."""
+    if _canonical_lab_authority():
+        raise RuntimeError("observation_lab_authority_required")
     db = get_db()
     was_in_tx = db.in_transaction
     cols = ", ".join(experiment.keys())
@@ -10667,6 +10800,8 @@ def insert_filter_shadow_experiment(experiment: dict) -> bool:
 
 
 def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 100) -> list[dict]:
+    if _canonical_lab_authority():
+        return []
     if status:
         return _select_all(
             "filter_shadow_experiments",
@@ -10679,6 +10814,8 @@ def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 10
 
 
 def update_filter_shadow_experiment(experiment_id: str, **values) -> None:
+    if _canonical_lab_authority():
+        raise RuntimeError("observation_lab_authority_required")
     db = get_db()
     was_in_tx = db.in_transaction
     sets = ", ".join(f"{key} = ?" for key in values)
@@ -10691,6 +10828,8 @@ def update_filter_shadow_experiment(experiment_id: str, **values) -> None:
 
 
 def insert_filter_shadow_evaluation(evaluation: dict) -> None:
+    if _canonical_lab_authority():
+        raise RuntimeError("observation_lab_authority_required")
     db = get_db()
     was_in_tx = db.in_transaction
     _insert("filter_shadow_evaluations", evaluation)
@@ -10699,6 +10838,8 @@ def insert_filter_shadow_evaluation(evaluation: dict) -> None:
 
 
 def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
+    if _canonical_lab_authority():
+        return None
     row = (
         get_db()
         .execute(
@@ -11839,8 +11980,34 @@ def prune_universe_forward_outcomes(
     min_experiment_started_at: str | None | object = _AUTO_EXPERIMENT_FLOOR,
 ) -> int:
     """Prune selected-member outcomes without deleting open-experiment fallback evidence."""
-    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-    cutoff = _effective_cutoff(days, min_experiment_started_at)
+    protected_refs: tuple[str, ...] = ()
+    try:
+        lab_authority = _canonical_lab_authority()
+    except ExperimentStateReadError:
+        return 0
+    if lab_authority:
+        try:
+            protected_refs = _active_observation_claim_refs("universe_forward_outcomes")
+        except ExperimentStateReadError:
+            return 0
+        cutoff = _effective_cutoff(days, None)
+    else:
+        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
+        cutoff = _effective_cutoff(days, min_experiment_started_at)
+    if lab_authority and protected_refs:
+        # Keep the exact outcome identity; no global Experiment date floor is
+        # consulted after Lab cutover.
+        if len(protected_refs) > 900:
+            # ponytail: keep this bounded and fail closed; a future bulk
+            # cleanup can use a temporary claim table instead of widening SQL.
+            return 0
+        placeholders = ",".join("?" for _ in protected_refs)
+        return _delete_by_rowid_batches(
+            "universe_forward_outcomes",
+            f"entry_ts < ? AND id NOT IN ({placeholders}) "
+            f"AND (outcome_candidate_key IS NULL OR outcome_candidate_key NOT IN ({placeholders}))",
+            (cutoff, *protected_refs, *protected_refs),
+        )
     return _delete_by_rowid_batches(
         "universe_forward_outcomes",
         "entry_ts < ?",
@@ -12134,6 +12301,11 @@ def prune_filter_shadow_evaluations(days: int = 90) -> int:
     Called first by ``prune_filter_shadow_experiments`` to cascade-delete
     children; can also be invoked independently.
     """
+    try:
+        if _canonical_lab_authority():
+            return 0
+    except ExperimentStateReadError:
+        return 0
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
@@ -12150,6 +12322,11 @@ def prune_filter_shadow_experiments(days: int = 90) -> int:
     keeps its evidence indefinitely. FK on filter_shadow_evaluations.experiment_id
     lacks ON DELETE CASCADE so children are deleted first.
     """
+    try:
+        if _canonical_lab_authority():
+            return 0
+    except ExperimentStateReadError:
+        return 0
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     exp_ids = [
@@ -12183,19 +12360,43 @@ def prune_universe_members(
     Exposed for the _PRUNABLE whitelist. ``prune_universe_snapshots`` calls
     this first inside a single transaction.
     """
+    try:
+        lab_authority = _canonical_lab_authority()
+    except ExperimentStateReadError:
+        return 0
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-    outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
+    protected_members: tuple[str, ...] = ()
+    if lab_authority:
+        try:
+            refs = _active_observation_claim_refs("universe_forward_outcomes")
+            protected_members, _ = _protected_universe_outcome_ids(get_db(), refs)
+        except (ExperimentStateReadError, sqlite3.Error):
+            return 0
+        if protected_members in {
+            ("__claim_set_too_large__",),
+            ("__claim_source_unavailable__",),
+        }:
+            return 0
+        outcome_cutoff = _effective_cutoff(days, None)
+    else:
+        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
+        outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     was_in_tx = db.in_transaction
+    protected_clause = ""
+    protected_params: tuple[str, ...] = ()
+    if protected_members:
+        placeholders = ",".join("?" for _ in protected_members)
+        protected_clause = f" AND id NOT IN ({placeholders})"
+        protected_params = protected_members
     cur = execute_write(
         "DELETE FROM universe_members WHERE snapshot_id IN ("
         "  SELECT id FROM universe_snapshots WHERE created_at < ?"
         ") AND NOT EXISTS ("
         "  SELECT 1 FROM universe_forward_outcomes o "
         "  WHERE o.member_id=universe_members.id AND o.entry_ts>=?"
-        ")",
-        (cutoff, outcome_cutoff),
+        ")" + protected_clause,
+        (cutoff, outcome_cutoff, *protected_params),
     )
     if not was_in_tx:
         db.commit()
@@ -12213,10 +12414,34 @@ def prune_universe_snapshots(
     universe_members. Snapshots with fallback outcomes protected by an active
     experiment remain until those outcomes leave their guarded window.
     """
+    try:
+        lab_authority = _canonical_lab_authority()
+    except ExperimentStateReadError:
+        return 0
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
-    outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
+    protected_snapshots: tuple[str, ...] = ()
+    if lab_authority:
+        try:
+            refs = _active_observation_claim_refs("universe_forward_outcomes")
+            _, protected_snapshots = _protected_universe_outcome_ids(get_db(), refs)
+        except (ExperimentStateReadError, sqlite3.Error):
+            return 0
+        if protected_snapshots in {
+            ("__claim_set_too_large__",),
+            ("__claim_source_unavailable__",),
+        }:
+            return 0
+        outcome_cutoff = _effective_cutoff(days, None)
+    else:
+        min_experiment_started_at = _resolve_experiment_floor(min_experiment_started_at)
+        outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
+    protected_clause = ""
+    protected_params: tuple[str, ...] = ()
+    if protected_snapshots:
+        placeholders = ",".join("?" for _ in protected_snapshots)
+        protected_clause = f" AND s.id NOT IN ({placeholders})"
+        protected_params = protected_snapshots
     snap_ids = [
         row[0]
         for row in db.execute(
@@ -12225,8 +12450,8 @@ def prune_universe_snapshots(
             "  SELECT 1 FROM universe_members m "
             "  JOIN universe_forward_outcomes o ON o.member_id=m.id "
             "  WHERE m.snapshot_id=s.id AND o.entry_ts>=?"
-            ")",
-            (cutoff, outcome_cutoff),
+            ")" + protected_clause,
+            (cutoff, outcome_cutoff, *protected_params),
         ).fetchall()
     ]
     if not snap_ids:

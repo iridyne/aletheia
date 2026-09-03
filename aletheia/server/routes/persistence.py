@@ -176,6 +176,9 @@ def list_backups():
 
 class BackupRequest(BaseModel):
     label: str | None = None
+    # A live HTTP request cannot prove a quiesced cross-store cut. It is
+    # therefore explicitly an online, non-recovery snapshot.
+    profile: str = "online"
 
 
 @router.post("/backups")
@@ -184,8 +187,13 @@ def create_backup(req: BackupRequest):
     from aletheia.backup.service import BackupService
 
     svc = BackupService()
+    if req.profile != "online":
+        raise HTTPException(
+            status_code=400,
+            detail="POST /backups only creates the explicit online non-recovery profile",
+        )
     path = svc.create_backup(label=req.label)
-    return {"path": str(path), "status": "ok"}
+    return {"path": str(path), "status": "ok", "profile": "online", "recovery_eligible": False}
 
 
 @router.post("/backups/verify")

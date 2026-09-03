@@ -1,6 +1,7 @@
 """Settings API routes."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
@@ -1268,6 +1269,22 @@ class LearningConfigUpdate(SettingsRequest):
     paper_active_allocation_pct: Optional[float] = None
 
 
+def _lab_experiment_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except (AttributeError, TypeError):
+        # Test/read-model doubles may expose only ``execute``; that is not a
+        # usable authority source and must keep the compatibility projection
+        # path, while real SQLite/runtime failures remain fail-closed below.
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 def _validated_paper_influence_paths(values: list[str]) -> list[str]:
     requested_paths = sorted({
         str(path).strip() for path in values if str(path).strip()
@@ -1344,6 +1361,41 @@ async def update_learning_config(req: LearningConfigUpdate):
 @router.get("/learning/experiments")
 def list_learning_experiments(limit: int = 100):
     """List all learning experiments with lightweight summary (path, stage, status)."""
+    if _lab_experiment_authority():
+        from aletheia.observation_lab.db import readonly_lab_db
+
+        try:
+            with readonly_lab_db(allow_missing=True) as lab:
+                if lab is None:
+                    raise HTTPException(503, "observation Lab unavailable")
+                rows = lab.execute(
+                    "SELECT observation_id, generation, kind, status, started_at, spec_json "
+                    "FROM observation_windows ORDER BY started_at DESC, observation_id, generation DESC LIMIT ?",
+                    (min(max(limit, 1), 200),),
+                ).fetchall()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(503, "observation Lab unavailable") from exc
+        result = []
+        for row in rows:
+            try:
+                spec = json.loads(row["spec_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                spec = {}
+            result.append({
+                "experiment_id": f"{row['observation_id']}:g{row['generation']}",
+                "hypothesis_id": None,
+                "stage": str(spec.get("stage") or row["kind"]),
+                "status": row["status"],
+                "allocation_pct": spec.get("allocation_pct"),
+                "min_samples_per_arm": None,
+                "activation_verdict_id": None,
+                "created_at": row["started_at"],
+                "path_id": spec.get("path_id"),
+                "target_horizon": spec.get("horizon") or spec.get("target_horizon"),
+            })
+        return result
     from aletheia.storage.sqlite import get_db
     try:
         rows = get_db().execute(
@@ -1363,6 +1415,98 @@ def list_learning_experiments(limit: int = 100):
 @router.get("/learning/experiments/{experiment_id}")
 def get_learning_experiment(experiment_id: str):
     """Read-only lifecycle/operator view for one experiment."""
+    if _lab_experiment_authority():
+        from aletheia.observation_lab.db import readonly_lab_db
+
+        try:
+            with readonly_lab_db(allow_missing=True) as lab:
+                if lab is None:
+                    raise HTTPException(503, "observation Lab unavailable")
+                lookup_generation = None
+                lookup_id = experiment_id
+                if ":g" in experiment_id and experiment_id.rsplit(":g", 1)[1].isdigit():
+                    lookup_id, raw_generation = experiment_id.rsplit(":g", 1)
+                    lookup_generation = int(raw_generation)
+                if lookup_generation is None:
+                    rows = lab.execute(
+                        "SELECT * FROM observation_windows WHERE observation_id=? "
+                        "OR substr(observation_id,1,?)=? ORDER BY observation_id, generation DESC",
+                        (lookup_id, len(lookup_id), lookup_id),
+                    ).fetchall()
+                else:
+                    rows = lab.execute(
+                        "SELECT * FROM observation_windows WHERE observation_id=? AND generation=?",
+                        (lookup_id, lookup_generation),
+                    ).fetchall()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(503, "observation Lab unavailable") from exc
+        if not rows:
+            raise HTTPException(404, f"experiment not found: {experiment_id}")
+        if len(rows) > 1:
+            active_rows = [candidate for candidate in rows if candidate["status"] == "active"]
+            rows = active_rows or rows[:1]
+        row = dict(rows[0])
+        try:
+            spec = json.loads(row.get("spec_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            spec = {}
+        try:
+            with readonly_lab_db(allow_missing=True) as lab:
+                latest_event = lab.execute(
+                    "SELECT event_id, action, reason, actor, source_receipt_id, to_status, created_at "
+                    "FROM observation_lifecycle_events WHERE observation_id=? AND generation=? "
+                    "ORDER BY created_at DESC, event_id DESC LIMIT 1",
+                    (row["observation_id"], int(row["generation"])),
+                ).fetchone()
+        except Exception as exc:
+            raise HTTPException(503, "observation Lab unavailable") from exc
+        try:
+            from aletheia.storage.sqlite import get_db
+
+            owner_receipt = get_db().execute(
+                "SELECT receipt_id, lab_application_status, lab_application_error, "
+                "lab_applied_observation_id, lab_applied_generation, lab_applied_event_id "
+                "FROM observation_delivery_outbox WHERE receipt_kind='owner_action' "
+                "AND observation_id=? AND generation=? ORDER BY sequence DESC LIMIT 1",
+                (row["observation_id"], int(row["generation"])),
+            ).fetchone()
+        except Exception as exc:
+            raise HTTPException(503, "observation owner-action status unavailable") from exc
+        return {
+            "available": True,
+            "experiment_id": f"{row['observation_id']}:g{row['generation']}",
+            "observation_id": row["observation_id"],
+            "generation": int(row["generation"]),
+            "stage": str(spec.get("stage") or row["kind"]),
+            "status": row["status"],
+            "spec": spec,
+            "terminal_reason": row.get("terminal_reason"),
+            "last_error": row.get("last_error"),
+            "lifecycle": dict(latest_event) if latest_event else None,
+            "owner_action_status": (
+                str(owner_receipt["lab_application_status"] or "pending")
+                if owner_receipt is not None
+                else None
+            ),
+            "owner_action_receipt_id": (
+                str(owner_receipt["receipt_id"]) if owner_receipt is not None else None
+            ),
+            "owner_action_error": (
+                owner_receipt["lab_application_error"] if owner_receipt is not None else None
+            ),
+            "owner_action_result": (
+                {
+                    "observation_id": owner_receipt["lab_applied_observation_id"],
+                    "generation": owner_receipt["lab_applied_generation"],
+                    "event_id": owner_receipt["lab_applied_event_id"],
+                }
+                if owner_receipt is not None
+                and owner_receipt["lab_application_status"] == "applied"
+                else None
+            ),
+        }
     from aletheia.learning.lifecycle import inspect_learning_experiment
     from aletheia.learning.experiments import (
         current_policy_epoch as resolve_current_policy_epoch,
@@ -1411,9 +1555,51 @@ class AdmitTrialRequest(SettingsRequest):
         return normalized[:200]
 
 
+class ObservationOwnerActionRequest(SettingsRequest):
+    """Authenticated-owner intent queued for asynchronous Lab application."""
+
+    action: Literal[
+        "withdraw", "refreeze", "invalidate", "revoke",
+        "admit", "close", "promote", "hold", "finalize", "adopt",
+    ]
+    reason: str
+    confirm: Literal[True]
+    manifest_id: Optional[str] = None
+    manifest_hash: Optional[str] = None
+    expected_manifest_hash: Optional[str] = None
+    expected_generation: Optional[int] = None
+
+    @field_validator("reason")
+    @classmethod
+    def _bounded_owner_action_reason(cls, value: str) -> str:
+        normalized = " ".join(str(value).split())
+        if len(normalized) < 8:
+            raise ValueError("owner action reason must be at least 8 characters")
+        return normalized[:200]
+
+    @field_validator("manifest_id", "manifest_hash", "expected_manifest_hash")
+    @classmethod
+    def _non_empty_optional_identity(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("manifest identity must not be empty")
+        return normalized
+
+    @field_validator("expected_generation")
+    @classmethod
+    def _positive_expected_generation(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and int(value) <= 0:
+            raise ValueError("expected_generation must be positive")
+        return value
+
+
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
 def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
+    if _lab_experiment_authority():
+        raise HTTPException(409, "canonical Lab authority requires the Observation owner-action surface")
     from aletheia.learning.lifecycle import _execute_trial_admission
     result = _execute_trial_admission(
         experiment_id,
@@ -1429,6 +1615,97 @@ def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
         "experiment_id": result.experiment_id,
         "successor_experiment_id": result.successor_experiment_id,
         "verdict_id": result.verdict_id,
+    }
+
+
+@router.post("/learning/experiments/{experiment_id}/owner-action")
+def queue_observation_owner_action(
+    experiment_id: str,
+    req: ObservationOwnerActionRequest,
+):
+    """Queue an owner action and report transport state, never Lab success."""
+    if not _lab_experiment_authority():
+        raise HTTPException(409, "canonical Lab authority is not selected")
+    from aletheia.observation_lab.db import readonly_lab_db
+
+    try:
+        with readonly_lab_db(allow_missing=True) as lab:
+            if lab is None:
+                raise HTTPException(503, "observation Lab unavailable")
+            parsed_generation = None
+            parsed_observation = experiment_id
+            if ":g" in experiment_id and experiment_id.rsplit(":g", 1)[1].isdigit():
+                parsed_observation, raw_generation = experiment_id.rsplit(":g", 1)
+                parsed_generation = int(raw_generation)
+            if parsed_generation is None:
+                rows = lab.execute(
+                    "SELECT observation_id, generation, status FROM observation_windows "
+                    "WHERE observation_id=? ORDER BY generation DESC",
+                    (parsed_observation,),
+                ).fetchall()
+                if not rows:
+                    raise HTTPException(404, f"experiment not found: {experiment_id}")
+                if len(rows) > 1:
+                    active_rows = [candidate for candidate in rows if candidate["status"] == "active"]
+                    rows = active_rows or rows[:1]
+                parsed_observation = str(rows[0]["observation_id"])
+                parsed_generation = int(rows[0]["generation"])
+            else:
+                exists = lab.execute(
+                    "SELECT 1 FROM observation_windows WHERE observation_id=? AND generation=?",
+                    (parsed_observation, parsed_generation),
+                ).fetchone()
+                if exists is None:
+                    raise HTTPException(404, f"experiment not found: {experiment_id}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, "observation Lab unavailable") from exc
+
+    from hashlib import sha256
+    from aletheia.observation_lab.canonical import record_owner_action
+
+    dedup_key = "lab-owner-action:" + sha256(
+        json.dumps(
+            {
+                "observation_id": parsed_observation,
+                "generation": parsed_generation,
+                "action": req.action,
+                "reason": req.reason,
+                "manifest_hash": req.manifest_hash or req.expected_manifest_hash,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    try:
+        receipt_id = record_owner_action(
+            action=req.action,
+            actor="dashboard_owner",
+            reason=req.reason,
+            observation_id=parsed_observation,
+            generation=parsed_generation,
+            manifest_id=req.manifest_id,
+            manifest_hash=req.manifest_hash,
+            expected_manifest_hash=req.expected_manifest_hash,
+            expected_generation=(
+                req.expected_generation
+                if req.expected_generation is not None
+                else parsed_generation
+            ),
+            dedup_key=dedup_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(503, "owner action receipt unavailable") from exc
+    return {
+        "status": "pending_lab_application",
+        "receipt_id": receipt_id,
+        "action": req.action,
+        "observation_id": parsed_observation,
+        "generation": parsed_generation,
+        "message": "owner action receipt persisted; Lab application is asynchronous",
     }
 
 

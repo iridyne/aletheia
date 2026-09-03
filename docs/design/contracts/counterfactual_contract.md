@@ -13,6 +13,13 @@
 
 以上四份为源约束；本合同不新增约束，只把源约束在**反事实模块内部**的具体落法固定下来。若与源约束矛盾，源约束优先。
 
+实验 authority 为 `legacy` 时，本合同下列 `filter_shadow_experiments` /
+`filter_shadow_evaluations` 条目描述兼容路径。authority 为 `lab` 时，注册、
+采集、评估与报告改由 Observation Lab 的 canonical
+`observation_windows`/`observation_units`/`observation_exposures`/
+`observation_evaluations` 处理；旧表只保留迁移与历史投影用途，不能成为
+活动生命周期的写入或读取权威。
+
 ## 1. Purpose and current scope
 
 反事实模块回答的是：
@@ -43,15 +50,19 @@
 - `storage.repositories.settle_linked_shadow_outcomes(...)` — 固定结果结算器在同一候选的 canonical `24h` `filter_candidate_outcomes` 成熟后，把完全相同的成本后结果投影到带 `outcome_candidate_key` 的 Shadow 行。
 - `counterfactual.trades.resolve_stale_shadows(min_age_hours, horizon_hours, limit, dry_run)` — 由 scheduler job `shadow_resolver`（interval=6h，见 [scheduler_contract.md](scheduler_contract.md)）调用。
 - `counterfactual.filter_experiments.register_replay_ready_experiments(replays)` — 由 `analytics.filter_controller` 在 shadow 观察周期调用。
-- `counterfactual.filter_experiments.capture_frozen_units_for(experiment)` — 由 `analytics.filter_controller` 在同一 cycle 里对已声明 adapter causal identity 的 Observation（当前只有 `ranker_confidence_gate`）冻结 first-exposure 单元；规则见 [observation_lab_contract.md](observation_lab_contract.md)。
-- `counterfactual.filter_experiments.evaluate_active_shadow_experiments()` — 由 `analytics.filter_controller` 定期评估收集中的实验。
-- `counterfactual.filter_experiments.build_filter_shadow_experiment_report(limit)` — 由 CLI / API 只读消费。
+- `counterfactual.filter_experiments.capture_frozen_units_for(experiment)` — legacy authority 下由 `analytics.filter_controller` 冻结兼容表单元；Lab authority 下同一入口投影到 canonical Lab 适配器，规则见 [observation_lab_contract.md](observation_lab_contract.md)。
+- `counterfactual.filter_experiments.evaluate_active_shadow_experiments()` — 按 authority 路由到 legacy 快照或 Lab-owned Evaluation。
+- `counterfactual.filter_experiments.build_filter_shadow_experiment_report(limit)` — CLI / API 只读消费对应 authority 的投影。
 - `counterfactual.calibration.build_calibration(days, symbols, policy_epoch_id)` — 由 `scripts/shadow_threshold_calibration.py` 与内部报告 API 调用。
 - `counterfactual.trades.list_deduped_shadows(days, symbols, policy_epoch_id, columns)` — 所有跨候选聚合的 shadow 消费必须走这里，去重按 `outcome_candidate_key`。
 
 ## 3. Durable state and consumers
 
-反事实模块的持久化状态**只在三张表**中；schema 见 [data_model.md](../data/data_model.md)：
+legacy authority 下，反事实模块的兼容持久化状态在下列三张表中；schema 见
+[data_model.md](../data/data_model.md)。Lab authority 下，前瞻 filter-shadow
+生命周期不再写入这两张实验表，而写入 Observation Lab 的 canonical 表：
+`observation_windows`、`observation_units`、`observation_exposures`、
+`observation_evaluations` 与 `observation_retention_claims`。
 
 - **`shadow_trades`** — 每 tick、每候选一行的固定 horizon 反事实账本。写入者是 `persist_shadow_batch`；带键行由 canonical `24h` 候选结果投影结算，legacy 无键行才走 `resolve_shadow_trades_for_position` / `resolve_stale_shadows`。
 - **`filter_shadow_experiments`** — 前瞻观察实验的注册记录，`production_mutation_allowed=0` 是硬字段，写入 SQL 保留此列以让观察-only 边界在数据库层显式。
@@ -95,7 +106,7 @@ Position 配对、frictionless requested-fill cost control。不同 estimand
 
 以下不变量在任何执行路径都必须成立；对应的执行证据在 §7：
 
-- **CF-I01 观察 only**：`filter_shadow_experiments.production_mutation_allowed = 0` 是 schema 层硬字段。任何 UPDATE 想改成 1 的路径必须**不存在**——用 spec 断言 code 与 migrations 不含此更新。
+- **CF-I01 观察 only**：legacy `filter_shadow_experiments.production_mutation_allowed = 0` 是 schema 层硬字段；Lab canonical roots 使用 `authority_mode='observe_only'`。任何路径都不得把 filter-shadow 变成 Paper treatment——用 spec 断言 code 与 migrations 不含此更新。
 - **CF-I02 First exposure 固定**：`shadow_trades.entry_price` / `entry_spread_bps` / `funding_rate_at_entry` / `regime_tag` / `policy_epoch_id` 在 `persist_shadow_batch` 时一次性快照，此后只被 append-only 结算字段扩充；不得回填。
 - **CF-I03 结果键完整**：`outcome_candidate_key` 是所有跨候选去重的唯一入口；聚合消费必须调 `list_deduped_shadows`。
 - **CF-I04 Epoch 分层**：`shadow_trades.policy_epoch_id` 由 `persist_shadow_batch` 通过 `_current_policy_epoch()` 从 `agent_shell.skip_policy.ensure_skip_remediation_policy_epoch()` 读取；写入失败时降级为 `NULL`，但不 fail-close shadow 写入。跨 epoch 的聚合分析必须传入 `policy_epoch_id` 过滤。

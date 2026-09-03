@@ -3,6 +3,23 @@
 from tests.test_economic_knowledge import _verdict
 
 
+def test_lab_authority_knowledge_yield_is_unavailable():
+    from aletheia.learning.knowledge_yield import build_knowledge_yield_report
+    from aletheia.observation_lab.canonical import set_authority_source
+
+    set_authority_source("lab", actor="owner", reason="knowledge-yield-authority-test")
+
+    report = build_knowledge_yield_report(
+        window_start="2026-08-01T00:00:00+00:00",
+        window_end="2026-09-01T00:00:00+00:00",
+    )
+
+    assert report.availability == "unavailable"
+    assert report.slices == []
+    assert report.current_economic_knowledge_n == 0
+    assert report.unavailable_reasons == ["canonical_lab_result_projection_unavailable"]
+
+
 def test_fifty_hypotheses_to_two_facts_yields_four_percent():
     from aletheia.learning.knowledge_yield import build_knowledge_yield_report
     from aletheia.learning.ledger import insert_experiment, insert_hypothesis

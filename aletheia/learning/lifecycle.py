@@ -53,6 +53,17 @@ from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.learning.lifecycle")
 
+
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
 class _ExperimentAlreadyClosedError(RuntimeError):
     """Raised inside a lifecycle transaction when the predecessor row is gone.
 
@@ -133,6 +144,10 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     The database transition is transactional and event-deduplicated.  A caller
     may retry after a crash at any point without manufacturing a successor.
     """
+    if _lab_authority():
+        return LifecycleResult(
+            "hold", "hold", "canonical_lab_authority", experiment_id,
+        )
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return LifecycleResult("hold", "hold", "experiment_not_found", experiment_id)
@@ -325,6 +340,11 @@ def admit_shadow_trial(
 ) -> LifecycleResult:
     """Remain fail closed until a real authenticated owner mutation route exists."""
     del current_policy_epoch, admitted_by, reason
+    if _lab_authority():
+        return LifecycleResult(
+            "hold", "admit_trial", "canonical_lab_authority", experiment_id,
+            verdict_id=verdict_id,
+        )
     return LifecycleResult(
         "hold",
         "admit_trial",
@@ -347,6 +367,11 @@ def _execute_trial_admission(
     The current epoch is derived server-side; caller input is optimistic
     concurrency evidence only and can never define measurement identity.
     """
+    if _lab_authority():
+        return LifecycleResult(
+            "hold", "admit_trial", "canonical_lab_authority", experiment_id,
+            verdict_id=verdict_id,
+        )
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return LifecycleResult("hold", "admit_trial", "experiment_not_found", experiment_id, verdict_id=verdict_id)
@@ -596,6 +621,11 @@ def _promote_one_stage(
     verdict: dict[str, Any],
     policy_epoch: str,
 ) -> LifecycleResult:
+    if _lab_authority():
+        return LifecycleResult(
+            "hold", "promote_stage", "canonical_lab_authority",
+            experiment.experiment_id, verdict_id=str(verdict["verdict_id"]),
+        )
     to_stage = STAGE_SUCCESSOR[experiment.stage]
     # #1452: resolve allocation before opening the transaction; fail closed if
     # config is unavailable rather than silently committing a 0.80 default.
@@ -691,6 +721,11 @@ def _apply_safety_action(
     *,
     reason: str | None = None,
 ) -> LifecycleResult:
+    if _lab_authority():
+        return LifecycleResult(
+            "hold", action, "canonical_lab_authority", experiment.experiment_id,
+            verdict_id=str(verdict["verdict_id"]),
+        )
     try:
         gate_reason = _safety_action_gate_reason()
         if gate_reason is not None:
@@ -774,6 +809,12 @@ def _record_blocked_recommendation(
 
 def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str) -> dict[str, Any]:
     """Return a read-only lifecycle/operator view for one experiment."""
+    if _lab_authority():
+        return {
+            "experiment_id": experiment_id,
+            "status": "unavailable",
+            "reason": "canonical_lab_authority",
+        }
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return {"experiment_id": experiment_id, "status": "not_found"}
@@ -914,6 +955,13 @@ def run_contribution_evaluator() -> dict[str, int | str]:
     This is intentionally outside the autonomous-behaviour job gate: it writes
     measurement facts but never stages, authorizes, or refreezes a consumer.
     """
+    if _lab_authority():
+        return {
+            "status": "canonical_lab_authority",
+            "experiments": 0,
+            "verdicts": 0,
+            "failed_experiments": 0,
+        }
     from aletheia.learning.control import (
         record_measurement_job_failure,
         record_measurement_job_partial,
@@ -974,8 +1022,18 @@ def run_contribution_evaluator() -> dict[str, int | str]:
         raise
 
 
-def run_lifecycle_controller() -> dict[str, int]:
+def run_lifecycle_controller() -> dict[str, int | str]:
     """Evaluate current-stage actions; scheduler gating supplies autonomy safety."""
+    if _lab_authority():
+        return {
+            "status": "canonical_lab_authority",
+            "experiments": 0,
+            "promoted": 0,
+            "refrozen": 0,
+            "admitted": 0,
+            "retired_idle": 0,
+            "failed_experiments": 0,
+        }
     results = []
     failed_experiments = 0
     seen: set[str] = set()
@@ -1054,6 +1112,11 @@ def _retire_idle_experiment(
     policy_epoch: str,
     verdict_id: str | None,
 ) -> LifecycleResult:
+    if _lab_authority():
+        return LifecycleResult(
+            "hold", "retire_idle", "canonical_lab_authority", experiment_id,
+            verdict_id=verdict_id,
+        )
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None or experiment_row.get("ended_at") is not None:
         return LifecycleResult(

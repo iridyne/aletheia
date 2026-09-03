@@ -28,10 +28,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+
+# Checkpoints prove durable evidence identity, not scheduler heartbeats or
+# mirror retry counters.  The latter change during a quiet bridge tick and
+# must not make a coherent restore look divergent.
+_CHECKPOINT_EXCLUDED_TABLES = frozenset({"observation_job_health"})
+_CHECKPOINT_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "observation_import_cursors": (
+        "source_name", "contiguous_sequence", "retry_sequences_json",
+        "source_checkpoint_json", "source_checkpoint_fingerprint",
+    ),
+    "lab_audit_outbox": (
+        "audit_id", "dedup_key", "event_type", "observation_id", "generation",
+        "payload_json",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -44,6 +62,13 @@ class JointCheckpoint:
     app_migration_count: int
     active_manifest_hashes: tuple[str, ...]
     active_manifest_count: int
+    lab_schema_head: str
+    lab_schema_count: int
+    lab_state_fingerprint: str
+    checkpoint_ledger_fingerprint: str
+    main_outbox_high_watermark: int
+    main_outbox_pending_count: int
+    main_outbox_fingerprint: str
     joint_fingerprint: str
     notes: str | None = None
 
@@ -86,12 +111,149 @@ def _read_app_migration_state() -> tuple[str, int]:
     return (head, len(rows))
 
 
-def _active_manifest_hashes(now: str | None = None) -> tuple[str, ...]:
-    """Sorted, deduplicated hash tuple for every currently-effective manifest."""
+def _read_app_outbox_state() -> tuple[int, int, str]:
+    """Return the durable Main receipt cut included in a joint checkpoint."""
+    from aletheia.storage.sqlite import get_db
+
+    try:
+        rows = get_db().execute(
+            "SELECT sequence, receipt_id, manifest_hash, acknowledged_at "
+            "FROM observation_delivery_outbox ORDER BY sequence"
+        ).fetchall()
+    except Exception:
+        return (-1, -1, "<unavailable>")
+    pending = sum(1 for row in rows if row[3] is None)
+    watermark = int(rows[-1][0]) if rows else 0
+    fingerprint = hashlib.sha256(
+        _canonical_json([tuple(row) for row in rows]).encode("utf-8")
+    ).hexdigest()
+    return watermark, pending, fingerprint
+
+
+def _active_manifest_hashes(
+    now: str | None = None,
+    *,
+    db: sqlite3.Connection | None = None,
+) -> tuple[str, ...]:
+    """Sorted, deduplicated hashes read through one Lab snapshot."""
     from aletheia.observation_lab.manifest import load_active_manifests
 
-    manifests = load_active_manifests(now=now)
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _active_manifest_hashes(now, db=connection)
+    manifests = load_active_manifests(now=now, db=db)
     return tuple(sorted({m.manifest_hash for m in manifests}))
+
+
+def _lab_schema_state(*, db: sqlite3.Connection | None = None) -> tuple[str, int]:
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _lab_schema_state(db=connection)
+    rows = db.execute(
+        "SELECT migration_id FROM lab_schema_migrations ORDER BY rowid DESC"
+    ).fetchall()
+    if not rows:
+        return ("<empty>", 0)
+    return str(rows[0][0]), len(rows)
+
+
+@contextmanager
+def _lab_read_snapshot():
+    """Hold one consistent Lab read transaction across a checkpoint digest."""
+    # Checkpoint computation is a read-only proof surface.  ``get_lab_db``
+    # materializes the schema when the file is missing, which would turn a
+    # missing/corrupt Lab restore into a new empty authority.  Use the physical
+    # read-only boundary so absence remains an explicit proof failure.
+    from aletheia.observation_lab.db import readonly_lab_db
+
+    with readonly_lab_db() as db:
+        yield db
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {"__bytes__": value.hex()}
+    return value
+
+
+def _lab_state_fingerprint(*, db: sqlite3.Connection | None = None) -> str:
+    """Hash every Lab table except the checkpoint ledger itself.
+
+    The checkpoint row is intentionally excluded from this digest because it
+    records the digest. The separate ledger digest below covers prior rows in
+    a stable way, so saving a quiet checkpoint does not create self-drift.
+    """
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _lab_state_fingerprint(db=connection)
+    tables = db.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%' AND name <> 'joint_checkpoints' "
+        "ORDER BY name"
+    ).fetchall()
+    material: list[Any] = []
+    for table in tables:
+        name = str(table["name"])
+        if name in _CHECKPOINT_EXCLUDED_TABLES:
+            continue
+        columns = [
+            str(row["name"])
+            for row in db.execute(f'PRAGMA table_info("{name}")').fetchall()
+        ]
+        selected_columns = _CHECKPOINT_TABLE_COLUMNS.get(name, tuple(columns))
+        if not selected_columns:
+            continue
+        if any(column not in columns for column in selected_columns):
+            raise RuntimeError(f"checkpoint_lab_schema_unavailable:{name}")
+        rows = db.execute(f'SELECT * FROM "{name}"').fetchall()
+        encoded_rows = sorted(
+            [
+                [_json_value(row[column]) for column in selected_columns]
+                for row in rows
+            ],
+            key=_canonical_json,
+        )
+        material.append({
+            "name": name,
+            "sql": table["sql"],
+            "columns": list(selected_columns),
+            "rows": encoded_rows,
+        })
+    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+
+
+def _checkpoint_ledger_fingerprint(
+    lab_state_fingerprint: str,
+    *,
+    db: sqlite3.Connection | None = None,
+) -> str:
+    """Hash historical checkpoint rows while excluding the current state rows."""
+    if db is None:
+        with _lab_read_snapshot() as connection:
+            return _checkpoint_ledger_fingerprint(lab_state_fingerprint, db=connection)
+    rows = db.execute(
+        "SELECT checkpoint_id, app_migration_head, app_migration_count, "
+        "active_manifest_hashes, active_manifest_count, lab_schema_head, "
+        "lab_schema_count, lab_state_fingerprint, checkpoint_ledger_fingerprint, "
+        "joint_fingerprint FROM joint_checkpoints ORDER BY rowid"
+    ).fetchall()
+    material = [
+        {
+            "checkpoint_id": row["checkpoint_id"],
+            "app_migration_head": row["app_migration_head"],
+            "app_migration_count": row["app_migration_count"],
+            "active_manifest_hashes": row["active_manifest_hashes"],
+            "active_manifest_count": row["active_manifest_count"],
+            "lab_schema_head": row["lab_schema_head"],
+            "lab_schema_count": row["lab_schema_count"],
+            "lab_state_fingerprint": row["lab_state_fingerprint"],
+            "checkpoint_ledger_fingerprint": row["checkpoint_ledger_fingerprint"],
+            "joint_fingerprint": row["joint_fingerprint"],
+        }
+        for row in rows
+        if row["lab_state_fingerprint"] != lab_state_fingerprint
+    ]
+    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
 
 
 def _fingerprint(
@@ -99,28 +261,68 @@ def _fingerprint(
     app_migration_head: str,
     app_migration_count: int,
     active_manifest_hashes: tuple[str, ...],
+    lab_schema_head: str,
+    lab_schema_count: int,
+    lab_state_fingerprint: str,
+    checkpoint_ledger_fingerprint: str,
+    main_outbox_high_watermark: int,
+    main_outbox_pending_count: int,
+    main_outbox_fingerprint: str,
 ) -> str:
     payload = {
         "app_migration_head": app_migration_head,
         "app_migration_count": int(app_migration_count),
         "active_manifest_hashes": list(active_manifest_hashes),
+        "lab_schema_head": lab_schema_head,
+        "lab_schema_count": int(lab_schema_count),
+        "lab_state_fingerprint": lab_state_fingerprint,
+        "checkpoint_ledger_fingerprint": checkpoint_ledger_fingerprint,
+        "main_outbox_high_watermark": int(main_outbox_high_watermark),
+        "main_outbox_pending_count": int(main_outbox_pending_count),
+        "main_outbox_fingerprint": main_outbox_fingerprint,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
+def compute_joint_checkpoint(
+    *, notes: str | None = None, create_lab: bool = True,
+) -> JointCheckpoint:
     """Snapshot current app + lab + manifest state as a fingerprint.
 
     Does NOT persist. Callers use ``save_joint_checkpoint`` to append. Kept
     separate so tests and CLI can inspect the current shape without touching
     the ledger.
     """
+    if create_lab:
+        # Explicit checkpoint creation is an operator/runner write boundary;
+        # materialize the Lab schema only for that caller.  Verification and
+        # runtime resolution can pass ``create_lab=False`` to preserve a
+        # missing Lab as unavailable evidence.
+        from aletheia.observation_lab.db import get_lab_db
+
+        get_lab_db()
     head, count = _read_app_migration_state()
-    hashes = _active_manifest_hashes()
+    outbox_watermark, outbox_pending, outbox_fingerprint = _read_app_outbox_state()
+    with _lab_read_snapshot() as lab:
+        # Keep every Lab-derived component on the same physical read
+        # transaction.  A manifest publish/revocation or lifecycle write that
+        # races this digest must land wholly before or after the checkpoint;
+        # nested connections would otherwise create a mixed cut.
+        hashes = _active_manifest_hashes(db=lab)
+        lab_head, lab_count = _lab_schema_state(db=lab)
+        lab_state = _lab_state_fingerprint(db=lab)
+        ledger_state = _checkpoint_ledger_fingerprint(lab_state, db=lab)
     fingerprint = _fingerprint(
         app_migration_head=head,
         app_migration_count=count,
         active_manifest_hashes=hashes,
+        lab_schema_head=lab_head,
+        lab_schema_count=lab_count,
+        lab_state_fingerprint=lab_state,
+        checkpoint_ledger_fingerprint=ledger_state,
+        main_outbox_high_watermark=outbox_watermark,
+        main_outbox_pending_count=outbox_pending,
+        main_outbox_fingerprint=outbox_fingerprint,
     )
     return JointCheckpoint(
         checkpoint_id=uuid.uuid4().hex,
@@ -129,6 +331,13 @@ def compute_joint_checkpoint(*, notes: str | None = None) -> JointCheckpoint:
         app_migration_count=count,
         active_manifest_hashes=hashes,
         active_manifest_count=len(hashes),
+        lab_schema_head=lab_head,
+        lab_schema_count=lab_count,
+        lab_state_fingerprint=lab_state,
+        checkpoint_ledger_fingerprint=ledger_state,
+        main_outbox_high_watermark=outbox_watermark,
+        main_outbox_pending_count=outbox_pending,
+        main_outbox_fingerprint=outbox_fingerprint,
         joint_fingerprint=fingerprint,
         notes=notes,
     )
@@ -152,7 +361,9 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
         "INSERT INTO joint_checkpoints ("
         "checkpoint_id, recorded_at, app_migration_head, app_migration_count, "
         "active_manifest_hashes, active_manifest_count, joint_fingerprint, notes"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ", lab_schema_head, lab_schema_count, lab_state_fingerprint, "
+        "checkpoint_ledger_fingerprint, main_outbox_high_watermark, main_outbox_pending_count, "
+        "main_outbox_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             checkpoint.checkpoint_id,
             checkpoint.recorded_at,
@@ -162,17 +373,27 @@ def save_joint_checkpoint(checkpoint: JointCheckpoint) -> None:
             checkpoint.active_manifest_count,
             checkpoint.joint_fingerprint,
             checkpoint.notes,
+            checkpoint.lab_schema_head,
+            checkpoint.lab_schema_count,
+            checkpoint.lab_state_fingerprint,
+            checkpoint.checkpoint_ledger_fingerprint,
+            checkpoint.main_outbox_high_watermark,
+            checkpoint.main_outbox_pending_count,
+            checkpoint.main_outbox_fingerprint,
         ),
     )
 
 
 def latest_joint_checkpoint() -> JointCheckpoint | None:
     """Read the most recent stored checkpoint, or None on a fresh Lab."""
-    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.db import readonly_lab_db
 
-    row = get_lab_db().execute(
-        "SELECT * FROM joint_checkpoints ORDER BY recorded_at DESC LIMIT 1"
-    ).fetchone()
+    with readonly_lab_db(allow_missing=True) as db:
+        if db is None:
+            return None
+        row = db.execute(
+            "SELECT * FROM joint_checkpoints ORDER BY recorded_at DESC LIMIT 1"
+        ).fetchone()
     if row is None:
         return None
     return JointCheckpoint(
@@ -182,12 +403,19 @@ def latest_joint_checkpoint() -> JointCheckpoint | None:
         app_migration_count=int(row["app_migration_count"]),
         active_manifest_hashes=tuple(json.loads(row["active_manifest_hashes"])),
         active_manifest_count=int(row["active_manifest_count"]),
+        lab_schema_head=str(row["lab_schema_head"] or "<legacy>"),
+        lab_schema_count=int(row["lab_schema_count"] or 0),
+        lab_state_fingerprint=str(row["lab_state_fingerprint"] or "<legacy>"),
+        checkpoint_ledger_fingerprint=str(row["checkpoint_ledger_fingerprint"] or "<legacy>"),
+        main_outbox_high_watermark=int(row["main_outbox_high_watermark"] if row["main_outbox_high_watermark"] is not None else -1),
+        main_outbox_pending_count=int(row["main_outbox_pending_count"] if row["main_outbox_pending_count"] is not None else -1),
+        main_outbox_fingerprint=str(row["main_outbox_fingerprint"] or "<legacy>"),
         joint_fingerprint=row["joint_fingerprint"],
         notes=row["notes"],
     )
 
 
-def verify_joint_checkpoint() -> CheckpointVerification:
+def verify_joint_checkpoint(*, create_lab: bool = True) -> CheckpointVerification:
     """Compare current joint state against the latest stored checkpoint.
 
     Returns:
@@ -197,8 +425,39 @@ def verify_joint_checkpoint() -> CheckpointVerification:
       silently proceed; failing closed on the affected Observations is
       the required response per new #1072 §"Storage and runtime boundary".
     """
-    current = compute_joint_checkpoint()
-    last = latest_joint_checkpoint()
+    try:
+        current = compute_joint_checkpoint(create_lab=create_lab)
+    except (FileNotFoundError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
+        try:
+            last = latest_joint_checkpoint()
+        except (FileNotFoundError, OSError, sqlite3.Error, ValueError, TypeError):
+            last = None
+        return CheckpointVerification(
+            ok=False,
+            last=last,
+            current_fingerprint="<unavailable>",
+            reason="lab_unavailable",
+        )
+    try:
+        last = latest_joint_checkpoint()
+    except (FileNotFoundError, OSError, sqlite3.Error, ValueError, TypeError):
+        return CheckpointVerification(
+            ok=False,
+            last=None,
+            current_fingerprint=current.joint_fingerprint,
+            reason="lab_unavailable",
+        )
+    if (
+        current.main_outbox_high_watermark < 0
+        or current.main_outbox_pending_count < 0
+        or current.main_outbox_fingerprint == "<unavailable>"
+    ):
+        return CheckpointVerification(
+            ok=False,
+            last=last,
+            current_fingerprint=current.joint_fingerprint,
+            reason="main_outbox_unavailable",
+        )
     if last is None:
         return CheckpointVerification(
             ok=True,
@@ -221,6 +480,10 @@ def verify_joint_checkpoint() -> CheckpointVerification:
             f"fingerprint_mismatch: app_head({last.app_migration_head}→"
             f"{current.app_migration_head}) count({last.app_migration_count}→"
             f"{current.app_migration_count}) manifests({last.active_manifest_count}→"
-            f"{current.active_manifest_count})"
+            f"{current.active_manifest_count}) lab_schema({last.lab_schema_head}/"
+            f"{last.lab_schema_count}→{current.lab_schema_head}/"
+            f"{current.lab_schema_count}) lab_state({last.lab_state_fingerprint}→"
+            f"{current.lab_state_fingerprint}) outbox({last.main_outbox_high_watermark}→"
+            f"{current.main_outbox_high_watermark})"
         ),
     )

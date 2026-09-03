@@ -18,7 +18,7 @@ This contract is what "one consistent evidence checkpoint" means in code.
 | File | Authority | What defines "state" |
 |---|---|---|
 | `~/.aletheia/app.db` | Production canonical facts | Head of `aletheia_schema_migrations` + total migration count |
-| `~/.aletheia/observation-lab/lab.db` | Lab-owned Observations | Set of currently effective `execution_manifests.manifest_hash` values |
+| `~/.aletheia/observation-lab/lab.db` | Lab-owned Observations | Versioned Lab schema head/count, canonical Lab state digest, and set of currently effective `execution_manifests.manifest_hash` values |
 | Any external "active manifest" cache (future) | Main Runtime seam post-Packet-2 | Same set as above; must not drift |
 
 Only the first two exist today. When the third appears in Packet 2, it participates in the same fingerprint.
@@ -29,6 +29,10 @@ Only the first two exist today. When the third appears in Packet 2, it participa
 joint_fingerprint = sha256(canonical_json({
     "app_migration_head": <migration_id of newest row in aletheia_schema_migrations>,
     "app_migration_count": <row count of aletheia_schema_migrations>,
+    "lab_schema_head": <migration_id of newest row in lab_schema_migrations>,
+    "lab_schema_count": <row count of lab_schema_migrations>,
+    "lab_state_fingerprint": <canonical schema + row digest for Lab tables>,
+    "checkpoint_ledger_fingerprint": <canonical digest of prior checkpoint rows>,
     "active_manifest_hashes": <sorted, deduplicated list of active manifest_hash>,
 }))
 ```
@@ -47,13 +51,14 @@ Sorted + deduplicated so the fingerprint is order-independent. `canonical_json` 
 1. `verify_joint_checkpoint()` — compare fresh compute against the latest stored fingerprint.
 2. `ok=True, reason="first_checkpoint"` — the ledger is empty (fresh install). Continue and record.
 3. `ok=True, reason="fingerprint_match"` — no drift. Continue.
-4. `ok=False` — at least one input was restored to a different point than the others. **Affected Observations must fail closed as `invalidated`** with `invalidation_reason="joint_checkpoint_mismatch:<detail>"`. Do not fall back to any current live cohort.
+4. `ok=False` — at least one input was restored to a different point than the others. The mismatch remains a durable diagnostic fact. Any behavior-bearing consumer must fail closed to its deterministic baseline; the v1 runner may continue observe-only collection and must not claim continuity verified or authorize a treatment from the mismatched state.
 
 ## 4. Why the fingerprint uses only these three inputs
 
 - **App migration head + count** captures every schema-visible fact in `app.db`: a rollback that dropped a migration bumps the count down, and if the head changes, that's an application-level restore. A row-level rollback (data changed, schema unchanged) is invisible here — that's intentional, because production data is meant to change while schema stays put. When migrations move, the joint state must move together.
-- **Active manifest hashes** captures every treatment contract Main Runtime might be executing. A restore that reverts `lab.db` to an earlier state removes some hashes; a restore that reverts `app.db` to a state where those manifests weren't yet active is caught in the same comparison.
-- Row-level Lab evidence (`filter_shadow_frozen_units`, `ufc_shadow_equivalence`, `lab_exposures`, evaluations) is deliberately **not** in the fingerprint. That evidence is append-only and idempotent; a partial restore that loses recent rows is recoverable through the natural next runner pass. Fingerprinting them would raise false alarms on every quiet cycle.
+- **Lab schema/state** captures the physical Lab contract and append-only evidence identities, including rows that a Lab-only restore could lose or replace. The runner records the post-window state, so expected append-only writes become the next verified checkpoint rather than perpetual false drift.
+- **Active manifest hashes** captures every treatment contract Main Runtime might be executing. Each loaded manifest is re-hashed from its canonical content before it can enter this set; payload-only mutation or a forged stored hash is an integrity failure.
+- **Checkpoint ledger** captures prior checkpoint identity without hashing the just-created current row, avoiding a self-referential fingerprint while still detecting removal or replacement of historical checkpoint rows.
 
 ## 5. Blast radius on mismatch
 
@@ -71,4 +76,4 @@ Once `verify_joint_checkpoint().ok is False` returns:
 
 ## 7. Verification
 
-- `tests/test_joint_checkpoint.py` covers: fresh install (empty ledger), matching fingerprint on repeat, mismatch on manifest set change, mismatch on migration head change, save-idempotency.
+- `tests/test_joint_checkpoint.py` covers: fresh install (empty ledger), matching fingerprint on repeat, mismatch on manifest set change, mismatch on app or Lab-only state change, schema identity, manifest immutability, and save-idempotency.

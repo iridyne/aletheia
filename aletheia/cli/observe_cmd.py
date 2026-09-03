@@ -21,6 +21,46 @@ observe_app = typer.Typer(
 )
 
 
+def _experiment_authority_source() -> str:
+    """Read the durable cutover row without bootstrapping a missing app DB."""
+    import sqlite3
+
+    try:
+        from aletheia.storage.sqlite import readonly_db
+
+        with readonly_db(allow_missing=True) as db:
+            if db is None:
+                return "legacy"
+            try:
+                row = db.execute(
+                    "SELECT authority_source FROM observation_authority_state "
+                    "WHERE state_key='experiment_authority'"
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                if "no such table: observation_authority_state" in str(exc):
+                    return "legacy"
+                return "unavailable"
+            if row is None:
+                return "unavailable"
+            source = str(row[0])
+            return source if source in {"legacy", "lab"} else "unavailable"
+    except FileNotFoundError:
+        return "legacy"
+    except Exception:
+        return "unavailable"
+
+
+def _require_experiment_authority() -> str:
+    source = _experiment_authority_source()
+    if source == "unavailable":
+        typer.echo(
+            "experiment authority unavailable; refusing legacy fallback",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    return source
+
+
 @observe_app.command("list")
 def list_observations(
     status: str | None = typer.Option(
@@ -30,6 +70,13 @@ def list_observations(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """List registered Observations with their frozen-unit counts."""
+    if _require_experiment_authority() == "lab":
+        payload = _list_lab_observations(status=status, limit=limit)
+        if payload is None:
+            typer.echo("observation lab unavailable", err=True)
+            raise typer.Exit(code=1)
+        _render_observation_list(payload, json_output=json_output)
+        return
     from aletheia.observation_lab.units import count_frozen_units
     from aletheia.storage import repositories as repo
 
@@ -61,6 +108,79 @@ def list_observations(
         )
 
 
+def _render_observation_list(payload: list[dict], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+        return
+    if not payload:
+        typer.echo("(no observations)")
+        return
+    for entry in payload:
+        typer.echo(
+            f"{entry['id'][:12]}… {entry['filter_name']}/{entry['scanner_family']}/"
+            f"{entry['horizon']} status={entry['status']} "
+            f"frozen_units={entry['frozen_units']} started={entry['started_at'][:19]}"
+        )
+
+
+def _list_lab_observations(*, status: str | None, limit: int) -> list[dict] | None:
+    """Project Lab roots into the historical CLI list shape."""
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+    from aletheia.observation_lab.db import readonly_lab_db
+
+    try:
+        filter_rows = list_filter_shadow_observations(limit=1000)
+        if filter_rows is None:
+            return None
+        filter_by_key = {
+            (str(row["observation_id"]), int(row["generation"])): row
+            for row in filter_rows
+        }
+        with readonly_lab_db(allow_missing=True) as db:
+            if db is None:
+                return None
+            rows = db.execute(
+                "SELECT observation_id, kind, generation, status, started_at, spec_json "
+                "FROM observation_windows ORDER BY started_at DESC, observation_id, generation "
+                "LIMIT ?",
+                (1000,),
+            ).fetchall()
+            result: list[dict] = []
+            for row in rows:
+                key = (str(row["observation_id"]), int(row["generation"]))
+                if row["kind"] == "filter_shadow":
+                    projected = filter_by_key.get(key)
+                    if projected is None or (status and projected["status"] != status):
+                        continue
+                    result.append(projected)
+                    continue
+                if status and str(row["status"]) != status:
+                    continue
+                try:
+                    spec = json.loads(row["spec_json"] or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    spec = {}
+                result.append({
+                    "id": f"{row['observation_id']}:g{row['generation']}",
+                    "filter_name": str(spec.get("filter_name") or spec.get("path_id") or row["kind"]),
+                    "scanner_family": str(spec.get("scanner_family") or spec.get("overlap_group") or "unknown"),
+                    "horizon": str(spec.get("horizon") or spec.get("target_horizon") or "unknown"),
+                    "status": row["status"],
+                    "started_at": row["started_at"],
+                    "frozen_units": int(db.execute(
+                        "SELECT COUNT(*) FROM observation_units WHERE observation_id=? AND generation=?",
+                        (row["observation_id"], row["generation"]),
+                    ).fetchone()[0] or 0),
+                })
+            result.sort(key=lambda item: (
+                str(item.get("started_at") or ""),
+                str(item.get("id") or ""),
+            ), reverse=True)
+            return result[: max(1, min(int(limit), 1000))]
+    except Exception:
+        return None
+
+
 @observe_app.command("status")
 def observation_status(
     observation_id: str = typer.Argument(..., help="Observation id (or unique prefix)."),
@@ -68,33 +188,50 @@ def observation_status(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Show a durable Observation Window, falling back to legacy Shadow status."""
+    from aletheia.config.loader import get_data_dir
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.kernel import status_window
     from aletheia.observation_lab.units import count_frozen_units
     from aletheia.storage import repositories as repo
     from aletheia.observation_lab.runner import register_builtin_handlers
 
+    authority = _require_experiment_authority()
+    if (
+        authority == "lab"
+        and not (get_data_dir() / "observation-lab" / "lab.db").is_file()
+    ):
+        typer.echo("observation lab unavailable", err=True)
+        raise typer.Exit(code=1)
+
     register_builtin_handlers()
 
+    embedded_observation_id, embedded_generation = _split_lab_observation_ref(
+        observation_id
+    )
+    resolved_generation = generation or embedded_generation
     durable = None
     try:
-        durable = status_window(observation_id, generation) if generation else status_window(observation_id)
+        durable = (
+            status_window(embedded_observation_id, resolved_generation)
+            if resolved_generation
+            else status_window(embedded_observation_id)
+        )
     except KeyError:
         rows = get_lab_db().execute(
             "SELECT DISTINCT observation_id FROM observation_windows "
             "WHERE substr(observation_id, 1, ?) = ? ORDER BY observation_id",
-            (len(observation_id), observation_id),
+            (len(embedded_observation_id), embedded_observation_id),
         ).fetchall()
         if len(rows) > 1:
             typer.echo(
-                f"prefix {observation_id!r} is ambiguous - "
+                f"prefix {embedded_observation_id!r} is ambiguous - "
                 f"matches {[str(row[0]) for row in rows]}", err=True,
             )
             raise typer.Exit(code=2)
         if rows:
             durable = (
-                status_window(str(rows[0][0]), generation)
-                if generation else status_window(str(rows[0][0]))
+                status_window(str(rows[0][0]), resolved_generation)
+                if resolved_generation else status_window(str(rows[0][0]))
             )
     if durable is not None:
         if json_output:
@@ -109,6 +246,10 @@ def observation_status(
             ):
                 typer.echo(f"{key}={durable.get(key)}")
         return
+
+    if authority == "lab":
+        typer.echo("observation is not available in the canonical Lab ledger", err=True)
+        raise typer.Exit(code=1)
 
     row = _find_observation(observation_id)
     if row is None:
@@ -225,6 +366,14 @@ def observation_overview(
             f"  {m['observation_id']} gen={m['generation']} "
             f"hash={m['manifest_hash'][:12]}… composability={m['composability_contract']}"
         )
+    bridge = payload.get("bridge") or {}
+    typer.echo(
+        f"delivery_bridge: available={bridge.get('available')} "
+        f"authority={bridge.get('authority_source')} "
+        f"pending={bridge.get('outbox_pending_count')} "
+        f"watermark={bridge.get('lab_imported_watermark')} "
+        f"archive_backlog={bridge.get('archive_backlog_count')}"
+    )
     cp = payload["checkpoint"]
     if cp["latest"] is None:
         typer.echo("checkpoint: (no fingerprint recorded yet)")
@@ -252,10 +401,9 @@ def observation_checkpoint(
         save_joint_checkpoint,
         verify_joint_checkpoint,
     )
-
     verdict = verify_joint_checkpoint()
     saved = False
-    if not verify_only:
+    if not verify_only and verdict.ok:
         save_joint_checkpoint(compute_joint_checkpoint())
         saved = True
     payload = {
@@ -543,6 +691,33 @@ def sync_all(
     Same body as the controller's periodic cycle for the Lab; convenient when
     an operator wants an immediate refresh without waiting for the next cycle.
     """
+    if _require_experiment_authority() == "lab":
+        from aletheia.observation_lab.canonical import (
+            compact_finalized_generations,
+            import_delivery_receipts,
+            mirror_lab_audit_outbox,
+        )
+        from aletheia.observation_lab.kernel import advance_windows
+
+        imported = import_delivery_receipts()
+        mirrored = mirror_lab_audit_outbox()
+        advanced = advance_windows(limit=10)
+        compacted = compact_finalized_generations(limit=10)
+        payload = {
+            "delivery_import": imported,
+            "audit_mirror": mirrored,
+            "windows": advanced,
+            "compaction": compacted,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2, default=str))
+        else:
+            typer.echo(f"delivery import: {imported}")
+            typer.echo(f"audit mirror: {mirrored}")
+            typer.echo(f"windows: {advanced}")
+            typer.echo(f"compaction: {compacted}")
+        return
+
     from aletheia.counterfactual.filter_experiments import (
         capture_frozen_units_for,
         evaluate_active_shadow_experiments,
@@ -563,12 +738,165 @@ def sync_all(
     typer.echo(f"evaluation: {summary}")
 
 
+@observe_app.command("migrate-learning-ledger")
+def migrate_learning_ledger(
+    apply_migration: bool = typer.Option(
+        False, "--apply", help="Write the deterministic legacy import into Lab.",
+    ),
+    archive_root: Path | None = typer.Option(
+        None, "--archive-root", file_okay=False,
+        help="Managed archive root for terminal imported generations.",
+    ),
+    retire_legacy_schema: bool = typer.Option(
+        False,
+        "--retire-legacy-schema",
+        help="After a successful Lab import, physically drop retired Experiment tables.",
+    ),
+    runtime_commit: str | None = typer.Option(
+        None, "--runtime-commit", help="Runtime commit included in the cutover proof."
+    ),
+    rollback_backup_identity: str | None = typer.Option(
+        None,
+        "--rollback-backup-identity",
+        help="Authoritative backup identity required for schema retirement.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Plan or apply the idempotent legacy Learning→Lab import."""
+    from aletheia.observation_lab.migration import (
+        apply_legacy_learning_migration,
+        plan_legacy_learning_migration,
+    )
+
+    if retire_legacy_schema and not apply_migration:
+        typer.echo("--retire-legacy-schema requires --apply", err=True)
+        raise typer.Exit(code=1)
+    try:
+        payload = (
+            apply_legacy_learning_migration(
+                archive_root=str(archive_root) if archive_root else None,
+                retire_legacy_schema=retire_legacy_schema,
+                runtime_commit=runtime_commit,
+                rollback_backup_identity=rollback_backup_identity,
+            )
+            if apply_migration
+            else plan_legacy_learning_migration()
+        )
+    except Exception as exc:
+        typer.echo(f"legacy migration refused: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+        return
+    if not payload.get("available", False):
+        typer.echo(f"migration unavailable: {payload.get('reason')}", err=True)
+        raise typer.Exit(code=1)
+    if apply_migration:
+        imported = payload.get("imported", {})
+        typer.echo(
+            "applied legacy import: "
+            + ", ".join(f"{key}={value}" for key, value in imported.items())
+        )
+    else:
+        typer.echo(
+            "plan only: "
+            + ", ".join(
+                f"{table}={details['row_count']}"
+                for table, details in payload.get("legacy_tables", {}).items()
+            )
+        )
+        typer.echo(f"plan_fingerprint={payload.get('plan_fingerprint')}")
+
+
+@observe_app.command("set-experiment-authority")
+def set_experiment_authority(
+    source: str = typer.Argument(..., help="Canonical source: legacy or lab."),
+    reason: str = typer.Option(..., "--reason", help="Audited cutover/rollback reason."),
+    runtime_commit: str | None = typer.Option(
+        None, "--runtime-commit", help="Runtime commit included in a Lab cutover proof."
+    ),
+    rollback_backup_identity: str | None = typer.Option(
+        None,
+        "--rollback-backup-identity",
+        help="Authoritative backup identity included in a Lab cutover proof.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Atomically select exactly one durable Experiment authority source."""
+    from aletheia.observation_lab.canonical import (
+        build_authority_cutover_proof,
+        get_authority_source,
+        set_authority_source,
+    )
+
+    try:
+        proof = None
+        rollback_proof = None
+        if source == "lab":
+            proof = build_authority_cutover_proof(
+                runtime_commit=runtime_commit,
+                rollback_backup_identity=rollback_backup_identity,
+            )
+        elif get_authority_source().source == "lab":
+            # Rollback uses the same immutable cut identity as cutover.  The
+            # canonical setter still validates the recorded proof, legacy
+            # tables, checkpoint, and backup identity before re-enabling the
+            # compatibility authority.
+            rollback_proof = build_authority_cutover_proof(
+                runtime_commit=runtime_commit,
+                rollback_backup_identity=rollback_backup_identity,
+            )
+        state = set_authority_source(
+            source,
+            actor="operator",
+            reason=reason,
+            cutover_proof=proof,
+            rollback_proof=rollback_proof,
+        )
+    except (RuntimeError, ValueError) as exc:
+        typer.echo(f"authority change refused: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    payload = {
+        "authority_source": state.source,
+        "authority_epoch": state.epoch,
+        "actor": state.actor,
+        "reason": state.reason,
+        "updated_at": state.updated_at,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"experiment authority={state.source} epoch={state.epoch}")
+
+
 @observe_app.command("evaluate")
 def evaluate_observation(
     observation_id: str = typer.Argument(..., help="Observation id (or unique prefix)."),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run one evaluation pass for a specific Observation."""
+    if _require_experiment_authority() == "lab":
+        from aletheia.observation_lab.evaluator import evaluate_observation as evaluate_lab
+
+        lookup_generation = None
+        lookup_id = observation_id
+        if ":g" in observation_id and observation_id.rsplit(":g", 1)[1].isdigit():
+            lookup_id, raw_generation = observation_id.rsplit(":g", 1)
+            lookup_generation = int(raw_generation)
+        result = evaluate_lab(lookup_id, lookup_generation)
+        if not result.get("available"):
+            typer.echo(
+                f"canonical Lab evaluation unavailable: {result.get('reason', 'unknown')}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if json_output:
+            typer.echo(json.dumps(result, indent=2, default=str))
+            return
+        typer.echo("disposition=evaluated")
+        typer.echo(f"verdict={result.get('verdict')}")
+        typer.echo(f"source_cutoff={result.get('source_cutoff')}")
+        return
     from aletheia.counterfactual.filter_experiments import evaluate_one_experiment
 
     row = _find_observation(observation_id)
@@ -591,6 +919,43 @@ def evaluate_observation(
             typer.echo(f"{key}={result[key]}")
 
 
+def _latest_lab_evaluation(observation_id: str) -> dict | None:
+    from aletheia.observation_lab.db import readonly_lab_db
+
+    try:
+        with readonly_lab_db(allow_missing=True) as db:
+            if db is None:
+                return None
+            lookup_generation = None
+            lookup_id = observation_id
+            if ":g" in observation_id and observation_id.rsplit(":g", 1)[1].isdigit():
+                lookup_id, raw_generation = observation_id.rsplit(":g", 1)
+                lookup_generation = int(raw_generation)
+            if lookup_generation is None:
+                rows = db.execute(
+                    "SELECT observation_id, generation FROM observation_windows "
+                    "WHERE observation_id=? OR substr(observation_id,1,?)=? "
+                    "ORDER BY observation_id, generation DESC",
+                    (lookup_id, len(lookup_id), lookup_id),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT observation_id, generation FROM observation_windows "
+                    "WHERE observation_id=? AND generation=?",
+                    (lookup_id, lookup_generation),
+                ).fetchall()
+            if len(rows) != 1:
+                return None
+            row = db.execute(
+                "SELECT * FROM observation_evaluations WHERE observation_id=? AND generation=? "
+                "ORDER BY created_at DESC, evaluation_id DESC LIMIT 1",
+                (rows[0]["observation_id"], rows[0]["generation"]),
+            ).fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
 @observe_app.command("register")
 def register(
     spec_path: Path = typer.Argument(
@@ -609,6 +974,37 @@ def register(
     (see docs/design/contracts/observation_lab_contract.md).
     """
     import yaml  # local — CLI-only path, keeps import cost off hot startup
+
+    if _require_experiment_authority() == "lab":
+        from aletheia.observation_lab.canonical import register_observation_spec
+
+        try:
+            spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            typer.echo(f"cannot parse YAML: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        if not isinstance(spec, dict):
+            typer.echo("spec file must contain a YAML mapping", err=True)
+            raise typer.Exit(code=1)
+        try:
+            row = register_observation_spec(spec)
+        except (KeyError, ValueError, TypeError) as exc:
+            typer.echo(f"failed to register: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        payload = {
+            "observation_id": row["observation_id"],
+            "generation": row["generation"],
+            "status": row["status"],
+            "authority_mode": row["authority_mode"],
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            typer.echo(
+                f"registered canonical Lab observation {row['observation_id']} "
+                f"generation {row['generation']}"
+            )
+        return
 
     from aletheia.counterfactual.filter_experiments import register_observation_from_spec
 
@@ -656,7 +1052,10 @@ def publish_manifest_cmd(
     - ``deterministic_baseline`` (dict), ``unavailable_fallback``
       (``baseline`` / ``exclude``)
 
-    Optional: ``effective_until``, ``owner_admission_ref``.
+    Optional: ``effective_until``, ``owner_admission_ref``, and, for a
+    Paper publication, ``inference_plan`` (with ``plan`` and frozen
+    ``cutoff`` mappings). ``no_manifest_reason`` records an explicit
+    non-executable publication decision instead of issuing a Manifest.
 
     Exit codes:
     - 0: manifest published or silent no-op (same hash already present).
@@ -681,6 +1080,13 @@ def publish_manifest_cmd(
         typer.echo("spec file must contain a YAML mapping", err=True)
         raise typer.Exit(code=1)
 
+    # Lifecycle-only publication fields are not Manifest wire fields.  Keep
+    # them in the same YAML document so the Lab transaction can atomically
+    # freeze the plan, publish the Manifest, and append its lifecycle/audit
+    # evidence.
+    inference_plan = spec.pop("inference_plan", None)
+    no_manifest_reason = spec.pop("no_manifest_reason", None)
+
     try:
         manifest = build_manifest(**spec)
     except (TypeError, ValueError, KeyError) as exc:
@@ -688,7 +1094,21 @@ def publish_manifest_cmd(
         raise typer.Exit(code=1) from exc
 
     try:
-        newly_inserted = publish_manifest(manifest)
+        if _require_experiment_authority() == "lab":
+            from aletheia.observation_lab.canonical import publish_manifest_with_lifecycle
+            from aletheia.observation_lab.runner import register_builtin_handlers
+
+            register_builtin_handlers()
+            publication = publish_manifest_with_lifecycle(
+                manifest,
+                actor="operator",
+                reason="cli_manifest_publish",
+                inference_plan=inference_plan,
+                no_manifest_reason=no_manifest_reason,
+            )
+            newly_inserted = bool(publication["published"])
+        else:
+            newly_inserted = publish_manifest(manifest)
     except ManifestGenerationConflict as exc:
         typer.echo(f"generation conflict: {exc}", err=True)
         typer.echo(
@@ -704,6 +1124,12 @@ def publish_manifest_cmd(
         "generation": manifest.generation,
         "newly_inserted": newly_inserted,
     }
+    if _experiment_authority_source() == "lab":
+        payload.update({
+            "lifecycle_event_id": publication["lifecycle_event_id"],
+            "inference_plan_id": publication["inference_plan_id"],
+            "no_manifest_reason": publication["no_manifest_reason"],
+        })
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -727,6 +1153,37 @@ def close_observation(
     Owner review §7: stopping preserves all evidence/lifecycle history — this
     only halts further collection. Historical evaluations remain queryable.
     """
+    if _require_experiment_authority() == "lab":
+        from aletheia.observation_lab.canonical import record_owner_action
+
+        target = _find_lab_generation(observation_id)
+        if target is None:
+            typer.echo("canonical Lab observation unavailable or ambiguous", err=True)
+            raise typer.Exit(code=1)
+        receipt_id = record_owner_action(
+            action="close",
+            actor="operator",
+            reason=reason,
+            observation_id=target["observation_id"],
+            generation=int(target["generation"]),
+            dedup_key=f"cli-close:{target['observation_id']}:{target['generation']}:{reason[:200]}",
+        )
+        payload = {
+            "observation_id": target["observation_id"],
+            "generation": int(target["generation"]),
+            "receipt_id": receipt_id,
+            "status": "pending_lab_application",
+            "reason": reason,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            typer.echo(
+                f"close requested for {target['observation_id']} generation "
+                f"{target['generation']} (receipt={receipt_id})"
+            )
+        return
+
     from aletheia.storage import repositories as repo
 
     row = _find_observation(observation_id)
@@ -749,6 +1206,42 @@ def close_observation(
         ))
     else:
         typer.echo(f"closed {row['id']} at {now}: {reason}")
+
+
+def _find_lab_generation(observation_id: str) -> dict | None:
+    from aletheia.observation_lab.db import readonly_lab_db
+
+    observation_id, generation = _split_lab_observation_ref(observation_id)
+    try:
+        with readonly_lab_db(allow_missing=True) as db:
+            if db is None:
+                return None
+            generation_clause = " AND generation=?" if generation else ""
+            params: tuple[object, ...] = (
+                observation_id, len(observation_id), observation_id,
+            )
+            if generation:
+                params += (generation,)
+            rows = db.execute(
+                "SELECT observation_id, generation, status FROM observation_windows "
+                "WHERE (observation_id=? OR substr(observation_id,1,?)=?) "
+                f"{generation_clause} "
+                "ORDER BY observation_id, generation DESC",
+                params,
+            ).fetchall()
+            if len(rows) != 1:
+                return None
+            return dict(rows[0])
+    except Exception:
+        return None
+
+
+def _split_lab_observation_ref(value: str) -> tuple[str, int | None]:
+    """Accept the report id form ``<observation_id>:g<generation>``."""
+    prefix, separator, raw_generation = str(value).rpartition(":g")
+    if separator and prefix and raw_generation.isdigit() and int(raw_generation) > 0:
+        return prefix, int(raw_generation)
+    return str(value), None
 
 
 def _systemctl_show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
@@ -859,7 +1352,8 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
         latest_joint_checkpoint,
         verify_joint_checkpoint,
     )
-    from aletheia.observation_lab.db import get_lab_db, readonly_lab_db
+    from aletheia.observation_lab.canonical import observation_bridge_health
+    from aletheia.observation_lab.db import readonly_lab_db
     from aletheia.observation_lab.execution_owner import get_execution_owner
     from aletheia.observation_lab.kernel import status_window
     from aletheia.observation_lab.manifest import load_active_manifests
@@ -870,6 +1364,17 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
 
     with read_only_config():
         owner = get_execution_owner()
+    authority_source = "unavailable"
+    try:
+        with readonly_db(allow_missing=True) as authority_db:
+            if authority_db is not None:
+                row = authority_db.execute(
+                    "SELECT authority_source FROM observation_authority_state "
+                    "WHERE state_key='experiment_authority'"
+                ).fetchone()
+                authority_source = str(row[0]) if row else "unavailable"
+    except Exception:
+        authority_source = "unavailable"
     worker = _collect_worker_status()
     reasons: set[str] = set()
     unavailable_reasons: set[str] = set()
@@ -899,6 +1404,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
         "verified": {"ok": None, "reason": "unavailable", "current_fingerprint": None},
     }
     windows = {"available": False, "active_count": None, "items": []}
+    bridge = {"available": False, "reason": "unavailable"}
 
     with ExitStack() as stack:
         try:
@@ -916,7 +1422,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
             lab_db = None
             storage["lab_db"]["status"] = "unreachable"
 
-        if app_db is not None:
+        if app_db is not None and authority_source != "lab":
             try:
                 experiments = repo.list_filter_shadow_experiments(limit=1000)
                 counts = {"available": True, "total": len(experiments)}
@@ -933,13 +1439,52 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                 storage["app_db"]["status"] = "unreachable"
                 app_db = None
 
+        if lab_db is not None and authority_source == "lab":
+            try:
+                rows = lab_db.execute(
+                    "SELECT w.status, w.kind, e.result_json "
+                    "FROM observation_windows w "
+                    "LEFT JOIN observation_evaluations e ON e.evaluation_id = ("
+                    "SELECT evaluation_id FROM observation_evaluations "
+                    "WHERE observation_id=w.observation_id AND generation=w.generation "
+                    "ORDER BY created_at DESC, evaluation_id DESC LIMIT 1)"
+                ).fetchall()
+                projected: list[str] = []
+                for row in rows:
+                    status = str(row[0])
+                    if status == "active":
+                        disposition = "collecting"
+                        if row[2]:
+                            try:
+                                payload = json.loads(str(row[2]))
+                            except (TypeError, ValueError, json.JSONDecodeError):
+                                payload = {}
+                            if isinstance(payload, dict) and payload.get("disposition") in {
+                                "ready_for_review", "completed_no_support", "invalidated",
+                            }:
+                                disposition = str(payload["disposition"])
+                    elif status == "invalidated":
+                        disposition = "invalidated"
+                    else:
+                        disposition = "completed_no_support"
+                    projected.append(disposition)
+                counts = {
+                    "available": True,
+                    "total": len(rows),
+                    "collecting": projected.count("collecting"),
+                    "ready_for_review": projected.count("ready_for_review"),
+                    "completed_no_support": projected.count("completed_no_support"),
+                    "invalidated": projected.count("invalidated"),
+                }
+            except Exception:
+                storage["lab_db"]["status"] = "unreachable"
+
         if lab_db is not None:
             try:
                 limit = max(0, int(equivalence_limit))
                 equivalence_rows = [
                     dict(row)
-                    for row in get_lab_db()
-                    .execute(
+                    for row in lab_db.execute(
                         "SELECT observation_id, checked_at, matched, mismatch_field, "
                         "learning_verdict, recomputed_verdict, notes "
                         "FROM ufc_shadow_equivalence ORDER BY checked_at DESC LIMIT ?",
@@ -958,7 +1503,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                 recent_skipped = sum(
                     1 for row in equivalence_rows if row["result"] == "skipped"
                 )
-                active_manifests = load_active_manifests()
+                active_manifests = load_active_manifests(db=lab_db)
                 manifest_dicts = [
                     {
                         "observation_id": manifest.observation_id,
@@ -979,8 +1524,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
             try:
                 register_builtin_handlers()
                 active_rows = (
-                    get_lab_db()
-                    .execute(
+                    lab_db.execute(
                         "SELECT observation_id, generation FROM observation_windows "
                         "WHERE status='active' ORDER BY observation_id, generation"
                     )
@@ -988,7 +1532,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                 )
                 items = []
                 for row in active_rows:
-                    status = status_window(str(row[0]), int(row[1]))
+                    status = status_window(str(row[0]), int(row[1]), db=lab_db)
                     items.append(
                         {
                             "observation_id": status["observation_id"],
@@ -1020,6 +1564,9 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                         "app_migration_head": latest_cp.app_migration_head,
                         "app_migration_count": latest_cp.app_migration_count,
                         "active_manifest_count": latest_cp.active_manifest_count,
+                        "main_outbox_high_watermark": latest_cp.main_outbox_high_watermark,
+                        "main_outbox_pending_count": latest_cp.main_outbox_pending_count,
+                        "main_outbox_fingerprint": latest_cp.main_outbox_fingerprint,
                     },
                     "verified": {
                         "ok": verified.ok,
@@ -1027,8 +1574,14 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                         "current_fingerprint": verified.current_fingerprint,
                     },
                 }
+                bridge = observation_bridge_health()
             except Exception:
                 storage["lab_db"]["status"] = "unreachable"
+
+    if app_db is not None and authority_source == "unavailable":
+        unavailable_reasons.add("experiment_authority_unavailable")
+    if lab_db is not None and authority_source == "lab" and not bridge.get("available", False):
+        unavailable_reasons.add("observation_bridge_unavailable")
 
     for name in ("app_db", "lab_db"):
         status = storage[name]["status"]
@@ -1079,6 +1632,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
         "overall_status": overall_status,
         "reason_codes": sorted(reasons),
         "execution_owner": owner,
+        "experiment_authority_source": authority_source,
         "storage": storage,
         "worker": worker,
         "windows": windows,
@@ -1116,6 +1670,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
             "active_count": manifest_count,
         },
         "checkpoint": checkpoint_payload,
+        "bridge": bridge,
     }
 
 

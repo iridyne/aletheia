@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 
 def test_first_pass_records_and_verifies_ok():
     from aletheia.observation_lab.checkpoint import (
@@ -88,6 +90,50 @@ def test_manifest_set_change_causes_mismatch_verdict():
     assert verdict.current_fingerprint != verdict.last.joint_fingerprint
 
 
+def test_lab_evidence_change_causes_mismatch_verdict():
+    """Lab-only evidence restore/divergence cannot keep the same checkpoint."""
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    get_lab_db().execute(
+        "INSERT INTO ufc_shadow_equivalence ("
+        "id, observation_id, experiment_id, cohort_key, checked_at, matched, "
+        "mismatch_field, learning_verdict, recomputed_verdict, notes"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "lab-drift-1", "obs", "exp", "cohort", "2026-09-02T00:00:00+00:00",
+            0, "verdict", "positive", "negative", "restore-divergence",
+        ),
+    )
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is False
+    assert "lab_state" in verdict.reason
+    assert verdict.current_fingerprint != verdict.last.joint_fingerprint
+
+
+def test_lab_checkpoint_state_is_stable_after_saving_quiet_pass():
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+    )
+
+    first = compute_joint_checkpoint()
+    save_joint_checkpoint(first)
+    second = compute_joint_checkpoint()
+    save_joint_checkpoint(second)
+    third = compute_joint_checkpoint()
+
+    assert second.joint_fingerprint == third.joint_fingerprint
+    assert second.lab_state_fingerprint == third.lab_state_fingerprint
+
+
 def test_app_migration_head_change_causes_mismatch_verdict():
     """A restore that rolls app.db to a different migration head must be seen."""
     from aletheia.observation_lab.checkpoint import (
@@ -128,6 +174,94 @@ def test_save_is_idempotent_on_unchanged_fingerprint():
     ).fetchone()
     # Three save calls, one fingerprint → one stored row.
     assert row["n"] == 1
+
+
+def test_execution_manifests_are_immutable():
+    import sqlite3
+
+    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
+    from aletheia.observation_lab.db import get_lab_db
+
+    manifest = build_manifest(
+        observation_id="immutable-manifest",
+        generation=1,
+        spec_hash="s",
+        treatment_adapter_id="t",
+        treatment_adapter_version="v1",
+        assignment_policy="stable",
+        assignment_salt="salt",
+        assignment_unit_key_template="{k}",
+        allocation_pct=0.5,
+        control_payload={"m": 1.0},
+        treatment_payload={"m": 1.1},
+        eligible_population={"path_id": "test"},
+        behavior_contract_hash="bh",
+        interference_key="ifk",
+        composability_contract="exclusive",
+        effective_from="2020-01-01T00:00:00+00:00",
+        deterministic_baseline={"m": 1.0},
+        unavailable_fallback="baseline",
+    )
+    publish_manifest(manifest)
+    db = get_lab_db()
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        db.execute(
+            "UPDATE execution_manifests SET treatment_payload_json=? WHERE manifest_id=?",
+            ("{}", manifest.manifest_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        db.execute(
+            "DELETE FROM execution_manifests WHERE manifest_id=?",
+            (manifest.manifest_id,),
+        )
+
+
+def test_joint_checkpoint_ledger_is_append_only():
+    import sqlite3
+
+    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint
+    from aletheia.observation_lab.db import get_lab_db
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    checkpoint_id = get_lab_db().execute(
+        "SELECT checkpoint_id FROM joint_checkpoints LIMIT 1"
+    ).fetchone()[0]
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        get_lab_db().execute(
+            "UPDATE joint_checkpoints SET notes=? WHERE checkpoint_id=?",
+            ("tampered", checkpoint_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        get_lab_db().execute(
+            "DELETE FROM joint_checkpoints WHERE checkpoint_id=?",
+            (checkpoint_id,),
+        )
+
+
+def test_existing_manifest_table_is_migrated_before_schema_head_is_recorded():
+    import sqlite3
+
+    from aletheia.observation_lab import db as lab_db
+
+    connection = sqlite3.connect(":memory:")
+    legacy_sql = lab_db._EXECUTION_MANIFEST_TABLE_SQL.replace(
+        " CHECK (julianday(effective_from) IS NOT NULL)", ""
+    ).replace(
+        " CHECK (effective_until IS NULL OR julianday(effective_until) IS NOT NULL)", ""
+    )
+    connection.executescript(legacy_sql)
+    # Opening a real pre-constraint Lab first materializes the current script,
+    # including indexes/triggers attached to the legacy table.
+    connection.executescript(lab_db._LAB_SCHEMA_SQL)
+    lab_db._migrate_execution_manifest_constraints(connection)
+    table_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_manifests'"
+    ).fetchone()[0]
+    assert "julianday(effective_from)" in table_sql
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+        "AND name='trg_execution_manifests_no_update'"
+    ).fetchone()
 
 
 def test_fingerprint_is_deterministic_across_recomputes():

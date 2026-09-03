@@ -104,6 +104,24 @@ def _select_min_open_experiment_exposure_at(db: sqlite3.Connection) -> str | Non
     guard keeps every candidate/decision row an exposed experiment could still
     look at. Unexposed registrations do not retain telemetry indefinitely.
     """
+    # After the durable cutover, exact Lab retention claims—not the legacy
+    # experiment-wide floor—own protection. Keep this one-shot tool from
+    # widening Main TTL after cutover.
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        authority = get_authority_source(db=db)
+    except sqlite3.OperationalError as exc:
+        # Pre-authority databases do not have the state row yet; retain the
+        # legacy floor query for that compatibility case.  Every other read
+        # failure is evidence loss, not "no open experiment".
+        if "no such table: observation_authority_state" not in str(exc):
+            raise RuntimeError("experiment_authority_state_unavailable") from exc
+    except (FileNotFoundError, RuntimeError, sqlite3.Error) as exc:
+        raise RuntimeError("experiment_authority_state_unavailable") from exc
+    else:
+        if authority.source == "lab":
+            return None
     try:
         row = db.execute(
             "SELECT MIN(x.exposed_at) FROM learning_experiments e "

@@ -204,6 +204,378 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
     assert save_calls == []
 
 
+def test_lab_filter_shadow_captures_and_evaluates_canonical_exposures():
+    from aletheia.counterfactual.filter_experiments import (
+        build_filter_shadow_experiment_report,
+        register_replay_ready_experiments,
+    )
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.evaluator import evaluate_observation
+    from aletheia.storage.sqlite import get_db
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-canonical-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    version = _record_ttl_candidate(
+        key="opportunity:lab-filter-history",
+        evaluated_at=start,
+        decision="rejected",
+        net_return_pct=9.0,
+    )
+    assert register_replay_ready_experiments(
+        [_ready_replay(filter_version=version)], now=start,
+    ) == {"registered": 1, "already_registered": 0, "skipped": 0}
+    # A later decision for the same candidate is still not a prospective first
+    # exposure: the pre-registration row owns the immutable identity.
+    _record_ttl_candidate(
+        key="opportunity:lab-filter-history",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="passed",
+        net_return_pct=9.0,
+    )
+    _record_ttl_candidate(
+        key="opportunity:lab-filter-no-trigger",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="rejected",
+        net_return_pct=0.0,
+        lateness_sec=3_600,
+    )
+    from aletheia.analytics.filter_evidence import record_filter_decision
+
+    record_filter_decision(
+        candidate_key="opportunity:lab-filter-invalid",
+        candidate_kind="opportunity",
+        filter_name="family_ttl",
+        stage="paper_ranker",
+        decision="rejected",
+        reason_code="malformed_snapshot",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+        inputs={},
+        parameters={"ttl_sec": 1_800},
+        evaluated_at=(start + timedelta(minutes=1)).isoformat(),
+    )
+
+    for index in range(20):
+        observed_at = start + timedelta(minutes=index + 1)
+        _record_ttl_candidate(
+            key=f"opportunity:lab-control-{index}",
+            evaluated_at=observed_at,
+            decision="passed",
+            net_return_pct=0.0,
+        )
+        _record_ttl_candidate(
+            key=f"opportunity:lab-treatment-{index}",
+            evaluated_at=observed_at,
+            decision="rejected",
+            net_return_pct=0.4,
+        )
+
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    evaluated = evaluate_observation(
+        root["observation_id"], 1, as_of_at=start + timedelta(hours=2),
+    )
+    assert evaluated["available"] is True
+    assert evaluated["verdict"] == "positive"
+    assert evaluated["evaluations"][0]["disposition"] == "ready_for_review"
+    assert evaluated["evaluations"][0]["no_trigger_unit_count"] == 1
+    assert evaluated["evaluations"][0]["invalid_unit_count"] == 1
+    repeated = evaluate_observation(
+        root["observation_id"], 1, as_of_at=start + timedelta(hours=2),
+    )
+    assert repeated["evaluations"][0]["evaluation_id"] == evaluated["evaluations"][0]["evaluation_id"]
+    from aletheia.counterfactual.filter_experiments import evaluate_active_shadow_experiments
+
+    assert evaluate_active_shadow_experiments(
+        now=start + timedelta(hours=2),
+    ) == {
+        "evaluated": 1,
+        "ready_for_review": 1,
+        "completed_no_support": 0,
+        "invalidated": 0,
+    }
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE observation_id=?",
+        (root["observation_id"],),
+    ).fetchone()[0] == 40
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_units WHERE observation_id=? AND admission='admitted'",
+        (root["observation_id"],),
+    ).fetchone()[0] == 40
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_retention_claims "
+        "WHERE observation_id=? AND status='active'",
+        (root["observation_id"],),
+    ).fetchone()[0] == 40
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_shadow_evaluations"
+    ).fetchone()[0] == 0
+    report = build_filter_shadow_experiment_report()
+    assert report[0]["observation_id"] == root["observation_id"]
+    assert report[0]["latest_evaluation"]["disposition"] == "ready_for_review"
+
+    # The scheduled Lab pass must evaluate the canonical root too; a Lab
+    # authority branch that merely reports "skipped" would leave the active
+    # filter-shadow generation without a lifecycle/evidence advance.
+    from aletheia.observation_lab.runner import run_lab_windows
+
+    runner_result = run_lab_windows()
+    filter_window = runner_result["results"]["filter_shadow_evaluate"]
+    assert filter_window["status"] == "canonical_lab_authority"
+    assert filter_window["evaluation"]["evaluated"] == 1
+    assert filter_window["evaluation"]["ready_for_review"] == 1
+
+
+def test_lab_filter_shadow_registration_reports_idempotent_repeat():
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import reset_lab_db
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-registration-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    replay = _ready_replay(filter_version="lab-repeat-v1")
+
+    assert register_replay_ready_experiments([replay], now=start) == {
+        "registered": 1,
+        "already_registered": 0,
+        "skipped": 0,
+    }
+    assert register_replay_ready_experiments(
+        [replay], now=start + timedelta(minutes=1),
+    ) == {
+        "registered": 0,
+        "already_registered": 1,
+        "skipped": 0,
+    }
+
+
+def test_lab_filter_shadow_respects_half_open_collect_interval():
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.canonical import register_observation_spec
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-half-open-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    version = _record_ttl_candidate(
+        key="opportunity:at-collect-until",
+        evaluated_at=start + timedelta(hours=1),
+        decision="passed",
+        net_return_pct=0.0,
+    )
+    register_observation_spec(
+        {
+            "filter_name": "family_ttl",
+            "filter_version": version,
+            "stage": "paper_ranker",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "1h",
+            "control": {"ttl_sec": 1800},
+            "treatment": {"ttl_sec": 3600},
+            "min_samples": 20,
+        },
+        actor="owner",
+        started_at=start.isoformat(),
+        collect_until=(start + timedelta(hours=1)).isoformat(),
+        finalize_not_before=(start + timedelta(hours=1)).isoformat(),
+    )
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    result = capture_filter_shadow_exposures(
+        root["observation_id"], 1,
+        as_of_at=datetime.fromisoformat(root["collect_until"]),
+    )
+    assert result["available"] is True
+    assert result["units_inserted"] == 0
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_units WHERE observation_id=?",
+        (root["observation_id"],),
+    ).fetchone()[0] == 0
+
+
+def test_lab_filter_shadow_rejects_malformed_source_time():
+    from aletheia.observation_lab.canonical import register_observation_spec, set_authority_source
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+    from aletheia.storage.sqlite import get_db
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="filter-shadow-invalid-time-test")
+    start = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    version = _record_ttl_candidate(
+        key="opportunity:malformed-source-time",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="passed",
+        net_return_pct=0.0,
+    )
+    get_db().execute(
+        "UPDATE filter_decisions SET evaluated_at='not-a-time' WHERE candidate_key=?",
+        ("opportunity:malformed-source-time",),
+    )
+    register_observation_spec(
+        {
+            "filter_name": "family_ttl",
+            "filter_version": version,
+            "stage": "paper_ranker",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "1h",
+            "control": {"ttl_sec": 1800},
+            "treatment": {"ttl_sec": 3600},
+        },
+        actor="owner",
+        started_at=start.isoformat(),
+    )
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    result = capture_filter_shadow_exposures(root["observation_id"], 1)
+    assert result == {
+        "available": False,
+        "reason": "filter_shadow_source_time_unavailable",
+        "observation_id": root["observation_id"],
+        "generation": 1,
+    }
+
+
+def test_lab_filter_shadow_rejects_malformed_observation_start():
+    from aletheia.observation_lab import filter_shadow
+
+    with pytest.raises(ValueError, match="observation_started_at_unavailable"):
+        filter_shadow._source_rows(
+            spec={
+                "filter_name": "ranker_confidence_gate",
+                "stage": "paper_ranker",
+                "scanner_family": "momentum",
+                "direction": "long",
+                "market_type": "perp",
+            },
+            root={
+                "started_at": "not-a-time",
+                "collect_until": "2026-08-20T13:00:00+00:00",
+            },
+            as_of_at="2026-08-20T12:30:00+00:00",
+        )
+
+
+def test_lab_filter_shadow_rejects_empty_active_observation_interval():
+    from aletheia.observation_lab import filter_shadow
+
+    with pytest.raises(ValueError, match="observation_interval_unavailable"):
+        filter_shadow._source_rows(
+            spec={
+                "filter_name": "ranker_confidence_gate",
+                "stage": "paper_ranker",
+                "scanner_family": "momentum",
+                "direction": "long",
+                "market_type": "perp",
+            },
+            root={
+                "status": "active",
+                "started_at": "2026-08-20T12:00:00+00:00",
+                "collect_until": "2026-08-20T12:00:00+00:00",
+            },
+            as_of_at="2026-08-20T12:30:00+00:00",
+        )
+
+
+def test_lab_observer_filter_shadow_preserves_union_and_companion_gates():
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.observation_lab.evaluator import evaluate_observation
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    reset_lab_db()
+    set_authority_source("lab", actor="owner", reason="observer-filter-shadow-canonical-test")
+    start = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+
+    def add_candidate(key: str, when: datetime, decision: str, inputs: dict) -> str:
+        record_filter_decision(
+            candidate_key=key,
+            candidate_kind="opportunity",
+            filter_name="observer_pre_filter",
+            stage="observer_pre_filter",
+            decision=decision,
+            reason_code="test",
+            symbol=f"BTC/{key[-1]}/USDT",
+            venue="okx",
+            market_type="perp",
+            direction="long",
+            scanner_family="momentum",
+            entry_price_usd=100.0,
+            inputs=inputs,
+            parameters={"rsi_deviation": 12.0, "atr_pct": 0.8},
+            evaluated_at=when.isoformat(),
+        )
+        return get_db().execute(
+            "SELECT filter_version FROM filter_decisions WHERE candidate_key=?",
+            (key,),
+        ).fetchone()[0]
+
+    version = add_candidate(
+        "opportunity:observer-history", start, "passed", {"rsi": 50.0, "atr_pct": 0.1},
+    )
+    replay = _ready_observer_replay(filter_version=version)
+    replay["min_samples"] = 20
+    assert register_replay_ready_experiments([replay], now=start)["registered"] == 1
+    db = get_db()
+    for index in range(20):
+        when = start + timedelta(days=index, minutes=1)
+        control_key = f"opportunity:observer-control-{index}"
+        treatment_key = f"opportunity:observer-treatment-{index}"
+        add_candidate(control_key, when, "passed", {"rsi": 50.0, "atr_pct": 0.1})
+        add_candidate(treatment_key, when, "rejected", {"rsi": 61.0, "atr_pct": 0.1})
+        for key, net in ((control_key, 0.0), (treatment_key, 0.8)):
+                for horizon in ("1h", "4h", "24h"):
+                    outcome = db.execute(
+                    "SELECT due_at, entry_price_usd FROM filter_candidate_outcomes "
+                        "WHERE outcome_candidate_key=? AND horizon=?",
+                        (key, horizon),
+                    ).fetchone()
+                    due = datetime.fromisoformat(outcome[0])
+                    db.execute(
+                        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
+                    "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
+                    "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0.0, "
+                    "net_return_pct=?, min_tradable_edge_pct=0.05, "
+                    "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+                    "cost_model_version=? "
+                        "WHERE outcome_candidate_key=? AND horizon=?",
+                        (
+                            (due + timedelta(minutes=1)).isoformat(), net + 0.2,
+                            100.0 + net + 0.2, net, COST_MODEL_VERSION, key, horizon,
+                        ),
+                    )
+    root = dict(get_lab_db().execute(
+        "SELECT * FROM observation_windows WHERE kind='filter_shadow'"
+    ).fetchone())
+    evaluated = evaluate_observation(
+        root["observation_id"], 1, as_of_at=start + timedelta(days=30),
+    )
+    evidence = evaluated["evaluations"][0]
+    assert evaluated["verdict"] == "positive"
+    assert evidence["newly_admitted"]["settled_n"] == 20
+    assert evidence["treatment"]["settled_n"] == 40
+    assert evidence["companion_horizons_ok"] is True
+    assert evidence["bootstrap_delta_lcb_pct"] > 0
+
+
 def _ready_observer_replay(*, filter_version: str) -> dict:
     """A replay with three ready alternatives; the least-permissive is (10, 0.7)."""
     return {
@@ -491,17 +863,23 @@ def test_frozen_units_use_exact_first_exposure_within_same_second():
     register_replay_ready_experiments([_ready_ranker_replay()], now=started_at)
     db = get_db()
     rows = [
-        ("frozen-newer", "frozen-newer", "frozen-newer", "rejected", "2026-08-30T10:00:00.900000+00:00"),
-        ("frozen-older", "frozen-older", "frozen-older", "passed", "2026-08-30T10:00:00.100000+00:00"),
+        (
+            "frozen-newer", "frozen-newer", "frozen-newer", "rejected",
+            "2026-08-30T10:00:00.900000+00:00", '{"minimum_confidence":"high"}',
+        ),
+        (
+            "frozen-older", "frozen-older", "frozen-older", "passed",
+            "2026-08-30T10:00:00.100000+00:00", '{"minimum_confidence":"high"}',
+        ),
     ]
     db.executemany(
         "INSERT INTO filter_decisions "
         "(id, dedup_key, candidate_key, candidate_kind, symbol, market_type, "
         "direction, scanner_family, filter_name, stage, decision, reason_code, "
-        "filter_version, outcome_candidate_key, evaluated_at) "
+        "filter_version, outcome_candidate_key, evaluated_at, parameter_snapshot) "
         "VALUES (?, ?, ?, 'opportunity', 'BTC/USDT', 'perp', 'long', "
         "'mean_reversion', 'ranker_confidence_gate', 'paper_ranker', ?, "
-        "'test', 'v1', 'shared-frozen-candidate', ?)",
+        "'test', 'v1', 'shared-frozen-candidate', ?, ?)",
         rows,
     )
     experiment = dict(
@@ -588,6 +966,79 @@ def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
     assert summary["invalidated"] == 0
     # Frozen units survive the version bump — provenance shifts but identity holds.
     assert count_frozen_units(experiment_after["id"]) >= 40
+
+
+def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze():
+    from aletheia.counterfactual.filter_experiments import (
+        capture_frozen_units_for,
+        evaluate_active_shadow_experiments,
+        register_replay_ready_experiments,
+    )
+    from aletheia.observation_lab.units import list_frozen_units
+    from aletheia.storage.sqlite import get_db
+
+    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    register_replay_ready_experiments([_ready_ranker_replay()], now=start)
+    _record_ranker_candidate(
+        key="opportunity:mean_reversion:compatible",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="passed",
+        confidence="high",
+        net_return_pct=0.0,
+        minimum="high",
+    )
+    _record_ranker_candidate(
+        key="opportunity:mean_reversion:changed-minimum",
+        evaluated_at=start + timedelta(minutes=2),
+        decision="rejected",
+        confidence="medium",
+        net_return_pct=0.4,
+        minimum="medium",
+    )
+    experiment = dict(get_db().execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone())
+
+    # The incompatible row is not admitted to the immutable frozen cohort.
+    assert capture_frozen_units_for(experiment) == 1
+    assert len(list_frozen_units(experiment["id"])) == 1
+
+    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    after = dict(get_db().execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone())
+    assert summary["invalidated"] == 1
+    assert after["status"] == "invalidated"
+    assert after["invalidation_reason"] == "adapter_causal_input_changed"
+
+
+def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
+    from aletheia.counterfactual import filter_experiments as fe
+    from aletheia.storage.sqlite import get_db
+
+    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    fe.register_replay_ready_experiments([_ready_ranker_replay()], now=start)
+    _record_ranker_candidate(
+        key="opportunity:mean_reversion:malformed-parameters",
+        evaluated_at=start + timedelta(minutes=1),
+        decision="rejected",
+        confidence="medium",
+        net_return_pct=0.4,
+        minimum="high",
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE filter_decisions SET parameter_snapshot=? WHERE candidate_key=?",
+        ("not-json", "opportunity:mean_reversion:malformed-parameters"),
+    )
+
+    summary = fe.evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    experiment = dict(db.execute(
+        "SELECT * FROM filter_shadow_experiments"
+    ).fetchone())
+    assert summary["invalidated"] == 1
+    assert experiment["status"] == "invalidated"
+    assert experiment["invalidation_reason"] == "adapter_causal_input_changed"
 
 
 def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v60"
+SCHEMA_VERSION = "aletheia-sqlite-v62"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4015,6 +4015,387 @@ _PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM = hashlib.sha256(
     (
         _PAPER_FUNDING_REVIVAL_CURSOR_SQL
         + "\npaper_funding_revival_cursor_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+# Observation Experiment Ownership V2 (#2737).  These are Main-owned bridge
+# facts only: Lab remains the canonical owner of the imported Experiment
+# ledger, while Main retains production facts and immediate deny tombstones.
+_OBSERVATION_OWNERSHIP_V2_SQL = """
+CREATE TABLE IF NOT EXISTS observation_delivery_outbox (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_id TEXT NOT NULL UNIQUE,
+    receipt_kind TEXT NOT NULL CHECK (receipt_kind IN ('treatment','capture','owner_action')),
+    observation_id TEXT,
+    generation INTEGER,
+    manifest_id TEXT,
+    manifest_hash TEXT,
+    treatment_adapter_id TEXT,
+    treatment_adapter_version TEXT,
+    assignment_unit_key TEXT,
+    candidate_key TEXT,
+    consumer TEXT,
+    consumer_stage TEXT,
+    assignment TEXT NOT NULL CHECK (assignment IN ('treatment','control','unassigned')),
+    applied INTEGER NOT NULL CHECK (applied IN (0,1)),
+    behavior_changed INTEGER NOT NULL CHECK (behavior_changed IN (0,1)),
+    baseline_payload_hash TEXT NOT NULL,
+    applied_payload_hash TEXT NOT NULL,
+    baseline_payload_json TEXT NOT NULL DEFAULT '{}',
+    applied_payload_json TEXT NOT NULL DEFAULT '{}',
+    outcome_candidate_key TEXT,
+    outcome_source TEXT,
+    resolution_reason TEXT NOT NULL,
+    behavior_contract_hash TEXT,
+    behavior_policy_epoch_ref TEXT,
+    active_manifest_snapshot_json TEXT NOT NULL DEFAULT '[]',
+    manifest_set_fingerprint TEXT,
+    revocation_snapshot_fingerprint TEXT,
+    authority_source TEXT NOT NULL DEFAULT 'legacy',
+    authority_epoch TEXT,
+    runtime_session_id TEXT,
+    producer_commit TEXT,
+    actor TEXT,
+    owner_action TEXT,
+    expected_manifest_hash TEXT,
+    expected_generation INTEGER,
+    dedup_key TEXT,
+    acknowledged_at TEXT,
+    applied_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_observation_delivery_outbox_pending
+    ON observation_delivery_outbox(sequence);
+CREATE INDEX IF NOT EXISTS idx_observation_delivery_outbox_manifest
+    ON observation_delivery_outbox(manifest_hash, sequence);
+CREATE TRIGGER IF NOT EXISTS trg_observation_delivery_outbox_identity_immutable
+BEFORE UPDATE ON observation_delivery_outbox
+WHEN NEW.sequence IS NOT OLD.sequence
+  OR NEW.receipt_id IS NOT OLD.receipt_id
+  OR NEW.receipt_kind IS NOT OLD.receipt_kind
+  OR NEW.observation_id IS NOT OLD.observation_id
+  OR NEW.generation IS NOT OLD.generation
+  OR NEW.manifest_id IS NOT OLD.manifest_id
+  OR NEW.manifest_hash IS NOT OLD.manifest_hash
+  OR NEW.treatment_adapter_id IS NOT OLD.treatment_adapter_id
+  OR NEW.treatment_adapter_version IS NOT OLD.treatment_adapter_version
+  OR NEW.assignment_unit_key IS NOT OLD.assignment_unit_key
+  OR NEW.candidate_key IS NOT OLD.candidate_key
+  OR NEW.consumer IS NOT OLD.consumer
+  OR NEW.consumer_stage IS NOT OLD.consumer_stage
+  OR NEW.assignment IS NOT OLD.assignment
+  OR NEW.applied IS NOT OLD.applied
+  OR NEW.behavior_changed IS NOT OLD.behavior_changed
+  OR NEW.baseline_payload_hash IS NOT OLD.baseline_payload_hash
+  OR NEW.applied_payload_hash IS NOT OLD.applied_payload_hash
+  OR NEW.baseline_payload_json IS NOT OLD.baseline_payload_json
+  OR NEW.applied_payload_json IS NOT OLD.applied_payload_json
+  OR NEW.outcome_candidate_key IS NOT OLD.outcome_candidate_key
+  OR NEW.outcome_source IS NOT OLD.outcome_source
+  OR NEW.resolution_reason IS NOT OLD.resolution_reason
+  OR NEW.behavior_contract_hash IS NOT OLD.behavior_contract_hash
+  OR NEW.behavior_policy_epoch_ref IS NOT OLD.behavior_policy_epoch_ref
+  OR NEW.active_manifest_snapshot_json IS NOT OLD.active_manifest_snapshot_json
+  OR NEW.manifest_set_fingerprint IS NOT OLD.manifest_set_fingerprint
+  OR NEW.revocation_snapshot_fingerprint IS NOT OLD.revocation_snapshot_fingerprint
+  OR NEW.authority_source IS NOT OLD.authority_source
+  OR NEW.authority_epoch IS NOT OLD.authority_epoch
+  OR NEW.runtime_session_id IS NOT OLD.runtime_session_id
+  OR NEW.producer_commit IS NOT OLD.producer_commit
+  OR NEW.actor IS NOT OLD.actor
+  OR NEW.owner_action IS NOT OLD.owner_action
+  OR NEW.expected_manifest_hash IS NOT OLD.expected_manifest_hash
+  OR NEW.expected_generation IS NOT OLD.expected_generation
+  OR NEW.dedup_key IS NOT OLD.dedup_key
+  OR NEW.applied_at IS NOT OLD.applied_at
+BEGIN SELECT RAISE(ABORT, 'observation_delivery_outbox identity is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS trg_observation_delivery_outbox_no_delete
+BEFORE DELETE ON observation_delivery_outbox
+WHEN OLD.acknowledged_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'unacknowledged observation receipt is immutable'); END;
+
+CREATE TABLE IF NOT EXISTS observation_deny_tombstones (
+    tombstone_id TEXT PRIMARY KEY,
+    observation_id TEXT,
+    generation INTEGER,
+    manifest_id TEXT,
+    manifest_hash TEXT,
+    reason TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    source_action_id TEXT UNIQUE,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_observation_deny_tombstones_lookup
+    ON observation_deny_tombstones(manifest_hash, observation_id, generation, created_at DESC);
+CREATE TRIGGER IF NOT EXISTS trg_observation_deny_tombstones_no_update
+BEFORE UPDATE ON observation_deny_tombstones BEGIN
+    SELECT RAISE(ABORT, 'observation_deny_tombstones is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_observation_deny_tombstones_no_delete
+BEFORE DELETE ON observation_deny_tombstones BEGIN
+    SELECT RAISE(ABORT, 'observation_deny_tombstones is append-only');
+END;
+
+CREATE TABLE IF NOT EXISTS observation_authority_state (
+    state_key TEXT PRIMARY KEY CHECK (state_key = 'experiment_authority'),
+    authority_source TEXT NOT NULL CHECK (authority_source IN ('legacy','lab')),
+    authority_epoch TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO observation_authority_state
+    (state_key, authority_source, authority_epoch, actor, reason, updated_at)
+VALUES ('experiment_authority', 'legacy', 'legacy-v1', 'system', 'pre_cutover', datetime('now'));
+"""
+
+_LEGACY_EXPERIMENT_TABLES = (
+    "learning_experiments",
+    "learning_exposures",
+    "learning_contribution_verdicts",
+    "learning_inference_decisions",
+    "learning_lifecycle_events",
+    "filter_shadow_experiments",
+    "filter_shadow_evaluations",
+    "strategy_experiments",
+)
+
+# Drop order is the reverse of the legacy foreign-key graph.  Research
+# hypotheses/nominations and the Main behavior-policy ledger intentionally stay
+# in app.db; they are nomination input and production policy identity, not the
+# retired Experiment runtime.
+_LEGACY_EXPERIMENT_DROP_ORDER = (
+    "learning_lifecycle_events",
+    "learning_inference_decisions",
+    "learning_exposures",
+    "learning_contribution_verdicts",
+    "learning_experiments",
+    "filter_shadow_evaluations",
+    "filter_shadow_experiments",
+    "strategy_experiments",
+)
+
+
+def _install_legacy_experiment_freeze_triggers(db: sqlite3.Connection) -> None:
+    """Make legacy Experiment tables physically read-only after Lab cutover."""
+    for table in _LEGACY_EXPERIMENT_TABLES:
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if exists is None:
+            continue
+        for operation in ("INSERT", "UPDATE", "DELETE"):
+            trigger = f"trg_observation_lab_freeze_{table}_{operation.lower()}"
+            db.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {trigger} BEFORE {operation} ON {table} "
+                "WHEN EXISTS (SELECT 1 FROM observation_authority_state "
+                "WHERE state_key='experiment_authority' AND authority_source='lab') "
+                "BEGIN SELECT RAISE(ABORT, 'legacy Experiment table is read-only under Lab authority'); END;"
+            )
+
+
+def retire_legacy_experiment_tables(
+    db: sqlite3.Connection | None = None,
+    *,
+    require_lab_authority: bool = True,
+) -> dict[str, object]:
+    """Physically retire the legacy Experiment runtime after Lab proof.
+
+    This is an explicit cutover operation, never part of ordinary schema
+    creation.  Existing rows may be dropped only after Lab has recorded the
+    deterministic legacy-import checkpoint; an empty fresh schema needs no
+    import but still requires the durable ``lab`` authority switch.
+    """
+    import json
+
+    from aletheia.config.loader import get_data_dir
+
+    connection = db or get_db()
+    if require_lab_authority:
+        try:
+            row = connection.execute(
+                "SELECT authority_source FROM observation_authority_state "
+                "WHERE state_key='experiment_authority'"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise MigrationStateError("legacy_experiment_retirement_authority_unavailable") from exc
+        if row is None or str(row[0]) != "lab":
+            raise MigrationStateError("legacy_experiment_retirement_requires_lab_authority")
+
+    existing = {
+        table: connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        is not None
+        for table in _LEGACY_EXPERIMENT_DROP_ORDER
+    }
+    counts = {
+        table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] or 0)
+        for table, present in existing.items()
+        if present
+    }
+    if any(counts.values()):
+        lab_path = get_data_dir() / "observation-lab" / "lab.db"
+        if not lab_path.is_file():
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+        try:
+            from aletheia.observation_lab.migration import plan_legacy_learning_migration
+
+            plan = plan_legacy_learning_migration()
+            if not plan.get("available"):
+                raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+            if any(
+                str(item.get("table")) != "strategy_experiments"
+                for item in plan.get("unprovable_rows", ())
+            ):
+                raise MigrationStateError("legacy_experiment_retirement_unprovable_rows")
+            with sqlite3.connect(
+                f"{lab_path.resolve().as_uri()}?mode=ro", uri=True
+            ) as lab:
+                lab.row_factory = sqlite3.Row
+                proof = lab.execute(
+                    "SELECT source_checkpoint_fingerprint, source_checkpoint_json "
+                    "FROM observation_import_cursors "
+                    "WHERE source_name='legacy_learning'"
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
+        if proof is None or str(proof[0] or "") != str(plan.get("plan_fingerprint") or ""):
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+        try:
+            checkpoint = json.loads(proof[1] or "")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
+        if not isinstance(checkpoint, dict):
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable")
+        if (
+            checkpoint.get("tables") != plan.get("legacy_tables")
+            or checkpoint.get("source_commit") != plan.get("source_commit")
+        ):
+            raise MigrationStateError("legacy_experiment_retirement_proof_mismatch")
+        # A matching cursor is necessary but not sufficient: prove that the
+        # Lab actually contains the projected rows and that every terminal
+        # generation has a verified archive root before deleting Main history.
+        expected = plan.get("estimated_lab_write_volume") or {}
+        try:
+            with sqlite3.connect(
+                f"{lab_path.resolve().as_uri()}?mode=ro", uri=True
+            ) as lab:
+                counts_in_lab = {
+                    "windows": int(lab.execute("SELECT COUNT(*) FROM observation_windows").fetchone()[0]),
+                    "contracts": int(lab.execute("SELECT COUNT(*) FROM observation_generation_contracts").fetchone()[0]),
+                    "exposures": int(lab.execute("SELECT COUNT(*) FROM observation_exposures").fetchone()[0]),
+                    "evaluations": int(lab.execute("SELECT COUNT(*) FROM observation_evaluations").fetchone()[0]),
+                    "nominations": int(lab.execute("SELECT COUNT(*) FROM observation_nominations").fetchone()[0]),
+                }
+                if any(
+                    counts_in_lab[key] < int(expected.get(key) or 0)
+                    for key in counts_in_lab
+                ):
+                    raise MigrationStateError("legacy_experiment_retirement_projection_incomplete")
+                missing_archives = lab.execute(
+                    "SELECT COUNT(*) FROM observation_windows w "
+                    "WHERE w.status IN ('finalized','invalidated','aborted') "
+                    "AND NOT EXISTS (SELECT 1 FROM observation_archives a "
+                    "WHERE a.observation_id=w.observation_id AND a.generation=w.generation)"
+                ).fetchone()[0]
+                archive_ids = [
+                    str(row[0])
+                    for row in lab.execute(
+                        "SELECT archive_id FROM observation_archives ORDER BY archive_id"
+                    ).fetchall()
+                ]
+        except sqlite3.Error as exc:
+            raise MigrationStateError("legacy_experiment_retirement_proof_unavailable") from exc
+        if int(missing_archives or 0):
+            raise MigrationStateError("legacy_experiment_retirement_archive_missing")
+        # The archive index is not itself replay proof.  Verify every archive
+        # before dropping the only legacy copy so a corrupt file cannot be
+        # mistaken for recoverable historical evidence.
+        try:
+            from aletheia.observation_lab.canonical import verify_generation_archive
+
+            for archive_id in archive_ids:
+                verdict = verify_generation_archive(archive_id)
+                if verdict.get("available") is not True:
+                    raise MigrationStateError("legacy_experiment_retirement_archive_unverified")
+        except MigrationStateError:
+            raise
+        except Exception as exc:
+            raise MigrationStateError("legacy_experiment_retirement_archive_unverified") from exc
+
+    owns_transaction = not connection.in_transaction
+    if not owns_transaction:
+        raise MigrationStateError("legacy_experiment_retirement_requires_transaction_boundary")
+    foreign_keys_enabled = bool(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled:
+        # SQLite ignores PRAGMA foreign_keys while a transaction is active.
+        # Turn it off before beginning the one explicit DDL transaction, then
+        # restore the connection setting after commit/rollback.
+        connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        # Foreign-key references are all within the drop set.  Disabling FK
+        # checks for this one explicit DDL transaction avoids ordering hazards
+        # while preserving FK enforcement for every subsequent runtime write.
+        dropped: list[str] = []
+        for table in _LEGACY_EXPERIMENT_DROP_ORDER:
+            if not existing[table]:
+                continue
+            connection.execute(f'DROP TABLE "{table}"')
+            dropped.append(table)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        if foreign_keys_enabled:
+            connection.execute("PRAGMA foreign_keys=ON")
+    return {"available": True, "dropped": dropped, "row_counts": counts}
+
+
+_OBSERVATION_OWNERSHIP_V2_CHECKSUM = hashlib.sha256(
+    (_OBSERVATION_OWNERSHIP_V2_SQL + "\nobservation_experiment_ownership_v2").encode("utf-8")
+).hexdigest()
+
+# A Lab cutover is an evidence boundary, not a boolean configuration change.
+# Keep the operator's migration, retention, checkpoint, runtime, and rollback
+# identities in an append-only Main ledger before the authority epoch changes.
+_OBSERVATION_AUTHORITY_CUTOVER_PROOF_SQL = """
+CREATE TABLE IF NOT EXISTS observation_authority_cutover_proofs (
+    proof_id TEXT PRIMARY KEY,
+    authority_source TEXT NOT NULL CHECK (authority_source = 'lab'),
+    migration_plan_fingerprint TEXT NOT NULL CHECK (length(trim(migration_plan_fingerprint)) > 0),
+    retention_claim_fingerprint TEXT NOT NULL CHECK (length(trim(retention_claim_fingerprint)) > 0),
+    checkpoint_fingerprint TEXT NOT NULL CHECK (length(trim(checkpoint_fingerprint)) > 0),
+    runtime_commit TEXT NOT NULL CHECK (length(trim(runtime_commit)) > 0),
+    rollback_backup_identity TEXT NOT NULL CHECK (length(trim(rollback_backup_identity)) > 0),
+    actor TEXT NOT NULL CHECK (length(trim(actor)) > 0),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    recorded_at TEXT NOT NULL,
+    UNIQUE (
+        authority_source,
+        migration_plan_fingerprint,
+        retention_claim_fingerprint,
+        checkpoint_fingerprint,
+        runtime_commit,
+        rollback_backup_identity
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_observation_authority_cutover_proofs_recent
+    ON observation_authority_cutover_proofs(recorded_at DESC);
+CREATE TRIGGER IF NOT EXISTS trg_observation_authority_cutover_proofs_no_update
+BEFORE UPDATE ON observation_authority_cutover_proofs BEGIN
+    SELECT RAISE(ABORT, 'observation_authority_cutover_proofs is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_observation_authority_cutover_proofs_no_delete
+BEFORE DELETE ON observation_authority_cutover_proofs BEGIN
+    SELECT RAISE(ABORT, 'observation_authority_cutover_proofs is append-only');
+END;
+"""
+_OBSERVATION_AUTHORITY_CUTOVER_PROOF_CHECKSUM = hashlib.sha256(
+    (
+        _OBSERVATION_AUTHORITY_CUTOVER_PROOF_SQL
+        + "\nobservation_authority_cutover_proof_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5645,6 +6026,12 @@ _MIGRATION_DESCRIPTIONS = {
     "20260902_0059_ai_entry_v57_integrity_v60": (
         "verify and transactionally repair the complete AI Entry v57 schema"
     ),
+    "20260902_0060_observation_experiment_ownership_v2_v61": (
+        "bounded Main-to-Lab Observation receipts, deny tombstones, and authority source"
+    ),
+    "20260903_0061_observation_authority_cutover_proof_v62": (
+        "append-only migration, retention, checkpoint, runtime, and rollback proof for Lab authority"
+    ),
 }
 
 
@@ -6343,6 +6730,37 @@ def _apply_ai_entry_v57_integrity_v60(db: sqlite3.Connection) -> None:
         raise MigrationStateError("ai_entry_v57_integrity_unproven")
 
 
+def _apply_observation_ownership_v2_v61(db: sqlite3.Connection) -> None:
+    """Install the bounded Main→Lab receipt bridge and deny-only authority state."""
+
+    db.executescript(_OBSERVATION_OWNERSHIP_V2_SQL)
+    _install_legacy_experiment_freeze_triggers(db)
+    columns = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(observation_delivery_outbox)").fetchall()
+    }
+    for column, ddl in (
+        ("acknowledged_at", "TEXT"),
+        ("authority_epoch", "TEXT"),
+        ("lab_application_status", "TEXT NOT NULL DEFAULT 'pending'"),
+        ("lab_applied_observation_id", "TEXT"),
+        ("lab_applied_generation", "INTEGER"),
+        ("lab_applied_event_id", "TEXT"),
+        ("lab_application_error", "TEXT"),
+        ("lab_applied_at", "TEXT"),
+    ):
+        if column not in columns:
+            db.execute(f"ALTER TABLE observation_delivery_outbox ADD COLUMN {column} {ddl}")
+    db.execute("PRAGMA optimize")
+
+
+def _apply_observation_authority_cutover_proof_v62(db: sqlite3.Connection) -> None:
+    """Install the append-only evidence ledger for Lab authority cutover."""
+
+    db.executescript(_OBSERVATION_AUTHORITY_CUTOVER_PROOF_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_paper_funding_revival_cursor_v58(db: sqlite3.Connection) -> None:
     """Persist only the scheduling keyset for terminal Paper funding revival."""
     db.executescript(_PAPER_FUNDING_REVIVAL_CURSOR_SQL)
@@ -7019,6 +7437,18 @@ _MIGRATIONS = (
         schema_version="aletheia-sqlite-v60",
         apply=_apply_ai_entry_v57_integrity_v60,
     ),
+    MigrationStep(
+        migration_id="20260902_0060_observation_experiment_ownership_v2_v61",
+        checksum=_OBSERVATION_OWNERSHIP_V2_CHECKSUM,
+        schema_version="aletheia-sqlite-v61",
+        apply=_apply_observation_ownership_v2_v61,
+    ),
+    MigrationStep(
+        migration_id="20260903_0061_observation_authority_cutover_proof_v62",
+        checksum=_OBSERVATION_AUTHORITY_CUTOVER_PROOF_CHECKSUM,
+        schema_version="aletheia-sqlite-v62",
+        apply=_apply_observation_authority_cutover_proof_v62,
+    ),
 )
 
 
@@ -7163,9 +7593,14 @@ def _record_migration_applied(
 
 def _apply_production_migrations(
     progress: MigrationProgressCallback | None = None,
+    *,
+    retire_legacy_experiment_schema: bool = False,
 ) -> bool:
     _validate_migration_registry()
     db = get_db()
+    fresh_install = db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+    ).fetchone()[0] == 0
     acquire_write_lock(timeout=_MIGRATION_LOCK_TIMEOUT_SEC)
     try:
         _ensure_migration_ledger(db)
@@ -7240,6 +7675,26 @@ def _apply_production_migrations(
                 migration.checksum[:12],
                 duration_ms,
             )
+        fresh_lab_install = fresh_install and db.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+            "AND name IN ('observation_delivery_outbox', 'observation_authority_state')"
+        ).fetchone()[0] == 2
+        if fresh_lab_install:
+            # A new installation has no legacy evidence to preserve.  Start
+            # directly on the canonical Lab authority and remove the temporary
+            # compatibility tables created by the historical baseline DDL.
+            from aletheia.observation_lab.canonical import set_authority_source
+
+            set_authority_source(
+                "lab",
+                actor="schema_migration",
+                reason="fresh_install_lab_authority",
+                db=db,
+            )
+        if retire_legacy_experiment_schema:
+            retire_legacy_experiment_tables(db)
+        elif fresh_lab_install:
+            retire_legacy_experiment_tables(db)
         return bool(pending)
     finally:
         release_write_lock()
@@ -7256,7 +7711,7 @@ def _is_pytest() -> bool:
     return "PYTEST_CURRENT_TEST" in os.environ
 
 
-def _apply_pytest_migrations() -> bool:
+def _apply_pytest_migrations(*, retire_legacy_experiment_schema: bool = False) -> bool:
     db = get_db()
     global _blueprint
     if _blueprint is None:
@@ -7281,6 +7736,8 @@ def _apply_pytest_migrations() -> bool:
         try:
             _blueprint.backup(db)
             db.commit()
+            if retire_legacy_experiment_schema:
+                retire_legacy_experiment_tables(db)
             return True
         except sqlite3.OperationalError:
             pass  # destination busy — fall through to normal DDL
@@ -7294,20 +7751,31 @@ def _apply_pytest_migrations() -> bool:
     for migration in _validate_applied_migrations(applied):
         migration.apply(db)
         _record_migration_applied(db, migration, duration_ms=0.0)
+    if retire_legacy_experiment_schema:
+        retire_legacy_experiment_tables(db)
     return True
 
 
 def apply_migrations(
     progress: MigrationProgressCallback | None = None,
+    *,
+    retire_legacy_experiment_schema: bool = False,
 ) -> bool:
     """Apply pending migrations under one process/cross-process writer permit."""
 
     if _is_pytest():
-        return _apply_pytest_migrations()
-    return _apply_production_migrations(progress=progress)
+        return _apply_pytest_migrations(
+            retire_legacy_experiment_schema=retire_legacy_experiment_schema,
+        )
+    return _apply_production_migrations(
+        progress=progress,
+        retire_legacy_experiment_schema=retire_legacy_experiment_schema,
+    )
 
 
-def run_migrations() -> bool:
+def run_migrations(*, retire_legacy_experiment_schema: bool = False) -> bool:
     """Compatibility alias for test fixtures; production owners use apply_migrations."""
 
-    return apply_migrations()
+    return apply_migrations(
+        retire_legacy_experiment_schema=retire_legacy_experiment_schema,
+    )

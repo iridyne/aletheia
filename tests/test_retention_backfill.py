@@ -99,6 +99,34 @@ def _setup_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
     return db_file, conn
 
 
+def test_backfill_lab_authority_does_not_use_legacy_experiment_floor(monkeypatch):
+    from aletheia.maintenance import data_retention_backfill as drb
+    from aletheia.observation_lab import canonical
+
+    monkeypatch.setattr(
+        canonical,
+        "get_authority_source",
+        lambda *, db: canonical.AuthoritySource(
+            "lab", "lab:test", "test", "test", "2026-01-01T00:00:00+00:00"
+        ),
+    )
+
+    assert drb._select_min_open_experiment_exposure_at(sqlite3.connect(":memory:")) is None
+
+
+def test_backfill_authority_read_failure_is_not_treated_as_empty_floor(monkeypatch):
+    from aletheia.maintenance import data_retention_backfill as drb
+    from aletheia.observation_lab import canonical
+
+    def unavailable(*, db):
+        raise RuntimeError("authority_state_unavailable")
+
+    monkeypatch.setattr(canonical, "get_authority_source", unavailable)
+
+    with pytest.raises(RuntimeError, match="experiment_authority_state_unavailable"):
+        drb._select_min_open_experiment_exposure_at(sqlite3.connect(":memory:"))
+
+
 @pytest.mark.real_db
 def test_backup_created_before_first_mutation(tmp_path, monkeypatch):
     """#1383: run(apply=True) must create app.db.pre-retention-backup before any DELETE."""

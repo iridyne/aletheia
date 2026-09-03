@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -342,8 +343,13 @@ def _atomic_universe_publication():
 def _persist_attempt_learning_exposures(writes: list[dict]) -> None:
     """Join deferred scoring evidence to the Universe publication transaction."""
     from aletheia.learning.ledger import insert_exposure
+    from aletheia.observation_lab.canonical import append_delivery_receipt
 
     for write in writes:
+        canonical_receipt = write.get("canonical_receipt")
+        if canonical_receipt is not None:
+            append_delivery_receipt(**canonical_receipt, db=repo.get_db())
+            continue
         inserted = insert_exposure(**write)
         if inserted is None:
             raise RuntimeError("learning_experiment_closed_before_publication")
@@ -607,6 +613,56 @@ def _build_experiment_candidate_outcomes(
             raise RuntimeError("universe_learning_outcome_build_incomplete")
         outcomes.extend(built)
     return outcomes
+
+
+def _register_experiment_candidate_outcomes(
+    scored: list[dict],
+    *,
+    entry_ts: str,
+    allocated: list[dict] | None = None,
+) -> int:
+    """Compatibility writer for callers that still invoke the old helper.
+
+    The refresh pipeline builds and persists outcomes in one explicit flow.  A
+    few older tests/tools call the former register helper directly; preserve
+    that API without creating another implementation path.  Lab authority
+    deliberately does not write the legacy Main table.
+    """
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            return 0
+    except sqlite3.OperationalError as exc:
+        # Pre-V2 databases have no durable authority row and are unambiguously
+        # legacy; any other SQLite failure remains fail-closed.
+        if "no such table: observation_authority_state" not in str(exc):
+            return 0
+    except Exception:
+        return 0
+    valid_scored = []
+    for item in scored:
+        try:
+            if (
+                item.get("scanner_direction") or item.get("direction")
+            ) not in {"long", "short"} or not isinstance(item.get("venue"), str):
+                continue
+            if (
+                not item["venue"].strip()
+                or not item.get("symbol")
+                or float(item.get("last_price") or 0) <= 0
+                or not item.get("learning_target_horizon")
+            ):
+                continue
+        except (TypeError, ValueError):
+            continue
+        valid_scored.append(item)
+    outcomes = _build_experiment_candidate_outcomes(
+        valid_scored,
+        entry_ts=entry_ts,
+        allocated=allocated,
+    )
+    return int(repo.insert_filter_candidate_outcomes_batch(outcomes))
 
 
 def _capture_universe_discovery_nonfatal(

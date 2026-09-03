@@ -759,7 +759,9 @@ def _stage_update(operation_id: str) -> None:
                 target_release=target_release,
                 message="Creating consistent backup and preflighting migrations",
             )
-            backup = BackupService(get_data_dir()).create_backup(label=f"pre_update_{operation_id[:12]}")
+            backup = BackupService(get_data_dir()).create_backup(
+                label=f"pre_update_{operation_id[:12]}", profile="online"
+            )
             # Pass the feed-pinned git_sha so preflight validates against the
             # signed external authority, not the candidate's self-reported value.
             feed_sha = str(feed.get("git_sha") or "")
@@ -777,6 +779,7 @@ def _stage_update(operation_id: str) -> None:
                 "candidate_release": target_release,
                 "previous_release": selection["current"],
                 "backup_path": str(backup),
+                "backup_profile": "online",
                 "preflight_data_path": str(preflight_data),
                 "was_paused": bool(load_config().runtime.paused),
                 "health_soak_sec": int(feed.get("health_soak_sec") or 30),
@@ -907,9 +910,17 @@ def restore_update_backup(archive_path: Path) -> dict[str, Any]:
 
     data_dir = get_data_dir()
     with worker_cycle_exclusion():
-        for suffix in ("-wal", "-shm"):
-            (data_dir / f"app.db{suffix}").unlink(missing_ok=True)
-        result = RestoreService().restore(archive_path, data_dir)
+        for database in (data_dir / "app.db", data_dir / "observation-lab" / "lab.db"):
+            for suffix in ("-wal", "-shm"):
+                # Both stores are part of the authoritative cut.  Stale
+                # sidecars beside either restored database can replay frames
+                # from the newer runtime and invalidate the rollback proof.
+                (database.parent / f"{database.name}{suffix}").unlink(missing_ok=True)
+        result = RestoreService().restore(
+            archive_path,
+            data_dir,
+            True,
+        )
         if not result.success:
             raise PackagedUpdateError("update_backup_restore_failed", "; ".join(result.errors))
         validate_current_data()

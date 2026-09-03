@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from pydantic import BaseModel
 
 from aletheia.storage.repositories import (
@@ -25,9 +27,30 @@ _TABLE_ID = {
 }
 
 
+def _lab_authority() -> bool:
+    """Return whether the canonical Lab owns Experiment behavior."""
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except sqlite3.OperationalError as exc:
+        if "no such table: observation_authority_state" in str(exc):
+            return False
+        return True
+    except FileNotFoundError:
+        return False
+    except (sqlite3.Error, RuntimeError):
+        return True
+
+
 def insert_record(table: str, record: BaseModel, *, ignore_duplicates: bool = False) -> bool:
     if table not in _TABLE_ID:
         raise ValueError(f"unsupported Learning ledger table: {table}")
+    if _lab_authority() and table in {
+        "learning_experiments", "learning_exposures", "learning_contribution_verdicts",
+        "learning_inference_decisions", "learning_lifecycle_events",
+    }:
+        raise RuntimeError("observation_lab_authority_required")
     data = record.model_dump()
     db = get_db()
     was_in_tx = db.in_transaction
@@ -44,6 +67,11 @@ def get_record(table: str, record_id: str) -> dict | None:
     id_column = _TABLE_ID.get(table)
     if not id_column:
         raise ValueError(f"unsupported Learning ledger table: {table}")
+    if _lab_authority() and table in {
+        "learning_experiments", "learning_exposures", "learning_contribution_verdicts",
+        "learning_inference_decisions", "learning_lifecycle_events",
+    }:
+        return None
     row = get_db().execute(f"SELECT * FROM {table} WHERE {id_column}=?", (record_id,)).fetchone()
     return dict(row) if row else None
 
@@ -52,6 +80,11 @@ def list_records(table: str, *, limit: int = 100) -> list[dict]:
     id_column = _TABLE_ID.get(table)
     if not id_column:
         raise ValueError(f"unsupported Learning ledger table: {table}")
+    if _lab_authority() and table in {
+        "learning_experiments", "learning_exposures", "learning_contribution_verdicts",
+        "learning_inference_decisions", "learning_lifecycle_events",
+    }:
+        return []
     rows = get_db().execute(f"SELECT * FROM {table} ORDER BY rowid DESC LIMIT ?", (max(1, int(limit)),)).fetchall()
     return [dict(row) for row in rows]
 
@@ -86,6 +119,8 @@ def insert_exposure(
     makes lifecycle validation and insertion one atomic operation. A concurrent
     close/refreeze therefore cannot append evidence to the ended experiment.
     """
+    if _lab_authority():
+        raise RuntimeError("observation_lab_authority_required")
     with transaction(immediate=require_open_experiment_id is not None):
         db = get_db()
         if require_open_experiment_id is not None:
@@ -122,6 +157,8 @@ def insert_exposure(
 
 
 def insert_lifecycle_event(record) -> bool:
+    if _lab_authority():
+        raise RuntimeError("observation_lab_authority_required")
     data = record.model_dump()
     with transaction(savepoint=True):
         db = get_db()
@@ -228,6 +265,8 @@ def list_nominations(*, limit: int = 100) -> list[dict]:
 
 
 def get_open_experiment(hypothesis_id: str) -> dict | None:
+    if _lab_authority():
+        return None
     row = get_db().execute(
         "SELECT * FROM learning_experiments WHERE hypothesis_id=? AND ended_at IS NULL "
         "ORDER BY created_at DESC LIMIT 1",
@@ -243,6 +282,8 @@ def get_latest_verdict(experiment_id: str, *, authority_only: bool = False) -> d
     (``positive``/``neutral``/``negative``/``insufficient_data``/``invalid``).
     They are durable evidence, never a signal to change a consumer's authority.
     """
+    if _lab_authority():
+        return None
     clauses = ["experiment_id=?"]
     params: list[str] = [experiment_id]
     if authority_only:
@@ -265,6 +306,8 @@ def get_latest_verdict_for_cohort(
     stage is invisible here — so a stale positive verdict cannot authorize a treatment
     after config/code (epoch) or lifecycle stage changed.
     """
+    if _lab_authority():
+        return None
     row = get_db().execute(
         "SELECT * FROM learning_contribution_verdicts "
         "WHERE experiment_id=? AND policy_epoch=? AND stage=? "
@@ -298,6 +341,8 @@ def get_latest_measurement_verdict(
     evidence only accumulates within a cohort, so created_at ordering is the
     monotonic one; window_end remains the tiebreak for cohorts evaluated together.
     """
+    if _lab_authority():
+        return None
     clauses = [
         "experiment_id=?",
         "verdict IN ('positive', 'neutral', 'negative', 'insufficient_data', 'invalid')",
@@ -328,6 +373,8 @@ def get_latest_measurement_verdict(
 
 
 def list_open_experiments(*, path_id: str | None = None) -> list[dict]:
+    if _lab_authority():
+        return []
     clauses = ["e.ended_at IS NULL"]
     params: list[str] = []
     if path_id is not None:
@@ -348,6 +395,8 @@ def list_open_experiments(*, path_id: str | None = None) -> list[dict]:
 
 
 def get_lifecycle_event_by_dedup_key(dedup_key: str) -> dict | None:
+    if _lab_authority():
+        return None
     row = get_db().execute(
         "SELECT * FROM learning_lifecycle_events WHERE dedup_key=?", (dedup_key,)
     ).fetchone()
@@ -355,6 +404,8 @@ def get_lifecycle_event_by_dedup_key(dedup_key: str) -> dict | None:
 
 
 def list_lifecycle_events(experiment_id: str, *, limit: int = 100) -> list[dict]:
+    if _lab_authority():
+        return []
     rows = get_db().execute(
         "SELECT * FROM learning_lifecycle_events WHERE experiment_id=? OR successor_experiment_id=? "
         "ORDER BY created_at DESC, event_id DESC LIMIT ?",
@@ -366,6 +417,8 @@ def list_lifecycle_events(experiment_id: str, *, limit: int = 100) -> list[dict]
 def list_unmirrored_lifecycle_events(
     *, limit: int = 100, event_ids: list[str] | None = None,
 ) -> list[dict]:
+    if _lab_authority():
+        return []
     clauses = ["audit_mirror_status IN ('pending', 'failed')"]
     params: list[object] = []
     if event_ids is not None:
@@ -384,6 +437,8 @@ def list_unmirrored_lifecycle_events(
 
 
 def count_unmirrored_lifecycle_events() -> int:
+    if _lab_authority():
+        return 0
     row = get_db().execute(
         "SELECT COUNT(*) FROM learning_lifecycle_events "
         "WHERE audit_mirror_status IN ('pending', 'failed')"
@@ -413,6 +468,8 @@ def update_lifecycle_audit_mirror(
 
 
 def get_trial_admission_event(successor_experiment_id: str) -> dict | None:
+    if _lab_authority():
+        return None
     row = get_db().execute(
         "SELECT * FROM learning_lifecycle_events "
         "WHERE successor_experiment_id=? AND action='admit_trial' "
@@ -423,11 +480,15 @@ def get_trial_admission_event(successor_experiment_id: str) -> dict | None:
 
 
 def get_exposure(exposure_id: str) -> dict | None:
+    if _lab_authority():
+        return None
     row = get_db().execute(
         "SELECT * FROM learning_exposures WHERE exposure_id=?", (exposure_id,)
     ).fetchone()
     return dict(row) if row else None
 def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
+    if _lab_authority():
+        return None
     row = get_db().execute(
         "SELECT * FROM learning_exposures WHERE dedup_key=?", (dedup_key,)
     ).fetchone()

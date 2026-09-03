@@ -27,6 +27,9 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
     "aletheia/analytics/alpha_attribution.py",
     "aletheia/analytics/profit_gradient_evidence.py",
+    # Backup verification must inspect legacy rows so an unproven cutover
+    # cannot be presented as an authoritative recovery checkpoint.
+    "aletheia/backup/verify.py",
     "aletheia/cli/data_cmd.py",
     "aletheia/cli/learning_cmd.py",
     "aletheia/cli/observe_cmd.py",
@@ -51,6 +54,7 @@ _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/observation_lab/db.py",
     "aletheia/observation_lab/exposure.py",
     "aletheia/observation_lab/runner.py",
+    "aletheia/observation_lab/migration.py",
     "aletheia/server/routes/analytics.py",
     "aletheia/server/routes/data.py",
     "aletheia/server/routes/settings.py",
@@ -230,3 +234,14 @@ def test_no_new_legacy_experiment_writer():
         discovered=_discover_legacy_writers(sources),
         allowed=_WRITER_ALLOWLIST,
     )
+
+
+@spec_claim(SpecClaim(
+    "OEO-S04", _CONTRACT, "Lab runtime independence", "L2a",
+    "The canonical Lab runner must not import the legacy Learning Experiment runtime.",
+))
+def test_lab_runner_does_not_import_legacy_experiment_runtime():
+    for module in ("runner.py", "evaluator.py"):
+        source = (_SRC / "observation_lab" / module).read_text(encoding="utf-8")
+        assert "aletheia.learning.experiments" not in source
+        assert "aletheia.learning.ledger" not in source

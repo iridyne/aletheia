@@ -82,8 +82,13 @@ def _handler(kind: str, version: str) -> ObservationHandler | None:
     return _HANDLERS.get((kind, version))
 
 
-def _row(observation_id: str, generation: int) -> dict[str, Any]:
-    result = get_lab_db().execute(
+def _row(
+    observation_id: str,
+    generation: int,
+    *,
+    db=None,
+) -> dict[str, Any]:
+    result = (db or get_lab_db()).execute(
         "SELECT * FROM observation_windows WHERE observation_id=? AND generation=?",
         (observation_id, int(generation)),
     ).fetchone()
@@ -92,7 +97,11 @@ def _row(observation_id: str, generation: int) -> dict[str, Any]:
     return dict(result)
 
 
-def active_window(*, slot_key: str | None = None, kind: str | None = None) -> dict[str, Any] | None:
+def active_window(
+    *, slot_key: str | None = None,
+    kind: str | None = None,
+    db=None,
+) -> dict[str, Any] | None:
     clauses = ["status='active'"]
     params: list[Any] = []
     if slot_key is not None:
@@ -101,7 +110,7 @@ def active_window(*, slot_key: str | None = None, kind: str | None = None) -> di
     if kind is not None:
         clauses.append("kind=?")
         params.append(kind)
-    result = get_lab_db().execute(
+    result = (db or get_lab_db()).execute(
         f"SELECT * FROM observation_windows WHERE {' AND '.join(clauses)} "
         "ORDER BY started_at DESC, observation_id, generation DESC LIMIT 1",
         params,
@@ -173,6 +182,21 @@ def start_window(
                     current["generation"],
                 ),
             )
+            from aletheia.observation_lab.canonical import _append_lifecycle_event
+
+            _append_lifecycle_event(
+                db,
+                observation_id=str(current["observation_id"]),
+                generation=int(current["generation"]),
+                to_status="invalidated",
+                action="supersede",
+                reason=f"superseded_by_generation:{next_generation}",
+                actor="observation_kernel",
+                dedup_key=(
+                    f"observation-supersede:{current['observation_id']}:{current['generation']}:{next_generation}"
+                ),
+                from_status="active",
+            )
         else:
             next_generation = int(
                 db.execute(
@@ -199,6 +223,18 @@ def start_window(
                 collect_end.isoformat(),
                 finalize_at.isoformat(),
             ),
+        )
+        from aletheia.observation_lab.canonical import _append_lifecycle_event
+
+        _append_lifecycle_event(
+            db,
+            observation_id=observation_id,
+            generation=next_generation,
+            to_status="shadow" if authority_mode == "observe_only" else "external_authority",
+            action="register",
+            reason="observation_registered",
+            actor="observation_kernel",
+            dedup_key=f"observation-register:{observation_id}:{next_generation}:{spec_hash}",
         )
     return _row(observation_id, next_generation)
 
@@ -227,15 +263,16 @@ def status_window(
     *,
     slot_key: str | None = None,
     now: str | datetime | None = None,
+    db=None,
 ) -> dict[str, Any]:
     if observation_id is not None and generation is not None:
-        window = _row(observation_id, generation)
+        window = _row(observation_id, generation, db=db)
     elif slot_key is not None:
-        window = active_window(slot_key=slot_key)
+        window = active_window(slot_key=slot_key, db=db)
         if window is None:
             raise KeyError(slot_key)
     elif observation_id is not None:
-        result = get_lab_db().execute(
+        result = (db or get_lab_db()).execute(
             "SELECT * FROM observation_windows WHERE observation_id=? "
             "ORDER BY generation DESC LIMIT 1",
             (observation_id,),
@@ -247,7 +284,7 @@ def status_window(
         raise ValueError("observation_id_or_slot_key_required")
     counts = Counter(
         str(row[0])
-        for row in get_lab_db().execute(
+        for row in (db or get_lab_db()).execute(
             "SELECT admission FROM observation_units WHERE observation_id=? AND generation=?",
             (window["observation_id"], window["generation"]),
         ).fetchall()
@@ -392,6 +429,20 @@ def _terminalize(observation_id: str, generation: int, status: str, reason: str)
             "WHERE observation_id=? AND generation=? AND status='active'",
             (status, _utc().isoformat(), reason, observation_id, int(generation)),
         )
+        if result.rowcount:
+            from aletheia.observation_lab.canonical import _append_lifecycle_event
+
+            _append_lifecycle_event(
+                db,
+                observation_id=observation_id,
+                generation=int(generation),
+                to_status=status,
+                action=status,
+                reason=reason,
+                actor="observation_kernel",
+                dedup_key=f"observation-{status}:{observation_id}:{generation}:{reason}",
+                from_status="active",
+            )
     return bool(result.rowcount)
 
 
@@ -460,6 +511,8 @@ def _finalize_window(
         ).fetchall()
     )
     domain_result = handler.finalize(window)
+    if not isinstance(domain_result, dict):
+        raise TypeError("handler_finalize_must_return_dict")
     provenance_rows = get_lab_db().execute(
         "SELECT DISTINCT producer_commit, producer_runtime_session_id FROM observation_units "
         "WHERE observation_id=? AND generation=?",
@@ -557,6 +610,96 @@ def _finalize_window(
                     int(generation),
                 ),
             )
+            # The immutable Lab result is emitted in the same transaction as
+            # the terminal lifecycle transition.  A missing Main import
+            # cursor remains explicit in the source cut and never becomes a
+            # fabricated complete measurement.
+            from aletheia.observation_lab.canonical import (
+                record_observation_evaluation,
+                record_observation_result,
+            )
+
+            cursor = db.execute(
+                "SELECT contiguous_sequence, source_checkpoint_fingerprint "
+                "FROM observation_import_cursors WHERE source_name='main'"
+            ).fetchone()
+            source_cutoff = _json({
+                "main_import_contiguous_sequence": int(cursor[0]) if cursor else None,
+                "source_checkpoint_fingerprint": (
+                    str(cursor[1]) if cursor and cursor[1] else None
+                ),
+                "collect_until": window["collect_until"],
+            })
+            exposure_rows = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM observation_exposures WHERE observation_id=? AND generation=? "
+                    "ORDER BY source_receipt_id",
+                    (observation_id, int(generation)),
+                ).fetchall()
+            ]
+            exposure_fingerprint = _hash(exposure_rows)
+            outcome_fingerprint = _hash([
+                {
+                    "candidate_key": row.get("outcome_candidate_key"),
+                    "outcome_source": row.get("outcome_source"),
+                }
+                for row in exposure_rows
+                if row.get("outcome_candidate_key")
+            ])
+            verdict = str(domain_result.get("verdict") or "insufficient_data")
+            if verdict not in {"positive", "negative", "neutral", "invalid", "insufficient_data"}:
+                verdict = "insufficient_data"
+            result_payload = {
+                "status": "finalized",
+                "source_cutoff": json.loads(source_cutoff),
+                "exposure_count": len(exposure_rows),
+                "outcome_count": sum(
+                    1 for row in exposure_rows if row.get("outcome_candidate_key")
+                ),
+                "domain_result": domain_result,
+            }
+            evaluation_id = record_observation_evaluation(
+                observation_id=observation_id,
+                generation=int(generation),
+                evaluation_kind="monitoring",
+                source_cutoff=source_cutoff,
+                input_fingerprint=_hash({
+                    "spec_hash": window["spec_hash"],
+                    "source_cutoff": source_cutoff,
+                    "domain_result": domain_result,
+                }),
+                exposure_fingerprint=exposure_fingerprint,
+                outcome_fingerprint=outcome_fingerprint,
+                result=result_payload,
+                verdict=verdict,
+                disposition="finalized",
+                db=db,
+            )
+            record_observation_result(
+                observation_id=observation_id,
+                generation=int(generation),
+                spec_hash=str(window["spec_hash"]),
+                source_cutoff=source_cutoff,
+                verdict=verdict,
+                disposition="finalized",
+                result=result_payload,
+                evaluation_id=evaluation_id,
+                db=db,
+            )
+            from aletheia.observation_lab.canonical import _append_lifecycle_event
+
+            _append_lifecycle_event(
+                db,
+                observation_id=observation_id,
+                generation=int(generation),
+                to_status="finalized",
+                action="finalize",
+                reason="handler_ready",
+                actor="observation_kernel",
+                dedup_key=f"observation-finalize:{observation_id}:{generation}:{digest}",
+                from_status="active",
+            )
     except Exception:
         staged.unlink(missing_ok=True)
         if created:
@@ -611,6 +754,18 @@ def advance_windows(*, limit: int = 10, now: str | datetime | None = None) -> di
                     reason=progress.invalidation_reason,
                 )
                 results[key] = {"status": "invalidated", "reason": progress.invalidation_reason}
+                continue
+            safety_action = (
+                progress.summary.get("evaluation", {}).get("safety_action")
+                if isinstance(progress.summary, dict)
+                and isinstance(progress.summary.get("evaluation"), dict)
+                else None
+            )
+            if safety_action:
+                # The canonical evaluator already committed the Lab lifecycle
+                # transition and Manifest revocations atomically.  Do not run
+                # the generic kernel invalidation a second time.
+                results[key] = {"status": "invalidated", "safety_action": safety_action}
                 continue
             with lab_transaction(immediate=True) as db:
                 db.execute(
@@ -671,20 +826,31 @@ def active_retention_claims() -> dict[str, Any]:
 def invalidate_active_for_restore(*, joint_cut_proven: bool) -> int:
     """Invalidate active windows after a restore whose joint cut is unproven."""
     from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    from aletheia.observation_lab.canonical import _append_lifecycle_event
     if joint_cut_proven:
         return 0
 
     with worker_cycle_exclusion():
         with lab_transaction(immediate=True) as db:
-            result = db.execute(
-                "UPDATE observation_windows SET status='invalidated',terminal_at=?,terminal_reason=? "
-                "WHERE status='active'",
-                (
-                    _utc().isoformat(),
-                    "restore_continuity_unproven",
-                ),
-            )
-        return max(0, result.rowcount)
+            rows = db.execute(
+                "SELECT observation_id, generation FROM observation_windows "
+                "WHERE status='active' ORDER BY observation_id, generation"
+            ).fetchall()
+            for row in rows:
+                identity = f"restore-invalidate:{row['observation_id']}:{row['generation']}"
+                _append_lifecycle_event(
+                    db,
+                    observation_id=str(row["observation_id"]),
+                    generation=int(row["generation"]),
+                    from_status="active",
+                    to_status="invalidated",
+                    action="restore_invalidate",
+                    reason="restore_continuity_unproven",
+                    actor="restore",
+                    dedup_key=identity,
+                    audit_identity=f"observation-restore:{identity}",
+                )
+            return len(rows)
 
 
 __all__ = [

@@ -280,6 +280,34 @@ def test_lco_projection_separates_measurement_integrity_and_authority(
     assert item["lifecycle"]["authority_enabled"] is False
 
 
+def test_lco_projection_does_not_call_terminal_experiment_active(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.learning.read_models import build_learning_contribution_projection
+    from aletheia.storage.sqlite import get_db
+
+    # Keep the row in the compatibility projection while making its lifecycle
+    # terminal; the path state must follow the persisted status, not mere row
+    # presence.
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET status='closed', ended_at=NULL "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    )
+    db.commit()
+
+    result = build_learning_contribution_projection()
+    state = next(
+        item for item in result["path_states"]
+        if item["path_id"] == "universe_family_calibration"
+    )
+    assert state["state"] == "terminal"
+
+
 def test_optional_count_does_not_invent_zero() -> None:
     from aletheia.learning.read_models import _safe_optional_int
 

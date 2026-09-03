@@ -31,6 +31,7 @@ from aletheia.counterfactual.filter_replay import (
     build_observer_pre_filter_replay,
     build_ranker_confidence_replay,
     build_ranker_confidence_replay_from_frozen,
+    _ranker_parameter_minimum,
 )
 from aletheia.observation_lab import units as lab_units
 from aletheia.storage import repositories as repo
@@ -83,12 +84,31 @@ _ADAPTER_CAUSAL_IDENTITY: dict[str, dict[str, Any]] = {
 _FROZEN_REBUILD_ADAPTERS: frozenset[str] = frozenset({"ranker_confidence_gate"})
 
 
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        # A pre-V2 database has no cutover row.  Every other authority read
+        # failure must remain unavailable rather than selecting either writer.
+        if "no such table: observation_authority_state" in str(exc):
+            return False
+        raise RuntimeError("observation_authority_unavailable") from exc
+
+
 def _adapter_causal_identity_hash(filter_name: str) -> str | None:
     """Hex-digest hash of the adapter's declared causal identity vector."""
     identity = _ADAPTER_CAUSAL_IDENTITY.get(filter_name)
     if identity is None:
         return None
     return hashlib.sha256(_json(identity).encode("utf-8")).hexdigest()
+
+
+def _hash_spec(spec: dict[str, Any]) -> str:
+    return hashlib.sha256(_json(spec).encode("utf-8")).hexdigest()
 
 
 def register_replay_ready_experiments(
@@ -154,6 +174,25 @@ def register_replay_ready_experiments(
             # None for adapters that opt out of Lab identity semantics (Phase 2 migration).
             "adapter_identity_hash": _adapter_causal_identity_hash(scope["filter_name"]),
         }
+        if _lab_authority():
+            from aletheia.observation_lab.canonical import register_observation_spec
+
+            registered = register_observation_spec(
+                {
+                    **scope,
+                    "control": control_param,
+                    "treatment": treatment_param,
+                    "min_samples": record["min_samples"],
+                    "min_coverage": record["min_coverage"],
+                    "min_edge_delta_pct": record["min_edge_delta_pct"],
+                },
+                actor="learning_replay",
+                source_hash=_hash_spec(replay),
+                started_at=timestamp,
+                return_created=True,
+            )
+            summary["registered" if registered.get("_created") else "already_registered"] += 1
+            continue
         if repo.insert_filter_shadow_experiment(record):
             summary["registered"] += 1
         else:
@@ -165,6 +204,31 @@ def evaluate_active_shadow_experiments(
     *, now: datetime | None = None
 ) -> dict[str, int]:
     """Append one evidence snapshot for each collecting experiment."""
+    if _lab_authority():
+        from aletheia.observation_lab.filter_shadow import (
+            evaluate_filter_shadow_observation,
+            list_filter_shadow_observations,
+        )
+
+        summary = {
+            "evaluated": 0,
+            "ready_for_review": 0,
+            "completed_no_support": 0,
+            "invalidated": 0,
+        }
+        for row in list_filter_shadow_observations(status="active", limit=1000) or []:
+            result = evaluate_filter_shadow_observation(
+                str(row["observation_id"]), int(row["generation"]), as_of_at=now,
+            )
+            summary["evaluated"] += 1
+            disposition = str(
+                ((result.get("evaluations") or [{}])[0]).get("disposition") or ""
+            )
+            if disposition in {"ready_for_review", "completed_no_support"}:
+                summary[disposition] += 1
+            elif result.get("safety_action") or result.get("verdict") in {"invalid", "negative"}:
+                summary["invalidated"] += 1
+        return summary
     timestamp = _iso(now)
     summary = {
         "evaluated": 0,
@@ -224,6 +288,16 @@ def register_observation_from_spec(
         raise ValueError(f"spec is missing required field(s): {missing}")
 
     timestamp = _iso(now)
+    if _lab_authority():
+        from aletheia.observation_lab.canonical import register_observation_spec
+
+        return str(register_observation_spec(
+            spec,
+            actor="learning_replay",
+            source_hash=_hash_spec(spec),
+            started_at=timestamp,
+        )["observation_id"])
+
     scope = {
         "filter_name": str(spec["filter_name"]),
         "filter_version": str(spec.get("filter_version") or ""),
@@ -275,6 +349,23 @@ def evaluate_one_experiment(
     operator can force a fresh evaluation snapshot without waiting for the
     controller cycle. Used by the ``aletheia observe evaluate`` CLI.
     """
+    if _lab_authority():
+        from aletheia.observation_lab.filter_shadow import (
+            evaluate_filter_shadow_observation,
+            list_filter_shadow_observations,
+        )
+
+        for row in list_filter_shadow_observations(limit=1000) or []:
+            if experiment_id in {
+                str(row.get("id") or ""),
+                str(row.get("observation_id") or ""),
+            }:
+                return evaluate_filter_shadow_observation(
+                    str(row["observation_id"]),
+                    int(row["generation"]),
+                    as_of_at=now,
+                )
+        raise ValueError(f"unknown observation id: {experiment_id}")
     target: dict[str, Any] | None = None
     for row in repo.list_filter_shadow_experiments(limit=1000):
         if row["id"] == experiment_id:
@@ -317,6 +408,8 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
 
     Idempotent. Returns the number of freshly-inserted units.
     """
+    if _lab_authority():
+        return 0
     filter_name = str(experiment.get("filter_name") or "")
     if filter_name not in _FROZEN_REBUILD_ADAPTERS:
         return 0
@@ -365,6 +458,15 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
         return 0
     frozen: list[dict[str, Any]] = []
     for row in rows:
+        # A consumed causal input must match the registered control. Keep the
+        # incompatible row out of the frozen cohort; the next evaluation pass
+        # records the stable invalidation for the whole collecting experiment.
+        if (
+            filter_name == "ranker_confidence_gate"
+            and _ranker_parameter_minimum(row["parameter_snapshot"])
+            != _ranker_control_minimum(experiment)
+        ):
+            continue
         frozen.append({
             "id": uuid.uuid4().hex,
             "outcome_candidate_key": row["outcome_candidate_key"],
@@ -381,6 +483,10 @@ def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None
 
 def build_filter_shadow_experiment_report(limit: int = 50) -> list[dict[str, Any]]:
     """Return plans with their latest evidence snapshot for CLI/API diagnostics."""
+    if _lab_authority():
+        from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
+
+        return list_filter_shadow_observations(limit=limit) or []
     rows: list[dict[str, Any]] = []
     for experiment in repo.list_filter_shadow_experiments(limit=max(1, int(limit))):
         row = dict(experiment)
@@ -479,6 +585,12 @@ def _invalidation_for(experiment: dict[str, Any]) -> tuple[str, str] | None:
     """
     filter_name = str(experiment.get("filter_name") or "")
     if filter_name in _ADAPTER_CAUSAL_IDENTITY:
+        if _ranker_parameter_identity_changed(experiment):
+            return (
+                "adapter_causal_input_changed",
+                "A Ranker causal parameter snapshot is missing, malformed, or "
+                "differs from the registered control; the cohort is invalidated.",
+            )
         stored = experiment.get("adapter_identity_hash")
         current = _adapter_causal_identity_hash(filter_name)
         if stored and current and stored != current:
@@ -494,6 +606,39 @@ def _invalidation_for(experiment: dict[str, Any]) -> tuple[str, str] | None:
             "Production filter version changed after experiment start.",
         )
     return None
+
+
+def _ranker_control_minimum(experiment: dict[str, Any]) -> str | None:
+    return _ranker_parameter_minimum(experiment.get("control_parameter"))
+
+
+def _ranker_parameter_identity_changed(experiment: dict[str, Any]) -> bool:
+    """Detect post-start Ranker rows that cannot join the frozen cohort."""
+    expected = _ranker_control_minimum(experiment)
+    if expected is None:
+        return True
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
+        "SELECT parameter_snapshot FROM filter_decisions "
+        "WHERE filter_name=? AND stage=? "
+        "AND COALESCE(scanner_family,'unknown')=? AND direction=? "
+        "AND market_type=? AND decision IN ('passed','rejected') "
+        "AND outcome_candidate_key IS NOT NULL "
+        "AND aletheia_instant_us(evaluated_at) > aletheia_instant_us(?)",
+        (
+            experiment["filter_name"],
+            experiment["stage"],
+            experiment["scanner_family"],
+            experiment["direction"],
+            experiment["market_type"],
+            experiment["started_at"],
+        ),
+    ).fetchall()
+    return any(
+        _ranker_parameter_minimum(row["parameter_snapshot"]) != expected
+        for row in rows
+    )
 
 
 def _production_version_changed(experiment: dict[str, Any]) -> bool:

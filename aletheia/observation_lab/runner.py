@@ -32,6 +32,7 @@ worker fleet or per-window daemon.
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -100,11 +101,10 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
     1. Verifies the joint app.db + lab.db + manifest fingerprint against
        the last stored checkpoint. Result surfaces as ``joint_checkpoint``
        in the return dict. A mismatch is logged as a warning but does NOT
-       stop the pass — v1 records the drift; Packet 2+ can escalate to
-       per-window invalidation when it has treatment-bearing windows to
-       protect.
-    2. Saves the current fingerprint (idempotent no-op when unchanged
-       from the last stored row).
+       stop the observe-only pass.
+    2. Saves the post-window fingerprint only when the pre-pass proof was
+       valid (idempotent no-op when unchanged). An unresolved mismatch is
+       never promoted to a new trusted baseline.
 
     Errors in the checkpoint step are contained the same way per-window
     errors are: logged, surfaced in the summary, execution continues.
@@ -132,6 +132,13 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
                 window.name, window.kind, exc, exc_info=True,
             )
             results[window.name] = {"status": "error", "error": repr(exc)[:400]}
+    if checkpoint_summary.get("ok") is True:
+        _save_checkpoint(checkpoint_summary)
+    else:
+        # A divergent checkpoint is an unresolved restore/continuity boundary.
+        # Never promote that state to the new trusted baseline merely because
+        # the observe-only window pass completed.
+        checkpoint_summary["save_skipped"] = "unresolved_checkpoint_mismatch"
     return {
         "windows_run": len(ordered),
         "windows_errored": errored,
@@ -141,18 +148,17 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
 
 
 def _pass_checkpoint() -> dict[str, Any]:
-    """Verify + save the joint checkpoint at the start of one pass.
+    """Verify the joint checkpoint at the start of one pass.
 
-    Failure-isolated: the whole checkpoint step is one try/except so a
+    Saving happens after windows run, so expected append-only Lab evidence
+    produced by this pass is part of the checkpoint for the next pass rather
+    than being reported as restore drift. Failure-isolated: the whole
+    checkpoint step is one try/except so a
     broken ``aletheia_schema_migrations`` reader (or any other input to
     the fingerprint) never prevents the window pass from running.
     """
     try:
-        from aletheia.observation_lab.checkpoint import (
-            compute_joint_checkpoint,
-            save_joint_checkpoint,
-            verify_joint_checkpoint,
-        )
+        from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
 
         verdict = verify_joint_checkpoint()
         if not verdict.ok:
@@ -160,17 +166,27 @@ def _pass_checkpoint() -> dict[str, Any]:
                 "observation_lab.runner: joint checkpoint mismatch: %s",
                 verdict.reason,
             )
-        current = compute_joint_checkpoint()
-        save_joint_checkpoint(current)
+        current_fingerprint = getattr(verdict, "current_fingerprint", None)
+        if current_fingerprint is None:
+            # Compatibility with older test doubles/callers that only exposed
+            # ``ok``, ``reason`` and ``last``.
+            from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
+
+            current_fingerprint = compute_joint_checkpoint().joint_fingerprint
         return {
             "ok": bool(verdict.ok),
             "reason": verdict.reason,
-            "current_fingerprint": current.joint_fingerprint,
+            "current_fingerprint": current_fingerprint,
             "last_fingerprint": (
                 verdict.last.joint_fingerprint if verdict.last is not None else None
             ),
-            "active_manifest_count": current.active_manifest_count,
-            "app_migration_count": current.app_migration_count,
+            "active_manifest_count": (
+                len(verdict.last.active_manifest_hashes)
+                if verdict.last is not None and verdict.ok else None
+            ),
+            "app_migration_count": (
+                verdict.last.app_migration_count if verdict.last is not None and verdict.ok else None
+            ),
         }
     except Exception as exc:
         logger.warning(
@@ -180,11 +196,134 @@ def _pass_checkpoint() -> dict[str, Any]:
         return {"ok": False, "reason": f"checkpoint_error:{exc!r}"[:400]}
 
 
+def _save_checkpoint(summary: dict[str, Any]) -> None:
+    """Persist the post-window Lab state without widening runner failures."""
+    try:
+        from aletheia.observation_lab.checkpoint import (
+            compute_joint_checkpoint,
+            save_joint_checkpoint,
+        )
+
+        current = compute_joint_checkpoint()
+        save_joint_checkpoint(current)
+        summary.update(
+            current_fingerprint=current.joint_fingerprint,
+            active_manifest_count=current.active_manifest_count,
+            app_migration_count=current.app_migration_count,
+        )
+    except Exception as exc:
+        summary.update(ok=False, reason=f"checkpoint_save_error:{exc!r}"[:400])
+
+
 def register_builtin_handlers() -> None:
     """Register every built-in durable Observation Window handler."""
     from aletheia.universe.discovery_benchmark import register_observation_handler
+    from datetime import datetime, timezone
+
+    from aletheia.observation_lab.kernel import (
+        ObservationHandler,
+        ObservationProgress,
+        register_handler,
+        registered_handlers,
+    )
+    from aletheia.observation_lab.canonical import (
+        register_treatment_adapter,
+        registered_treatment_adapters,
+    )
+    from aletheia.observation_lab.canonical import NumericTreatmentAdapter
 
     register_observation_handler()
+
+    def _canonical_progress(window: dict[str, Any]) -> ObservationProgress:
+        evaluation: dict[str, Any] | None = None
+        try:
+            from aletheia.observation_lab.evaluator import evaluate_observation
+
+            evaluation = evaluate_observation(
+                str(window["observation_id"]),
+                int(window["generation"]),
+            )
+        except Exception as exc:
+            # Evaluation is a Lab evidence failure, not permission to invent a
+            # healthy/empty measurement or to stop unrelated windows.
+            evaluation = {
+                "available": False,
+                "reason": "evaluation_unavailable",
+                "error": type(exc).__name__,
+            }
+        try:
+            due = datetime.fromisoformat(
+                str(window.get("finalize_not_before") or "").replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            can_finalize = datetime.now(timezone.utc) >= due
+        except (TypeError, ValueError, OverflowError):
+            can_finalize = False
+        return ObservationProgress(
+            summary={
+                "status": "collecting",
+                "handler": window.get("kind"),
+                "evaluation": evaluation,
+            },
+            can_finalize=can_finalize and evaluation is not None and evaluation.get("available") is True,
+        )
+
+    def _canonical_capture(window: dict[str, Any], event: dict[str, Any]) -> ObservationProgress:
+        return ObservationProgress(
+            summary={"status": "captured", "event_keys": sorted(event)},
+        )
+
+    def _canonical_finalize(window: dict[str, Any]) -> dict[str, Any]:
+        from aletheia.observation_lab.canonical import latest_observation_result
+
+        result = latest_observation_result(
+            str(window["observation_id"]), int(window["generation"]),
+        )
+        if result is not None:
+            try:
+                payload = json.loads(str(result.get("result_json") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if isinstance(payload, dict):
+                return {
+                    **payload,
+                    "status": "finalized",
+                    "handler": window.get("kind"),
+                }
+        raise RuntimeError("canonical_evaluation_result_unavailable")
+
+    def _canonical_claims(window: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    for kind in (
+        "filter_shadow",
+        "universe_family_calibration",
+        "momentum_entry_geometry",
+        "ranker_case_score",
+    ):
+        key = (kind, "canonical-v1")
+        if key not in registered_handlers():
+            register_handler(ObservationHandler(
+                kind=kind,
+                version=key[1],
+                normalize_spec=lambda spec: dict(spec),
+                capture=_canonical_capture,
+                advance=_canonical_progress,
+                finalize=_canonical_finalize,
+                retention_claims=_canonical_claims,
+            ))
+
+    for path_id in (
+        "universe_family_calibration",
+        "momentum_entry_geometry",
+        "ranker_case_score",
+    ):
+        key = (f"learning.numeric:{path_id}", "v1")
+        if key not in registered_treatment_adapters():
+            register_treatment_adapter(NumericTreatmentAdapter(
+                adapter_id=key[0],
+                adapter_version=key[1],
+                behavior_dimension=path_id,
+            ))
 def _durable_observation_windows() -> dict[str, Any]:
     register_builtin_handlers()
     from aletheia.observation_lab.kernel import advance_windows
@@ -199,6 +338,38 @@ def _register_default_windows() -> None:
     subsystems until each pass executes.
     """
     def _filter_shadow_evaluate() -> dict[str, Any]:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            # Canonical filter-shadow roots are advanced by the durable
+            # ObservationHandler window.  Keep this compatibility window as a
+            # projection only; evaluating here as well would append a second
+            # snapshot in the same runner pass.
+            from aletheia.observation_lab.filter_shadow import (
+                list_filter_shadow_observations,
+            )
+
+            roots = list_filter_shadow_observations(status="active", limit=1000) or []
+            evaluation = {
+                "evaluated": len(roots),
+                "ready_for_review": 0,
+                "completed_no_support": 0,
+                "invalidated": 0,
+                "canonical_handler": True,
+            }
+            for root in roots:
+                disposition = str(
+                    ((root.get("latest_evaluation") or {}).get("disposition") or "")
+                )
+                if disposition in {
+                    "ready_for_review", "completed_no_support", "invalidated",
+                }:
+                    evaluation[disposition] += 1
+            return {
+                "status": "canonical_lab_authority",
+                "frozen_units_captured": 0,
+                "evaluation": evaluation,
+            }
         from aletheia.counterfactual.filter_experiments import (
             capture_frozen_units_for,
             evaluate_active_shadow_experiments,

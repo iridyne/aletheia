@@ -43,11 +43,16 @@ The data root is resolved through the normal Aletheia data-dir contract. Lab mus
 
 `lab.db` contains bounded Lab-specific facts such as:
 
-- `filter_shadow_frozen_units` — immutable first-exposure snapshots;
+- `observation_units` / `observation_exposures` — canonical immutable
+  first-exposure snapshots and observe-only assignment facts for Lab-owned
+  filter-shadow generations;
 - `ufc_shadow_equivalence` — equivalence observations for the UFC evaluator path;
 - `execution_manifests` — immutable/versioned treatment manifests;
 - `lab_exposures` — append-only Lab exposure facts where used;
 - `joint_checkpoints` — cross-store continuity/diagnostic fingerprints.
+
+The legacy `filter_shadow_frozen_units` table is retained only for the
+`legacy` authority compatibility path and is not the canonical Lab ledger.
 
 Current app-db observation surfaces remain owned by their existing canonical modules. Observation Lab must not duplicate market, Candidate, Position, Risk, execution or cost truth.
 
@@ -88,7 +93,9 @@ Required properties:
 - Lab runner failure cannot stop ordinary Paper trading;
 - registered windows share the same evidence/authority boundaries.
 
-Current registered work includes filter-shadow evaluation and UFC equivalence observation. Adding another window requires its own independently justified contract; listing it in a design document is not activation.
+Current registered work includes the canonical filter-shadow handler and UFC
+equivalence observation. Adding another window requires its own independently
+justified contract; listing it in a design document is not activation.
 
 ## Adapter causal identity
 

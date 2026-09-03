@@ -29,8 +29,26 @@ from aletheia.learning.registry import metric_version_for_path
 from aletheia.storage.sqlite import get_db
 
 
+def _lab_authority() -> bool:
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        return get_authority_source().source == "lab"
+    except FileNotFoundError:
+        return False
+    except Exception as exc:
+        return "no such table: observation_authority_state" not in str(exc)
+
+
 def run_verdict_cycle() -> dict:
     """Manual compatibility helper for evaluating all open experiments."""
+    if _lab_authority():
+        return {
+            "evaluated": 0,
+            "verdicts_written": 0,
+            "skipped": 0,
+            "status": "canonical_lab_authority",
+        }
     db = get_db()
     rows = db.execute(
         "SELECT experiment_id FROM learning_experiments WHERE ended_at IS NULL",
@@ -67,6 +85,8 @@ def evaluate_experiment(
     Equal source inputs yield the same verdict id and leave the existing row in
     place.  New settled inputs yield a new immutable measurement record.
     """
+    if _lab_authority():
+        raise RuntimeError("observation_lab_authority_required")
     verdicts: list[LearningContributionVerdict] = []
     evaluation_as_of = (
         datetime.now(timezone.utc) if as_of_at is None else as_of_at
@@ -117,6 +137,14 @@ def evaluate_experiment(
 
 def inspect_experiment(experiment_id: str) -> dict[str, Any]:
     """Read an experiment's current source cohorts and persisted verdicts only."""
+    if _lab_authority():
+        return {
+            "available": False,
+            "reason": "canonical_lab_authority",
+            "experiment": None,
+            "cohorts": [],
+            "verdicts": [],
+        }
     experiment = get_record("learning_experiments", experiment_id)
     cohorts = build_experiment_cohorts(experiment_id)
     rows = get_db().execute(

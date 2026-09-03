@@ -99,6 +99,7 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
     e2e_db, monkeypatch
 ):
     """A real allocator consumer reaches the ledger and its exact outcome reader."""
+    import aletheia.universe.allocator as allocator
     import aletheia.learning.models as learning_models
     import aletheia.learning.policy_epochs as policy_epochs
     from aletheia.config.loader import load_config, save_config
@@ -130,6 +131,7 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
 
     monkeypatch.setattr(learning_models, "datetime", ClockDateTime)
     monkeypatch.setattr(policy_epochs, "datetime", ClockDateTime)
+    monkeypatch.setattr(allocator, "datetime", ClockDateTime)
 
     feature = {
         "feature_snapshot_id": "reachability-feature",

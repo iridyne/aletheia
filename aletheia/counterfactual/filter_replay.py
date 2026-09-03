@@ -405,6 +405,8 @@ def build_ranker_confidence_replay_from_frozen(
     )
     hydrated: list[dict[str, Any]] = []
     for unit in frozen:
+        if _ranker_parameter_minimum(unit.get("parameter_snapshot")) != control:
+            return None
         outcome = outcomes.get(unit["outcome_candidate_key"]) or {}
         hydrated.append({
             "outcome_candidate_key": unit["outcome_candidate_key"],
@@ -1050,6 +1052,12 @@ def _ttl_from_snapshot(value: Any) -> int | None:
 def _confidence_value(value: Any) -> str | None:
     confidence = str(value or "").strip().lower()
     return confidence if confidence in _CONFIDENCE_LADDER else None
+
+
+def _ranker_parameter_minimum(value: Any) -> str | None:
+    """Return the declared Ranker minimum from either stored schema spelling."""
+    params = _json_dict(value)
+    return _confidence_value(params.get("minimum") or params.get("minimum_confidence"))
 
 
 def _json_dict(value: Any) -> dict[str, Any]:

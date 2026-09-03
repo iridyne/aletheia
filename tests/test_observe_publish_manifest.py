@@ -115,3 +115,29 @@ def test_publish_manifest_rejects_invalid_field_values(runner: CliRunner, tmp_pa
     assert result.exit_code == 1
     combined = result.stdout + (result.stderr or "")
     assert "allocation_pct" in combined or "invalid manifest" in combined
+
+
+@pytest.mark.parametrize(
+    ("effective_from", "effective_until"),
+    [
+        ("not-a-timestamp", None),
+        ("2026-08-19T00:00:00", None),
+        ("2026-08-19T00:00:00+00:00", "2026-08-19T00:00:00+00:00"),
+    ],
+)
+def test_publish_manifest_rejects_invalid_effective_interval_without_write(
+    runner: CliRunner, tmp_path: Path, effective_from: str, effective_until: str | None,
+):
+    from aletheia.observation_lab.db import get_lab_db
+
+    spec_path = _write_manifest_yaml(
+        tmp_path,
+        effective_from=effective_from,
+        effective_until=effective_until,
+    )
+    result = runner.invoke(observe_app, ["publish-manifest", str(spec_path)])
+
+    assert result.exit_code == 1
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM execution_manifests"
+    ).fetchone()[0] == 0

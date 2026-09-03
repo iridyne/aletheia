@@ -872,7 +872,6 @@ def test_apply_restart_builds_changed_frontend_and_restarts(tmp_path, monkeypatc
     monkeypatch.setattr(applier, "_restart_gateway", lambda: calls.append("restart") or {"ok": True})
 
     result = applier.apply_update(restart=True)
-
     assert result["applied"] is True
     assert result["frontend_built"] is True
     assert result["restart_completed"] is True
@@ -1151,9 +1150,9 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
         def __init__(self, data_dir):
             calls.append(("backup_service", data_dir))
 
-        def create_backup(self, *, label):
+        def create_backup(self, *, label, profile="online"):
             path = next(backups)
-            calls.append(("backup", label, path))
+            calls.append(("backup", label, profile, path))
             return path
 
     monkeypatch.setattr(backup_service, "BackupService", FakeBackupService)
@@ -1179,7 +1178,7 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
     assert result["schema_backup"] == str(tmp_path / "activation.tar")
     assert ("preflight", "new222", tmp_path / "preflight.tar") in calls
     assert calls.index(("preflight", "new222", tmp_path / "preflight.tar")) < calls.index(("advance", "new222"))
-    assert calls.index(("backup", "interactive_schema_activate", tmp_path / "activation.tar")) < calls.index(
+    assert calls.index(("backup", "interactive_schema_activate", "online", tmp_path / "activation.tar")) < calls.index(
         ("restart",)
     )
 

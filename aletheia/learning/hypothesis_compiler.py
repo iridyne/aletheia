@@ -233,6 +233,16 @@ def admit_nomination_to_shadow(
     preflight: ExperimentabilityPreflightV1,
 ) -> LearningExperiment | None:
     """Open one existing-ledger Shadow experiment only after viable preflight."""
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        if get_authority_source().source == "lab":
+            return None
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        if "no such table: observation_authority_state" not in str(exc):
+            return None
     from aletheia.learning.ledger import (
         get_nomination,
         get_open_experiment,

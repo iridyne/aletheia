@@ -105,6 +105,16 @@ active `app.db` file is not a supported backup or restore path. Restore rehearsa
 must target an isolated data root and must not overwrite the active runtime merely
 to test the archive.
 
+Managed backups have two explicit profiles. The HTTP `POST /api/persistence/backups`
+surface creates only an `online` non-recovery snapshot; it must not be described as
+a coherent rollback point. An `authoritative` checkpoint may be created only after
+the caller has quiesced runtime writers. It holds the audit writer lock while
+capturing the WAL-safe SQLite snapshot and the complete rotated `audit.jsonl`
+inventory, and records the SQLite identity, Lab DB identity when present, exact
+audit head, and a derived checkpoint identity in `manifest.yaml`. Restore paths
+used for update rollback reject an online, legacy, malformed, or mismatched
+checkpoint instead of combining independently valid stores.
+
 ## CSV export is diagnostic, not migration
 
 `/api/export` exposes two bounded CSV presets:

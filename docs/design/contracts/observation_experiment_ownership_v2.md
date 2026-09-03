@@ -6,13 +6,19 @@ This Contract records the durable migration boundary established for Issue
 #2737. The accepted future design is
 [Observation Experiment Ownership V2](../proposals/observation_experiment_ownership_v2.md).
 
-The target design is not current runtime behavior. Until an explicit authority
-cutover is implemented and verified, the legacy Main/Learning Experiment
-resolver and its `app.db` ledger remain authoritative. Observation Lab owns
-only the behavior already guaranteed by
-[Observation Lab v1](observation_lab_contract.md). Merging documentation and
-architecture constraints does not change Runtime, schema, treatment, scheduler,
-retention, trading behavior, or authority.
+The target design is not a second experiment ledger. The executable V2 bridge
+now provides the Lab-owned canonical schema, immutable generation contracts,
+receipts/import cursors, lifecycle/audit outbox, fixed-look/result identities,
+retention claims and verified generation archives. The durable Main authority
+switch still defaults to `legacy`; until an explicit cutover proof is recorded,
+legacy treatment remains the production authority and the V2 bridge is
+non-authoritative compatibility/evidence infrastructure.
+
+The bridge is intentionally fail-closed: a missing Lab manifest, incompatible
+adapter, revoked contract, unresolved conflict, deny tombstone, unavailable
+Lab, or full delivery outbox returns the declared deterministic baseline while
+preserving a Main receipt. A `lab` authority epoch is the only state in which
+the generic `TreatmentAdapter` seam may apply a behavior-changing Manifest.
 
 ## Current ownership
 
@@ -22,10 +28,39 @@ retention, trading behavior, or authority.
   Execution, Gateway, credentials, and Live authority.
 - Observation Lab v1 owns its implemented windows, units, Manifests, Lab
   exposure facts, runner, and joint-checkpoint primitives.
-- Existing no-prune and earliest-exposure guards remain authoritative until
-  later phases prove exact Lab retention claims and archive/replay safety.
+- Legacy mode keeps the existing no-prune and earliest-exposure guards. Lab
+  mode uses exact active retention claims plus verified archive-before-eviction;
+  missing claim/source state fails closed and never widens deletion.
 - The existing `execution_owner=main|worker` modes host the same Lab runner;
   exactly one cycle owner remains mandatory.
+
+## Executable V2 boundary
+
+`observation_delivery_outbox` is a bounded Main transport/proof surface, not a
+second Experiment owner. A production transaction writes its domain fact and
+receipt together. `import_delivery_receipts()` consumes present receipts in
+sequence order, inserts each Lab Exposure by `source_receipt_id`, and
+acknowledges Main only after the Lab transaction commits. A numeric sequence gap
+alone is not evidence loss; only a proven source checkpoint may classify a
+missing receipt. A malformed present row stops the prefix and remains retryable.
+Owner actions use the same transport and remain `pending` until Lab applies the
+lifecycle event.
+
+`observation_results` is an immutable Lab result projection for Learning and
+review. Learning may import/read that artifact by fingerprint; a positive
+verdict never grants production authority or changes a Main behavior policy.
+Graduation/adoption remains a separate owner-approved Main behavior-policy
+change, after which the Lab generation is revoked/superseded and retained as
+evidence.
+
+For measurement-supported paths, the Lab evaluator reads the immutable Lab
+Exposure snapshot and exact Main outcome identities, then invokes the existing
+cohort and verdict algorithms in memory. It records only Lab Evaluation and
+Result rows; it never creates or reads legacy Experiment rows. Monitoring uses
+the descriptive look, while confirmatory evaluation requires a hash-valid,
+frozen Lab inference plan, its assignment-unit cutoff, and a declared finite
+authority alpha; a consumed plan
+returns its already-bound Evaluation rather than recomputing history.
 
 ## Frozen legacy storage inventory
 
@@ -63,9 +98,9 @@ baseline.
 
 ## Current migration invariants
 
-- This boundary does not itself authorize Lab schema, outbox, importer,
-  TreatmentAdapter, lifecycle, retention, archive, or authority-cutover
-  implementation; each requires its separately reviewed implementation gate.
+- The V2 bridge does not authorize a cutover by itself; the exact authority
+  source/epoch, current-head equivalence, retention safety, recovery checkpoint
+  and rollback proof are still required before selecting `lab`.
 - Existing Universe production fact, outcome seed, and legacy Exposure
   atomicity remains unchanged.
 - Observation Lab grants no Risk, Gateway, credential, signer, order, Position,
@@ -97,6 +132,12 @@ Executable SpecClaims must prove that:
 3. actual legacy-table writes are detected without textual-proximity false
    positives;
 4. no allowlist can remain stale after coupling is removed.
+
+The V2 compatibility suite additionally proves receipt atomicity/idempotency,
+contiguous import, Lab audit mirroring, archive-before-eviction, exact claim
+protection, and authority-epoch fail-closed behavior. These checks establish
+storage and transport semantics; they do not claim that any treatment is
+economically positive or production-qualified.
 
 Rolling back this documentation-and-test boundary does not migrate or rewrite
 durable state. Phase sequencing, active work, merge status, review evidence, and

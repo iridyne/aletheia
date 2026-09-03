@@ -255,6 +255,10 @@ def build_experiment_cohorts(
     *,
     assignment_unit_keys: frozenset[str] | None = None,
     as_of_at: str | datetime | None = None,
+    _source_rows: list[dict[str, Any]] | None = None,
+    _source_experiment: LearningExperiment | None = None,
+    _source_hypothesis: LearningHypothesis | None = None,
+    _source_valid_policy_epochs: set[str] | None = None,
 ) -> list[ContributionCohort]:
     """Return validly scoped cohorts without modifying Learning or trading state.
 
@@ -262,6 +266,17 @@ def build_experiment_cohorts(
     inference.  Filtering happens before outcomes or integrity counters are
     resolved, so later rows cannot change an already-declared fixed look.
     """
+    if _source_rows is None:
+        try:
+            from aletheia.observation_lab.canonical import get_authority_source
+
+            if get_authority_source().source == "lab":
+                return []
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            if "no such table: observation_authority_state" not in str(exc):
+                return []
     evaluation_as_of = (
         datetime.now(timezone.utc)
         if as_of_at is None
@@ -269,43 +284,55 @@ def build_experiment_cohorts(
     )
     if evaluation_as_of is None:
         raise ValueError("as_of_at must be a valid timestamp")
-    experiment_row = get_record("learning_experiments", experiment_id)
-    if experiment_row is None:
-        return []
-    experiment = LearningExperiment(**experiment_row)
-    hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
-    if hypothesis_row is None:
-        return []
-    hypothesis = LearningHypothesis(**hypothesis_row)
+    if _source_rows is None:
+        experiment_row = get_record("learning_experiments", experiment_id)
+        if experiment_row is None:
+            return []
+        experiment = LearningExperiment(**experiment_row)
+        hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
+        if hypothesis_row is None:
+            return []
+        hypothesis = LearningHypothesis(**hypothesis_row)
+    else:
+        if _source_experiment is None or _source_hypothesis is None:
+            raise ValueError("source_experiment_and_hypothesis_required")
+        experiment = _source_experiment
+        hypothesis = _source_hypothesis
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return []
 
-    rows = [dict(row) for row in get_db().execute(
-        "SELECT * FROM learning_exposures WHERE experiment_id=? AND hypothesis_id=? "
-        "AND path_id=? ORDER BY datetime(exposed_at), exposure_id",
-        (experiment.experiment_id, hypothesis.hypothesis_id, hypothesis.path_id),
-    ).fetchall()]
+    rows = (
+        [dict(row) for row in get_db().execute(
+            "SELECT * FROM learning_exposures WHERE experiment_id=? AND hypothesis_id=? "
+            "AND path_id=? ORDER BY datetime(exposed_at), exposure_id",
+            (experiment.experiment_id, hypothesis.hypothesis_id, hypothesis.path_id),
+        ).fetchall()]
+        if _source_rows is None else [dict(row) for row in _source_rows]
+    )
     if assignment_unit_keys is not None:
         rows = [
             row
             for row in rows
             if str(row.get("assignment_unit_key") or "") in assignment_unit_keys
         ]
-    epoch_ids = sorted({
-        str(row.get("concurrent_policy_epoch") or "") for row in rows
-        if row.get("concurrent_policy_epoch")
-    })
-    valid_policy_epochs: set[str] = set()
-    if epoch_ids:
-        placeholders = ", ".join("?" for _ in epoch_ids)
-        valid_policy_epochs = {
-            str(row["epoch_id"])
-            for row in get_db().execute(
-                "SELECT epoch_id FROM learning_policy_epochs "
-                f"WHERE epoch_id IN ({placeholders}) AND epoch_kind=?",
-                (*epoch_ids, f"decision_policy:{hypothesis.path_id}"),
-            ).fetchall()
-        }
+    if _source_valid_policy_epochs is not None:
+        valid_policy_epochs = set(_source_valid_policy_epochs)
+    else:
+        epoch_ids = sorted({
+            str(row.get("concurrent_policy_epoch") or "") for row in rows
+            if row.get("concurrent_policy_epoch")
+        })
+        valid_policy_epochs = set()
+        if epoch_ids:
+            placeholders = ", ".join("?" for _ in epoch_ids)
+            valid_policy_epochs = {
+                str(row["epoch_id"])
+                for row in get_db().execute(
+                    "SELECT epoch_id FROM learning_policy_epochs "
+                    f"WHERE epoch_id IN ({placeholders}) AND epoch_kind=?",
+                    (*epoch_ids, f"decision_policy:{hypothesis.path_id}"),
+                ).fetchall()
+            }
     outcome_resolutions = _load_exact_outcomes(
         {str(row.get("outcome_candidate_key") or "") for row in rows},
         str(hypothesis.target_horizon or ""),

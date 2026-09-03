@@ -17,7 +17,7 @@ This Contract describes current behavior only. It does not contain a future impl
 
 ## V2 migration boundary
 
-The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) freezes the current #2737 Phase 1 boundary, while its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future target. During Phases 1–7 this v1 Contract continues to describe implemented runtime behavior: legacy Experiment truth and treatment authority remain in Main/Learning. Only an explicit Phase 8 cutover may move the relevant clauses into current Contracts. Physical Lab isolation, exact causal identity, one Observation-cycle owner, deterministic failure isolation, and the prohibition on Risk/Gateway/credential/Live authority remain unchanged.
+The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) freezes the #2737 ownership boundary, while its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) records the target architecture. The executable bridge is compatibility-safe while the durable authority row is `legacy`: legacy Experiment truth remains the production resolver, and Lab receives only immutable receipts/imported evidence. Selecting `lab` is a separate, owner-attributable cutover that requires exact-head equivalence, retention, archive, recovery and rollback proof. Physical Lab isolation, exact causal identity, one Observation-cycle owner, deterministic failure isolation, and the prohibition on Risk/Gateway/credential/Live authority remain unchanged.
 
 ## Related authorities
 
@@ -56,7 +56,11 @@ Rules:
 
 ## Frozen first-exposure evidence
 
-`filter_shadow_frozen_units` stores immutable first-exposure units in `lab.db`.
+Under the canonical `lab` authority, filter-shadow first exposures are stored
+in the generic `observation_units`/`observation_exposures` ledger in `lab.db`.
+The legacy `filter_shadow_frozen_units` table remains only as a compatibility
+surface while the authority row is `legacy`; it is not consulted or mutated by
+the canonical Lab adapter.
 
 Each row preserves at least:
 
@@ -68,7 +72,10 @@ Each row preserves at least:
 
 Capture is idempotent. Missing causal facts remain unavailable. A later schema/runtime state must not retroactively rewrite the frozen unit.
 
-Evaluation may combine frozen Lab units with canonical outcomes from `app.db`, but the join must preserve exact unit identity and outcome semantics.
+Evaluation may combine frozen Lab units with canonical outcomes from `app.db`, but the join must preserve exact unit identity and outcome semantics. The
+canonical filter-shadow adapter supports `family_ttl`, `observer_pre_filter`,
+and `ranker_confidence_gate`; it records observe-only assignments and exact
+outcome retention claims without publishing a Paper Manifest.
 
 ## Runtime ownership
 
@@ -106,7 +113,10 @@ Where a treatment contract is represented by an `ExecutionManifest`:
 
 Observation Lab is evidence infrastructure, not a trading authority.
 
-- `filter_shadow_experiments.production_mutation_allowed = 0` remains a storage-enforced invariant for filter-shadow observations.
+- Legacy `filter_shadow_experiments.production_mutation_allowed = 0` remains a
+  storage-enforced compatibility invariant. Canonical Lab filter-shadow roots
+  use `authority_mode='observe_only'` and likewise cannot publish a
+  `paper_treatment` Manifest.
 - Lab does not own Risk, Gateway, credentials, orders, fills or Positions.
 - `ready_for_review` or any equivalent Lab result means only that evidence is reviewable under its declared contract.
 - Paper influence still requires the existing path-specific experiment/authority and owner gates.

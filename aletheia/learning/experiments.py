@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import sqlite3
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -36,6 +37,7 @@ from aletheia.learning.models import LearningExperiment, LearningExposure, Learn
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
 from aletheia.learning.registry import get_learning_path
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+from aletheia.observation_lab.canonical import NumericTreatmentAdapter as _ObservationNumericAdapter
 
 # Hypothesis statuses that forbid opening a *new* experiment. They are durable
 # terminal decisions on the hypothesis, not merely on one experiment row.
@@ -55,6 +57,210 @@ class InfluenceDecision:
     hypothesis_id: str | None = None
     experiment_id: str | None = None
     exposure_id: str | None = None
+
+
+def _resolve_numeric_via_observation_lab(
+    *,
+    path_id: str,
+    scope: dict,
+    action: dict,
+    source_cohort: str,
+    target_horizon: str,
+    candidate_key: str | None,
+    baseline: float,
+    treatment: float,
+    consumer: str,
+    consumer_stage: str,
+    outcome_candidate_key: str | None,
+    manifest: dict | None,
+    assignment_key: str | None,
+    exposed_at: str | None,
+    outcome_seeds: list | None,
+    require_outcome_seed: bool,
+    deferred_exposure_writes: list[dict] | None,
+    runtime_db: sqlite3.Connection | None,
+) -> InfluenceDecision:
+    """Use the canonical Lab seam without reading the legacy Experiment ledger."""
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        get_authority_source,
+        _outbox_capacity_available,
+        register_treatment_adapter,
+        resolve_observation_treatment,
+    )
+
+    baseline_value = float(baseline)
+    treatment_value = float(treatment)
+    if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
+        raise ValueError("numeric Learning treatment values must be finite")
+    authority = get_authority_source(db=runtime_db)
+    receipt_id = (
+        "observation-treatment:"
+        + hashlib.sha256(json.dumps({
+            "path_id": path_id,
+            "candidate_key": candidate_key,
+            "assignment_key": assignment_key or candidate_key,
+            "consumer": consumer,
+            "consumer_stage": consumer_stage,
+            "authority_epoch": authority.epoch,
+            "manifest_hash": (manifest or {}).get("manifest_hash"),
+            "outcome_candidate_key": outcome_candidate_key,
+        }, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+        if candidate_key
+        else uuid4().hex
+    )
+    if deferred_exposure_writes is not None and authority.source == "lab":
+        from aletheia.storage.sqlite import get_db
+
+        if not _outbox_capacity_available(runtime_db or get_db(), receipt_id=receipt_id):
+            # Do not queue a receipt that cannot fit when the publication
+            # transaction later commits.  The already-computed score stays on
+            # the deterministic baseline and the ordinary Paper publication
+            # can continue while the Lab bridge drains.
+            return InfluenceDecision(
+                baseline_value, False, "unassigned", "outbox_backpressure",
+            )
+    if require_outcome_seed and len(outcome_seeds or []) != 1:
+        if authority.source != "lab":
+            raise RuntimeError("learning_outcome_seed_unavailable")
+    persist_receipt = deferred_exposure_writes is None
+    adapter_id = str((manifest or {}).get("treatment_adapter_id") or f"learning.numeric:{path_id}")
+    adapter_version = str((manifest or {}).get("treatment_adapter_version") or "v1")
+    if (adapter_id, adapter_version) == (f"learning.numeric:{path_id}", "v1"):
+        register_treatment_adapter(
+            _ObservationNumericAdapter(
+                adapter_id=adapter_id,
+                adapter_version=adapter_version,
+                behavior_dimension=path_id,
+                requires_outcome_seed=bool(require_outcome_seed or outcome_candidate_key),
+            ),
+            replace=True,
+        )
+    context = {
+        "path_id": path_id,
+        "scope": dict(scope),
+        "action": dict(action),
+        "source_cohort": source_cohort,
+        "target_horizon": target_horizon,
+        "candidate_key": candidate_key,
+        "assignment_key": assignment_key or candidate_key,
+        "baseline": {"value": baseline_value},
+        "treatment": {"value": treatment_value},
+        "interference_key": (manifest or {}).get("interference_key") or path_id,
+        "outcome_candidate_key": outcome_candidate_key,
+        "outcome_seed": (outcome_seeds or [None])[0],
+    }
+    if authority.source != "lab":
+        return InfluenceDecision(baseline_value, False, "unassigned", "authority_source_legacy")
+    gate_reason = _learning_gate_reason()
+    if gate_reason is not None:
+        receipt_values = {
+            # No Lab Generation is selected while a global gate is active.  A
+            # producer-only capture preserves the refusal without fabricating
+            # an Exposure identity.
+            "receipt_kind": "capture",
+            "receipt_id": receipt_id,
+            "treatment_adapter_id": adapter_id,
+            "treatment_adapter_version": adapter_version,
+            "assignment_unit_key": assignment_key or candidate_key,
+            "candidate_key": candidate_key,
+            "consumer": consumer,
+            "consumer_stage": consumer_stage,
+            "assignment": "unassigned",
+            "applied": False,
+            "behavior_changed": False,
+            "baseline_payload": context["baseline"],
+            "applied_payload": context["baseline"],
+            "outcome_candidate_key": outcome_candidate_key,
+            "outcome_seeds": outcome_seeds,
+            "outcome_source": "fixed_horizon_candidate" if outcome_candidate_key else None,
+            "resolution_reason": gate_reason,
+            "authority_source": authority.source,
+            "authority_epoch": authority.epoch,
+            "runtime_session_id": (manifest or {}).get("runtime_session_id"),
+            "producer_commit": (manifest or {}).get("producer_commit"),
+        }
+        if persist_receipt:
+            try:
+                receipt = append_delivery_receipt(db=runtime_db, **receipt_values)
+            except RuntimeError as exc:
+                if str(exc) != "observation_outbox_capacity":
+                    raise
+                # The bounded Lab transport is full.  Keep the producer on
+                # deterministic baseline without growing the backlog.
+                receipt = None
+        else:
+            deferred_exposure_writes.append({"canonical_receipt": receipt_values})
+            receipt = receipt_id
+        return InfluenceDecision(
+            baseline_value, False, "unassigned", gate_reason, exposure_id=receipt,
+        )
+
+    decision = resolve_observation_treatment(
+        adapter_id=adapter_id,
+        adapter_version=adapter_version,
+        candidate_key=candidate_key,
+        context=context,
+        baseline=context["baseline"],
+        now=exposed_at,
+        db=runtime_db,
+        outcome_candidate_key=outcome_candidate_key,
+        outcome_seeds=outcome_seeds,
+        consumer=consumer,
+        consumer_stage=consumer_stage,
+        runtime_session_id=(manifest or {}).get("runtime_session_id"),
+        producer_commit=(manifest or {}).get("producer_commit"),
+        receipt_id=receipt_id,
+        persist_receipt=persist_receipt,
+    )
+    payload_value = decision.payload.get("value", baseline_value)
+    if isinstance(payload_value, bool) or not isinstance(payload_value, (int, float)):
+        payload_value = baseline_value
+    payload_value = float(payload_value)
+    if not persist_receipt and not (
+        decision.reason == "outbox_backpressure" and decision.receipt_id is None
+    ):
+        deferred_exposure_writes.append({
+            "canonical_receipt": {
+                "receipt_kind": "treatment",
+                "receipt_id": decision.receipt_id or receipt_id,
+                "observation_id": decision.observation_id,
+                "generation": decision.generation,
+                "manifest_id": decision.manifest_id,
+                "manifest_hash": decision.manifest_hash,
+                "treatment_adapter_id": adapter_id,
+                "treatment_adapter_version": adapter_version,
+                "assignment_unit_key": assignment_key or candidate_key,
+                "candidate_key": candidate_key,
+                "consumer": consumer,
+                "consumer_stage": consumer_stage,
+                "assignment": decision.assignment,
+                "applied": decision.applied,
+                "behavior_changed": decision.behavior_changed,
+                "baseline_payload": context["baseline"],
+                "applied_payload": decision.payload,
+                "outcome_candidate_key": outcome_candidate_key,
+                "outcome_seeds": outcome_seeds,
+                "outcome_source": "fixed_horizon_candidate" if outcome_candidate_key else None,
+                "resolution_reason": decision.reason,
+                "active_manifest_snapshot": list(decision.active_manifest_snapshot),
+                "manifest_set_fingerprint": decision.manifest_set_fingerprint,
+                "revocation_snapshot_fingerprint": decision.revocation_snapshot_fingerprint,
+                "authority_source": authority.source,
+                "authority_epoch": authority.epoch,
+                "runtime_session_id": (manifest or {}).get("runtime_session_id"),
+                "producer_commit": (manifest or {}).get("producer_commit"),
+            },
+        })
+    return InfluenceDecision(
+        payload_value if decision.behavior_changed else baseline_value,
+        decision.behavior_changed,
+        decision.assignment,
+        decision.reason,
+        hypothesis_id=None,
+        experiment_id=decision.observation_id,
+        exposure_id=decision.receipt_id,
+    )
 
 
 def stable_assignment(experiment: LearningExperiment, candidate_key: str) -> str:
@@ -374,12 +580,52 @@ def apply_numeric_treatment(
     outcome_seeds: list | None = None,
     require_outcome_seed: bool = False,
     deferred_exposure_writes: list[dict] | None = None,
+    runtime_db: sqlite3.Connection | None = None,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
     baseline_value = float(baseline)
     treatment_value = float(treatment)
     if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
         raise ValueError("numeric Learning treatment values must be finite")
+    authority_unavailable = False
+    try:
+        from aletheia.observation_lab.canonical import get_authority_source
+
+        authority_source = get_authority_source(db=runtime_db).source
+    except sqlite3.OperationalError as exc:
+        if "no such table: observation_authority_state" in str(exc):
+            authority_source = "legacy"
+        else:
+            authority_source = "legacy"
+            authority_unavailable = True
+    except (FileNotFoundError, RuntimeError, sqlite3.Error):
+        authority_source = "legacy"
+        authority_unavailable = True
+    if authority_unavailable:
+        return InfluenceDecision(
+            baseline_value, False, "unassigned", "authority_source_unavailable",
+        )
+    if authority_source == "lab":
+        return _resolve_numeric_via_observation_lab(
+            path_id=path_id,
+            scope=scope,
+            action=action,
+            source_cohort=source_cohort,
+            target_horizon=target_horizon,
+            candidate_key=candidate_key,
+            baseline=baseline_value,
+            treatment=treatment_value,
+            consumer=consumer,
+            consumer_stage=consumer_stage,
+            outcome_candidate_key=outcome_candidate_key,
+            manifest=manifest,
+            assignment_key=assignment_key,
+            exposed_at=exposed_at,
+            outcome_seeds=outcome_seeds,
+            require_outcome_seed=require_outcome_seed,
+            deferred_exposure_writes=deferred_exposure_writes,
+            runtime_db=runtime_db,
+        )
     gate_reason = _learning_gate_reason()
     if gate_reason is not None:
         return InfluenceDecision(baseline_value, False, "disabled", gate_reason)
@@ -625,6 +871,7 @@ def apply_boolean_treatment(
     target_horizon: str, candidate_key: str | None, consumer: str,
     consumer_stage: str, outcome_candidate_key: str | None = None,
     opportunity_id: str | None = None, manifest: dict | None = None,
+    runtime_db: sqlite3.Connection | None = None,
 ) -> InfluenceDecision:
     """Apply one default-off boolean treatment through the numeric authority seam.
 
@@ -648,4 +895,5 @@ def apply_boolean_treatment(
         outcome_candidate_key=outcome_candidate_key,
         opportunity_id=opportunity_id,
         manifest=manifest,
+        runtime_db=runtime_db,
     )
