@@ -3,6 +3,9 @@
 
 Use this directory for procedural instructions: running the gateway, local development, preview worktrees, testing, deployment, and recovery.
 
+PR review budgets, lifecycle states, feedback validity, and merge readiness are
+defined only in [`PR_REVIEW_LIFECYCLE.md`](development/agent-guides/PR_REVIEW_LIFECYCLE.md).
+
 ## Subfolders
 
 | Folder | Use |
