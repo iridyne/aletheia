@@ -5,9 +5,14 @@ import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
+
 from aletheia.learning.entry_context import build_entry_learning_context
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Fill, Order, Position, UniverseMember, UniverseSnapshot
+from aletheia.storage.models import (
+    Fill, Order, Position, TradeProposal, UniverseForwardOutcome, UniverseMember,
+    UniverseSnapshot,
+)
 from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
 
@@ -122,6 +127,51 @@ def _context(as_of_at: str):
     )
 
 
+def _insert_plan(generation: dict, *, plan_id: str, status: str, mode: str) -> None:
+    plan_json = json.dumps({
+        "entry_profile_id": "grounded-anchor-resting-maker",
+        "entry_profile_version": "v1",
+    }, sort_keys=True, separators=(",", ":"))
+    repo._insert("entry_plans", {
+        "id": plan_id, "planning_generation_id": generation["id"],
+        "candidate_id": generation["candidate_id"], "planning_key": generation["planning_key"],
+        "version": "entry-plan/v2", "venue": "bitget", "symbol": "BTC/USDT",
+        "market_type": "perp", "direction": "long", "execution_mode": mode,
+        "plan_json": plan_json, "plan_hash": hashlib.sha256(plan_json.encode()).hexdigest(),
+        "status": status, "created_at": "2026-09-01T00:01:00+00:00",
+        "updated_at": "2026-09-01T00:02:00+00:00",
+        "terminal_at": (
+            "2026-09-01T00:02:00+00:00"
+            if status in {"expired", "invalidated", "cancelled", "failed"} else None
+        ),
+    })
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET status='planned',result_kind='entry_plan',"
+        "entry_plan_id=? WHERE id=?", (plan_id, generation["id"]),
+    )
+
+
+def _insert_forward_outcome(
+    generation: dict, *, outcome_id: str, settled_at: str,
+    entry_price: float = 100.0, exit_price: float = 110.0,
+) -> None:
+    candidate = repo.get_universe_member(generation["candidate_id"])
+    repo.insert_forward_outcome(UniverseForwardOutcome(
+        id=outcome_id, outcome_candidate_key=f"member:{generation['candidate_id']}",
+        member_id=generation["candidate_id"], snapshot_id=candidate["snapshot_id"],
+        symbol="BTC/USDT", venue="bitget", market_type="perp",
+        scanner_family="mean_reversion", direction="long", horizon="4h",
+        entry_price_usd=entry_price, entry_ts="2026-09-01T00:00:00+00:00",
+        due_at="2026-09-01T04:00:00+00:00", settled_at=settled_at,
+        exit_price_usd=exit_price, directional_return_pct=(exit_price-entry_price),
+        estimated_fee_pct=0.4, estimated_spread_slippage_pct=0.6,
+        estimated_funding_pct=0.0, net_return_pct=(exit_price-entry_price)-1.0,
+        min_tradable_edge_pct=0.2, mfe_pct=12.0, mae_pct=-3.0,
+        settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
+        cost_model_version="test-cost/v1", status="settled",
+    ))
+
+
 def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units():
     before = _generation(created_at="2026-09-01T00:00:00+00:00")
     repo.execute_write(
@@ -136,6 +186,7 @@ def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units(
     assert context.support == {
         "independent_n": 1, "distinct_symbols": 1, "distinct_dates": 1,
         "complete_outcome_coverage": 1.0,
+        "evidence_ref_total": 3, "evidence_refs_truncated": False,
     }
     assert context.metrics["no_plan_rate"] == 1.0
     assert context.metrics["intent_to_treat_net_utility_pct"] == 0.0
@@ -145,20 +196,7 @@ def test_entry_learning_uses_full_no_plan_denominator_and_excludes_future_units(
 def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff():
     generation = _generation(created_at="2026-09-01T00:00:00+00:00")
     plan_id = "plan-late"
-    plan_json = "{}"
-    repo._insert("entry_plans", {
-        "id": plan_id, "planning_generation_id": generation["id"],
-        "candidate_id": generation["candidate_id"], "planning_key": generation["planning_key"],
-        "version": "entry-plan/v2", "venue": "bitget", "symbol": "BTC/USDT",
-        "market_type": "perp", "direction": "long", "execution_mode": "RESTING_MAKER",
-        "plan_json": plan_json, "plan_hash": hashlib.sha256(plan_json.encode()).hexdigest(),
-        "status": "filled", "created_at": "2026-09-01T00:01:00+00:00",
-        "updated_at": "2026-09-01T00:02:00+00:00",
-    })
-    repo.execute_write(
-        "UPDATE candidate_planning_generations SET status='planned',result_kind='entry_plan',"
-        "entry_plan_id=? WHERE id=?", (plan_id, generation["id"]),
-    )
+    _insert_plan(generation, plan_id=plan_id, status="filled", mode="RESTING_MAKER")
     order = Order(
         id="order-late", symbol="BTC/USDT", market_type="perp", direction="long",
         order_type="limit", quantity=1, price=100, execution_mode="paper_internal",
@@ -178,13 +216,91 @@ def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff(
         opened_at="2026-09-01T00:03:00+00:00", closed_at="2026-09-04T00:00:00+00:00",
     )
     repo._insert("positions", position.model_dump())
+    _insert_forward_outcome(
+        generation, outcome_id="outcome-late",
+        settled_at="2026-09-04T00:00:00+00:00",
+    )
 
     context = _context("2026-09-03T00:00:00+00:00")
 
     assert context.status == "unavailable"
-    assert "entry_learning_outcome_after_cutoff" in context.blocking_reasons
+    assert "entry_learning_fixed_horizon_outcome_unavailable" in context.blocking_reasons
     assert "position:position-late" not in context.evidence_refs
     assert context.metrics["intent_to_treat_net_utility_pct"] is None
+
+
+def test_entry_learning_uses_fixed_4h_outcome_reanchored_to_actual_fill():
+    generation = _generation(created_at="2026-09-01T00:00:00+00:00")
+    _insert_plan(generation, plan_id="plan-open", status="filled", mode="RESTING_MAKER")
+    order = Order(
+        id="order-open", symbol="BTC/USDT", market_type="perp", direction="long",
+        order_type="limit", quantity=1, price=105, execution_mode="paper_internal",
+        entry_plan_id="plan-open", status="filled", created_at="2026-09-01T00:02:00+00:00",
+        filled_at="2026-09-01T00:03:00+00:00",
+    )
+    repo._insert("orders", order.model_dump())
+    repo._insert("fills", Fill(
+        id="fill-open", order_id=order.id, fill_price=105, fill_quantity=1,
+        filled_at="2026-09-01T00:03:00+00:00",
+    ).model_dump())
+    repo._insert("positions", Position(
+        id="position-open", symbol="BTC/USDT", market_type="perp", direction="long",
+        quantity=1, entry_price=105, realized_pnl=0, execution_mode="paper_internal",
+        order_id=order.id, status="open", outcome_eligible=True,
+        opened_at="2026-09-01T00:03:00+00:00",
+    ).model_dump())
+    _insert_forward_outcome(
+        generation, outcome_id="outcome-open",
+        settled_at="2026-09-01T04:01:00+00:00",
+    )
+
+    context = _context("2026-09-03T00:00:00+00:00")
+
+    assert context.status == "observational"
+    assert context.metrics["intent_to_treat_net_utility_pct"] == pytest.approx(
+        (110 - 105) / 105 * 100 - 1.0
+    )
+    assert context.metrics["mfe_pct"] == pytest.approx((112 - 105) / 105 * 100)
+    assert context.metrics["mae_p95_pct"] == pytest.approx((105 - 97) / 105 * 100)
+    assert "universe-forward-outcome:outcome-open" in context.evidence_refs
+
+
+def test_entry_learning_triggered_proposal_failure_is_not_counted_as_no_trigger():
+    generation = _generation(created_at="2026-09-01T00:00:00+00:00")
+    _insert_plan(generation, plan_id="plan-triggered", status="failed", mode="TRIGGERED")
+    repo._insert("trade_proposals", TradeProposal(
+        id="proposal-triggered", symbol="BTC/USDT", market_type="perp", direction="long",
+        entry_plan_id="plan-triggered", status="rejected",
+        created_at="2026-09-01T00:01:30+00:00",
+    ).model_dump())
+
+    context = _context("2026-09-03T00:00:00+00:00")
+
+    assert context.status == "observational"
+    assert context.metrics["no_trigger_rate"] == 0.0
+    assert context.metrics["no_fill_rate"] == 1.0
+    assert "trade-proposal:proposal-triggered" in context.evidence_refs
+
+
+def test_entry_learning_bounds_large_evidence_cohorts_without_losing_denominator():
+    for index in range(22):
+        generation = _generation(
+            created_at=f"2026-09-01T00:{index:02d}:00+00:00",
+            symbol=f"ASSET{index}/USDT",
+        )
+        repo.execute_write(
+            "UPDATE candidate_planning_generations SET status='no_plan',result_kind='no_plan',"
+            "completed_at=? WHERE id=?",
+            (f"2026-09-01T00:{index:02d}:30+00:00", generation["id"]),
+        )
+
+    context = _context("2026-09-03T00:00:00+00:00")
+
+    assert context.status == "observational"
+    assert context.support["independent_n"] == 22
+    assert context.support["evidence_ref_total"] == 66
+    assert context.support["evidence_refs_truncated"] is True
+    assert len(context.evidence_refs) == 64
 
 
 def test_entry_learning_does_not_read_a_no_plan_completed_after_cutoff():

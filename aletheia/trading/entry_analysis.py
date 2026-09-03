@@ -33,6 +33,14 @@ def fingerprint(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+def _candidate_opportunity_evidence_refs(opportunity: dict[str, Any]) -> tuple[str, ...]:
+    refs = list(opportunity.get("primary_evidence_refs") or ())
+    for mechanism in opportunity.get("secondary_mechanisms") or ():
+        if isinstance(mechanism, dict):
+            refs.extend(mechanism.get("evidence_refs") or ())
+    return tuple(sorted({str(ref) for ref in refs if str(ref).strip()})[:64])
+
+
 def _aware_utc(value: str) -> str:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -270,6 +278,11 @@ class EntryHypothesisV2(BaseModel):
             raise ValueError("entry_profile_required")
         if self.execution_urgency not in {"PASSIVE", "BOUNDED_URGENT"}:
             raise ValueError("entry_execution_urgency_required")
+        if (
+            self.entry_profile_id == "grounded-anchor-resting-maker"
+            and self.execution_urgency != "PASSIVE"
+        ):
+            raise ValueError("resting_maker_must_be_passive")
         if self.risk_tier == "NONE" or self.horizon != "INTRADAY":
             raise ValueError("entry_risk_horizon_required")
         if not self.supporting_fact_refs:
@@ -683,6 +696,11 @@ def build_entry_analysis_context(
                 **learning_scope,
                 reasons=(f"entry_learning_treatment:{treatment.reason}",),
             )
+    candidate_fact_refs = [candidate_ref]
+    if opportunity_context is not None:
+        candidate_fact_refs.extend(
+            _candidate_opportunity_evidence_refs(opportunity_context.opportunity)
+        )
     context_fields = dict(
         analysis_cutoff_at=cutoff.isoformat(),
         instrument={"venue": venue, "symbol": symbol, "market_type": market_type, "direction": generation["direction"]},
@@ -694,7 +712,7 @@ def build_entry_analysis_context(
                 None if opportunity_context is not None else candidate.get("inclusion_reason")
             ),
             "risk_flags": candidate.get("risk_flags"),
-            "fact_refs": [candidate_ref],
+            "fact_refs": candidate_fact_refs,
         },
         candle_windows=serialized, market_structure={**structures, "fact_refs": fact_refs},
         quant_context={

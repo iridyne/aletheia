@@ -10,6 +10,7 @@ from aletheia.trading.entry_analysis import (
     EntryAnchorV1,
     EntryHypothesisV1,
     EntryHypothesisV2,
+    _candidate_opportunity_evidence_refs,
     validate_hypothesis_references,
 )
 
@@ -125,6 +126,31 @@ def test_v2_hypothesis_binds_mechanism_profile_and_current_market_fact():
     with pytest.raises(ValueError, match="hypothesis_current_market_fact_required"):
         validate_hypothesis_references(
             hypothesis.model_copy(update={"supporting_fact_refs": (primary.anchor_id,)}), context,
+        )
+
+
+def test_v2_candidate_facts_include_bounded_primary_and_secondary_opportunity_evidence():
+    refs = _candidate_opportunity_evidence_refs({
+        "primary_evidence_refs": ["opportunity:primary"],
+        "secondary_mechanisms": [
+            {"evidence_refs": ["opportunity:secondary", "opportunity:primary"]},
+        ],
+    })
+
+    assert refs == ("opportunity:primary", "opportunity:secondary")
+
+
+def test_v2_resting_maker_cannot_claim_bounded_urgent_execution():
+    primary = _anchor("candidate_reference", 100.0, "candidate:c1")
+    invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
+
+    with pytest.raises(ValueError, match="resting_maker_must_be_passive"):
+        EntryHypothesisV2(
+            decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
+            primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
+            entry_profile_id="grounded-anchor-resting-maker", entry_profile_version="v1",
+            execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY",
+            supporting_fact_refs=(invalidation.anchor_id,),
         )
 
 

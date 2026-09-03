@@ -32,6 +32,119 @@ def _fingerprint(value: object) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _percentile(values: list[float], probability: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower, upper = math.floor(position), math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+def _bounded_evidence(refs: list[str]) -> tuple[tuple[str, ...], int, bool]:
+    complete = sorted(set(refs))
+    return tuple(complete[:64]), len(complete), len(complete) > 64
+
+
+def _filled_unit_outcome(
+    db, *, row: dict[str, Any], position: dict[str, Any], cutoff: datetime,
+) -> tuple[float, float | None, float | None, str] | tuple[None, None, None, str]:
+    """Return one fixed-4h Entry outcome, re-anchored to its actual fill price."""
+
+    outcomes = [dict(item) for item in db.execute(
+        "SELECT * FROM universe_forward_outcomes WHERE member_id=? AND horizon='4h' "
+        "AND venue=? AND symbol=? AND market_type=? AND LOWER(direction)=LOWER(?) "
+        "ORDER BY entry_ts,id",
+        (
+            row["plan_candidate_id"], row["venue"], row["symbol"],
+            row["market_type"], row["direction"],
+        ),
+    ).fetchall()]
+    if len(outcomes) != 1:
+        return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
+    outcome = outcomes[0]
+    try:
+        due_at = _instant(outcome["due_at"])
+        settled_at = _instant(outcome["settled_at"])
+    except (TypeError, ValueError):
+        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
+    if outcome.get("status") != "settled" or due_at > cutoff or settled_at > cutoff:
+        return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
+
+    from aletheia.analytics.outcome_semantics import validated_outcome_economics
+
+    economics = validated_outcome_economics(outcome)
+    if economics is None:
+        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
+    try:
+        entry_price = float(position["entry_price"])
+        quantity = abs(float(position["quantity"]))
+    except (TypeError, ValueError):
+        return None, None, None, "entry_learning_position_outcome_invalid"
+    if (
+        not math.isfinite(entry_price) or entry_price <= 0
+        or not math.isfinite(quantity) or quantity <= 0
+        or not bool(position.get("outcome_eligible"))
+    ):
+        return None, None, None, "entry_learning_position_outcome_incomplete"
+
+    closed_at = None
+    if position.get("status") == "closed" and position.get("closed_at"):
+        try:
+            closed_at = _instant(position["closed_at"])
+        except (TypeError, ValueError):
+            return None, None, None, "entry_learning_position_outcome_invalid"
+    if closed_at is not None and closed_at <= due_at:
+        try:
+            realized = float(position["realized_pnl"])
+        except (TypeError, ValueError):
+            return None, None, None, "entry_learning_position_outcome_invalid"
+        if not math.isfinite(realized):
+            return None, None, None, "entry_learning_position_outcome_invalid"
+        return realized / (quantity * entry_price) * 100.0, None, None, str(outcome["id"])
+
+    try:
+        candidate_entry = float(outcome["entry_price_usd"])
+        exit_price = float(outcome["exit_price_usd"])
+        candidate_mfe = float(outcome["mfe_pct"])
+        candidate_mae = float(outcome["mae_pct"])
+    except (TypeError, ValueError):
+        return None, None, None, "entry_learning_fixed_horizon_path_invalid"
+    if (
+        not all(math.isfinite(value) for value in (
+            candidate_entry, exit_price, candidate_mfe, candidate_mae,
+        ))
+        or candidate_entry <= 0 or exit_price <= 0
+        or candidate_mfe < 0 or candidate_mae > 0
+    ):
+        return None, None, None, "entry_learning_fixed_horizon_path_invalid"
+    direction = str(row["direction"]).lower()
+    if direction == "long":
+        high = candidate_entry * (1.0 + candidate_mfe / 100.0)
+        low = candidate_entry * (1.0 + candidate_mae / 100.0)
+        directional = (exit_price - entry_price) / entry_price * 100.0
+        mfe = max(0.0, (high - entry_price) / entry_price * 100.0)
+        mae = min(0.0, (low - entry_price) / entry_price * 100.0)
+    elif direction == "short":
+        low = candidate_entry * (1.0 - candidate_mfe / 100.0)
+        high = candidate_entry * (1.0 - candidate_mae / 100.0)
+        directional = (entry_price - exit_price) / entry_price * 100.0
+        mfe = max(0.0, (entry_price - low) / entry_price * 100.0)
+        mae = min(0.0, (entry_price - high) / entry_price * 100.0)
+    else:
+        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
+    utility = (
+        directional - economics["estimated_fee_pct"]
+        - economics["estimated_spread_slippage_pct"]
+        - economics["estimated_funding_pct"]
+    )
+    if not all(math.isfinite(value) for value in (utility, mfe, mae)):
+        return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
+    return utility, mfe, mae, str(outcome["id"])
+
+
 def _planning_inference_evidence(
     db, *, generation_id: str, cutoff: datetime,
 ) -> tuple[set[tuple[str, ...]], float | None, list[str], set[str]]:
@@ -250,6 +363,7 @@ def empty_entry_learning_context(
         support={
             "independent_n": 0, "distinct_symbols": 0, "distinct_dates": 0,
             "complete_outcome_coverage": 0.0,
+            "evidence_ref_total": 0, "evidence_refs_truncated": False,
         },
         metrics={
             "intent_to_treat_net_utility_pct": None, "fill_rate": None,
@@ -274,6 +388,7 @@ def build_entry_learning_context(
     db = repo.get_db()
     rows = db.execute(
         "SELECT pg.*,um.symbol AS candidate_symbol,ep.id AS plan_id,"
+        "ep.candidate_id AS plan_candidate_id,"
         "ep.status AS plan_status,ep.execution_mode,ep.plan_json,"
         "ep.terminal_at AS plan_terminal_at "
         "FROM candidate_planning_generations pg "
@@ -306,6 +421,9 @@ def build_entry_learning_context(
     inference_identities: set[tuple[str, ...]] = set()
     profile_identities: set[tuple[str, str]] = set()
     inference_costs: list[float] = []
+    maes: list[float] = []
+    mfes: list[float] = []
+    captures: list[float] = []
     invalid_reasons: set[str] = set()
     for raw in rows:
         row = dict(raw)
@@ -393,7 +511,16 @@ def build_entry_learning_context(
                 and plan_terminal_at is not None
                 and plan_terminal_at <= cutoff
             ):
-                no_trigger += int(row.get("execution_mode") == "TRIGGERED")
+                proposal = db.execute(
+                    "SELECT id FROM trade_proposals WHERE entry_plan_id=? "
+                    "AND julianday(created_at)<=julianday(?) LIMIT 1",
+                    (plan_id, cutoff.isoformat()),
+                ).fetchone()
+                if proposal is not None:
+                    evidence_refs.append(f"trade-proposal:{proposal['id']}")
+                no_trigger += int(
+                    row.get("execution_mode") == "TRIGGERED" and proposal is None
+                )
                 no_fill += 1
                 complete += 1
                 utilities.append(0.0)
@@ -433,28 +560,21 @@ def build_entry_learning_context(
             invalid_reasons.add("entry_learning_position_missing")
             continue
         position = dict(position)
-        closed_at = position.get("closed_at")
-        if position.get("status") != "closed" or not closed_at:
-            invalid_reasons.add("entry_learning_position_open_at_cutoff")
-            continue
-        try:
-            if _instant(closed_at) > cutoff:
-                invalid_reasons.add("entry_learning_outcome_after_cutoff")
-                continue
-            notional = abs(float(position["quantity"]) * float(position["entry_price"]))
-            net = float(position["realized_pnl"])
-        except (TypeError, ValueError):
-            invalid_reasons.add("entry_learning_position_outcome_invalid")
-            continue
-        if (
-            not math.isfinite(notional) or notional <= 0 or not math.isfinite(net)
-            or not bool(position.get("outcome_eligible"))
-        ):
-            invalid_reasons.add("entry_learning_position_outcome_incomplete")
+        utility, mfe, mae, outcome_id = _filled_unit_outcome(
+            db, row=row, position=position, cutoff=cutoff,
+        )
+        if utility is None:
+            invalid_reasons.add(outcome_id)
             continue
         evidence_refs.append(f"position:{position['id']}")
+        evidence_refs.append(f"universe-forward-outcome:{outcome_id}")
         complete += 1
-        utilities.append(net / notional * 100.0)
+        utilities.append(utility)
+        if mfe is not None and mae is not None:
+            mfes.append(mfe)
+            maes.append(-mae)
+            if mfe > 0:
+                captures.append(utility / mfe)
 
     total = len(rows)
     coverage = complete / total
@@ -477,6 +597,13 @@ def build_entry_learning_context(
         "independent_n": total, "distinct_symbols": len(symbols),
         "distinct_dates": len(dates), "complete_outcome_coverage": coverage,
     }
+    bounded_refs, evidence_ref_total, evidence_refs_truncated = _bounded_evidence(
+        evidence_refs
+    )
+    support.update(
+        evidence_ref_total=evidence_ref_total,
+        evidence_refs_truncated=evidence_refs_truncated,
+    )
     rates = lambda value: value / total
     metrics = {
         "intent_to_treat_net_utility_pct": (
@@ -484,7 +611,11 @@ def build_entry_learning_context(
         ),
         "fill_rate": rates(filled), "no_plan_rate": rates(no_plan),
         "no_trigger_rate": rates(no_trigger), "no_fill_rate": rates(no_fill),
-        "mae_p95_pct": None, "mfe_pct": None, "mfe_to_realized_capture": None,
+        "mae_p95_pct": _percentile(maes, 0.95) if len(maes) == filled else None,
+        "mfe_pct": sum(mfes) / filled if len(mfes) == filled and filled else None,
+        "mfe_to_realized_capture": (
+            sum(captures) / filled if len(captures) == filled and filled else None
+        ),
         "model_and_data_cost": (
             sum(inference_costs) / total if len(inference_costs) == total else None
         ),
@@ -499,12 +630,12 @@ def build_entry_learning_context(
     if invalid_reasons:
         return EntryLearningContextV1(
             as_of_at=cutoff.isoformat(), status="unavailable", scope=scope,
-            support=support, metrics=metrics, evidence_refs=tuple(sorted(set(evidence_refs))),
+            support=support, metrics=metrics, evidence_refs=bounded_refs,
             source_fingerprint=None, blocking_reasons=tuple(sorted(invalid_reasons)),
         )
     return EntryLearningContextV1(
         as_of_at=cutoff.isoformat(), status="observational", scope=scope,
-        support=support, metrics=metrics, evidence_refs=tuple(sorted(set(evidence_refs))),
+        support=support, metrics=metrics, evidence_refs=bounded_refs,
         source_fingerprint=_fingerprint(material), blocking_reasons=(),
     )
 

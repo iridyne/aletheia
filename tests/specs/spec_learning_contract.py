@@ -94,6 +94,7 @@ def test_entry_learning_projection_is_read_only_and_full_denominator():
     from aletheia.learning.entry_context import (
         ENTRY_LEARNING_INTERFERENCE_KEY,
         EntryLearningTreatmentAdapter,
+        _filled_unit_outcome,
         build_entry_learning_context,
         empty_entry_learning_context,
     )
@@ -101,7 +102,9 @@ def test_entry_learning_projection_is_read_only_and_full_denominator():
     source = inspect.getsource(build_entry_learning_context)
     assert "julianday(pg.created_at)<=julianday(?)" in source
     assert "julianday(closed_at)" not in source
-    assert "entry_learning_outcome_after_cutoff" in source
+    outcome_source = inspect.getsource(_filled_unit_outcome)
+    assert "due_at > cutoff or settled_at > cutoff" in outcome_source
+    assert "entry_learning_fixed_horizon_outcome_unavailable" in outcome_source
     assert "no_plan" in source and "no_trigger" in source and "no_fill" in source
     assert "execute_write" not in source and "INSERT " not in source and "UPDATE " not in source
     adapter = EntryLearningTreatmentAdapter()
