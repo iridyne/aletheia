@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 
 import aletheia.analytics.profit_loop_diagnosis as diagnosis
+from aletheia.analytics.candidate_facts import CANDIDATE_TERMINAL_STATES
 
 
 def _position_fact(*, path_status: str = "available") -> dict:
@@ -394,3 +395,58 @@ def test_candidate_all_ineligible_yields_insufficient_data_not_directional():
     assert result["layers"]["Selection"]["baseline"] is None
     assert result["layers"]["Selection"]["observed"] is None
     assert result["layers"]["Selection"]["delta_pct"] is None
+
+
+def test_candidate_layers_account_for_every_canonical_terminal_state():
+    kind_by_state = {
+        "filtered": "universe_member",
+        "opportunity_not_reached": "universe_member",
+        "pi_skip": "pi_decision",
+        "pi_watch": "pi_decision",
+        "pi_hold": "pi_decision",
+        "proposal_not_reached": "pi_decision",
+        "risk_reject": "proposal",
+        "risk_not_reached": "proposal",
+        "approved_unfilled": "proposal",
+        "order_unfilled": "proposal",
+        "filled_without_position": "proposal",
+        "traded": "proposal",
+    }
+    assert set(kind_by_state) == CANDIDATE_TERMINAL_STATES
+    facts = [
+        _make_candidate_fact(
+            candidate_kind=kind_by_state[state],
+            terminal_state=state,
+            net_return_pct=float(index),
+            fact_id=state,
+            outcome_candidate_key=f"key-{state}",
+        )
+        for index, state in enumerate(sorted(CANDIDATE_TERMINAL_STATES))
+    ]
+
+    result = diagnosis.diagnose_candidate_report({"facts": facts})
+
+    for layer in result["layers"].values():
+        assert layer["raw_count"] == len(facts)
+        assert layer["raw_count"] == layer["eligible_count"] + layer["excluded_count"]
+    assert result["layers"]["Risk"]["eligible_count"] == 5
+    assert result["layers"]["Risk"]["exclusion_reasons"]["risk_not_reached"] == 1
+
+
+def test_unknown_candidate_terminal_state_is_typed_and_fails_closed():
+    facts = [
+        _make_candidate_fact(
+            candidate_kind="opportunity",
+            terminal_state="new_terminal_state",
+            net_return_pct=1.0,
+        )
+    ]
+
+    result = diagnosis.diagnose_candidate_report({"facts": facts})
+
+    assert result["status"] == "insufficient_data"
+    for layer in result["layers"].values():
+        assert layer["raw_count"] == 1
+        assert layer["eligible_count"] == 0
+        assert layer["excluded_count"] == 1
+        assert layer["exclusion_reasons"] == {"unclassified_terminal_state": 1}

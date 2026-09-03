@@ -15,6 +15,20 @@ from aletheia.storage.sqlite import iso_instant_us, register_instant_us
 
 FACT_CONTRACT_VERSION = "profit_loop_fact/v1"
 _FIXED_HORIZONS = frozenset({"15m", "1h", "4h", "24h"})
+CANDIDATE_TERMINAL_STATES = frozenset({
+    "filtered",
+    "opportunity_not_reached",
+    "pi_skip",
+    "pi_watch",
+    "pi_hold",
+    "proposal_not_reached",
+    "risk_reject",
+    "risk_not_reached",
+    "approved_unfilled",
+    "order_unfilled",
+    "filled_without_position",
+    "traded",
+})
 
 
 def _utc(value: str | datetime | None) -> datetime | None:
