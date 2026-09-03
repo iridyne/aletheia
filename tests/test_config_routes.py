@@ -1292,7 +1292,31 @@ def test_settings_openapi_exposes_redacted_typed_response_contract():
     assert settings["network"]["$ref"] == "#/components/schemas/NetworkConfig"
     assert settings["fast_trigger"]["$ref"] == "#/components/schemas/FastTriggerConfig"
     assert "secret" not in schemas["SettingsWebhookResponse"]["properties"]
+    assert schemas["SettingsWebhookResponse"]["properties"]["last_delivery"]
     assert "credentials_path" not in schemas["SettingsTunnelResponse"]["properties"]
+
+
+@pytest.mark.anyio
+async def test_get_settings_projects_sanitized_webhook_delivery(client, monkeypatch):
+    from aletheia import notifications
+
+    delivery = {
+            "status": "failed",
+            "attempted_at": "2026-09-02T08:00:00+00:00",
+            "receiver_host": "receiver.example",
+            "event_type": "trade_fill",
+            "entity_type": "position",
+            "entity_id": "position-1",
+            "http_status": 500,
+            "error_class": "HTTPError",
+            "latency_ms": 12,
+    }
+    monkeypatch.setattr(notifications, "webhook_delivery_status", lambda: delivery)
+
+    response = await client.get("/api/settings")
+
+    assert response.status_code == 200
+    assert response.json()["webhook"]["last_delivery"] == delivery
 
 
 @pytest.mark.anyio

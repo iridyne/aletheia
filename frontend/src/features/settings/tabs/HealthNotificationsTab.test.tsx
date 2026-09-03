@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HealthNotificationsTab } from "./HealthNotificationsTab";
 
-function renderHealthTab() {
+function renderHealthTab(webhook: Record<string, unknown> = {}) {
 	const client = new QueryClient();
 	client.setQueryData(["telegram-health"], {
 		reachable: false,
@@ -12,7 +12,7 @@ function renderHealthTab() {
 	return renderToStaticMarkup(
 		<QueryClientProvider client={client}>
 			<HealthNotificationsTab
-				settings={{ health: {}, telegram: {}, webhook: {} }}
+				settings={{ health: {}, telegram: {}, webhook }}
 				qc={client}
 			/>
 		</QueryClientProvider>,
@@ -42,5 +42,24 @@ describe("HealthNotificationsTab", () => {
 		expect(html).toContain("HMAC secret (write-only)");
 		expect(html).toContain("X-Aletheia-Signature");
 		expect(html).toContain("Secret is write-only — leave blank to keep the current value.");
+	});
+
+	it("shows only the sanitized last Webhook delivery result", () => {
+		const html = renderHealthTab({
+			last_delivery: {
+				status: "failed",
+				attempted_at: "2026-09-02T08:00:00+00:00",
+				receiver_host: "receiver.example",
+				event_type: "trade_fill",
+				entity_type: "position",
+				entity_id: "position-1",
+				http_status: null,
+				error_class: "TimeoutError",
+				latency_ms: 1000,
+			},
+		});
+
+		expect(html).toContain("Last delivery: failed · trade_fill · position:position-1 · receiver.example · 2026-09-02T08:00:00+00:00 · TimeoutError · 1000 ms");
+		expect(html).not.toContain("path-secret");
 	});
 });

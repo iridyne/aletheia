@@ -32,6 +32,16 @@ unchanged by this contract. Risk, execution, and paper-trading controls remain
 staged unless a separately reviewed backend contract changes their persistence
 semantics.
 
+Webhook configuration and delivery truth are separate. Settings exposes only
+the newest attempted delivery as `delivered` or `failed`, with timestamp,
+host-only receiver identity, source entity, HTTP status or exception class, and
+latency. Disabled or category-suppressed events are `not_attempted`, do not
+create delivery facts, and never overwrite the last attempt. URL paths,
+queries, HMAC secrets, payloads, response bodies, and raw exception text are
+never persisted or returned. The read model selects by attempt timestamp and
+exposes only records confirmed in the hash-chained audit mirror; pending or
+failed mirrors remain unavailable and are retried rather than shown as truth.
+
 ## Checked-in inventory
 
 The table maps all 65 static `Switch`/`Toggle` JSX sites in `frontend/src`.
@@ -77,6 +87,7 @@ runtime; each grid uses the staged mode and the named Save boundary.
 | same | USDT Futures market | staged | `setExchangeMarkets`; `Save exchange config` |
 | same | Exchange/data divergence confirmation | staged | `setExchangeMarkets`; `Save exchange config` |
 | `features/settings/tabs/HealthNotificationsTab.tsx` `WebhookCard` | Webhook delivery | staged | `updateWebhookConfig`; `Save` |
+| same | Last Webhook delivery | read-only | latest sanitized `webhook_delivery` audit outcome |
 | same | Alert events | staged | `updateWebhookConfig`; `Save` |
 | same | Trade fill events | staged | `updateWebhookConfig`; `Save` |
 | same | Daily summary event | staged | `updateWebhookConfig`; `Save` |

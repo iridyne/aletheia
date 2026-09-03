@@ -229,6 +229,19 @@ class SettingsWebhookResponse(BaseModel):
     notify_alerts: bool
     notify_daily_summary: bool
     timeout_sec: float
+    last_delivery: "SettingsWebhookDeliveryResponse | None"
+
+
+class SettingsWebhookDeliveryResponse(BaseModel):
+    status: Literal["delivered", "failed"]
+    attempted_at: str
+    receiver_host: str
+    event_type: str
+    entity_type: str | None
+    entity_id: str | None
+    http_status: int | None
+    error_class: str | None
+    latency_ms: int
 
 
 class SettingsTunnelResponse(BaseModel):
@@ -382,6 +395,7 @@ def get_settings() -> SettingsResponse:
     from aletheia.agent_runtime.pi_daemon import daemon_status
     from aletheia.learning.registry import paper_influence_path_options
     from aletheia.trading.persona_rollout import persona_rollout_status
+    from aletheia.notifications import webhook_delivery_status
     providers_safe = {}
     for name, p in cfg.models.providers.items():
         providers_safe[name] = {
@@ -426,7 +440,10 @@ def get_settings() -> SettingsResponse:
         "health": cfg.health.model_dump(mode="json"),
         "retention": cfg.retention.model_dump(mode="json"),
         "telegram": cfg.telegram.model_dump(mode="json"),
-        "webhook": {k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
+        "webhook": {
+            **{k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
+            "last_delivery": webhook_delivery_status(),
+        },
         "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
         "universe": cfg.universe.model_dump(mode="json"),
         "fast_trigger": cfg.fast_trigger.model_dump(mode="json"),

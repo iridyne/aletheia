@@ -100,6 +100,17 @@ interface WebhookConfig {
 	notify_alerts?: boolean;
 	notify_daily_summary?: boolean;
 	timeout_sec?: number;
+	last_delivery?: {
+		status: "delivered" | "failed";
+		attempted_at: string;
+		receiver_host: string;
+		event_type: string;
+		entity_type?: string | null;
+		entity_id?: string | null;
+		http_status?: number | null;
+		error_class?: string | null;
+		latency_ms: number;
+	} | null;
 }
 
 function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unknown>; qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
@@ -157,6 +168,11 @@ function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unkn
 
 	return (
 		<div className="card mb-0">
+			<p className="hint">
+				Last delivery: {webhook.last_delivery
+					? `${webhook.last_delivery.status} · ${webhook.last_delivery.event_type} · ${webhook.last_delivery.entity_type ?? "unknown"}:${webhook.last_delivery.entity_id ?? "unknown"} · ${webhook.last_delivery.receiver_host} · ${webhook.last_delivery.attempted_at} · ${webhook.last_delivery.error_class ?? webhook.last_delivery.http_status ?? "no status"} · ${webhook.last_delivery.latency_ms} ms`
+					: "not available"}
+			</p>
 			<div className="form-grid mb-3">
 				<label className="col-full">
 					<span>Webhook URL</span>
