@@ -692,11 +692,13 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             old,
             pulled.get("reason", "pull_failed"),
             detail=pulled.get("stderr") or "",
+            actual_head=pulled.get("current_commit"),
         )
         return {
             "applied": False,
             "reason": pulled.get("reason", "pull_failed"),
             "message": pulled.get("stderr") or "",
+            "actual_head": pulled.get("current_commit", ""),
             "mode": "development",
         }
 
@@ -797,11 +799,13 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 advanced.get("reason", "ff_only_rejected"),
                 attempted=new,
                 detail=advanced.get("stderr", ""),
+                actual_head=advanced.get("current_commit"),
             )
             return {
                 "applied": False,
                 "reason": advanced.get("reason", "ff_only_rejected"),
                 "message": advanced.get("stderr", ""),
+                "actual_head": advanced.get("current_commit", ""),
                 "mode": "development",
             }
 

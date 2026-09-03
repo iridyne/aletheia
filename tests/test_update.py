@@ -121,6 +121,108 @@ def test_git_timeout_is_reported_as_unknown_state(monkeypatch):
     assert git_ops.changed_files("old", "new") is None
 
 
+def _stub_timed_out_git_mutation(monkeypatch, tmp_path, *, mutation, heads):
+    from aletheia.update import git_ops
+
+    head_values = iter(heads)
+
+    def fake_git(*args):
+        if args == mutation:
+            return _FakeProc(returncode=124, stderr="git command exceeded 60s")
+        if args == ("rev-parse", "HEAD"):
+            return _FakeProc(stdout=f"{next(head_values)}\n")
+        if args == ("status", "--porcelain"):
+            return _FakeProc()
+        if args == ("merge-base", "--is-ancestor", "old111", "new222"):
+            return _FakeProc()
+        if args == ("rev-parse", "--git-dir"):
+            return _FakeProc(stdout=f"{tmp_path}\n")
+        if args == (
+            "fetch",
+            "--no-write-fetch-head",
+            "origin",
+            "master:refs/aletheia/update/master",
+        ):
+            return _FakeProc()
+        if args == ("rev-parse", "--verify", "refs/aletheia/update/master"):
+            return _FakeProc(stdout="new222\n")
+        if args == ("rev-list", "--count", "new222..HEAD"):
+            return _FakeProc(stdout="0\n")
+        pytest.fail(f"unexpected git call: {args}")
+
+    monkeypatch.setattr(git_ops, "_git", fake_git)
+
+
+def test_merge_timeout_reconciles_when_target_head_is_clean(tmp_path, monkeypatch):
+    from aletheia.update import git_ops
+
+    _stub_timed_out_git_mutation(
+        monkeypatch,
+        tmp_path,
+        mutation=("merge", "--ff-only", "new222"),
+        heads=["old111", "new222"],
+    )
+
+    result = git_ops.merge_fast_forward("new222")
+
+    assert result["ok"] is True
+    assert result["reason"] == "git_mutation_timeout_reconciled"
+    assert result["current_commit"] == "new222"
+
+
+def test_merge_timeout_with_active_git_operation_stays_unknown(tmp_path, monkeypatch):
+    from aletheia.update import git_ops
+
+    (tmp_path / "MERGE_HEAD").write_text("unresolved\n", encoding="utf-8")
+    _stub_timed_out_git_mutation(
+        monkeypatch,
+        tmp_path,
+        mutation=("merge", "--ff-only", "new222"),
+        heads=["old111", "new222"],
+    )
+
+    result = git_ops.merge_fast_forward("new222")
+
+    assert result["ok"] is False
+    assert result["reason"] == "git_mutation_state_unknown"
+    assert "MERGE_HEAD" in result["detail"]
+
+
+def test_pull_timeout_reports_unknown_when_target_head_did_not_land(tmp_path, monkeypatch):
+    from aletheia.update import git_ops
+
+    _stub_timed_out_git_mutation(
+        monkeypatch,
+        tmp_path,
+        mutation=("merge", "--ff-only", "new222"),
+        heads=["old111", "old111"],
+    )
+    monkeypatch.setattr(git_ops, "git_available", lambda: True)
+
+    result = git_ops.pull("master")
+
+    assert result["ok"] is False
+    assert result["reason"] == "git_mutation_state_unknown"
+    assert result["current_commit"] == "old111"
+
+
+def test_reset_timeout_reconciles_when_rollback_head_is_clean(tmp_path, monkeypatch):
+    from aletheia.update import git_ops
+
+    _stub_timed_out_git_mutation(
+        monkeypatch,
+        tmp_path,
+        mutation=("reset", "--hard", "old111"),
+        heads=["old111"],
+    )
+
+    result = git_ops.reset_hard("old111")
+
+    assert result["ok"] is True
+    assert result["reason"] == "git_mutation_timeout_reconciled"
+    assert result["current_commit"] == "old111"
+
+
 def test_pull_rejects_local_ahead_before_merge(monkeypatch):
     from aletheia.update import git_ops
 

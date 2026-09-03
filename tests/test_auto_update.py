@@ -217,6 +217,52 @@ def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, 
     assert restored == [("old-sha", backups[1], True, True)]
 
 
+def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monkeypatch):
+    from aletheia.update import auto, git_ops
+
+    _linux_source(monkeypatch)
+    monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
+    monkeypatch.setattr(git_ops, "tag_names", lambda: ["v1.1.0"])
+    monkeypatch.setattr(git_ops, "tag_commit", lambda tag: "target-sha")
+    monkeypatch.setattr(
+        git_ops,
+        "version_at_ref",
+        lambda ref: '__version__ = "1.0.0"\n' if ref == "HEAD" else '__version__ = "1.1.0"\n',
+    )
+    monkeypatch.setattr(auto, "_runtime_gate", lambda **kwargs: {"ok": True})
+    monkeypatch.setattr(auto, "_doctor_healthy", lambda: {"ok": True})
+    monkeypatch.setattr(auto, "_observer_auto_preflight", lambda: {"required": False})
+    service = MagicMock()
+    service.create_backup.side_effect = [tmp_path / "preflight", tmp_path / "activation"]
+    monkeypatch.setattr(auto, "BackupService", lambda data_dir: service)
+    monkeypatch.setattr(auto, "_candidate_preflight", lambda target, backup: tmp_path / "candidate")
+    monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
+    monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
+    monkeypatch.setattr(auto, "_remove_candidate", lambda worktree: None)
+    actions = []
+    monkeypatch.setattr(
+        auto,
+        "_gateway_command",
+        lambda action: actions.append(action) or {"ok": action == "stop"},
+    )
+    monkeypatch.setattr(
+        git_ops,
+        "merge_fast_forward",
+        lambda target: {
+            "ok": False,
+            "reason": "git_mutation_state_unknown",
+            "detail": "HEAD/worktree state unavailable",
+        },
+    )
+    monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
+
+    result = auto.run()
+
+    assert result["reason"] == "git_mutation_state_unknown"
+    assert result["state"]["hold"] is True
+    assert actions == ["stop"]
+
+
 def test_state_is_atomic_and_resume_only_clears_global_hold(tmp_path, monkeypatch):
     from aletheia.update import auto
 
