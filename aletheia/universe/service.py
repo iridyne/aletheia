@@ -35,6 +35,8 @@ from aletheia.universe.candidate_opportunity import (
 logger = logging.getLogger("aletheia.universe")
 
 _TWIN_SHADOW_TIMEOUT_SEC = 10.0
+_terminal_candidate_selection_policy_fingerprint: str | None = None
+_terminal_candidate_selection_policy_lock = threading.Lock()
 
 # Phase 3 retention (2026-07-17): universe_snapshots + universe_members
 # change-suppression. Universe refresh runs every ~10 min but the allocation
@@ -411,6 +413,9 @@ async def _persist_candidate_selection_shadow_nonfatal(
         return 0
 
     def build_and_persist() -> int:
+        global _terminal_candidate_selection_policy_fingerprint
+
+        from aletheia.universe.candidate_eligibility import canonical_fingerprint
         from aletheia.universe.candidate_selection_authority import (
             candidate_selection_policy_identity,
         )
@@ -418,17 +423,22 @@ async def _persist_candidate_selection_shadow_nonfatal(
             evaluate_candidate_selection_policy,
         )
 
-        qualification = evaluate_candidate_selection_policy(as_of_at=captured_at)
         current_policy = candidate_selection_policy_identity(
             cfg,
             family_spread_tolerances=family_spread_tolerances,
             family_spread_evidence=family_spread_evidence,
         )
-        if (
-            qualification["verdict"] in {"positive", "negative", "neutral", "invalid"}
-            and qualification.get("selection_policy") == current_policy
-        ):
-            return 0
+        policy_fingerprint = canonical_fingerprint(current_policy)
+        with _terminal_candidate_selection_policy_lock:
+            if policy_fingerprint == _terminal_candidate_selection_policy_fingerprint:
+                return 0
+            qualification = evaluate_candidate_selection_policy(as_of_at=captured_at)
+            if (
+                qualification["verdict"] in {"positive", "negative", "neutral", "invalid"}
+                and qualification.get("selection_policy") == current_policy
+            ):
+                _terminal_candidate_selection_policy_fingerprint = policy_fingerprint
+                return 0
         bundle = _build_candidate_selection_bundle(
             population=population,
             scanner_run_id=scanner_run_id,
