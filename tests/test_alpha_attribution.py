@@ -450,6 +450,35 @@ def test_system_operator_alpha_compares_fixed_horizon_passed_and_rejected_candid
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
 
+def test_system_operator_alpha_timestamp_tie_counts_first_rowid_once():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_operator_candidate(db, 0, "passed", -3.0)
+    _insert_operator_candidate(db, 0, "rejected", 2.0)
+    accepted_key = "pi_decision:operator-passed-0"
+    rejected_key = "pi_decision:operator-rejected-0"
+    db.execute(
+        "UPDATE filter_decisions SET outcome_candidate_key=? "
+        "WHERE outcome_candidate_key=?",
+        (accepted_key, rejected_key),
+    )
+    db.execute(
+        "DELETE FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+        (rejected_key,),
+    )
+    db.commit()
+
+    first = build_alpha_attribution_audit(days=30)["verdicts"]["system_operator"]
+    second = build_alpha_attribution_audit(days=30)["verdicts"]["system_operator"]
+    first_counts = (first["sample_size"], first["details"]["rejected_sample_size"])
+    second_counts = (second["sample_size"], second["details"]["rejected_sample_size"])
+
+    assert first_counts == second_counts == (1, 0)
+    assert sum(first_counts) == 1
+
+
 def test_system_operator_alpha_does_not_mix_behavior_fingerprints():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
