@@ -1625,7 +1625,10 @@ class UniverseService:
                     candidate_selection_utility_pct=item.get(
                         "candidate_selection_utility_pct",
                     ),
-                    opportunity_mechanism=opportunity_context.opportunity["primary_mechanism"],
+                    opportunity_mechanism=(
+                        opportunity_context.opportunity["primary_mechanism"]
+                        if opportunity_context else None
+                    ),
                     opportunity_mechanism_version=item.get("opportunity_mechanism_version"),
                     opportunity_source_component=item.get("opportunity_source_component"),
                     opportunity_source_cutoff_at=item.get("opportunity_source_cutoff_at"),
