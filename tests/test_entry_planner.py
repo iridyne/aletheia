@@ -636,6 +636,45 @@ def test_plan_intent_no_plan_persists_reason_code(monkeypatch):
     assert json.loads(stored["result_json"])["reason_code"] == "STALE_FACTS"
 
 
+def test_v4_no_plan_invalid_identity_is_replaced_before_persistence(monkeypatch):
+    from types import SimpleNamespace
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    context = SimpleNamespace(
+        candle_windows={"15m": {"availability": "available"}},
+        anchors=(SimpleNamespace(anchor_id="candidate:anchor"),),
+        entry_profiles=({"id": "grounded-anchor-resting-maker", "version": "v1"},),
+        candidate={"fact_refs": [f"candidate:{candidate.id}"]},
+        market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
+        portfolio_context={"fact_refs": []}, execution_context={"fact_refs": []},
+        candidate_opportunity_context={
+            "opportunity": {"primary_mechanism": "reversal", "direction": "long"},
+        },
+        learning_context=SimpleNamespace(evidence_refs=()),
+        model_dump=lambda **_kwargs: {"context": "v4"},
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
+        lambda *_args, **_kwargs: context,
+    )
+
+    async def planner(_context):
+        return {
+            "decision": "NO_PLAN", "reason_code": "CONFLICTING_SIGNALS",
+            "mechanism": "continuation", "direction": "long",
+            "risk_tier": "NONE", "horizon": "NONE",
+        }
+
+    result = asyncio.run(plan_next_candidate(planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+
+    assert result["status"] == "no_plan"
+    persisted = json.loads(stored["result_json"])
+    assert persisted["reason_code"] == "INVALID_HYPOTHESIS_REFERENCE"
+    assert persisted["source"] == "deterministic_validation"
+
+
 def test_entry_planner_persists_plan_for_paper_internal():
     from aletheia.config.loader import load_config
 

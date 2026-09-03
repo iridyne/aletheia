@@ -154,6 +154,31 @@ def test_v2_resting_maker_cannot_claim_bounded_urgent_execution():
         )
 
 
+def test_v2_no_plan_still_binds_opportunity_identity_and_explanatory_refs():
+    context = _context_v2((_anchor("candidate_reference", 100.0, "candidate:c1"),))
+    no_plan = EntryHypothesisV2(
+        decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS",
+        mechanism="continuation", direction="long", risk_tier="NONE", horizon="NONE",
+    )
+
+    with pytest.raises(ValueError, match="hypothesis_opportunity_identity_mismatch"):
+        validate_hypothesis_references(no_plan, context)
+    with pytest.raises(ValueError, match="hypothesis_fact_ref_not_supplied"):
+        validate_hypothesis_references(
+            no_plan.model_copy(update={
+                "mechanism": "reversal", "supporting_fact_refs": ("missing:fact",),
+            }),
+            context,
+        )
+    with pytest.raises(ValueError, match="hypothesis_learning_ref_not_supplied"):
+        validate_hypothesis_references(
+            no_plan.model_copy(update={
+                "mechanism": "reversal", "learning_evidence_refs": ("missing:learning",),
+            }),
+            context,
+        )
+
+
 @pytest.mark.parametrize(
     "mechanism",
     ("continuation", "reversal", "positioning_forced_flow", "information_catalyst"),

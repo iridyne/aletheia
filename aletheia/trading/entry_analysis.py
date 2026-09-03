@@ -294,17 +294,7 @@ def validate_hypothesis_references(
     hypothesis: EntryHypothesisV1 | EntryHypothesisV2,
     context: EntryAnalysisContextV1 | EntryAnalysisContextV2,
 ) -> None:
-    if hypothesis.decision == "NO_PLAN":
-        return
     anchors = {anchor.anchor_id: anchor for anchor in context.anchors}
-    if hypothesis.primary_anchor_ref not in anchors or hypothesis.invalidation_anchor_ref not in anchors:
-        raise ValueError("hypothesis_anchor_ref_not_supplied")
-    if anchors[hypothesis.primary_anchor_ref].directional_role not in {"entry_candidate", "both"}:
-        raise ValueError("hypothesis_primary_anchor_role_invalid")
-    if anchors[hypothesis.invalidation_anchor_ref].directional_role not in {
-        "invalidation_candidate", "both",
-    }:
-        raise ValueError("hypothesis_invalidation_anchor_role_invalid")
     facts = set(anchors)
     for section in (
         context.market_structure,
@@ -324,6 +314,20 @@ def validate_hypothesis_references(
             or hypothesis.direction != opportunity["direction"]
         ):
             raise ValueError("hypothesis_opportunity_identity_mismatch")
+        learning_refs = set(context.learning_context.evidence_refs)
+        if not set(hypothesis.learning_evidence_refs).issubset(learning_refs):
+            raise ValueError("hypothesis_learning_ref_not_supplied")
+    if hypothesis.decision == "NO_PLAN":
+        return
+    if hypothesis.primary_anchor_ref not in anchors or hypothesis.invalidation_anchor_ref not in anchors:
+        raise ValueError("hypothesis_anchor_ref_not_supplied")
+    if anchors[hypothesis.primary_anchor_ref].directional_role not in {"entry_candidate", "both"}:
+        raise ValueError("hypothesis_primary_anchor_role_invalid")
+    if anchors[hypothesis.invalidation_anchor_ref].directional_role not in {
+        "invalidation_candidate", "both",
+    }:
+        raise ValueError("hypothesis_invalidation_anchor_role_invalid")
+    if isinstance(hypothesis, EntryHypothesisV2):
         from aletheia.trading.entry_profiles import require_compatible_entry_profile
 
         profile = require_compatible_entry_profile(
@@ -360,9 +364,6 @@ def validate_hypothesis_references(
         )
         if not set(hypothesis.supporting_fact_refs) & current_facts:
             raise ValueError("hypothesis_current_market_fact_required")
-        learning_refs = set(context.learning_context.evidence_refs)
-        if not set(hypothesis.learning_evidence_refs).issubset(learning_refs):
-            raise ValueError("hypothesis_learning_ref_not_supplied")
 
 
 def build_entry_analysis_context(

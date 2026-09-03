@@ -464,6 +464,19 @@ async def plan_next_candidate(
             "model_invoked": True,
         }
     if intent.decision == "NO_PLAN":
+        if isinstance(intent, (EntryHypothesisV1, EntryHypothesisV2)):
+            try:
+                validate_hypothesis_references(intent, context_model)
+            except ValueError as exc:
+                stored = _complete_semantic_no_plan(
+                    generation["id"], owner, "INVALID_HYPOTHESIS_REFERENCE",
+                    detail=str(exc),
+                )
+                return {
+                    "status": "no_plan" if stored else "stale",
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": True,
+                }
         stored = repo.complete_candidate_planning_no_plan(
             generation["id"],
             owner,
