@@ -209,6 +209,128 @@ def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, mon
     reset_db()
 
 
+@pytest.mark.parametrize("late_read", ["different", "raises"])
+def test_authoritative_risk_identity_uses_evaluated_policy_snapshot(
+    tmp_path,
+    monkeypatch,
+    late_read,
+):
+    """A second config read cannot re-stamp or erase an approved authority."""
+    setup_test_env(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    import aletheia.risk.engine as eng
+    from aletheia.risk.policy import resolve_risk_policy
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **trade,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    policy_a_cfg = loader.load_config().model_copy(deep=True)
+    policy_a_cfg.risk.demo.policy_id = "demo-policy-a"
+    policy_a_cfg.risk.demo.revision = 41
+    policy_b_cfg = policy_a_cfg.model_copy(deep=True)
+    policy_b_cfg.risk.demo.policy_id = "demo-policy-b"
+    policy_b_cfg.risk.demo.revision = 42
+
+    reads = []
+
+    def read_config():
+        reads.append(len(reads) + 1)
+        if len(reads) == 3:
+            if late_read == "raises":
+                raise RuntimeError("config changed during persistence")
+            return policy_b_cfg
+        return policy_a_cfg
+
+    monkeypatch.setattr(eng, "load_config", read_config)
+
+    result = eng.evaluate_proposal(proposal)
+
+    assert result.approved is True
+    decisions = [
+        row
+        for row in repo.list_risk_decisions(limit=10)
+        if row["proposal_id"] == proposal.id
+        and row["decision_role"] == "authoritative"
+    ]
+    assert len(decisions) == 1
+    stored = decisions[0]
+    resolved_a = resolve_risk_policy(policy_a_cfg, proposal.execution_mode)
+    assert stored["risk_mode"] == resolved_a.mode
+    assert stored["policy_id"] == resolved_a.policy.policy_id
+    assert stored["policy_revision"] == resolved_a.policy.revision
+    assert stored["policy_hash"] == resolved_a.policy_hash
+    assert reads == [1, 2]
+    reset_db()
+
+
+def test_missing_authoritative_risk_identity_blocks_gateway(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    import aletheia.execution.gateway as gateway
+    import aletheia.risk.policy as policy_module
+    from aletheia.config.loader import load_config
+    from aletheia.risk.policy import ResolvedRiskPolicy
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+    cfg = load_config()
+    incomplete_policy = ResolvedRiskPolicy(
+        mode="demo",
+        policy=cfg.risk.demo.model_copy(update={"policy_id": ""}),
+        policy_hash="",
+    )
+    monkeypatch.setattr(
+        policy_module,
+        "resolve_risk_policy",
+        lambda *_args, **_kwargs: incomplete_policy,
+    )
+    broker_calls = []
+    monkeypatch.setattr(
+        gateway,
+        "execute_paper_order",
+        lambda **kwargs: broker_calls.append(kwargs),
+    )
+
+    result = gateway.submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60000,
+        execution_mode="paper_internal",
+        **trade,
+    )
+
+    assert result["status"] == "rejected"
+    assert "risk_policy_identity_unavailable" in result["risk_violations"]
+    assert broker_calls == []
+    stored = repo.list_risk_decisions(limit=10)[0]
+    assert stored["approved"] == 0
+    assert stored["policy_id"] is None
+    reset_db()
+
+
 def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

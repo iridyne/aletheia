@@ -1505,6 +1505,7 @@ def _evaluate_proposal_locked(
         proposal,
         violations,
         decision_role=decision_role,
+        resolved_policy=resolved_policy,
     )
 
 
@@ -1629,9 +1630,22 @@ def _persist_risk_result(
     violations: list[str],
     *,
     decision_role: str,
+    resolved_policy=None,
 ) -> RiskCheckResult:
     """Persist a role-labelled decision over the immutable evaluated snapshot."""
     approved = len(violations) == 0
+    policy = getattr(resolved_policy, "policy", None)
+    identity_complete = bool(
+        resolved_policy is not None
+        and getattr(resolved_policy, "mode", None)
+        and policy is not None
+        and getattr(policy, "policy_id", None)
+        and getattr(policy, "revision", None) is not None
+        and getattr(resolved_policy, "policy_hash", None)
+    )
+    if decision_role == "authoritative" and proposal.source == "native" and approved and not identity_complete:
+        violations = ["risk_policy_identity_unavailable"]
+        approved = False
     allowed_mode = proposal.execution_mode if approved else "paper_internal"
     result = RiskCheckResult(
         approved=approved,
@@ -1640,14 +1654,6 @@ def _persist_risk_result(
         allowed_execution_mode=allowed_mode,
         message="Approved" if approved else f"Rejected: {', '.join(violations)}",
     )
-
-    policy_identity = None
-    try:
-        from aletheia.risk.policy import resolve_risk_policy
-
-        policy_identity = resolve_risk_policy(load_config(), proposal.execution_mode)
-    except Exception:
-        policy_identity = None
 
     decision = RiskDecision(
         proposal_id=proposal.id,
@@ -1665,10 +1671,10 @@ def _persist_risk_result(
             proposal,
             require_evaluated_snapshot_match=(decision_role == "authoritative"),
         ),
-        risk_mode=policy_identity.mode if policy_identity else None,
-        policy_id=policy_identity.policy.policy_id if policy_identity else None,
-        policy_revision=policy_identity.policy.revision if policy_identity else None,
-        policy_hash=policy_identity.policy_hash if policy_identity else None,
+        risk_mode=resolved_policy.mode if identity_complete else None,
+        policy_id=policy.policy_id if identity_complete else None,
+        policy_revision=policy.revision if identity_complete else None,
+        policy_hash=resolved_policy.policy_hash if identity_complete else None,
         message=result.message,
     )
     created = True
