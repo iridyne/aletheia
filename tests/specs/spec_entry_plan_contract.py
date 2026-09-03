@@ -309,6 +309,34 @@ def test_paper_outcome_cohort_requires_the_current_entry_fill_model():
 
 @spec_claim(
     SpecClaim(
+        "EP-S13", "entry_plan_contract", "Mechanism-aware Grounded Entry", "L2a",
+        "Planning V2 owns exact mechanism authority while ordinary Candidate churn cannot duplicate ownership.",
+        status="implemented",
+    )
+)
+def test_mechanism_planning_identity_and_runtime_revalidation_are_explicit():
+    from aletheia.agent_runtime.fast_trigger_watch import _load_entry_plan_watchers
+    from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
+    from aletheia.trading.entry_plan import candidate_planning_identity
+
+    identity_source = inspect.getsource(candidate_planning_identity)
+    for field in (
+        "primary_mechanism", "direction", "policy", "policy_epoch", "mechanism_version",
+    ):
+        assert field in identity_source
+    for excluded in ("rank", "total_score", "entry_price_usd"):
+        assert excluded not in identity_source
+    authority_source = inspect.getsource(_require_ai_entry_authority)
+    assert "candidate_opportunity_context_hash" in authority_source
+    assert "candidate_selection_policy_epoch" in authority_source
+    assert "mechanism_version" in authority_source
+    assert "require_entry_plan_runtime_authority" in inspect.getsource(
+        _load_entry_plan_watchers
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "EP-S12",
         "entry_plan_contract",
         "Operator observability",
@@ -326,3 +354,26 @@ def test_workbench_projects_monitoring_and_exact_funding_readiness():
     assert "venue=plan.venue" in source
     assert "monitoring_state" in EntryPlanRecord.model_fields
     assert "monitoring_evidence_json" in EntryPlanRecord.model_fields
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S14", "entry_plan_contract", "Mechanism-aware Grounded Entry", "L2a",
+        "One V2 hypothesis repeats upstream mechanism/direction, exposes no numeric execution authority, and sees only compatible Profiles.",
+        status="implemented",
+    )
+)
+def test_grounded_v2_is_one_bounded_schema_and_profile_registry():
+    from aletheia.trading.entry_analysis import EntryHypothesisV2
+    from aletheia.trading.entry_profiles import compatible_entry_profiles
+
+    assert {
+        "price", "size", "quantity", "leverage", "stop_price", "target_price",
+        "slippage_bps", "trigger_params",
+    }.isdisjoint(EntryHypothesisV2.model_fields)
+    assert set(EntryHypothesisV2.model_fields["horizon"].annotation.__args__) == {
+        "INTRADAY", "NONE",
+    }
+    for mechanism in ("continuation", "reversal", "positioning_forced_flow"):
+        assert compatible_entry_profiles(mechanism)
+    assert compatible_entry_profiles("information_catalyst") == ()

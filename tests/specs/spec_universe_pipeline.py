@@ -130,6 +130,7 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
             "opportunity_source_component": "momentum",
             "opportunity_source_cutoff_at": "2026-09-03T00:00:00+00:00",
             "opportunity_evidence_hash": "a" * 64,
+            "_candidate_opportunity_record": {"source_record_hash": "a" * 64},
         }]
     previous = UniverseSnapshot(
         id="previous-healthy-universe",
@@ -364,6 +365,26 @@ def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
                 "opportunity_source_component": "momentum",
                 "opportunity_source_cutoff_at": "2026-09-03T00:00:00+00:00",
                 "opportunity_evidence_hash": "a" * 64,
+                "_candidate_opportunity_record": {
+                    "source_record_hash": "a" * 64,
+                    "decision": {
+                        "primary_mechanism": "continuation",
+                        "primary_direction": "long",
+                        "economic_utility_pct": 1.0,
+                        "opportunity_evidence": {
+                            "feature_snapshot_id": "feature-test",
+                            "source_cutoff_at": "2026-09-03T00:00:00+00:00",
+                            "context": {},
+                            "mechanisms": [{
+                                "mechanism_id": "continuation",
+                                "mechanism_version": "continuation/v1",
+                                "source_component_id": "momentum",
+                                "evidence_refs": [],
+                                "capability_gaps": [],
+                            }],
+                        },
+                    },
+                },
             }],
         )
         monkeypatch.setattr(

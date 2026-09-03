@@ -201,12 +201,25 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
     if plan.version != "entry-plan/v2":
         return
     generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
-    if generation is None or generation.get("planner_contract_version") != "entry-planner/v3":
+    if (
+        generation is None
+        or not bool(generation.get("is_current", 1))
+        or generation.get("planner_contract_version") not in {"entry-planner/v3", "entry-planner/v4"}
+    ):
         raise ValueError("ai_entry_generation_contract_mismatch")
-    from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
+    from aletheia.trading.entry_analysis import (
+        EntryAnalysisContextV1,
+        EntryAnalysisContextV2,
+        fingerprint,
+    )
 
     try:
-        context = EntryAnalysisContextV1.model_validate_json(generation.get("planner_input_json") or "")
+        context_type = (
+            EntryAnalysisContextV2
+            if generation.get("planner_contract_version") == "entry-planner/v4"
+            else EntryAnalysisContextV1
+        )
+        context = context_type.model_validate_json(generation.get("planner_input_json") or "")
     except Exception as exc:
         raise ValueError("ai_entry_context_invalid") from exc
     if (
@@ -219,6 +232,23 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         or plan.direction != context.instrument.get("direction")
     ):
         raise ValueError("ai_entry_context_identity_mismatch")
+    if generation.get("planner_contract_version") == "entry-planner/v4":
+        candidate = repo.get_candidate(str(plan.candidate_id))
+        opportunity = context.candidate_opportunity_context
+        if (
+            candidate is None
+            or candidate.get("candidate_opportunity_context_hash")
+            != opportunity.get("context_hash")
+            or candidate.get("opportunity_mechanism")
+            != generation.get("opportunity_mechanism")
+            or candidate.get("candidate_selection_policy")
+            != generation.get("candidate_selection_policy")
+            or candidate.get("candidate_selection_policy_epoch")
+            != generation.get("candidate_selection_policy_epoch")
+            or opportunity.get("opportunity", {}).get("mechanism_version")
+            != generation.get("mechanism_version")
+        ):
+            raise ValueError("ai_entry_candidate_authority_mismatch")
     from aletheia.config.loader import load_config
 
     cfg = load_config(persist_migrations=False)
@@ -341,7 +371,11 @@ def build_entry_plan_order_intent(
                 "treatment_exposure_id": plan.treatment_exposure_id,
                 "geometry_version": plan.trigger_params.get("geometry_version"),
                 "geometry_fingerprint": plan.trigger_params.get("geometry_fingerprint"),
-                "planner_contract_version": "entry-planner/v3" if plan.version == "entry-plan/v2" else None,
+                "planner_contract_version": (
+                    (repo.get_candidate_planning_generation(plan.planning_generation_id) or {}).get(
+                        "planner_contract_version"
+                    ) if plan.version == "entry-plan/v2" else None
+                ),
                 "entry_plan_version": plan.version,
                 "entry_behavior_version": plan.behavior_version,
                 "analysis_context_version": plan.analysis_context_version,

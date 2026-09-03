@@ -25,6 +25,7 @@ def test_only_declared_closed_loops_are_measurement_supported():
         "universe_family_calibration",
         "ranker_case_score",
         "momentum_entry_geometry",
+        "mechanism_entry_learning",
     }
     assert any(
         path.consumer_wired and not path.measurement_supported
@@ -81,3 +82,38 @@ def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch
         table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in tables
     } == before
+
+
+@spec_claim(SpecClaim(
+    "LC-S03", "learning_contract", "Bounded Entry Learning context", "L2a",
+    "Entry Learning is a read-only T1-cutoff full-denominator projection with a deterministic empty fallback.",
+    status="implemented",
+))
+def test_entry_learning_projection_is_read_only_and_full_denominator():
+    import inspect
+
+    from aletheia.learning.entry_context import (
+        ENTRY_LEARNING_INTERFERENCE_KEY,
+        EntryLearningTreatmentAdapter,
+        _filled_unit_outcome,
+        build_entry_learning_context,
+        empty_entry_learning_context,
+    )
+
+    source = inspect.getsource(build_entry_learning_context)
+    assert "julianday(pg.created_at)<=julianday(?)" in source
+    assert "julianday(closed_at)" not in source
+    outcome_source = inspect.getsource(_filled_unit_outcome)
+    assert "due_at > cutoff or settled_at > cutoff" in outcome_source
+    assert "entry_learning_fixed_horizon_outcome_unavailable" in outcome_source
+    assert "no_plan" in source and "no_trigger" in source and "no_fill" in source
+    assert "execute_write" not in source and "INSERT " not in source and "UPDATE " not in source
+    adapter = EntryLearningTreatmentAdapter()
+    assert adapter.deterministic_baseline({}) == {"include_learning_context": False}
+    assert ENTRY_LEARNING_INTERFERENCE_KEY == "mechanism-aware-grounded-entry"
+    empty = empty_entry_learning_context(
+        as_of_at="2026-09-03T00:00:00Z", mechanism="reversal", direction="long",
+        market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+    )
+    assert empty.status == "unavailable"
+    assert empty.evidence_refs == ()

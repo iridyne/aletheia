@@ -1,0 +1,225 @@
+"""Typed, replayable Opportunity authority carried by a Candidate."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from datetime import datetime, timezone
+from typing import Any, Literal, Mapping
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+CANDIDATE_OPPORTUNITY_CONTEXT_VERSION = "candidate-opportunity-context/v1"
+OPPORTUNITY_HORIZON = "4h"
+LEGACY_MECHANISM_MAP = {
+    "momentum": "continuation",
+    "short_bias": "continuation",
+    "mean_reversion": "reversal",
+    "derivatives": "positioning_forced_flow",
+}
+
+
+def canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def fingerprint(value: object) -> str:
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+class CandidateOpportunityContextV1(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal["candidate-opportunity-context/v1"] = CANDIDATE_OPPORTUNITY_CONTEXT_VERSION
+    candidate_id: str = Field(min_length=1)
+    candidate_selection: dict[str, Any]
+    source: dict[str, Any]
+    opportunity: dict[str, Any]
+    context: dict[str, Any]
+    context_hash: str = ""
+
+    @model_validator(mode="after")
+    def _validate_and_hash(self) -> "CandidateOpportunityContextV1":
+        selection = self.candidate_selection
+        source = self.source
+        opportunity = self.opportunity
+        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1"}:
+            raise ValueError("candidate_opportunity_policy_invalid")
+        if selection.get("policy") == "candidate_selection_utility_v1" and not selection.get("policy_epoch"):
+            raise ValueError("candidate_opportunity_policy_epoch_missing")
+        source_record_hash = str(selection.get("source_record_hash") or "")
+        if len(source_record_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in source_record_hash
+        ):
+            raise ValueError("candidate_opportunity_source_record_hash_missing")
+        if not source.get("detected_at") or not source.get("source_cutoff_at"):
+            raise ValueError("candidate_opportunity_source_clock_missing")
+        try:
+            detected_at = datetime.fromisoformat(
+                str(source["detected_at"]).replace("Z", "+00:00")
+            )
+            source_cutoff_at = datetime.fromisoformat(
+                str(source["source_cutoff_at"]).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("candidate_opportunity_source_clock_invalid") from exc
+        if (
+            detected_at.tzinfo is None
+            or source_cutoff_at.tzinfo is None
+            or source_cutoff_at.astimezone(timezone.utc)
+            > detected_at.astimezone(timezone.utc)
+        ):
+            raise ValueError("candidate_opportunity_source_clock_invalid")
+        if opportunity.get("primary_mechanism") not in {
+            "continuation", "reversal", "positioning_forced_flow", "information_catalyst",
+        }:
+            raise ValueError("candidate_opportunity_mechanism_invalid")
+        if opportunity.get("direction") not in {"long", "short"}:
+            raise ValueError("candidate_opportunity_direction_invalid")
+        if opportunity.get("horizon") != OPPORTUNITY_HORIZON:
+            raise ValueError("candidate_opportunity_horizon_invalid")
+        if opportunity.get("mechanism_source") not in {
+            "target_authority", "legacy_projection"
+        } or not str(opportunity.get("mechanism_version") or "").strip():
+            raise ValueError("candidate_opportunity_mechanism_identity_invalid")
+        if not str(opportunity.get("source_component_id") or "").strip():
+            raise ValueError("candidate_opportunity_source_component_missing")
+        if opportunity.get("capability_status") not in {"supported", "observe_only", "unavailable"}:
+            raise ValueError("candidate_opportunity_capability_invalid")
+        utility = opportunity.get("economic_utility_pct")
+        if selection.get("policy") == "candidate_selection_utility_v1" and (
+            isinstance(utility, bool)
+            or not isinstance(utility, (int, float))
+            or not math.isfinite(float(utility))
+        ):
+            raise ValueError("candidate_opportunity_utility_invalid")
+        for field, limit in (
+            ("capability_gaps", 16), ("primary_evidence_refs", 32),
+            ("secondary_mechanisms", 4),
+        ):
+            value = opportunity.get(field)
+            if not isinstance(value, (list, tuple)) or len(value) > limit:
+                raise ValueError(f"candidate_opportunity_{field}_invalid")
+        expected = fingerprint(self.model_dump(mode="json", exclude={"context_hash"}))
+        if self.context_hash and self.context_hash != expected:
+            raise ValueError("candidate_opportunity_context_hash_mismatch")
+        object.__setattr__(self, "context_hash", expected)
+        return self
+
+
+def target_candidate_opportunity_context(
+    *,
+    candidate_id: str,
+    decision: Mapping[str, Any],
+    policy_epoch: str,
+    source_record_hash: str,
+    detected_at: str,
+) -> CandidateOpportunityContextV1:
+    evidence = decision["opportunity_evidence"]
+    mechanisms = tuple(evidence["mechanisms"])
+    primary = next(
+        item for item in mechanisms if item["mechanism_id"] == decision["primary_mechanism"]
+    )
+    gaps = tuple(str(value) for value in primary.get("capability_gaps") or ())
+    capability = "observe_only" if gaps else "supported"
+    return CandidateOpportunityContextV1(
+        candidate_id=candidate_id,
+        candidate_selection={
+            "policy": "candidate_selection_utility_v1",
+            "policy_epoch": policy_epoch,
+            "source_record_hash": source_record_hash,
+        },
+        source={
+            "detected_at": detected_at,
+            "source_cutoff_at": evidence["source_cutoff_at"],
+            "feature_snapshot_id": evidence.get("feature_snapshot_id"),
+            "feature_snapshot_unavailable_reason": (
+                None if evidence.get("feature_snapshot_id") else "feature_snapshot_id_unavailable"
+            ),
+        },
+        opportunity={
+            "primary_mechanism": decision["primary_mechanism"],
+            "mechanism_version": primary["mechanism_version"],
+            "mechanism_source": "target_authority",
+            "source_component_id": primary.get("source_component_id"),
+            "direction": decision["primary_direction"],
+            "horizon": OPPORTUNITY_HORIZON,
+            "economic_utility_pct": decision["economic_utility_pct"],
+            "capability_status": capability,
+            "capability_gaps": gaps,
+            "primary_evidence_refs": tuple(primary.get("evidence_refs") or ()),
+            "secondary_mechanisms": tuple(
+                item for item in mechanisms if item["mechanism_id"] != decision["primary_mechanism"]
+            ),
+        },
+        context=dict(evidence.get("context") or {}),
+    )
+
+
+def legacy_candidate_opportunity_context(
+    *,
+    candidate_id: str,
+    candidate: Mapping[str, Any],
+    detected_at: str,
+) -> CandidateOpportunityContextV1 | None:
+    family = str(candidate.get("scanner_family") or "")
+    mechanism = LEGACY_MECHANISM_MAP.get(family)
+    direction = str(candidate.get("scanner_direction") or candidate.get("direction") or "")
+    if mechanism is None or direction not in {"long", "short"}:
+        return None
+    gaps = (
+        ("liquidation_flow_unavailable", "basis_unavailable", "cross_venue_positioning_unavailable")
+        if mechanism == "positioning_forced_flow" else ()
+    )
+    source_material = {
+        "venue": candidate.get("venue"),
+        "symbol": candidate.get("symbol"),
+        "market_type": candidate.get("market_type"),
+        "scanner_family": family,
+        "direction": direction,
+        "feature_snapshot_id": candidate.get("feature_snapshot_id"),
+        "detected_at": detected_at,
+    }
+    return CandidateOpportunityContextV1(
+        candidate_id=candidate_id,
+        candidate_selection={
+            "policy": "legacy_total_score_v1",
+            "policy_epoch": None,
+            "source_record_hash": fingerprint(source_material),
+        },
+        source={
+            "detected_at": detected_at,
+            "source_cutoff_at": detected_at,
+            "feature_snapshot_id": candidate.get("feature_snapshot_id"),
+            "feature_snapshot_unavailable_reason": (
+                None if candidate.get("feature_snapshot_id") else "feature_snapshot_id_unavailable"
+            ),
+        },
+        opportunity={
+            "primary_mechanism": mechanism,
+            "mechanism_version": f"legacy-{family}/v1",
+            "mechanism_source": "legacy_projection",
+            "source_component_id": family,
+            "direction": direction,
+            "horizon": OPPORTUNITY_HORIZON,
+            "economic_utility_pct": None,
+            "capability_status": "observe_only" if gaps else "supported",
+            "capability_gaps": gaps,
+            "primary_evidence_refs": (),
+            "secondary_mechanisms": (),
+        },
+        context={
+            "volatility_state": candidate.get("volatility_state"),
+            "regime": candidate.get("regime_tag"),
+            "shock_state": candidate.get("shock_state"),
+        },
+    )
+
+
+__all__ = [
+    "CANDIDATE_OPPORTUNITY_CONTEXT_VERSION", "CandidateOpportunityContextV1",
+    "LEGACY_MECHANISM_MAP", "legacy_candidate_opportunity_context",
+    "target_candidate_opportunity_context",
+]

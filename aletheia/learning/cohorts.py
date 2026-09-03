@@ -12,7 +12,7 @@ import json
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import fmean
 from typing import Any
 
@@ -437,6 +437,7 @@ def build_experiment_cohorts(
             exposure,
             assignment=assignment,
             authority_applied=authority_applied,
+            path_id=hypothesis.path_id,
         )
         if behavior_changed is not None and behavior_change_reason is not None:
             if assignment == "control":
@@ -489,8 +490,12 @@ def build_experiment_cohorts(
         if mirrored_rows and (key, outcome_key) not in seen_mirrored_outcomes:
             cohort.mirrored_universe_row_n += mirrored_rows
             seen_mirrored_outcomes.add((key, outcome_key))
-        assessment = assess_candidate_outcome(outcome, as_of_at=evaluation_as_of)
-        if not assessment.eligible:
+        assessment = (
+            None
+            if hypothesis.path_id == "mechanism_entry_learning"
+            else assess_candidate_outcome(outcome, as_of_at=evaluation_as_of)
+        )
+        if assessment is not None and not assessment.eligible:
             # Observations before the data-quality floor or with unsettled status are
             # ineligible but not corrupt — exclude them without invalidating the cohort.
             # Structural issues (missing direction, missing cost model, etc.) indicate
@@ -505,7 +510,11 @@ def build_experiment_cohorts(
             else:
                 cohort.invalid_reasons[assessment.reason] += 1
             continue
-        incomplete_cost_reason = _incomplete_cost_reason(outcome)
+        incomplete_cost_reason = (
+            None
+            if hypothesis.path_id == "mechanism_entry_learning"
+            else _incomplete_cost_reason(outcome)
+        )
         if incomplete_cost_reason:
             cohort.invalid_reasons[incomplete_cost_reason] += 1
             continue
@@ -552,6 +561,7 @@ def build_experiment_cohorts(
                 exposure,
                 assignment=assignment,
                 authority_applied=authority_applied,
+                path_id=hypothesis.path_id,
             )
             if behavior_changed is None or behavior_change_reason is None:
                 cohort.invalid_reasons["invalid_behavior_change_provenance"] += 1
@@ -626,6 +636,7 @@ def _exposure_behavior_change(
     *,
     assignment: str,
     authority_applied: bool,
+    path_id: str | None = None,
 ) -> tuple[bool | None, str | None]:
     """Derive effective numeric behavior from durable before/after provenance."""
     try:
@@ -636,14 +647,21 @@ def _exposure_behavior_change(
         return None, None
     if not all(isinstance(value, dict) for value in (before, after, manifest)):
         return None, None
-    before_value = _finite_float(before.get("value"))
-    after_value = _finite_float(after.get("value"))
-    if before_value is None or after_value is None:
-        return None, None
-    delta = after_value - before_value
-    if not math.isfinite(delta):
-        return None, None
-    changed = delta != 0.0
+    if path_id == "mechanism_entry_learning":
+        before_value = before.get("include_learning_context")
+        after_value = after.get("include_learning_context")
+        if not isinstance(before_value, bool) or not isinstance(after_value, bool):
+            return None, None
+        changed = before_value is not after_value
+    else:
+        before_value = _finite_float(before.get("value"))
+        after_value = _finite_float(after.get("value"))
+        if before_value is None or after_value is None:
+            return None, None
+        delta = after_value - before_value
+        if not math.isfinite(delta):
+            return None, None
+        changed = delta != 0.0
     if authority_applied and assignment != "treatment":
         return None, None
     if changed and not (authority_applied and assignment == "treatment"):
@@ -677,6 +695,141 @@ def _non_intervention_reason(sample: CohortSample) -> str:
     return sample.behavior_change_reason or "behavior_change_reason_unavailable"
 
 
+def _load_entry_learning_outcomes(
+    generation_ids: set[str], *, as_of_at: datetime,
+) -> dict[str, tuple[dict[str, Any] | None, str | None, int, int, str | None, dict[str, Any] | None]]:
+    """Resolve one ITT outcome from exact Planning/Plan/Order/Fill owners."""
+
+    if not generation_ids:
+        return {}
+    db = get_db()
+    placeholders = ",".join("?" for _ in generation_ids)
+    rows = [dict(row) for row in db.execute(
+        "SELECT pg.*,ep.id AS plan_id,ep.status AS plan_status,"
+        "ep.terminal_at AS plan_terminal_at,ep.venue,ep.symbol,ep.market_type,"
+        "ep.direction FROM candidate_planning_generations pg "
+        "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+        f"WHERE pg.id IN ({placeholders})",
+        tuple(sorted(generation_ids)),
+    ).fetchall()]
+    by_id = {str(row["id"]): row for row in rows}
+    resolved = {}
+    for generation_id in sorted(generation_ids):
+        row = by_id.get(generation_id)
+        if row is None:
+            resolved[generation_id] = (None, "missing_exact_outcome", 0, 0, None, None)
+            continue
+        created = _parse_time(row.get("created_at"))
+        due = created + timedelta(hours=4) if created is not None else None
+        if created is None or due is None:
+            resolved[generation_id] = (None, "entry_learning_unit_time_invalid", 0, 0, None, None)
+            continue
+        if due > as_of_at:
+            resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
+            continue
+        utility = 0.0
+        mae = 0.0
+        selected = False
+        outcome_entry = None
+        settled = _parse_time(row.get("completed_at"))
+        if row.get("status") != "no_plan":
+            plan_id = row.get("plan_id")
+            if not plan_id:
+                resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
+                continue
+            orders = [dict(item) for item in db.execute(
+                "SELECT * FROM orders WHERE entry_plan_id=? "
+                "AND julianday(created_at)<=julianday(?) ORDER BY created_at,id",
+                (plan_id, as_of_at.isoformat()),
+            ).fetchall()]
+            if not orders:
+                settled = _parse_time(row.get("plan_terminal_at"))
+                if row.get("plan_status") not in {
+                    "expired", "invalidated", "cancelled", "failed",
+                } or settled is None:
+                    resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
+                    continue
+            else:
+                order = orders[-1]
+                first_fill = db.execute(
+                    "SELECT filled_at FROM fills WHERE order_id=? "
+                    "AND julianday(filled_at)<=julianday(?) "
+                    "ORDER BY julianday(filled_at),id LIMIT 1",
+                    (order["id"], as_of_at.isoformat()),
+                ).fetchone()
+                if first_fill is None:
+                    settled = _parse_time(row.get("plan_terminal_at"))
+                    if order.get("status") not in {
+                        "cancelled", "rejected", "failed", "expired",
+                    } or settled is None:
+                        resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
+                        continue
+                else:
+                    outcome_entry = _parse_time(first_fill[0])
+                    if outcome_entry is None or outcome_entry < created:
+                        resolved[generation_id] = (
+                            None, "retrospective_or_contaminated_exposure", 0, 0, None, None,
+                        )
+                        continue
+                    position = db.execute(
+                        "SELECT * FROM positions WHERE order_id=? "
+                        "AND julianday(opened_at)<=julianday(?) "
+                        "ORDER BY opened_at DESC,id DESC LIMIT 1",
+                        (order["id"], as_of_at.isoformat()),
+                    ).fetchone()
+                    if position is None:
+                        resolved[generation_id] = (
+                            None, "entry_learning_position_missing", 0, 0, None, None,
+                        )
+                        continue
+                    from aletheia.learning.entry_context import _filled_unit_outcome
+
+                    utility_value, _mfe, mae_value, outcome_ids = _filled_unit_outcome(
+                        db, row=row, position=dict(position), cutoff=as_of_at,
+                    )
+                    if utility_value is None:
+                        reason = str(outcome_ids)
+                        resolved[generation_id] = (
+                            None,
+                            "unsettled" if reason.endswith("_unavailable") else reason,
+                            0, 0, None, None,
+                        )
+                        continue
+                    utility = utility_value
+                    mae = mae_value
+                    selected = True
+                    settlement_rows = db.execute(
+                        "SELECT settled_at FROM filter_candidate_outcomes WHERE id IN ({})".format(
+                            ",".join("?" for _ in outcome_ids)
+                        ),
+                        tuple(outcome_ids),
+                    ).fetchall()
+                    settled_times = [_parse_time(item[0]) for item in settlement_rows]
+                    if any(value is None for value in settled_times):
+                        resolved[generation_id] = (
+                            None, "entry_learning_fixed_horizon_outcome_invalid", 0, 0, None, None,
+                        )
+                        continue
+                    settled = max(value for value in settled_times if value is not None)
+        if settled is None or settled > as_of_at:
+            resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
+            continue
+        settled = max(settled, due)
+        if outcome_entry is None:
+            outcome_entry = settled
+        outcome = {
+            "entry_ts": outcome_entry.isoformat(),
+            "settled_at": settled.isoformat(),
+            "net_return_pct": utility,
+            "mae_pct": mae,
+            "_allocation_selected": selected,
+            "_allocation_selection_source": "entry_learning_exact_owners",
+            "_learning_outcome_source": "entry_learning_exact_owners",
+        }
+        resolved[generation_id] = (outcome, None, 0, 0, None, None)
+    return resolved
+
+
 def _load_exact_outcomes(
     outcome_candidate_keys: set[str],
     horizon: str,
@@ -697,6 +850,8 @@ def _load_exact_outcomes(
     """Resolve all requested outcomes with two bounded, exact-key query sets."""
     cutoff = datetime.now(timezone.utc) if as_of_at is None else as_of_at
     requested = {key for key in outcome_candidate_keys if key}
+    if path_id == "mechanism_entry_learning":
+        return _load_entry_learning_outcomes(requested, as_of_at=cutoff)
     if path_id in {RANKER_CASE_PATH_ID, "momentum_entry_geometry"}:
         return _load_ranker_case_outcomes(
             requested,

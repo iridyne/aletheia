@@ -1665,17 +1665,23 @@ class UniverseMember(BaseModel):
     ] = "legacy_total_score_v1"
     candidate_selection_policy_epoch: str | None = None
     candidate_selection_utility_pct: float | None = None
-    opportunity_mechanism: str | None = None
+    opportunity_mechanism: Literal[
+        "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
+    ] | None = None
     opportunity_mechanism_version: str | None = None
     opportunity_source_component: str | None = None
     opportunity_source_cutoff_at: str | None = None
     opportunity_evidence_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    candidate_opportunity_context_version: Literal["candidate-opportunity-context/v1"] | None = None
+    candidate_opportunity_context_json: str | None = None
+    candidate_opportunity_context_hash: str | None = Field(default=None, min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def _validate_candidate_selection_evidence(self):
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
         target = self.candidate_selection_policy == "candidate_selection_utility_v1"
         mechanism_evidence = (
-            self.opportunity_mechanism,
             self.opportunity_mechanism_version,
             self.opportunity_source_component,
             self.opportunity_source_cutoff_at,
@@ -1694,6 +1700,32 @@ class UniverseMember(BaseModel):
             or any(value is not None for value in mechanism_evidence)
         ):
             raise ValueError("legacy Candidate cannot carry target selection evidence")
+        context_fields = (
+            self.candidate_opportunity_context_version,
+            self.candidate_opportunity_context_json,
+            self.candidate_opportunity_context_hash,
+        )
+        if any(value is not None for value in context_fields):
+            if any(value is None for value in context_fields):
+                raise ValueError("Candidate Opportunity context is incomplete")
+            try:
+                context = CandidateOpportunityContextV1.model_validate_json(
+                    self.candidate_opportunity_context_json
+                )
+            except ValueError as exc:
+                raise ValueError("Candidate Opportunity context is invalid") from exc
+            if (
+                context.candidate_id != self.id
+                or context.version != self.candidate_opportunity_context_version
+                or context.context_hash != self.candidate_opportunity_context_hash
+                or context.opportunity["primary_mechanism"] != self.opportunity_mechanism
+                or context.candidate_selection["policy"] != self.candidate_selection_policy
+                or context.candidate_selection.get("policy_epoch") != self.candidate_selection_policy_epoch
+                or context.opportunity["direction"] != self.scanner_direction
+            ):
+                raise ValueError("Candidate Opportunity context identity mismatch")
+        elif target:
+            raise ValueError("target Candidate Opportunity context is missing")
         return self
 
 
@@ -1701,6 +1733,7 @@ Candidate = UniverseMember
 
 PLANNER_CONTRACT_VERSION = "entry-planner/v2"
 AI_ENTRY_PLANNER_CONTRACT_VERSION = "entry-planner/v3"
+MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION = "entry-planner/v4"
 
 
 class CandidatePlanningGeneration(_Provenanced):
@@ -1709,8 +1742,10 @@ class CandidatePlanningGeneration(_Provenanced):
     id: str = Field(default_factory=new_id)
     planning_key: str = Field(min_length=64, max_length=64)
     planning_identity: str = Field(min_length=64, max_length=64)
-    identity_version: Literal["candidate-planning/v1"] = "candidate-planning/v1"
-    planner_contract_version: Literal["entry-planner/v2", "entry-planner/v3"] = PLANNER_CONTRACT_VERSION
+    identity_version: Literal["candidate-planning/v1", "candidate-planning/v2"] = "candidate-planning/v1"
+    planner_contract_version: Literal[
+        "entry-planner/v2", "entry-planner/v3", "entry-planner/v4"
+    ] = PLANNER_CONTRACT_VERSION
     candidate_id: str
     last_candidate_id: str
     venue: str
@@ -1718,6 +1753,14 @@ class CandidatePlanningGeneration(_Provenanced):
     market_type: Literal["spot", "perp"]
     candidate_family: str
     direction: Literal["long", "short"]
+    opportunity_mechanism: Literal[
+        "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
+    ] | None = None
+    candidate_selection_policy: Literal[
+        "legacy_total_score_v1", "candidate_selection_utility_v1"
+    ] | None = None
+    candidate_selection_policy_epoch: str | None = None
+    mechanism_version: str | None = None
     is_current: bool = True
     status: Literal["pending", "planning", "planned", "no_plan", "unavailable", "superseded"] = "pending"
     result_kind: Literal["entry_plan", "no_plan", "unavailable", "stale_result"] | None = None
@@ -1744,6 +1787,25 @@ class CandidatePlanningGeneration(_Provenanced):
     planner_input_hash: str | None = Field(default=None, min_length=64, max_length=64)
     # Deprecated schema field retained for historical row compatibility.
     activation_identity: str | None = None
+
+    @model_validator(mode="after")
+    def _mechanism_identity_is_complete(self):
+        fields = (
+            self.opportunity_mechanism,
+            self.candidate_selection_policy,
+            self.mechanism_version,
+        )
+        if self.identity_version == "candidate-planning/v2":
+            if any(value is None or not str(value).strip() for value in fields):
+                raise ValueError("mechanism planning identity is incomplete")
+            if (
+                self.candidate_selection_policy == "candidate_selection_utility_v1"
+                and not str(self.candidate_selection_policy_epoch or "").strip()
+            ):
+                raise ValueError("target mechanism planning epoch is missing")
+        elif any(value is not None for value in (*fields, self.candidate_selection_policy_epoch)):
+            raise ValueError("legacy planning identity carries mechanism authority")
+        return self
 
 
 class EntryPlanRecord(_Provenanced):

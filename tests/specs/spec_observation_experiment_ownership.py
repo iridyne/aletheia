@@ -245,3 +245,26 @@ def test_lab_runner_does_not_import_legacy_experiment_runtime():
         source = (_SRC / "observation_lab" / module).read_text(encoding="utf-8")
         assert "aletheia.learning.experiments" not in source
         assert "aletheia.learning.ledger" not in source
+
+
+@spec_claim(SpecClaim(
+    "OEO-S05", _CONTRACT, "Executable V2 boundary", "L2a",
+    "Mechanism-aware Entry Learning is one Lab adapter with empty control and an explicit interference key.",
+))
+def test_entry_learning_uses_the_canonical_lab_adapter_boundary():
+    from aletheia.learning.entry_context import (
+        ENTRY_LEARNING_ADAPTER_ID,
+        ENTRY_LEARNING_ADAPTER_VERSION,
+        ENTRY_LEARNING_INTERFERENCE_KEY,
+        EntryLearningTreatmentAdapter,
+    )
+    from aletheia.observation_lab.canonical import registered_treatment_adapters
+    from aletheia.observation_lab.runner import register_builtin_handlers
+
+    register_builtin_handlers()
+    assert (ENTRY_LEARNING_ADAPTER_ID, ENTRY_LEARNING_ADAPTER_VERSION) in (
+        registered_treatment_adapters()
+    )
+    adapter = EntryLearningTreatmentAdapter()
+    assert adapter.deterministic_baseline({}) == {"include_learning_context": False}
+    assert ENTRY_LEARNING_INTERFERENCE_KEY == "mechanism-aware-grounded-entry"

@@ -136,8 +136,9 @@ automatic close or stop change.
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
 These tables were additive/observational in Phase 1. The currently
-measurement-supported paths are `universe_family_calibration` and
-`ranker_case_score`, each with a path-specific causal outcome contract.
+measurement-supported paths are `universe_family_calibration`,
+`momentum_entry_geometry`, `mechanism_entry_learning`, and `ranker_case_score`,
+each with a path-specific causal outcome contract.
 `ranker_case_score` is Shadow-only and cannot apply a Ranker delta or Paper
 authority. Operator, factor, ranker-memo, learned-guard, automatic Risk-lesson,
 Observer-bundle and persona-sizing hooks are consumer-wired but

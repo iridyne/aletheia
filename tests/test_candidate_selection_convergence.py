@@ -321,6 +321,7 @@ async def test_shadow_not_due_skips_expensive_candidate_build(monkeypatch):
 def test_typed_mechanism_survives_target_projection_and_member_model():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.universe.candidate_opportunity import target_candidate_opportunity_context
     from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
 
     bundle, legacy = _authority_bundle()
@@ -332,8 +333,18 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
     assert candidate["opportunity_source_component"] == "momentum"
     assert candidate["opportunity_source_cutoff_at"] == "2026-09-02T00:00:00+00:00"
     assert len(candidate["opportunity_evidence_hash"]) == 64
+    member_id = "target-member"
+    target_record = candidate["_candidate_opportunity_record"]
+    context = target_candidate_opportunity_context(
+        candidate_id=member_id,
+        decision=target_record["decision"],
+        policy_epoch=candidate["candidate_selection_policy_epoch"],
+        source_record_hash=target_record["source_record_hash"],
+        detected_at="2026-09-02T00:00:00+00:00",
+    )
 
     member = UniverseMember(
+        id=member_id,
         snapshot_id="snapshot",
         asset_id=candidate["asset_id"],
         venue=candidate["venue"],
@@ -351,6 +362,9 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
         opportunity_source_component=candidate["opportunity_source_component"],
         opportunity_source_cutoff_at=candidate["opportunity_source_cutoff_at"],
         opportunity_evidence_hash=candidate["opportunity_evidence_hash"],
+        candidate_opportunity_context_version=context.version,
+        candidate_opportunity_context_json=context.model_dump_json(),
+        candidate_opportunity_context_hash=context.context_hash,
     )
     assert member.model_dump()["opportunity_source_component"] == "momentum"
     repo.insert_universe_snapshot(UniverseSnapshot(id="snapshot"))

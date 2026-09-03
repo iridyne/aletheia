@@ -95,6 +95,7 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
 | `ranker_case_score` | wired | exact candidate-level 4h `filter_candidate_outcomes` | supported for Shadow measurement; Paper authority unsupported | candidate-level Shadow measurement; actual Ranker delta remains `0` |
 | `momentum_entry_geometry` | Entry Plan compiler | exact Momentum Candidate exposure plus 4h `filter_candidate_outcomes` | stable control/treatment assignment; Paper-only v2 authority requires the immutable treatment exposure receipt | v1 control and v2 causal geometry preserve the same Candidate, PlanIntent, sizing, Risk, Gateway, and outcome identity |
+| `mechanism_entry_learning` | Entry hypothesis planner | Planning Generation ITT unit plus exact Fill-T0 4h `filter_candidate_outcomes` | deterministic empty-context control; owner-gated Paper prompt context | current behavior identity must match; unavailable evidence becomes the empty baseline before inference |
 | `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
 | `ranker_learned_guard` | wired | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
 | `risk_lesson_constraint` | wired | unsupported | unsupported | automatic lessons advisory-only; manual/owner lessons are non-experimental static constraints |
@@ -104,8 +105,9 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `filter_parameter_tune` | unwired skeleton | unsupported | unsupported | deferred design; no override table, producer or authority |
 | `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary, registry-backed measured-path UI and current-route performance contract implemented; drill-down/full workbench incomplete |
 
-`universe_family_calibration`, `ranker_case_score`, and `momentum_entry_geometry`
-are `measurement_supported`. UFC and Momentum geometry are Paper-authority-capable;
+`universe_family_calibration`, `ranker_case_score`, `momentum_entry_geometry`, and
+`mechanism_entry_learning` are `measurement_supported`. UFC, Momentum geometry,
+and mechanism Entry Learning are Paper-authority-capable;
 Momentum v2 remains fail-closed unless its exact treatment exposure is present and applied.
 `ranker_case_score` is explicitly Shadow-only (`paper_authority_supported=False`)
 and its Ranker delta remains zero. Any further path requires its own causal unit,
@@ -868,3 +870,27 @@ rules rather than Learning treatments. An automatic lesson has no blocking effec
 refreeze unless the exact current prospective path is independently authorized; unavailable or
 errored authority remains advisory/fail-closed. Risk account-loss semantics remain separately
 controlled by OI-C03.
+
+## 12. Bounded Entry Learning context
+
+`entry-learning-context/v1` is a read-only T1-cutoff projection over existing
+Candidate, Planning Generation, Entry Plan, Order, Fill, Position, and retained
+outcome owners. It includes the full eligible denominator: `NO_PLAN`, no
+trigger, no fill, filled, and open-at-cutoff units. A Position or outcome
+settled after the current Planning T1 is future information and is excluded.
+Candidate 4h Utility remains Source-Alpha context, not an Entry outcome.
+
+The scope freezes mechanism, direction, market type, selection policy/epoch,
+planner/behavior provenance, exact logical/physical model identity and compatible
+Profile identity. Entry Planner inference and cost rows are joined only through
+the generation-tagged context artifact; missing or mixed model/cost identity,
+incomplete outcomes, stale evidence, or survivor-only evidence makes the context
+explicitly unavailable. Other missing numeric economics remain null, never zero.
+Observational summaries are not causal claims. `experimental` status is possible
+only for the separately assigned Observation Lab treatment.
+
+Control is mechanism-aware Grounded Entry with the deterministic empty typed
+context. Treatment differs only by adding this bounded context through the
+canonical Lab manifest/receipt path. Negative, neutral, insufficient, or
+unavailable evidence grants no influence, and code/test success grants neither
+Paper adoption nor Live authority.

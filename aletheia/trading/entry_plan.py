@@ -24,6 +24,7 @@ SIDEWAYS_STOP_MULT = 2.0
 ENTRY_PLAN_VERSION = "entry-plan/v1"
 ENTRY_PLAN_V2_VERSION = "entry-plan/v2"
 PLANNING_IDENTITY_VERSION = "candidate-planning/v1"
+PLANNING_IDENTITY_V2_VERSION = "candidate-planning/v2"
 ENTRY_PLAN_EXECUTION_MODES = ("RESTING_MAKER", "TRIGGERED")
 ENTRY_PLAN_STATUSES = (
     "waiting",
@@ -216,14 +217,19 @@ class EntryPlan(BaseModel):
     runtime_session_id: str | None = None
     producer_commit: str | None = None
     behavior_fingerprint: str | None = None
-    analysis_context_version: Literal["entry-analysis-context/v1"] | None = None
+    analysis_context_version: Literal[
+        "entry-analysis-context/v1", "entry-analysis-context/v2"
+    ] | None = None
     analysis_context_fingerprint: str | None = None
-    entry_hypothesis_version: Literal["entry-hypothesis/v1"] | None = None
+    entry_hypothesis_version: Literal["entry-hypothesis/v1", "entry-hypothesis/v2"] | None = None
     entry_hypothesis_json: str | None = None
     entry_hypothesis_hash: str | None = None
     primary_anchor_snapshot: dict | None = None
     invalidation_anchor_snapshot: dict | None = None
-    entry_profile_id: Literal["anchor-resting-maker", "anchor-retrace-reclaim"] | None = None
+    entry_profile_id: Literal[
+        "anchor-resting-maker", "anchor-retrace-reclaim",
+        "grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim",
+    ] | None = None
     entry_profile_version: Literal["v1"] | None = None
     compiled_geometry_fingerprint: str | None = None
 
@@ -325,7 +331,9 @@ class EntryPlan(BaseModel):
             object.__setattr__(self, "trigger_params", params)
         elif self.trigger_spec_id is not None or self.trigger_spec_version is not None:
             raise ValueError("resting_maker_cannot_require_trigger")
-        strict_tactic_contract = self.behavior_version == "entry-planner/v3"
+        strict_tactic_contract = self.behavior_version in {
+            "entry-planner/v3", "mechanism-aware-entry-hypothesis-compiler/v2",
+        }
         if self.order_tactic == "POST_ONLY_LIMIT":
             if not self.maker_required or self.time_in_force != "POST_ONLY":
                 raise ValueError("maker_tactic_requires_post_only")
@@ -382,28 +390,49 @@ def _aware_instant(raw: str, field: str) -> datetime:
 def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
     """Return stable ownership and material hashes without snapshot/score/price churn."""
 
-    ownership = {
-        "venue": str(candidate.get("venue") or "").lower(),
-        "symbol": str(candidate.get("symbol") or "").upper(),
-        "market_type": str(candidate.get("market_type") or ""),
-        "family": str(candidate.get("scanner_family") or ""),
-        "direction": str(candidate.get("scanner_direction") or ""),
-    }
+    context_json = candidate.get("candidate_opportunity_context_json")
+    if context_json:
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+        context = CandidateOpportunityContextV1.model_validate_json(context_json)
+        opportunity = context.opportunity
+        selection = context.candidate_selection
+        ownership = {
+            "venue": str(candidate.get("venue") or "").lower(),
+            "symbol": str(candidate.get("symbol") or "").upper(),
+            "market_type": str(candidate.get("market_type") or ""),
+            "opportunity_mechanism": str(opportunity.get("primary_mechanism") or ""),
+            "direction": str(opportunity.get("direction") or ""),
+            "candidate_selection_policy": str(selection.get("policy") or ""),
+            "policy_epoch": str(selection.get("policy_epoch") or "legacy"),
+            "mechanism_version": str(opportunity.get("mechanism_version") or ""),
+        }
+        identity_version = PLANNING_IDENTITY_V2_VERSION
+        material = ownership
+    else:
+        ownership = {
+            "venue": str(candidate.get("venue") or "").lower(),
+            "symbol": str(candidate.get("symbol") or "").upper(),
+            "market_type": str(candidate.get("market_type") or ""),
+            "family": str(candidate.get("scanner_family") or ""),
+            "direction": str(candidate.get("scanner_direction") or ""),
+        }
+        identity_version = PLANNING_IDENTITY_VERSION
+        risk_flags = candidate.get("risk_flags") or []
+        if isinstance(risk_flags, str):
+            try:
+                risk_flags = json.loads(risk_flags)
+            except json.JSONDecodeError:
+                risk_flags = [risk_flags]
+        material = {
+            "identity_version": identity_version,
+            **ownership,
+            "regime": str(candidate.get("regime_tag") or "unknown"),
+            "execution_eligible": bool(candidate.get("execution_eligible", True)),
+            "risk_flags": sorted(str(value) for value in risk_flags),
+        }
     if not all(ownership.values()):
         raise ValueError("candidate_planning_identity_incomplete")
-    risk_flags = candidate.get("risk_flags") or []
-    if isinstance(risk_flags, str):
-        try:
-            risk_flags = json.loads(risk_flags)
-        except json.JSONDecodeError:
-            risk_flags = [risk_flags]
-    material = {
-        "identity_version": PLANNING_IDENTITY_VERSION,
-        **ownership,
-        "regime": str(candidate.get("regime_tag") or "unknown"),
-        "execution_eligible": bool(candidate.get("execution_eligible", True)),
-        "risk_flags": sorted(str(value) for value in risk_flags),
-    }
     canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
     return (
         hashlib.sha256(canonical(ownership).encode()).hexdigest(),

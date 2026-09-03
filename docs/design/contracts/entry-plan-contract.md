@@ -14,9 +14,9 @@ Monitoring. Durable authority remains in `candidate_planning_generations`,
 approval authority and Gateway is the only order/cancel authority.
 
 Historical and legacy planning retains `entry-plan/v1`; its canonical JSON and
-hash are not rewritten. New eligible Momentum planning uses `entry-plan/v2`,
-which additionally requires exact context, hypothesis, selected Anchor,
-Profile, and compiled geometry identities.
+hash are not rewritten. Grounded planning uses `entry-plan/v2`, which
+additionally requires exact context, hypothesis, selected Anchor, Profile, and
+compiled geometry identities.
 
 ## AI Entry hypothesis authority
 
@@ -38,6 +38,45 @@ compiler Profiles. The latter reuses the existing retrace/sweep/reclaim engine
 and 0.25 ATR semantics under its own identity; Fast Monitoring never invokes AI.
 Plan activation and execution revalidate the V3 generation, Paper/Live gate,
 immutable hashes, and V2 provenance before Proposal or Risk.
+
+## Mechanism-aware Grounded Entry
+
+`entry-planner/v4` consumes `candidate-opportunity-context/v1` through one
+`entry-analysis-context/v2` and one `entry-hypothesis/v2` path for Continuation,
+Reversal, Positioning/Forced Flow, and Information/Catalyst. Mechanism and
+direction are upstream facts and must match exactly. Candidate T0 evidence,
+Planning T1 facts, and T1-cutoff Learning evidence remain separate. V2 permits
+only `INTRADAY`; the Candidate policy's 4h comparison horizon is not a Swing
+Entry authority. At least one current Planning fact is mandatory, and AI owns
+no price, size, leverage, stop, target, slippage, trigger parameter, or Risk
+field.
+
+`candidate-planning/v2` identity is venue, symbol, market type, mechanism,
+direction, selection policy/epoch, and mechanism version. Rank, score, Utility,
+price, and ordinary snapshot churn are excluded. Any authority-dimension change
+supersedes the old generation and invalidates its active pre-order plan; Fast
+Monitoring and execution revalidate both the current generation and exact
+Candidate context/hash before creating or cancelling an order.
+
+The generic `grounded-anchor-resting-maker/v1` and
+`grounded-anchor-retrace-reclaim/v1` Profiles declare compatible mechanisms,
+required facts/anchors/timeframes, compiler and TriggerSpec identity, and
+freshness. They may reuse deterministic geometry because geometry is not the
+Alpha source. Historical Momentum profile/experiment identities are unchanged.
+
+`entry-learning-context/v1` uses planning generation as its independent unit.
+NO_PLAN, no-trigger, and no-fill terminal units contribute zero ITT utility only
+after the 4h look; filled units use cost-complete `filter_candidate_outcomes`
+registered at each exact Fill T0 and aggregated by fill notional. Candidate-T0
+forward outcomes are context only and are never re-anchored as Entry outcomes.
+The cohort must match the current code, behavior, planner, mechanism, provider,
+model, prompt, profile-registry, market, and policy identities. Profile results
+are explicitly an exact profile or the declared `mechanism-aware-grounded/v1`
+parent summary. Any unavailable or mixed evidence is replaced by the deterministic
+empty context before inference. Observation Lab measures this path under
+`mechanism_entry_learning` with the same planning-generation outcome key.
+An unsupported mechanism, currently Information/Catalyst, has no visible
+Profile and reaches `NO_PLAN` without a model call.
 
 ## Planner contract epoch
 

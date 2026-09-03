@@ -672,6 +672,10 @@ def target_candidates_from_bundle(
             "opportunity_source_component": family,
             "opportunity_source_cutoff_at": decision["opportunity_evidence"]["source_cutoff_at"],
             "opportunity_evidence_hash": decision["opportunity_evidence"]["mechanism_set_fingerprint"],
+            "_candidate_opportunity_record": {
+                "decision": decision,
+                "source_record_hash": row.record_hash,
+            },
             "reasons": source_reasons + [
                 f"candidate_selection_utility:{utility:.6f}",
                 f"primary_mechanism:{decision['primary_mechanism']}",

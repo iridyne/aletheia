@@ -3574,6 +3574,68 @@ def list_strategy_orders(
 
 def insert_fill(f: Fill) -> None:
     _insert("fills", _stamp_provenance(f.model_dump()))
+    try:
+        _seed_entry_fill_outcome(f)
+    except Exception as exc:
+        # The exchange Fill is the authoritative fact and must never be lost
+        # because its observational follow-up could not be registered.
+        _sqlite_logger.warning(
+            "entry fill outcome seed unavailable fill_id=%s error=%s",
+            f.id,
+            type(exc).__name__,
+        )
+
+
+def _seed_entry_fill_outcome(f: Fill) -> None:
+    """Register the existing fixed-horizon owner at the actual Fill T0."""
+
+    db = get_db()
+    owner = db.execute(
+        "SELECT o.entry_plan_id,ep.candidate_id,ep.venue,ep.symbol,"
+        "ep.market_type,ep.direction,um.scanner_family "
+        "FROM orders o JOIN entry_plans ep ON ep.id=o.entry_plan_id "
+        "LEFT JOIN universe_members um ON um.id=ep.candidate_id "
+        "WHERE o.id=? AND o.entry_plan_id IS NOT NULL AND o.close_reason IS NULL",
+        (f.order_id,),
+    ).fetchone()
+    if owner is None:
+        return
+    fill_time = datetime.fromisoformat(f.filled_at.replace("Z", "+00:00"))
+    if fill_time.tzinfo is None:
+        raise ValueError("entry_fill_time_timezone_required")
+    fill_at = fill_time.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    orderbook = db.execute(
+        "SELECT spread_bps FROM orderbook_snapshots WHERE symbol=? AND exchange=? "
+        "AND market_type=? AND julianday(observed_at)<=julianday(?) "
+        "ORDER BY julianday(observed_at) DESC,id DESC LIMIT 1",
+        (owner["symbol"], owner["venue"], owner["market_type"], fill_at),
+    ).fetchone()
+    funding = None
+    if owner["market_type"] == "perp":
+        funding = db.execute(
+            "SELECT funding_rate FROM funding_rate_snapshots WHERE symbol=? "
+            "AND exchange=? AND julianday(observed_at)<=julianday(?) "
+            "ORDER BY julianday(observed_at) DESC,id DESC LIMIT 1",
+            (owner["symbol"], owner["venue"], fill_at),
+        ).fetchone()
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
+
+    outcomes = build_candidate_outcomes(
+        outcome_candidate_key=f"entry-fill:{f.id}",
+        venue=str(owner["venue"]),
+        symbol=str(owner["symbol"]),
+        market_type=str(owner["market_type"]),
+        direction=str(owner["direction"]),
+        scanner_family=(str(owner["scanner_family"]) if owner["scanner_family"] else None),
+        regime_tag=None,
+        entry_price_usd=float(f.fill_price),
+        entry_spread_bps=(float(orderbook[0]) if orderbook is not None else None),
+        funding_rate_at_entry=(float(funding[0]) if funding is not None else None),
+        entry_ts=fill_at,
+        allocation_selected=True,
+        horizons=("4h",),
+    )
+    insert_filter_candidate_outcomes_batch(outcomes)
 
 
 def list_fills(limit: int = 100, order_id: str | None = None) -> list[dict]:
@@ -9185,8 +9247,15 @@ def ensure_candidate_planning_generation(
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
-    from aletheia.storage.models import AI_ENTRY_PLANNER_CONTRACT_VERSION
-    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.storage.models import (
+        AI_ENTRY_PLANNER_CONTRACT_VERSION,
+        MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION,
+    )
+    from aletheia.trading.entry_plan import (
+        PLANNING_IDENTITY_V2_VERSION,
+        candidate_planning_identity,
+    )
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not 300 <= int(soft_lease_sec) <= int(max_attention_age_sec) <= 86_400:
@@ -9198,19 +9267,34 @@ def ensure_candidate_planning_generation(
             raise ValueError("candidate_not_found")
         if not bool(candidate.get("execution_eligible")):
             raise ValueError("candidate_execution_ineligible")
+        context = (
+            CandidateOpportunityContextV1.model_validate_json(
+                candidate["candidate_opportunity_context_json"]
+            )
+            if candidate.get("candidate_opportunity_context_json") else None
+        )
         planner_contract_version = (
-            AI_ENTRY_PLANNER_CONTRACT_VERSION
+            MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION
+            if context is not None
+            else AI_ENTRY_PLANNER_CONTRACT_VERSION
             if str(candidate.get("scanner_family") or "") == "momentum"
             else PLANNER_CONTRACT_VERSION
         )
         planning_key, planning_identity = candidate_planning_identity(candidate)
         existing_row = (
-            get_db()
-            .execute(
-                "SELECT * FROM candidate_planning_generations WHERE planning_key=? AND is_current=1 LIMIT 1",
-                (planning_key,),
-            )
-            .fetchone()
+            get_db().execute(
+                "SELECT * FROM candidate_planning_generations "
+                + (
+                    "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
+                    "ORDER BY created_at DESC,id DESC LIMIT 1"
+                    if context is not None else
+                    "WHERE planning_key=? AND is_current=1 LIMIT 1"
+                ),
+                (
+                    (str(candidate["venue"]), str(candidate["symbol"]), str(candidate["market_type"]))
+                    if context is not None else (planning_key,)
+                ),
+            ).fetchone()
         )
         existing = dict(existing_row) if existing_row else None
         existing_candidate = get_candidate(str(existing["last_candidate_id"])) if existing is not None else None
@@ -9279,6 +9363,21 @@ def ensure_candidate_planning_generation(
             market_type=str(candidate["market_type"]),
             candidate_family=str(candidate["scanner_family"]),
             direction=str(candidate["scanner_direction"]),
+            identity_version=(
+                PLANNING_IDENTITY_V2_VERSION if context is not None else "candidate-planning/v1"
+            ),
+            opportunity_mechanism=(
+                str(context.opportunity["primary_mechanism"]) if context else None
+            ),
+            candidate_selection_policy=(
+                str(context.candidate_selection["policy"]) if context else None
+            ),
+            candidate_selection_policy_epoch=(
+                context.candidate_selection.get("policy_epoch") if context else None
+            ),
+            mechanism_version=(
+                str(context.opportunity["mechanism_version"]) if context else None
+            ),
             created_at=timestamp,
             updated_at=timestamp,
             attention_started_at=timestamp,
@@ -9584,22 +9683,50 @@ def complete_candidate_planning_with_plan(
         if row["status"] != "planning":
             return "claim_lost", None
         if plan.version == "entry-plan/v2":
-            from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
+            from aletheia.trading.entry_analysis import (
+                EntryAnalysisContextV1,
+                EntryAnalysisContextV2,
+                fingerprint,
+            )
 
             try:
-                frozen_context = EntryAnalysisContextV1.model_validate_json(
+                context_type = (
+                    EntryAnalysisContextV2
+                    if row["planner_contract_version"] == "entry-planner/v4"
+                    else EntryAnalysisContextV1
+                )
+                frozen_context = context_type.model_validate_json(
                     row["planner_input_json"] or ""
                 )
             except Exception as exc:
                 raise ValueError("entry_plan_frozen_context_invalid") from exc
             if (
-                row["planner_contract_version"] != "entry-planner/v3"
+                row["planner_contract_version"] not in {
+                    "entry-planner/v3", "entry-planner/v4"
+                }
                 or row["planner_input_hash"]
                 != fingerprint(frozen_context.model_dump(mode="json"))
                 or plan.analysis_context_fingerprint
                 != frozen_context.context_fingerprint
             ):
                 raise ValueError("entry_plan_frozen_context_mismatch")
+            if row["planner_contract_version"] == "entry-planner/v4":
+                opportunity = frozen_context.candidate_opportunity_context
+                selection = opportunity.get("candidate_selection") or {}
+                mechanism = opportunity.get("opportunity") or {}
+                if (
+                    opportunity.get("context_hash")
+                    != (get_candidate(str(row["last_candidate_id"])) or {}).get(
+                        "candidate_opportunity_context_hash"
+                    )
+                    or mechanism.get("primary_mechanism") != row["opportunity_mechanism"]
+                    or mechanism.get("direction") != row["direction"]
+                    or mechanism.get("mechanism_version") != row["mechanism_version"]
+                    or selection.get("policy") != row["candidate_selection_policy"]
+                    or selection.get("policy_epoch")
+                    != row["candidate_selection_policy_epoch"]
+                ):
+                    raise ValueError("entry_plan_candidate_opportunity_mismatch")
         if (
             plan.candidate_id != row["last_candidate_id"]
             or plan.venue != row["venue"]

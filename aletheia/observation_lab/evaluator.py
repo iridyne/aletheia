@@ -136,7 +136,10 @@ def _path_id(
         # A missing path is still ambiguous between the two candidate-level
         # adapters; do not invent authority from a storage shape alone.
         return None
-    if window_kind in {"universe_family_calibration", "momentum_entry_geometry", "ranker_case_score"}:
+    if window_kind in {
+        "universe_family_calibration", "momentum_entry_geometry",
+        "mechanism_entry_learning", "ranker_case_score",
+    }:
         return window_kind
     return None
 

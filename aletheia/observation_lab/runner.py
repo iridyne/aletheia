@@ -298,6 +298,7 @@ def register_builtin_handlers() -> None:
         "filter_shadow",
         "universe_family_calibration",
         "momentum_entry_geometry",
+        "mechanism_entry_learning",
         "ranker_case_score",
     ):
         key = (kind, "canonical-v1")
@@ -324,6 +325,15 @@ def register_builtin_handlers() -> None:
                 adapter_version=key[1],
                 behavior_dimension=path_id,
             ))
+    from aletheia.learning.entry_context import EntryLearningTreatmentAdapter
+
+    entry_learning_adapter = EntryLearningTreatmentAdapter()
+    entry_learning_key = (
+        entry_learning_adapter.adapter_id,
+        entry_learning_adapter.adapter_version,
+    )
+    if entry_learning_key not in registered_treatment_adapters():
+        register_treatment_adapter(entry_learning_adapter)
 def _durable_observation_windows() -> dict[str, Any]:
     register_builtin_handlers()
     from aletheia.observation_lab.kernel import advance_windows

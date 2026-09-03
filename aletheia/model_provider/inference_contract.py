@@ -62,6 +62,12 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
         _spec("agent_shell.general_query", OutputMode.TEXT),
         _spec("agent_shell.fast_trigger_authorizer", OutputMode.STRUCTURED),
         _spec("agent_shell.entry_planner", OutputMode.STRUCTURED),
+        _spec(
+            "agent_shell.entry_planner.v2",
+            OutputMode.STRUCTURED,
+            prompt_template_id="agent_shell.entry_planner",
+            prompt_version="v2",
+        ),
         _spec("agent_shell.synthesis", OutputMode.TEXT),
         _spec("dreaming.lesson_extraction", OutputMode.STRUCTURED),
         _spec("dreaming.nightly_consolidation", OutputMode.TEXT),

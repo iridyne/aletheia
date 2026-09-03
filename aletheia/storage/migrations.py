@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v65"
+SCHEMA_VERSION = "aletheia-sqlite-v66"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3407,6 +3407,115 @@ _PAPER_ENTRY_EXECUTION_V64_CHECKSUM = hashlib.sha256(
         repr(_PAPER_ENTRY_EXECUTION_V64_COLUMNS)
         + _PAPER_ENTRY_EXECUTION_V64_SQL
         + "\npaper_order_fill_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_MECHANISM_AWARE_ENTRY_COLUMNS = (
+    ("opportunity_mechanism", "universe_members", "TEXT"),
+    ("candidate_opportunity_context_version", "universe_members", "TEXT"),
+    ("candidate_opportunity_context_json", "universe_members", "TEXT"),
+    ("candidate_opportunity_context_hash", "universe_members", "TEXT"),
+)
+_MECHANISM_AWARE_ENTRY_SQL = """
+CREATE TABLE candidate_planning_generations_v66 (
+    id TEXT PRIMARY KEY, planning_key TEXT NOT NULL, planning_identity TEXT NOT NULL,
+    identity_version TEXT NOT NULL CHECK(identity_version IN ('candidate-planning/v1','candidate-planning/v2')),
+    candidate_id TEXT NOT NULL, last_candidate_id TEXT NOT NULL, venue TEXT NOT NULL,
+    symbol TEXT NOT NULL, market_type TEXT NOT NULL CHECK(market_type IN ('spot','perp')),
+    candidate_family TEXT NOT NULL, direction TEXT NOT NULL CHECK(direction IN ('long','short')),
+    is_current INTEGER NOT NULL DEFAULT 1 CHECK(is_current IN (0,1)),
+    status TEXT NOT NULL CHECK(status IN ('pending','planning','planned','no_plan','unavailable','superseded')),
+    result_kind TEXT CHECK(result_kind IN ('entry_plan','no_plan','unavailable','stale_result')),
+    owner_token TEXT, claim_expires_at TEXT, retry_not_before TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+    result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)), entry_plan_id TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+    runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT,
+    attention_status TEXT NOT NULL DEFAULT 'active' CHECK(attention_status IN ('active','terminal')),
+    attention_started_at TEXT, last_requalified_at TEXT,
+    requalification_source_json TEXT CHECK(requalification_source_json IS NULL OR json_valid(requalification_source_json)),
+    soft_expires_at TEXT, hard_expires_at TEXT,
+    attention_max_age_sec INTEGER CHECK(attention_max_age_sec BETWEEN 300 AND 86400),
+    attention_policy_version TEXT CHECK(attention_policy_version IS NULL OR attention_policy_version='candidate-attention/v1'),
+    attention_terminal_at TEXT, attention_terminal_reason TEXT,
+    planner_contract_version TEXT NOT NULL DEFAULT 'entry-planner/v1'
+        CHECK(planner_contract_version IN ('entry-planner/v1','entry-planner/v2','entry-planner/v3','entry-planner/v4')),
+    planner_input_json TEXT CHECK(planner_input_json IS NULL OR json_valid(planner_input_json)),
+    planner_input_hash TEXT CHECK(planner_input_hash IS NULL OR length(planner_input_hash)=64),
+    activation_identity TEXT,
+    opportunity_mechanism TEXT CHECK(opportunity_mechanism IS NULL OR opportunity_mechanism IN
+        ('continuation','reversal','positioning_forced_flow','information_catalyst')),
+    candidate_selection_policy TEXT CHECK(candidate_selection_policy IS NULL OR candidate_selection_policy IN
+        ('legacy_total_score_v1','candidate_selection_utility_v1')),
+    candidate_selection_policy_epoch TEXT,
+    mechanism_version TEXT,
+    CHECK(identity_version='candidate-planning/v1' OR (
+        opportunity_mechanism IS NOT NULL AND candidate_selection_policy IS NOT NULL
+        AND mechanism_version IS NOT NULL
+        AND (candidate_selection_policy!='candidate_selection_utility_v1'
+             OR candidate_selection_policy_epoch IS NOT NULL)))
+);
+INSERT INTO candidate_planning_generations_v66 (
+    id,planning_key,planning_identity,identity_version,candidate_id,last_candidate_id,venue,symbol,
+    market_type,candidate_family,direction,is_current,status,result_kind,owner_token,claim_expires_at,
+    retry_not_before,attempt_count,result_json,entry_plan_id,created_at,updated_at,completed_at,
+    runtime_session_id,producer_commit,behavior_fingerprint,attention_status,attention_started_at,
+    last_requalified_at,requalification_source_json,soft_expires_at,hard_expires_at,attention_max_age_sec,
+    attention_policy_version,attention_terminal_at,attention_terminal_reason,planner_contract_version,
+    planner_input_json,planner_input_hash,activation_identity
+)
+SELECT id,planning_key,planning_identity,identity_version,candidate_id,last_candidate_id,venue,symbol,
+    market_type,candidate_family,direction,is_current,status,result_kind,owner_token,claim_expires_at,
+    retry_not_before,attempt_count,result_json,entry_plan_id,created_at,updated_at,completed_at,
+    runtime_session_id,producer_commit,behavior_fingerprint,attention_status,attention_started_at,
+    last_requalified_at,requalification_source_json,soft_expires_at,hard_expires_at,attention_max_age_sec,
+    attention_policy_version,attention_terminal_at,attention_terminal_reason,planner_contract_version,
+    planner_input_json,planner_input_hash,activation_identity
+FROM candidate_planning_generations;
+CREATE TABLE entry_plans_v66 (
+    id TEXT PRIMARY KEY,
+    planning_generation_id TEXT NOT NULL UNIQUE REFERENCES candidate_planning_generations_v66(id),
+    candidate_id TEXT NOT NULL, planning_key TEXT NOT NULL,
+    version TEXT NOT NULL CHECK(version IN ('entry-plan/v1','entry-plan/v2')),
+    venue TEXT NOT NULL, symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL CHECK(market_type IN ('spot','perp')),
+    direction TEXT NOT NULL CHECK(direction IN ('long','short')),
+    execution_mode TEXT NOT NULL CHECK(execution_mode IN ('RESTING_MAKER','TRIGGERED')),
+    plan_json TEXT NOT NULL CHECK(json_valid(plan_json)), plan_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('waiting','risk_reserved','triggered','ordered','partially_filled','filled','invalidated','expired','cancelled','failed')),
+    order_id TEXT REFERENCES orders(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    terminal_at TEXT, terminal_reason TEXT, runtime_session_id TEXT,
+    producer_commit TEXT, behavior_fingerprint TEXT,
+    monitoring_state TEXT,
+    monitoring_evidence_json TEXT CHECK(
+        monitoring_evidence_json IS NULL OR json_valid(monitoring_evidence_json)
+    ),
+    monitoring_evidence_hash TEXT
+);
+INSERT INTO entry_plans_v66 SELECT * FROM entry_plans;
+DROP TABLE entry_plans;
+DROP TABLE candidate_planning_generations;
+ALTER TABLE candidate_planning_generations_v66 RENAME TO candidate_planning_generations;
+ALTER TABLE entry_plans_v66 RENAME TO entry_plans;
+CREATE UNIQUE INDEX idx_candidate_planning_current ON candidate_planning_generations(planning_key) WHERE is_current=1;
+CREATE INDEX idx_candidate_planning_work ON candidate_planning_generations(is_current,status,retry_not_before,created_at);
+CREATE INDEX idx_candidate_attention_active_deadline ON candidate_planning_generations(attention_status,is_current,soft_expires_at,hard_expires_at);
+CREATE INDEX idx_candidate_planning_history ON candidate_planning_generations(updated_at DESC,id DESC);
+CREATE INDEX idx_candidate_planning_candidate ON candidate_planning_generations(candidate_id,updated_at DESC);
+CREATE INDEX idx_candidate_planning_last_candidate ON candidate_planning_generations(last_candidate_id,updated_at DESC);
+CREATE INDEX idx_entry_plans_watch ON entry_plans(status,execution_mode,updated_at);
+CREATE UNIQUE INDEX idx_entry_plans_active_key ON entry_plans(planning_key) WHERE status IN ('waiting','risk_reserved','triggered','ordered','partially_filled');
+CREATE TRIGGER trg_entry_plan_facts_immutable
+BEFORE UPDATE OF planning_generation_id,candidate_id,planning_key,version,venue,symbol,market_type,direction,execution_mode,plan_json,plan_hash,created_at
+ON entry_plans BEGIN SELECT RAISE(ABORT,'Entry Plan facts are immutable'); END;
+CREATE TRIGGER trg_entry_plan_no_delete BEFORE DELETE ON entry_plans
+BEGIN SELECT RAISE(ABORT,'Entry Plan history is retained'); END;
+"""
+_MECHANISM_AWARE_ENTRY_CHECKSUM = hashlib.sha256(
+    (
+        repr(_MECHANISM_AWARE_ENTRY_COLUMNS)
+        + _MECHANISM_AWARE_ENTRY_SQL
+        + "\nmechanism_aware_entry_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -7001,6 +7110,41 @@ def _apply_candidate_mechanism_handoff_v65(db: sqlite3.Connection) -> None:
     for column, table, column_type in _CANDIDATE_MECHANISM_HANDOFF_V65_COLUMNS:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_mechanism_aware_entry_v66(db: sqlite3.Connection) -> None:
+    """Add typed Candidate authority and V2 planning identity without rewriting history."""
+
+    required_tables = {"universe_members", "candidate_planning_generations", "entry_plans"}
+    existing_tables = {
+        str(row[0]) for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?,?)",
+            tuple(required_tables),
+        )
+    }
+    if existing_tables != required_tables:
+        return
+    member_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(universe_members)")}
+    for column, table, column_type in _MECHANISM_AWARE_ENTRY_COLUMNS:
+        if column not in member_columns:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+            member_columns.add(column)
+    planning_columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(candidate_planning_generations)")
+    }
+    planning_sql_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'"
+    ).fetchone()
+    planning_sql = "".join(str(planning_sql_row[0] or "").split()) if planning_sql_row else ""
+    required = {
+        "opportunity_mechanism", "candidate_selection_policy",
+        "candidate_selection_policy_epoch", "mechanism_version",
+    }
+    if not required.issubset(planning_columns) or "'candidate-planning/v2'" not in planning_sql:
+        db.executescript(_MECHANISM_AWARE_ENTRY_SQL)
+    db.executescript(_AI_ENTRY_V57_INTEGRITY_SQL)
+    if db.execute("PRAGMA foreign_key_check").fetchall():
+        raise MigrationStateError("mechanism_aware_entry_foreign_key_invalid")
     db.execute("PRAGMA optimize")
 
 
@@ -7609,6 +7753,12 @@ _MIGRATIONS = (
         checksum=_CANDIDATE_MECHANISM_HANDOFF_V65_CHECKSUM,
         schema_version="aletheia-sqlite-v65",
         apply=_apply_candidate_mechanism_handoff_v65,
+    ),
+    MigrationStep(
+        migration_id="20260903_0065_mechanism_aware_entry_v66",
+        checksum=_MECHANISM_AWARE_ENTRY_CHECKSUM,
+        schema_version="aletheia-sqlite-v66",
+        apply=_apply_mechanism_aware_entry_v66,
     ),
 )
 
