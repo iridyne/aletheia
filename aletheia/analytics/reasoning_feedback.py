@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 import aletheia.analytics.execution_mode as _execution_mode
 from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.outcome_integrity import (
-    eligible_strategy_outcomes,
     is_current_outcome_artifact,
+    read_complete_outcome_cohort,
 )
 from aletheia.analytics.learning_window import outcome_window_metadata
 
@@ -82,12 +82,19 @@ def build_reasoning_feedback(
         if not rows:
             return None
 
+        cohort = read_complete_outcome_cohort(
+            closed_after=cutoff,
+            execution_mode=execution_mode,
+            db=db,
+        )
+        if not cohort.cohort_complete:
+            return None
         outcomes_by_proposal = {
             str(row["proposal_id"]): row
-            for row in eligible_strategy_outcomes(
-                closed_after=cutoff, execution_mode=execution_mode,
+            for row, assessment in zip(
+                cohort.rows, cohort.assessments, strict=True
             )
-            if row.get("proposal_id")
+            if assessment.eligible and row.get("proposal_id")
         }
         proposals = []
         for raw in rows:
@@ -242,6 +249,11 @@ def build_reasoning_feedback(
             "recommended_pursue": recommended_pursue,
             "high_conviction_win_rate": _win_rate(high_conv),
             "low_conviction_win_rate": _win_rate(low_conv),
+            "source_raw_event_count": cohort.source_raw_event_count,
+            "loaded_raw_event_count": cohort.loaded_raw_event_count,
+            "cohort_complete": cohort.cohort_complete,
+            "ordered_source_digest": cohort.ordered_source_digest,
+            "cohort_identity": cohort.identity,
             **execution_mode_identity(execution_mode),
             **outcome_window_metadata(),
         }
@@ -281,6 +293,10 @@ def get_latest_reasoning_feedback(
                 continue
             if feedback.get("execution_mode") != execution_mode:
                 continue
+            if feedback.get("cohort_complete") is not True or not feedback.get(
+                "ordered_source_digest"
+            ):
+                continue
             if is_current_outcome_artifact(
                 feedback, max_age=MAX_ACTIVE_FEEDBACK_AGE,
             ):
@@ -296,6 +312,12 @@ def render_feedback_for_pi(fb: dict) -> str:
     n_prop = fb.get("sample_proposals", 0)
     n_exec = fb.get("sample_executed", 0)
     lines = [f"\n## Reasoning Quality Feedback ({fb.get('window_days', 30)}d, {n_prop} proposals → {n_exec} executed)"]
+    if fb.get("cohort_complete") is True and fb.get("ordered_source_digest"):
+        lines.append(
+            "Cohort: complete "
+            f"{fb.get('loaded_raw_event_count')}/{fb.get('source_raw_event_count')} "
+            f"digest={str(fb['ordered_source_digest'])[:12]}"
+        )
 
     pursue = fb.get("recommended_pursue", [])
     if pursue:

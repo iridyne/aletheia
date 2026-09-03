@@ -389,6 +389,16 @@ def test_calibration_and_reasoning_readers_reject_other_mode_artifacts(
         "low_conviction_win_rate": None,
         "execution_mode": "okx_demo",
         "execution_mode_status": "resolved",
+        "source_raw_event_count": 5,
+        "loaded_raw_event_count": 5,
+        "cohort_complete": True,
+        "ordered_source_digest": "cohort-digest",
+        "cohort_identity": {
+            "execution_mode": "okx_demo",
+            "runtime_session_id": None,
+            "closed_after": "2026-08-01T00:00:00+00:00",
+            "closed_before": None,
+        },
         **outcome_window_metadata(),
     }
     insert_knowledge_item(KnowledgeItem(

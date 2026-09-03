@@ -103,6 +103,20 @@ class OutcomeAssessment:
     source: str | None = None
 
 
+@dataclass(frozen=True)
+class CompleteOutcomeCohort:
+    """One complete, ordered outcome range and its shared evidence identity."""
+
+    rows: tuple[dict[str, Any], ...]
+    assessments: tuple[OutcomeAssessment, ...]
+    source_raw_event_count: int | None
+    loaded_raw_event_count: int
+    cohort_complete: bool
+    cohort_state: Literal["available", "unavailable"]
+    ordered_source_digest: str | None
+    identity: dict[str, str | None]
+
+
 class AttributionReadError(RuntimeError):
     """The attribution chain could not be read, so absence is not proven."""
 
@@ -449,11 +463,11 @@ def raw_account_events(
     closed_before: str | None = None,
     symbol: str | None = None,
     runtime_session_id: str | None = None,
-    limit: int = 10_000,
+    limit: int | None = 10_000,
     db: Any = None,
 ) -> list[dict]:
     """Read immutable closed-position events without implying outcome quality."""
-    if limit < 1 or limit > 10_000:
+    if limit is not None and (limit < 1 or limit > 10_000):
         raise ValueError("limit must be between 1 and 10000")
     from aletheia.storage.sqlite import (
         get_db,
@@ -486,7 +500,7 @@ def raw_account_events(
     if runtime_session_id is not None:
         conditions.append("p.runtime_session_id = ?")
         params.append(runtime_session_id)
-    params.append(limit)
+    params.append(-1 if limit is None else limit)
     rows = connection.execute(
         """
         SELECT recent.* FROM (
@@ -541,6 +555,57 @@ def raw_account_events(
         params,
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def read_complete_outcome_cohort(
+    *,
+    execution_mode: str | None = None,
+    closed_after: str | None = None,
+    closed_before: str | None = None,
+    runtime_session_id: str | None = None,
+    db: Any = None,
+) -> CompleteOutcomeCohort:
+    """Read a bounded authority cohort to exhaustion in one SQLite snapshot."""
+    identity = {
+        "execution_mode": execution_mode,
+        "runtime_session_id": runtime_session_id,
+        "closed_after": closed_after,
+        "closed_before": closed_before,
+    }
+    try:
+        rows = tuple(raw_account_events(
+            execution_mode=execution_mode,
+            closed_after=closed_after,
+            closed_before=closed_before,
+            runtime_session_id=runtime_session_id,
+            limit=None,
+            db=db,
+        ))
+        assessments = tuple(assess_reportable_outcome(row) for row in rows)
+        from aletheia.storage.hashing import sha256_json
+
+        digest = sha256_json(list(rows))
+    except Exception:
+        return CompleteOutcomeCohort(
+            rows=(),
+            assessments=(),
+            source_raw_event_count=None,
+            loaded_raw_event_count=0,
+            cohort_complete=False,
+            cohort_state="unavailable",
+            ordered_source_digest=None,
+            identity=identity,
+        )
+    return CompleteOutcomeCohort(
+        rows=rows,
+        assessments=assessments,
+        source_raw_event_count=len(rows),
+        loaded_raw_event_count=len(rows),
+        cohort_complete=True,
+        cohort_state="available",
+        ordered_source_digest=digest,
+        identity=identity,
+    )
 
 
 def eligible_strategy_outcomes(**filters) -> list[dict]:

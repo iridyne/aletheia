@@ -26,8 +26,8 @@ from math import exp, log
 
 from aletheia.analytics.execution_mode import resolve_selected_execution_mode
 from aletheia.analytics.outcome_integrity import (
-    eligible_strategy_outcomes,
     is_current_outcome_artifact,
+    read_complete_outcome_cohort,
 )
 from aletheia.storage.sqlite import iso_instant_us
 
@@ -90,6 +90,10 @@ def evaluate_prior_memo(
         max_age = timedelta(days=30) if for_rotation else timedelta(hours=72)
         if not is_current_outcome_artifact(memo, max_age=max_age):
             return None
+        if memo.get("cohort_complete") is not True or not memo.get(
+            "ordered_source_digest"
+        ):
+            return None
         generated_at = memo.get("generated_at")
         if not memo_id or not generated_at:
             return None
@@ -112,8 +116,15 @@ def evaluate_prior_memo(
         )
         if not memo_execution_mode:
             return None
+        cohort = read_complete_outcome_cohort(execution_mode=memo_execution_mode)
+        if not cohort.cohort_complete:
+            return None
         rows = []
-        for row in eligible_strategy_outcomes(execution_mode=memo_execution_mode):
+        for row, assessment in zip(
+            cohort.rows, cohort.assessments, strict=True
+        ):
+            if not assessment.eligible:
+                continue
             opened_at_us = iso_instant_us(row.get("opened_at"))
             if opened_at_us is None or opened_at_us < generated_at_us:
                 continue
@@ -135,6 +146,11 @@ def evaluate_prior_memo(
             "overturned_rules": [],
             "n_trades": len(rows),
             "evaluated_at": now_iso,
+            "source_raw_event_count": cohort.source_raw_event_count,
+            "loaded_raw_event_count": cohort.loaded_raw_event_count,
+            "cohort_complete": cohort.cohort_complete,
+            "ordered_source_digest": cohort.ordered_source_digest,
+            "cohort_identity": cohort.identity,
         }
 
         if rows:
@@ -197,6 +213,7 @@ def evaluate_prior_memo(
         tags["overturned_count"] = len(verdict["overturned_rules"])
         tags["evaluated_at"] = now_iso
         tags["eval_trades"] = verdict["n_trades"]
+        tags["eval_cohort_digest"] = cohort.ordered_source_digest
         try:
             update_knowledge_item(memo_id, tags=json.dumps(tags, ensure_ascii=False))
         except Exception as e:  # noqa: BLE001 — write-back is best-effort

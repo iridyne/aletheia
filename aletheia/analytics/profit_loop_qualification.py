@@ -17,8 +17,7 @@ from typing import Any
 
 from aletheia.analytics.outcome_integrity import (
     OUTCOME_SEMANTICS_VERSION,
-    eligible_strategy_outcomes,
-    build_outcome_cohort_summary,
+    read_complete_outcome_cohort,
 )
 from aletheia.storage.hashing import sha256_json
 
@@ -43,6 +42,12 @@ REQUIRED_REGISTRATION_KEYS: tuple[str, ...] = (
 _DEFAULT_CONCENTRATION_TOP1_CAP = 0.25
 _DEFAULT_CONCENTRATION_TOP5_CAP = 0.50
 _MIN_ELIGIBLE_DAYS = 2
+
+
+def _finalize_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
+    artifact["content_hash"] = sha256_json(artifact)
+    artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return artifact
 
 
 def _to_float(v: Any) -> float | None:
@@ -171,54 +176,78 @@ def compile_qualification_verdict(
     )
     max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
 
-    # ------------------------------------------------------------------
-    # Fetch eligible genuine outcomes for this cohort window
-    # ------------------------------------------------------------------
-    # Window filters (time + mode only) — used for mismatch counting.
-    # Window filters (time + mode only) — used for mismatch counting.
-    window_kwargs: dict[str, Any] = {
-        "execution_mode": execution_mode,
-        "closed_after": reg_dt,
-        "closed_before": cut_dt,
-    }
-
-    # Identity-bound fetch: only rows that prove registration membership.
-    fetch_kwargs: dict[str, Any] = {**window_kwargs, "runtime_session_id": runtime_session_id}
-
-    all_outcomes = eligible_strategy_outcomes(**fetch_kwargs)
-    exclusion_summary = build_outcome_cohort_summary(**fetch_kwargs)
-    window_summary = build_outcome_cohort_summary(**window_kwargs)
-    source_raw_count = window_summary.get("raw_event_count") or 0
-
-    # Post-filter: only positions *opened* on or after the registration date
-    # to exclude pre-policy positions that may close inside the window.
-    cohort_outcomes = [
-        row for row in all_outcomes
-        if _parse_utc(row.get("opened_at") or "", field="opened_at") >= reg_dt
-    ]
-    loaded_raw_count = len(cohort_outcomes)
-
-    # If cohort is incomplete (10k limit clipped data), fail closed.
-    # Authority verdict requires a complete cohort.
-    if loaded_raw_count < source_raw_count and source_raw_count >= 10_000:
-        _partial_hash = sha256_json(registration)
-        return {
+    # One complete window read supplies identity, exclusions, and economics.
+    cohort = read_complete_outcome_cohort(
+        execution_mode=execution_mode,
+        closed_after=registration_at,
+        closed_before=cutoff_at,
+    )
+    registration_hash = sha256_json(registration)
+    if not cohort.cohort_complete:
+        return _finalize_artifact({
             "contract_version": QUALIFICATION_CONTRACT_VERSION,
             "verdict": "insufficient_data",
             "registration": registration,
-            "registration_hash": _partial_hash,
-            "metrics": {"reason": "partial_cohort_cannot_prove"},
+            "registration_hash": registration_hash,
+            "metrics": {"reason": "outcome_cohort_unavailable"},
             "gates": {},
             "funnel": {
-                "source_raw_event_count": source_raw_count,
-                "loaded_raw_event_count": loaded_raw_count,
+                "source_raw_event_count": cohort.source_raw_event_count,
+                "loaded_raw_event_count": cohort.loaded_raw_event_count,
                 "cohort_complete": False,
+                "cohort_state": cohort.cohort_state,
+                "ordered_source_digest": cohort.ordered_source_digest,
+                "cohort_identity": cohort.identity,
             },
             "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
-            "content_hash": "",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        })
 
+    target_pairs = [
+        (row, assessment)
+        for row, assessment in zip(cohort.rows, cohort.assessments, strict=True)
+        if row.get("runtime_session_id") == runtime_session_id
+    ]
+    registered_pairs: list[tuple[dict[str, Any], Any]] = []
+    try:
+        for row, assessment in target_pairs:
+            if _parse_utc(row.get("opened_at") or "", field="opened_at") >= reg_dt:
+                registered_pairs.append((row, assessment))
+    except ValueError:
+        return _finalize_artifact({
+            "contract_version": QUALIFICATION_CONTRACT_VERSION,
+            "verdict": "insufficient_data",
+            "registration": registration,
+            "registration_hash": registration_hash,
+            "metrics": {"reason": "invalid_opened_at"},
+            "gates": {},
+            "funnel": {
+                "source_raw_event_count": None,
+                "loaded_raw_event_count": 0,
+                "cohort_complete": False,
+                "cohort_state": "unavailable",
+                "ordered_source_digest": None,
+                "cohort_identity": {
+                    **cohort.identity,
+                    "runtime_session_id": runtime_session_id,
+                    "opened_after": registration_at,
+                },
+            },
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        })
+
+    registered_rows = [row for row, _assessment in registered_pairs]
+    cohort_outcomes = [
+        row for row, assessment in registered_pairs if assessment.eligible
+    ]
+    exclusion_reasons: dict[str, int] = {}
+    for _row, assessment in registered_pairs:
+        if not assessment.eligible:
+            exclusion_reasons[assessment.reason] = (
+                exclusion_reasons.get(assessment.reason, 0) + 1
+            )
+    source_raw_count = len(registered_rows)
+    loaded_raw_count = len(registered_rows)
+    ordered_source_digest = sha256_json(registered_rows)
 
     # ------------------------------------------------------------------
     # Metrics
@@ -267,17 +296,24 @@ def compile_qualification_verdict(
     }
 
     funnel: dict[str, Any] = {
-        "raw_event_count": exclusion_summary.get("raw_event_count"),
-        "eligible_outcome_count": exclusion_summary.get("eligible_outcome_count"),
-        "excluded_outcome_count": exclusion_summary.get("excluded_outcome_count"),
+        "raw_event_count": source_raw_count,
+        "eligible_outcome_count": len(cohort_outcomes),
+        "excluded_outcome_count": source_raw_count - len(cohort_outcomes),
         "cohort_filtered_count": len(ordered_pnls),
-        "pre_policy_excluded_count": len(all_outcomes) - len(cohort_outcomes),
-        "identity_mismatched_count": (window_summary.get("raw_event_count") or 0) - (exclusion_summary.get("raw_event_count") or 0),
-        "outcome_exclusion_reasons": exclusion_summary.get("outcome_exclusion_reasons", {}),
+        "pre_policy_excluded_count": len(target_pairs) - len(registered_pairs),
+        "identity_mismatched_count": len(cohort.rows) - len(target_pairs),
+        "outcome_exclusion_reasons": dict(sorted(exclusion_reasons.items())),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         "source_raw_event_count": source_raw_count,
         "loaded_raw_event_count": loaded_raw_count,
-        "cohort_complete": loaded_raw_count >= source_raw_count or source_raw_count < 10_000,
+        "cohort_complete": True,
+        "cohort_state": cohort.cohort_state,
+        "ordered_source_digest": ordered_source_digest,
+        "cohort_identity": {
+            **cohort.identity,
+            "runtime_session_id": runtime_session_id,
+            "opened_after": registration_at,
+        },
     }
     # Decision gates
     # ------------------------------------------------------------------
@@ -346,8 +382,6 @@ def compile_qualification_verdict(
     # ------------------------------------------------------------------
     # registration_hash lets callers detect if the same session is re-evaluated
     # with a different registration blob (different hash = different preregistration).
-    registration_hash = sha256_json(registration)
-
     artifact: dict[str, Any] = {
         "contract_version": QUALIFICATION_CONTRACT_VERSION,
         "verdict": verdict,
@@ -358,7 +392,4 @@ def compile_qualification_verdict(
         "funnel": funnel,
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
-    # content_hash covers only stable evidence; generated_at is envelope metadata added after.
-    artifact["content_hash"] = sha256_json(artifact)
-    artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
-    return artifact
+    return _finalize_artifact(artifact)

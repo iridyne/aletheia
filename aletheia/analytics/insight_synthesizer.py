@@ -21,8 +21,8 @@ from aletheia.analytics.execution_mode import (
     resolve_selected_execution_mode,
 )
 from aletheia.analytics.outcome_integrity import (
-    eligible_strategy_outcomes,
     is_current_outcome_artifact,
+    read_complete_outcome_cohort,
 )
 from aletheia.analytics.learning_window import outcome_window_metadata
 
@@ -85,6 +85,11 @@ class TradingMemo(TypedDict):
     outcome_semantics_version: str
     clean_window_anchor_id: str
     clean_window_anchor_iso: str
+    source_raw_event_count: int
+    loaded_raw_event_count: int
+    cohort_complete: bool
+    ordered_source_digest: str
+    cohort_identity: dict[str, str | None]
 
 
 def get_latest_memo(
@@ -123,6 +128,10 @@ def get_latest_memo(
             except (json.JSONDecodeError, TypeError):
                 continue
             if memo.get("execution_mode") != execution_mode:
+                continue
+            if memo.get("cohort_complete") is not True or not memo.get(
+                "ordered_source_digest"
+            ):
                 continue
             if is_current_outcome_artifact(
                 memo, max_age=timedelta(hours=MAX_MEMO_AGE_HOURS),
@@ -218,9 +227,17 @@ def _gather_statistics(
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
         )
 
-        rows = eligible_strategy_outcomes(
+        cohort = read_complete_outcome_cohort(
             closed_after=cutoff, execution_mode=execution_mode,
         )
+        if not cohort.cohort_complete:
+            return None
+        rows = [
+            row for row, assessment in zip(
+                cohort.rows, cohort.assessments, strict=True
+            )
+            if assessment.eligible
+        ]
 
         if not rows:
             return None
@@ -232,6 +249,11 @@ def _gather_statistics(
             "rows": rows,
             "current_regime": current_regime,
             "window_days": window_days,
+            "source_raw_event_count": cohort.source_raw_event_count,
+            "loaded_raw_event_count": cohort.loaded_raw_event_count,
+            "cohort_complete": cohort.cohort_complete,
+            "ordered_source_digest": cohort.ordered_source_digest,
+            "cohort_identity": cohort.identity,
         }
     except Exception as e:
         logger.warning("_gather_statistics failed: %s", e)
@@ -262,6 +284,11 @@ def _build_deterministic_memo(
         "anti_patterns": anti_patterns,
         "direction_summary": direction_summary,
         "key_insight": "",
+        "source_raw_event_count": stats["source_raw_event_count"],
+        "loaded_raw_event_count": stats["loaded_raw_event_count"],
+        "cohort_complete": stats["cohort_complete"],
+        "ordered_source_digest": stats["ordered_source_digest"],
+        "cohort_identity": stats["cohort_identity"],
         **execution_mode_identity(execution_mode),
         **outcome_window_metadata(),
     }
@@ -566,6 +593,12 @@ def render_memo_for_observer(
 
     memo_weight = memo_half_life_weight(memo.get("generated_at"))
     lines = ["\n## Historical Performance Context (Trading Memo)"]
+    if memo.get("cohort_complete") is True and memo.get("ordered_source_digest"):
+        lines.append(
+            "Cohort: complete "
+            f"{memo.get('loaded_raw_event_count')}/{memo.get('source_raw_event_count')} "
+            f"digest={str(memo['ordered_source_digest'])[:12]}"
+        )
 
     if not compact:
         lines.append(f"Data: {memo['sample_size']} trades over {memo['data_window_days']} days")
