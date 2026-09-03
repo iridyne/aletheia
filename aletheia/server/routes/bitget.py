@@ -243,7 +243,7 @@ async def binance_test_candidate(req: BinanceCandidateRequest):
     if req.mode not in ("testnet", "live"):
         raise HTTPException(400, "mode must be 'testnet' or 'live'")
     try:
-        from aletheia.net import make_ccxt
+        from aletheia.net import close_ccxt, make_ccxt
         exchange, session = make_ccxt(
             "binanceusdm",
             apiKey=req.api_key,
@@ -255,8 +255,8 @@ async def binance_test_candidate(req: BinanceCandidateRequest):
                 exchange.set_sandbox_mode(True)
             await exchange.fetch_balance()
         finally:
-            await exchange.close()
-            await session.close()
+            if not await close_ccxt(exchange, session):
+                raise RuntimeError("credential_probe_cleanup_failed")
         return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)
@@ -371,7 +371,7 @@ async def okx_test_candidate(req: OkxCandidateRequest):
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "mode must be 'demo' or 'live'")
     try:
-        from aletheia.net import make_ccxt
+        from aletheia.net import close_ccxt, make_ccxt
         exchange, session = make_ccxt(
             "okx",
             apiKey=req.api_key,
@@ -383,8 +383,8 @@ async def okx_test_candidate(req: OkxCandidateRequest):
                 exchange.set_sandbox_mode(True)
             await exchange.fetch_balance()
         finally:
-            await exchange.close()
-            await session.close()
+            if not await close_ccxt(exchange, session):
+                raise RuntimeError("credential_probe_cleanup_failed")
         return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)

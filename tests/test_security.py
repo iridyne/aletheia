@@ -286,6 +286,87 @@ async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatc
     assert calls.count(("session_closed", True)) == 2
 
 
+async def test_exchange_candidate_cleanup_failure_closes_session_and_fails_closed(monkeypatch):
+    import aletheia.net as net
+    from aletheia.server.routes.bitget import BinanceCandidateRequest, binance_test_candidate
+
+    calls = []
+
+    class _FakeExchange:
+        async def fetch_balance(self):
+            return {"total": {"USDT": 1.0}}
+
+        async def close(self):
+            calls.append("exchange")
+            raise RuntimeError("close failed")
+
+    class _FakeSession:
+        async def close(self):
+            calls.append("session")
+
+    monkeypatch.setattr(net, "make_ccxt", lambda *args, **kwargs: (_FakeExchange(), _FakeSession()))
+
+    result = await binance_test_candidate(
+        BinanceCandidateRequest(mode="testnet", api_key="candidate-key", api_secret="candidate-secret")
+    )
+
+    assert result == {"connected": False, "error": "RuntimeError"}
+    assert calls == ["exchange", "session"]
+
+
+async def test_close_ccxt_reraises_cancellation_after_session_cleanup():
+    import asyncio
+    from aletheia.net import close_ccxt
+
+    calls = []
+
+    class _Exchange:
+        async def close(self):
+            calls.append("exchange")
+            raise asyncio.CancelledError
+
+    class _Session:
+        async def close(self):
+            calls.append("session")
+
+    with pytest.raises(asyncio.CancelledError):
+        await close_ccxt(_Exchange(), _Session())
+
+    assert calls == ["exchange", "session"]
+
+
+@pytest.mark.parametrize(
+    ("module_name", "class_name"),
+    [
+        ("aletheia.exchanges.binance.client", "BinanceClient"),
+        ("aletheia.exchanges.okx.client", "OKXClient"),
+    ],
+)
+async def test_exchange_client_close_surfaces_failure_and_retains_retry_handles(
+    monkeypatch, module_name, class_name
+):
+    import importlib
+    import aletheia.net as net
+
+    module = importlib.import_module(module_name)
+    client = getattr(module, class_name).__new__(getattr(module, class_name))
+    exchange = object()
+    session = object()
+    client._exchange = exchange
+    client._session = session
+    monkeypatch.setattr(net, "close_ccxt", lambda *_args: _false_async())
+
+    with pytest.raises(RuntimeError, match="ccxt_cleanup_failed"):
+        await client.close()
+
+    assert client._exchange is exchange
+    assert client._session is session
+
+
+async def _false_async():
+    return False
+
+
 # ---------------------------------------------------------------------------
 # error-leak 2.7: model providers must not leak credentials via raised exceptions.
 # raise_for_status_without_secrets scrubs auth headers + sanitises the message.

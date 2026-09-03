@@ -633,10 +633,13 @@ class OKXClient:
         No-op if the exchange was never lazily created (e.g. constructed then
         closed without any awaited call).
         """
-        if self._exchange is not None:
-            await self._exchange.close()
-        if self._session is not None:
-            await self._session.close()
+        from aletheia.net import close_ccxt
+
+        exchange, session = self._exchange, self._session
+        if not await close_ccxt(exchange, session):
+            raise RuntimeError("ccxt_cleanup_failed")
+        self._exchange = None
+        self._session = None
 
     @staticmethod
     async def load_demo_markets() -> dict:
@@ -646,7 +649,7 @@ class OKXClient:
         Keeping the sets separate lets the pre-flight check be market-type-aware:
         a symbol available only as spot (e.g. WLD) must not pass a perp order.
         """
-        from aletheia.net import make_ccxt
+        from aletheia.net import close_ccxt, make_ccxt
         exchange, session = make_ccxt("okx", options={"defaultType": "swap"})
         exchange.set_sandbox_mode(True)
         try:
@@ -670,8 +673,8 @@ class OKXClient:
                     spot_symbols.add(canonical)
             return {"swap": frozenset(swap_symbols), "spot": frozenset(spot_symbols)}
         finally:
-            await exchange.close()
-            await session.close()
+            if not await close_ccxt(exchange, session):
+                raise RuntimeError("ccxt_cleanup_failed")
 
     @staticmethod
     def _map_status(raw: str) -> str:
