@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v63"
+SCHEMA_VERSION = "aletheia-sqlite-v64"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3328,6 +3328,72 @@ _CANDIDATE_SELECTION_UTILITY_COLUMNS = (
 )
 _CANDIDATE_SELECTION_UTILITY_CHECKSUM = hashlib.sha256(
     (repr(_CANDIDATE_SELECTION_UTILITY_COLUMNS) + "\ncandidate_selection_utility_v1").encode("utf-8")
+).hexdigest()
+
+_PAPER_ENTRY_EXECUTION_V64_COLUMNS = (
+    ("execution_attempt_id", "proposal_execution_claims", "TEXT"),
+    ("execution_receipt_hash", "proposal_execution_claims", "TEXT"),
+    (
+        "execution_receipt_json",
+        "proposal_execution_claims",
+        "TEXT CHECK(execution_receipt_json IS NULL OR json_valid(execution_receipt_json))",
+    ),
+    ("execution_attempt_id", "risk_decisions", "TEXT"),
+    ("execution_receipt_hash", "risk_decisions", "TEXT"),
+    (
+        "execution_receipt_json",
+        "risk_decisions",
+        "TEXT CHECK(execution_receipt_json IS NULL OR json_valid(execution_receipt_json))",
+    ),
+    ("execution_attempt_id", "orders", "TEXT"),
+    ("execution_receipt_hash", "orders", "TEXT"),
+    ("paper_fill_model_version", "orders", "TEXT"),
+    ("matching_stream_generation_id", "orders", "TEXT"),
+    ("matching_subscription_generation_id", "orders", "TEXT"),
+    ("monitoring_gap_started_at", "orders", "TEXT"),
+    ("simulated_liquidity", "fills", "TEXT"),
+    ("execution_attempt_id", "fills", "TEXT"),
+    ("execution_receipt_hash", "fills", "TEXT"),
+    ("paper_fill_model_version", "fills", "TEXT"),
+    (
+        "fill_evidence_json",
+        "fills",
+        "TEXT CHECK(fill_evidence_json IS NULL OR json_valid(fill_evidence_json))",
+    ),
+    ("fill_evidence_hash", "fills", "TEXT"),
+    ("market_event_id", "fills", "TEXT"),
+    ("monitoring_state", "entry_plans", "TEXT"),
+    (
+        "monitoring_evidence_json",
+        "entry_plans",
+        "TEXT CHECK(monitoring_evidence_json IS NULL OR json_valid(monitoring_evidence_json))",
+    ),
+    ("monitoring_evidence_hash", "entry_plans", "TEXT"),
+)
+_PAPER_ENTRY_EXECUTION_V64_SQL = """
+DROP INDEX IF EXISTS idx_risk_authoritative_snapshot_v2;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot_v3
+ON risk_decisions(
+    proposal_id,
+    COALESCE(proposal_commit_hash, ''),
+    COALESCE(evaluated_quantity, -1.7976931348623157e308),
+    COALESCE(policy_hash, ''),
+    COALESCE(execution_attempt_id, '')
+)
+WHERE decision_role = 'authoritative';
+CREATE INDEX IF NOT EXISTS idx_orders_open_paper_entry
+ON orders(execution_mode, status, entry_plan_id)
+WHERE execution_mode='paper_internal' AND entry_plan_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_fill_market_event_v64
+ON fills(order_id, market_event_id)
+WHERE market_event_id IS NOT NULL;
+"""
+_PAPER_ENTRY_EXECUTION_V64_CHECKSUM = hashlib.sha256(
+    (
+        repr(_PAPER_ENTRY_EXECUTION_V64_COLUMNS)
+        + _PAPER_ENTRY_EXECUTION_V64_SQL
+        + "\npaper_order_fill_v1"
+    ).encode("utf-8")
 ).hexdigest()
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
@@ -6884,6 +6950,29 @@ def _apply_candidate_selection_utility_v63(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_paper_entry_execution_v64(db: sqlite3.Connection) -> None:
+    """Add durable attempt and conservative Paper-fill provenance."""
+
+    for column, table, column_type in _PAPER_ENTRY_EXECUTION_V64_COLUMNS:
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone() is None:
+            continue
+        existing = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    for statement in _PAPER_ENTRY_EXECUTION_V64_SQL.split(";"):
+        if not statement.strip():
+            continue
+        try:
+            db.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if not str(exc).startswith(("no such table", "no such column")):
+                raise
+    db.execute("PRAGMA optimize")
+
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -7477,6 +7566,12 @@ _MIGRATIONS = (
         checksum=_CANDIDATE_SELECTION_UTILITY_CHECKSUM,
         schema_version="aletheia-sqlite-v63",
         apply=_apply_candidate_selection_utility_v63,
+    ),
+    MigrationStep(
+        migration_id="20260903_0063_paper_entry_execution_v64",
+        checksum=_PAPER_ENTRY_EXECUTION_V64_CHECKSUM,
+        schema_version="aletheia-sqlite-v64",
+        apply=_apply_paper_entry_execution_v64,
     ),
 )
 

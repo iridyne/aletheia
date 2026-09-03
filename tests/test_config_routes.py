@@ -1125,7 +1125,12 @@ async def test_fast_trigger_settings_are_visible_bounded_and_persisted(client):
 
     resp = await client.post(
         "/api/settings/fast-trigger",
-        json={"mode": "off", "max_setups": 7, "authorization_ttl_minutes": 45},
+        json={
+            "enabled": False,
+            "mode": "off",
+            "max_setups": 7,
+            "authorization_ttl_minutes": 45,
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["runtime_status"]["reason"] == "fast_trigger_disabled"

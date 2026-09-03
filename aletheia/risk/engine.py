@@ -3,6 +3,7 @@
 Change-controlled module (guide §31.3). Implements the §21.3 check matrix.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -220,6 +221,150 @@ def _entry_plan_authority_violations(
         plan_max_risk = capital_base * plan.max_risk_pct / 100.0
         if risk_amount > plan_max_risk + 1e-12:
             violations.append("entry_plan_max_risk_exceeded")
+    return violations
+
+
+def _entry_execution_receipt_violations(
+    proposal: TradeProposal,
+    execution_receipt,
+) -> list[str]:
+    """Validate one expiring Entry Plan attempt against its immutable intent."""
+
+    if not proposal.entry_plan_id:
+        return []
+    from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
+
+    try:
+        receipt = EntryExecutionReceiptV1.model_validate(execution_receipt)
+    except Exception:
+        return ["entry_execution_receipt_required"]
+    if not receipt.hash_is_valid():
+        return ["entry_execution_receipt_hash_mismatch"]
+    row = get_entry_plan(proposal.entry_plan_id)
+    if row is None:
+        return ["entry_plan_not_found"]
+    try:
+        plan = EntryPlan.model_validate_json(str(row["plan_json"]))
+    except Exception:
+        return ["entry_plan_contract_invalid"]
+
+    violations: list[str] = []
+    if receipt.proposal_id != proposal.id or receipt.entry_plan_id != plan.plan_id:
+        violations.append("entry_execution_receipt_identity_mismatch")
+    instrument = receipt.instrument
+    if (
+        instrument.get("venue") != plan.venue
+        or instrument.get("symbol") != plan.symbol
+        or _physical_market_type(instrument.get("market_type"))
+        != _physical_market_type(plan.market_type)
+    ):
+        violations.append("entry_execution_receipt_instrument_mismatch")
+    captured_at = None
+    try:
+        captured_at = datetime.fromisoformat(receipt.captured_at.replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(receipt.expires_at.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        if captured_at.tzinfo is None or expires_at.tzinfo is None:
+            raise ValueError
+        if captured_at > now + MAX_FUTURE_SKEW or expires_at <= now or expires_at <= captured_at:
+            violations.append("entry_execution_receipt_stale")
+    except (TypeError, ValueError):
+        violations.append("entry_execution_receipt_time_invalid")
+
+    expected_channels = {
+        {"books5": "depth", "candle1m": "candle"}.get(channel, channel)
+        for channel in plan.trigger_data_requirements
+    } or {"quote"}
+    if not expected_channels <= set(receipt.required_channels):
+        violations.append("entry_execution_receipt_channels_missing")
+    quote = receipt.quote
+    freshness_ms = int(plan.trigger_freshness_ms or 2_000)
+    try:
+        bid = float(quote["bid"])
+        ask = float(quote["ask"])
+        quote_received = int(quote["received_timestamp_ms"])
+        quote_exchange = int(quote["exchange_timestamp_ms"])
+        quote_sequence = int(quote["sequence"])
+        if captured_at is None:
+            raise ValueError
+        captured_ms = int(captured_at.timestamp() * 1_000)
+        if (
+            not math.isfinite(bid)
+            or not math.isfinite(ask)
+            or bid <= 0
+            or ask < bid
+            or quote_sequence < 0
+            or quote_received != captured_ms
+            or quote_exchange > quote_received + int(MAX_FUTURE_SKEW.total_seconds() * 1_000)
+            or quote_received - quote_exchange > freshness_ms
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, OverflowError):
+        violations.append("entry_execution_receipt_quote_invalid")
+        bid = ask = None
+
+    try:
+        proposal_price = float(proposal.price)
+    except (TypeError, ValueError):
+        proposal_price = math.nan
+    if bid is not None and ask is not None:
+        if proposal.order_tactic == "POST_ONLY_LIMIT":
+            crossed = (
+                proposal.direction == "long" and proposal_price >= ask
+            ) or (
+                proposal.direction == "short" and proposal_price <= bid
+            )
+            if crossed:
+                violations.append("entry_execution_receipt_post_only_crossed")
+        elif proposal.order_tactic == "OPPOSING_BBO_IOC":
+            expected_bbo = ask if proposal.direction == "long" else bid
+            if not math.isclose(proposal_price, expected_bbo, rel_tol=1e-9, abs_tol=1e-8):
+                violations.append("entry_execution_receipt_ioc_price_mismatch")
+            depth = receipt.depth
+            if not isinstance(depth, dict) or not depth.get("bids") or not depth.get("asks"):
+                violations.append("entry_execution_receipt_depth_required")
+            else:
+                try:
+                    depth_received = int(depth["received_timestamp_ms"])
+                    depth_exchange = int(depth["exchange_timestamp_ms"])
+                    depth_sequence = int(depth["sequence"])
+                    bids = [(float(price), float(size)) for price, size in depth["bids"]]
+                    asks = [(float(price), float(size)) for price, size in depth["asks"]]
+                    if (
+                        depth_sequence < 0
+                        or depth_received > captured_ms
+                        + int(MAX_FUTURE_SKEW.total_seconds() * 1_000)
+                        or captured_ms - depth_received > freshness_ms
+                        or depth_exchange
+                        > depth_received + int(MAX_FUTURE_SKEW.total_seconds() * 1_000)
+                        or depth_received - depth_exchange > freshness_ms
+                        or any(
+                            not math.isfinite(value) or value <= 0
+                            for level in (*bids, *asks)
+                            for value in level
+                        )
+                        or any(left[0] < right[0] for left, right in zip(bids, bids[1:]))
+                        or any(left[0] > right[0] for left, right in zip(asks, asks[1:]))
+                        or bids[0][0] > asks[0][0]
+                    ):
+                        raise ValueError
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    violations.append("entry_execution_receipt_depth_invalid")
+    attribution = {}
+    try:
+        attribution = json.loads(proposal.attribution_snapshot or "{}")
+    except (TypeError, ValueError):
+        pass
+    trigger = attribution.get("entry_trigger") if isinstance(attribution, dict) else None
+    expected_trigger_hash = (
+        hashlib.sha256(
+            json.dumps(trigger, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if isinstance(trigger, dict)
+        else None
+    )
+    if receipt.trigger_evidence_hash != expected_trigger_hash:
+        violations.append("entry_execution_receipt_trigger_mismatch")
     return violations
 
 
@@ -736,6 +881,7 @@ def evaluate_proposal(
     proposal: TradeProposal,
     *,
     decision_role: str = "authoritative",
+    execution_receipt=None,
 ) -> RiskCheckResult:
     """Run all risk checks against a trade proposal. Returns a decision.
 
@@ -775,6 +921,9 @@ def evaluate_proposal(
                     proposal_commit_hash,
                     proposal.quantity,
                     current_policy_hash,
+                    execution_attempt_id=(
+                        execution_receipt.attempt_id if execution_receipt else None
+                    ),
                 )
                 if existing is not None:
                     result = _risk_result_from_row(existing)
@@ -791,17 +940,22 @@ def evaluate_proposal(
                         refreshed = _evaluate_proposal_locked(
                             proposal,
                             decision_role="preflight",
+                            execution_receipt=execution_receipt,
                         )
                         if not refreshed.approved:
                             return refreshed
                 else:
                     # Preserve the historical one-argument private call for the
                     # default role; lock-focused tests instrument this boundary.
-                    result = _evaluate_proposal_locked(proposal)
+                    result = _evaluate_proposal_locked(
+                        proposal,
+                        execution_receipt=execution_receipt,
+                    )
                 if not result.approved:
                     stored = get_trade_proposal(proposal.id)
                     if (
-                        stored is not None
+                        not _receipt_only_rejection(result.violations)
+                        and stored is not None
                         and str(stored.get("status") or "")
                         in {"pending", "approved"}
                     ):
@@ -839,12 +993,17 @@ def evaluate_proposal(
                             leverage=float(proposal.leverage or 1.0),
                         )
                 return result
-        return _evaluate_proposal_locked(proposal, decision_role=decision_role)
+        return _evaluate_proposal_locked(
+            proposal,
+            decision_role=decision_role,
+            execution_receipt=execution_receipt,
+        )
 
 
 def _evaluate_proposal_locked(
     proposal: TradeProposal,
     decision_role: str = "authoritative",
+    execution_receipt=None,
 ) -> RiskCheckResult:
     native_input_violations = _native_input_violations(proposal)
     if native_input_violations:
@@ -855,6 +1014,7 @@ def _evaluate_proposal_locked(
             proposal,
             native_input_violations,
             decision_role=decision_role,
+            execution_receipt=execution_receipt,
         )
 
     cfg = load_config()
@@ -869,6 +1029,7 @@ def _evaluate_proposal_locked(
             proposal,
             [f"unregistered_risk_execution_mode:{proposal.execution_mode}"],
             decision_role=decision_role,
+            execution_receipt=execution_receipt,
         )
     risk = resolved_policy.legacy_view(cfg.risk)
     # Downstream helpers receive the same mode-scoped view. This copy is local to
@@ -907,55 +1068,56 @@ def _evaluate_proposal_locked(
         and proposal.source == "native"
         and proposal.execution_mode == "paper_internal"
     ):
-        from aletheia.data.price_feed import (
-            get_fresh_price_for_protective_close,
-            protective_price_venue,
-        )
-
-        venue = protective_price_venue(
-            proposal.execution_mode,
-            configured_data_venue=cfg.market_data.ccxt_exchange,
-        )
-        physical_market = (
-            "perp" if proposal.market_type == "usdt_futures" else proposal.market_type
-        )
-        fresh_mark = None
-        if venue is not None:
-            try:
-                raw_fresh_mark = get_fresh_price_for_protective_close(
-                    sym_canonical,
-                    proposal.market_type,
-                    venue=venue,
-                )
-                if raw_fresh_mark is not None:
-                    candidate_mark = float(raw_fresh_mark)
-                    if math.isfinite(candidate_mark) and candidate_mark > 0:
-                        fresh_mark = candidate_mark
-            except Exception as exc:
-                logger.warning(
-                    "paper market authority unavailable for %s/%s/%s (%s)",
-                    venue,
-                    physical_market,
-                    sym_canonical,
-                    type(exc).__name__,
-                )
-        if fresh_mark is None:
-            violations.append(
-                f"paper_market_data_unavailable:{venue or 'unknown'}:{physical_market}"
+        if proposal.entry_plan_id:
+            violations.extend(
+                _entry_execution_receipt_violations(proposal, execution_receipt)
             )
-        elif not math.isclose(
-            float(proposal.price),
-            fresh_mark,
-            rel_tol=1e-9,
-            abs_tol=1e-8,
-        ):
-            # The paper broker treats Proposal.price as its requested execution
-            # mark and applies slippage afterwards. A merely fresh but different
-            # market row must never authorize a stale/invented requested price.
-            violations.append("proposal_price_not_current_mark")
-        if proposal.order_type == "limit" and not proposal.entry_plan_id:
-            violations.append("paper_internal_limit_not_supported")
-        if not proposal.entry_plan_id:
+        else:
+            from aletheia.data.price_feed import (
+                get_fresh_price_for_protective_close,
+                protective_price_venue,
+            )
+
+            venue = protective_price_venue(
+                proposal.execution_mode,
+                configured_data_venue=cfg.market_data.ccxt_exchange,
+            )
+            physical_market = (
+                "perp" if proposal.market_type == "usdt_futures" else proposal.market_type
+            )
+            fresh_mark = None
+            if venue is not None:
+                try:
+                    raw_fresh_mark = get_fresh_price_for_protective_close(
+                        sym_canonical,
+                        proposal.market_type,
+                        venue=venue,
+                    )
+                    if raw_fresh_mark is not None:
+                        candidate_mark = float(raw_fresh_mark)
+                        if math.isfinite(candidate_mark) and candidate_mark > 0:
+                            fresh_mark = candidate_mark
+                except Exception as exc:
+                    logger.warning(
+                        "paper market authority unavailable for %s/%s/%s (%s)",
+                        venue,
+                        physical_market,
+                        sym_canonical,
+                        type(exc).__name__,
+                    )
+            if fresh_mark is None:
+                violations.append(
+                    f"paper_market_data_unavailable:{venue or 'unknown'}:{physical_market}"
+                )
+            elif not math.isclose(
+                float(proposal.price),
+                fresh_mark,
+                rel_tol=1e-9,
+                abs_tol=1e-8,
+            ):
+                violations.append("proposal_price_not_current_mark")
+            if proposal.order_type == "limit":
+                violations.append("paper_internal_limit_not_supported")
             violations.extend(_paper_opportunity_identity_violations(proposal))
 
     # 2. Market allowed
@@ -979,7 +1141,11 @@ def _evaluate_proposal_locked(
                 has_fresh_local_funding_schedule,
             )
 
-            funding_available = has_fresh_local_funding_schedule(proposal.symbol)
+            funding_available = has_fresh_local_funding_schedule(
+                proposal.symbol,
+                venue=str(cfg.market_data.ccxt_exchange or ""),
+                market_type="perp",
+            )
         except Exception as exc:
             logger.warning(
                 "local funding schedule unavailable for %s (%s)",
@@ -1506,6 +1672,7 @@ def _evaluate_proposal_locked(
         violations,
         decision_role=decision_role,
         resolved_policy=resolved_policy,
+        execution_receipt=execution_receipt,
     )
 
 
@@ -1625,12 +1792,19 @@ def _risk_result_from_row(row: dict) -> RiskCheckResult:
     )
 
 
+def _receipt_only_rejection(violations: list[str]) -> bool:
+    return bool(violations) and all(
+        str(item).startswith("entry_execution_receipt_") for item in violations
+    )
+
+
 def _persist_risk_result(
     proposal: TradeProposal,
     violations: list[str],
     *,
     decision_role: str,
     resolved_policy=None,
+    execution_receipt=None,
 ) -> RiskCheckResult:
     """Persist a role-labelled decision over the immutable evaluated snapshot."""
     approved = len(violations) == 0
@@ -1675,6 +1849,9 @@ def _persist_risk_result(
         policy_id=policy.policy_id if identity_complete else None,
         policy_revision=policy.revision if identity_complete else None,
         policy_hash=resolved_policy.policy_hash if identity_complete else None,
+        execution_attempt_id=(execution_receipt.attempt_id if execution_receipt else None),
+        execution_receipt_hash=(execution_receipt.receipt_hash if execution_receipt else None),
+        execution_receipt_json=(execution_receipt.model_dump_json() if execution_receipt else None),
         message=result.message,
     )
     created = True

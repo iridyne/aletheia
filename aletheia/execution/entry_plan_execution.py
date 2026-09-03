@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import TradeProposal
@@ -17,6 +22,159 @@ from aletheia.trading.instruments import instrument_market_to_db_market
 
 
 _MOMENTUM_V2_TRIGGER = ("momentum-retrace-reclaim", "v2")
+_RECEIPT_VERSION = "entry-execution-receipt/v1"
+_RECEIPT_CHANNELS = frozenset({"quote", "trade", "depth", "candle"})
+
+
+class EntryExecutionReceiptV1(BaseModel):
+    """Bounded, expiring market evidence for one pre-Order attempt."""
+
+    model_config = ConfigDict(frozen=True)
+
+    version: Literal["entry-execution-receipt/v1"] = _RECEIPT_VERSION
+    attempt_id: str = Field(min_length=1)
+    proposal_id: str = Field(min_length=1)
+    entry_plan_id: str = Field(min_length=1)
+    instrument: dict[str, str]
+    stream_generation_id: str = Field(min_length=1)
+    subscription_generation_id: str = Field(min_length=1)
+    required_channels: tuple[Literal["quote", "trade", "depth", "candle"], ...]
+    quote: dict[str, object]
+    depth: dict[str, object] | None = None
+    trigger_evidence_hash: str | None = None
+    captured_at: str
+    expires_at: str
+    receipt_hash: str
+
+    def unsigned_payload(self) -> dict:
+        return self.model_dump(exclude={"receipt_hash"}, mode="json")
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.unsigned_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def hash_is_valid(self) -> bool:
+        return hashlib.sha256(self.canonical_json().encode()).hexdigest() == self.receipt_hash
+
+
+def _receipt_timestamp_ms(value: str) -> int:
+    return int(_instant(value).timestamp() * 1_000)
+
+
+def _bounded_depth(
+    levels: tuple[tuple[float, float], ...] | list[tuple[float, float]] | None,
+) -> list[list[float]]:
+    bounded: list[list[float]] = []
+    for raw_price, raw_size in tuple(levels or ())[:5]:
+        price, size = float(raw_price), float(raw_size)
+        if not math.isfinite(price) or price <= 0 or not math.isfinite(size) or size < 0:
+            raise ValueError("entry_execution_receipt_depth_invalid")
+        bounded.append([price, size])
+    return bounded
+
+
+def build_entry_execution_receipt(
+    plan: EntryPlan,
+    proposal: TradeProposal,
+    *,
+    bid: float,
+    ask: float,
+    observed_at: str,
+    source_observed_at: str,
+    stream_generation_id: str,
+    subscription_generation_id: str,
+    quote_sequence: int,
+    required_channels: tuple[str, ...],
+    depth_bids: tuple[tuple[float, float], ...] | list[tuple[float, float]] | None = None,
+    depth_asks: tuple[tuple[float, float], ...] | list[tuple[float, float]] | None = None,
+    depth_exchange_timestamp_ms: int | None = None,
+    depth_received_timestamp_ms: int | None = None,
+    depth_sequence: int | None = None,
+    trigger_evidence: dict | None = None,
+) -> EntryExecutionReceiptV1:
+    """Bind exact runtime evidence to one immutable Proposal without mutating it."""
+
+    channels = tuple(dict.fromkeys(str(item) for item in required_channels))
+    if not channels or any(item not in _RECEIPT_CHANNELS for item in channels):
+        raise ValueError("entry_execution_receipt_channels_invalid")
+    if not str(stream_generation_id).strip() or not str(subscription_generation_id).strip():
+        raise ValueError("entry_execution_receipt_generation_required")
+    if isinstance(quote_sequence, bool) or int(quote_sequence) < 0:
+        raise ValueError("entry_execution_receipt_quote_sequence_invalid")
+    bid_value, ask_value = float(bid), float(ask)
+    if (
+        not math.isfinite(bid_value)
+        or not math.isfinite(ask_value)
+        or bid_value <= 0
+        or ask_value < bid_value
+    ):
+        raise ValueError("entry_execution_receipt_quote_invalid")
+
+    bids, asks = _bounded_depth(depth_bids), _bounded_depth(depth_asks)
+    depth_required = "depth" in channels
+    if depth_required and (
+        not bids
+        or not asks
+        or depth_exchange_timestamp_ms is None
+        or depth_received_timestamp_ms is None
+        or depth_sequence is None
+    ):
+        raise ValueError("entry_execution_receipt_depth_required")
+    if depth_sequence is not None and (isinstance(depth_sequence, bool) or int(depth_sequence) < 0):
+        raise ValueError("entry_execution_receipt_depth_sequence_invalid")
+
+    captured = _instant(observed_at)
+    freshness_ms = int(plan.trigger_freshness_ms or 2_000)
+    trigger_hash = (
+        hashlib.sha256(
+            json.dumps(trigger_evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if trigger_evidence is not None
+        else None
+    )
+    payload = {
+        "version": _RECEIPT_VERSION,
+        "attempt_id": uuid4().hex,
+        "proposal_id": proposal.id,
+        "entry_plan_id": plan.plan_id,
+        "instrument": {
+            "venue": plan.venue,
+            "symbol": plan.symbol,
+            "market_type": plan.market_type,
+        },
+        "stream_generation_id": str(stream_generation_id),
+        "subscription_generation_id": str(subscription_generation_id),
+        "required_channels": channels,
+        "quote": {
+            "bid": bid_value,
+            "ask": ask_value,
+            "exchange_timestamp_ms": _receipt_timestamp_ms(source_observed_at),
+            "received_timestamp_ms": _receipt_timestamp_ms(observed_at),
+            "sequence": int(quote_sequence),
+        },
+        "depth": (
+            {
+                "bids": bids,
+                "asks": asks,
+                "exchange_timestamp_ms": int(depth_exchange_timestamp_ms),
+                "received_timestamp_ms": int(depth_received_timestamp_ms),
+                "sequence": int(depth_sequence),
+            }
+            if bids or asks or depth_required
+            else None
+        ),
+        "trigger_evidence_hash": trigger_hash,
+        "captured_at": captured.isoformat(),
+        "expires_at": (captured + timedelta(milliseconds=freshness_ms)).isoformat(),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return EntryExecutionReceiptV1(
+        **payload,
+        receipt_hash=hashlib.sha256(canonical.encode()).hexdigest(),
+    )
 
 
 def _require_momentum_v2_authority(plan: EntryPlan) -> None:
@@ -225,6 +383,15 @@ def execute_entry_plan(
     ask: float,
     observed_at: str,
     source_observed_at: str,
+    stream_generation_id: str,
+    subscription_generation_id: str,
+    quote_sequence: int,
+    required_channels: tuple[str, ...] = ("quote",),
+    depth_bids: tuple[tuple[float, float], ...] | None = None,
+    depth_asks: tuple[tuple[float, float], ...] | None = None,
+    depth_exchange_timestamp_ms: int | None = None,
+    depth_received_timestamp_ms: int | None = None,
+    depth_sequence: int | None = None,
     trigger_evidence: dict | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -245,7 +412,28 @@ def execute_entry_plan(
     if existing is not None:
         from aletheia.execution.gateway import execute_existing_proposal
 
-        return execute_existing_proposal(existing["id"], existing["execution_mode"])
+        proposal = TradeProposal.model_validate(existing)
+        receipt = build_entry_execution_receipt(
+            plan,
+            proposal,
+            bid=bid,
+            ask=ask,
+            observed_at=observed_at,
+            source_observed_at=source_observed_at,
+            stream_generation_id=stream_generation_id,
+            subscription_generation_id=subscription_generation_id,
+            quote_sequence=quote_sequence,
+            required_channels=required_channels,
+            depth_bids=depth_bids,
+            depth_asks=depth_asks,
+            depth_exchange_timestamp_ms=depth_exchange_timestamp_ms,
+            depth_received_timestamp_ms=depth_received_timestamp_ms,
+            depth_sequence=depth_sequence,
+            trigger_evidence=trigger_evidence,
+        )
+        return execute_existing_proposal(
+            existing["id"], existing["execution_mode"], execution_receipt=receipt
+        )
 
     proposal = build_entry_plan_order_intent(
         plan,
@@ -255,6 +443,24 @@ def execute_entry_plan(
         source_observed_at=source_observed_at,
         trigger_evidence=trigger_evidence,
         now=now,
+    )
+    receipt = build_entry_execution_receipt(
+        plan,
+        proposal,
+        bid=bid,
+        ask=ask,
+        observed_at=observed_at,
+        source_observed_at=source_observed_at,
+        stream_generation_id=stream_generation_id,
+        subscription_generation_id=subscription_generation_id,
+        quote_sequence=quote_sequence,
+        required_channels=required_channels,
+        depth_bids=depth_bids,
+        depth_asks=depth_asks,
+        depth_exchange_timestamp_ms=depth_exchange_timestamp_ms,
+        depth_received_timestamp_ms=depth_received_timestamp_ms,
+        depth_sequence=depth_sequence,
+        trigger_evidence=trigger_evidence,
     )
     if plan.execution_mode == "TRIGGERED" and row["status"] == "waiting":
         if not repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered", now=now):
@@ -272,4 +478,8 @@ def execute_entry_plan(
 
     from aletheia.execution.gateway import execute_existing_proposal
 
-    return execute_existing_proposal(proposal.id, proposal.execution_mode)
+    return execute_existing_proposal(
+        proposal.id,
+        proposal.execution_mode,
+        execution_receipt=receipt,
+    )

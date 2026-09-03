@@ -31,6 +31,7 @@ from aletheia.storage.models import (
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.universe.fast_stream import (
     FastMarketEvent,
+    events_share_generation,
     fast_market_data_venue_for_config,
     fast_market_stream_available_for_config,
 )
@@ -277,6 +278,10 @@ class TriggerSnapshot(BaseModel):
     quote_sequence: int = Field(ge=0)
     trade_sequence: int = Field(ge=0)
     depth_sequence: int = Field(ge=0)
+    stream_generation_id: str | None = None
+    subscription_generation_id: str | None = None
+    depth_bids: tuple[tuple[float, float], ...] = ()
+    depth_asks: tuple[tuple[float, float], ...] = ()
     entry_trigger: dict = Field(default_factory=dict)
     market_structure: dict = Field(default_factory=dict)
 
@@ -307,6 +312,7 @@ class TriggerEngine:
         self.state = "armed"
         self.subscription_confirmed = False
         self.health_reason: str | None = None
+        self.final_requirement_reason: str | None = None
         self._sequences: dict[str, int] = {}
         self._quote: FastMarketEvent | None = None
         self._depth: FastMarketEvent | None = None
@@ -399,20 +405,27 @@ class TriggerEngine:
             return None
         quote, depth = self._quote, self._depth
         if quote is None or depth is None or not self._trades:
+            self.final_requirement_reason = "required_market_fact_missing"
             return None
         self._prune_trades(now_ms)
         if not self._trades:
+            self.final_requirement_reason = "trade_window_empty"
+            return None
+        if not events_share_generation(quote, depth, *self._trades):
+            self.health_reason = "market_evidence_generation_mismatch"
             return None
         if (
             now_ms - quote.received_timestamp_ms > 1_000
             or now_ms - depth.received_timestamp_ms > 1_000
             or now_ms - self._trades[-1].received_timestamp_ms > 2_000
         ):
+            self.final_requirement_reason = "market_fact_stale"
             return None
         bid, ask = float(quote.bid), float(quote.ask)
         mid = (bid + ask) / 2
         spread = (ask - bid) / mid * 10_000
         if spread > self.policy.max_spread_bps:
+            self.final_requirement_reason = "spread"
             return None
         depth_value = sum(
             price * size
@@ -420,19 +433,24 @@ class TriggerEngine:
             if abs(price / mid - 1.0) <= 0.001
         )
         if depth_value < self.policy.min_depth_10bps_usd:
+            self.final_requirement_reason = "depth"
             return None
         buy = sum(float(item.price) * float(item.size) for item in self._trades if item.side == "buy")
         total = sum(float(item.price) * float(item.size) for item in self._trades)
         if total <= 0:
+            self.final_requirement_reason = "order_flow"
             return None
         ratio = buy / total
         if (self.direction == "long" and ratio < 0.60) or (
             self.direction == "short" and ratio > 0.40
         ):
+            self.final_requirement_reason = "order_flow"
             return None
         entry = ask if self.direction == "long" else bid
         if not self.entry_zone[0] <= entry <= self.entry_zone[1]:
+            self.final_requirement_reason = "entry_zone"
             return None
+        self.final_requirement_reason = None
         observed = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat()
         from aletheia.universe.market_structure import evaluate_market_structure
 
@@ -455,6 +473,10 @@ class TriggerEngine:
             quote_sequence=quote.sequence,
             trade_sequence=self._trades[-1].sequence,
             depth_sequence=depth.sequence,
+            stream_generation_id=quote.stream_generation_id,
+            subscription_generation_id=quote.subscription_generation_id,
+            depth_bids=depth.bids,
+            depth_asks=depth.asks,
             entry_price=entry,
             entry_trigger={
                 "trigger_spec_version": TRIGGER_SPEC_VERSION,
@@ -515,7 +537,7 @@ def authorize_setup(
         )
         raise ValueError("fast_trigger_setup_expired")
     execution_mode = cfg.exchange.paper_execution_mode
-    if cfg.fast_trigger.mode not in {"shadow", "execute"}:
+    if not getattr(cfg.fast_trigger, "enabled", True) or cfg.fast_trigger.mode not in {"shadow", "execute"}:
         raise ValueError("fast_trigger_disabled")
     trigger_venue = fast_market_data_venue_for_config(cfg)
     if setup.venue.lower() != trigger_venue:
@@ -733,7 +755,7 @@ async def authorize_next_setup(cfg=None) -> dict:
 
 
 def validate_fast_trigger_stream(cfg) -> str | None:
-    if cfg.fast_trigger.mode == "off":
+    if not getattr(cfg.fast_trigger, "enabled", True):
         return "fast_trigger_disabled"
     if cfg.agent.permission_mode not in {"Paper", "Full"}:
         return "entry_plan_permission_revoked"
@@ -747,6 +769,8 @@ def validate_fast_trigger_stream(cfg) -> str | None:
 
 
 def validate_fast_trigger_execution(cfg) -> str | None:
+    if cfg.fast_trigger.mode == "off":
+        return "fast_trigger_disabled"
     return validate_fast_trigger_stream(cfg)
 
 
