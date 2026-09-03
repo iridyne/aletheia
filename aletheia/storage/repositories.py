@@ -11490,8 +11490,9 @@ def latest_orderbook(symbol: str, exchange: str = "", market_type: str = "") -> 
 
 
 # Write-side dedup thresholds (Phase 3). If the newest row for a (symbol,
-# exchange) is identical to the incoming payload AND younger than the
-# heartbeat floor, skip the INSERT. Once the newest row crosses the floor,
+# exchange) has identical values and source-time provenance AND is younger
+# than the heartbeat floor, skip the INSERT. Once the newest row crosses the
+# floor,
 # the next INSERT lands regardless — the doctor probe reads MAX(observed_at)
 # so a stale-newest would trip freshness thresholds.
 _FUNDING_DEDUP_FIELDS = (
@@ -11510,9 +11511,10 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     """Insert a funding_rate_snapshots row, skipping identical repeats.
 
     Guard (Phase 3): if the newest row for the same (symbol, exchange) has
-    the same funding_rate / annualized / next_funding_time / mark_price AND
-    its ``observed_at`` is younger than ``_FUNDING_HEARTBEAT_FLOOR_MINUTES``
-    minutes ago, the insert is skipped. This is idempotent — collectors that
+    the same funding values and source-time provenance AND
+    acquisition/compatibility timestamp is younger than
+    ``_FUNDING_HEARTBEAT_FLOOR_MINUTES`` minutes ago, the insert is skipped.
+    This is idempotent — collectors that
     poll on a 2-minute cadence stop writing 5× duplicate rows per 10-minute
     window while still emitting one heartbeat row every ~10 minutes so both
     freshness probes and settlement-window checks stay green.
@@ -11546,20 +11548,31 @@ def insert_funding_rate_snapshot(data: dict) -> None:
                 pass
         if not settlement_imminent:
             db = get_db()
+            register_instant_us(db)
             row = db.execute(
                 "SELECT funding_rate, funding_rate_annualized, next_funding_time, "
-                "mark_price, observed_at "
+                "mark_price, observed_at, source_observed_at, acquired_at, "
+                "source_time_status "
                 "FROM funding_rate_snapshots "
                 "WHERE symbol = ? AND exchange = ? "
-                "ORDER BY observed_at DESC LIMIT 1",
+                "ORDER BY COALESCE(aletheia_instant_us(acquired_at), "
+                "aletheia_instant_us(observed_at)) DESC, rowid DESC LIMIT 1",
                 (symbol, exchange),
             ).fetchone()
             if row is not None:
                 latest = dict(row)
-                same = all(data.get(field) == latest.get(field) for field in _FUNDING_DEDUP_FIELDS)
-                if same and latest.get("observed_at"):
+                same = (
+                    all(data.get(field) == latest.get(field) for field in _FUNDING_DEDUP_FIELDS)
+                    and data.get("source_time_status") == latest.get("source_time_status")
+                    and iso_instant_us(data.get("source_observed_at"))
+                    == iso_instant_us(latest.get("source_observed_at"))
+                    and (iso_instant_us(data.get("acquired_at")) is None)
+                    == (iso_instant_us(latest.get("acquired_at")) is None)
+                )
+                heartbeat_at = latest.get("acquired_at") or latest.get("observed_at")
+                if same and heartbeat_at:
                     try:
-                        prev_ts = datetime.fromisoformat(latest["observed_at"])
+                        prev_ts = datetime.fromisoformat(str(heartbeat_at))
                         if prev_ts.tzinfo is None:
                             prev_ts = prev_ts.replace(tzinfo=timezone.utc)
                         age = datetime.now(timezone.utc) - prev_ts

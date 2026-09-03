@@ -1098,6 +1098,133 @@ def test_insert_funding_rate_snapshot_dedup_and_heartbeat(invariant_baseline):
     _assert_invariants_preserved(*invariant_baseline)
 
 
+@pytest.mark.parametrize(
+    ("source_time_status", "source_observed_at"),
+    [("missing", None), ("invalid", None), ("future", "2099-01-01T00:00:00+00:00")],
+)
+def test_funding_dedup_persists_source_time_degradation(
+    source_time_status,
+    source_observed_at,
+):
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    now = datetime.now(timezone.utc)
+    financial = {
+        "symbol": "BTCUSDT",
+        "exchange": "binance",
+        "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.0001 * 24 * 365,
+        "next_funding_time": None,
+        "mark_price": 50000.0,
+    }
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": now.isoformat(),
+        "acquired_at": now.isoformat(),
+        "source_time_status": "provided",
+        "observed_at": now.isoformat(),
+    })
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": source_observed_at,
+        "acquired_at": (now + timedelta(minutes=2)).isoformat(),
+        "source_time_status": source_time_status,
+        "observed_at": source_observed_at or "",
+    })
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": source_observed_at,
+        "acquired_at": (now + timedelta(minutes=4)).isoformat(),
+        "source_time_status": source_time_status,
+        "observed_at": source_observed_at or "",
+    })
+
+    rows = get_db().execute(
+        "SELECT source_time_status, source_observed_at "
+        "FROM funding_rate_snapshots ORDER BY rowid"
+    ).fetchall()
+    assert len(rows) == 2
+    assert tuple(rows[-1]) == (source_time_status, source_observed_at)
+
+
+def test_funding_dedup_persists_source_time_recovery():
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    now = datetime.now(timezone.utc)
+    financial = {
+        "symbol": "ETHUSDT",
+        "exchange": "binance",
+        "funding_rate": 0.0002,
+        "funding_rate_annualized": 0.0002 * 24 * 365,
+        "next_funding_time": None,
+        "mark_price": 3000.0,
+    }
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": None,
+        "acquired_at": now.isoformat(),
+        "source_time_status": "missing",
+        "observed_at": "",
+    })
+    recovered_at = now + timedelta(minutes=2)
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": recovered_at.isoformat(),
+        "acquired_at": recovered_at.isoformat(),
+        "source_time_status": "provided",
+        "observed_at": recovered_at.isoformat(),
+    })
+
+    rows = get_db().execute(
+        "SELECT source_time_status, source_observed_at "
+        "FROM funding_rate_snapshots ORDER BY rowid"
+    ).fetchall()
+    assert len(rows) == 2
+    assert tuple(rows[-1]) == ("provided", recovered_at.isoformat())
+
+
+def test_funding_dedup_normalizes_source_instants_but_persists_new_source_time():
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    financial = {
+        "symbol": "SOLUSDT",
+        "exchange": "binance",
+        "funding_rate": 0.0003,
+        "funding_rate_annualized": 0.0003 * 24 * 365,
+        "next_funding_time": None,
+        "mark_price": 150.0,
+    }
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": now.isoformat(),
+        "acquired_at": now.isoformat(),
+        "source_time_status": "provided",
+        "observed_at": now.isoformat(),
+    })
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": now.isoformat().replace("+00:00", "Z"),
+        "acquired_at": (now + timedelta(minutes=2)).isoformat(),
+        "source_time_status": "provided",
+        "observed_at": now.isoformat().replace("+00:00", "Z"),
+    })
+    changed_source = now + timedelta(minutes=1)
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": changed_source.isoformat(),
+        "acquired_at": (now + timedelta(minutes=4)).isoformat(),
+        "source_time_status": "provided",
+        "observed_at": changed_source.isoformat(),
+    })
+
+    rows = get_db().execute(
+        "SELECT source_observed_at FROM funding_rate_snapshots ORDER BY rowid"
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[-1][0] == changed_source.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # agent_shell_heartbeats — UPDATE-not-INSERT dedup
 # ---------------------------------------------------------------------------
