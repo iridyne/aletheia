@@ -286,9 +286,17 @@ def _build_research_cycle_payload(opportunity: dict) -> dict:
 def get_agent_runs(
     days: Annotated[int | None, Query(ge=1, le=90)] = None,
     limit: Annotated[int, Query(ge=1, le=5_000)] = 50,
+    hours: Annotated[int | None, Query(ge=1, le=168)] = None,
+    latest_per_agent: bool = False,
 ):
     _ensure_db()
-    if days is None and limit == 50:
+    if sum((days is not None, hours is not None, latest_per_agent)) > 1:
+        raise HTTPException(status_code=400, detail="choose one agent-run scope")
+    if latest_per_agent:
+        runs = repo.list_latest_agent_runs()
+    elif hours is not None:
+        runs = repo.list_agent_runs_window(hours=hours)
+    elif days is None and limit == 50:
         runs = repo.list_agent_runs()
     else:
         runs = repo.list_agent_runs(limit=limit, days=days)

@@ -155,7 +155,13 @@ export class BackendClient implements BackendGatewayClient {
   }
 
   async getAgentRuns(): Promise<AgentRunSummary[]> {
-    return fetchJson<AgentRunSummary[]>(`${this.baseUrl}/api/agent-runs`)
+    const [windowRuns, latestRuns] = await Promise.all([
+      fetchJson<AgentRunSummary[]>(`${this.baseUrl}/api/agent-runs?hours=24`),
+      fetchJson<AgentRunSummary[]>(`${this.baseUrl}/api/agent-runs?latest_per_agent=true`),
+    ])
+    const runs = new Map(windowRuns.map(run => [run.id, run]))
+    for (const run of latestRuns) runs.set(run.id, run)
+    return [...runs.values()]
   }
 
   async postHeartbeat(heartbeat: OperatorHeartbeat): Promise<boolean> {
