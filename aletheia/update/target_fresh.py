@@ -195,6 +195,7 @@ def reanchor_joint_checkpoint(
         "payload = {\n"
         "    'ok': bool(verdict.ok),\n"
         "    'reason': verdict.reason,\n"
+        "    'mismatch_components': list(verdict.mismatch_components),\n"
         "    'joint_fingerprint': checkpoint.joint_fingerprint,\n"
         "}\n"
         f"print({_RESULT_PREFIX!r} + json.dumps(payload, sort_keys=True))\n"

@@ -66,6 +66,51 @@ def test_preflight_still_fails_closed_on_app_migration_checkpoint_drift():
     assert "observation_checkpoint_app_migration_drift" in result["failures"]
 
 
+def test_preflight_classifies_structured_outbox_drift():
+    from aletheia.update.continuity import evaluate_preflight
+
+    snapshot = _minimal_snapshot(checkpoint_reason="fingerprint_mismatch")
+    snapshot["observation"]["checkpoint"]["verified"]["mismatch_components"] = [
+        "main_outbox"
+    ]
+
+    result = evaluate_preflight(snapshot)
+
+    assert result["ok"] is False
+    assert result["failures"] == ["observation_checkpoint_outbox_drift"]
+
+
+def test_preflight_classifies_six_field_lab_schema_drift():
+    from aletheia.update.continuity import evaluate_preflight
+
+    snapshot = _minimal_snapshot(
+        checkpoint_reason=(
+            "fingerprint_mismatch: app_head(v35→v35) count(35→35) "
+            "manifests(2→2) lab_schema(v1/1→v2/2) "
+            "lab_state(same→same) outbox(10→10)"
+        )
+    )
+
+    result = evaluate_preflight(snapshot)
+
+    assert result["ok"] is False
+    assert result["failures"] == ["observation_checkpoint_lab_schema_drift"]
+
+
+def test_preflight_rejects_unknown_structured_mismatch_component():
+    from aletheia.update.continuity import evaluate_preflight
+
+    snapshot = _minimal_snapshot(checkpoint_reason="fingerprint_mismatch")
+    snapshot["observation"]["checkpoint"]["verified"]["mismatch_components"] = [
+        "unknown"
+    ]
+
+    result = evaluate_preflight(snapshot)
+
+    assert result["ok"] is False
+    assert result["failures"] == ["observation_checkpoint_drift"]
+
+
 def test_worker_runtime_owner_proof_unavailable_is_preflight_proof_gap():
     from aletheia.update.continuity import evaluate_preflight
 

@@ -410,6 +410,7 @@ def observation_checkpoint(
         "ok": verdict.ok,
         "reason": verdict.reason,
         "current_fingerprint": verdict.current_fingerprint,
+        "mismatch_components": list(getattr(verdict, "mismatch_components", ())),
         "last_fingerprint": (
             verdict.last.joint_fingerprint if verdict.last is not None else None
         ),
@@ -1572,6 +1573,9 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                         "ok": verified.ok,
                         "reason": verified.reason,
                         "current_fingerprint": verified.current_fingerprint,
+                        "mismatch_components": list(
+                            getattr(verified, "mismatch_components", ())
+                        ),
                     },
                 }
                 bridge = observation_bridge_health()

@@ -20,7 +20,7 @@ def _seed_outbox_cursor_bundle(root: Path, *, cursor_sequence: int = 1) -> Path:
     app = sqlite3.connect(str(bundle / "app.db"))
     app.execute(
         "CREATE TABLE observation_delivery_outbox ("
-        "sequence INTEGER PRIMARY KEY, receipt_id TEXT, manifest_hash TEXT, acknowledged_at TEXT)"
+        "sequence INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, manifest_hash TEXT, acknowledged_at TEXT)"
     )
     app.execute(
         "INSERT INTO observation_delivery_outbox VALUES (1, 'r1', 'm1', '2026-01-01T00:00:00+00:00')"
@@ -30,7 +30,7 @@ def _seed_outbox_cursor_bundle(root: Path, *, cursor_sequence: int = 1) -> Path:
 
     outbox_fingerprint = hashlib.sha256(
         json.dumps(
-            [[1, "r1", "m1", "2026-01-01T00:00:00+00:00"]],
+            [],
             sort_keys=True,
             separators=(",", ":"),
             default=str,
@@ -96,6 +96,70 @@ def test_authoritative_outbox_cursor_cut_accepts_matching_import_proof(tmp_path)
     assert result.valid, result.errors
 
 
+def test_authoritative_outbox_cursor_cut_accepts_proven_retention_pruning(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    app = sqlite3.connect(str(bundle / "app.db"))
+    app.execute("DELETE FROM observation_delivery_outbox WHERE sequence=1")
+    app.commit()
+    app.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert result.valid, result.errors
+
+
+def test_authoritative_outbox_cursor_cut_accepts_legacy_fingerprint(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    legacy_fingerprint = hashlib.sha256(
+        json.dumps(
+            [[1, "r1", "m1", "2026-01-01T00:00:00+00:00"]],
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    lab = sqlite3.connect(str(bundle / "observation-lab" / "lab.db"))
+    lab.execute(
+        "UPDATE joint_checkpoints SET main_outbox_fingerprint=?",
+        (legacy_fingerprint,),
+    )
+    lab.commit()
+    lab.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert result.valid, result.errors
+
+
+def test_authoritative_outbox_cursor_cut_rejects_missing_sequence_watermark(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    app = sqlite3.connect(str(bundle / "app.db"))
+    app.executescript(
+        "ALTER TABLE observation_delivery_outbox RENAME TO old_outbox;"
+        "CREATE TABLE observation_delivery_outbox ("
+        "sequence INTEGER PRIMARY KEY, receipt_id TEXT, manifest_hash TEXT, "
+        "acknowledged_at TEXT);"
+        "INSERT INTO observation_delivery_outbox SELECT * FROM old_outbox;"
+        "DROP TABLE old_outbox;"
+    )
+    app.commit()
+    app.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert not result.valid
+    assert any("outbox cut is unreadable" in error for error in result.errors)
+
+
 def test_authoritative_outbox_cursor_cut_rejects_acknowledged_row_ahead_of_cursor(tmp_path):
     from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
 
@@ -112,6 +176,80 @@ def test_authoritative_outbox_cursor_cut_rejects_acknowledged_row_ahead_of_curso
 
     assert not result.valid
     assert any("newer than Lab cursor" in error for error in result.errors)
+
+
+def test_authoritative_outbox_cursor_cut_rejects_pending_deletion(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    app = sqlite3.connect(str(bundle / "app.db"))
+    app.execute(
+        "INSERT INTO observation_delivery_outbox "
+        "(sequence, receipt_id, manifest_hash, acknowledged_at) "
+        "VALUES (2, 'pending-r2', 'm2', NULL)"
+    )
+    app.commit()
+    app.close()
+    pending_fingerprint = hashlib.sha256(
+        json.dumps(
+            [[2, "pending-r2", "m2"]],
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    lab = sqlite3.connect(str(bundle / "observation-lab" / "lab.db"))
+    lab.execute(
+        "UPDATE joint_checkpoints SET main_outbox_high_watermark=2, "
+        "main_outbox_pending_count=1, main_outbox_fingerprint=?",
+        (pending_fingerprint,),
+    )
+    lab.commit()
+    lab.close()
+    app = sqlite3.connect(str(bundle / "app.db"))
+    app.execute("DELETE FROM observation_delivery_outbox WHERE sequence=2")
+    app.commit()
+    app.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert not result.valid
+    assert any("does not match joint checkpoint" in error for error in result.errors)
+
+
+def test_authoritative_outbox_cursor_cut_rejects_retry_at_cursor(tmp_path):
+    from aletheia.backup.verify import VerifyResult, _verify_outbox_cursor_cut
+
+    bundle = _seed_outbox_cursor_bundle(tmp_path)
+    lab = sqlite3.connect(str(bundle / "observation-lab" / "lab.db"))
+    checkpoint = {
+        "source_name": "main",
+        "contiguous_sequence": 1,
+        "last_receipt_id": "r1",
+        "retry_sequences": [1],
+        "receipt_chain_fingerprint": "a" * 64,
+    }
+    checkpoint_json = json.dumps(
+        checkpoint, sort_keys=True, separators=(",", ":"), default=str
+    )
+    lab.execute(
+        "UPDATE observation_import_cursors SET retry_sequences_json='[1]', "
+        "source_checkpoint_json=?, source_checkpoint_fingerprint=? "
+        "WHERE source_name='main'",
+        (
+            checkpoint_json,
+            hashlib.sha256(checkpoint_json.encode("utf-8")).hexdigest(),
+        ),
+    )
+    lab.commit()
+    lab.close()
+
+    result = VerifyResult()
+    _verify_outbox_cursor_cut(bundle, result)
+
+    assert not result.valid
+    assert any("retry receipt is not ahead of cursor" in error for error in result.errors)
 
 
 def _manifest(archive: Path) -> dict:

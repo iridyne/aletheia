@@ -36,7 +36,7 @@ joint_fingerprint = sha256(canonical_json({
     "active_manifest_hashes": <sorted, deduplicated list of active manifest_hash>,
     "main_outbox_high_watermark": <largest durable Main receipt sequence>,
     "main_outbox_pending_count": <unacknowledged Main receipt count>,
-    "main_outbox_fingerprint": <canonical digest of the durable Main receipt cut>,
+    "main_outbox_fingerprint": <canonical digest of unacknowledged receipt identities>,
 }))
 ```
 
@@ -70,7 +70,7 @@ and behavior-bearing consumers retain strict verification by default.
 - **Lab schema/state** captures the physical Lab contract and append-only evidence identities, including rows that a Lab-only restore could lose or replace. The runner records the post-window state, so expected append-only writes become the next verified checkpoint rather than perpetual false drift.
 - **Active manifest hashes** captures every treatment contract Main Runtime might be executing. Each loaded manifest is re-hashed from its canonical content before it can enter this set; payload-only mutation or a forged stored hash is an integrity failure.
 - **Checkpoint ledger** captures prior checkpoint identity without hashing the just-created current row, avoiding a self-referential fingerprint while still detecting removal or replacement of historical checkpoint rows.
-- **Main receipt cut** lets the scheduled runner distinguish recoverable pending transport progress from a changed checkpointed prefix. An acknowledged suffix without matching Lab progress is not recoverable append-only progress and remains a mismatch.
+- **Main receipt cut** binds the logical high watermark and pending transport frontier. Acknowledged rows covered by the Lab cursor/evidence are a bounded retention cache, so pruning them does not change the fingerprint. Pending receipt loss or identity drift, cursor rollback, and an acknowledged suffix without matching Lab progress remain mismatches.
 
 ## 5. Blast radius on mismatch
 

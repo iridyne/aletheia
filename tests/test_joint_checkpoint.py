@@ -106,6 +106,178 @@ def test_appended_main_receipt_does_not_hide_checkpointed_prefix_change():
     assert "fingerprint_mismatch" in verdict.reason
 
 
+def test_pruning_acknowledged_receipts_keeps_exact_checkpoint_match():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        prune_observation_delivery_outbox,
+    )
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-prunable-receipt",
+        candidate_key="candidate-prunable",
+        resolution_reason="adapter_unavailable",
+    )
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", receipt_id),
+    )
+    save_joint_checkpoint(compute_joint_checkpoint())
+
+    pruned = prune_observation_delivery_outbox(
+        keep_acknowledged=0,
+        safety_grace_seconds=0,
+    )
+    verdict = verify_joint_checkpoint()
+
+    assert pruned["deleted"] == 1
+    assert verdict.ok is True
+    assert verdict.reason == "fingerprint_match"
+
+
+def test_pending_receipt_identity_change_is_structured_outbox_drift():
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-pending-identity",
+        candidate_key="candidate-pending-identity",
+        resolution_reason="adapter_unavailable",
+    )
+    save_joint_checkpoint(compute_joint_checkpoint())
+    db = get_db()
+    db.execute("DROP TRIGGER trg_observation_delivery_outbox_identity_immutable")
+    db.execute(
+        "UPDATE observation_delivery_outbox SET manifest_hash='changed' WHERE receipt_id=?",
+        (receipt_id,),
+    )
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is False
+    assert verdict.mismatch_components == ("main_outbox",)
+
+
+def test_outbox_frontier_uses_one_sqlite_snapshot(monkeypatch, tmp_path):
+    import sqlite3
+
+    from aletheia.observation_lab.checkpoint import _read_app_outbox_state
+    from aletheia.storage import sqlite as sqlite_store
+
+    path = tmp_path / "snapshot.db"
+    reader = sqlite3.connect(path, isolation_level=None)
+    reader.row_factory = sqlite3.Row
+    reader.execute("PRAGMA journal_mode=WAL")
+    reader.execute(
+        "CREATE TABLE observation_delivery_outbox ("
+        "sequence INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, "
+        "manifest_hash TEXT, acknowledged_at TEXT)"
+    )
+    writer = sqlite3.connect(path, isolation_level=None)
+    inserted = False
+
+    def insert_between_frontier_reads(sql):
+        nonlocal inserted
+        if not inserted and sql.startswith("SELECT seq FROM sqlite_sequence"):
+            inserted = True
+            writer.execute(
+                "INSERT INTO observation_delivery_outbox "
+                "(receipt_id, manifest_hash) VALUES ('late', 'm')"
+            )
+
+    reader.set_trace_callback(insert_between_frontier_reads)
+    monkeypatch.setattr(sqlite_store, "get_db", lambda: reader)
+
+    first = _read_app_outbox_state()
+    second = _read_app_outbox_state()
+
+    assert first[:2] == (0, 0)
+    assert second[:2] == (1, 1)
+    writer.close()
+    reader.close()
+
+
+def test_outbox_frontier_rejects_incomplete_identity_schema(monkeypatch, tmp_path):
+    import sqlite3
+
+    from aletheia.observation_lab.checkpoint import _read_app_outbox_state
+    from aletheia.storage import sqlite as sqlite_store
+
+    db = sqlite3.connect(tmp_path / "incomplete.db", isolation_level=None)
+    db.execute(
+        "CREATE TABLE observation_delivery_outbox ("
+        "sequence INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id TEXT, "
+        "acknowledged_at TEXT)"
+    )
+    monkeypatch.setattr(sqlite_store, "get_db", lambda: db)
+
+    assert _read_app_outbox_state() == (-1, -1, "<unavailable>")
+    db.close()
+
+
+def test_runtime_verification_accepts_exact_legacy_outbox_fingerprint():
+    from dataclasses import replace
+
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        _fingerprint,
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-legacy-runtime",
+        candidate_key="candidate-legacy-runtime",
+        resolution_reason="adapter_unavailable",
+    )
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", receipt_id),
+    )
+    current = compute_joint_checkpoint()
+    assert current.legacy_main_outbox_state is not None
+    watermark, pending, fingerprint = current.legacy_main_outbox_state
+    legacy_joint_fingerprint = _fingerprint(
+        app_migration_head=current.app_migration_head,
+        app_migration_count=current.app_migration_count,
+        active_manifest_hashes=current.active_manifest_hashes,
+        lab_schema_head=current.lab_schema_head,
+        lab_schema_count=current.lab_schema_count,
+        lab_state_fingerprint=current.lab_state_fingerprint,
+        checkpoint_ledger_fingerprint=current.checkpoint_ledger_fingerprint,
+        main_outbox_high_watermark=watermark,
+        main_outbox_pending_count=pending,
+        main_outbox_fingerprint=fingerprint,
+    )
+    save_joint_checkpoint(replace(
+        current,
+        main_outbox_high_watermark=watermark,
+        main_outbox_pending_count=pending,
+        main_outbox_fingerprint=fingerprint,
+        joint_fingerprint=legacy_joint_fingerprint,
+    ))
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is True
+    assert verdict.reason == "legacy_main_outbox_fingerprint_match"
+
+
 def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
     from aletheia.observation_lab.canonical import append_delivery_receipt
     from aletheia.observation_lab.checkpoint import (

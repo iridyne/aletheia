@@ -493,20 +493,21 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
     try:
         with _open_sqlite_readonly(app_db) as app:
             app.row_factory = sqlite3.Row
-            outbox_columns = {
-                str(row[1])
-                for row in app.execute(
-                    "PRAGMA table_info(observation_delivery_outbox)"
-                ).fetchall()
-            }
+            outbox_schema = app.execute(
+                "PRAGMA table_info(observation_delivery_outbox)"
+            ).fetchall()
+            outbox_columns = {str(row[1]) for row in outbox_schema}
             required_outbox = {
                 "sequence", "receipt_id", "manifest_hash", "acknowledged_at",
             }
             if not required_outbox.issubset(outbox_columns):
                 raise sqlite3.Error("outbox_schema_unavailable")
-            select_columns = [
-                "sequence", "receipt_id", "manifest_hash", "acknowledged_at",
-            ]
+            from aletheia.observation_lab.checkpoint import _OUTBOX_IDENTITY_COLUMNS
+
+            if not set(_OUTBOX_IDENTITY_COLUMNS).issubset(outbox_columns):
+                raise sqlite3.Error("outbox_identity_schema_unavailable")
+            immutable_columns = list(_OUTBOX_IDENTITY_COLUMNS)
+            select_columns = [*immutable_columns, "acknowledged_at"]
             if "lab_application_status" in outbox_columns:
                 select_columns.append("lab_application_status")
             outbox_rows = app.execute(
@@ -514,17 +515,36 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
                 + " FROM observation_delivery_outbox ORDER BY sequence"
             ).fetchall()
             outbox_state = [
-                tuple(row[column] for column in select_columns[:4])
+                tuple(row[column] for column in immutable_columns)
                 for row in outbox_rows
+                if row["acknowledged_at"] is None
             ]
             outbox_by_sequence = {
                 int(row["sequence"]): row for row in outbox_rows
             }
-            outbox_watermark = int(outbox_rows[-1]["sequence"]) if outbox_rows else 0
+            sequence_row = app.execute(
+                "SELECT seq FROM sqlite_sequence "
+                "WHERE name='observation_delivery_outbox'"
+            ).fetchone()
+            if sequence_row is None and outbox_rows:
+                raise sqlite3.Error("outbox_sequence_watermark_unavailable")
+            outbox_watermark = int(sequence_row[0]) if sequence_row is not None else 0
             outbox_pending = sum(
                 1 for row in outbox_rows if row["acknowledged_at"] is None
             )
             outbox_fingerprint = _sha256_json(outbox_state)
+            legacy_outbox_fingerprint = _sha256_json([
+                (
+                    row["sequence"], row["receipt_id"], row["manifest_hash"],
+                    row["acknowledged_at"],
+                )
+                for row in outbox_rows
+            ])
+            legacy_outbox_values = (
+                int(outbox_rows[-1]["sequence"]) if outbox_rows else 0,
+                outbox_pending,
+                legacy_outbox_fingerprint,
+            )
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         result.valid = False
         result.errors.append(
@@ -576,11 +596,10 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             checkpoint_row["main_outbox_pending_count"],
             checkpoint_row["main_outbox_fingerprint"],
         )
-        if checkpoint_values != (
-            outbox_watermark,
-            outbox_pending,
-            outbox_fingerprint,
-        ):
+        current_outbox_values = (
+            outbox_watermark, outbox_pending, outbox_fingerprint,
+        )
+        if checkpoint_values not in {current_outbox_values, legacy_outbox_values}:
             result.valid = False
             result.errors.append(
                 "Lab-authoritative outbox cut does not match joint checkpoint"
@@ -611,6 +630,7 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             and cursor_fingerprint == _sha256_json(checkpoint)
             and isinstance(checkpoint.get("receipt_chain_fingerprint"), str)
             and bool(re.fullmatch(r"[0-9a-f]{64}", checkpoint["receipt_chain_fingerprint"]))
+            and checkpoint.get("retry_sequences") == retry_sequences
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         valid_cursor = False
@@ -626,10 +646,20 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
         result.valid = False
         result.errors.append("Lab-authoritative import cursor retries are duplicated")
     for sequence in retry_sequences:
-        if sequence not in outbox_by_sequence:
+        if sequence <= cursor_sequence:
+            result.valid = False
+            result.errors.append(
+                f"Lab-authoritative retry receipt is not ahead of cursor: {sequence}"
+            )
+        elif sequence not in outbox_by_sequence:
             result.valid = False
             result.errors.append(
                 f"Lab-authoritative retry receipt is missing from app cut: {sequence}"
+            )
+        elif outbox_by_sequence[sequence]["acknowledged_at"] is not None:
+            result.valid = False
+            result.errors.append(
+                f"Lab-authoritative retry receipt is already acknowledged: {sequence}"
             )
 
     covered_receipts = {

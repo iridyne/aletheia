@@ -50,6 +50,10 @@ _CHECKPOINT_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "payload_json",
     ),
 }
+# The outbox trigger makes the full receipt payload immutable. These three
+# columns are its stable transport identity; mutable Lab application state is
+# deliberately outside the pending frontier fingerprint.
+_OUTBOX_IDENTITY_COLUMNS = ("sequence", "receipt_id", "manifest_hash")
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,7 @@ class JointCheckpoint:
     main_outbox_fingerprint: str
     joint_fingerprint: str
     notes: str | None = None
+    legacy_main_outbox_state: tuple[int, int, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,7 @@ class CheckpointVerification:
     last: JointCheckpoint | None
     current_fingerprint: str
     reason: str
+    mismatch_components: tuple[str, ...] = ()
 
 
 def _now() -> str:
@@ -111,28 +117,102 @@ def _read_app_migration_state() -> tuple[str, int]:
     return (head, len(rows))
 
 
-def _read_app_outbox_state(*, through_sequence: int | None = None) -> tuple[int, int, str]:
-    """Return the durable Main receipt cut included in a joint checkpoint."""
-    from aletheia.storage.sqlite import get_db
+def _read_app_outbox_states(
+    *, through_sequence: int | None = None,
+) -> tuple[tuple[int, int, str], tuple[int, int, str]]:
+    """Return current and legacy outbox cuts from one SQLite snapshot."""
+    from aletheia.storage.sqlite import read_snapshot
 
     try:
-        sql = (
-            "SELECT sequence, receipt_id, manifest_hash, acknowledged_at "
-            "FROM observation_delivery_outbox"
-        )
-        params: tuple[int, ...] = ()
-        if through_sequence is not None:
-            sql += " WHERE sequence<=?"
-            params = (int(through_sequence),)
-        rows = get_db().execute(f"{sql} ORDER BY sequence", params).fetchall()
+        with read_snapshot() as db:
+            columns = {
+                str(row[1])
+                for row in db.execute(
+                    "PRAGMA table_info(observation_delivery_outbox)"
+                ).fetchall()
+            }
+            if not set(_OUTBOX_IDENTITY_COLUMNS).issubset(columns):
+                raise sqlite3.Error("outbox_schema_unavailable")
+            sql = (
+                f"SELECT {', '.join(_OUTBOX_IDENTITY_COLUMNS)} "
+                "FROM observation_delivery_outbox WHERE acknowledged_at IS NULL"
+            )
+            params: tuple[int, ...] = ()
+            if through_sequence is not None:
+                sql += " AND sequence<=?"
+                params = (int(through_sequence),)
+            rows = db.execute(f"{sql} ORDER BY sequence", params).fetchall()
+            legacy_sql = (
+                "SELECT sequence, receipt_id, manifest_hash, acknowledged_at "
+                "FROM observation_delivery_outbox"
+            )
+            if through_sequence is not None:
+                legacy_sql += " WHERE sequence<=?"
+            legacy_rows = db.execute(
+                f"{legacy_sql} ORDER BY sequence", params
+            ).fetchall()
+            sequence_row = db.execute(
+                "SELECT seq FROM sqlite_sequence "
+                "WHERE name='observation_delivery_outbox'"
+            ).fetchone()
+            if sequence_row is None and legacy_rows:
+                raise sqlite3.Error("outbox_sequence_watermark_unavailable")
+            logical_watermark = int(sequence_row[0]) if sequence_row is not None else 0
     except Exception:
-        return (-1, -1, "<unavailable>")
-    pending = sum(1 for row in rows if row[3] is None)
-    watermark = int(rows[-1][0]) if rows else 0
+        unavailable = (-1, -1, "<unavailable>")
+        return unavailable, unavailable
+    watermark = (
+        min(logical_watermark, int(through_sequence))
+        if through_sequence is not None
+        else logical_watermark
+    )
     fingerprint = hashlib.sha256(
         _canonical_json([tuple(row) for row in rows]).encode("utf-8")
     ).hexdigest()
-    return watermark, pending, fingerprint
+    legacy_watermark = int(legacy_rows[-1][0]) if legacy_rows else 0
+    legacy_pending = sum(1 for row in legacy_rows if row[3] is None)
+    legacy_fingerprint = hashlib.sha256(
+        _canonical_json([tuple(row) for row in legacy_rows]).encode("utf-8")
+    ).hexdigest()
+    return (
+        (watermark, len(rows), fingerprint),
+        (legacy_watermark, legacy_pending, legacy_fingerprint),
+    )
+
+
+def _read_app_outbox_state(*, through_sequence: int | None = None) -> tuple[int, int, str]:
+    """Return the logical watermark and pending transport frontier."""
+    return _read_app_outbox_states(through_sequence=through_sequence)[0]
+
+
+def _mismatch_components(
+    last: JointCheckpoint,
+    current: JointCheckpoint,
+) -> tuple[str, ...]:
+    components: list[str] = []
+    if (
+        last.app_migration_head != current.app_migration_head
+        or last.app_migration_count != current.app_migration_count
+    ):
+        components.append("app_migration")
+    if last.active_manifest_hashes != current.active_manifest_hashes:
+        components.append("active_manifests")
+    if (
+        last.lab_schema_head != current.lab_schema_head
+        or last.lab_schema_count != current.lab_schema_count
+    ):
+        components.append("lab_schema")
+    if last.lab_state_fingerprint != current.lab_state_fingerprint:
+        components.append("lab_state")
+    if last.checkpoint_ledger_fingerprint != current.checkpoint_ledger_fingerprint:
+        components.append("checkpoint_ledger")
+    if (
+        last.main_outbox_high_watermark != current.main_outbox_high_watermark
+        or last.main_outbox_pending_count != current.main_outbox_pending_count
+        or last.main_outbox_fingerprint != current.main_outbox_fingerprint
+    ):
+        components.append("main_outbox")
+    return tuple(components)
 
 
 def _main_outbox_advanced_append_only(
@@ -346,7 +426,8 @@ def compute_joint_checkpoint(
 
         get_lab_db()
     head, count = _read_app_migration_state()
-    outbox_watermark, outbox_pending, outbox_fingerprint = _read_app_outbox_state()
+    outbox_state, legacy_outbox_state = _read_app_outbox_states()
+    outbox_watermark, outbox_pending, outbox_fingerprint = outbox_state
     with _lab_read_snapshot() as lab:
         # Keep every Lab-derived component on the same physical read
         # transaction.  A manifest publish/revocation or lifecycle write that
@@ -384,6 +465,7 @@ def compute_joint_checkpoint(
         main_outbox_fingerprint=outbox_fingerprint,
         joint_fingerprint=fingerprint,
         notes=notes,
+        legacy_main_outbox_state=legacy_outbox_state,
     )
 
 
@@ -522,6 +604,22 @@ def verify_joint_checkpoint(
             current_fingerprint=current.joint_fingerprint,
             reason="fingerprint_match",
         )
+    if (
+        current.legacy_main_outbox_state is not None
+        and current.legacy_main_outbox_state
+        == (
+            last.main_outbox_high_watermark,
+            last.main_outbox_pending_count,
+            last.main_outbox_fingerprint,
+        )
+        and _mismatch_components(last, current) == ("main_outbox",)
+    ):
+        return CheckpointVerification(
+            ok=True,
+            last=last,
+            current_fingerprint=current.joint_fingerprint,
+            reason="legacy_main_outbox_fingerprint_match",
+        )
     if allow_main_outbox_progress and _main_outbox_advanced_append_only(
         last, current
     ):
@@ -531,6 +629,7 @@ def verify_joint_checkpoint(
             current_fingerprint=current.joint_fingerprint,
             reason="main_outbox_append_only",
         )
+    mismatch_components = _mismatch_components(last, current)
     return CheckpointVerification(
         ok=False,
         last=last,
@@ -545,4 +644,5 @@ def verify_joint_checkpoint(
             f"{current.lab_state_fingerprint}) outbox({last.main_outbox_high_watermark}→"
             f"{current.main_outbox_high_watermark})"
         ),
+        mismatch_components=mismatch_components,
     )

@@ -21,9 +21,15 @@ _VALID_OWNERS = {"main", "worker"}
 _FRESH_CAPTURE_PREFIX = "ALETHEIA_CONTINUITY_SNAPSHOT="
 _POSTFLIGHT_SETTLE_TIMEOUT_SEC = 120.0
 _POSTFLIGHT_POLL_SEC = 2.0
-_CHECKPOINT_MISMATCH_RE = re.compile(
+_LEGACY_CHECKPOINT_MISMATCH_RE = re.compile(
     r"^fingerprint_mismatch: app_head\((.*?)→(.*?)\) "
     r"count\((\d+)→(\d+)\) manifests\((\d+)→(\d+)\)$"
+)
+_CHECKPOINT_MISMATCH_RE = re.compile(
+    r"^fingerprint_mismatch: app_head\((.*?)→(.*?)\) "
+    r"count\((\d+)→(\d+)\) manifests\((\d+)→(\d+)\) "
+    r"lab_schema\((.*?)/(\d+)→(.*?)/(\d+)\) "
+    r"lab_state\((.*?)→(.*?)\) outbox\((\d+)→(\d+)\)$"
 )
 
 
@@ -209,6 +215,9 @@ def capture_update_continuity() -> dict[str, Any]:
                     "ok": verified.ok,
                     "reason": verified.reason,
                     "current_fingerprint": verified.current_fingerprint,
+                    "mismatch_components": list(
+                        getattr(verified, "mismatch_components", ())
+                    ),
                 }
             }
         observation_available = identities.get("available") is True
@@ -329,13 +338,57 @@ def _checkpoint_preflight_verdict(checkpoint: dict[str, Any]) -> tuple[str | Non
     if not isinstance(verified, dict) or verified.get("ok") is not False:
         return (None, None)
     reason = str(verified.get("reason") or "")
-    match = _CHECKPOINT_MISMATCH_RE.fullmatch(reason)
-    if match is None:
+    components = verified.get("mismatch_components")
+    if isinstance(components, list) and all(isinstance(item, str) for item in components):
+        changed = set(components)
+    else:
+        changed: set[str] = set()
+        match = _CHECKPOINT_MISMATCH_RE.fullmatch(reason)
+        if match is not None:
+            (
+                old_head, new_head, old_count, new_count, old_manifests,
+                new_manifests, old_lab_head, old_lab_count, new_lab_head,
+                new_lab_count, old_lab_state, new_lab_state, old_outbox,
+                new_outbox,
+            ) = match.groups()
+            if old_head != new_head or old_count != new_count:
+                changed.add("app_migration")
+            if old_manifests != new_manifests:
+                changed.add("active_manifests")
+            if old_lab_head != new_lab_head or old_lab_count != new_lab_count:
+                changed.add("lab_schema")
+            if old_lab_state != new_lab_state:
+                changed.add("lab_state")
+            if old_outbox != new_outbox:
+                changed.add("main_outbox")
+        else:
+            legacy = _LEGACY_CHECKPOINT_MISMATCH_RE.fullmatch(reason)
+            if legacy is None:
+                return ("failure", "observation_checkpoint_drift")
+            old_head, new_head, old_count, new_count, old_manifests, new_manifests = legacy.groups()
+            if old_head != new_head or old_count != new_count:
+                changed.add("app_migration")
+            if old_manifests != new_manifests:
+                changed.add("active_manifests")
+
+    known = {
+        "app_migration", "active_manifests", "lab_schema", "lab_state",
+        "checkpoint_ledger", "main_outbox",
+    }
+    if not changed or not changed.issubset(known):
         return ("failure", "observation_checkpoint_drift")
-    old_head, new_head, old_count, new_count, _old_manifests, _new_manifests = match.groups()
-    if old_head != new_head or old_count != new_count:
-        return ("failure", "observation_checkpoint_app_migration_drift")
-    return ("warning", "observation_checkpoint_changed")
+    if changed == {"active_manifests"}:
+        return ("warning", "observation_checkpoint_changed")
+    for component, code in (
+        ("app_migration", "observation_checkpoint_app_migration_drift"),
+        ("lab_schema", "observation_checkpoint_lab_schema_drift"),
+        ("lab_state", "observation_checkpoint_lab_state_drift"),
+        ("checkpoint_ledger", "observation_checkpoint_ledger_drift"),
+        ("main_outbox", "observation_checkpoint_outbox_drift"),
+    ):
+        if component in changed:
+            return ("failure", code)
+    return ("failure", "observation_checkpoint_drift")
 
 
 # (description, fix_hint) — fix_hint is "" when there is no specific user action.
@@ -347,6 +400,22 @@ _CODE_HINTS: dict[str, tuple[str, str]] = {
     ),
     "observation_checkpoint_drift": (
         "Observation checkpoint fingerprint has an unrecognised mismatch shape",
+        "aletheia observe overview --json",
+    ),
+    "observation_checkpoint_lab_schema_drift": (
+        "Observation Lab schema differs from the latest checkpoint",
+        "aletheia observe overview --json",
+    ),
+    "observation_checkpoint_lab_state_drift": (
+        "Observation Lab state differs from the latest checkpoint",
+        "aletheia observe overview --json",
+    ),
+    "observation_checkpoint_ledger_drift": (
+        "Observation checkpoint ledger differs from the latest checkpoint",
+        "aletheia observe overview --json",
+    ),
+    "observation_checkpoint_outbox_drift": (
+        "Observation delivery frontier differs from the latest checkpoint",
         "aletheia observe overview --json",
     ),
     "observation_checkpoint_changed": (
