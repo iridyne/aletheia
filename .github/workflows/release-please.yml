@@ -7,8 +7,8 @@ on:
     # owner-gated release-preparation batch.
     types: [release_candidate_merged, release_candidate_refresh]
   # The only preparation trigger is an explicit owner release-intent gate. Once
-  # it is selected, candidate CI, merge, tag, and the downstream Runtime update
-  # remain unattended.
+  # it is selected, release-candidate maintenance starts. CI remains an explicit
+  # manual action; this workflow never dispatches it.
   workflow_dispatch:
     inputs:
       operational_need:
@@ -45,7 +45,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
     timeout-minutes: 10
     permissions:
-      actions: write
+      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -293,7 +293,7 @@ jobs:
               issue_number: candidate.number,
               body: `Owner-authorized release preparation run ${context.runId} bound this candidate.\n\n${marker}`,
             });
-      - name: Run CI for the pending release pull request
+      - name: Hold the release candidate for explicit validation
         if: >-
           github.event_name != 'repository_dispatch' ||
           github.event.action == 'release_candidate_refresh'
@@ -307,46 +307,14 @@ jobs:
               base: 'master',
             });
             for (const pullRequest of pullRequests) {
-              if (!pullRequest.labels.some(({name}) => name === 'autorelease: pending')) {
-                continue;
-              }
-              await github.rest.issues.addLabels({
-                ...context.repo,
-                issue_number: pullRequest.number,
-                labels: ['do-not-auto-merge'],
-              });
-              const {data: workflowRuns} = await github.rest.actions.listWorkflowRuns({
-                ...context.repo,
-                workflow_id: 'ci.yml',
-                branch: pullRequest.head.ref,
-                event: 'workflow_dispatch',
-                per_page: 30,
-              });
-              const exactRuns = workflowRuns.workflow_runs.filter(
-                ({head_sha}) => head_sha === pullRequest.head.sha,
-              );
-              const activeStatuses = new Set([
-                'requested', 'waiting', 'pending', 'queued', 'in_progress',
-              ]);
-              if (exactRuns.some(({status}) => activeStatuses.has(status))) {
-                core.info(`CI already active for ${pullRequest.head.sha}; reusing it`);
-                continue;
-              }
-              if (exactRuns.some(({status, conclusion}) =>
-                status === 'completed' && conclusion === 'success')) {
-                await github.rest.repos.createDispatchEvent({
+              if (
+                pullRequest.labels.some(({name}) => name === 'autorelease: pending') &&
+                !pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
+              ) {
+                await github.rest.issues.addLabels({
                   ...context.repo,
-                  event_type: 'release_candidate_verified',
-                  client_payload: {
-                    head_branch: pullRequest.head.ref,
-                    head_sha: pullRequest.head.sha,
-                  },
+                  issue_number: pullRequest.number,
+                  labels: ['do-not-auto-merge'],
                 });
-                continue;
               }
-              await github.rest.actions.createWorkflowDispatch({
-                ...context.repo,
-                workflow_id: 'ci.yml',
-                ref: pullRequest.head.ref,
-              });
             }

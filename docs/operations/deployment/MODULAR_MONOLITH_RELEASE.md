@@ -30,25 +30,24 @@ accumulated Conventional Commit history needs a Runtime update; Release Please
 then computes one Ready-for-review release PR from the history since the
 previous tag. Ordinary `feat`, `fix`, and `perf` changes therefore accumulate
 instead of creating one product version per merge, and hidden `docs`, `ci`, and
-`chore` changes remain accumulated. From that one explicit release-intent
-selection onward, candidate CI, exact-head merge, immutable Tag/Release, and
-Paper-role deployment are unattended.
+`chore` changes remain accumulated. Release preparation never dispatches CI.
+If full remote validation is needed, an owner starts `Aletheia CI` explicitly
+on the release branch; its successful exact-head handoff may then continue
+merge, immutable Tag/Release, and Paper-role deployment unattended.
 
 If an ordinary PR advances `master` while the release candidate is still open,
 `Refresh release candidate after master advances` observes the completed trusted
 auto-merge run, confirms that an active repository-owned `autorelease: pending`
 candidate has a stale branch merge-base, and dispatches a refresh authenticated
-to that workflow run. Release Please then updates the same candidate and
-re-runs exact-head CI; the refresh path cannot create a candidate without the
-owner's original release-intent gate.
+to that workflow run. Release Please then updates the same candidate without
+starting CI; the refresh path cannot create a candidate without the owner's
+original release-intent gate.
 
 Release Please keeps its `autorelease: pending` marker on the generated PR and
-the workflow adds `do-not-auto-merge` while the candidate is unverified. It
-explicitly dispatches the existing read-only CI workflow on the generated
-branch because its `GITHUB_TOKEN` cannot trigger the normal pull-request event.
-After all required CI jobs succeed, a metadata-only job dispatches the exact
+adds `do-not-auto-merge` until an explicitly requested validation succeeds.
+When an owner explicitly requests CI and it succeeds, a metadata-only job dispatches the exact
 candidate branch, SHA, and merge-base SHA to the trusted auto-merge workflow.
-The candidate is refreshed and re-verified automatically when `master` advances.
+The candidate is refreshed without automatically starting CI when `master` advances.
 Merging the exact candidate emits a tag-only follow-up; that follow-up verifies
 the squash parent against the authorized base before creating the matching
 immutable tag and metadata-only GitHub Release. Failed CI or identity checks
@@ -65,11 +64,11 @@ third-party Action.
 
 正常路径只保留一个显式发布意图动作：repository admin 在 GitHub Actions 运行
 `Prepare and tag releases` 并设置 `operational_need=true`；workflow 会通过 GitHub API
-fail-closed 验证触发者的 repository admin 权限。之后自动生成候选、
-运行精确 SHA CI、解除候选 hold 并合并、创建不可变 Tag/Release；配置为
-Paper 角色的 Fedora auto-update timer 再自动部署正式 Tag。无需手动指定
-版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条自动部署链，
-必须保持 owner 选定的固定 SHA。
+fail-closed 验证触发者的 repository admin 权限并生成候选，但不会自动启动 CI。
+需要远程全量验证时，由 owner 在候选分支上显式运行 `Aletheia CI`；成功后才会
+继续解除候选 hold、合并、创建不可变 Tag/Release，并由 Fedora Paper timer 部署。
+无需手动指定版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条
+自动部署链，必须保持 owner 选定的固定 SHA。
 
 只有在确认 Runtime 更新确有 operational need 时才运行该批处理；失败或候选
 状态损坏时可用同一入口重试。CLI 形式为：

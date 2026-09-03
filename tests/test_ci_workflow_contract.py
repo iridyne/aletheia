@@ -10,6 +10,7 @@ pytestmark = pytest.mark.tier_unit
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release-please.yml"
 
 
 def _workflow() -> dict:
@@ -24,6 +25,14 @@ def test_automatic_pull_request_remote_tests_are_disabled() -> None:
     assert "pull_request" not in triggers
     assert "merge_group" not in triggers
     assert "push" not in triggers
+
+
+def test_release_preparation_does_not_dispatch_ci() -> None:
+    release_workflow = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "workflow_id: 'ci.yml'" not in release_workflow
+    assert "actions.createWorkflowDispatch" not in release_workflow
+    assert "labels: ['do-not-auto-merge']" in release_workflow
 
 
 def test_manual_full_validation_keeps_repository_test_surfaces_available() -> None:
