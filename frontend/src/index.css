@@ -4798,6 +4798,13 @@ button.pred-market-card:active:not(:disabled) { transform: none; }
   color: var(--muted);
   padding: 4px 0 2px;
 }
+.insights-truncation-warning {
+  color: var(--yellow);
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-base);
+}
 .insights-section-label {
   font-size: 0.78rem;
   font-weight: 600;

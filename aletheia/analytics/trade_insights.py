@@ -21,36 +21,34 @@ def build_trade_insights(*, execution_mode: str | None = None) -> dict:
     from aletheia.analytics.execution_mode import execution_mode_identity
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
-        eligible_strategy_outcomes,
-        raw_account_events,
+        read_complete_outcome_cohort,
     )
 
-    rows = eligible_strategy_outcomes(
+    cohort = read_complete_outcome_cohort(
         closed_after=_SINCE_UTC, execution_mode=execution_mode,
     )
-    raw_rows = raw_account_events(
-        closed_after=_SINCE_UTC, execution_mode=execution_mode, limit=10_000,
-    )
-
-    # #1254: truncation metadata
-    source_total = len(raw_rows)
+    if cohort.cohort_state != "available":
+        raise RuntimeError("trade insights cohort unavailable")
+    bounded = list(zip(cohort.rows, cohort.assessments, strict=True))[-10_000:]
+    rows = [row for row, assessment in bounded if assessment.eligible]
+    raw_rows = [row for row, _assessment in bounded]
+    source_raw_count = cohort.source_raw_event_count or 0
+    loaded_raw_count = len(raw_rows)
     loaded_count = len(rows)
-    cohort_complete = loaded_count < 10_000
-    loaded_from = rows[0]["closed_at"] if rows else None
-    loaded_through = rows[-1]["closed_at"] if rows else None
+    omitted_count = source_raw_count - loaded_raw_count
 
     return {
-        **build_outcome_cohort_summary(
-            closed_after=_SINCE_UTC, execution_mode=execution_mode,
-        ),
+        **build_outcome_cohort_summary(cohort=cohort),
         **execution_mode_identity(execution_mode),
         "since":                  _SINCE_UTC,
         "trade_count":            loaded_count,
-        "source_total_raw_events": source_total,
+        "source_raw_count":       source_raw_count,
+        "loaded_raw_count":       loaded_raw_count,
         "loaded_count":           loaded_count,
-        "cohort_complete":        cohort_complete,
-        "loaded_from":            loaded_from,
-        "loaded_through":         loaded_through,
+        "omitted_count":          omitted_count,
+        "cohort_complete":        omitted_count == 0,
+        "loaded_from":            raw_rows[0]["closed_at"] if raw_rows else None,
+        "loaded_through":         raw_rows[-1]["closed_at"] if raw_rows else None,
         "equity_curve":           _equity_curve(rows),
         "drawdown_curve":         _drawdown_curve(rows),
         "by_direction":           _by_direction(rows),

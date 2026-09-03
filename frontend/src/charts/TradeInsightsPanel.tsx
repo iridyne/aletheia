@@ -698,6 +698,33 @@ function ConvictionCalibrationChart({ executionMode }: { executionMode?: string 
 }
 
 // ── Main Panel ────────────────────────────────────────────────────────────────
+type TradeInsightsScopeData = Pick<
+  TradeInsights,
+  'since' | 'source_raw_count' | 'loaded_raw_count' | 'loaded_count' |
+  'omitted_count' | 'cohort_complete' | 'loaded_from' | 'loaded_through' |
+  'eligible_outcome_count' | 'excluded_outcome_count'
+>
+
+export function TradeInsightsScope({ data }: { data: TradeInsightsScopeData }) {
+  if (!data.cohort_complete) {
+    return (
+      <div className="insights-truncation-warning" role="status" aria-live="polite">
+        Metrics cover the latest {data.loaded_raw_count.toLocaleString()} raw close events
+        {' · '}{data.omitted_count.toLocaleString()} earlier {data.omitted_count === 1 ? 'event' : 'events'} omitted
+        {' · '}{data.loaded_count.toLocaleString()} verified outcomes loaded
+        {' · '}{data.loaded_from ?? 'unavailable'} through {data.loaded_through ?? 'unavailable'}
+      </div>
+    )
+  }
+  return (
+    <div className="insights-date-range">
+      Since {data.since} · {data.eligible_outcome_count ?? 'unavailable'} verified strategy outcomes
+      {' · '}{data.source_raw_count.toLocaleString()} raw close events
+      {' · '}{data.excluded_outcome_count ?? 'unavailable'} excluded
+    </div>
+  )
+}
+
 export default function TradeInsightsPanel({ executionMode }: { executionMode?: string }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['trade-insights', executionMode ?? 'unavailable'],
@@ -727,11 +754,7 @@ export default function TradeInsightsPanel({ executionMode }: { executionMode?: 
 
   return (
     <div className="insights-panel">
-      <div className="insights-date-range">
-        Since {data.since} · {data.eligible_outcome_count ?? 'unavailable'} verified strategy outcomes
-        {' · '}{data.raw_event_count ?? 'unavailable'} raw close events
-        {' · '}{data.excluded_outcome_count ?? 'unavailable'} excluded
-      </div>
+      <TradeInsightsScope data={data} />
       <EquityCurve data={data.equity_curve} />
       <DrawdownCurve data={data.drawdown_curve} />
 

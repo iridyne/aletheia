@@ -664,11 +664,20 @@ def administrative_closures(**filters) -> list[dict]:
     ]
 
 
-def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
+def build_outcome_cohort_summary(
+    *, cohort: CompleteOutcomeCohort | None = None, **filters
+) -> dict[str, Any]:
     """Describe raw close events and the verified judgement cohort side by side."""
     from aletheia.analytics.learning_window import outcome_window_metadata
     try:
-        rows = raw_account_events(**filters)
+        rows = raw_account_events(**filters) if cohort is None else cohort.rows
+        assessments = (
+            [assess_reportable_outcome(row) for row in rows]
+            if cohort is None
+            else cohort.assessments
+        )
+        if len(rows) != len(assessments):
+            raise ValueError("outcome rows and assessments must have equal length")
     except Exception:
         return {
             "raw_event_count": None,
@@ -688,12 +697,11 @@ def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
     raw_recorded_pnl = 0.0
     raw_recorded_count = 0
     exclusion_reasons: dict[str, int] = {}
-    for row in rows:
+    for row, assessment in zip(rows, assessments, strict=True):
         raw_pnl = _to_float(row.get("realized_pnl"))
         if raw_pnl is not None:
             raw_recorded_pnl += raw_pnl
             raw_recorded_count += 1
-        assessment = assess_reportable_outcome(row)
         if assessment.eligible:
             eligible_count += 1
             eligible_pnl += float(raw_pnl)

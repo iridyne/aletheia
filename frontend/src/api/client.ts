@@ -3299,8 +3299,15 @@ export interface ExitReasonEntry {
 }
 
 export interface TradeInsights extends OutcomeCohort {
-	since: string; // ISO date, e.g. "2026-06-22" — all metrics cover closed_at >= since
+	since: string;
 	trade_count: number;
+	source_raw_count: number;
+	loaded_raw_count: number;
+	loaded_count: number;
+	omitted_count: number;
+	cohort_complete: boolean;
+	loaded_from: string | null;
+	loaded_through: string | null;
 	equity_curve: EquityPoint[];
 	drawdown_curve: DrawdownPoint[];
 	by_direction: Record<string, DirectionStats>;
