@@ -3820,11 +3820,26 @@ def _run_observation_lab_bridge() -> None:
             mirror_lab_audit_outbox,
             prune_observation_delivery_outbox,
         )
+        from aletheia.observation_lab.runner import _pass_checkpoint, _save_checkpoint
+
+        checkpoint = _pass_checkpoint()
+        if not checkpoint.get("ok"):
+            _record_job_failure(
+                "observation_lab_bridge",
+                f"checkpoint_mismatch:{checkpoint.get('reason')}",
+            )
+            return
 
         imported = import_delivery_receipts(limit=500)
         mirrored = mirror_lab_audit_outbox(limit=500)
         pruned = prune_observation_delivery_outbox()
         compacted = compact_finalized_generations(limit=10)
+        _save_checkpoint(checkpoint)
+        if not checkpoint.get("ok"):
+            _record_job_failure(
+                "observation_lab_bridge",
+                f"checkpoint_save_failed:{checkpoint.get('reason')}",
+            )
         if not imported.get("available", False) and imported.get("reason") not in {
             "lab_unavailable", "outbox_unavailable",
         }:

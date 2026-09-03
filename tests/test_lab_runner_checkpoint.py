@@ -163,3 +163,52 @@ def test_runner_imports_receipts_appended_after_previous_checkpoint(clean_regist
     assert imported["joint_checkpoint"]["reason"] == "main_outbox_append_only"
     assert imported["results"]["delivery"]["processed"] == 1
     assert settled["joint_checkpoint"]["reason"] == "fingerprint_match"
+
+
+def test_main_bridge_checkpoints_imported_receipts_and_refuses_existing_drift():
+    from aletheia.agent_runtime import scheduler
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.storage.sqlite import get_db
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    first_receipt = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-main-bridge",
+        candidate_key="candidate-main-bridge",
+        resolution_reason="adapter_unavailable",
+    )
+
+    scheduler._run_observation_lab_bridge()
+
+    assert verify_joint_checkpoint().reason == "fingerprint_match"
+    assert get_db().execute(
+        "SELECT acknowledged_at FROM observation_delivery_outbox WHERE receipt_id=?",
+        (first_receipt,),
+    ).fetchone()[0] is not None
+
+    get_lab_db().execute(
+        "INSERT INTO ufc_shadow_equivalence "
+        "(id, observation_id, experiment_id, cohort_key, checked_at, matched) "
+        "VALUES ('unexpected-drift', 'obs', 'exp', 'cohort', "
+        "'2026-09-03T00:00:00+00:00', 1)"
+    )
+    blocked_receipt = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-main-bridge-blocked",
+        candidate_key="candidate-main-bridge-blocked",
+        resolution_reason="adapter_unavailable",
+    )
+
+    scheduler._run_observation_lab_bridge()
+
+    assert verify_joint_checkpoint().ok is False
+    assert get_db().execute(
+        "SELECT acknowledged_at FROM observation_delivery_outbox WHERE receipt_id=?",
+        (blocked_receipt,),
+    ).fetchone()[0] is None
