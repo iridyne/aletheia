@@ -88,7 +88,10 @@ def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> Mechani
         refs,
         groups,
         (f"projected_from:{selected.component_id}", *diagnostics),
-        (),
+        (
+            ("liquidation_flow_unavailable", "basis_unavailable", "cross_venue_positioning_unavailable")
+            if mechanism_id == "positioning_forced_flow" else ()
+        ),
     )
 
 

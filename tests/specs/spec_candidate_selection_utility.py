@@ -133,3 +133,29 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
         candidate_selection_overlap_block_reason()
         == "candidate_selection_overlapping_learning_authority"
     )
+
+
+@spec_claim(SpecClaim(
+    "CSU-S06", "candidate_selection_utility", "Typed Candidate Opportunity handoff", "L2a",
+    "Target selection persists typed mechanism/source authority; legacy projection maps only unambiguous families.",
+    status="implemented",
+))
+def test_candidate_opportunity_handoff_never_uses_display_reasons_as_authority():
+    import inspect
+
+    from aletheia.universe.candidate_opportunity import LEGACY_MECHANISM_MAP
+    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
+    from aletheia.universe.opportunity_evidence import MechanismEvidenceV1
+
+    assert LEGACY_MECHANISM_MAP == {
+        "momentum": "continuation",
+        "short_bias": "continuation",
+        "mean_reversion": "reversal",
+        "derivatives": "positioning_forced_flow",
+    }
+    assert "volatility" not in LEGACY_MECHANISM_MAP
+    assert "event" not in LEGACY_MECHANISM_MAP
+    assert "source_component_id" in MechanismEvidenceV1.__dataclass_fields__
+    source = inspect.getsource(target_candidates_from_bundle)
+    assert 'mechanism["source_component_id"]' in source
+    assert "reason_codes" not in source

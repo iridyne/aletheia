@@ -109,6 +109,17 @@ Where a treatment contract is represented by an `ExecutionManifest`:
 - Main Runtime may consume only a manifest/adapter combination explicitly supported by the relevant behavior authority;
 - Lab publication never grants Risk/Execution/Live authority by itself.
 
+The `mechanism-aware-entry-learning/v1` adapter is the only registered Entry
+Learning intervention. Its deterministic baseline and control payload are an
+empty typed Learning context; treatment adds only a bounded
+`entry-learning-context/v1`. Assignment uses the Planning Generation as the
+unit and declares the `mechanism-aware-grounded-entry` interference key. The
+manifest eligibility population freezes mechanism, direction, market type,
+Candidate-selection policy and exact policy epoch. A changed epoch or any
+missing/conflicting Lab authority returns the empty baseline and records the
+typed resolution reason; it cannot silently pool populations or change Profile,
+compiler, model/prompt, Risk, sizing, Gateway, or Live authority.
+
 ## Zero-authority guarantees
 
 Observation Lab is evidence infrastructure, not a trading authority.

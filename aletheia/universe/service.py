@@ -27,6 +27,10 @@ from aletheia.storage.models import (
     UniverseSnapshot,
 )
 from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+from aletheia.universe.candidate_opportunity import (
+    legacy_candidate_opportunity_context,
+    target_candidate_opportunity_context,
+)
 
 logger = logging.getLogger("aletheia.universe")
 
@@ -621,6 +625,10 @@ def _member_fingerprint(
                 str(item.get("opportunity_source_component") or ""),
                 str(item.get("opportunity_source_cutoff_at") or ""),
                 str(item.get("opportunity_evidence_hash") or ""),
+                str(
+                    (item.get("_candidate_opportunity_record") or {}).get("source_record_hash")
+                    if isinstance(item.get("_candidate_opportunity_record"), dict) else ""
+                ),
                 bool(item.get("execution_eligible", True)),
                 int(item.get("ttl_sec") or 0),
                 _risk_flags(item.get("risk_flags")),
@@ -1542,7 +1550,26 @@ class UniverseService:
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
                 scanner_direction = item.get("scanner_direction") or _infer_direction(item.get("scanner_family"), item)
+                member_id = uuid4().hex[:12]
+                target_record = item.get("_candidate_opportunity_record")
+                if item.get("candidate_selection_policy") == "candidate_selection_utility_v1":
+                    if not isinstance(target_record, dict):
+                        raise ValueError("candidate_selection_opportunity_record_missing")
+                    opportunity_context = target_candidate_opportunity_context(
+                        candidate_id=member_id,
+                        decision=target_record["decision"],
+                        policy_epoch=str(item["candidate_selection_policy_epoch"]),
+                        source_record_hash=str(target_record["source_record_hash"]),
+                        detected_at=entry_ts,
+                    )
+                else:
+                    opportunity_context = legacy_candidate_opportunity_context(
+                        candidate_id=member_id,
+                        candidate={**item, "scanner_direction": scanner_direction},
+                        detected_at=entry_ts,
+                    )
                 member = UniverseMember(
+                    id=member_id,
                     snapshot_id=snap.id,
                     asset_id=item["asset_id"],
                     venue=item.get("venue"),
@@ -1578,11 +1605,20 @@ class UniverseService:
                     candidate_selection_utility_pct=item.get(
                         "candidate_selection_utility_pct",
                     ),
-                    opportunity_mechanism=item.get("opportunity_mechanism"),
+                    opportunity_mechanism=opportunity_context.opportunity["primary_mechanism"],
                     opportunity_mechanism_version=item.get("opportunity_mechanism_version"),
                     opportunity_source_component=item.get("opportunity_source_component"),
                     opportunity_source_cutoff_at=item.get("opportunity_source_cutoff_at"),
                     opportunity_evidence_hash=item.get("opportunity_evidence_hash"),
+                    candidate_opportunity_context_version=(
+                        opportunity_context.version if opportunity_context else None
+                    ),
+                    candidate_opportunity_context_json=(
+                        opportunity_context.model_dump_json() if opportunity_context else None
+                    ),
+                    candidate_opportunity_context_hash=(
+                        opportunity_context.context_hash if opportunity_context else None
+                    ),
                 )
                 member_models.append(member)
                 inserted_members.append(

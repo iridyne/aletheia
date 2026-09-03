@@ -101,6 +101,12 @@ Hypothesis → `entry-plan/v2` provenance。它没有独立 feature flag、activ
 activation identity 或 fresh-cohort 权限；Planner 与执行仍受全局 Paper/Live/Risk/Gateway
 约束。旧 generation、`entry-plan/v1` 与既有 Position 不重规划、不回填。
 
+携带有效 `candidate-opportunity-context/v1` 的新 Candidate 使用
+`entry-planner/v4` 与 `candidate-planning/v2`。其 ownership identity 由 exact instrument、
+Opportunity mechanism/direction、Candidate-selection policy/epoch 与 mechanism version 组成；
+family、rank、score、Utility、price 与普通 snapshot churn 不进入身份。机制或 policy epoch
+变化会保留并 supersede 旧 generation，同时 fail-closed 终结旧的 pre-order Entry Plan。
+
 `candidate_planning_generations` 以 exact instrument、family、direction 和 thesis-level material facts
 建立耐久 planning identity；snapshot/member/rank/score/price churn 不在 ownership identity 中。每代
 最多一个 planning owner；No-Plan 耐久；unavailable 仅有界重试；旧 plan expiry/invalidation 不自动
@@ -314,6 +320,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-39 Entry market evidence 双时钟**:RESTING_MAKER 与 TRIGGERED 执行均须验证并持久化同一 exact quote 的 exchange/source time 与 local receive time。任一时间旧、未来、无时区或不可解析均不得进入 Risk/Gateway；subscription 尚未确认或 generation 已重置时，旧 rolling evidence 不可复用。
 - **DL-INV-40 IOC 与 maker remainder 收敛**:Opposing-BBO IOC 的 cumulative Fill 与 remainder terminal state 是独立事实；零 Fill terminal 为 cancelled，partial Fill 先物化 Position 后仅 terminalize remainder，完整 Fill 为 filled，重启必须幂等。任何实际 `POST_ONLY_LIMIT`（包括 TRIGGERED 后释放者）都从真实 Order lifetime 执行 `max_wait_sec`，且 invalidation 必须严格位于所有允许 entry reference 的保护侧。
 - **DL-INV-41 post-submit Plan integrity**:Entry Plan 在 `ordered/partially_filled` 后即使 JSON/hash 损坏，也不得丢失外部 Order ownership；只能使用耐久 Plan↔Order identity 进入 canonical Gateway cancel/reconcile，保留 partial Fill 与原始 integrity reason。证据不完整保持 retry-suppressing unresolved state。
+- **DL-INV-42 Mechanism-aware planning authority**:`candidate-planning/v2` 的 mechanism、direction、selection policy/epoch 与 mechanism version 必须与当前 typed Candidate context/hash 一致。Fast Monitoring 与 Order Intent creation 在任何 pre-order side effect 前复核该身份；不一致则终结旧 Plan，且撤单仍只能经 Gateway。
 - **DL-INV-35 Price Action 权限隔离**:`market-structure/v2` 只可将同一 [Market Structure Derived Data Contract](market_structure_contract.md) 的连续、已收盘、同 venue 1m 因果事实投影成 append-only Shadow assessment；历史 v1 行保持不可变。BOS/CHoCH 不得改变 Opportunity、Risk 或 Execution。hard-gate consumer seam 必须对未批准版本及 unavailable 结果 fail closed，生产 allowlist 为空。
 - **DL-INV-36 Universe instrument background**:每个进入 feature/scanner 的 registry 标的必须携带完整的 `instrument-background/v1`，并解析到一个明确支持的 analysis context。当前只支持既有 crypto context 与经核验的 `stock_linked_perp` context；后者只消费 instrument-local 行情、成本与衍生品证据，BTC 相对强弱、全局 crypto regime 和旧 crypto-family prior 明确不适用。`signal_emitter` 将同一 background 与 applicability 冻结进统一 Opportunity；缺失、冲突、未解析或无受支持 context 均 fail closed，完整 equity 身份本身不是拒绝理由。
 - **DL-INV-37 Candidate planning priority**:稀缺 Entry Planner capacity 必须先 claim 当前 `last_candidate_id` 所指向的最低 Candidate rank；每轮可用 3–15 个并发 worker 依次完成 CAS claim 后并行规划，且每个 generation 仍只有一个 owner。rank 只决定调度顺序，不进入 planning identity 或经济权限。exact rank 不可用时稳定回退 generation `created_at`、再 `id`，不得随机排序或因 rank/score churn 创建重复 LLM work。

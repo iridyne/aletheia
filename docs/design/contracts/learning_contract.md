@@ -868,3 +868,27 @@ rules rather than Learning treatments. An automatic lesson has no blocking effec
 refreeze unless the exact current prospective path is independently authorized; unavailable or
 errored authority remains advisory/fail-closed. Risk account-loss semantics remain separately
 controlled by OI-C03.
+
+## 12. Bounded Entry Learning context
+
+`entry-learning-context/v1` is a read-only T1-cutoff projection over existing
+Candidate, Planning Generation, Entry Plan, Order, Fill, Position, and retained
+outcome owners. It includes the full eligible denominator: `NO_PLAN`, no
+trigger, no fill, filled, and open-at-cutoff units. A Position or outcome
+settled after the current Planning T1 is future information and is excluded.
+Candidate 4h Utility remains Source-Alpha context, not an Entry outcome.
+
+The scope freezes mechanism, direction, market type, selection policy/epoch,
+planner/behavior provenance, exact logical/physical model identity and compatible
+Profile identity. Entry Planner inference and cost rows are joined only through
+the generation-tagged context artifact; missing or mixed model/cost identity,
+incomplete outcomes, stale evidence, or survivor-only evidence makes the context
+explicitly unavailable. Other missing numeric economics remain null, never zero.
+Observational summaries are not causal claims. `experimental` status is possible
+only for the separately assigned Observation Lab treatment.
+
+Control is mechanism-aware Grounded Entry with the deterministic empty typed
+context. Treatment differs only by adding this bounded context through the
+canonical Lab manifest/receipt path. Negative, neutral, insufficient, or
+unavailable evidence grants no influence, and code/test success grants neither
+Paper adoption nor Live authority.

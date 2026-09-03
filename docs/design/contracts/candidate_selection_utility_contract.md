@@ -160,6 +160,23 @@ mechanism-aware Planning identity/context/compiler work remains owned by #2791.
 An explicit audited rollback restores `legacy_total_score_v1` without deleting
 or relabeling historical evidence.
 
+## Typed Candidate Opportunity handoff
+
+Every target-authority Candidate carries `candidate-opportunity-context/v1`
+on the existing `universe_members` row, with a queryable primary mechanism and
+canonical JSON/hash. The payload freezes Candidate T0, the selection source
+cutoff, policy/epoch, exact target record hash, selected mechanism/direction,
+typed `source_component_id`, all bounded mechanism summaries, capability gaps,
+and volatility/regime/shock context. No downstream owner may recover authority
+from `inclusion_reason`, reason codes, or display prose.
+
+Legacy projection is limited to Momentum/Short Bias → Continuation, Mean
+Reversion → Reversal, and Derivatives → Positioning proxy with liquidation,
+Basis, and cross-venue gaps. Volatility/Event do not receive an invented
+mechanism. Information/Catalyst remains unavailable without exact external
+claim identity and provenance. A mechanism is a predictive hypothesis, not
+proved causal attribution.
+
 ## Isolation
 
 Issue #2556 owns a separate frozen Observation Lab generation. This path never

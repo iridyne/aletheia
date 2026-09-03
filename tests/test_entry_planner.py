@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -57,6 +58,80 @@ def _candidate(
         regime_tag=regime,
         entry_price_usd=price,
         expires_at="2099-01-01T00:00:00+00:00",
+    )
+    repo.insert_candidate(candidate)
+    return candidate
+
+
+def _typed_candidate(
+    *,
+    mechanism: str,
+    family: str,
+    direction: str = "long",
+    policy: str = "candidate_selection_utility_v1",
+    policy_epoch: str | None = "epoch-1",
+    mechanism_version: str | None = None,
+    rank: int = 1,
+    price: float = 100.0,
+    regime: str = "trending",
+    risk_flags: str = "[]",
+):
+    from uuid import uuid4
+
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    candidate_id = uuid4().hex[:12]
+    context = CandidateOpportunityContextV1(
+        candidate_id=candidate_id,
+        candidate_selection={
+            "policy": policy,
+            "policy_epoch": policy_epoch,
+            "source_record_hash": "a" * 64,
+        },
+        source={
+            "detected_at": "2026-09-03T00:00:00+00:00",
+            "source_cutoff_at": "2026-09-03T00:00:00+00:00",
+            "feature_snapshot_id": "feature-1",
+        },
+        opportunity={
+            "primary_mechanism": mechanism,
+            "mechanism_version": mechanism_version or f"{mechanism}/v1",
+            "mechanism_source": "target_authority",
+            "source_component_id": family,
+            "direction": direction,
+            "horizon": "4h",
+            "economic_utility_pct": 1.0 if policy == "candidate_selection_utility_v1" else None,
+            "capability_status": "supported",
+            "capability_gaps": (),
+            "primary_evidence_refs": ("fact-1",),
+            "secondary_mechanisms": (),
+        },
+        context={"regime": regime},
+    )
+    snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
+    repo.insert_universe_snapshot(snapshot)
+    candidate = UniverseMember(
+        id=candidate_id,
+        snapshot_id=snapshot.id,
+        asset_id="asset-btc",
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        rank=rank,
+        total_score=90 - rank,
+        scanner_family=family,
+        scanner_direction=direction,
+        regime_tag=regime,
+        risk_flags=risk_flags,
+        entry_price_usd=price,
+        expires_at="2099-01-01T00:00:00+00:00",
+        candidate_selection_policy=policy,
+        candidate_selection_policy_epoch=policy_epoch,
+        candidate_selection_utility_pct=(1.0 if policy == "candidate_selection_utility_v1" else None),
+        opportunity_mechanism=mechanism,
+        candidate_opportunity_context_version=context.version,
+        candidate_opportunity_context_json=context.model_dump_json(),
+        candidate_opportunity_context_hash=context.context_hash,
     )
     repo.insert_candidate(candidate)
     return candidate
@@ -195,6 +270,57 @@ def test_momentum_defaults_to_v3_without_activation_identity():
     legacy, _ = repo.ensure_candidate_planning_generation(non_momentum.id)
     assert legacy["planner_contract_version"] == "entry-planner/v2"
     assert legacy["activation_identity"] is None
+
+
+@pytest.mark.parametrize(
+    ("mechanism", "family"),
+    [("reversal", "mean_reversion"), ("positioning_forced_flow", "derivatives")],
+)
+def test_typed_target_candidate_uses_mechanism_aware_grounded_planner(mechanism, family):
+    candidate = _typed_candidate(mechanism=mechanism, family=family)
+
+    generation, created = repo.ensure_candidate_planning_generation(candidate.id)
+
+    assert created is True
+    assert generation["identity_version"] == "candidate-planning/v2"
+    assert generation["planner_contract_version"] == "entry-planner/v4"
+    assert generation["opportunity_mechanism"] == mechanism
+    assert generation["candidate_selection_policy"] == "candidate_selection_utility_v1"
+    assert generation["candidate_selection_policy_epoch"] == "epoch-1"
+
+
+def test_mechanism_planning_identity_ignores_churn_and_rotates_authority_dimensions():
+    first = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(first.id)
+    churn = _typed_candidate(
+        mechanism="reversal", family="mean_reversion", rank=9, price=103.0,
+        regime="sideways", risk_flags='["new-risk"]',
+    )
+    same, created = repo.ensure_candidate_planning_generation(churn.id)
+    assert created is False
+    assert same["id"] == generation["id"]
+
+    plan_json = "{}"
+    repo._insert("entry_plans", {
+        "id": "mechanism-old-plan", "planning_generation_id": generation["id"],
+        "candidate_id": same["last_candidate_id"], "planning_key": generation["planning_key"],
+        "version": "entry-plan/v2", "venue": "bitget", "symbol": "BTC/USDT",
+        "market_type": "perp", "direction": "long", "execution_mode": "RESTING_MAKER",
+        "plan_json": plan_json, "plan_hash": hashlib.sha256(plan_json.encode()).hexdigest(),
+        "status": "waiting", "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    changed = _typed_candidate(
+        mechanism="positioning_forced_flow", family="derivatives"
+    )
+    replacement, created = repo.ensure_candidate_planning_generation(changed.id)
+    assert created is True
+    assert replacement["id"] != generation["id"]
+    assert repo.get_candidate_planning_generation(generation["id"])["is_current"] == 0
+    old_plan = repo.get_entry_plan("mechanism-old-plan")
+    assert old_plan["status"] == "invalidated"
+    assert old_plan["terminal_reason"] == "incompatible_planning_generation"
 
 
 @pytest.mark.parametrize("terminal_status", ["unavailable", "no_plan", "planned"])
@@ -719,6 +845,92 @@ def test_ai_entry_compiler_emits_v2_without_momentum_treatment(monkeypatch):
     assert plan.candidate_id == "c1"
     assert (plan.version, plan.behavior_version, plan.treatment_exposure_id) == ("entry-plan/v2", "ai-entry-hypothesis-compiler/v1", None)
     assert plan.trigger_spec_id == "anchor-retrace-reclaim"
+
+
+def test_mechanism_aware_compiler_preserves_upstream_identity_without_numeric_ai_authority(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.config.loader import load_config
+    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_analysis import (
+        EntryAnalysisContextV2, EntryAnchorV1, EntryHypothesisV2,
+        canonical_json, fingerprint,
+    )
+    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    assert repo.claim_next_candidate_planning("v4-owner")["id"] == generation["id"]
+    policy = SimpleNamespace(
+        policy_id="test", revision=1,
+        capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100),
+        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_plan_compiler.resolve_risk_policy",
+        lambda *_a, **_k: SimpleNamespace(policy=policy, policy_hash="hash"),
+    )
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
+    monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
+    primary = EntryAnchorV1(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference",
+        price=100, directional_role="entry_candidate", known_at_ms=1,
+        source_fact_refs=("candidate:c1",), source_fingerprint="candidate",
+    )
+    invalidation = EntryAnchorV1(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing",
+        price=95, directional_role="invalidation_candidate", known_at_ms=1,
+        source_fact_refs=("swing:s1",), source_fingerprint="swing",
+    )
+    opportunity = json.loads(candidate.candidate_opportunity_context_json)
+    context = EntryAnalysisContextV2(
+        analysis_cutoff_at="2026-09-03T00:00:00+00:00",
+        instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
+        planning_generation={"id": generation["id"], "planner_contract_version": "entry-planner/v4", "candidate_id": candidate.id, "candidate_family": "mean_reversion"},
+        candidate={"candidate_price": 100, "fact_refs": [f"candidate:{candidate.id}"]},
+        candidate_opportunity_context=opportunity,
+        inference_identity={
+            "caller": "agent_shell.entry_planner",
+            "prompt_version": "v2",
+            "model_provider": "test",
+        },
+        candle_windows={"4h": {"availability": "unavailable", "bars": []}, "1h": {"availability": "unavailable", "bars": []}, "15m": {"availability": "available", "bars": [{} for _ in range(96)]}},
+        market_structure={"15m": {"availability": "available", "atr14": 2.0, "break_tolerance": 0.1}, "fact_refs": [invalidation.anchor_id]},
+        quant_context={"values": {"atr_pct": 2.0}, "fact_refs": []},
+        portfolio_context={"availability": "available", "fact_refs": []},
+        execution_context={"availability": "available", "bid": 99.9, "ask": 100.1, "spread_bps": 2, "depth_10bps_usd": 100_000, "estimated_costs": 0.1, "fact_refs": []},
+        anchors=(primary, invalidation),
+        entry_profiles=({"id": "grounded-anchor-resting-maker", "version": "v1"},),
+        learning_context=empty_entry_learning_context(
+            as_of_at="2026-09-03T00:00:00+00:00", mechanism="reversal", direction="long",
+            market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+        ),
+    )
+    hypothesis = EntryHypothesisV2(
+        decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
+        primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
+        entry_profile_id="grounded-anchor-resting-maker", entry_profile_version="v1",
+        execution_urgency="PASSIVE", risk_tier="LOW", horizon="INTRADAY",
+        supporting_fact_refs=(invalidation.anchor_id,),
+    )
+    input_payload = canonical_json(context.model_dump(mode="json"))
+    assert repo.bind_candidate_planner_input(
+        generation["id"], "v4-owner", input_payload,
+        fingerprint(context.model_dump(mode="json")),
+    )
+    plan = compile_ai_entry_plan(generation, context, hypothesis, cfg)
+
+    assert plan.entry_hypothesis_version == "entry-hypothesis/v2"
+    assert plan.analysis_context_version == "entry-analysis-context/v2"
+    assert plan.entry_profile_id == "grounded-anchor-resting-maker"
+    assert plan.behavior_version == "mechanism-aware-entry-hypothesis-compiler/v2"
+    assert plan.thesis == "reversal grounded entry"
+    assert repo.complete_candidate_planning_with_plan(
+        generation["id"], "v4-owner", plan,
+    )[0] == "planned"
 
 
 def test_ai_entry_v3_frozen_lineage_reaches_attributed_proposal(monkeypatch):
