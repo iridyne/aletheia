@@ -6,6 +6,7 @@ import math
 import statistics
 from typing import Any, Iterable, Mapping
 
+from .candidate_facts import CANDIDATE_TERMINAL_STATES
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
 DIAGNOSIS_CONTRACT_VERSION = "profit_loop_diagnosis/v1"
@@ -294,6 +295,69 @@ def _candidate_kind(fact: Mapping[str, Any]) -> str:
     return str(first.get("candidate_kind") or "") if isinstance(first, Mapping) else ""
 
 
+def _classify_candidate_fact(layer: str, fact: Mapping[str, Any]) -> tuple[str, str | None]:
+    terminal = str(fact.get("terminal_state") or "")
+    if terminal not in CANDIDATE_TERMINAL_STATES:
+        return "excluded", "unclassified_terminal_state"
+
+    kind = _candidate_kind(fact)
+    if layer == "Selection":
+        if terminal == "filtered" and kind in {"universe_member", "opportunity"}:
+            return "baseline", None
+        if terminal == "opportunity_not_reached":
+            return "excluded", "opportunity_not_reached"
+        if kind == "opportunity":
+            return "observed", None
+        return "excluded", "selection_unit_not_observed"
+
+    if layer == "Decision":
+        if kind != "pi_decision":
+            return "excluded", "decision_unit_not_observed"
+        if terminal in {"pi_skip", "pi_watch", "pi_hold"}:
+            return "baseline", None
+        if terminal in {
+            "proposal_not_reached",
+            "risk_reject",
+            "risk_not_reached",
+            "approved_unfilled",
+            "order_unfilled",
+            "filled_without_position",
+            "traded",
+        }:
+            return "observed", None
+        return "excluded", "decision_not_reached"
+
+    if kind != "proposal":
+        return "excluded", "risk_unit_not_observed"
+    if terminal == "risk_reject":
+        return "baseline", None
+    if terminal in {"approved_unfilled", "order_unfilled", "filled_without_position", "traded"}:
+        return "observed", None
+    return "excluded", terminal
+
+
+def _classified_layer_returns(
+    facts: list[Mapping[str, Any]], layer: str
+) -> tuple[list[float], list[float], dict[str, int]]:
+    arms: dict[str, list[Mapping[str, Any]]] = {"baseline": [], "observed": []}
+    rejected: dict[str, int] = {}
+    for fact in facts:
+        disposition, reason = _classify_candidate_fact(layer, fact)
+        if disposition == "excluded":
+            rejected[reason or "unclassified_terminal_state"] = (
+                rejected.get(reason or "unclassified_terminal_state", 0) + 1
+            )
+        else:
+            arms[disposition].append(fact)
+
+    baseline, baseline_rejected = _group_returns(arms["baseline"], lambda _fact: True)
+    observed, observed_rejected = _group_returns(arms["observed"], lambda _fact: True)
+    for source in (baseline_rejected, observed_rejected):
+        for reason, count in source.items():
+            rejected[reason] = rejected.get(reason, 0) + count
+    return baseline, observed, rejected
+
+
 def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     facts = [fact for fact in report.get("facts", []) if isinstance(fact, Mapping)]
     unavailable_count = int(report.get("unavailable_count") or 0)
@@ -302,62 +366,26 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         unavailable_reasons = {}
     exclusions = [item for item in report.get("exclusions", []) if isinstance(item, Mapping)]
     comparisons = {
-        "Selection": (
-            _group_returns(
-                facts,
-                lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") == "filtered",
-            ),
-            _group_returns(
-                facts,
-                lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") != "filtered",
-            ),
-        ),
-        "Decision": (
-            _group_returns(
-                facts,
-                lambda fact: (
-                    _candidate_kind(fact) == "pi_decision" and str(fact.get("terminal_state", "")).startswith("pi_")
-                ),
-            ),
-            _group_returns(
-                facts,
-                lambda fact: (
-                    _candidate_kind(fact) == "pi_decision"
-                    and fact.get("terminal_state") in {"risk_reject", "approved_unfilled", "traded"}
-                ),
-            ),
-        ),
-        "Risk": (
-            _group_returns(
-                facts,
-                lambda fact: _candidate_kind(fact) == "proposal" and fact.get("terminal_state") == "risk_reject",
-            ),
-            _group_returns(
-                facts,
-                lambda fact: (
-                    _candidate_kind(fact) == "proposal"
-                    and fact.get("terminal_state") in {"approved_unfilled", "traded"}
-                ),
-            ),
-        ),
+        layer: _classified_layer_returns(facts, layer)
+        for layer in ("Selection", "Decision", "Risk")
     }
     layers = {}
-    total_eligible_all = 0
-    total_excluded_all = 0
-    for layer, ((baseline, baseline_rejected), (observed, observed_rejected)) in comparisons.items():
+    has_unclassified_terminal = False
+    for layer, (baseline, observed, all_rejected) in comparisons.items():
         layer_eligible = len(baseline) + len(observed)
-        # Merge rejection reasons from both populations
-        all_rejected: dict[str, int] = {}
-        for src in (baseline_rejected, observed_rejected):
-            for reason, count in src.items():
-                all_rejected[reason] = all_rejected.get(reason, 0) + count
         layer_excluded = sum(all_rejected.values())
+        has_unclassified_terminal = has_unclassified_terminal or bool(
+            all_rejected.get("unclassified_terminal_state")
+        )
         baseline_mean = statistics.fmean(baseline) if baseline else None
         observed_mean = statistics.fmean(observed) if observed else None
-        # #1269: all-ineligible groups → insufficient_data not directional
         layers[layer] = {
-            "status": "directional" if baseline and observed else "insufficient_data",
-            "raw_count": layer_eligible + layer_excluded,
+            "status": (
+                "directional"
+                if baseline and observed and not all_rejected.get("unclassified_terminal_state")
+                else "insufficient_data"
+            ),
+            "raw_count": len(facts),
             "eligible_count": layer_eligible,
             "excluded_count": layer_excluded,
             "exclusion_reasons": all_rejected,
@@ -369,8 +397,7 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
             "statistical_unit": "outcome_candidate_key",
             "economic_unit": "fixed_horizon_net_return_pct",
         }
-        total_eligible_all += layer_eligible
-        total_excluded_all += layer_excluded
+    all_values, all_rejected = _group_returns(facts, lambda _fact: True)
     directional = any(layer["status"] == "directional" for layer in layers.values())
     return {
         "contract_version": DIAGNOSIS_CONTRACT_VERSION,
@@ -380,6 +407,8 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "status": (
             "unavailable"
             if unavailable_count
+            else "insufficient_data"
+            if has_unclassified_terminal
             else "directional"
             if directional
             else "insufficient_data"
@@ -387,8 +416,8 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "as_of_at": report.get("as_of_at"),
         "fixed_horizon": report.get("fixed_horizon"),
         "raw_count": len(facts),
-        "eligible_count": total_eligible_all,
-        "excluded_count": total_excluded_all,
+        "eligible_count": len(all_values),
+        "excluded_count": sum(all_rejected.values()),
         "unavailable_count": unavailable_count,
         "unavailable_reasons": dict(unavailable_reasons),
         "exclusions": exclusions,
