@@ -160,7 +160,7 @@ def _pass_checkpoint() -> dict[str, Any]:
     try:
         from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
 
-        verdict = verify_joint_checkpoint()
+        verdict = verify_joint_checkpoint(allow_main_outbox_progress=True)
         if not verdict.ok:
             logger.warning(
                 "observation_lab.runner: joint checkpoint mismatch: %s",
