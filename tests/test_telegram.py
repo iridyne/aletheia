@@ -155,21 +155,28 @@ async def test_enabled_telegram_requires_allowed_chat_ids(tmp_path, monkeypatch)
 @pytest.mark.anyio
 async def test_authorization_tracks_current_config_after_startup(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
+    import yaml
+
+    import aletheia.config.loader as loader
 
     bot = TelegramBot()
     bot.allowed_chat_ids = {123}  # Startup snapshot.
 
-    cfg = load_config()
-    cfg.telegram.allowed_chat_ids = [456]
-    save_config(cfg)
+    # Warm this process's cache, then emulate another process writing config.
+    loader.load_config()
+    raw = yaml.safe_load(loader.CONFIG_PATH.read_text(encoding="utf-8"))
+    raw["telegram"]["allowed_chat_ids"] = [456]
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+    )
 
     assert await bot.handle_message(123, "/status") is None
     assert "Gateway" in await bot.handle_message(456, "/status")
 
-    cfg = load_config()
-    cfg.telegram.enabled = False
-    save_config(cfg)
+    raw["telegram"]["enabled"] = False
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+    )
 
     assert await bot.handle_message(456, "/status") is None
     reset_db()

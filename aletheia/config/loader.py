@@ -414,7 +414,9 @@ def _invalidate_config_cache() -> None:
     _config_cache = None
 
 
-def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
+def load_config(
+    *, persist_migrations: bool = True, use_cache: bool = True
+) -> AletheiaConfig:
     """Load config from disk or return defaults.  Hot path uses in-memory cache.
 
     #147 fix: return a DEEP COPY of the cached config, not the cached object
@@ -436,7 +438,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
             target=DATA_DIR,
             override_active=bool(os.environ.get("ALETHEIA_DATA_DIR", "").strip()),
         )
-    if _config_cache is not None:
+    if use_cache and _config_cache is not None:
         ts, cached_path, cfg = _config_cache
         if time.monotonic() - ts < _CONFIG_CACHE_TTL and cached_path == CONFIG_PATH:
             return cfg.model_copy(deep=True)

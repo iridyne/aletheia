@@ -62,7 +62,7 @@ class TelegramBot:
         return self._authorization_error(chat_id) is None
 
     def _authorization_error(self, chat_id: int) -> str | None:
-        cfg = load_config()
+        cfg = load_config(use_cache=False)
         if not cfg.telegram.enabled:
             return "Telegram is disabled."
         effective_allowed = set(cfg.telegram.allowed_chat_ids)
