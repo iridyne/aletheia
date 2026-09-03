@@ -101,6 +101,9 @@ def _identity(cfg) -> dict[str, Any] | None:
         "persona_progressive_unlock_enabled": bool(
             getattr(trading, "persona_progressive_unlock_enabled", False)
         ),
+        "persona_rollout_generation": int(
+            getattr(trading, "persona_rollout_generation", 0)
+        ),
         "outcome_semantics_version": outcome_semantics_version,
         "runtime_version": _runtime_version(),
     }
