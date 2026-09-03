@@ -26,7 +26,10 @@ from aletheia.trading.trigger_specs import (
     compatible_trigger_specs,
     require_compatible_trigger_spec,
 )
-from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+from aletheia.universe.fast_stream import (
+    fast_market_data_unavailability_reason,
+    fast_market_stream_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -262,9 +265,13 @@ def _complete_semantic_no_plan(
 
 
 def _ai_entry_runtime_is_supported(cfg) -> bool:
+    execution_mode = cfg.exchange.paper_execution_mode
     return bool(
         cfg.agent.permission_mode == "Paper"
-        and cfg.exchange.paper_execution_mode in {"paper_internal", "bitget_demo"}
+        and (
+            execution_mode == "paper_internal"
+            or fast_market_stream_available(execution_mode)
+        )
         and cfg.live.state == "live_disabled"
     )
 

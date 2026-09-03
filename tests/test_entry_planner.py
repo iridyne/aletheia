@@ -1053,6 +1053,49 @@ def test_binance_testnet_spot_candidate_consumes_no_model_call():
     assert fast_market_data_unavailability_reason(cfg, "binance", "spot") is None
 
 
+def test_binance_testnet_perp_candidate_reaches_v3_planner(monkeypatch):
+    from aletheia.config.loader import load_config
+
+    candidate = _candidate(venue="binance", market_type="perp")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    calls = 0
+
+    class AvailableContext:
+        candle_windows = {"15m": {"availability": "available"}}
+        anchors = (object(),)
+
+        def model_dump(self, **_kwargs):
+            return {"candidate_id": candidate.id}
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
+        lambda *_args, **_kwargs: AvailableContext(),
+    )
+
+    async def planner(_context):
+        nonlocal calls
+        calls += 1
+        return {
+            "decision": "NO_PLAN",
+            "reason_code": "INSUFFICIENT_EVIDENCE",
+            "thesis": "",
+            "scenario": "",
+            "risk_tier": "NONE",
+            "horizon": "NONE",
+        }
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "binance_testnet"
+    cfg.live.state = "live_disabled"
+    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+
+    assert generation["planner_contract_version"] == "entry-planner/v3"
+    assert result["status"] == "no_plan"
+    assert result["model_invoked"] is True
+    assert calls == 1
+
+
 def test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt(monkeypatch):
     captured = {}
 
