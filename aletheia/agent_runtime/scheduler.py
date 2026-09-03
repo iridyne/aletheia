@@ -32,6 +32,15 @@ _universe_scanner_audit_mirror_done = False
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 
+
+def _current_scheduler() -> BackgroundScheduler | None:
+    return _scheduler
+
+
+def _publish_scheduler(candidate: BackgroundScheduler) -> None:
+    global _scheduler
+    _scheduler = candidate
+
 # Jobs that continue running during a layered pause (no LLM dependency).
 # These are pure data-collection / infrastructure jobs whose output is valuable
 # even when AI-dependent decision-making is offline.
@@ -1217,7 +1226,7 @@ def init_scheduler() -> BackgroundScheduler | None:
 
     Returns None if scheduler is disabled in config. Honors runtime.paused at boot.
     """
-    global _scheduler, _scheduler_last_tick
+    global _scheduler_last_tick
     global _universe_scanner_startup_cutoff
     global _universe_scanner_startup_recovery_done
     global _universe_scanner_audit_mirror_done
@@ -1257,8 +1266,9 @@ def init_scheduler() -> BackgroundScheduler | None:
             daemon=True,
         )
         _t.start()
-    if _scheduler is not None:
-        return _scheduler
+    current = _current_scheduler()
+    if current is not None:
+        return current
 
     try:
         cfg = load_config()
@@ -1271,8 +1281,6 @@ def init_scheduler() -> BackgroundScheduler | None:
     if not cfg.runtime.scheduler_enabled:
         logger.info("Scheduler disabled by config; not starting.")
         return None
-    _ensure_timeout_workers_ready()
-
     # Keep each pool small for SQLite, but split queues by job class:
     # - io: short read/write infrastructure jobs (market data, health, sync)
     # - observer: the boot catch-up market observer; must not starve behind LLM jobs
@@ -1684,36 +1692,51 @@ def init_scheduler() -> BackgroundScheduler | None:
         timezone="Asia/Shanghai",
     )
 
-    _scheduler.start()
-    # If config says paused at boot, apply pause (layered or blanket).
-    if cfg.runtime.paused:
-        if cfg.health.layered_pause_enabled:
-            for job in _scheduler.get_jobs():
-                if job.id not in _ESSENTIAL_JOBS:
-                    _scheduler.pause_job(job.id)
-                    _selectively_paused_jobs.add(job.id)
-            logger.info(
-                "Scheduler started LAYERED-PAUSED (runtime.paused=true) with %d jobs "
-                "(%d essential running, %d paused)",
-                len(_scheduler.get_jobs()),
-                len([j for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS]),
-                len(_selectively_paused_jobs),
-            )
+    try:
+        _ensure_timeout_workers_ready()
+        _scheduler.start()
+        # If config says paused at boot, apply pause (layered or blanket).
+        if cfg.runtime.paused:
+            if cfg.health.layered_pause_enabled:
+                for job in _scheduler.get_jobs():
+                    if job.id not in _ESSENTIAL_JOBS:
+                        _scheduler.pause_job(job.id)
+                        _selectively_paused_jobs.add(job.id)
+                logger.info(
+                    "Scheduler started LAYERED-PAUSED (runtime.paused=true) with %d jobs "
+                    "(%d essential running, %d paused)",
+                    len(_scheduler.get_jobs()),
+                    len([j for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS]),
+                    len(_selectively_paused_jobs),
+                )
+            else:
+                _scheduler.pause()
+                logger.info("Scheduler started PAUSED (runtime.paused=true) with %d jobs", len(_scheduler.get_jobs()))
         else:
-            _scheduler.pause()
-            logger.info("Scheduler started PAUSED (runtime.paused=true) with %d jobs", len(_scheduler.get_jobs()))
-    else:
-        logger.info("Scheduler started with %d jobs", len(_scheduler.get_jobs()))
+            logger.info("Scheduler started with %d jobs", len(_scheduler.get_jobs()))
+    except Exception:
+        _selectively_paused_jobs.clear()
+        try:
+            _scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        _async_timeout_worker.close()
+        _news_analyzer_timeout_worker.close()
+        raise
+    _publish_scheduler(_scheduler)
     return _scheduler
 
 
 def stop_scheduler() -> None:
     global _scheduler
-    if _scheduler:
-        _scheduler.shutdown(wait=False)
-        _scheduler = None
-    _async_timeout_worker.close()
-    _news_analyzer_timeout_worker.close()
+    scheduler = _scheduler
+    _scheduler = None
+    try:
+        if scheduler:
+            scheduler.shutdown(wait=False)
+    finally:
+        _async_timeout_worker.close()
+        _news_analyzer_timeout_worker.close()
 
 
 def pause_scheduler(layered: bool | None = None) -> None:
@@ -1756,9 +1779,9 @@ def resume_scheduler() -> bool:
     check and the resume action.  The final-owner release path re-enters this same
     ``RLock`` after persisting the empty owner set.
 
-    Returns ``False`` only when an active owner blocks the request.  Otherwise the
-    request keeps the historical best-effort semantics, including the configured-
-    disabled/no-scheduler case.
+    Returns ``False`` only when an active owner blocks the request. Raises when an
+    enabled scheduler cannot reach a running state. The configured-disabled case
+    keeps its historical best-effort success semantics.
     """
     # Lazy import avoids a module cycle: pause_ownership imports scheduler only
     # inside acquire/release operations.
@@ -1807,7 +1830,11 @@ def resume_scheduler() -> bool:
                 logger.warning(
                     "resume_scheduler: scheduler unavailable (disabled or init failed)"
                 )
-                return True
+                return not cfg.runtime.scheduler_enabled
+        if _scheduler.state not in (STATE_PAUSED, STATE_RUNNING):
+            raise RuntimeError(
+                f"scheduler_not_resumable:state={_scheduler.state}"
+            )
         # If blanket-paused, resume the whole scheduler
         if _scheduler.state == STATE_PAUSED:
             _scheduler.resume()
@@ -1830,6 +1857,10 @@ def resume_scheduler() -> bool:
                 _pending_wake_jobs.discard(job_id)
                 if job_id == "paper_trader":
                     _arm_paper_trader_job()
+        if _scheduler.state != STATE_RUNNING:
+            raise RuntimeError(
+                f"scheduler_resume_incomplete:state={_scheduler.state}"
+            )
         return True
 
 

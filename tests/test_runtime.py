@@ -108,6 +108,84 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     reset_db()
 
 
+@pytest.mark.parametrize(
+    "failure_phase", ["registration", "workers", "start", "pause"]
+)
+def test_scheduler_initialization_failure_is_retryable(
+    tmp_path, monkeypatch, failure_phase
+):
+    setup_env(tmp_path, monkeypatch)
+    from types import SimpleNamespace
+
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
+
+    import aletheia.agent_runtime.scheduler as sched
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.runtime.paused = failure_phase == "pause"
+    cfg.health.layered_pause_enabled = False
+    save_config(cfg)
+
+    candidates = []
+    worker_attempts = 0
+
+    class FakeScheduler:
+        def __init__(self, *args, **kwargs):
+            self.state = STATE_STOPPED
+            self.jobs = []
+            self.failure_phase = failure_phase if not candidates else None
+            self.shutdown_called = False
+            candidates.append(self)
+
+        def add_listener(self, *args, **kwargs):
+            return None
+
+        def add_job(self, *args, **kwargs):
+            if self.failure_phase == "registration":
+                raise RuntimeError("registration failed")
+            self.jobs.append(SimpleNamespace(id=kwargs["id"]))
+
+        def get_jobs(self):
+            return self.jobs
+
+        def start(self):
+            if self.failure_phase == "start":
+                raise RuntimeError("start failed")
+            self.state = STATE_RUNNING
+
+        def pause(self):
+            if self.failure_phase == "pause":
+                raise RuntimeError("pause failed")
+            self.state = STATE_PAUSED
+
+        def shutdown(self, wait=False):
+            self.shutdown_called = True
+            self.state = STATE_STOPPED
+
+    monkeypatch.setattr(sched, "_scheduler", None)
+    monkeypatch.setattr(sched, "BackgroundScheduler", FakeScheduler)
+
+    def ensure_workers():
+        nonlocal worker_attempts
+        worker_attempts += 1
+        if failure_phase == "workers" and worker_attempts == 1:
+            raise RuntimeError("workers failed")
+
+    monkeypatch.setattr(sched, "_ensure_timeout_workers_ready", ensure_workers)
+
+    with pytest.raises(RuntimeError, match=f"{failure_phase} failed"):
+        sched.init_scheduler()
+
+    assert sched._scheduler is None
+    assert candidates[0].shutdown_called is (failure_phase != "registration")
+    retry = sched.init_scheduler()
+    assert retry is candidates[1]
+    assert sched._scheduler is retry
+    assert retry.state == (STATE_PAUSED if failure_phase == "pause" else STATE_RUNNING)
+    reset_db()
+
+
 @pytest.mark.real_db
 def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypatch):
     """Guard rolls back a leaked explicit transaction (BEGIN without COMMIT).

@@ -960,6 +960,25 @@ def test_shadow_runtime_context_skips_scheduler_and_pidfile(monkeypatch):
     assert server_app.should_write_gateway_pidfile(context) is False
 
 
+def test_owned_gateway_pid_cleanup_clears_only_owned_pid(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.gateway import pidfile
+    from aletheia.server import app as server_app
+
+    cleared = []
+    monkeypatch.setattr(pidfile, "clear_pid", lambda: cleared.append(True))
+
+    owned = SimpleNamespace(state=SimpleNamespace(_owns_pid=True))
+    server_app._clear_owned_gateway_pid(owned)
+    server_app._clear_owned_gateway_pid(owned)
+    foreign = SimpleNamespace(state=SimpleNamespace(_owns_pid=False))
+    server_app._clear_owned_gateway_pid(foreign)
+
+    assert cleared == [True]
+    assert owned.state._owns_pid is False
+
+
 def test_promote_rejects_dead_shadow_process(tmp_path, monkeypatch):
     """#1201: promote must reject when shadow PID is not running."""
     setup_env(tmp_path, monkeypatch)
