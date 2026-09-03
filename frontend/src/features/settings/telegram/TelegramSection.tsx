@@ -146,7 +146,12 @@ export function TelegramSection({
 	qc: QueryClient;
 	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
-	const { data: health } = useQuery({
+	const {
+		data: health,
+		isPending: healthPending,
+		isError: healthError,
+		fetchStatus: healthFetchStatus,
+	} = useQuery({
 		queryKey: ["telegram-health"],
 		queryFn: api.getTelegramHealth,
 		refetchInterval: 30_000,
@@ -218,7 +223,13 @@ export function TelegramSection({
 
 	let state: ConnState = "muted";
 	let connectionText = "not configured";
-	if (health) {
+	if (healthPending && healthFetchStatus === "fetching") {
+		state = "yellow";
+		connectionText = "checking…";
+	} else if (healthError || !health) {
+		state = "red";
+		connectionText = "status unavailable";
+	} else {
 		if (health.reachable) {
 			state = "green";
 			connectionText = health.username ? `@${health.username}` : "reachable";
