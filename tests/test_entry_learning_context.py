@@ -44,7 +44,10 @@ def _candidate(*, created_at: str, symbol: str = "BTC/USDT") -> UniverseMember:
         expires_at="2099-01-01T00:00:00+00:00",
         candidate_selection_policy="candidate_selection_utility_v1",
         candidate_selection_policy_epoch="epoch-1", candidate_selection_utility_pct=1.0,
-        opportunity_mechanism="reversal", candidate_opportunity_context_version=context.version,
+        opportunity_mechanism="reversal", opportunity_mechanism_version="reversal/v1",
+        opportunity_source_component="mean_reversion", opportunity_source_cutoff_at=created_at,
+        opportunity_evidence_hash="b" * 64,
+        candidate_opportunity_context_version=context.version,
         candidate_opportunity_context_json=context.model_dump_json(),
         candidate_opportunity_context_hash=context.context_hash,
     )

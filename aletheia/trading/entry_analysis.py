@@ -294,19 +294,22 @@ def validate_hypothesis_references(
     hypothesis: EntryHypothesisV1 | EntryHypothesisV2,
     context: EntryAnalysisContextV1 | EntryAnalysisContextV2,
 ) -> None:
-    anchors = {anchor.anchor_id: anchor for anchor in context.anchors}
-    facts = set(anchors)
-    for section in (
-        context.market_structure,
-        context.quant_context,
-        context.portfolio_context,
-        context.execution_context,
-        context.candidate,
-    ):
-        refs = section.get("fact_refs", ()) if isinstance(section, dict) else ()
-        facts.update(str(item) for item in refs)
-    if not set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs).issubset(facts):
-        raise ValueError("hypothesis_fact_ref_not_supplied")
+    supplied_refs = set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs)
+    anchors = {}
+    if supplied_refs or hypothesis.decision != "NO_PLAN":
+        anchors = {anchor.anchor_id: anchor for anchor in context.anchors}
+        facts = set(anchors)
+        for section in (
+            context.market_structure,
+            context.quant_context,
+            context.portfolio_context,
+            context.execution_context,
+            context.candidate,
+        ):
+            refs = section.get("fact_refs", ()) if isinstance(section, dict) else ()
+            facts.update(str(item) for item in refs)
+        if not supplied_refs.issubset(facts):
+            raise ValueError("hypothesis_fact_ref_not_supplied")
     if isinstance(hypothesis, EntryHypothesisV2):
         opportunity = context.candidate_opportunity_context["opportunity"]
         if (
