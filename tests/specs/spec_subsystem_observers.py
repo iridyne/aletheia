@@ -275,9 +275,11 @@ def test_observer_has_pre_filter_function():
 def test_pre_filter_signal_detection():
     import aletheia.agents.market_observer as mo
     assert mo._has_sufficient_signal({
+        "technical_context": {"artifacts": [{"stable_id": "exact"}]},
         "symbols": {"BTC/USDT": {"1h": {"rsi_14": 72.3, "atr_pct": 0.2}}},
     }) is True
     assert mo._has_sufficient_signal({
+        "technical_context": {"artifacts": [{"stable_id": "exact"}]},
         "symbols": {"BTC/USDT": {"1h": {"rsi_14": 51.2, "atr_pct": 0.2}}},
         "markdown": "breakout spike overbought",
     }) is False

@@ -528,6 +528,10 @@ async def build_market_context(
                 reason = "inconsistent_timeframe_venues"
                 debug["errors"].append(f"{sym}: {reason}")
                 logger.warning("Technical context unavailable %s: %s", sym, reason)
+            elif available_snaps and venues != {instrument.exchange}:
+                reason = "foreign_timeframe_venue"
+                debug["errors"].append(f"{sym}: {reason}")
+                logger.warning("Technical context unavailable %s: %s", sym, reason)
             elif available_snaps:
                 rendered = _render_snap_table(sym, snaps)
                 sections.append(rendered)
