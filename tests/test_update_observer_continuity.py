@@ -575,7 +575,6 @@ def test_wrapper_rolls_back_postflight_failure(monkeypatch):
 def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     """After apply_update succeeds, the observation checkpoint is immediately
     re-anchored so the next preflight doesn't see stale migration state."""
-    import aletheia.observation_lab.checkpoint as obs_chkpt
     from aletheia.update import applier, continuity
 
     before = _snapshot()
@@ -597,18 +596,19 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
 
     anchored = []
-    monkeypatch.setattr(obs_chkpt, "compute_joint_checkpoint", lambda: "computed_cp")
-    monkeypatch.setattr(obs_chkpt, "save_joint_checkpoint", lambda cp: anchored.append(cp))
+    monkeypatch.setattr(
+        "aletheia.update.target_fresh.reanchor_joint_checkpoint",
+        lambda **_: anchored.append("target-fresh") or {"ok": True},
+    )
 
     result = continuity.apply_update_with_continuity(restart=True)
 
     assert result["applied"] is True
-    assert anchored == ["computed_cp"], "checkpoint must be re-anchored after successful apply"
+    assert anchored == ["target-fresh"], "checkpoint must be re-anchored after successful apply"
 
 
 def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
     """Checkpoint re-anchor is skipped when apply_update returns applied=False."""
-    import aletheia.observation_lab.checkpoint as obs_chkpt
     from aletheia.update import applier, continuity
 
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
@@ -620,7 +620,10 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
 
     anchored = []
-    monkeypatch.setattr(obs_chkpt, "save_joint_checkpoint", lambda cp: anchored.append(cp))
+    monkeypatch.setattr(
+        "aletheia.update.target_fresh.reanchor_joint_checkpoint",
+        lambda **_: anchored.append("target-fresh") or {"ok": True},
+    )
 
     result = continuity.apply_update_with_continuity(restart=True)
 
@@ -629,7 +632,6 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
 
 
 def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
-    import aletheia.observation_lab.checkpoint as obs_chkpt
     from aletheia.update import applier, continuity
 
     before = _snapshot()
@@ -650,7 +652,10 @@ def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
     )
     audits = []
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: audits.append((args, kwargs)))
-    monkeypatch.setattr(obs_chkpt, "compute_joint_checkpoint", lambda: (_ for _ in ()).throw(RuntimeError("db")))
+    monkeypatch.setattr(
+        "aletheia.update.target_fresh.reanchor_joint_checkpoint",
+        lambda **_: {"ok": False, "reason": "target_fresh_process_failed"},
+    )
 
     result = continuity.apply_update_with_continuity(restart=True)
 

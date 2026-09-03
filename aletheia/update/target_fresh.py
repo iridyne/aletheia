@@ -168,8 +168,49 @@ def persist_current_commit(
     return result
 
 
+def reanchor_joint_checkpoint(
+    *,
+    project_root: Path,
+    data_dir: Path,
+    env: dict[str, str],
+    python_executable: str,
+) -> dict[str, Any]:
+    """Re-anchor the cross-store checkpoint with target-loaded code.
+
+    A source update process may still have pre-pull checkpoint modules in
+    ``sys.modules`` after switching the checkout.  Run the write in a fresh
+    interpreter so the persisted checkpoint schema and digest belong to the
+    target source, not the updater's old module graph.
+    """
+    child_env = dict(env)
+    child_env["ALETHEIA_DATA_DIR"] = str(data_dir)
+    script = (
+        "import json\n"
+        "from aletheia.observation_lab.checkpoint import (\n"
+        "    compute_joint_checkpoint, save_joint_checkpoint, verify_joint_checkpoint,\n"
+        ")\n"
+        "checkpoint = compute_joint_checkpoint()\n"
+        "save_joint_checkpoint(checkpoint)\n"
+        "verdict = verify_joint_checkpoint(create_lab=False)\n"
+        "payload = {\n"
+        "    'ok': bool(verdict.ok),\n"
+        "    'reason': verdict.reason,\n"
+        "    'joint_fingerprint': checkpoint.joint_fingerprint,\n"
+        "}\n"
+        f"print({_RESULT_PREFIX!r} + json.dumps(payload, sort_keys=True))\n"
+    )
+    return _run_json_script(
+        script,
+        project_root=project_root,
+        env=child_env,
+        python_executable=python_executable,
+        timeout=60,
+    )
+
+
 __all__ = [
     "persist_current_commit",
+    "reanchor_joint_checkpoint",
     "run_smoke_check",
     "validate_dashboard_artifacts",
 ]
