@@ -144,6 +144,48 @@ class TestProtectiveClosePrice:
         assert mark["market_type"] == "spot"
         assert "provider" not in mark
 
+    def test_exact_cache_rejects_mark_before_causal_lower_bound(self):
+        from aletheia.data import price_feed
+
+        observed_at = datetime.now(timezone.utc) - timedelta(seconds=30)
+        with _cache_lock:
+            price_feed._instrument_price_cache[("binance", "BTC/USDT", "spot")] = {
+                "price": 65_000.0,
+                "ts": observed_at,
+            }
+
+        mark = price_feed.get_fresh_mark_for_protective_close(
+            "BTC/USDT",
+            "spot",
+            venue="binance",
+            not_before=observed_at + timedelta(seconds=1),
+        )
+
+        assert mark is None
+
+    def test_sqlite_fallback_rejects_mark_before_causal_lower_bound(
+        self, monkeypatch,
+    ):
+        from aletheia.data import price_feed
+
+        observed_at = datetime.now(timezone.utc) - timedelta(seconds=30)
+        monkeypatch.setattr(
+            "aletheia.storage.repositories.list_market_snapshots",
+            lambda **_kwargs: [{
+                "price": 65_100.0,
+                "snapshot_at": observed_at.isoformat(),
+            }],
+        )
+
+        mark = price_feed.get_fresh_mark_for_protective_close(
+            "BTC/USDT",
+            "spot",
+            venue="binance",
+            not_before=observed_at + timedelta(seconds=1),
+        )
+
+        assert mark is None
+
     def test_exact_cache_keeps_spot_and_perp_marks_separate(self):
         from aletheia.data import price_feed
 

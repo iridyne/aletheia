@@ -408,6 +408,10 @@ def _materialize_triggered(state: dict) -> dict:
             state["position_id"],
             expected_reason,
             paper_mark_venue=state_venue,
+            paper_mark_not_before=datetime.fromtimestamp(
+                int(trigger["bar_close_ms"]) / 1000,
+                timezone.utc,
+            ),
             decision_actor="system",
             decision_source="protective_barrier_1m",
         )

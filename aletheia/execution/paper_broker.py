@@ -774,6 +774,7 @@ def close_paper_position(
     position_id: str,
     *,
     mark_price: float,
+    mark_provenance: dict[str, Any] | None = None,
     reason: str = "manual",
     actor: str = "system",
     source: str = "scheduler",
@@ -821,6 +822,25 @@ def close_paper_position(
         "slippage_bps": slippage_bps,
         "reason": reason,
     }
+    if mark_provenance is not None:
+        try:
+            mark_evidence = {
+                key: mark_provenance[key]
+                for key in (
+                    "price",
+                    "observed_at",
+                    "age_seconds",
+                    "source",
+                    "venue",
+                    "symbol",
+                    "market_type",
+                )
+            }
+            if float(mark_evidence["price"]) != mark:
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("paper close mark provenance is invalid") from None
+        close_evidence["mark"] = mark_evidence
     close_evidence_json = json.dumps(
         close_evidence,
         sort_keys=True,

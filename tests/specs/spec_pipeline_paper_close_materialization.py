@@ -779,6 +779,19 @@ def test_stop_or_tp_materializes_one_close_from_observed_mark(
         "get_fresh_price_for_protective_close",
         lambda _symbol, _market_type, *, venue: observed_mark,
     )
+    monkeypatch.setattr(
+        position_manager,
+        "get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue, not_before=None: {
+            "price": observed_mark,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "age_seconds": 0.0,
+            "source": "instrument_price_cache",
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": market_type,
+        },
+    )
     audit_observations: list[dict] = []
 
     def _capture_audit(event, *, mirror_db=True):
@@ -1318,8 +1331,16 @@ def test_manual_bulk_close_enumerates_every_open_local_position(
     )
     monkeypatch.setattr(
         position_manager,
-        "get_fresh_price_for_protective_close",
-        lambda _symbol, _market_type, *, venue: 1.0,
+        "get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue, not_before=None: {
+            "price": 1.0,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "age_seconds": 0.0,
+            "source": "instrument_price_cache",
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": market_type,
+        },
     )
     monkeypatch.setattr(
         position_manager,
