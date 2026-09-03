@@ -103,6 +103,7 @@ def test_historical_nightly_off_to_on_adds_job(monkeypatch):
     assert result is True
     assert "ohlcv_nightly_backfill" in fs.added
     assert fs._jobs["ohlcv_nightly_backfill"].kwargs["hour"] == 3
+    assert fs._jobs["ohlcv_nightly_backfill"].kwargs["executor"] == "maintenance_io"
 
 
 def test_historical_nightly_on_to_off_removes_job(monkeypatch):
@@ -146,6 +147,7 @@ def test_historical_active_off_to_on_adds_job(monkeypatch):
     assert result is True
     assert "ohlcv_active_backfill" in fs.added
     assert fs._jobs["ohlcv_active_backfill"].kwargs["minutes"] == 20
+    assert fs._jobs["ohlcv_active_backfill"].kwargs["executor"] == "maintenance_io"
 
 
 def test_historical_active_on_to_off_removes_job(monkeypatch):
