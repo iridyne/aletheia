@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 
 def test_paper_trader_outputs_receive_non_operator_semantics():
     from aletheia.server.routes.data import _agent_run_output_events
@@ -52,6 +54,20 @@ def test_agent_run_routes_preserve_raw_outputs_and_add_semantics(monkeypatch):
     assert detail["outputs_created"] == run["outputs_created"]
     assert listed["output_events"][0]["event_class"] == "existing_position"
     assert detail["output_events"][0]["is_operator_decision"] is False
+
+
+def test_agent_run_exact_routes_fail_closed_on_missing_identity(monkeypatch):
+    from aletheia.server.routes import data
+
+    monkeypatch.setattr(data.repo, "get_agent_run", lambda _run_id: None)
+    monkeypatch.setattr(data.repo, "list_tool_calls", lambda **_: pytest.fail("child trace queried"))
+    monkeypatch.setattr(data, "get_db", lambda: pytest.fail("child steps queried"))
+
+    for route in (data.get_agent_run, data.get_agent_run_tool_calls, data.get_agent_run_steps):
+        with pytest.raises(data.HTTPException) as raised:
+            route("missing-run")
+        assert raised.value.status_code == 404
+        assert raised.value.detail == {"code": "agent_run_not_found", "run_id": "missing-run"}
 
 
 def test_agent_run_route_forwards_usage_window(monkeypatch):

@@ -303,16 +303,24 @@ def get_agent_runs(
     return [_with_agent_run_output_events(run) for run in runs]
 
 
+def _require_agent_run(run_id: str) -> dict:
+    run = repo.get_agent_run(run_id)
+    if run is None:
+        raise HTTPException(404, {"code": "agent_run_not_found", "run_id": run_id})
+    return run
+
+
 @router.get("/agent-runs/{run_id}")
 def get_agent_run(run_id: str):
     _ensure_db()
-    return _with_agent_run_output_events(repo.get_agent_run(run_id))
+    return _with_agent_run_output_events(_require_agent_run(run_id))
 
 
 @router.get("/agent-runs/{run_id}/tool-calls")
 def get_agent_run_tool_calls(run_id: str):
     """Get structured tool call records for a specific agent run."""
     _ensure_db()
+    _require_agent_run(run_id)
     return repo.list_tool_calls(run_id=run_id, limit=200)
 
 
@@ -326,6 +334,7 @@ def get_agent_run_steps(run_id: str):
     `source='tool_call'` marker so the UI can style them distinctly.
     """
     _ensure_db()
+    _require_agent_run(run_id)
     db = get_db()
     rows: list[dict] = []
     steps = db.execute(
