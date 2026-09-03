@@ -97,8 +97,16 @@ export default function StatusCluster({
   const live = String(data?.live?.state || 'live_disabled')
   const liveOn = data?.live?.enabled ?? live !== 'live_disabled'
   const connectivityState = status?.external_connectivity?.state ?? data?.connectivity?.state ?? 'not_available'
-  const schedulerRunning = data?.scheduler?.running ?? (!paused && !!data?.scheduler?.enabled)
-  const schedulerState = data?.scheduler?.state || (paused ? 'paused' : data?.scheduler?.enabled ? 'configured' : 'disabled')
+  const schedulerEnabled = data?.scheduler?.enabled
+  const schedulerRunning = data?.scheduler?.running
+  const schedulerState = data?.scheduler?.state || (
+    paused ? 'paused' : schedulerEnabled === false ? 'disabled' : schedulerRunning === true ? 'running' : schedulerRunning === false ? 'stopped' : 'not available'
+  )
+  const schedulerLight = paused
+    ? 'yellow'
+    : schedulerEnabled === false || schedulerRunning == null
+      ? 'muted'
+      : schedulerRunning ? 'green' : 'red'
   const healthIssues = (healthQuery.data?.issues ?? data?.health?.issues ?? []).filter(issue => !issue.startsWith('code_updated_pending_restart:'))
   const driftIssue = (healthQuery.data?.issues ?? data?.health?.issues ?? []).find(issue => issue.startsWith('code_updated_pending_restart:')) || ''
   const driftRange = driftIssue.replace('code_updated_pending_restart:', '')
@@ -137,6 +145,8 @@ export default function StatusCluster({
     gatewayRunning: running,
     killed,
     paused,
+    schedulerEnabled,
+    schedulerRunning,
     riskState,
     healthState,
     operatorStatus,
@@ -273,7 +283,7 @@ export default function StatusCluster({
           ref={openerRef}
           type="button"
           className="status-cluster"
-          aria-label={`System status: ${master.word}`}
+          aria-label={`System status: ${master.word}; Scheduler: ${schedulerState}`}
           aria-expanded={popoverOpen}
           aria-controls={popoverId}
           onClick={() => {
@@ -288,6 +298,7 @@ export default function StatusCluster({
           <span className={`dot dot-${connectivityLight}`} />
           <span className={`dot dot-${liveLight}`} />
           <span className={`dot dot-${killLight}`} />
+          <span className={`dot dot-${schedulerLight}`} />
           {driftIssue && <span className="dot dot-yellow" title={`Code drift: ${driftRange} — restart needed`} />}
         </span>
         {heartbeatText && (
@@ -315,7 +326,7 @@ export default function StatusCluster({
 
           <div className="sp-section">
             <div className="sp-row"><span className={`dot dot-${gwLight}`} /><span className="sp-label">Gateway</span><span className="sp-value">{running ? (paused ? 'paused' : 'running') : 'stopped'}</span></div>
-            <div className="sp-row"><span className={`dot dot-${schedulerRunning ? 'green' : paused ? 'yellow' : 'red'}`} /><span className="sp-label">Scheduler</span><span className="sp-value">{schedulerState}</span></div>
+            <div className="sp-row"><span className={`dot dot-${schedulerLight}`} /><span className="sp-label">Scheduler</span><span className="sp-value">{schedulerState}</span></div>
             <div className="sp-row"><span className={`dot dot-${liveLight}`} /><span className="sp-label">Live</span><span className="sp-value">{live.replace('live_', '')}</span></div>
             <div className="sp-row"><span className={`dot dot-${killLight}`} /><span className="sp-label">Kill Switch</span><span className="sp-value">{killed ? 'engaged' : 'inactive'}</span></div>
             {healthIssues.length > 0 && (

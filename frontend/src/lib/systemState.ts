@@ -33,6 +33,9 @@ export interface MasterStateInput {
   gatewayRunning: boolean
   killed: boolean
   paused: boolean
+  /** Scheduler authority from ShellBootstrap or /api/status. */
+  schedulerEnabled?: boolean | null
+  schedulerRunning?: boolean | null
   /** From /risk/status .status — 'healthy' | 'warning' | 'blocked' | 'not_available' | … */
   riskState?: string
   /** From /health .status — 'healthy' | 'degraded' | 'unavailable' | … */
@@ -136,10 +139,12 @@ export interface MasterState {
  *   7. Operator in blocking mode   → BLOCKED    / yellow (Repairing / Degraded)
  *   8. Operator trading blocked    → BLOCKED    / yellow (llm_unavailable etc.)
  *   9. Scheduler paused            → PAUSED     / yellow
- *  10. Risk warning                → CAUTION    / yellow
- *  11. Degraded health issue       → DEGRADED   / yellow (agent failures, health_check_error, no market data)
- *  12. Risk healthy                → OPERATIONAL / green
- *  13. Unknown/not evaluated       → STANDBY    / blue
+ *  10. Enabled scheduler stopped  → DEGRADED   / yellow
+ *  11. Risk warning                → CAUTION    / yellow
+ *  12. Degraded health issue       → DEGRADED   / yellow (agent failures, health_check_error, no market data)
+ *  13. Scheduler disabled/unknown → STANDBY    / blue
+ *  14. Risk healthy                → OPERATIONAL / green
+ *  15. Unknown/not evaluated       → STANDBY    / blue
  */
 export function deriveMasterState(p: MasterStateInput): MasterState {
   if (!p.gatewayRunning) {
@@ -172,6 +177,9 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   if (p.paused) {
     return { word: 'PAUSED', tone: 'yellow', detail: 'Scheduler is paused. Agents are idle until resumed.' }
   }
+  if (p.schedulerEnabled === true && p.schedulerRunning === false) {
+    return { word: 'DEGRADED', tone: 'yellow', detail: 'Scheduler is stopped — automated jobs are not running.' }
+  }
   const healthState = p.healthState?.trim().toLowerCase()
   if (healthState && _HEALTH_CAUTION_STATES.has(healthState)) {
     return { word: 'CAUTION', tone: 'yellow', detail: 'System health is degraded — review the health details below.' }
@@ -185,6 +193,19 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
     i.startsWith('health_check_error:')
   )) {
     return { word: 'DEGRADED', tone: 'yellow', detail: 'System health is degraded — check the health indicators in the status panel.' }
+  }
+  if (p.schedulerEnabled !== true || p.schedulerRunning !== true) {
+    return {
+      word: 'STANDBY',
+      tone: 'blue',
+      detail: p.schedulerEnabled === false
+        ? p.schedulerRunning === true
+          ? 'Autonomous trading jobs are disabled; essential scheduler jobs remain active.'
+          : p.schedulerRunning === false
+            ? 'Autonomous trading jobs are disabled; the scheduler is not running.'
+            : 'Autonomous trading jobs are disabled; scheduler runtime state is unavailable.'
+        : 'Scheduler state has not been verified yet.',
+    }
   }
   if (healthState !== 'healthy') {
     return { word: 'STANDBY', tone: 'blue', detail: 'System health has not been verified yet.' }

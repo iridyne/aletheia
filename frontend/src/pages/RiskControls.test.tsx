@@ -29,6 +29,10 @@ describe('RiskControls trust-path mutations', () => {
     expect(SRC).toContain('riskState, healthState, paused')
   })
 
+  it('refreshes scheduler authority while the page remains mounted', () => {
+    expect(SRC).toContain("queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 30_000")
+  })
+
   it('keeps historical risk decisions visibly separate from current health', () => {
     expect(SRC).toContain("const riskState = riskStatusError ? 'unavailable' : String(riskStatus?.status || 'unknown')")
     expect(SRC).toContain("latest.decision_role === 'authoritative' ? 'Authoritative' : `${latest.decision_role || 'legacy'} history`")
