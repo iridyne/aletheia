@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
+from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.infra.events import emit_infra_event
 from aletheia.storage import repositories as repo
 
@@ -29,6 +30,11 @@ _ATTEMPTED_STATUSES = _COMPLETED_STATUSES | {"failed", "timed_out", "not_configu
 _VALID_STATUSES = _ATTEMPTED_STATUSES | {"skipped_budget", "disabled"}
 _ALERT_THRESHOLD = 3
 _RECOVERY_GRACE_SEC = max(COLLECTOR_CADENCE_SEC.values()) * 2
+_TIMESTAMP_ERRORS = {
+    "collector_health_timestamp_missing",
+    "collector_health_timestamp_invalid",
+    "collector_health_timestamp_future",
+}
 
 
 def _now_iso() -> str:
@@ -75,7 +81,10 @@ def record_collector_status(
     if status not in _VALID_STATUSES:
         raise ValueError(f"invalid collector status: {status}")
 
-    now = occurred_at or _now_iso()
+    now = _now_iso() if occurred_at is None else occurred_at
+    _, timestamp_error = _collector_timestamp_age(now, now=datetime.now(timezone.utc))
+    if timestamp_error:
+        raise ValueError(timestamp_error)
     previous = repo.get_collector_health_state(domain) or {}
     problem_count = (
         int(previous.get("consecutive_problems") or 0) + 1
@@ -148,14 +157,32 @@ def record_collector_status(
     return state
 
 
-def _parse_time(value: str | None) -> datetime | None:
+def _parse_time(value: object) -> datetime | None:
     if not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def _collector_timestamp_age(
+    value: object,
+    *,
+    now: datetime,
+) -> tuple[int | None, str | None]:
+    """Return bounded age or the stable reason invalidating collector evidence."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, "collector_health_timestamp_missing"
+    observed_at = _parse_time(value)
+    if observed_at is None:
+        return None, "collector_health_timestamp_invalid"
+    current = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
+    age_sec = (current - observed_at.astimezone(timezone.utc)).total_seconds()
+    if age_sec < -MAX_FUTURE_SKEW.total_seconds():
+        return None, "collector_health_timestamp_future"
+    return max(0, int(age_sec)), None
 
 
 def _epoch_iso(value: float | int | None) -> str | None:
@@ -193,7 +220,11 @@ def _infrastructure_incident(
     except (TypeError, ValueError):
         outage_epoch = None
 
-    problem_rows = [row for row in domains if row["last_status"] in _PROBLEM_STATUSES]
+    problem_rows = [
+        row for row in domains
+        if row["last_status"] in _PROBLEM_STATUSES
+        and row.get("last_error_summary") not in _TIMESTAMP_ERRORS
+    ]
     affected: list[dict[str, Any]]
     code: str
     status: str
@@ -287,9 +318,13 @@ def get_collector_health_report(
     completed = 0
 
     for domain, cadence_sec in COLLECTOR_CADENCE_SEC.items():
-        row = dict(stored.get(domain) or {})
-        last_scheduled = _parse_time(row.get("last_scheduled_at"))
-        age_sec = max(0, int((now - last_scheduled).total_seconds())) if last_scheduled else None
+        stored_row = stored.get(domain)
+        row = dict(stored_row or {})
+        age_sec, timestamp_error = (
+            _collector_timestamp_age(row.get("last_scheduled_at"), now=now)
+            if stored_row is not None
+            else (None, None)
+        )
         status = str(row.get("last_status") or "never_run")
         overdue = bool(
             age_sec is not None
@@ -297,7 +332,7 @@ def get_collector_health_report(
             and age_sec > cadence_sec * 3
         )
         consecutive = int(row.get("consecutive_problems") or 0)
-        is_degraded = overdue or consecutive >= _ALERT_THRESHOLD
+        is_degraded = timestamp_error is not None or overdue or consecutive >= _ALERT_THRESHOLD
         if is_degraded:
             degraded += 1
         elif status in _PROBLEM_STATUSES:
@@ -308,14 +343,14 @@ def get_collector_health_report(
         # collector returns a failed result without raising, say so explicitly
         # rather than inventing an exception message.
         error_code = row.get("last_error_code")
-        error_summary = (
+        error_summary = timestamp_error or ((
             str(error_code) if error_code else "collector_returned_failed_result"
-        ) if status in _PROBLEM_STATUSES else None
+        ) if status in _PROBLEM_STATUSES else None)
         row.update({
             "domain": domain,
             "cadence_sec": cadence_sec,
             "last_status": status,
-            "display_status": status,
+            "display_status": "degraded" if timestamp_error else status,
             "attributed_cause": None,
             "last_error_summary": error_summary,
             "display_severity": (
