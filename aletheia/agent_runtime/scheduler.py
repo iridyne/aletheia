@@ -4444,7 +4444,17 @@ _DC_HEALTH_TICK: ContextVar[int | None] = ContextVar("dc_health_tick", default=N
 # scheduler persists them. Their successful call status is therefore recorded
 # by the caller after storage, rather than eagerly inside _bounded().
 _PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset(
-    {"derivatives", "hyperliquid", "defillama", "options_structure"}
+    {
+        "microstructure",
+        "derivatives",
+        "volume_scanner",
+        "hyperliquid",
+        "defillama",
+        "coingecko_top",
+        "macro",
+        "coinalyze",
+        "options_structure",
+    }
 )
 
 
@@ -4662,12 +4672,19 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro_result: dict = {}
+    raw_micro_result = None
+    micro_duration_ms = 0
     deriv_result: dict = {}
     raw_deriv_result = None
     deriv_duration_ms = 0
     if instruments:
         micro = MicrostructureCollector()
-        micro_result = await _bounded(micro.collect(instruments), "microstructure", 18.0, _deadline) or {}
+        micro_started = _time.monotonic()
+        raw_micro_result = await _bounded(
+            micro.collect(instruments), "microstructure", 18.0, _deadline
+        )
+        micro_duration_ms = int((_time.monotonic() - micro_started) * 1000)
+        micro_result = raw_micro_result or {}
     else:
         _record_collector_health("microstructure", "not_configured")
 
@@ -4682,7 +4699,8 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     else:
         _record_collector_health("derivatives", "not_configured")
 
-    deriv_persist_errors: list[str] = []
+    micro_persist_error: str | None = None
+    deriv_persist_error: str | None = None
     try:
         repo.insert_collector_snapshot_batch(
             orderbooks=[
@@ -4697,21 +4715,34 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
         )
     except Exception as e:
         logger.debug("collector batch persist failed: %s", e)
-        persist_code = {
-            "funding": "derivatives_funding_persist_failed",
-            "open_interest": "derivatives_open_interest_persist_failed",
-        }.get(getattr(e, "stage", None), "collector_batch_persist_failed")
-        deriv_persist_errors.append(persist_code)
+        stage = getattr(e, "stage", None)
+        if stage == "orderbooks":
+            micro_persist_error = "microstructure_persist_failed"
+            job_error_codes.append(micro_persist_error)
+        else:
+            deriv_persist_error = {
+                "funding": "derivatives_funding_persist_failed",
+                "open_interest": "derivatives_open_interest_persist_failed",
+            }.get(stage, "collector_batch_persist_failed")
+            job_error_codes.append(deriv_persist_error)
+
+    if raw_micro_result is not None:
+        from aletheia.data.collector_health import classify_collector_result
+
+        _record_collector_health(
+            "microstructure",
+            "failed" if micro_persist_error else classify_collector_result(micro_result),
+            duration_ms=micro_duration_ms,
+            error_code=micro_persist_error,
+        )
 
     if raw_deriv_result is not None:
-        if deriv_persist_errors:
-            unique_errors = list(dict.fromkeys(deriv_persist_errors))
-            job_error_codes.extend(unique_errors)
+        if deriv_persist_error:
             _record_collector_health(
                 "derivatives",
                 "failed",
                 duration_ms=deriv_duration_ms,
-                error_code=unique_errors[0],
+                error_code=deriv_persist_error,
             )
         else:
             from aletheia.data.collector_health import classify_collector_result
@@ -4913,7 +4944,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     with repo.transaction():
         if volume_result.get("top_symbols"):
             _persist_domain(
-                "volume_ranking",
+                "volume_scanner",
                 lambda: repo.save_volume_ranking_snapshot(
                     volume_result["top_symbols"], volume_result["observed_at"]
                 ),
@@ -4958,11 +4989,8 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
 
     from aletheia.data.collector_health import classify_collector_result
 
-    for domain, result in (
-        ("hyperliquid", hyperliquid_result),
-        ("defillama", defillama_result),
-    ):
-        if domain not in wave_one:
+    for domain, result in {**wave_one, **wave_two}.items():
+        if domain not in _PERSISTENCE_GATED_COLLECTOR_HEALTH or result is None:
             continue
         persist_error = next(
             (code for code in context_error_codes if code.startswith(f"{domain}_")),
@@ -4972,17 +5000,6 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             domain,
             "failed" if persist_error else classify_collector_result(result),
             error_code=persist_error,
-        )
-
-    if "options_structure" in wave_two:
-        options_persist_error = next(
-            (code for code in context_error_codes if code.startswith("options_structure_")),
-            None,
-        )
-        _record_collector_health(
-            "options_structure",
-            "failed" if options_persist_error else classify_collector_result(options_result),
-            error_code=options_persist_error,
         )
 
     # Sparse derivatives history is useful but must never spend the two-minute
