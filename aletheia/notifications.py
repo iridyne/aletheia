@@ -330,9 +330,12 @@ def notify_daily_summary() -> None:
         return
 
     try:
-        from aletheia.portfolio.pnl import today_realized_pnl, compute_portfolio
-        realized = today_realized_pnl()
+        from aletheia.portfolio.pnl import compute_portfolio
         portfolio = compute_portfolio()
+        realized_complete = portfolio.get("today_realized_pnl_complete") is True
+        realized = (
+            portfolio.get("today_realized_pnl") if realized_complete else None
+        )
         unrealized = float(portfolio.get("unrealized_pnl") or 0.0)
         open_count = portfolio.get("positions_count", 0)
         total = portfolio.get("total_value_usdt", 0.0)
@@ -358,7 +361,7 @@ def notify_daily_summary() -> None:
                 "unrealized_pnl": unrealized,
                 "open_positions": open_count,
                 "total_value_usdt": total,
-                "realized_pnl_complete": realized is not None,
+                "realized_pnl_complete": realized_complete,
             }, event_type="daily_summary")
     except Exception as e:
         logger.warning("notify_daily_summary failed: %s", e)

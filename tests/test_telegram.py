@@ -150,3 +150,52 @@ async def test_latest_command_empty(tmp_path, monkeypatch):
     resp = await bot.handle_message(123, "/latest")
     assert "No recent" in resp
     reset_db()
+
+
+def test_pnl_command_uses_one_mode_scoped_portfolio_projection(monkeypatch):
+    import aletheia.portfolio.pnl as pnl
+
+    monkeypatch.setattr(
+        pnl,
+        "today_realized_pnl",
+        lambda: pytest.fail("must not read unscoped realized PnL"),
+    )
+    monkeypatch.setattr(
+        pnl,
+        "compute_portfolio",
+        lambda: {
+            "today_realized_pnl": 0.0,
+            "today_realized_pnl_complete": True,
+            "unrealized_pnl": -5.0,
+        },
+    )
+
+    response = TelegramBot()._cmd_pnl()
+
+    assert "Realized: +0.00 USDT" in response
+    assert "Unrealized: -5.00 USDT" in response
+    assert "Total: -5.00 USDT" in response
+
+
+def test_pnl_command_preserves_incomplete_realized_state(monkeypatch):
+    import aletheia.portfolio.pnl as pnl
+
+    monkeypatch.setattr(
+        pnl,
+        "today_realized_pnl",
+        lambda: pytest.fail("must not read unscoped realized PnL"),
+    )
+    monkeypatch.setattr(
+        pnl,
+        "compute_portfolio",
+        lambda: {
+            "today_realized_pnl": 20.0,
+            "today_realized_pnl_complete": False,
+            "unrealized_pnl": -5.0,
+        },
+    )
+
+    response = TelegramBot()._cmd_pnl()
+
+    assert "Realized: unavailable" in response
+    assert "Total: unavailable" in response
