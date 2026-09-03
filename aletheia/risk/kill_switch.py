@@ -21,6 +21,10 @@ from aletheia.files.jsonl import write_audit
 _SCOPES = {"global", "demo", "live"}
 
 
+class AuditPersistenceError(RuntimeError):
+    """A risk-expanding brake release lacked authoritative audit durability."""
+
+
 def _field(scope: str) -> str:
     if scope not in _SCOPES:
         raise ValueError(f"unknown brake scope: {scope!r}")
@@ -40,7 +44,7 @@ def activate(
     reason: str = "",
     actor: str = "human",
     scope: str = "global",
-) -> None:
+) -> bool:
     """Engage the kill switch. Idempotent; always writes an audit event."""
     from aletheia.agent_runtime.pause_ownership import (
         _pause_transition_lock,
@@ -82,7 +86,7 @@ def activate(
                 # The durable brake remains authoritative even if the in-process
                 # scheduler is unavailable during startup or shutdown.
                 pass
-    write_audit({
+    return write_audit({
         "actor": actor,
         "source": source,
         "event_type": "trading_brake_activated",
@@ -105,7 +109,7 @@ def activate(
     })
 
 
-def deactivate(actor: str = "human", scope: str = "global") -> None:
+def deactivate(actor: str = "human", scope: str = "global") -> bool:
     """Release the kill switch. Only human/system actors should call this."""
     from aletheia.agent_runtime.pause_ownership import (
         _pause_transition_lock,
@@ -114,7 +118,7 @@ def deactivate(actor: str = "human", scope: str = "global") -> None:
 
     field = _field(scope)
     owner = BRAKE_OWNERS_BY_SCOPE[scope]
-    release = None
+    source = {"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard")
     # Use a capture list so Pyright can track types out of the closure.
     _state: List[Tuple[bool, Optional[PauseOwnerLease]]] = []
     with _pause_transition_lock:
@@ -127,12 +131,33 @@ def deactivate(actor: str = "human", scope: str = "global") -> None:
         mutate_config(_read_state)
         was_active, lease = _state[0]
 
+        audit_ok = write_audit({
+            "actor": actor,
+            "source": source,
+            "event_type": "trading_brake_deactivated",
+            "entity_type": "trading_brake",
+            "entity_id": scope,
+            "before": {"active": was_active},
+            "after": {"active": False},
+            "metadata": {
+                "pause_owner": owner,
+                "pause_generation": lease.generation if lease else None,
+                "pause_reason": lease.reason if lease else None,
+                "pause_acquired_at": lease.acquired_at if lease else None,
+                "pause_source": lease.source if lease else None,
+                "pause_scope": lease.scope if lease else scope,
+            },
+            "message": f"{scope} trading brake deactivated",
+        })
+        if not audit_ok:
+            raise AuditPersistenceError("trading_brake_deactivation_audit_failed")
+
         if lease is not None and lease.active:
-            release = release_pauses(
+            release_pauses(
                 {owner: lease.generation if lease.generation is not None else ""},
                 resume_when_clear=True,
                 actor=actor,
-                source={"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard"),
+                source=source,
             )
         else:
             # No active lease — clear the field directly via mutate_config.
@@ -140,31 +165,4 @@ def deactivate(actor: str = "human", scope: str = "global") -> None:
                 setattr(cfg.runtime, field, False)
                 return True
             mutate_config(_clear_field)
-        after_cfg = load_config()
-        after_active = bool(getattr(after_cfg.runtime, field))
-    write_audit({
-        "actor": actor,
-        "source": {"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard"),
-        "event_type": "trading_brake_deactivated",
-        "entity_type": "trading_brake",
-        "entity_id": scope,
-        "before": {"active": was_active},
-        "after": {"active": after_active},
-        "metadata": {
-            "pause_owner": owner,
-            "pause_generation": lease.generation if lease else None,
-            "pause_reason": lease.reason if lease else None,
-            "pause_acquired_at": lease.acquired_at if lease else None,
-            "pause_source": lease.source if lease else None,
-            "pause_scope": lease.scope if lease else scope,
-            "pause_active": after_active,
-            "resume_attempted": bool(release),
-            "resume_succeeded": bool(release and release.resumed),
-            "resume_failed": bool(release and release.resume_failed),
-        },
-        "message": (
-            f"{scope} trading brake deactivated"
-            if not after_active
-            else f"{scope} trading brake release retained because scheduler resume failed"
-        ),
-    })
+    return True

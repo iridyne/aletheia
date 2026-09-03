@@ -110,7 +110,7 @@ def set_kill_switch(req: KillSwitchRequest):
     brake is the last-resort stop; un-setting it must be a deliberate two-step action.
     """
     if req.active:
-        kill_switch.activate(reason=req.reason, actor="human")
+        audit_ok = kill_switch.activate(reason=req.reason, actor="human")
     else:
         if not req.confirm_release:
             raise HTTPException(
@@ -118,8 +118,17 @@ def set_kill_switch(req: KillSwitchRequest):
                 detail="Releasing the kill switch requires confirm_release=true "
                        "(second confirmation).",
             )
-        kill_switch.deactivate(actor="human")
-    return {"active": kill_switch.is_active()}
+        try:
+            audit_ok = kill_switch.deactivate(actor="human")
+        except kill_switch.AuditPersistenceError as exc:
+            raise HTTPException(503, detail={
+                "error": "audit_write_failed",
+                "message": "Kill-switch release refused; the brake remains active.",
+            }) from exc
+    return {
+        "active": kill_switch.is_active(),
+        "audit_status": "mirrored" if audit_ok else "degraded_retry_required",
+    }
 
 
 @router.post("/brakes/{scope}")
@@ -127,15 +136,26 @@ def set_mode_brake(scope: str, req: KillSwitchRequest):
     if scope not in {"global", "demo", "live"}:
         raise HTTPException(404, "Unknown trading brake scope")
     if req.active:
-        kill_switch.activate(reason=req.reason, actor="human", scope=scope)
+        audit_ok = kill_switch.activate(reason=req.reason, actor="human", scope=scope)
     else:
         if not req.confirm_release:
             raise HTTPException(
                 422,
                 "Releasing a trading brake requires confirm_release=true",
             )
-        kill_switch.deactivate(actor="human", scope=scope)
-    return {"scope": scope, "active": kill_switch.is_active(scope), **_brake_status()}
+        try:
+            audit_ok = kill_switch.deactivate(actor="human", scope=scope)
+        except kill_switch.AuditPersistenceError as exc:
+            raise HTTPException(503, detail={
+                "error": "audit_write_failed",
+                "message": "Trading-brake release refused; the brake remains active.",
+            }) from exc
+    return {
+        "scope": scope,
+        "active": kill_switch.is_active(scope),
+        "audit_status": "mirrored" if audit_ok else "degraded_retry_required",
+        **_brake_status(),
+    }
 
 
 @router.get("/account-leverage")
