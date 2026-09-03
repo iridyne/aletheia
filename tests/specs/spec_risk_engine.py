@@ -908,6 +908,71 @@ def test_symbol_blacklist_rejects(tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.parametrize(
+    ("symbol", "expected_violation"),
+    (
+        ("ETH/BTC", "unsupported_trading_quote_asset:BTC"),
+        ("BTC/USDC", "unsupported_trading_quote_asset:USDC"),
+        ("BTC", "invalid_symbol_format"),
+        ("/USDT", "invalid_symbol_format"),
+    ),
+)
+def test_risk_rejects_non_usdt_or_malformed_trading_symbol(
+    tmp_path, monkeypatch, symbol, expected_violation,
+):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+    import aletheia.risk.engine as eng
+
+    _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(eng, "load_config", AletheiaConfig)
+    proposal = TradeProposal(
+        symbol=symbol,
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=1.0,
+        price=1.0,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal, decision_role="authoritative")
+
+    assert expected_violation in result.violations
+    assert repo.get_entry_risk_reservation(proposal.id) is None
+    assert repo.has_order_for_proposal(proposal.id) is False
+
+
+def test_risk_accepts_usdt_quote_currency_boundary(tmp_path, monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+    import aletheia.risk.engine as eng
+
+    _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(eng, "load_config", AletheiaConfig)
+    proposal = TradeProposal(
+        symbol="btc-usdt",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60_000.0,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+
+    assert "invalid_trading_symbol" not in result.violations
+    assert not any(
+        violation.startswith("unsupported_trading_quote_asset:")
+        for violation in result.violations
+    )
+
+
 # ---------------------------------------------------------------------------
 # RE-B07 — §2 check #3: live state blocks live proposal
 # ---------------------------------------------------------------------------
