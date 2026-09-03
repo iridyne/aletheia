@@ -938,14 +938,24 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     # pre-update one (which would trigger observation_checkpoint_app_migration_drift).
     checkpoint_reanchor_error: str | None = None
     try:
-        from aletheia.observation_lab.checkpoint import (
-            compute_joint_checkpoint,
-            save_joint_checkpoint,
-        )
+        from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
+        from aletheia.update import target_fresh
 
-        save_joint_checkpoint(compute_joint_checkpoint())
+        reanchor = target_fresh.reanchor_joint_checkpoint(
+            project_root=_PROJECT_ROOT,
+            data_dir=get_data_dir(),
+            env=safe_env(),
+            python_executable=sys.executable,
+        )
+        if reanchor.get("ok") is not True:
+            checkpoint_reanchor_error = str(
+                reanchor.get("detail")
+                or reanchor.get("reason")
+                or "target_fresh_reanchor_failed"
+            )
     except Exception as exc:
         checkpoint_reanchor_error = type(exc).__name__
+    if checkpoint_reanchor_error:
         _record(
             "update_observer_checkpoint_reanchor_failed",
             str(result.get("new_commit") or "unknown"),

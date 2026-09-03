@@ -2206,8 +2206,14 @@ def write_generation_archive(
         raise ValueError("observation_generation_root_unavailable")
     if root["status"] == "active":
         raise ValueError("active_generation_cannot_be_archived")
+    # ``record_archive`` writes these fields back to the root after the
+    # archive bytes are built.  They are locator metadata, not evidence; keep
+    # them out of the payload so a second archive pass has the same identity.
+    root_payload = dict(root)
+    root_payload["artifact_path"] = None
+    root_payload["artifact_sha256"] = None
     tables = {
-        "observation_window": root,
+        "observation_window": root_payload,
         "generation_contract": db.execute(
             "SELECT * FROM observation_generation_contracts WHERE observation_id=? AND generation=?",
             (observation_id, int(generation)),
@@ -2254,7 +2260,7 @@ def write_generation_archive(
             None
             if value is None
             else dict(value)
-            if isinstance(value, sqlite3.Row)
+            if isinstance(value, (sqlite3.Row, dict))
             else [dict(item) for item in value]
         )
         for key, value in tables.items()
