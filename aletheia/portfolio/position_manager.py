@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
 from aletheia.data.price_feed import (
+    get_fresh_mark_for_protective_close,
     get_fresh_price_for_protective_close,
     protective_price_venue,
 )
@@ -97,7 +98,8 @@ def _fresh_local_paper_mark(
     position: dict,
     *,
     configured_data_venue: str | None = None,
-) -> float:
+    not_before: datetime | None = None,
+) -> dict:
     """Resolve the only mark allowed to authorize a local-paper close Fill."""
     if position.get("execution_mode") != "paper_internal":
         raise ValueError(
@@ -114,21 +116,22 @@ def _fresh_local_paper_mark(
         raise RuntimeError(
             f"protective_mark_venue_unavailable:{position.get('id')}"
         )
-    price = get_fresh_price_for_protective_close(
+    mark = get_fresh_mark_for_protective_close(
         position["symbol"],
         position.get("market_type") or "spot",
         venue=venue,
+        not_before=not_before,
     )
-    if price is None:
+    if mark is None:
         raise RuntimeError(
             f"protective_mark_unavailable:{position.get('id')}"
         )
-    return float(price)
+    return mark
 
 
 def _close_local_paper_with_authorized_mark(
     position_id: str,
-    mark_price: float,
+    mark: dict,
     *,
     reason: str,
     actor: str,
@@ -139,7 +142,8 @@ def _close_local_paper_with_authorized_mark(
 
     return close_paper_position(
         position_id,
-        mark_price=mark_price,
+        mark_price=float(mark["price"]),
+        mark_provenance=mark,
         reason=reason,
         actor=actor,
         source=source,
@@ -183,7 +187,7 @@ def close_local_positions_batch(
         and (market_type is None or row.get("market_type") == market_type)
     ]
     configured_venue = load_config().market_data.ccxt_exchange
-    authorized_marks: dict[str, float] = {}
+    authorized_marks: dict[str, dict] = {}
     preflight_failures: list[dict] = []
     for position in candidates:
         try:
@@ -237,6 +241,7 @@ def close_position_routed(
     fallback_exit_price: float | None = None,
     *,
     paper_mark_venue: str | None = None,
+    paper_mark_not_before: datetime | None = None,
     allow_live: bool = False,
     decision_reasoning: str | None = None,
     decision_actor: str = "system",
@@ -270,8 +275,10 @@ def close_position_routed(
 
     row = _select_one("positions", position_id)
     mode = (row or {}).get("execution_mode")
-    if paper_mark_venue is not None and mode != "paper_internal":
-        raise ValueError("paper_mark_venue is only valid for paper_internal closes")
+    if (
+        paper_mark_venue is not None or paper_mark_not_before is not None
+    ) and mode != "paper_internal":
+        raise ValueError("paper mark constraints are only valid for paper_internal closes")
     if mode and mode.endswith("_live_limited") and not allow_live:
         raise RuntimeError(
             f"refusing to autonomously close live position {position_id} "
@@ -320,13 +327,14 @@ def close_position_routed(
         # the close Order/Fill with Position and cash settlement.
         if row is None:
             raise ValueError(f"position not found: {position_id}")
-        mark_price = _fresh_local_paper_mark(
+        mark = _fresh_local_paper_mark(
             row,
             configured_data_venue=paper_mark_venue,
+            not_before=paper_mark_not_before,
         )
         result = _close_local_paper_with_authorized_mark(
             position_id,
-            mark_price,
+            mark,
             reason=reason,
             actor=decision_actor,
             source=decision_source,

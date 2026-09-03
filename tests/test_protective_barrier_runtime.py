@@ -18,7 +18,7 @@ from aletheia.portfolio.protective_barrier import (
     run_due_position_protection_cycle,
 )
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import PositionExitPlanVersion
+from aletheia.storage.models import MarketSnapshot, PositionExitPlanVersion
 from tests.test_position_manager import _position_with_entry_chain, _snap, setup_env
 
 
@@ -408,6 +408,61 @@ def test_long_wick_stop_records_trigger_and_closes_at_fresh_mark(tmp_path, monke
     assert repo.get_position(position.id)["close_reason"] == "stop_loss"
 
 
+def test_completed_bar_close_waits_for_post_bar_mark_and_persists_provenance(
+    tmp_path, monkeypatch,
+):
+    from aletheia.data import price_feed
+
+    position, cursor = _protected_position(tmp_path, monkeypatch)
+    _bar(cursor, high=101.0, low=97.0)
+    with price_feed._cache_lock:
+        price_feed._instrument_price_cache.clear()
+    pre_bar = datetime.fromtimestamp((cursor + 30_000) / 1000, timezone.utc)
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="spot",
+        exchange="binance",
+        price=99.5,
+        snapshot_at=pre_bar.isoformat(),
+    ))
+
+    first = evaluate_due_position_protection()
+
+    state = repo.get_position_protection_state(position.id)
+    assert first["closed"] == 0
+    assert state["status"] == "triggered"
+    assert repo.get_position(position.id)["status"] == "open"
+    assert repo.get_local_paper_close_chain(position.id) == (None, None)
+
+    post_bar = datetime.fromtimestamp((cursor + 61_000) / 1000, timezone.utc)
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="spot",
+        exchange="binance",
+        price=99.0,
+        snapshot_at=post_bar.isoformat(),
+    ))
+
+    second = evaluate_due_position_protection()
+
+    state = repo.get_position_protection_state(position.id)
+    _order, fill = repo.get_local_paper_close_chain(position.id)
+    evidence = json.loads(fill["fill_evidence_json"])
+    assert second["closed"] == 1
+    assert state["status"] == "materialized"
+    assert evidence["mark"] == {
+        "age_seconds": pytest.approx(
+            (datetime.now(timezone.utc) - post_bar).total_seconds(), abs=2.0
+        ),
+        "market_type": "spot",
+        "observed_at": post_bar.isoformat(),
+        "price": 99.0,
+        "source": "market_snapshot",
+        "symbol": "BTC/USDT",
+        "venue": "binance",
+    }
+
+
 def test_protective_close_uses_activation_venue_after_config_change(
     tmp_path, monkeypatch,
 ):
@@ -422,8 +477,19 @@ def test_protective_close_uses_activation_venue_after_config_change(
     seen_venues = []
     monkeypatch.setattr(
         position_manager,
-        "get_fresh_price_for_protective_close",
-        lambda *_args, **kwargs: seen_venues.append(kwargs["venue"]) or 99.5,
+        "get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, **kwargs: (
+            seen_venues.append(kwargs["venue"])
+            or {
+                "price": 99.5,
+                "observed_at": kwargs["not_before"].isoformat(),
+                "age_seconds": 0.0,
+                "source": "instrument_price_cache",
+                "venue": kwargs["venue"],
+                "symbol": symbol,
+                "market_type": market_type,
+            }
+        ),
     )
     _bar(cursor, high=101.0, low=97.0, exchange=frozen_venue)
 

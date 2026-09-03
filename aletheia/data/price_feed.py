@@ -129,6 +129,7 @@ def _valid_fresh_mark(
     entry: dict | None,
     *,
     max_age_sec: float,
+    not_before: datetime | None,
     source: str,
     venue: str,
     symbol: str,
@@ -142,7 +143,13 @@ def _valid_fresh_mark(
         age = (datetime.now(timezone.utc) - ts).total_seconds()
     except (KeyError, TypeError, ValueError):
         return None
-    if not math.isfinite(price) or price <= 0 or age < 0 or age > max_age_sec:
+    if (
+        not math.isfinite(price)
+        or price <= 0
+        or age < 0
+        or age > max_age_sec
+        or (not_before is not None and ts < not_before)
+    ):
         return None
     return {
         "price": price,
@@ -160,8 +167,13 @@ def get_fresh_mark_for_protective_close(
     market_type: str,
     *,
     venue: str,
+    not_before: datetime | None = None,
 ) -> dict | None:
-    """Return a fresh exact mark with bounded, non-secret provenance."""
+    """Return a fresh exact mark with bounded, non-secret provenance.
+
+    ``not_before`` adds a causal lower bound for completed-bar exits. Ordinary
+    callers omit it and retain the existing maximum-age behavior.
+    """
     from aletheia.data.symbols import to_canonical
 
     canonical = to_canonical(symbol)
@@ -177,6 +189,7 @@ def get_fresh_mark_for_protective_close(
         cached = _valid_fresh_mark(
             cache_entry,
             max_age_sec=_STALE_THRESHOLD_SEC,
+            not_before=not_before,
             source="instrument_price_cache",
             venue=exact_venue,
             symbol=canonical,
@@ -200,6 +213,7 @@ def get_fresh_mark_for_protective_close(
     return _valid_fresh_mark(
         {"price": row.get("price"), "ts": observed_at},
         max_age_sec=_PROTECTIVE_DB_MAX_AGE_SEC,
+        not_before=not_before,
         source="market_snapshot",
         venue=exact_venue,
         symbol=canonical,
