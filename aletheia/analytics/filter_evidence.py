@@ -1253,6 +1253,7 @@ def record_risk_filter_decision(
     risk_decision_id: str,
     approved: bool,
     violations: list[str],
+    raise_on_error: bool = False,
 ) -> str:
     """Index the authoritative RiskDecision without weakening or duplicating it."""
     opportunity = repo.get_opportunity(proposal.opportunity_id) if proposal.opportunity_id else None
@@ -1315,6 +1316,7 @@ def record_risk_filter_decision(
         entry_price_usd=_positive_float(proposal.price),
         entry_spread_bps=_optional_float((member or {}).get("spread_bps")),
         funding_rate_at_entry=_optional_float((opportunity or {}).get("funding_rate")),
+        raise_on_error=raise_on_error,
     )
 
 

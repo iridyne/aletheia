@@ -249,7 +249,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - `filter_decision_batches` 保存 ticker/tradability 等高频无方向门；必须保存本次扫描的全部候选，不得抽样。
 - `filter_decisions` 保存已有方向的 Observer、Ranker、System Operator 和 Risk 逐关事实，到首个拒绝停止。
 - `filter_candidate_outcomes` 按候选共享一份目标市场净结果，不按筛选关重复结算。
-- Risk 证据必须在权威 `RiskDecision` 落库后追加；证据失败不改变原始批准/拒绝。
+- Risk 证据必须在 authoritative `RiskDecision` 的同一事务内写入；任一 evidence 失败整体回滚，preflight 不写最终候选 evidence。
 - `TradingDecision.action='trade'` 表示 System Operator 的交易意图，不等于提案已经创建。
   方向过热是确定性业务拒绝，转成可耐久的 `skip`；模型 `trade` 缺显式 stop/TP/五项参数理由、
   或这些保护价相对提交时精确 mark 几何错误时，返回可重试的稳定不可用原因，在形成最终决定前
@@ -272,7 +272,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | 决策→提案 | `trading_decision.py` | `gateway.py` | `conviction≥55 且 action='trade'` 且有精确 pending 载体才尝试；LLM 开仓还必须显式给出有限正数 stop/TP 与五项参数理由；`paper_internal` 还需配置行情 venue 的同 symbol/spot-perp 新鲜精确 mark，并据此校验几何、计算唯一 reward:risk；PiDecision+Proposal 原子提交；不可用时零最终行并保留队列 | DL-S18~19 + DL-S40~41 + DL-C01 + DL-C02 + TDR-C01 + execution_contract §3 |
 | 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
 | 平仓脊柱 | — | — | 见 `execution_contract §10`(退出触发器优先级 / paused 不挡平仓) | PL-PM-01~07 |
-| 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；Risk 只报告 | filter_evidence_contract / spec_filter_evidence |
+| 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；authoritative Risk evidence 与 RiskDecision 原子提交 | filter_evidence_contract / spec_filter_evidence |
 
 ---
 

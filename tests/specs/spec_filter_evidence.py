@@ -1041,11 +1041,11 @@ def test_doctor_excludes_administrative_cascade_from_candidate_skips(
 @spec_claim(
     SpecClaim(
         "FE-B07", _CONTRACT, "§5 risk authority", "L2b",
-        "RiskDecision remains authoritative while a report-only risk filter fact is appended after persistence.",
+        "Authoritative RiskDecision and its final filter/outcome evidence commit atomically; evidence failure cannot authorize execution.",
         status="implemented",
     )
 )
-def test_risk_evidence_is_appended_after_authoritative_decision():
+def test_risk_evidence_is_atomic_after_authoritative_decision():
     from pathlib import Path
 
     from aletheia.analytics.filter_registry import filter_by_name
@@ -1056,6 +1056,7 @@ def test_risk_evidence_is_appended_after_authoritative_decision():
     assert source.index("insert_risk_decision(decision)") < source.index(
         "record_risk_filter_decision"
     )
+    assert "raise_on_error=True" in source
     spec = filter_by_name("risk_engine")
     assert spec is not None
     assert spec.auto_tunable is False

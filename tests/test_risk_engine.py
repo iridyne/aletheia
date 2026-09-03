@@ -331,6 +331,110 @@ def test_missing_authoritative_risk_identity_blocks_gateway(tmp_path, monkeypatc
     reset_db()
 
 
+def test_authoritative_filter_evidence_failure_blocks_execution(
+    tmp_path,
+    monkeypatch,
+):
+    setup_test_env(tmp_path, monkeypatch)
+    import aletheia.analytics.filter_evidence as filter_evidence
+    import aletheia.execution.gateway as gateway
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+
+    def fail_evidence(*_args, **_kwargs):
+        raise RuntimeError("forced risk evidence failure")
+
+    monkeypatch.setattr(
+        filter_evidence,
+        "record_risk_filter_decision",
+        fail_evidence,
+    )
+    broker_calls = []
+    monkeypatch.setattr(
+        gateway,
+        "execute_paper_order",
+        lambda **kwargs: broker_calls.append(kwargs) or {},
+    )
+
+    result = gateway.submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60000,
+        execution_mode="paper_internal",
+        **trade,
+    )
+
+    assert result["status"] == "error"
+    proposal = repo.list_trade_proposals(limit=1)[0]
+    assert proposal["status"] == "error"
+    assert broker_calls == []
+    assert repo.list_risk_decisions(limit=10) == []
+    assert repo.list_orders() == []
+    assert repo.list_positions(status="open") == []
+    assert repo._select_all("filter_decisions") == []
+    assert repo._select_all("filter_candidate_outcomes") == []
+    assert repo._select_all("entry_risk_reservations") == []
+    reset_db()
+
+
+def test_authoritative_risk_and_filter_evidence_commit_together(
+    tmp_path,
+    monkeypatch,
+):
+    setup_test_env(tmp_path, monkeypatch)
+    import aletheia.analytics.filter_evidence as filter_evidence
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000,
+    )
+    monkeypatch.setattr(
+        filter_evidence,
+        "_member_asset_venue",
+        lambda *_args, **_kwargs: "okx",
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60000,
+        **trade,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+
+    assert result.approved is True
+    assert repo.list_risk_decisions(limit=10)[0]["approved"] == 1
+    assert repo._select_all(
+        "filter_decisions",
+        where="proposal_id=?",
+        params=(proposal.id,),
+    )
+    outcomes = repo._select_all(
+        "filter_candidate_outcomes",
+        where="outcome_candidate_key=?",
+        params=(f"proposal:{proposal.id}",),
+    )
+    assert {row["horizon"] for row in outcomes} == {"15m", "1h", "4h", "24h"}
+    reset_db()
+
+
 def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
