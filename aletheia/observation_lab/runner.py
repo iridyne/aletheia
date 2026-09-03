@@ -176,6 +176,9 @@ def _pass_checkpoint() -> dict[str, Any]:
         return {
             "ok": bool(verdict.ok),
             "reason": verdict.reason,
+            "mismatch_components": list(
+                getattr(verdict, "mismatch_components", ())
+            ),
             "current_fingerprint": current_fingerprint,
             "last_fingerprint": (
                 verdict.last.joint_fingerprint if verdict.last is not None else None

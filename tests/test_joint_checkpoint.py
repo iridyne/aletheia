@@ -106,6 +106,70 @@ def test_appended_main_receipt_does_not_hide_checkpointed_prefix_change():
     assert "fingerprint_mismatch" in verdict.reason
 
 
+def test_pruning_acknowledged_receipts_keeps_exact_checkpoint_match():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        prune_observation_delivery_outbox,
+    )
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-prunable-receipt",
+        candidate_key="candidate-prunable",
+        resolution_reason="adapter_unavailable",
+    )
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", receipt_id),
+    )
+    save_joint_checkpoint(compute_joint_checkpoint())
+
+    pruned = prune_observation_delivery_outbox(
+        keep_acknowledged=0,
+        safety_grace_seconds=0,
+    )
+    verdict = verify_joint_checkpoint()
+
+    assert pruned["deleted"] == 1
+    assert verdict.ok is True
+    assert verdict.reason == "fingerprint_match"
+
+
+def test_pending_receipt_identity_change_is_structured_outbox_drift():
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-pending-identity",
+        candidate_key="candidate-pending-identity",
+        resolution_reason="adapter_unavailable",
+    )
+    save_joint_checkpoint(compute_joint_checkpoint())
+    db = get_db()
+    db.execute("DROP TRIGGER trg_observation_delivery_outbox_identity_immutable")
+    db.execute(
+        "UPDATE observation_delivery_outbox SET manifest_hash='changed' WHERE receipt_id=?",
+        (receipt_id,),
+    )
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is False
+    assert verdict.mismatch_components == ("main_outbox",)
+
+
 def test_acknowledged_main_receipt_suffix_is_not_append_only_progress():
     from aletheia.observation_lab.canonical import append_delivery_receipt
     from aletheia.observation_lab.checkpoint import (

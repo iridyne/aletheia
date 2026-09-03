@@ -493,20 +493,25 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
     try:
         with _open_sqlite_readonly(app_db) as app:
             app.row_factory = sqlite3.Row
-            outbox_columns = {
-                str(row[1])
-                for row in app.execute(
-                    "PRAGMA table_info(observation_delivery_outbox)"
-                ).fetchall()
-            }
+            outbox_schema = app.execute(
+                "PRAGMA table_info(observation_delivery_outbox)"
+            ).fetchall()
+            outbox_columns = {str(row[1]) for row in outbox_schema}
             required_outbox = {
                 "sequence", "receipt_id", "manifest_hash", "acknowledged_at",
             }
             if not required_outbox.issubset(outbox_columns):
                 raise sqlite3.Error("outbox_schema_unavailable")
-            select_columns = [
-                "sequence", "receipt_id", "manifest_hash", "acknowledged_at",
+            mutable_columns = {
+                "acknowledged_at", "lab_application_status",
+                "lab_applied_observation_id", "lab_applied_generation",
+                "lab_applied_event_id", "lab_application_error", "lab_applied_at",
+            }
+            immutable_columns = [
+                str(row[1]) for row in outbox_schema
+                if str(row[1]) not in mutable_columns
             ]
+            select_columns = [*immutable_columns, "acknowledged_at"]
             if "lab_application_status" in outbox_columns:
                 select_columns.append("lab_application_status")
             outbox_rows = app.execute(
@@ -514,13 +519,24 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
                 + " FROM observation_delivery_outbox ORDER BY sequence"
             ).fetchall()
             outbox_state = [
-                tuple(row[column] for column in select_columns[:4])
+                tuple(row[column] for column in immutable_columns)
                 for row in outbox_rows
+                if row["acknowledged_at"] is None
             ]
             outbox_by_sequence = {
                 int(row["sequence"]): row for row in outbox_rows
             }
-            outbox_watermark = int(outbox_rows[-1]["sequence"]) if outbox_rows else 0
+            try:
+                sequence_row = app.execute(
+                    "SELECT seq FROM sqlite_sequence "
+                    "WHERE name='observation_delivery_outbox'"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                sequence_row = None
+            outbox_watermark = (
+                int(sequence_row[0]) if sequence_row is not None
+                else (int(outbox_rows[-1]["sequence"]) if outbox_rows else 0)
+            )
             outbox_pending = sum(
                 1 for row in outbox_rows if row["acknowledged_at"] is None
             )
@@ -611,6 +627,7 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
             and cursor_fingerprint == _sha256_json(checkpoint)
             and isinstance(checkpoint.get("receipt_chain_fingerprint"), str)
             and bool(re.fullmatch(r"[0-9a-f]{64}", checkpoint["receipt_chain_fingerprint"]))
+            and checkpoint.get("retry_sequences") == retry_sequences
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         valid_cursor = False
@@ -626,10 +643,20 @@ def _verify_outbox_cursor_cut(bundle_dir: Path, result: VerifyResult) -> None:
         result.valid = False
         result.errors.append("Lab-authoritative import cursor retries are duplicated")
     for sequence in retry_sequences:
-        if sequence not in outbox_by_sequence:
+        if sequence <= cursor_sequence:
+            result.valid = False
+            result.errors.append(
+                f"Lab-authoritative retry receipt is not ahead of cursor: {sequence}"
+            )
+        elif sequence not in outbox_by_sequence:
             result.valid = False
             result.errors.append(
                 f"Lab-authoritative retry receipt is missing from app cut: {sequence}"
+            )
+        elif outbox_by_sequence[sequence]["acknowledged_at"] is not None:
+            result.valid = False
+            result.errors.append(
+                f"Lab-authoritative retry receipt is already acknowledged: {sequence}"
             )
 
     covered_receipts = {

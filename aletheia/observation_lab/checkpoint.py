@@ -50,6 +50,15 @@ _CHECKPOINT_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "payload_json",
     ),
 }
+_OUTBOX_MUTABLE_COLUMNS = frozenset({
+    "acknowledged_at",
+    "lab_application_status",
+    "lab_applied_observation_id",
+    "lab_applied_generation",
+    "lab_applied_event_id",
+    "lab_application_error",
+    "lab_applied_at",
+})
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,7 @@ class CheckpointVerification:
     last: JointCheckpoint | None
     current_fingerprint: str
     reason: str
+    mismatch_components: tuple[str, ...] = ()
 
 
 def _now() -> str:
@@ -112,27 +122,74 @@ def _read_app_migration_state() -> tuple[str, int]:
 
 
 def _read_app_outbox_state(*, through_sequence: int | None = None) -> tuple[int, int, str]:
-    """Return the durable Main receipt cut included in a joint checkpoint."""
+    """Return the logical watermark and pending transport frontier."""
     from aletheia.storage.sqlite import get_db
 
     try:
+        db = get_db()
+        immutable_columns = [
+            str(row[1])
+            for row in db.execute(
+                "PRAGMA table_info(observation_delivery_outbox)"
+            ).fetchall()
+            if str(row[1]) not in _OUTBOX_MUTABLE_COLUMNS
+        ]
+        if not immutable_columns:
+            raise sqlite3.Error("outbox_schema_unavailable")
         sql = (
-            "SELECT sequence, receipt_id, manifest_hash, acknowledged_at "
-            "FROM observation_delivery_outbox"
+            f"SELECT {', '.join(immutable_columns)} "
+            "FROM observation_delivery_outbox WHERE acknowledged_at IS NULL"
         )
         params: tuple[int, ...] = ()
         if through_sequence is not None:
-            sql += " WHERE sequence<=?"
+            sql += " AND sequence<=?"
             params = (int(through_sequence),)
-        rows = get_db().execute(f"{sql} ORDER BY sequence", params).fetchall()
+        rows = db.execute(f"{sql} ORDER BY sequence", params).fetchall()
+        sequence_row = db.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name='observation_delivery_outbox'"
+        ).fetchone()
+        logical_watermark = int(sequence_row[0]) if sequence_row is not None else 0
     except Exception:
         return (-1, -1, "<unavailable>")
-    pending = sum(1 for row in rows if row[3] is None)
-    watermark = int(rows[-1][0]) if rows else 0
+    watermark = (
+        min(logical_watermark, int(through_sequence))
+        if through_sequence is not None
+        else logical_watermark
+    )
     fingerprint = hashlib.sha256(
         _canonical_json([tuple(row) for row in rows]).encode("utf-8")
     ).hexdigest()
-    return watermark, pending, fingerprint
+    return watermark, len(rows), fingerprint
+
+
+def _mismatch_components(
+    last: JointCheckpoint,
+    current: JointCheckpoint,
+) -> tuple[str, ...]:
+    components: list[str] = []
+    if (
+        last.app_migration_head != current.app_migration_head
+        or last.app_migration_count != current.app_migration_count
+    ):
+        components.append("app_migration")
+    if last.active_manifest_hashes != current.active_manifest_hashes:
+        components.append("active_manifests")
+    if (
+        last.lab_schema_head != current.lab_schema_head
+        or last.lab_schema_count != current.lab_schema_count
+    ):
+        components.append("lab_schema")
+    if last.lab_state_fingerprint != current.lab_state_fingerprint:
+        components.append("lab_state")
+    if last.checkpoint_ledger_fingerprint != current.checkpoint_ledger_fingerprint:
+        components.append("checkpoint_ledger")
+    if (
+        last.main_outbox_high_watermark != current.main_outbox_high_watermark
+        or last.main_outbox_pending_count != current.main_outbox_pending_count
+        or last.main_outbox_fingerprint != current.main_outbox_fingerprint
+    ):
+        components.append("main_outbox")
+    return tuple(components)
 
 
 def _main_outbox_advanced_append_only(
@@ -531,6 +588,7 @@ def verify_joint_checkpoint(
             current_fingerprint=current.joint_fingerprint,
             reason="main_outbox_append_only",
         )
+    mismatch_components = _mismatch_components(last, current)
     return CheckpointVerification(
         ok=False,
         last=last,
@@ -545,4 +603,5 @@ def verify_joint_checkpoint(
             f"{current.lab_state_fingerprint}) outbox({last.main_outbox_high_watermark}→"
             f"{current.main_outbox_high_watermark})"
         ),
+        mismatch_components=mismatch_components,
     )

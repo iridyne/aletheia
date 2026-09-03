@@ -262,6 +262,39 @@ def test_only_lab_runner_accepts_main_outbox_progress():
 
 
 @spec_claim(SpecClaim(
+    "OEO-S07", _CHECKPOINT_CONTRACT, "Pending transport frontier", "L2a",
+    "Checkpoint identity excludes acknowledged retention rows while preserving the logical Main watermark.",
+))
+def test_checkpoint_outbox_identity_is_the_pending_frontier():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        prune_observation_delivery_outbox,
+    )
+    from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="spec-checkpoint-frontier",
+        resolution_reason="adapter_unavailable",
+    )
+    pending = compute_joint_checkpoint()
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2020-01-01T00:00:00+00:00", receipt_id),
+    )
+    acknowledged = compute_joint_checkpoint()
+    prune_observation_delivery_outbox(keep_acknowledged=0, safety_grace_seconds=0)
+    pruned = compute_joint_checkpoint()
+
+    assert pending.main_outbox_pending_count == 1
+    assert acknowledged.main_outbox_pending_count == 0
+    assert acknowledged.main_outbox_high_watermark == pending.main_outbox_high_watermark
+    assert pruned.main_outbox_high_watermark == acknowledged.main_outbox_high_watermark
+    assert pruned.main_outbox_fingerprint == acknowledged.main_outbox_fingerprint
+
+
+@spec_claim(SpecClaim(
     "OEO-S05", _CONTRACT, "Executable V2 boundary", "L2a",
     "Mechanism-aware Entry Learning is one Lab adapter with empty control and an explicit interference key.",
 ))
