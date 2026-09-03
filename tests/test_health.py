@@ -402,6 +402,54 @@ def test_market_data_staleness_names_lagging_source_group(tmp_path, monkeypatch)
     assert not any("source=bitget/spot" in issue for issue in result["issues"])
 
 
+def test_empty_market_targets_ignore_fresh_and_stale_foreign_rows(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import health
+    from aletheia.storage import repositories
+    from aletheia.trading import market_data
+
+    cfg = SimpleNamespace(
+        runtime=SimpleNamespace(paused=False, scheduler_enabled=True),
+        health=SimpleNamespace(market_data_max_staleness_min=30),
+    )
+    rows = [{
+        "exchange": "foreign",
+        "market_type": "spot",
+        "snapshot_at": datetime.now(timezone.utc).isoformat(),
+    }]
+    monkeypatch.setattr(repositories, "latest_market_snapshot_groups", lambda: rows)
+    monkeypatch.setattr(market_data, "market_snapshot_target_groups", lambda _cfg: set())
+
+    assert health._market_data_stale_minutes(cfg) is None
+    assert health._market_data_stale_sources(cfg) == []
+
+    rows[0]["snapshot_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    assert health._market_data_stale_minutes(cfg) is None
+    assert health._market_data_stale_sources(cfg) == []
+
+
+def test_empty_market_targets_do_not_hide_snapshot_query_error(tmp_path, monkeypatch):
+    real_fn = setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.storage import repositories
+    from aletheia.trading import market_data
+
+    monkeypatch.setattr(health, "_market_data_stale_minutes", real_fn)
+    monkeypatch.setattr(market_data, "market_snapshot_target_groups", lambda _cfg: set())
+    monkeypatch.setattr(
+        repositories,
+        "latest_market_snapshot_groups",
+        lambda: (_ for _ in ()).throw(RuntimeError("db gone")),
+    )
+
+    result = health.compute_health()
+
+    assert result["status"] == "initializing"
+    assert "market_data_probe_error" in result["issues"]
+
+
 def test_stale_market_data_not_flagged_when_paused(tmp_path, monkeypatch):
     real_fn = setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

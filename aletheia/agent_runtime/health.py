@@ -118,8 +118,10 @@ def _market_data_stale_minutes(cfg) -> float | None:
     from aletheia.storage.repositories import latest_market_snapshot_groups
     from aletheia.trading.market_data import market_snapshot_target_groups
 
-    targets = market_snapshot_target_groups(cfg)
     rows = latest_market_snapshot_groups()
+    targets = market_snapshot_target_groups(cfg)
+    if not targets:
+        return None
     if not rows:
         return float("inf")  # scheduler active but snapshot never collected
     by_group = {
@@ -130,12 +132,6 @@ def _market_data_stale_minutes(cfg) -> float | None:
         _timestamp_age_minutes(by_group[group]) if by_group.get(group) else float("inf")
         for group in targets
     ]
-    if not ages:
-        ages = [
-            _timestamp_age_minutes(row["snapshot_at"])
-            for row in rows
-            if row.get("snapshot_at")
-        ]
     return max(ages, default=float("inf"))
 
 
@@ -146,10 +142,13 @@ def _market_data_stale_sources(cfg) -> list[tuple[str, str, float]]:
     from aletheia.storage.repositories import latest_market_snapshot_groups
     from aletheia.trading.market_data import market_snapshot_target_groups
 
+    rows = latest_market_snapshot_groups()
     targets = market_snapshot_target_groups(cfg)
+    if not targets:
+        return []
     latest = {
         (str(row.get("exchange") or ""), str(row.get("market_type") or "")): row.get("snapshot_at")
-        for row in latest_market_snapshot_groups()
+        for row in rows
     }
     stale = []
     for venue, market_type in sorted(targets):
