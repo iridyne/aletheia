@@ -312,11 +312,12 @@ def render_feedback_for_pi(fb: dict) -> str:
     n_prop = fb.get("sample_proposals", 0)
     n_exec = fb.get("sample_executed", 0)
     lines = [f"\n## Reasoning Quality Feedback ({fb.get('window_days', 30)}d, {n_prop} proposals → {n_exec} executed)"]
-    lines.append(
-        "Cohort: complete "
-        f"{fb.get('loaded_raw_event_count')}/{fb.get('source_raw_event_count')} "
-        f"digest={str(fb.get('ordered_source_digest') or '')[:12]}"
-    )
+    if fb.get("cohort_complete") is True and fb.get("ordered_source_digest"):
+        lines.append(
+            "Cohort: complete "
+            f"{fb.get('loaded_raw_event_count')}/{fb.get('source_raw_event_count')} "
+            f"digest={str(fb['ordered_source_digest'])[:12]}"
+        )
 
     pursue = fb.get("recommended_pursue", [])
     if pursue:

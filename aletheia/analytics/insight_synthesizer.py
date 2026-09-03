@@ -593,11 +593,12 @@ def render_memo_for_observer(
 
     memo_weight = memo_half_life_weight(memo.get("generated_at"))
     lines = ["\n## Historical Performance Context (Trading Memo)"]
-    lines.append(
-        "Cohort: complete "
-        f"{memo.get('loaded_raw_event_count')}/{memo.get('source_raw_event_count')} "
-        f"digest={str(memo.get('ordered_source_digest') or '')[:12]}"
-    )
+    if memo.get("cohort_complete") is True and memo.get("ordered_source_digest"):
+        lines.append(
+            "Cohort: complete "
+            f"{memo.get('loaded_raw_event_count')}/{memo.get('source_raw_event_count')} "
+            f"digest={str(memo['ordered_source_digest'])[:12]}"
+        )
 
     if not compact:
         lines.append(f"Data: {memo['sample_size']} trades over {memo['data_window_days']} days")
