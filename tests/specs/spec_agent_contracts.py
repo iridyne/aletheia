@@ -184,6 +184,7 @@ def test_scheduler_executor_pool_names():
     expected = {
         "default",
         "io",
+        "maintenance_io",
         "audit",
         "fast_io",
         "protective",
@@ -194,6 +195,48 @@ def test_scheduler_executor_pool_names():
     assert keys == expected, (
         f"Executor pool names mismatch. Expected={sorted(expected)} Got={sorted(keys)}"
     )
+
+
+def test_long_maintenance_jobs_do_not_share_short_io_lane():
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    init_fn = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "init_scheduler"
+    )
+    executors = {}
+    for call in ast.walk(init_fn):
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_job"
+        ):
+            continue
+        keywords = {item.arg: item.value for item in call.keywords if item.arg}
+        job_id = keywords.get("id")
+        executor = keywords.get("executor")
+        if isinstance(job_id, ast.Constant) and isinstance(executor, ast.Constant):
+            executors[job_id.value] = executor.value
+
+    assert {
+        job_id: executors[job_id]
+        for job_id in (
+            "universe_refresh",
+            "outcome_settler",
+            "ohlcv_nightly_backfill",
+            "ohlcv_active_backfill",
+        )
+    } == {
+        "universe_refresh": "maintenance_io",
+        "outcome_settler": "maintenance_io",
+        "ohlcv_nightly_backfill": "maintenance_io",
+        "ohlcv_active_backfill": "maintenance_io",
+    }
+    assert executors["tpsl_fill_check"] == "io"
 
 
 def test_scheduler_job_ids_unique():

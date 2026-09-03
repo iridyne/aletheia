@@ -546,6 +546,8 @@ _EXECUTOR_WORKERS = {
     # more reliable than parallel scheduled writers that frequently collide and
     # cascade into ``database is locked`` across unrelated jobs.
     "io": 1,
+    # Long bounded maintenance must not consume the short operational IO lane.
+    "maintenance_io": 1,
     # Hash-chain scans and cross-process audit locks must never occupy the
     # single operational IO worker while their bounded sync lane times out.
     "audit": 1,
@@ -1530,7 +1532,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
-        id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
+        id="universe_refresh", misfire_grace_time=120, max_instances=1,
+        executor="maintenance_io",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
     _scheduler.add_job(
@@ -1553,7 +1556,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     # so the attribution chain keeps ticking even when the universe scan is off.
     _scheduler.add_job(
         _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
-        id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
+        id="outcome_settler", misfire_grace_time=120, max_instances=1,
+        executor="maintenance_io",
         next_run_time=datetime.now() + timedelta(seconds=120),
     )
     _scheduler.add_job(
@@ -1641,7 +1645,7 @@ def init_scheduler() -> BackgroundScheduler | None:
             _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
             "cron", hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30,
             id="ohlcv_nightly_backfill", misfire_grace_time=600,
-            executor="io", timezone="Asia/Shanghai",
+            executor="maintenance_io", timezone="Asia/Shanghai",
         )
     if (
         getattr(cfg.historical_data, "enabled", True)
@@ -1656,7 +1660,7 @@ def init_scheduler() -> BackgroundScheduler | None:
             id="ohlcv_active_backfill",
             misfire_grace_time=120,
             next_run_time=datetime.now() + timedelta(minutes=3),
-            executor="io",
+            executor="maintenance_io",
         )
     # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
     _scheduler.add_job(
@@ -2125,7 +2129,7 @@ def reconcile_historical_data_jobs(historical_cfg) -> bool:
                         _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
                         "cron", hour=nightly_hour, minute=30,
                         id="ohlcv_nightly_backfill", misfire_grace_time=600,
-                        executor="io", timezone="Asia/Shanghai",
+                        executor="maintenance_io", timezone="Asia/Shanghai",
                     )
                     logger.info("Added ohlcv_nightly_backfill job at %02d:30 CST", nightly_hour)
                 else:
@@ -2149,7 +2153,8 @@ def reconcile_historical_data_jobs(historical_cfg) -> bool:
                     _scheduler.add_job(
                         _guarded("ohlcv_active_backfill", _run_active_ohlcv_backfill),
                         "interval", minutes=active_interval,
-                        id="ohlcv_active_backfill", misfire_grace_time=120, executor="io",
+                        id="ohlcv_active_backfill", misfire_grace_time=120,
+                        executor="maintenance_io",
                     )
                     logger.info("Added ohlcv_active_backfill job every %d min", active_interval)
                 else:
