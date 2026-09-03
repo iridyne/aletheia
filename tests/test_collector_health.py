@@ -142,6 +142,107 @@ def test_collector_report_marks_overdue_domain_degraded(collector_db):
     assert report["status"] == "degraded"
 
 
+@pytest.mark.parametrize(
+    "occurred_at,reason",
+    [
+        ("", "collector_health_timestamp_missing"),
+        ("not-a-timestamp", "collector_health_timestamp_invalid"),
+        (
+            (datetime.now(timezone.utc) + timedelta(minutes=6)).isoformat(),
+            "collector_health_timestamp_future",
+        ),
+    ],
+)
+def test_invalid_collector_timestamp_is_rejected_before_state_access(
+    monkeypatch, occurred_at, reason
+):
+    from aletheia.data import collector_health
+
+    state = {"attempts": 7, "successes": 5}
+    calls = []
+    monkeypatch.setattr(
+        collector_health.repo,
+        "get_collector_health_state",
+        lambda _domain: calls.append("read") or state,
+    )
+    monkeypatch.setattr(
+        collector_health.repo,
+        "upsert_collector_health_state",
+        lambda row: calls.append("write") or state.update(row),
+    )
+
+    with pytest.raises(ValueError, match=reason):
+        collector_health.record_collector_status(
+            "macro", "success", occurred_at=occurred_at
+        )
+
+    assert state == {"attempts": 7, "successes": 5}
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "timestamp,reason",
+    [
+        (None, "collector_health_timestamp_missing"),
+        ("not-a-timestamp", "collector_health_timestamp_invalid"),
+        (
+            datetime(2026, 1, 1, 0, 6, tzinfo=timezone.utc).isoformat(),
+            "collector_health_timestamp_future",
+        ),
+    ],
+)
+def test_historical_invalid_timestamp_projects_degraded(
+    monkeypatch, timestamp, reason
+):
+    from aletheia.data import collector_health
+
+    monkeypatch.setattr(collector_health.repo, "list_collector_health_states", lambda: [{
+        "domain": "macro",
+        "cadence_sec": 600,
+        "last_status": "success",
+        "last_scheduled_at": timestamp,
+        "attempts": 1,
+        "successes": 1,
+    }])
+
+    report = collector_health.get_collector_health_report(
+        now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        connectivity_status={"state": "reachable"},
+    )
+    row = next(item for item in report["domains"] if item["domain"] == "macro")
+
+    assert row["last_status"] == "success"
+    assert row["display_status"] == "degraded"
+    assert row["degraded"] is True
+    assert row["age_sec"] is None
+    assert row["last_error_summary"] == reason
+    assert report["status"] == "degraded"
+
+
+def test_collector_timestamp_within_future_skew_is_fresh(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    now = datetime.now(timezone.utc)
+    record_collector_status(
+        "macro",
+        "success",
+        occurred_at=(now + timedelta(minutes=4, seconds=59)).isoformat(),
+    )
+
+    report = get_collector_health_report(
+        now=now,
+        connectivity_status={"state": "reachable"},
+    )
+    row = next(item for item in report["domains"] if item["domain"] == "macro")
+
+    assert row["age_sec"] == 0
+    assert row["degraded"] is False
+    assert report["status"] == "healthy"
+
+
 def test_result_classifier_distinguishes_empty_partial_and_not_configured():
     from aletheia.data.collector_health import classify_collector_result
 
