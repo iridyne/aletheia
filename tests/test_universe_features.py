@@ -123,6 +123,80 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
     assert ("ohlcv", "BTC/USDT", "1h", "spot") in calls
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_market", ["spot", "perp"])
+async def test_market_bootstrap_failure_does_not_abort_other_market_features(
+    monkeypatch,
+    failed_market,
+):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data import ccxt_provider
+    from aletheia.universe import features
+
+    cfg = AletheiaConfig()
+    cfg.universe.min_volume_24h_usdt = 0
+    assets = [
+        {"id": "spot-eth", "symbol": "ETH/USDT", "market_type": "spot"},
+        {"id": "perp-sol", "symbol": "SOL/USDT", "market_type": "perp"},
+    ]
+    fetched_assets = []
+
+    class Exchange:
+        def __init__(self, *, fail_load=False):
+            self.fail_load = fail_load
+            self.options = {}
+            self.markets = {"ETH/USDT": {}, "SOL/USDT:USDT": {"contract": True}}
+
+        async def load_markets(self):
+            if self.fail_load:
+                raise RuntimeError("market metadata unavailable")
+            return self.markets
+
+        async def fetch_tickers(self, symbols):
+            return {
+                symbol: {"last": 100.0, "quoteVolume": 1_000_000.0}
+                for symbol in symbols
+            }
+
+        async def fetch_ohlcv(self, _symbol, _timeframe, limit):
+            return [[index, 1, 1, 1, 100 + index, 1] for index in range(limit)]
+
+    class Provider:
+        instances = []
+
+        def __init__(self, **_kwargs):
+            market = "spot" if not self.instances else "perp"
+            self.exchange = Exchange(fail_load=market == failed_market)
+            self.closed = False
+            self.instances.append(self)
+
+        def _ensure_primary(self):
+            return self.exchange
+
+        async def close(self):
+            self.closed = True
+
+    async def fetch_single(_exchange, asset, *_args, **_kwargs):
+        fetched_assets.append(asset["id"])
+        return {"asset_id": asset["id"], "market_type": asset["market_type"]}
+
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
+    monkeypatch.setattr(features, "_fetch_single_feature", fetch_single)
+    monkeypatch.setattr(
+        features,
+        "instrument_background_from_metadata",
+        lambda _value: {"asset_class": "crypto", "product_kind": "crypto_spot"},
+    )
+
+    collected = await features.collect_features(assets, cfg)
+
+    expected_asset = "perp-sol" if failed_market == "spot" else "spot-eth"
+    assert fetched_assets == [expected_asset]
+    assert [row["asset_id"] for row in collected] == [expected_asset]
+    assert len(Provider.instances) == 2
+    assert all(provider.closed for provider in Provider.instances)
+
+
 def test_quote_volume_prefers_exchange_quote_volume():
     from aletheia.universe.features import _quote_volume_24h
 

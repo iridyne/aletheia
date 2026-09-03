@@ -1024,23 +1024,33 @@ async def collect_features(
         # --- Phase A: batch ticker fetch (spot + perp) ---
         spot_assets = [a for a in assets if not _is_derivatives_market(a.get("market_type"))]
         perp_assets = [a for a in assets if _is_derivatives_market(a.get("market_type"))]
-        spot_exchange = spot_provider._ensure_primary()
-        spot_exchange.options["defaultType"] = "spot"
-        await spot_exchange.load_markets()
+        spot_exchange = None
+        try:
+            spot_exchange = spot_provider._ensure_primary()
+            spot_exchange.options["defaultType"] = "spot"
+            await spot_exchange.load_markets()
+        except Exception as exc:
+            spot_exchange = None
+            logger.warning("Spot market bootstrap failed: %s", type(exc).__name__)
         perp_exchange = None
         if perp_assets:
             perp_provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
             providers.append(perp_provider)
-            perp_exchange = perp_provider._ensure_primary()
-            perp_exchange.options["defaultType"] = "swap"
-            await perp_exchange.load_markets()
+            try:
+                perp_exchange = perp_provider._ensure_primary()
+                perp_exchange.options["defaultType"] = "swap"
+                await perp_exchange.load_markets()
+            except Exception as exc:
+                perp_exchange = None
+                logger.warning("Perp market bootstrap failed: %s", type(exc).__name__)
 
         spot_symbols = list(dict.fromkeys(a["symbol"] for a in spot_assets if a.get("symbol")))
         perp_symbols = list(dict.fromkeys(to_ccxt_perp(a["symbol"]) for a in perp_assets if a.get("symbol")))
 
         tickers: dict = {}
 
-        tickers.update(await _chunked_fetch_tickers(spot_exchange, spot_symbols))
+        if spot_symbols and spot_exchange is not None:
+            tickers.update(await _chunked_fetch_tickers(spot_exchange, spot_symbols))
 
         if perp_symbols and perp_exchange is not None:
             tickers.update(await _chunked_fetch_tickers(perp_exchange, perp_symbols))
@@ -1082,7 +1092,7 @@ async def collect_features(
             )) or {}).get("kind") == "crypto"
             for asset, _ticker in candidates
         )
-        if needs_btc_context:
+        if needs_btc_context and spot_exchange is not None:
             try:
                 btc_ohlcv = await asyncio.wait_for(
                     spot_exchange.fetch_ohlcv(
