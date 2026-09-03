@@ -9,7 +9,7 @@ from aletheia.universe.candidate_eligibility import canonical_fingerprint
 from aletheia.universe.continuous_scoring import ComponentScore, score_all_continuous_families
 
 
-OPPORTUNITY_EVIDENCE_VERSION = "universe-opportunity-evidence/v1"
+OPPORTUNITY_EVIDENCE_VERSION = "universe-opportunity-evidence/v2"
 _FAMILY_TO_ROLE = {
     "momentum": "continuation",
     "short_bias": "continuation",
@@ -22,6 +22,7 @@ _FAMILY_TO_ROLE = {
 class MechanismEvidenceV1:
     mechanism_id: Literal["continuation", "reversal", "positioning_forced_flow", "information_catalyst"]
     mechanism_version: str
+    source_component_id: str | None
     applicability: Literal["applicable", "not_applicable", "unavailable"]
     direction: Literal["long", "short"] | None
     point_strength: float | None
@@ -35,7 +36,7 @@ class MechanismEvidenceV1:
 
 @dataclass(frozen=True)
 class OpportunityEvidenceBundleV1:
-    version: Literal["universe-opportunity-evidence/v1"]
+    version: Literal["universe-opportunity-evidence/v2"]
     candidate_key: str
     feature_snapshot_id: str | None
     source_cutoff_at: str
@@ -50,31 +51,35 @@ class OpportunityEvidenceBundleV1:
 
 
 def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> MechanismEvidenceV1:
+    primary = (
+        next((item for item in components if item.component_id == "momentum"), None)
+        if mechanism_id == "continuation"
+        else components[0] if components else None
+    )
     usable = [item for item in components if item.valid and item.direction in {"long", "short"}]
+    if primary not in usable:
+        usable = []
     if not usable:
         reasons = tuple(sorted({item.invalid_reason or "direction_unavailable" for item in components}))
         return MechanismEvidenceV1(
-            mechanism_id, f"{mechanism_id}/v1", "unavailable", None, None, None, None,
+            mechanism_id, f"{mechanism_id}/v1", primary.component_id if primary else None,
+            "unavailable", None, None, None, None,
             (), (), reasons, reasons,
         )
-    directions = {item.direction for item in usable}
-    if len(directions) > 1:
-        refs = tuple(sorted({e.raw_feature_id for item in usable for e in item.evidence}))
-        groups = tuple(sorted({e.evidence_group_id for item in usable for e in item.evidence}))
-        return MechanismEvidenceV1(
-            mechanism_id, f"{mechanism_id}/v1", "unavailable", None, None, None, None,
-            refs, groups, ("mechanism_direction_conflict",), ("direction_resolution",),
-        )
-    # One mechanism keeps one witness: choose the most conservative usable source,
-    # never add Momentum and Short Bias as if they were independent evidence.
-    selected = max(usable, key=lambda item: (item.pessimistic_score, item.point_score, item.component_id))
+    selected = primary
+    assert selected is not None
     refs = tuple(sorted({e.raw_feature_id for e in selected.evidence}))
     groups = tuple(sorted({e.evidence_group_id for e in selected.evidence}))
     point = max(0.0, min(100.0, float(selected.point_score)))
     pessimistic = max(0.0, min(point, float(selected.pessimistic_score)))
+    diagnostics = tuple(
+        f"diagnostic_component:{item.component_id}:{item.direction}"
+        for item in usable if item is not selected
+    )
     return MechanismEvidenceV1(
         mechanism_id,
         f"{mechanism_id}/v1",
+        selected.component_id,
         "applicable",
         selected.direction,
         point,
@@ -82,7 +87,7 @@ def _project(mechanism_id: str, components: Sequence[ComponentScore]) -> Mechani
         None,
         refs,
         groups,
-        (f"projected_from:{selected.component_id}",),
+        (f"projected_from:{selected.component_id}", *diagnostics),
         (),
     )
 
@@ -104,7 +109,7 @@ def build_opportunity_evidence(
         _project("reversal", grouped["reversal"]),
         _project("positioning_forced_flow", grouped["positioning_forced_flow"]),
         MechanismEvidenceV1(
-            "information_catalyst", "information_catalyst/v1", "unavailable", None,
+            "information_catalyst", "information_catalyst/v1", None, "unavailable", None,
             None, None, None, (), (), ("external_event_provenance_unavailable",),
             ("external_event_provenance",),
         ),

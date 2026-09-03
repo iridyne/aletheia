@@ -22,16 +22,18 @@ The V1 chain is:
    `eligible`, `ineligible`, or `unavailable`, separately from actionability.
    Missing volume, spread, depth, freshness, price, provenance, or identity is
    unavailable. Volatility is never a Hard Gate.
-2. `universe-opportunity-evidence/v1` projects the existing six families into
+2. `universe-opportunity-evidence/v2` projects the existing six families into
    Continuation, Reversal, Positioning/Forced Flow, and Information/Catalyst,
    with volatility/regime/shock as context. Mechanism strengths are ordinal,
    same-run percentiles require 20 comparable rows, and raw evidence is never
-   duplicated or summed across mechanisms.
+   duplicated or summed across mechanisms. Continuation uses Momentum as its
+   typed primary source; Short Bias is diagnostic evidence rather than a
+   correlated best-of authority.
 3. `universe-economic-utility/v1` compares mechanisms only within the same
    exact venue, market type, and direction in 4h cost-after percentage points.
    It uses selected and dropped canonical outcomes, one
-   economic observation per instrument/direction occurrence, scanner-run
-   cluster inference, `K=50` parent shrinkage, one cluster-SE uncertainty
+   economic observation per instrument/direction/non-overlapping 4h UTC block,
+   `K=50` parent shrinkage, one independent-unit SE uncertainty
    penalty, explicit minimum support, and fail-closed tail status.
 4. `candidate-selection-utility/v1` chooses the highest available mechanism,
    never sums utilities, rejects unresolved Long/Short conflicts, applies
@@ -77,11 +79,26 @@ leaves its cluster incomplete. Negative,
 neutral, insufficient, unavailable, and invalid are valid
 terminal/reporting states and grant no authority.
 
-The admitted epoch, its frozen training denominator, and their canonical
-outcomes are retained for fixed-look replay rather than entering the generic
-30-day Twin/outcome prune. Runtime Session attestations referenced by those
-outcomes are retained with them. If configured policy state is unreadable, Candidate
-evidence pruning fails closed.
+Historical outcomes are indexed once per refresh and then looked up per
+Candidate/mechanism, making computation `O(history + candidates)` rather than
+re-scanning history per mechanism. Non-authoritative Shadow first checks the
+existing 55-minute persistence cadence, so a skipped capture does not load or
+aggregate historical outcomes. Record v2 stores compact row-local evidence and
+keeps shared policy/training fingerprints in the batch. For the 20-Candidate
+regression fixture this is 77,016 payload bytes/run, 27 runs/day, and 1.983 MiB/day;
+the rolling 30-day Twin window projects to 59.493 MiB. For an admitted epoch,
+the immutable evidence prefix through its first admission audit and the global
+frozen training denominator remain protected. Later operational telemetry uses
+the ordinary 30-day window, so an active authority does not grow storage without
+bound. A protected epoch with no admission audit fails closed and retains all
+evidence.
+
+The admitted epoch's evidence prefix, frozen training denominator, and linked
+canonical outcomes are retained for fixed-look replay rather than entering the
+generic 30-day Twin/outcome prune. Post-admission rows and their outcomes enter
+that prune after 30 days. Runtime Session attestations referenced by retained
+outcomes are retained with them. If configured policy state is unreadable,
+Candidate evidence pruning fails closed.
 At a frozen cutoff, a row settled later remains a pending denominator row with
 no post-cutoff settlement fields, while a post-cutoff exposure is excluded. The
 training cohort cannot disappear, expand, or borrow future facts.
@@ -110,10 +127,15 @@ that same qualification before every target publication. Missing, stale,
 negative, neutral, insufficient, or invalid evidence fails closed and preserves
 the previous active snapshot.
 
-Qualification requires attested capture and settlement Runtime Sessions, one
-consistent deployed commit and behavior fingerprint, and equality with the
-runtime identity frozen in the policy epoch. Missing, mixed, or unattested
-provenance is invalid evidence, never a local-checkout inference.
+Qualification requires independently attested capture and settlement Runtime
+Sessions. Commit SHA and process-wide behavior fingerprints remain provenance
+but are not Candidate economic identity: unrelated deployments may coexist in
+one fixed look. Economic comparability is frozen by the explicit semantic
+manifest (Hard Gate, Opportunity Evidence, scorer, estimator, outcome, cost,
+and Candidate-selection contract versions) plus policy/cost inputs. A semantic
+contract change rotates the epoch even if the Git commit string does not.
+Missing, contradictory, or unattested provenance is invalid evidence, never a
+local-checkout inference.
 
 An active target snapshot may intentionally contain no members when every row
 is below-floor or unavailable. An admitted scan with no currently available
@@ -131,6 +153,10 @@ An authoritative refresh writes the target selection evidence, canonical 4h
 outcomes, Candidate rows, Planning Generation handoffs, and scanner completion
 in one SQLite publication transaction. Candidate rows expose the target Utility
 separately and retain `total_score` only as named legacy compatibility evidence.
+They also persist typed `opportunity_mechanism`, mechanism version, source
+component, source cutoff, and evidence hash fields; downstream code does not
+recover authority from reason strings. This is the minimum carrier repair only;
+mechanism-aware Planning identity/context/compiler work remains owned by #2791.
 An explicit audited rollback restores `legacy_total_score_v1` without deleting
 or relabeling historical evidence.
 
@@ -139,5 +165,6 @@ or relabeling historical evidence.
 Issue #2556 owns a separate frozen Observation Lab generation. This path never
 reads, relabels, backfills, or mutates its benchmark records, identities, cost
 model, stopping rule, or result package. Code/tests prove contract behavior and
-replayability, not profitability, deployment, qualification, or production
-authority.
+replayability. This implementation does not itself prove a positive prospective
+qualification, enable production authority, demonstrate profitability, or prove
+the exact code is deployed on Fedora.

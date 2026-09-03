@@ -822,6 +822,11 @@ export interface Candidate {
   candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1'
   candidate_selection_policy_epoch: string | null
   candidate_selection_utility_pct: number | null
+  opportunity_mechanism: string | null
+  opportunity_mechanism_version: string | null
+  opportunity_source_component: string | null
+  opportunity_source_cutoff_at: string | null
+  opportunity_evidence_hash: string | null
   opportunity_score: number | null
   tradability_score: number | null
   liquidity_score: number | null
@@ -945,6 +950,11 @@ export interface CandidateAttention {
   candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1' | null
   candidate_selection_policy_epoch: string | null
   candidate_selection_utility_pct: number | null
+  opportunity_mechanism: string | null
+  opportunity_mechanism_version: string | null
+  opportunity_source_component: string | null
+  opportunity_source_cutoff_at: string | null
+  opportunity_evidence_hash: string | null
   entry_price_usd: number | null
   liquidity_score: number | null
   spread_bps: number | null
@@ -968,6 +978,11 @@ export interface CandidateWorkbenchRow {
   candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1'
   candidate_selection_policy_epoch: string | null
   candidate_selection_utility_pct: number | null
+  opportunity_mechanism: string | null
+  opportunity_mechanism_version: string | null
+  opportunity_source_component: string | null
+  opportunity_source_cutoff_at: string | null
+  opportunity_evidence_hash: string | null
   scanner_family: string | null
   scanner_direction: 'long' | 'short' | null
   inclusion_reason: string | null

@@ -305,8 +305,6 @@ async def _persist_twin_shadow_nonfatal(
             kwargs.get("scanner_run_id", "not_available"),
         )
         return 0
-
-
 async def _persist_relative_rank_shadow_nonfatal(*args, **kwargs) -> int:
     return await _persist_twin_shadow_nonfatal(*args, **kwargs)
 
@@ -397,6 +395,8 @@ async def _persist_candidate_selection_shadow_nonfatal(
         logger.info(
             "Candidate Selection Shadow skipped while Learning controls the legacy arm"
         )
+        return 0
+    if not repo.universe_twin_shadow_capture_due(captured_at):
         return 0
 
     def build_and_persist() -> int:
@@ -616,6 +616,11 @@ def _member_fingerprint(
                 str(item.get("candidate_selection_policy") or "legacy_total_score_v1"),
                 str(item.get("candidate_selection_policy_epoch") or ""),
                 item.get("candidate_selection_utility_pct"),
+                str(item.get("opportunity_mechanism") or ""),
+                str(item.get("opportunity_mechanism_version") or ""),
+                str(item.get("opportunity_source_component") or ""),
+                str(item.get("opportunity_source_cutoff_at") or ""),
+                str(item.get("opportunity_evidence_hash") or ""),
                 bool(item.get("execution_eligible", True)),
                 int(item.get("ttl_sec") or 0),
                 _risk_flags(item.get("risk_flags")),
@@ -1454,7 +1459,6 @@ class UniverseService:
                             candidate_selection_authority_bundle.batch,
                             candidate_selection_authority_bundle.evidence,
                             outcomes=candidate_selection_authority_bundle.outcomes,
-                            min_interval_sec=0,
                         )
                     repo.update_universe_scanner_run(
                         run.id,
@@ -1574,6 +1578,11 @@ class UniverseService:
                     candidate_selection_utility_pct=item.get(
                         "candidate_selection_utility_pct",
                     ),
+                    opportunity_mechanism=item.get("opportunity_mechanism"),
+                    opportunity_mechanism_version=item.get("opportunity_mechanism_version"),
+                    opportunity_source_component=item.get("opportunity_source_component"),
+                    opportunity_source_cutoff_at=item.get("opportunity_source_cutoff_at"),
+                    opportunity_evidence_hash=item.get("opportunity_evidence_hash"),
                 )
                 member_models.append(member)
                 inserted_members.append(
@@ -1599,6 +1608,11 @@ class UniverseService:
                         "candidate_selection_utility_pct": item.get(
                             "candidate_selection_utility_pct",
                         ),
+                        "opportunity_mechanism": item.get("opportunity_mechanism"),
+                        "opportunity_mechanism_version": item.get("opportunity_mechanism_version"),
+                        "opportunity_source_component": item.get("opportunity_source_component"),
+                        "opportunity_source_cutoff_at": item.get("opportunity_source_cutoff_at"),
+                        "opportunity_evidence_hash": item.get("opportunity_evidence_hash"),
                         "learning_candidate_key": item.get("learning_candidate_key"),
                         "learning_exposure_id": item.get("learning_exposure_id"),
                         "instrument_background": item.get("instrument_background"),

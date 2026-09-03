@@ -1,8 +1,9 @@
-"""Transparent clustered 4h cost-after Candidate utility estimator."""
+"""Transparent 4h cost-after Candidate utility on independent UTC blocks."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import math
 from numbers import Real
 from statistics import mean, stdev
@@ -15,7 +16,7 @@ from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
 ECONOMIC_UTILITY_VERSION = "universe-economic-utility/v1"
-ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v1"
+ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v2"
 CANDIDATE_SELECTION_OUTCOME_VERSION = "candidate-selection-utility-outcome/v1"
 _SHRINKAGE_K = 50
 _TAIL_HARM_FLOOR_PCT = -15.0
@@ -33,11 +34,203 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
         return None
     ordered = sorted(values)
     index = (len(ordered) - 1) * percentile
-    lower = math.floor(index)
-    upper = math.ceil(index)
+    lower, upper = math.floor(index), math.ceil(index)
     if lower == upper:
         return ordered[lower]
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
+
+
+def _cost_assumptions(value: Mapping[str, object] | None) -> dict[str, float] | None:
+    try:
+        result = {
+            key: float((value or {})[key]) for key in ("execution_fee_pct", "slippage_bps", "fallback_spread_bps")
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    return result if all(math.isfinite(item) for item in result.values()) else None
+
+
+def _utc_block(entry_at: datetime) -> str:
+    entry_at = entry_at.astimezone(timezone.utc)
+    return entry_at.replace(
+        hour=(entry_at.hour // 4) * 4,
+        minute=0,
+        second=0,
+        microsecond=0,
+    ).isoformat()
+
+
+def _independent_values(
+    rows: Sequence[Mapping[str, object]],
+) -> tuple[list[float], list[float]]:
+    """Collapse repeated windows into instrument/direction/non-overlapping 4h units."""
+
+    grouped: dict[tuple[str, str, str, str, str], list[Mapping[str, object]]] = {}
+    for row in rows:
+        entry = parse_utc_instant(row.get("entry_ts"))
+        if entry is None:
+            continue
+        key = (
+            str(row.get("venue") or ""),
+            str(row.get("market_type") or "spot"),
+            str(row.get("symbol") or ""),
+            str(row.get("direction") or ""),
+            _utc_block(entry),
+        )
+        grouped.setdefault(key, []).append(row)
+    net_values = [mean(float(row["net_return_pct"]) for row in values) for _, values in sorted(grouped.items())]
+    mae_values = [
+        max(abs(float(row["mae_pct"])) for row in values)
+        for _, values in sorted(grouped.items())
+        if all(_finite(row.get("mae_pct")) is not None for row in values)
+    ]
+    return net_values, mae_values
+
+
+@dataclass(frozen=True)
+class _CohortSummary:
+    parent_values: tuple[float, ...]
+    child_values: Mapping[int, tuple[float, ...]]
+    child_mae_values: Mapping[int, tuple[float, ...]]
+    child_raw_min: Mapping[int, float | None]
+    dates: frozenset[object]
+    symbols: frozenset[str]
+    coverage: float
+    minimum_edge: float | None
+    source_outcome_fingerprint: str | None
+    identity_invalid: bool
+
+
+@dataclass(frozen=True)
+class EconomicUtilityCohortIndex:
+    """One frozen O(history) index reused by every Candidate lookup in a refresh."""
+
+    source_cutoff_at: str
+    cost_assumptions: Mapping[str, float] | None
+    cohorts: Mapping[tuple[str, str, str, str], _CohortSummary]
+
+
+def build_economic_utility_cohort_index(
+    outcomes: Sequence[Mapping[str, object]],
+    *,
+    source_cutoff_at: str,
+    cost_assumptions: Mapping[str, object] | None = None,
+) -> EconomicUtilityCohortIndex:
+    cutoff = parse_utc_instant(source_cutoff_at)
+    if cutoff is None:
+        raise ValueError("source_cutoff_at_invalid")
+    expected_costs = _cost_assumptions(cost_assumptions)
+    by_cohort: dict[tuple[str, str, str, str], dict[str, Mapping[str, object]]] = {}
+    invalid: set[tuple[str, str, str, str]] = set()
+    comparable = (
+        "scanner_run_id",
+        "status",
+        "entry_ts",
+        "settled_at",
+        "symbol",
+        "net_return_pct",
+        "mae_pct",
+        "cost_model_version",
+        "min_tradable_edge_pct",
+        "strength_quintile",
+        "mechanism_behavior_version",
+        "outcome_contract_version",
+        "cost_assumptions",
+        "estimated_fee_pct",
+        "estimated_spread_slippage_pct",
+        "estimated_funding_pct",
+    )
+    for row in outcomes:
+        entry = parse_utc_instant(row.get("entry_ts"))
+        settled = parse_utc_instant(row.get("settled_at"))
+        if (
+            row.get("horizon") != "4h"
+            or row.get("mechanism_behavior_version") != OPPORTUNITY_EVIDENCE_VERSION
+            or row.get("outcome_contract_version") != CANDIDATE_SELECTION_OUTCOME_VERSION
+            or row.get("cost_assumptions") != expected_costs
+            or entry is None
+            or entry > cutoff
+            or (row.get("status") == "settled" and (settled is None or settled > cutoff))
+        ):
+            continue
+        key = (
+            str(row.get("mechanism_id") or ""),
+            str(row.get("direction") or ""),
+            str(row.get("venue") or ""),
+            str(row.get("market_type") or "spot"),
+        )
+        identity = str(row.get("outcome_candidate_key") or "")
+        if not identity:
+            invalid.add(key)
+            continue
+        previous = by_cohort.setdefault(key, {}).get(identity)
+        if previous is not None and any(previous.get(field) != row.get(field) for field in comparable):
+            invalid.add(key)
+            continue
+        by_cohort[key].setdefault(identity, row)
+
+    summaries: dict[tuple[str, str, str, str], _CohortSummary] = {}
+    for key, identified in by_cohort.items():
+        parent_rows = list(identified.values())
+        complete = [
+            row
+            for row in parent_rows
+            if row.get("status") == "settled"
+            and _finite(row.get("net_return_pct")) is not None
+            and row.get("cost_model_version") == COST_MODEL_VERSION
+            and row.get("scanner_run_id")
+        ]
+        parent_values, _ = _independent_values(complete)
+        child_values: dict[int, tuple[float, ...]] = {}
+        child_mae: dict[int, tuple[float, ...]] = {}
+        child_raw_min: dict[int, float | None] = {}
+        for quintile in range(1, 6):
+            rows = [row for row in complete if row.get("strength_quintile") == quintile]
+            values, maes = _independent_values(rows)
+            child_values[quintile] = tuple(values)
+            child_mae[quintile] = tuple(maes)
+            child_raw_min[quintile] = min(
+                (float(row["net_return_pct"]) for row in rows),
+                default=None,
+            )
+        edges = {_finite(row.get("min_tradable_edge_pct")) for row in complete}
+        edges.discard(None)
+        source_material = sorted(
+            (
+                {
+                    "outcome_candidate_key": row.get("outcome_candidate_key"),
+                    "scanner_run_id": row.get("scanner_run_id"),
+                    "net_return_pct": row.get("net_return_pct"),
+                    "mae_pct": row.get("mae_pct"),
+                    "estimated_fee_pct": row.get("estimated_fee_pct"),
+                    "estimated_spread_slippage_pct": row.get("estimated_spread_slippage_pct"),
+                    "estimated_funding_pct": row.get("estimated_funding_pct"),
+                    "min_tradable_edge_pct": row.get("min_tradable_edge_pct"),
+                    "cost_model_version": row.get("cost_model_version"),
+                    "mechanism_behavior_version": row.get("mechanism_behavior_version"),
+                    "outcome_contract_version": row.get("outcome_contract_version"),
+                    "cost_assumptions": row.get("cost_assumptions"),
+                    "settled_at": row.get("settled_at"),
+                }
+                for row in complete
+            ),
+            key=lambda row: (str(row["outcome_candidate_key"]), str(row["scanner_run_id"])),
+        )
+        summaries[key] = _CohortSummary(
+            tuple(parent_values),
+            child_values,
+            child_mae,
+            child_raw_min,
+            frozenset(
+                entry.date() for row in complete if (entry := parse_utc_instant(row.get("entry_ts"))) is not None
+            ),
+            frozenset(str(row.get("symbol")) for row in complete if row.get("symbol")),
+            len(complete) / len(parent_rows) if parent_rows else 0.0,
+            next(iter(edges)) if len(edges) == 1 else None,
+            canonical_fingerprint(source_material) if complete else None,
+            key in invalid,
+        )
+    return EconomicUtilityCohortIndex(source_cutoff_at, expected_costs, summaries)
 
 
 @dataclass(frozen=True)
@@ -85,110 +278,52 @@ def estimate_economic_utility(
     venue: str,
     market_type: str,
     strength_percentile: float,
-    outcomes: Sequence[Mapping[str, object]],
-    source_cutoff_at: str,
+    outcomes: Sequence[Mapping[str, object]] = (),
+    source_cutoff_at: str | None = None,
     cost_assumptions: Mapping[str, object] | None = None,
+    cohort_index: EconomicUtilityCohortIndex | None = None,
 ) -> EconomicUtilityEstimateV1:
     if not math.isfinite(strength_percentile) or not 0 <= strength_percentile <= 1:
         raise ValueError("strength_percentile_out_of_range")
     quintile = min(5, int(strength_percentile * 5) + 1)
-    cutoff = parse_utc_instant(source_cutoff_at)
-    if cutoff is None:
-        raise ValueError("source_cutoff_at_invalid")
-    try:
-        expected_costs = {
-            key: float((cost_assumptions or {})[key])
-            for key in ("execution_fee_pct", "slippage_bps", "fallback_spread_bps")
-        }
-    except (KeyError, TypeError, ValueError):
-        expected_costs = None
-    if expected_costs is not None and any(not math.isfinite(value) for value in expected_costs.values()):
-        expected_costs = None
-    parent_by_identity: dict[str, Mapping[str, object]] = {}
-    identity_invalid = False
-    for row in outcomes:
-        entry = parse_utc_instant(row.get("entry_ts"))
-        settled = parse_utc_instant(row.get("settled_at"))
-        if (
-            row.get("mechanism_id") == mechanism_id
-            and row.get("direction") == direction
-            and str(row.get("venue") or "") == venue
-            and str(row.get("market_type") or "spot") == market_type
-            and row.get("horizon") == "4h"
-            and row.get("mechanism_behavior_version") == OPPORTUNITY_EVIDENCE_VERSION
-            and row.get("outcome_contract_version") == CANDIDATE_SELECTION_OUTCOME_VERSION
-            and row.get("cost_assumptions") == expected_costs
-            and entry is not None and entry <= cutoff
-            and (
-                row.get("status") != "settled"
-                or (settled is not None and settled <= cutoff)
-            )
-        ):
-            identity = str(row.get("outcome_candidate_key") or "")
-            if not identity:
-                identity_invalid = True
-                continue
-            previous = parent_by_identity.get(identity)
-            comparable = (
-                "scanner_run_id", "status", "entry_ts", "settled_at", "symbol",
-                "net_return_pct", "mae_pct", "cost_model_version",
-                "min_tradable_edge_pct", "strength_quintile",
-                "mechanism_behavior_version", "outcome_contract_version",
-                "cost_assumptions", "estimated_fee_pct",
-                "estimated_spread_slippage_pct", "estimated_funding_pct",
-            )
-            if previous is not None and any(previous.get(key) != row.get(key) for key in comparable):
-                identity_invalid = True
-                continue
-            parent_by_identity.setdefault(identity, row)
-    parent_rows = list(parent_by_identity.values())
-    complete = [
-        row for row in parent_rows
-        if row.get("status") == "settled"
-        and _finite(row.get("net_return_pct")) is not None
-        and row.get("cost_model_version") == COST_MODEL_VERSION
-        and row.get("scanner_run_id")
-    ]
-    coverage = len(complete) / len(parent_rows) if parent_rows else 0.0
-
-    def cluster_means(rows: Sequence[Mapping[str, object]]) -> list[float]:
-        grouped: dict[str, list[float]] = {}
-        seen: set[str] = set()
-        for row in rows:
-            observation = str(row.get("outcome_candidate_key") or "")
-            if not observation or observation in seen:
-                continue
-            seen.add(observation)
-            grouped.setdefault(str(row["scanner_run_id"]), []).append(float(row["net_return_pct"]))
-        return [mean(values) for _, values in sorted(grouped.items())]
-
-    parent_clusters = cluster_means(complete)
-    child_rows = [row for row in complete if row.get("strength_quintile") == quintile]
-    child_clusters = cluster_means(child_rows)
-    dates = {
-        parsed.date()
-        for row in complete
-        if (parsed := parse_utc_instant(row.get("entry_ts"))) is not None
-    }
-    symbols = {str(row.get("symbol") or "") for row in complete if row.get("symbol")}
-    parent_supported = (
-        len(parent_clusters) >= 50 and len(dates) >= 10 and len(symbols) >= 5 and coverage >= 0.80
+    if cohort_index is None:
+        if source_cutoff_at is None:
+            raise ValueError("source_cutoff_at_invalid")
+        cohort_index = build_economic_utility_cohort_index(
+            outcomes,
+            source_cutoff_at=source_cutoff_at,
+            cost_assumptions=cost_assumptions,
+        )
+    summary = cohort_index.cohorts.get((mechanism_id, direction, venue, market_type))
+    parent_values = summary.parent_values if summary else ()
+    child_values = summary.child_values.get(quintile, ()) if summary else ()
+    child_mae = summary.child_mae_values.get(quintile, ()) if summary else ()
+    coverage = summary.coverage if summary else 0.0
+    parent_supported = bool(
+        summary
+        and len(parent_values) >= 50
+        and len(summary.dates) >= 10
+        and len(summary.symbols) >= 5
+        and coverage >= 0.80
     )
-    child_supported = len(child_clusters) >= 20
-    status: Literal["available", "diagnostic_parent_only", "unavailable"]
-    status = "available" if parent_supported and child_supported else "diagnostic_parent_only" if parent_supported else "unavailable"
-    if identity_invalid:
+    child_supported = len(child_values) >= 20
+    status: Literal["available", "diagnostic_parent_only", "unavailable"] = (
+        "available"
+        if parent_supported and child_supported
+        else "diagnostic_parent_only"
+        if parent_supported
+        else "unavailable"
+    )
+    if summary and summary.identity_invalid:
         status = "unavailable"
-    net_values = [float(row["net_return_pct"]) for row in child_rows]
-    mae_values = [abs(float(value)) for row in child_rows if (value := _finite(row.get("mae_pct"))) is not None]
-    if net_values and len(mae_values) == len(child_rows):
-        worst_count = max(1, math.ceil(len(net_values) * 0.05))
-        minimum = min(net_values)
+    if child_values and len(child_mae) == len(child_values):
+        worst_count = max(1, math.ceil(len(child_values) * 0.05))
+        raw_min = summary.child_raw_min.get(quintile) if summary else None
         tail = TailEvidenceV1(
-            minimum,
-            mean(sorted(net_values)[:worst_count]),
-            _percentile(mae_values, 0.95),
-            "harm" if minimum < _TAIL_HARM_FLOOR_PCT else "clear",
+            min(child_values),
+            mean(sorted(child_values)[:worst_count]),
+            _percentile(child_mae, 0.95),
+            "harm" if raw_min is not None and raw_min < _TAIL_HARM_FLOOR_PCT else "clear",
         )
     else:
         tail = TailEvidenceV1(None, None, None, "unavailable")
@@ -196,26 +331,17 @@ def estimate_economic_utility(
         status = "unavailable"
     expected = standard_error = utility = None
     if status == "available":
-        parent_mean = mean(parent_clusters)
-        child_mean = mean(child_clusters)
-        expected = (len(child_clusters) * child_mean + _SHRINKAGE_K * parent_mean) / (
-            len(child_clusters) + _SHRINKAGE_K
+        expected = (len(child_values) * mean(child_values) + _SHRINKAGE_K * mean(parent_values)) / (
+            len(child_values) + _SHRINKAGE_K
         )
-        standard_error = stdev(child_clusters) / math.sqrt(len(child_clusters)) if len(child_clusters) > 1 else None
-        if standard_error is None:
-            status = "diagnostic_parent_only"
-            expected = None
-        else:
-            utility = expected - standard_error
-            if tail.status != "clear":
-                utility = None
-    edge_values = {_finite(row.get("min_tradable_edge_pct")) for row in complete}
-    edge_values.discard(None)
-    minimum_edge = next(iter(edge_values)) if len(edge_values) == 1 else None
+        standard_error = stdev(child_values) / math.sqrt(len(child_values))
+        utility = expected - standard_error if tail.status == "clear" else None
+    minimum_edge = summary.minimum_edge if summary else None
     if status == "available" and minimum_edge is None:
         status, expected, standard_error, utility = "unavailable", None, None, None
     cohort = {
         "version": ECONOMIC_UTILITY_VERSION,
+        "independent_unit": "instrument_direction_4h_utc_block/v1",
         "mechanism_id": mechanism_id,
         "direction": direction,
         "venue": venue,
@@ -225,28 +351,11 @@ def estimate_economic_utility(
         "cost_model_version": COST_MODEL_VERSION,
         "mechanism_behavior_version": OPPORTUNITY_EVIDENCE_VERSION,
         "outcome_contract_version": CANDIDATE_SELECTION_OUTCOME_VERSION,
-        "cost_assumptions": expected_costs,
+        "cost_assumptions": cohort_index.cost_assumptions,
     }
-    source_material = sorted([
-        {
-            "outcome_candidate_key": row.get("outcome_candidate_key"),
-            "scanner_run_id": row.get("scanner_run_id"),
-            "net_return_pct": row.get("net_return_pct"),
-            "mae_pct": row.get("mae_pct"),
-            "estimated_fee_pct": row.get("estimated_fee_pct"),
-            "estimated_spread_slippage_pct": row.get("estimated_spread_slippage_pct"),
-            "estimated_funding_pct": row.get("estimated_funding_pct"),
-            "min_tradable_edge_pct": row.get("min_tradable_edge_pct"),
-            "cost_model_version": row.get("cost_model_version"),
-            "mechanism_behavior_version": row.get("mechanism_behavior_version"),
-            "outcome_contract_version": row.get("outcome_contract_version"),
-            "cost_assumptions": row.get("cost_assumptions"),
-            "settled_at": row.get("settled_at"),
-        }
-        for row in complete
-    ], key=lambda row: (str(row["outcome_candidate_key"]), str(row["scanner_run_id"])))
     estimator = {
         "version": ECONOMIC_ESTIMATOR_VERSION,
+        "independent_unit": "instrument_direction_4h_utc_block/v1",
         "shrinkage_k": _SHRINKAGE_K,
         "uncertainty_multiplier": 1.0,
         "parent_min_clusters": 50,
@@ -274,16 +383,21 @@ def estimate_economic_utility(
         minimum_edge,
         tail,
         canonical_fingerprint(cohort),
-        canonical_fingerprint(source_material) if complete else None,
+        summary.source_outcome_fingerprint if summary else None,
         canonical_fingerprint(estimator),
-        len(parent_clusters),
-        len(child_clusters),
+        len(parent_values),
+        len(child_values),
         coverage,
     )
 
 
 __all__ = [
-    "CANDIDATE_SELECTION_OUTCOME_VERSION", "ECONOMIC_ESTIMATOR_VERSION",
-    "ECONOMIC_UTILITY_VERSION", "EconomicUtilityEstimateV1",
-    "TailEvidenceV1", "estimate_economic_utility",
+    "CANDIDATE_SELECTION_OUTCOME_VERSION",
+    "ECONOMIC_ESTIMATOR_VERSION",
+    "ECONOMIC_UTILITY_VERSION",
+    "EconomicUtilityCohortIndex",
+    "EconomicUtilityEstimateV1",
+    "TailEvidenceV1",
+    "build_economic_utility_cohort_index",
+    "estimate_economic_utility",
 ]

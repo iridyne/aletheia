@@ -288,9 +288,29 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-            f"aletheia-sqlite-v{version}" for version in range(2, 65)
+            f"aletheia-sqlite-v{version}" for version in range(2, 66)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v64"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v65"
+    connection.close()
+
+
+def test_candidate_mechanism_handoff_v65_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE universe_members (id TEXT PRIMARY KEY)")
+
+    migrations._apply_candidate_mechanism_handoff_v65(connection)
+    migrations._apply_candidate_mechanism_handoff_v65(connection)
+
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(universe_members)")}
+    assert {
+        "opportunity_mechanism",
+        "opportunity_mechanism_version",
+        "opportunity_source_component",
+        "opportunity_source_cutoff_at",
+        "opportunity_evidence_hash",
+    } <= columns
     connection.close()
 
 
@@ -755,8 +775,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260903_0063_paper_entry_execution_v64",
-        "aletheia-sqlite-v64",
+        "20260903_0064_candidate_mechanism_handoff_v65",
+        "aletheia-sqlite-v65",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")

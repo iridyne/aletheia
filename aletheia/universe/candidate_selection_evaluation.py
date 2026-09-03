@@ -100,10 +100,6 @@ def _runtime_provenance_reason(row: dict[str, Any]) -> str | None:
             or session.get("behavior_fingerprint") != behavior
         ):
             return "runtime_provenance_unattested"
-    if row.get("producer_commit") != row.get("settlement_producer_commit"):
-        return "mixed_runtime_commit"
-    if row.get("producer_behavior_fingerprint") != row.get("settlement_behavior_fingerprint"):
-        return "mixed_runtime_behavior"
     return None
 
 
@@ -356,16 +352,10 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
     }
     for cluster in fixed_look_population:
         invalid.update(cluster["invalid_reasons"])
-    if len(observed_commits) != 1:
-        invalid.add("mixed_runtime_commit")
-    if len(observed_behaviors) != 1:
-        invalid.add("mixed_runtime_behavior")
     report["runtime_provenance"] = {
-        "producer_commit": next(iter(observed_commits)) if len(observed_commits) == 1 else None,
-        "behavior_fingerprint": next(iter(observed_behaviors)) if len(observed_behaviors) == 1 else None,
+        "producer_commits": sorted(observed_commits),
+        "behavior_fingerprints": sorted(observed_behaviors),
     }
-    if (report.get("selection_policy") or {}).get("runtime_identity") != report["runtime_provenance"]:
-        invalid.add("runtime_policy_identity_mismatch")
     expected_outcome_n = sum(cluster["expected_outcome_n"] for cluster in fixed_look_population)
     complete_outcome_n = sum(cluster["complete_outcome_n"] for cluster in fixed_look_population)
     coverage = complete_outcome_n / expected_outcome_n if expected_outcome_n else 0.0

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v64"
+SCHEMA_VERSION = "aletheia-sqlite-v65"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3328,6 +3328,20 @@ _CANDIDATE_SELECTION_UTILITY_COLUMNS = (
 )
 _CANDIDATE_SELECTION_UTILITY_CHECKSUM = hashlib.sha256(
     (repr(_CANDIDATE_SELECTION_UTILITY_COLUMNS) + "\ncandidate_selection_utility_v1").encode("utf-8")
+).hexdigest()
+
+_CANDIDATE_MECHANISM_HANDOFF_V65_COLUMNS = (
+    ("opportunity_mechanism", "universe_members", "TEXT"),
+    ("opportunity_mechanism_version", "universe_members", "TEXT"),
+    ("opportunity_source_component", "universe_members", "TEXT"),
+    ("opportunity_source_cutoff_at", "universe_members", "TEXT"),
+    ("opportunity_evidence_hash", "universe_members", "TEXT"),
+)
+_CANDIDATE_MECHANISM_HANDOFF_V65_CHECKSUM = hashlib.sha256(
+    (
+        repr(_CANDIDATE_MECHANISM_HANDOFF_V65_COLUMNS)
+        + "\ncandidate_mechanism_handoff_v1"
+    ).encode("utf-8")
 ).hexdigest()
 
 _PAPER_ENTRY_EXECUTION_V64_COLUMNS = (
@@ -6092,6 +6106,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260901_0053_universe_discovery_benchmark_v54": (
         "read-only prospective Universe discovery benchmark window and evidence storage"
     ),
+    "20260903_0064_candidate_mechanism_handoff_v65": (
+        "typed Candidate opportunity-mechanism evidence handoff"
+    ),
     "20260902_0057_paper_funding_revival_cursor_v58": (
         "durable round-robin cursor for terminal Paper funding revival"
     ),
@@ -6973,6 +6990,20 @@ def _apply_paper_entry_execution_v64(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_candidate_mechanism_handoff_v65(db: sqlite3.Connection) -> None:
+    """Add typed mechanism evidence without rewriting legacy Candidates."""
+
+    if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='universe_members'"
+    ).fetchone() is None:
+        return
+    existing = {str(row[1]) for row in db.execute("PRAGMA table_info(universe_members)")}
+    for column, table, column_type in _CANDIDATE_MECHANISM_HANDOFF_V65_COLUMNS:
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -7572,6 +7603,12 @@ _MIGRATIONS = (
         checksum=_PAPER_ENTRY_EXECUTION_V64_CHECKSUM,
         schema_version="aletheia-sqlite-v64",
         apply=_apply_paper_entry_execution_v64,
+    ),
+    MigrationStep(
+        migration_id="20260903_0064_candidate_mechanism_handoff_v65",
+        checksum=_CANDIDATE_MECHANISM_HANDOFF_V65_CHECKSUM,
+        schema_version="aletheia-sqlite-v65",
+        apply=_apply_candidate_mechanism_handoff_v65,
     ),
 )
 
