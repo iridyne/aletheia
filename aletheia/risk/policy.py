@@ -101,6 +101,7 @@ def risk_policy_hash(policy: ModeRiskPolicy) -> str:
     raw = json.dumps(
         policy.model_dump(mode="json"),
         ensure_ascii=False,
+        allow_nan=False,
         separators=(",", ":"),
         sort_keys=True,
     )

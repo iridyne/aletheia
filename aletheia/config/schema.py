@@ -537,15 +537,19 @@ class ModelsConfig(BaseModel):
 
 
 class StrictRiskPolicyModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        allow_inf_nan=False,
+        validate_assignment=True,
+    )
 
 
 class RiskCapitalPolicy(StrictRiskPolicyModel):
     # Existing v1/v2 policies intentionally migrate to account equity because
     # this default is merged underneath every persisted override.
     base_source: Literal["account_equity", "custom"] = "account_equity"
-    base_usdt: float = 100.0
-    max_position_margin_usdt: float = 50.0
+    base_usdt: float = Field(default=100.0, gt=0)
+    max_position_margin_usdt: float = Field(default=50.0, gt=0)
     # Per-symbol cumulative bound (CUM-ADD), expressed as a COUNT of full-size
     # entries — never a currency amount. Same-symbol adds average-merge into ONE
     # position, so the single-position cap does not bound repeated accumulation.
@@ -554,47 +558,47 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
     # entry is always exactly 1/N of the cap and can never be rejected by it at
     # any account size or leverage. A hardcoded dollar cap silently goes stale as
     # equity grows; a count cannot. 0 disables the check.
-    max_per_symbol_entries: int = 3
-    max_total_exposure_pct: float = 5.0
+    max_per_symbol_entries: int = Field(default=3, ge=0)
+    max_total_exposure_pct: float = Field(default=5.0, ge=0)
 
 
 class RiskLossPolicy(StrictRiskPolicyModel):
-    max_single_trade_risk_pct: float = 0.25
-    max_daily_loss_pct: float = 1.0
+    max_single_trade_risk_pct: float = Field(default=0.25, gt=0)
+    max_daily_loss_pct: float = Field(default=1.0, gt=0)
 
 
 class RiskPositionsPolicy(StrictRiskPolicyModel):
-    max_open_positions: int = 3
+    max_open_positions: int = Field(default=3, ge=1)
     allow_short: bool = True
 
 
 class RiskLeveragePolicy(StrictRiskPolicyModel):
-    futures_cap: int = 2
-    major_cap: int = 3
-    mid_cap: int = 2
-    alt_cap: int = 1
-    account_cap: float = 1.5
+    futures_cap: int = Field(default=2, ge=1)
+    major_cap: int = Field(default=3, ge=1)
+    mid_cap: int = Field(default=2, ge=1)
+    alt_cap: int = Field(default=1, ge=1)
+    account_cap: float = Field(default=1.5, ge=1)
 
 
 class RiskMarginPolicy(StrictRiskPolicyModel):
-    warning_ratio: float = 0.70
-    block_ratio: float = 0.85
-    min_entry_liquidation_buffer_pct: float = 5.0
-    runtime_liquidation_buffer_pct: float = 3.0
+    warning_ratio: float = Field(default=0.70, ge=0, le=1)
+    block_ratio: float = Field(default=0.85, ge=0, le=1)
+    min_entry_liquidation_buffer_pct: float = Field(default=5.0, gt=0)
+    runtime_liquidation_buffer_pct: float = Field(default=3.0, gt=0)
 
 
 class RiskCorrelationPolicy(StrictRiskPolicyModel):
     enabled: bool = True
-    max_sector_concentration_pct: float = 60.0
-    max_portfolio_beta: float = 3.0
-    min_positions_for_concentration: int = 4
+    max_sector_concentration_pct: float = Field(default=60.0, ge=0)
+    max_portfolio_beta: float = Field(default=3.0, ge=0)
+    min_positions_for_concentration: int = Field(default=4, ge=0)
 
 
 class RiskExitPolicy(StrictRiskPolicyModel):
     catastrophic_stop_enabled: bool = True
-    catastrophic_stop_pct: float = 10.0
-    catastrophic_stop_pct_serenity: float = 15.0
-    horizon_hard_backstop_mult: float = 3.0
+    catastrophic_stop_pct: float = Field(default=10.0, gt=0, le=100)
+    catastrophic_stop_pct_serenity: float = Field(default=15.0, gt=0, le=100)
+    horizon_hard_backstop_mult: float = Field(default=3.0, gt=0)
     # Horizon-due review may hold (roll the authored horizon) instead of
     # flattening. Default True is the safer behavior: expiry is not a forced
     # close. False restores close-or-explicit-extend.
@@ -602,19 +606,19 @@ class RiskExitPolicy(StrictRiskPolicyModel):
 
 
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
-    family_min_samples: int = 30
-    family_min_win_rate_pct: float = 50.0
+    family_min_samples: int = Field(default=30, ge=0)
+    family_min_win_rate_pct: float = Field(default=50.0, ge=0, le=100)
     # Exchange-demo entry quality (ignored on live when left at these defaults).
     # min_regime_confidence_to_enter <= 0 disables the confidence stand-down.
     # family_min_expectancy is None on live; 0.0 on demo means "must not be negative".
-    min_regime_confidence_to_enter: float = 0.0
+    min_regime_confidence_to_enter: float = Field(default=0.0, ge=0, le=1)
     sideways_standdown: bool = False
     family_min_expectancy: float | None = None
 
 
 class ModeRiskPolicy(StrictRiskPolicyModel):
-    policy_id: str
-    revision: int = 1
+    policy_id: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
     capital: RiskCapitalPolicy = Field(default_factory=RiskCapitalPolicy)
     loss: RiskLossPolicy = Field(default_factory=RiskLossPolicy)
     positions: RiskPositionsPolicy = Field(default_factory=RiskPositionsPolicy)
@@ -624,6 +628,51 @@ class ModeRiskPolicy(StrictRiskPolicyModel):
     exits: RiskExitPolicy = Field(default_factory=RiskExitPolicy)
     eligibility: RiskEligibilityPolicy | None = None
     auto_trip_mode_brake_on_daily_loss: bool = False
+
+
+LIVE_RISK_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
+    "loss.max_daily_loss_pct": (0.1, 20.0),
+    "loss.max_single_trade_risk_pct": (0.01, 10.0),
+    "capital.max_total_exposure_pct": (1.0, 50.0),
+    "capital.max_position_margin_usdt": (1.0, 100_000.0),
+    "capital.base_usdt": (1.0, 100_000.0),
+    "capital.max_per_symbol_entries": (0, 20),
+    "leverage.futures_cap": (1, 20),
+    "leverage.major_cap": (1, 10),
+    "leverage.mid_cap": (1, 5),
+    "leverage.alt_cap": (1, 3),
+    "leverage.account_cap": (1.0, 5.0),
+    "margin.min_entry_liquidation_buffer_pct": (1.0, 20.0),
+    "margin.runtime_liquidation_buffer_pct": (1.0, 20.0),
+    "margin.warning_ratio": (0.3, 0.95),
+    "margin.block_ratio": (0.5, 0.99),
+    "positions.max_open_positions": (1, 50),
+    "correlation.max_sector_concentration_pct": (10.0, 100.0),
+    "correlation.max_portfolio_beta": (0.5, 10.0),
+    "correlation.min_positions_for_concentration": (1, 200),
+    "eligibility.family_min_samples": (1, 500),
+    "eligibility.family_min_win_rate_pct": (0.0, 100.0),
+}
+
+
+def validate_mode_risk_policy(mode: Literal["demo", "live"], policy: ModeRiskPolicy) -> None:
+    """Validate the mode-aware contract at every Risk Policy ingress."""
+    invalid = []
+    if not policy.policy_id.strip():
+        invalid.append("policy_id")
+    if mode == "live":
+        if policy.eligibility is None:
+            invalid.append("eligibility")
+        for path, (lo, hi) in LIVE_RISK_POLICY_BOUNDS.items():
+            parent, _, child = path.partition(".")
+            group = getattr(policy, parent)
+            if group is None:
+                continue
+            value = float(getattr(group, child))
+            if not lo <= value <= hi:
+                invalid.append(path)
+    if invalid:
+        raise ValueError(f"Invalid risk policy fields: {sorted(invalid)}")
 
 
 def _legacy_mode_policy(data: dict, mode: str) -> dict:
@@ -837,6 +886,12 @@ class RiskConfig(BaseModel):
             )
         data["schema_version"] = 4
         return data
+
+    @model_validator(mode="after")
+    def validate_mode_policies(self):
+        validate_mode_risk_policy("demo", self.demo)
+        validate_mode_risk_policy("live", self.live)
+        return self
 
     def __setattr__(self, name: str, value) -> None:
         """Keep one-release legacy assignments synchronized with v2 policies."""

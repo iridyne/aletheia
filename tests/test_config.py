@@ -158,6 +158,28 @@ def test_restored_invalid_execution_cost_config_fails_closed(
 
 
 @pytest.mark.parametrize(
+    ("yaml_text", "field"),
+    [
+        ("risk:\n  demo:\n    loss:\n      max_daily_loss_pct: .nan\n", "max_daily_loss_pct"),
+        ("risk:\n  max_daily_loss_pct: .inf\n", "max_daily_loss_pct"),
+    ],
+)
+def test_restored_nonfinite_risk_policy_fails_closed_without_rewriting_source(
+    tmp_path, yaml_text, field,
+):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml_text, encoding="utf-8")
+
+    with patch("aletheia.config.loader.DATA_DIR", tmp_path), patch(
+        "aletheia.config.loader.CONFIG_PATH", config_file
+    ):
+        with pytest.raises(ValidationError, match=field):
+            load_config()
+
+    assert config_file.read_text(encoding="utf-8") == yaml_text
+
+
+@pytest.mark.parametrize(
     "yaml_text",
     [
         "unknown_root: true\n",

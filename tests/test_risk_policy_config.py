@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 
 def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
@@ -125,11 +126,61 @@ def test_resolve_risk_policy_rejects_unknown_mode():
 def test_nested_risk_policy_rejects_unknown_fields():
     from aletheia.config.schema import RiskConfig
 
-    with pytest.raises(Exception, match="extra_forbidden"):
+    with pytest.raises(ValidationError, match="extra_forbidden"):
         RiskConfig.model_validate({
             "demo": {"capital": {"max_position_margin_usdt_typo": 999}},
             "live": {},
         })
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"demo": {"capital": {"base_usdt": float("nan")}}},
+        {"max_daily_loss_pct": float("inf")},
+        {"demo": {"loss": {"max_single_trade_risk_pct": -1}}},
+        {"demo": {"positions": {"max_open_positions": 0}}},
+        {"demo": {"leverage": {"account_cap": 0}}},
+        {"demo": {"margin": {"warning_ratio": float("nan")}}},
+        {"demo": {"margin": {"min_entry_liquidation_buffer_pct": 0}}},
+        {"demo": {"margin": {"runtime_liquidation_buffer_pct": 0}}},
+        {"demo": {"correlation": {"max_portfolio_beta": -1}}},
+        {"demo": {"exits": {"catastrophic_stop_pct": 0}}},
+        {"demo": {"eligibility": {"family_min_expectancy": float("-inf")}}},
+        {"live": {"eligibility": {"family_min_samples": 0}}},
+        {"demo": {"policy_id": ""}},
+        {"demo": {"revision": 0}},
+    ],
+)
+def test_canonical_risk_policy_rejects_invalid_authority(payload):
+    from aletheia.config.schema import RiskConfig
+
+    with pytest.raises(ValueError):
+        RiskConfig.model_validate(payload)
+
+
+def test_persisted_live_policy_uses_the_same_safety_ceilings_as_settings():
+    from aletheia.config.schema import RiskConfig
+
+    with pytest.raises(ValueError, match="leverage.account_cap"):
+        RiskConfig.model_validate({"live": {"leverage": {"account_cap": 6}}})
+
+
+def test_policy_hash_rejects_a_model_copy_forged_nonfinite_value():
+    from aletheia.config.schema import RiskConfig
+    from aletheia.risk.policy import risk_policy_hash
+
+    policy = RiskConfig.model_validate({}).demo
+    forged = policy.model_copy(
+        update={
+            "loss": policy.loss.model_copy(
+                update={"max_daily_loss_pct": float("nan")},
+            ),
+        },
+    )
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        risk_policy_hash(forged)
 
 
 def test_demo_total_exposure_default_is_disabled_in_favour_of_account_leverage():

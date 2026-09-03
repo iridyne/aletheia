@@ -6,6 +6,7 @@ Executable claims from the risk engine trust-boundary contract.
 import threading
 
 import pytest
+from pydantic import ValidationError
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -25,6 +26,30 @@ def test_risk_engine_entry_point_and_lock():
 
     assert callable(eng.evaluate_proposal)
     assert isinstance(eng._eval_lock, type(threading.Lock()))
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-S08",
+        "risk_engine_contract",
+        "§1.1 policy identity",
+        "L2a",
+        "Every Risk Policy ingress rejects invalid numeric authority before hashing or use",
+    )
+)
+def test_risk_policy_schema_rejects_invalid_authority_and_preserves_zero_disables():
+    from aletheia.config.schema import RiskConfig
+
+    with pytest.raises(ValidationError):
+        RiskConfig.model_validate({"demo": {"loss": {"max_daily_loss_pct": float("nan")}}})
+    with pytest.raises(ValueError, match="leverage.account_cap"):
+        RiskConfig.model_validate({"live": {"leverage": {"account_cap": 6}}})
+
+    risk = RiskConfig.model_validate(
+        {"demo": {"capital": {"max_total_exposure_pct": 0, "max_per_symbol_entries": 0}}}
+    )
+    assert risk.demo.capital.max_total_exposure_pct == 0
+    assert risk.demo.capital.max_per_symbol_entries == 0
 
 
 @spec_claim(
