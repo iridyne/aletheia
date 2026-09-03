@@ -4,12 +4,28 @@ import {
   calculateRsi, calculateStochastic, estimateVisibleVolumeProfile, marketDataMetaState,
   type Bar, type ChartMarker,
 } from './PriceChart'
+import SRC from './PriceChart.tsx?raw'
 
 it('advances retained metadata age and marks a failed poll stale', () => {
   expect(marketDataMetaState({ ageMs: 5_000, stale: false, receivedAt: 1_000 }, 22_000)).toEqual({
     ageMs: 26_000,
     stale: true,
   })
+})
+
+it('resets the chart generation when the exchange identity changes', () => {
+  expect(SRC).not.toContain('const exchangeRef = useRef(exchange)')
+  expect(SRC).toContain('api.getOhlcv(symbol, timeframe, PAGE_LIMIT, barsRef.current[0].time, exchange, marketType)')
+  expect(SRC).toContain('api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchange)')
+  expect(SRC).toContain('api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType, exchange)')
+  expect(SRC).toContain('marketType, symbol, timeframe])')
+})
+
+it('keeps pagination locks inside the chart generation', () => {
+  expect(SRC).not.toContain('const loadingOlderRef = useRef(false)')
+  expect(SRC).not.toContain('const exhaustedRef = useRef(false)')
+  expect(SRC).toContain('let loadingOlder = false')
+  expect(SRC).toContain('let exhausted = false')
 })
 
 const bar = (time: number, low: number, high: number, volume: number, close = high): Bar => ({
