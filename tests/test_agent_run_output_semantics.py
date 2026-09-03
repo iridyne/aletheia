@@ -72,6 +72,27 @@ def test_agent_run_route_forwards_usage_window(monkeypatch):
     assert observed == {"days": 7, "limit": 5_000}
 
 
+def test_agent_run_route_exposes_exact_supervision_scopes(monkeypatch):
+    from aletheia.server.routes import data
+
+    observed = []
+    monkeypatch.setattr(data, "_ensure_db", lambda: None)
+    monkeypatch.setattr(
+        data.repo,
+        "list_agent_runs_window",
+        lambda *, hours: observed.append(("window", hours)) or [],
+    )
+    monkeypatch.setattr(
+        data.repo,
+        "list_latest_agent_runs",
+        lambda: observed.append(("latest", None)) or [],
+    )
+
+    assert data.get_agent_runs(hours=24) == []
+    assert data.get_agent_runs(latest_per_agent=True) == []
+    assert observed == [("window", 24), ("latest", None)]
+
+
 def test_non_paper_agent_outputs_are_left_unclassified():
     from aletheia.server.routes.data import _agent_run_output_events
 

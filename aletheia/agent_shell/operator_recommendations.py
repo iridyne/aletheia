@@ -1428,7 +1428,13 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         ),
         None,
     )
-    recent_agent_runs = repo.list_agent_runs(limit=50)
+    recent_agent_runs = repo.list_agent_runs_window(hours=24)
+    recent_run_ids = {str(run.get("id")) for run in recent_agent_runs}
+    recent_agent_runs.extend(
+        run
+        for run in repo.list_latest_agent_runs()
+        if str(run.get("id")) not in recent_run_ids
+    )
     market_observer_runs = [
         run for run in recent_agent_runs if str(run.get("agent_name") or "") == "market_observer"
     ]

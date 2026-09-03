@@ -712,6 +712,45 @@ def list_agent_runs(limit: int = 50, *, days: int | None = None) -> list[dict]:
     )
 
 
+def list_agent_runs_window(*, hours: int) -> list[dict]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    return _select_all(
+        "agent_runs",
+        where=(
+            "replace(COALESCE(NULLIF(ended_at,''),started_at),' ','T') "
+            ">= replace(?,' ','T')"
+        ),
+        params=(cutoff,),
+        order=(
+            "replace(COALESCE(NULLIF(ended_at,''),started_at),' ','T') DESC, "
+            "rowid DESC"
+        ),
+        limit=None,
+    )
+
+
+def list_latest_agent_runs() -> list[dict]:
+    rows = get_db().execute(
+        """
+        WITH ranked AS (
+            SELECT agent_runs.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY agent_name
+                       ORDER BY replace(COALESCE(NULLIF(ended_at,''),started_at),' ','T') DESC,
+                                rowid DESC
+                   ) AS _rank
+            FROM agent_runs
+        )
+        SELECT * FROM ranked WHERE _rank = 1
+        ORDER BY replace(COALESCE(NULLIF(ended_at,''),started_at),' ','T') DESC, id DESC
+        """
+    ).fetchall()
+    result = [dict(row) for row in rows]
+    for row in result:
+        row.pop("_rank", None)
+    return result
+
+
 def get_agent_run(run_id: str) -> dict | None:
     return _select_one("agent_runs", run_id)
 

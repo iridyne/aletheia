@@ -36,6 +36,40 @@ import type {
 } from '../src/schemas.js'
 import { TaskRuntime } from '../src/task_runtime.js'
 
+test('backend agent-run supervision combines the exact window with latest-per-agent rows', async () => {
+  const originalFetch = globalThis.fetch
+  const urls: string[] = []
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = String(input)
+    urls.push(url)
+    const rows = url.includes('latest_per_agent=true')
+      ? [
+          { id: 'shared', agent_name: 'market_observer' },
+          { id: 'older-latest', agent_name: 'post_trade_reviewer' },
+        ]
+      : [
+          { id: 'shared', agent_name: 'market_observer' },
+          { id: 'window-only', agent_name: 'research_agent' },
+        ]
+    return new Response(JSON.stringify(rows), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  try {
+    const client = new BackendClient('http://127.0.0.1:8787')
+    const runs = await client.getAgentRuns()
+    assert.deepEqual(urls.sort(), [
+      'http://127.0.0.1:8787/api/agent-runs?hours=24',
+      'http://127.0.0.1:8787/api/agent-runs?latest_per_agent=true',
+    ])
+    assert.deepEqual(runs.map(run => run.id), ['shared', 'window-only', 'older-latest'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 function makeRecommendation(overrides: Partial<OperatorRecommendation> = {}): OperatorRecommendation {
   return {
     id: 'health:market_data_stale',
