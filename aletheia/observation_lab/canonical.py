@@ -3790,10 +3790,17 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                     # the prefix before any later receipt is consumed.
                     kind = str(row["receipt_kind"] or "")
                     missing_identity = not row["observation_id"] or row["generation"] is None
+                    legacy_identityless_refusal = (
+                        kind == "treatment"
+                        and not bool(row["applied"])
+                        and not bool(row["behavior_changed"])
+                        and str(row["assignment"] or "") == "unassigned"
+                        and _capture_receipt_reason_allowed(row["resolution_reason"])
+                    )
                     if missing_identity and not (
                         kind == "capture"
                         and _capture_receipt_reason_allowed(row["resolution_reason"])
-                    ):
+                    ) and not legacy_identityless_refusal:
                         raise ValueError("unclassified_receipt_identity")
                     if missing_identity:
                         # A blocked/read-only producer can be imported exactly

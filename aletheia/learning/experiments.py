@@ -222,7 +222,9 @@ def _resolve_numeric_via_observation_lab(
     ):
         deferred_exposure_writes.append({
             "canonical_receipt": {
-                "receipt_kind": "treatment",
+                "receipt_kind": (
+                    "treatment" if decision.observation_id is not None else "capture"
+                ),
                 "receipt_id": decision.receipt_id or receipt_id,
                 "observation_id": decision.observation_id,
                 "generation": decision.generation,

@@ -485,6 +485,36 @@ def test_identityless_capture_receipt_is_imported_as_non_authorizing_lab_audit()
     assert receipt_id in audit[0]
 
 
+def test_legacy_identityless_treatment_refusal_imports_as_non_authorizing_audit():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        import_delivery_receipts,
+        set_authority_source,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+
+    set_authority_source("lab", actor="owner", reason="legacy-refusal-import-test")
+    receipt_id = append_delivery_receipt(
+        receipt_kind="treatment",
+        receipt_id="legacy-treatment-without-generation",
+        candidate_key="candidate-legacy-refusal",
+        assignment="unassigned",
+        applied=False,
+        behavior_changed=False,
+        resolution_reason="no_eligible_manifest",
+        authority_source="lab",
+    )
+
+    result = import_delivery_receipts()
+
+    assert result["processed"] == 1
+    assert result["failed_sequence"] is None
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE source_receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] == 0
+
+
 def test_legacy_assignment_namespace_and_denominator_are_bitwise_compatible():
     from aletheia.learning.experiments import stable_assignment
     from aletheia.learning.models import LearningExperiment
@@ -615,6 +645,32 @@ def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monke
     assert get_db().execute(
         "SELECT COUNT(*) FROM observation_delivery_outbox"
     ).fetchone()[0] == 1
+
+
+def test_deferred_identityless_refusal_is_published_as_capture(monkeypatch):
+    from aletheia.learning import experiments
+    from aletheia.observation_lab.canonical import set_authority_source
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    set_authority_source("lab", actor="owner", reason="deferred-capture-test")
+    deferred: list[dict] = []
+
+    decision = experiments.apply_numeric_treatment(
+        path_id="ranker_case_score",
+        scope={"feature": "score"},
+        action={"delta": 1},
+        source_cohort="test",
+        target_horizon="24h",
+        candidate_key="capture-candidate",
+        baseline=1.0,
+        treatment=2.0,
+        consumer="test",
+        consumer_stage="score",
+        deferred_exposure_writes=deferred,
+    )
+
+    assert decision.reason == "no_eligible_manifest"
+    assert deferred[0]["canonical_receipt"]["receipt_kind"] == "capture"
 
 
 def test_observe_only_and_deny_tombstone_never_change_baseline():
