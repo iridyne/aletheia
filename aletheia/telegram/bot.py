@@ -27,6 +27,7 @@ class TelegramBot:
         self._running = False
         self._pending_kills: dict[int, float] = {}  # chat_id → monotonic timestamp
         self._consecutive_poll_failures = 0
+        self._consecutive_update_failures = 0
 
     def configure(self) -> bool:
         """Load config and token. Returns True if bot is ready."""
@@ -55,8 +56,26 @@ class TelegramBot:
         payload: dict = {"chat_id": chat_id, "text": text}
         if parse_mode:
             payload["parse_mode"] = parse_mode
-        async with httpx_client(timeout=10) as client:
-            await client.post(self._api_url("sendMessage"), json=payload)
+        try:
+            async with httpx_client(timeout=10) as client:
+                response = await client.post(
+                    self._api_url("sendMessage"), json=payload
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Telegram sendMessage transport failed: {type(exc).__name__}"
+            ) from None
+        status_code = int(getattr(response, "status_code", 200))
+        if status_code >= 400:
+            raise RuntimeError(f"Telegram sendMessage failed with HTTP {status_code}")
+        try:
+            accepted = response.json().get("ok") is True
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Telegram sendMessage returned invalid JSON: {type(exc).__name__}"
+            ) from None
+        if not accepted:
+            raise RuntimeError("Telegram sendMessage was rejected")
 
     async def handle_message(self, chat_id: int, text: str) -> str | None:
         """Handle a telegram command. Returns response text or None."""
@@ -258,27 +277,63 @@ class TelegramBot:
             return
         self._running = True
         self._consecutive_poll_failures = 0
-        backoff = poll_interval
+        self._consecutive_update_failures = 0
+        poll_backoff = poll_interval
+        update_backoff = poll_interval
         async with httpx_client(timeout=20) as client:
             while self._running:
                 try:
                     updates = await self._fetch_updates(client)
-                    for update in updates:
-                        await self._handle_update(update, client)
-                        update_id = update.get("update_id")
-                        if update_id is not None:
-                            self._offset = max(self._offset, int(update_id) + 1)
-                    backoff = poll_interval
+                    poll_backoff = poll_interval
                     if self._consecutive_poll_failures > 0:
-                        logger.info("Telegram polling recovered after %d failures", self._consecutive_poll_failures)
+                        logger.info(
+                            "Telegram polling recovered after %d failures",
+                            self._consecutive_poll_failures,
+                        )
                     self._consecutive_poll_failures = 0
                 except Exception as exc:
                     self._consecutive_poll_failures += 1
-                    logger.warning("Telegram polling failed (%d consecutive): %s", self._consecutive_poll_failures, exc)
+                    logger.warning(
+                        "Telegram polling failed (%d consecutive): %s",
+                        self._consecutive_poll_failures,
+                        type(exc).__name__,
+                    )
                     if self._consecutive_poll_failures == 5:
                         self._escalate_poll_failure(exc)
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, 60.0)
+                    await asyncio.sleep(poll_backoff)
+                    poll_backoff = min(poll_backoff * 2, 60.0)
+                    continue
+
+                update_failed = False
+                for update in updates:
+                    try:
+                        await self._handle_update(update, client)
+                    except Exception as exc:
+                        self._consecutive_update_failures += 1
+                        logger.warning(
+                            "Telegram update processing failed for update_id=%s "
+                            "(%d consecutive): %s",
+                            update.get("update_id"),
+                            self._consecutive_update_failures,
+                            type(exc).__name__,
+                        )
+                        if self._consecutive_update_failures == 5:
+                            self._escalate_update_failure(update, exc)
+                        await asyncio.sleep(update_backoff)
+                        update_backoff = min(update_backoff * 2, 60.0)
+                        update_failed = True
+                        break
+                    if self._consecutive_update_failures > 0:
+                        logger.info(
+                            "Telegram update processing recovered after %d failures",
+                            self._consecutive_update_failures,
+                        )
+                    self._consecutive_update_failures = 0
+                    update_backoff = poll_interval
+                    update_id = update.get("update_id")
+                    if update_id is not None:
+                        self._offset = max(self._offset, int(update_id) + 1)
+                if update_failed:
                     continue
                 await asyncio.sleep(poll_interval)
 
@@ -291,15 +346,43 @@ class TelegramBot:
             from aletheia.files.jsonl import write_error
             write_error({
                 "source": "telegram_bot",
-                "message": f"Telegram polling failed 5 consecutive times: {exc}",
+                "message": (
+                    "Telegram polling failed 5 consecutive times: "
+                    f"{type(exc).__name__}"
+                ),
             })
         except Exception:
             pass
         try:
             from aletheia.notifications import send_windows_toast
+
             send_windows_toast(
                 "Telegram Bot Disconnected",
                 f"Polling failed 5x: {type(exc).__name__}",
+            )
+        except Exception:
+            pass
+
+    def _escalate_update_failure(self, update: dict[str, Any], exc: Exception) -> None:
+        """Report repeated local command failures without claiming disconnect."""
+        try:
+            from aletheia.files.jsonl import write_error
+
+            write_error({
+                "source": "telegram_bot",
+                "message": (
+                    "Telegram update processing failed 5 consecutive times "
+                    f"for update_id={update.get('update_id')}: {type(exc).__name__}"
+                ),
+            })
+        except Exception:
+            pass
+        try:
+            from aletheia.notifications import send_windows_toast
+
+            send_windows_toast(
+                "Telegram Command Processing Failed",
+                f"Update failed 5x: {type(exc).__name__}",
             )
         except Exception:
             pass

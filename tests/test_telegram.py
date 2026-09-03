@@ -270,6 +270,8 @@ def test_pnl_command_preserves_incomplete_realized_state(monkeypatch):
 
     assert "Realized: unavailable" in response
     assert "Total: unavailable" in response
+
+
 @pytest.mark.anyio
 async def test_reply_failure_does_not_stop_polling_or_replay_command(monkeypatch, caplog):
     bot = TelegramBot()
@@ -305,7 +307,50 @@ async def test_reply_failure_does_not_stop_polling_or_replay_command(monkeypatch
 
 
 @pytest.mark.anyio
-async def test_command_failure_retries_without_advancing_offset(monkeypatch):
+@pytest.mark.parametrize(
+    ("status_code", "payload", "message"),
+    [
+        (403, {"ok": False}, "HTTP 403"),
+        (200, {"ok": False}, "was rejected"),
+    ],
+)
+async def test_send_message_rejects_http_and_api_failures_without_token(
+    monkeypatch, status_code, payload, message
+):
+    bot = TelegramBot()
+    bot.token = "secret-token"
+    client = _FakeSendClient(_FakeSendResponse(status_code, payload))
+    monkeypatch.setattr(
+        bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
+    )
+    bot_module._rate_limit_last_send.clear()
+
+    with pytest.raises(RuntimeError, match=message) as exc_info:
+        await bot.send_message(123, "reply")
+
+    assert "secret-token" not in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_send_message_sanitizes_transport_failure(monkeypatch):
+    bot = TelegramBot()
+    bot.token = "secret-token"
+    client = _FakeSendClient(
+        RuntimeError("https://api.telegram.org/botsecret-token/sendMessage")
+    )
+    monkeypatch.setattr(
+        bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
+    )
+    bot_module._rate_limit_last_send.clear()
+
+    with pytest.raises(RuntimeError, match="transport failed: RuntimeError") as exc_info:
+        await bot.send_message(123, "reply")
+
+    assert "secret-token" not in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_command_failure_retries_without_advancing_offset(monkeypatch, caplog):
     bot = TelegramBot()
     bot.allowed_chat_ids = {123}
     monkeypatch.setattr(bot, "configure", lambda: True)
@@ -330,6 +375,54 @@ async def test_command_failure_retries_without_advancing_offset(monkeypatch):
 
     assert client.seen_offsets == [0, 0]
     assert attempts == 2
+    assert bot._offset == 8
+    assert bot._consecutive_poll_failures == 0
+    assert "Telegram update processing failed" in caplog.text
+    assert "Telegram polling failed" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_repeated_command_failure_uses_update_escalation(monkeypatch):
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}
+    monkeypatch.setattr(bot, "configure", lambda: True)
+
+    update = {"update_id": 7, "message": {"chat": {"id": 123}, "text": "/pause"}}
+    client = _FakeTelegramClient([[update]] * 6)
+    attempts = 0
+    update_escalations = []
+    poll_escalations = []
+
+    async def handle(_chat_id, _text):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 5:
+            raise RuntimeError("command failed")
+        bot.stop()
+        return None
+
+    monkeypatch.setattr(
+        bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
+    )
+    monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
+    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(
+        bot,
+        "_escalate_update_failure",
+        lambda failed_update, exc: update_escalations.append(
+            (failed_update["update_id"], type(exc).__name__)
+        ),
+    )
+    monkeypatch.setattr(
+        bot,
+        "_escalate_poll_failure",
+        lambda exc: poll_escalations.append(type(exc).__name__),
+    )
+
+    await bot.run(poll_interval=0)
+
+    assert update_escalations == [(7, "RuntimeError")]
+    assert poll_escalations == []
     assert bot._offset == 8
 
 
@@ -358,3 +451,22 @@ class _FakeTelegramResponse:
 
     def json(self):
         return {"ok": True, "result": self._updates}
+
+
+class _FakeSendClient:
+    def __init__(self, result):
+        self._result = result
+
+    async def post(self, _url, *, json):
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+class _FakeSendResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
