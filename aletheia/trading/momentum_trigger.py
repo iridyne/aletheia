@@ -12,7 +12,7 @@ import math
 from typing import Literal, cast
 
 from aletheia.data.symbols import InstrumentId
-from aletheia.universe.fast_stream import FastMarketEvent
+from aletheia.universe.fast_stream import FastMarketEvent, events_share_generation
 from aletheia.universe.fast_trigger import TriggerPolicy, TriggerReady
 
 TRIGGER_SPEC_ID = "momentum-retrace-reclaim"
@@ -94,6 +94,7 @@ class MomentumTriggerEngineV2:
         self.state_path: list[State] = ["armed"]
         self.subscription_confirmed = False
         self.health_reason: str | None = None
+        self.final_requirement_reason: str | None = None
         self._sequences: dict[str, int] = {}
         self._quote: FastMarketEvent | None = None
         self._depth: FastMarketEvent | None = None
@@ -249,19 +250,25 @@ class MomentumTriggerEngineV2:
             return None
         self._prune_trades(now_ms)
         if not self._trades:
+            self.final_requirement_reason = "trade_window_empty"
             return None
         quote, depth = self._quote, self._depth
+        if not events_share_generation(quote, depth, *self._trades):
+            self.health_reason = "market_evidence_generation_mismatch"
+            return None
         if (
             now_ms - quote.received_timestamp_ms > 1_000
             or now_ms - depth.received_timestamp_ms > 1_000
             or now_ms - self._trades[-1].received_timestamp_ms > 2_000
         ):
+            self.final_requirement_reason = "market_fact_stale"
             return None
         bid = float(quote.bid) if quote.bid is not None else 0.0
         ask = float(quote.ask) if quote.ask is not None else 0.0
         mid = (bid + ask) / 2.0
         spread = (ask - bid) / mid * 10_000
         if spread > self.policy.max_spread_bps:
+            self.final_requirement_reason = "spread"
             return None
         depth_value = sum(
             price * size
@@ -269,19 +276,25 @@ class MomentumTriggerEngineV2:
             if abs(price / mid - 1.0) <= 0.001
         )
         if depth_value < self.policy.min_depth_10bps_usd:
+            self.final_requirement_reason = "depth"
             return None
         buy = sum(float(item.price or 0.0) * float(item.size or 0.0) for item in self._trades if item.side == "buy")
         total = sum(float(item.price or 0.0) * float(item.size or 0.0) for item in self._trades)
         if total <= 0:
+            self.final_requirement_reason = "order_flow"
             return None
         ratio = buy / total
         if (self.direction == "long" and ratio < 0.60) or (
             self.direction == "short" and ratio > 0.40
         ):
+            self.final_requirement_reason = "order_flow"
             return None
         entry = ask if self.direction == "long" else bid
         if not self.entry_zone[0] <= entry <= self.entry_zone[1]:
+            self.final_requirement_reason = "entry_zone"
             return None
+
+        self.final_requirement_reason = None
 
         self._advance("triggered", now_ms)
         from aletheia.universe.market_structure import evaluate_market_structure
@@ -306,6 +319,10 @@ class MomentumTriggerEngineV2:
             quote_sequence=quote.sequence,
             trade_sequence=self._trades[-1].sequence,
             depth_sequence=depth.sequence,
+            stream_generation_id=quote.stream_generation_id,
+            subscription_generation_id=quote.subscription_generation_id,
+            depth_bids=depth.bids,
+            depth_asks=depth.asks,
             entry_price=entry,
             entry_trigger={
                 "trigger_spec_id": self.trigger_spec_id,

@@ -2886,14 +2886,27 @@ def insert_proposal_execution_claim(
     owner_token: str,
     claimed_at: str,
     lease_expires_at: str,
+    *,
+    execution_attempt_id: str | None = None,
+    execution_receipt_hash: str | None = None,
+    execution_receipt_json: str | None = None,
 ) -> bool:
     """Acquire an absent Proposal execution claim without replacing an owner."""
     db = get_db()
     was_in_tx = db.in_transaction
     cur = execute_write(
         "INSERT OR IGNORE INTO proposal_execution_claims "
-        "(proposal_id, owner_token, claimed_at, lease_expires_at) VALUES (?, ?, ?, ?)",
-        (proposal_id, owner_token, claimed_at, lease_expires_at),
+        "(proposal_id, owner_token, claimed_at, lease_expires_at, execution_attempt_id, "
+        "execution_receipt_hash, execution_receipt_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            proposal_id,
+            owner_token,
+            claimed_at,
+            lease_expires_at,
+            execution_attempt_id,
+            execution_receipt_hash,
+            execution_receipt_json,
+        ),
     )
     if not was_in_tx:
         db.commit()
@@ -2908,18 +2921,25 @@ def replace_proposal_execution_claim(
     owner_token: str,
     claimed_at: str,
     lease_expires_at: str,
+    execution_attempt_id: str | None = None,
+    execution_receipt_hash: str | None = None,
+    execution_receipt_json: str | None = None,
 ) -> bool:
     """CAS-replace one observed expired execution claim."""
     db = get_db()
     was_in_tx = db.in_transaction
     cur = execute_write(
         "UPDATE proposal_execution_claims "
-        "SET owner_token=?, claimed_at=?, lease_expires_at=? "
+        "SET owner_token=?, claimed_at=?, lease_expires_at=?, execution_attempt_id=?, "
+        "execution_receipt_hash=?, execution_receipt_json=? "
         "WHERE proposal_id=? AND owner_token=? AND lease_expires_at=?",
         (
             owner_token,
             claimed_at,
             lease_expires_at,
+            execution_attempt_id,
+            execution_receipt_hash,
+            execution_receipt_json,
             proposal_id,
             expected_owner_token,
             expected_lease_expires_at,
@@ -2990,12 +3010,16 @@ def get_authoritative_risk_decision(
     proposal_commit_hash: str | None,
     evaluated_quantity: float | None,
     policy_hash: str | None = None,
+    execution_attempt_id: str | None = None,
 ) -> dict | None:
     """Return the authoritative decision for one immutable evaluated snapshot."""
     policy_clause = "AND policy_hash IS ?" if policy_hash is not None else ""
+    attempt_clause = "AND execution_attempt_id IS ?" if execution_attempt_id is not None else ""
     params = [proposal_id, proposal_commit_hash, evaluated_quantity]
     if policy_hash is not None:
         params.append(policy_hash)
+    if execution_attempt_id is not None:
+        params.append(execution_attempt_id)
     row = (
         get_db()
         .execute(
@@ -3007,6 +3031,7 @@ def get_authoritative_risk_decision(
           AND proposal_commit_hash IS ?
           AND evaluated_quantity IS ?
           {policy_clause}
+          {attempt_clause}
         ORDER BY rowid ASC
         LIMIT 1
         """,
@@ -3033,6 +3058,7 @@ def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
             d.proposal_commit_hash,
             d.evaluated_quantity,
             d.policy_hash,
+            d.execution_attempt_id,
         )
         if existing is not None:
             return existing, False
@@ -3339,6 +3365,41 @@ def list_orders(
     return _select_all("orders", limit=limit)
 
 
+def list_open_paper_maker_orders(
+    *,
+    symbol: str,
+    market_type: str,
+    direction: str,
+) -> list[dict]:
+    """Return every V1 resting Paper order for one exact instrument."""
+
+    rows = get_db().execute(
+        "SELECT o.*, rd.execution_receipt_json, tp.attribution_snapshot, "
+        "tp.stop_price, tp.take_profit, tp.leverage, tp.opportunity_id, "
+        "tp.trade_school, tp.strategy_id, tp.commit_hash AS proposal_commit_hash "
+        "FROM orders o "
+        "JOIN trade_proposals tp ON tp.id=o.proposal_id "
+        "JOIN risk_decisions rd ON rd.id=o.risk_decision_id "
+        "WHERE o.execution_mode='paper_internal' AND o.status IN ('open','partially_filled') "
+        "AND o.order_tactic='POST_ONLY_LIMIT' "
+        "AND o.paper_fill_model_version='paper-order-fill/v1' "
+        "AND o.symbol=? AND o.market_type=? AND o.direction=? "
+        f"ORDER BY o.price {'DESC' if direction in {'long', 'buy'} else 'ASC'}, "
+        "o.created_at ASC, o.id ASC",
+        (symbol, market_type, direction),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def paper_market_event_consumed_quantity(market_event_id: str) -> float:
+    row = get_db().execute(
+        "SELECT COALESCE(SUM(fill_quantity), 0.0) AS quantity FROM fills "
+        "WHERE market_event_id=?",
+        (market_event_id,),
+    ).fetchone()
+    return float(row["quantity"] or 0.0)
+
+
 def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     """Return every unresolved native entry plus its represented local state.
 
@@ -3348,6 +3409,7 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     rows that predate ``close_reason`` cannot consume a new-entry allowance.
     """
     unresolved_states = (
+        "open",
         "pending",
         "submitted",
         "partial",
@@ -8157,6 +8219,21 @@ def get_universe_asset(asset_id: str) -> dict | None:
     return _select_one("universe_registry", asset_id)
 
 
+def get_active_universe_asset_for_instrument(
+    venue: str,
+    symbol: str,
+    market_type: str,
+) -> dict | None:
+    physical_market = "perp" if market_type == "usdt_futures" else market_type
+    row = get_db().execute(
+        "SELECT * FROM universe_registry WHERE venue=? AND symbol=? "
+        "AND market_type=? AND status='active' AND is_blacklisted=0 "
+        "ORDER BY last_seen_at DESC, rowid DESC LIMIT 1",
+        (venue, to_canonical(symbol), physical_market),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def insert_universe_feature_snapshot(snap: UniverseFeatureSnapshot) -> None:
     data = snap.model_dump()
     data.pop("raw", None)
@@ -9825,6 +9902,47 @@ def transition_entry_plan(
         ),
     )
     return updated.rowcount == 1
+
+
+def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
+    """Persist only material readiness transitions, never every market tick."""
+
+    row = get_entry_plan(plan_id)
+    if row is None:
+        return False
+
+    def signature(value: dict) -> tuple:
+        channels = value.get("channels") if isinstance(value.get("channels"), dict) else {}
+        return (
+            value.get("state"),
+            value.get("stream_generation_id"),
+            value.get("subscription_generation_id"),
+            tuple(value.get("required_channels") or ()),
+            tuple(
+                (name, facts.get("state"), facts.get("reason"))
+                for name, facts in sorted(channels.items())
+                if isinstance(facts, dict)
+            ),
+        )
+
+    try:
+        existing = json.loads(row.get("monitoring_evidence_json") or "null")
+    except (TypeError, json.JSONDecodeError):
+        existing = None
+    if isinstance(existing, dict) and signature(existing) == signature(evidence):
+        return False
+    payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+    execute_write(
+        "UPDATE entry_plans SET monitoring_state=?, monitoring_evidence_json=?, "
+        "monitoring_evidence_hash=? WHERE id=?",
+        (
+            str(evidence.get("state") or "unavailable"),
+            payload,
+            hashlib.sha256(payload.encode()).hexdigest(),
+            plan_id,
+        ),
+    )
+    return True
 
 
 def get_active_universe_members(limit: int | None = 20) -> list[dict]:

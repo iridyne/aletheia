@@ -99,8 +99,10 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 - 本地纸面入场通常只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
   普通 `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单。唯一例外是
   `§3.0a` 的持久 Entry Plan → Proposal → Risk 权威链所拥有的 bounded Limit Order Intent；
-  Paper broker 立即模拟成交并保留 requested tactic，但不得写 maker `realized_liquidity` 或声称
-  Post-Only queue fidelity。交易所 demo/testnet 仍按各自 adapter 能力使用 limit。
+  `paper-order-fill/v1` 保留 requested tactic：IOC 只消费同一 execution receipt 中的已知 opposing
+  depth 并取消未知 remainder；Post-Only 先写 durable open Order，placement/touch 不成交，只在后续
+  strict opposite-aggressor trade-through 时按该真实事件剩余 size 分配。模拟 Fill 的
+  `realized_liquidity` 保持 unavailable，并单独持久化 simulated provenance。
 - 入场价只来自配置行情 venue 的同 canonical symbol、同物理 `spot/perp` 新鲜精确 mark；内存
   mark 必须小于 90 秒，SQLite 精确回退不得超过 120 秒。跨 venue、跨 spot/perp、symbol-only
   或 stale row 都不能建立 Proposal，pending 留待后续重试。
@@ -118,12 +120,17 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
   V1 authority 中。
 - Risk reservation 必须在 Order 持久化和 exchange submission 之前存在。Order 与 Entry Plan
   `risk_reserved → ordered` 在同一 SQLite writer transaction 中前进。
+- Entry Plan Proposal 的短期 `EntryExecutionReceiptV1` 不进入 immutable Proposal identity；其
+  attempt/hash 必须同时绑定 authoritative RiskDecision、Order 与 Fill。Maker limit 是订单约束，
+  不得再要求它等于另一条异步 mark；generic 非 Entry Plan Paper Proposal 的 mark 防伪规则不变。
+- `paper_internal` 新 Order 必须复用 exact active `universe_registry` 的 venue/symbol/physical-market、
+  precision 与 min-notional 事实。缺失或不可表示时 fail closed，不增加第二套 rules store。
 - Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，
   随后持锁重读 private Fill/Order。full Fill 赢得竞态；partial Fill 保留真实 Position，并允许取消
   remainder；request-side `requested_liquidity` 不能冒充 `realized_liquidity`。
-- `paper_internal` 可验证 plan、trigger、Risk 和 deterministic Order Intent，但其 immediate-fill
-  模型不能证明 Post-Only queue 或 maker fill。真实 tactic qualification 使用 deterministic fake
-  adapter tests 与 Bitget Demo private evidence。
+- open/partial Paper Order 在重启后保持 unresolved authority；旧 generation 不补造 downtime Fill。
+  exact quote/trade readiness 建立新 matching generation 后才恢复消费新事件，并留下 monitoring-gap
+  事实。一个真实 Trade event 在全部本地 eligible Orders 间只可消费一次，按价格后时间/id 排序。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 

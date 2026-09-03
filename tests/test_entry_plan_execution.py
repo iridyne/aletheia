@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -6,7 +7,14 @@ import pytest
 
 from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Fill, Order, RiskDecision, UniverseMember, UniverseSnapshot
+from aletheia.storage.models import (
+    Fill,
+    Order,
+    RiskDecision,
+    UniverseAsset,
+    UniverseMember,
+    UniverseSnapshot,
+)
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
 
 
@@ -587,11 +595,24 @@ def _persist_waiting_plan(
     mode="TRIGGERED",
     tactic="OPPOSING_BBO_IOC",
     plan_updates=None,
+    candidate_id="candidate-1",
+    candidate_family="momentum",
 ) -> EntryPlan:
+    repo.upsert_universe_asset(
+        UniverseAsset(
+            id="asset-btc",
+            venue="bitget",
+            symbol="BTC/USDT",
+            market_type="perp",
+            min_notional=1.0,
+            price_precision=4,
+            amount_precision=6,
+        )
+    )
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_snapshot(snapshot)
     candidate = UniverseMember(
-        id="candidate-1",
+        id=candidate_id,
         snapshot_id=snapshot.id,
         asset_id="asset-btc",
         venue="bitget",
@@ -599,7 +620,7 @@ def _persist_waiting_plan(
         market_type="perp",
         rank=1,
         total_score=90,
-        scanner_family="momentum",
+        scanner_family=candidate_family,
         scanner_direction="long",
         regime_tag="trending",
         expires_at="2099-01-01T00:00:00+00:00",
@@ -608,10 +629,41 @@ def _persist_waiting_plan(
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.claim_next_candidate_planning("owner")
     plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic).model_copy(
-        update={"planning_generation_id": generation["id"], **(plan_updates or {})}
+        update={
+            "planning_generation_id": generation["id"],
+            "candidate_id": candidate_id,
+            "candidate_family": candidate_family,
+            **(plan_updates or {}),
+        }
     )
     repo.complete_candidate_planning_with_plan(generation["id"], "owner", plan)
     return plan
+
+
+def _execution_receipt_kwargs(
+    now: datetime,
+    *,
+    depth: bool,
+    depth_size: float = 10.0,
+) -> dict:
+    values = {
+        "stream_generation_id": "stream-1",
+        "subscription_generation_id": "subscription-1",
+        "quote_sequence": 11,
+        "required_channels": ("quote", "trade", "depth", "candle") if depth else ("quote",),
+    }
+    if depth:
+        instant_ms = int(now.timestamp() * 1_000)
+        values.update(
+            {
+                "depth_bids": ((100.0, depth_size),),
+                "depth_asks": ((100.05, depth_size),),
+                "depth_exchange_timestamp_ms": instant_ms,
+                "depth_received_timestamp_ms": instant_ms,
+                "depth_sequence": 12,
+            }
+        )
+    return values
 
 
 @pytest.mark.parametrize(
@@ -814,7 +866,11 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
     requested_liquidity,
 ):
     from aletheia.execution import gateway
-    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.execution.entry_plan_execution import (
+        build_entry_execution_receipt,
+        build_entry_plan_order_intent,
+        execute_entry_plan,
+    )
 
     plan = _persist_waiting_plan(
         account_mode="paper_internal",
@@ -822,7 +878,7 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
         tactic=tactic,
     )
 
-    def approve(proposal, *, decision_role):
+    def approve(proposal, *, decision_role, execution_receipt=None):
         decision = RiskDecision(
             proposal_id=proposal.id,
             approved=True,
@@ -849,8 +905,11 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
         observed_at=now.isoformat(),
         source_observed_at=now.isoformat(),
         now=now,
+        **_execution_receipt_kwargs(now, depth=tactic == "OPPOSING_BBO_IOC"),
     )
-    assert result["status"] == "executed", result
+    assert result["status"] == (
+        "ordered" if tactic == "POST_ONLY_LIMIT" else "executed"
+    ), result
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
     order = repo.get_order(result["order_id"])
     assert proposal["execution_mode"] == "paper_internal"
@@ -859,8 +918,14 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
     assert order["time_in_force"] == expected_tif
     assert order["post_only"] == expected_post_only
     assert order["requested_liquidity"] == requested_liquidity
-    assert repo.list_fills(order_id=order["id"])[0]["realized_liquidity"] is None
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    fills = repo.list_fills(order_id=order["id"])
+    if tactic == "POST_ONLY_LIMIT":
+        assert fills == []
+        assert order["status"] == "open"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+    else:
+        assert fills[0]["realized_liquidity"] is None
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
 
 
 def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
@@ -900,14 +965,538 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
         observed_at=now.isoformat(),
         source_observed_at=now.isoformat(),
         now=now,
+        **_execution_receipt_kwargs(now, depth=True),
     )
 
     assert result["status"] == "executed", result
     assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    order = repo.get_order(result["order_id"])
+    fill = repo.list_fills(order_id=order["id"])[0]
+    assert fill["fill_price"] == 100.05
+    assert fill["realized_liquidity"] is None
+    assert fill["simulated_liquidity"] == "taker"
+    assert fill["paper_fill_model_version"] == "paper-order-fill/v1"
+    assert fill["execution_attempt_id"] == order["execution_attempt_id"]
+
+
+def test_paper_ioc_walks_only_visible_depth_and_cancels_remainder(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = load_config()
+    resolved = resolve_risk_policy(cfg, "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+    now = datetime.now(timezone.utc)
+    result = execute_entry_plan(
+        plan.plan_id,
+        bid=100,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+        **_execution_receipt_kwargs(now, depth=True, depth_size=0.05),
+    )
+
+    order = repo.get_order(result["order_id"])
+    fill = repo.list_fills(order_id=order["id"])[0]
+    assert result["status"] == "executed"
+    assert order["status"] == "cancelled"
+    assert order["error_reason"] == "ioc_remainder_cancelled"
+    assert fill["fill_quantity"] == 0.05
+    assert fill["fill_price"] == 100.05
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
+    assert repo.get_entry_risk_reservation(order["proposal_id"]) is None
+
+
+def test_paper_maker_real_risk_places_open_order_without_inventing_fill(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.data import price_feed
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = load_config()
+    resolved = resolve_risk_policy(cfg, "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    monkeypatch.setattr(
+        price_feed,
+        "get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 100.05,
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+
+    now = datetime.now(timezone.utc)
+    result = execute_entry_plan(
+        plan.plan_id,
+        bid=100.01,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+        **_execution_receipt_kwargs(now, depth=False),
+    )
+
+    assert result["status"] == "ordered", result
+    proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    order = repo.get_order_for_entry_plan(plan.plan_id)
+    assert proposal is not None
+    assert order is not None
+    assert order["status"] == "open"
+    assert order["price"] == plan.limit_price
+    assert repo.list_fills(order_id=order["id"]) == []
+    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+    decision = next(
+        row
+        for row in repo.list_risk_decisions(limit=10)
+        if row["id"] == order["risk_decision_id"]
+    )
+    receipt = json.loads(decision["execution_receipt_json"])
+    assert decision["approved"] == 1
+    assert decision["execution_attempt_id"] == order["execution_attempt_id"]
+    assert decision["execution_receipt_hash"] == order["execution_receipt_hash"]
+    assert receipt["receipt_hash"] == order["execution_receipt_hash"]
+    from aletheia.execution.gateway import cancel_entry_plan_order
+
+    assert cancel_entry_plan_order(
+        plan.plan_id,
+        reason="maker_order_unfilled_until_expiry",
+    )["status"] == "cancelled"
+    assert repo.get_order(order["id"])["status"] == "cancelled"
+    assert repo.get_entry_plan(plan.plan_id)["terminal_reason"] == (
+        "maker_order_unfilled_until_expiry"
+    )
+    assert repo.get_entry_risk_reservation(order["proposal_id"]) is None
+
+
+def test_paper_entry_plan_requires_exact_active_public_venue_rules(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+
+    resolved = resolve_risk_policy(load_config(), "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    repo.get_db().execute(
+        "UPDATE universe_registry SET status='inactive' WHERE id='asset-btc'"
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+    now = datetime.now(timezone.utc)
+
+    result = execute_entry_plan(
+        plan.plan_id,
+        bid=100.01,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+        **_execution_receipt_kwargs(now, depth=False),
+    )
+
+    assert result["status"] == "rejected"
+    assert repo.get_order_for_entry_plan(plan.plan_id) is None
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "failed"
+
+
+def test_paper_maker_fills_once_only_after_later_strict_opposite_trade(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.trading.instruments import InstrumentId
+    from aletheia.universe.fast_stream import FastMarketEvent
+
+    cfg = load_config()
+    resolved = resolve_risk_policy(cfg, "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+    now = datetime.now(timezone.utc) - timedelta(milliseconds=500)
+    placed = execute_entry_plan(
+        plan.plan_id,
+        bid=100.01,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+        **_execution_receipt_kwargs(now, depth=False),
+    )
+    assert placed["status"] == "ordered"
+    placed_order = repo.get_order(placed["order_id"])
+    assert repo.get_entry_risk_reservation(placed_order["proposal_id"]) is not None
+
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+
+    def trade(
+        *,
+        price,
+        side,
+        sequence,
+        size=1,
+        received_delta_ms=100,
+        stream_generation_id="stream-1",
+        subscription_generation_id="subscription-1",
+    ):
+        instant_ms = int(now.timestamp() * 1_000) + received_delta_ms
+        return FastMarketEvent(
+            event_type="trade",
+            instrument=instrument,
+            exchange_timestamp_ms=instant_ms,
+            received_timestamp_ms=instant_ms,
+            sequence=sequence,
+            stream_generation_id=stream_generation_id,
+            subscription_generation_id=subscription_generation_id,
+            price=price,
+            size=size,
+            side=side,
+        )
+
+    assert gateway.observe_paper_entry_order_event(
+        trade(price=100.0, side="sell", sequence=12)
+    ) == []
+    assert gateway.observe_paper_entry_order_event(
+        trade(price=99.99, side="buy", sequence=13)
+    ) == []
+    first_quantity = float(placed_order["quantity"]) / 2
+    event = trade(price=99.99, side="sell", sequence=14, size=first_quantity)
+    partial = gateway.observe_paper_entry_order_event(event)
+    assert len(partial) == 1
+    assert partial[0]["order_status"] == "partially_filled"
+    assert gateway.observe_paper_entry_order_event(event) == []
+    assert repo.get_order(placed["order_id"])["status"] == "partially_filled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "partially_filled"
+    assert repo.get_entry_risk_reservation(placed_order["proposal_id"]) is not None
+
+    restart_event = trade(
+        price=99.98,
+        side="sell",
+        sequence=1,
+        received_delta_ms=200,
+        stream_generation_id="stream-2",
+        subscription_generation_id="subscription-2",
+    )
+    assert gateway.observe_paper_entry_order_event(restart_event) == []
+    assert gateway.rebind_open_paper_orders_to_monitoring(
+        instrument,
+        {
+            "state": "ready",
+            "stream_generation_id": "stream-2",
+            "subscription_generation_id": "subscription-2",
+        },
+    ) == 1
+    assert repo.get_order(placed["order_id"])["monitoring_gap_started_at"] is not None
+    filled = gateway.observe_paper_entry_order_event(
+        restart_event
+    )
+    assert len(filled) == 1
+    assert filled[0]["order_status"] == "filled"
+
+    order = repo.get_order(placed["order_id"])
+    fills = repo.list_fills(order_id=order["id"])
+    positions = repo.list_positions(execution_mode="paper_internal")
+    assert order["status"] == "filled"
+    assert len(fills) == 2
+    assert sum(fill["fill_quantity"] for fill in fills) == pytest.approx(order["quantity"])
+    assert {fill["fill_price"] for fill in fills} == {plan.limit_price}
+    assert {fill["realized_liquidity"] for fill in fills} == {None}
+    assert {fill["simulated_liquidity"] for fill in fills} == {"maker"}
+    assert {fill["paper_fill_model_version"] for fill in fills} == {"paper-order-fill/v1"}
+    assert {fill["execution_attempt_id"] for fill in fills} == {
+        order["execution_attempt_id"]
+    }
+    assert len(positions) == 1
+    assert positions[0]["proposal_id"] == order["proposal_id"]
+    assert positions[0]["order_id"] == order["id"]
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    assert repo.get_entry_risk_reservation(order["proposal_id"]) is None
+
+
+def test_expired_execution_attempt_is_retryable_only_with_a_new_receipt(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = load_config()
+    resolved = resolve_risk_policy(cfg, "paper_internal")
+    plan = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        plan_updates={
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        },
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+    stale = datetime.now(timezone.utc) - timedelta(seconds=3)
+    rejected = execute_entry_plan(
+        plan.plan_id,
+        bid=100.01,
+        ask=100.05,
+        observed_at=stale.isoformat(),
+        source_observed_at=stale.isoformat(),
+        now=stale,
+        **_execution_receipt_kwargs(stale, depth=False),
+    )
+    proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    assert rejected["status"] == "attempt_rejected"
+    assert rejected["risk_violations"] == ["entry_execution_receipt_stale"]
+    assert proposal["status"] == "pending"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+    assert repo.get_order_for_entry_plan(plan.plan_id) is None
+
+    fresh = datetime.now(timezone.utc)
+    replayed_market_fact = execute_entry_plan(
+        plan.plan_id,
+        bid=100.01,
+        ask=100.05,
+        observed_at=fresh.isoformat(),
+        source_observed_at=(fresh - timedelta(seconds=3)).isoformat(),
+        now=fresh,
+        **_execution_receipt_kwargs(fresh, depth=False),
+    )
+    assert replayed_market_fact["status"] == "attempt_rejected"
+    assert replayed_market_fact["risk_violations"] == [
+        "entry_execution_receipt_quote_invalid"
+    ]
+
+    fresh = datetime.now(timezone.utc)
+    placed = execute_entry_plan(
+        plan.plan_id,
+        bid=100.01,
+        ask=100.05,
+        observed_at=fresh.isoformat(),
+        source_observed_at=fresh.isoformat(),
+        now=fresh,
+        **_execution_receipt_kwargs(fresh, depth=False),
+    )
+    decisions = [
+        row
+        for row in repo.list_risk_decisions(limit=10)
+        if row["proposal_id"] == proposal["id"] and row["decision_role"] == "authoritative"
+    ]
+    assert placed["status"] == "ordered"
+    assert len(decisions) == 3
+    assert len({row["execution_attempt_id"] for row in decisions}) == 3
+
+
+def test_one_trade_budget_is_shared_by_paper_orders_in_price_priority(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import (
+        build_entry_execution_receipt,
+        execute_entry_plan,
+    )
+    from aletheia.portfolio import local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.trading.instruments import InstrumentId
+    from aletheia.universe.fast_stream import FastMarketEvent
+
+    resolved = resolve_risk_policy(load_config(), "paper_internal")
+    common = {
+        "max_notional": 10.0,
+        "risk_policy_id": resolved.policy.policy_id,
+        "risk_policy_revision": resolved.policy.revision,
+        "risk_policy_hash": resolved.policy_hash,
+    }
+    high = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        candidate_id="candidate-high",
+        plan_updates={**common, "limit_price": 100.1},
+    )
+    low = _persist_waiting_plan(
+        account_mode="paper_internal",
+        mode="RESTING_MAKER",
+        tactic="POST_ONLY_LIMIT",
+        candidate_id="candidate-low",
+        candidate_family="breakout",
+        plan_updates={**common, "limit_price": 100.0},
+    )
+    monkeypatch.setattr(
+        local_funding,
+        "has_fresh_local_funding_schedule",
+        lambda *_args, **_kwargs: True,
+    )
+    now = datetime.now(timezone.utc) - timedelta(milliseconds=500)
+    high_result = execute_entry_plan(
+        high.plan_id,
+        bid=100.2,
+        ask=100.25,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+        **_execution_receipt_kwargs(now, depth=False),
+    )
+    low_proposal = build_entry_plan_order_intent(
+        low,
+        bid=100.2,
+        ask=100.25,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+    )
+    repo.insert_trade_proposal(low_proposal)
+    low_receipt = build_entry_execution_receipt(
+        low,
+        low_proposal,
+        bid=100.2,
+        ask=100.25,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        **_execution_receipt_kwargs(now, depth=False),
+    )
+    low_decision = RiskDecision(
+        proposal_id=low_proposal.id,
+        approved=True,
+        allowed_execution_mode="paper_internal",
+        proposal_execution_mode="paper_internal",
+        decision_role="authoritative",
+        evaluated_quantity=low_proposal.quantity,
+        proposal_commit_hash=low_proposal.commit_hash,
+        execution_attempt_id=low_receipt.attempt_id,
+        execution_receipt_hash=low_receipt.receipt_hash,
+        execution_receipt_json=low_receipt.model_dump_json(),
+    )
+    repo.insert_risk_decision(low_decision)
+    low_order_model = Order(
+        proposal_id=low_proposal.id,
+        risk_decision_id=low_decision.id,
+        symbol=low_proposal.symbol,
+        market_type=low_proposal.market_type,
+        direction=low_proposal.direction,
+        order_type=low_proposal.order_type,
+        quantity=low_proposal.quantity,
+        price=low_proposal.price,
+        execution_mode="paper_internal",
+        entry_plan_id=low.plan_id,
+        order_tactic="POST_ONLY_LIMIT",
+        time_in_force="post_only",
+        post_only=True,
+        requested_liquidity="maker",
+        execution_attempt_id=low_receipt.attempt_id,
+        execution_receipt_hash=low_receipt.receipt_hash,
+        paper_fill_model_version="paper-order-fill/v1",
+        matching_stream_generation_id=low_receipt.stream_generation_id,
+        matching_subscription_generation_id=low_receipt.subscription_generation_id,
+        status="open",
+    )
+    repo.insert_order(low_order_model)
+    assert repo.transition_entry_plan(
+        low.plan_id,
+        expected_status="waiting",
+        status="triggered",
+    )
+    assert repo.transition_entry_plan(
+        low.plan_id,
+        expected_status="triggered",
+        status="risk_reserved",
+    )
+    assert repo.transition_entry_plan(
+        low.plan_id,
+        expected_status="risk_reserved",
+        status="ordered",
+        order_id=low_order_model.id,
+    )
+    assert high_result["status"] == "ordered", high_result
+    high_order = repo.get_order(high_result["order_id"])
+    low_order = repo.get_order(low_order_model.id)
+    budget = float(high_order["quantity"]) + float(low_order["quantity"]) / 2
+    instant_ms = int(now.timestamp() * 1_000) + 100
+    matches = gateway.observe_paper_entry_order_event(
+        FastMarketEvent(
+            event_type="trade",
+            instrument=InstrumentId.from_parts("bitget", "BTC/USDT", "perp"),
+            exchange_timestamp_ms=instant_ms,
+            received_timestamp_ms=instant_ms,
+            sequence=50,
+            stream_generation_id="stream-1",
+            subscription_generation_id="subscription-1",
+            price=99.8,
+            size=budget,
+            side="sell",
+        )
+    )
+
+    assert [match["order_id"] for match in matches] == [
+        high_order["id"],
+        low_order["id"],
+    ]
+    assert repo.get_order(high_order["id"])["status"] == "filled"
+    assert repo.get_order(low_order["id"])["status"] == "partially_filled"
+    assert sum(
+        fill["fill_quantity"] for fill in repo.list_fills(order_id=low_order["id"])
+    ) == pytest.approx(float(low_order["quantity"]) / 2)
 
 def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
     from aletheia.execution import gateway
     from aletheia.execution.entry_plan_execution import (
+        build_entry_execution_receipt,
         build_entry_plan_order_intent,
     )
 
@@ -926,6 +1515,15 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
         now=now,
     )
     repo.insert_trade_proposal(proposal)
+    receipt = build_entry_execution_receipt(
+        plan,
+        proposal,
+        bid=99.9,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        **_execution_receipt_kwargs(now, depth=False),
+    )
     repo.acquire_entry_risk_reservation(
         proposal_id=proposal.id,
         proposal_commit_hash=proposal.commit_hash,
@@ -937,7 +1535,7 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
         leverage=proposal.leverage,
     )
 
-    def approve(proposal, *, decision_role):
+    def approve(proposal, *, decision_role, execution_receipt=None):
         decision = RiskDecision(
             proposal_id=proposal.id,
             approved=True,
@@ -961,7 +1559,11 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
         raise RuntimeError("paper broker failed")
 
     monkeypatch.setattr(gateway, "execute_paper_order", fail_paper_order)
-    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+    result = gateway.execute_existing_proposal(
+        proposal.id,
+        "paper_internal",
+        execution_receipt=receipt,
+    )
 
     assert result["status"] == "error"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "failed"
@@ -980,8 +1582,49 @@ def test_stale_exact_state_cannot_advance_triggered_plan():
             ask=100.05,
             observed_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
             source_observed_at=datetime.now(timezone.utc).isoformat(),
+            stream_generation_id="stream-1",
+            subscription_generation_id="subscription-1",
+            quote_sequence=1,
         )
     assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+
+
+def test_entry_plan_monitoring_persists_only_material_readiness_changes():
+    plan = _persist_waiting_plan()
+    evidence = {
+        "version": "entry-plan-monitoring/v1",
+        "state": "warming",
+        "stream_generation_id": "stream-1",
+        "subscription_generation_id": "subscription-1",
+        "required_channels": ["quote"],
+        "channels": {
+            "quote": {
+                "state": "warming",
+                "reason": "channel_event_not_observed",
+                "last_sequence": None,
+            }
+        },
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    assert repo.record_entry_plan_monitoring(plan.plan_id, evidence) is True
+    assert repo.record_entry_plan_monitoring(
+        plan.plan_id,
+        {
+            **evidence,
+            "updated_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+        },
+    ) is False
+    ready = {
+        **evidence,
+        "state": "ready",
+        "channels": {"quote": {"state": "ready", "reason": None, "last_sequence": 3}},
+    }
+    assert repo.record_entry_plan_monitoring(plan.plan_id, ready) is True
+    row = repo.get_entry_plan(plan.plan_id)
+    payload = row["monitoring_evidence_json"]
+    assert row["monitoring_state"] == "ready"
+    assert row["monitoring_evidence_hash"] == hashlib.sha256(payload.encode()).hexdigest()
 
 
 def test_stale_source_state_cannot_advance_triggered_plan():
@@ -997,6 +1640,9 @@ def test_stale_source_state_cannot_advance_triggered_plan():
             source_observed_at=(
                 datetime.now(timezone.utc) - timedelta(seconds=5)
             ).isoformat(),
+            stream_generation_id="stream-1",
+            subscription_generation_id="subscription-1",
+            quote_sequence=1,
         )
     assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
 

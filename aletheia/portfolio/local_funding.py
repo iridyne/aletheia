@@ -55,6 +55,9 @@ class _ScheduledSnapshot:
     funding_rate: float
     scheduled_at: datetime
     observed_at: datetime
+    source_observed_at: datetime | None
+    acquired_at: datetime | None
+    source_time_status: str | None
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,8 @@ def _load_scheduled_snapshots(symbol: str, *, through: datetime) -> list[_Schedu
 
     rows = get_db().execute(
         """
-        SELECT id, symbol, exchange, funding_rate, next_funding_time, observed_at
+        SELECT id, symbol, exchange, funding_rate, next_funding_time, observed_at,
+               source_observed_at, acquired_at, source_time_status
         FROM funding_rate_snapshots
         WHERE symbol=? AND next_funding_time IS NOT NULL
         ORDER BY observed_at ASC, rowid ASC
@@ -121,6 +125,9 @@ def _load_scheduled_snapshots(symbol: str, *, through: datetime) -> list[_Schedu
             funding_rate=rate,
             scheduled_at=scheduled_at,
             observed_at=observed_at,
+            source_observed_at=_parse_utc(row.get("source_observed_at")),
+            acquired_at=_parse_utc(row.get("acquired_at")),
+            source_time_status=str(row.get("source_time_status") or "") or None,
         ))
     return result
 
@@ -430,9 +437,30 @@ def _incomplete(
 def has_fresh_local_funding_schedule(
     symbol: str,
     *,
+    venue: str,
+    market_type: str,
     as_of: str | datetime | None = None,
 ) -> bool:
-    """Return whether entry has a fresh, persisted next-settlement anchor."""
+    """Return exact-venue Perp entry authority with complete time provenance."""
+
+    return bool(
+        local_funding_schedule_readiness(
+            symbol,
+            venue=venue,
+            market_type=market_type,
+            as_of=as_of,
+        )["ready"]
+    )
+
+
+def local_funding_schedule_readiness(
+    symbol: str,
+    *,
+    venue: str,
+    market_type: str,
+    as_of: str | datetime | None = None,
+) -> dict[str, Any]:
+    """Project the exact entry gate and its latest bounded failure reason."""
 
     if as_of is None:
         instant = datetime.now(timezone.utc)
@@ -441,15 +469,51 @@ def has_fresh_local_funding_schedule(
     else:
         instant = _parse_utc(as_of)
     if instant is None:
-        return False
+        return {"ready": False, "reason": "as_of_invalid"}
+    exact_venue = str(venue or "").strip().lower()
+    if not exact_venue or str(market_type or "").strip().lower() not in {
+        "perp",
+        "swap",
+        "usdt_futures",
+    }:
+        return {"ready": False, "reason": "exact_perp_identity_required"}
     rows = _load_scheduled_snapshots(symbol, through=instant)
-    candidates = [
-        row
-        for row in rows
-        if row.observed_at <= instant < row.scheduled_at
-        and instant - row.observed_at <= _MAX_OBSERVATION_GAP
-    ]
-    return bool(candidates)
+    exact_rows = [row for row in rows if row.exchange == exact_venue]
+    if not exact_rows:
+        return {
+            "ready": False,
+            "reason": "exact_schedule_missing",
+            "venue": exact_venue,
+            "symbol": symbol,
+            "market_type": "perp",
+        }
+    row = exact_rows[-1]
+    reason = None
+    if row.source_time_status != "provided" or row.source_observed_at is None:
+        reason = "source_time_unavailable"
+    elif row.acquired_at is None:
+        reason = "acquired_at_unavailable"
+    elif row.source_observed_at > row.acquired_at + _SETTLEMENT_SKEW:
+        reason = "source_after_acquisition"
+    elif row.acquired_at > instant:
+        reason = "acquisition_after_as_of"
+    elif instant >= row.scheduled_at:
+        reason = "next_settlement_not_future"
+    elif instant - row.acquired_at > _MAX_OBSERVATION_GAP:
+        reason = "schedule_stale"
+    return {
+        "ready": reason is None,
+        "reason": reason,
+        "venue": exact_venue,
+        "symbol": symbol,
+        "market_type": "perp",
+        "snapshot_id": row.id,
+        "source_observed_at": (
+            _as_iso(row.source_observed_at) if row.source_observed_at else None
+        ),
+        "acquired_at": _as_iso(row.acquired_at) if row.acquired_at else None,
+        "next_funding_time": _as_iso(row.scheduled_at),
+    }
 
 
 def _compute_local_funding_with_entry_fills(

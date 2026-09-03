@@ -304,6 +304,43 @@ def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
     assert ready.taker_buy_ratio == pytest.approx(4 / 14)
 
 
+def test_trigger_rejects_market_evidence_from_mixed_stream_generations():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import FastMarketEvent
+    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+    engine = TriggerEngine(
+        instrument=instrument,
+        direction="long",
+        breakout_level=100.0,
+        pullback_band=(99.75, 100.25),
+        entry_zone=(100.0, 100.25),
+        policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
+    )
+    engine.confirm_subscription()
+
+    def event(kind, at, sequence, generation, **values):
+        return FastMarketEvent(
+            event_type=kind,
+            instrument=instrument,
+            exchange_timestamp_ms=at,
+            received_timestamp_ms=at,
+            sequence=sequence,
+            stream_generation_id=generation,
+            subscription_generation_id="subscription-a",
+            **values,
+        )
+
+    engine.observe(event("quote", 1_000, 1, "stream-a", bid=99.98, ask=100.00))
+    engine.observe(event("depth", 1_050, 1, "stream-b", bids=((99.99, 2.0),), asks=((100.01, 2.0),)))
+    engine.observe(event("trade", 1_100, 1, "stream-a", price=100.0, size=10.0, side="buy"))
+    engine.observe(event("quote", 1_200, 2, "stream-a", bid=100.04, ask=100.06))
+
+    assert engine.observe(event("quote", 1_550, 3, "stream-a", bid=100.05, ask=100.07)) is None
+    assert engine.health_reason == "market_evidence_generation_mismatch"
+
+
 def test_reclaim_side_alone_does_not_count_as_pullback():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
@@ -332,6 +369,58 @@ def test_reclaim_side_alone_does_not_count_as_pullback():
             )
         )
     assert engine.state == "armed"
+
+
+def test_entry_plan_expiry_reason_preserves_monitoring_and_trigger_cause():
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime.fast_trigger_watch import _entry_plan_expiry_reason
+
+    assert _entry_plan_expiry_reason({"status": "waiting", "monitoring_state": None}) == (
+        "monitoring_never_ready"
+    )
+    assert _entry_plan_expiry_reason(
+        {
+            "status": "waiting",
+            "monitoring_state": "unavailable",
+            "monitoring_evidence_json": json.dumps(
+                {"channels": {"depth": {"state": "unavailable"}}}
+            ),
+        }
+    ) == "monitoring_channel_unavailable:depth"
+    assert _entry_plan_expiry_reason(
+        {"status": "waiting", "monitoring_state": "ready"},
+        SimpleNamespace(state="reclaim", final_requirement_reason="order_flow"),
+    ) == "trigger_final_requirements_unsatisfied:order_flow"
+    assert _entry_plan_expiry_reason(
+        {"status": "ordered", "monitoring_state": "ready"}
+    ) == "maker_order_unfilled_until_expiry"
+
+
+def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+
+    monkeypatch.setattr(
+        watch.repo,
+        "get_order",
+        lambda _order_id: {
+            "matching_stream_generation_id": "stream-a",
+            "matching_subscription_generation_id": "subscription-a",
+        },
+    )
+    row = {
+        "status": "ordered",
+        "order_id": "order-1",
+        "monitoring_evidence_json": json.dumps(
+            {
+                "state": "warming",
+                "stream_generation_id": "stream-b",
+                "subscription_generation_id": "subscription-b",
+            }
+        ),
+    }
+
+    assert watch._entry_plan_expiry_reason(row) == "expired_during_monitoring_gap"
 
 
 def test_sequence_regression_disarms_trigger():
@@ -790,8 +879,27 @@ def test_local_paper_uses_configured_public_fast_stream():
 
     assert fast_market_data_venue_for_config(cfg) == "binance"
     assert validate_fast_trigger_execution(cfg) is None
-    cfg.fast_trigger.mode = "off"
+    cfg.fast_trigger.enabled = False
     assert fast_market_data_unavailability_reason(cfg, "binance") == "FAST_TRIGGER_DISABLED"
+
+
+def test_legacy_mode_off_does_not_disable_current_entry_plan_monitoring():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.fast_trigger import (
+        validate_fast_trigger_execution,
+        validate_fast_trigger_stream,
+    )
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
+
+    cfg = AletheiaConfig()
+    cfg.fast_trigger.enabled = True
+    cfg.fast_trigger.mode = "off"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.market_data.ccxt_exchange = "binance"
+
+    assert validate_fast_trigger_execution(cfg) == "fast_trigger_disabled"
+    assert validate_fast_trigger_stream(cfg) is None
+    assert fast_market_data_unavailability_reason(cfg, "binance") is None
 
 
 def test_fast_trigger_refuses_observe_permission():
@@ -1224,7 +1332,7 @@ async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
 
     assert plans == {}
     assert engines == {}
-    assert cancellations == [("triggered-maker", "entry_plan_maker_timeout")]
+    assert cancellations == [("triggered-maker", "maker_order_unfilled_until_expiry")]
 
 
 @pytest.mark.asyncio
@@ -1389,6 +1497,9 @@ async def test_watch_loop_reloads_setups_while_stream_is_busy(monkeypatch):
         def health(self):
             return FastStreamHealth(connected=True, subscriptions_confirmed=True)
 
+        def monitoring_state(self, _instrument, _channels):
+            return {"state": "ready"}
+
         async def close(self):
             pass
 
@@ -1477,6 +1588,9 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
 
         def health(self):
             return FastStreamHealth(connected=True, subscriptions_confirmed=True)
+
+        def monitoring_state(self, _instrument, _channels):
+            return {"state": "ready"}
 
         async def close(self):
             pass
@@ -1969,7 +2083,84 @@ async def test_binance_spot_snapshot_retries_transient_failure():
 
 
 @pytest.mark.asyncio
-async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync():
+async def test_binance_spot_snapshot_failure_keeps_perp_lane_available():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
+
+    class _Session:
+        def get(self, *_args, **_kwargs):
+            raise RuntimeError("snapshot unavailable")
+
+    class _Ws:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    spot = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+    perp = InstrumentId.from_parts("binance", "ETH/USDT", "perp")
+    stream = BinanceFastMarketStream()
+    stream._session = _Session()
+    stream._sockets = {"spot": _Ws(), "perp": _Ws()}
+    stream._lane_connected = {"spot": True, "perp": True}
+    stream._books[spot] = _SpotBook()
+
+    await stream._load_spot_snapshot(spot)
+
+    assert stream._sockets["spot"].closed is True
+    assert stream.health().connected is True
+    assert stream.monitoring_state(spot, ("depth",))["state"] == "unavailable"
+    assert stream.monitoring_state(perp, ("trade",))["state"] == "warming"
+
+
+@pytest.mark.asyncio
+async def test_binance_delta_subscription_preserves_unchanged_instrument_generation():
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import BinanceFastMarketStream, FastMarketEvent
+
+    class _Ws:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+    perp = InstrumentId.from_parts("binance", "ETH/USDT", "perp")
+    spot = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
+    stream = BinanceFastMarketStream()
+    stream._sockets = {"spot": _Ws(), "perp": _Ws()}
+    stream._lane_connected = {"spot": True, "perp": True}
+
+    async def _no_snapshot(_instrument):
+        return None
+
+    stream._load_spot_snapshot = _no_snapshot
+    await stream.set_instruments({perp})
+    generation = stream._subscription_generations[perp]
+    fact = FastMarketEvent(
+        event_type="trade",
+        instrument=perp,
+        exchange_timestamp_ms=1,
+        received_timestamp_ms=1,
+        sequence=1,
+        price=100,
+        size=1,
+        side="buy",
+    )
+    stream._channel_facts[(perp, "trade")] = fact
+
+    await stream.set_instruments({perp, spot})
+
+    assert stream._subscription_generations[perp] == generation
+    assert stream._channel_facts[(perp, "trade")] is fact
+    assert stream._sockets["perp"].sent == [
+        stream._sockets["perp"].sent[0]
+    ]
+    assert stream._sockets["spot"].sent[-1]["method"] == "SUBSCRIBE"
+
+
+@pytest.mark.asyncio
+async def test_binance_dual_socket_health_keeps_ready_perp_lane_while_spot_syncs():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
 
@@ -1984,6 +2175,7 @@ async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync(
     perp = InstrumentId.from_parts("binance", "ETH/USDT", "perp")
     stream = BinanceFastMarketStream()
     stream._sockets = {"spot": _Ws(), "perp": _Ws()}
+    stream._lane_connected = {"spot": True, "perp": True}
 
     async def _no_snapshot(_instrument):
         return None
@@ -1996,7 +2188,8 @@ async def test_binance_dual_socket_subscriptions_require_all_acks_and_spot_sync(
     assert stream.health().subscriptions_confirmed is False
     stream._pending_acks.clear()
     stream._refresh_confirmation()
-    assert stream.health().subscriptions_confirmed is False
+    assert stream.health().subscriptions_confirmed is True
+    assert stream.monitoring_state(spot, ("depth",))["state"] == "warming"
     book = _SpotBook()
     book.synced = True
     stream._books[spot] = book
@@ -2035,23 +2228,20 @@ async def test_binance_subscription_confirmation_rejects_error_and_unknown_acks(
 
     stream = BinanceFastMarketStream()
     stream._instruments = {InstrumentId.from_parts("binance", "BTC/USDT", "perp")}
-    stream._pending_acks = {7}
+    stream._pending_acks = {7: "perp"}
+    stream._lane_connected["perp"] = True
     stream._health = FastStreamHealth(connected=True)
     ws = _Ws()
     reader = asyncio.create_task(stream._read_socket("perp", ws))
 
     await send({"id": 99, "result": None})
-    assert stream._pending_acks == {7}
+    assert stream._pending_acks == {7: "perp"}
     assert stream.health().subscriptions_confirmed is False
 
     await send({"id": 7, "error": {"code": 2, "msg": "sensitive venue detail"}})
-    assert stream._pending_acks == {7}
+    assert stream._pending_acks == {}
     assert stream.health().subscriptions_confirmed is False
     assert stream.health().reason == "fast_trigger_subscription_rejected:binance"
-
-    await send({"id": 7, "result": None})
-    assert stream._pending_acks == set()
-    assert stream.health().subscriptions_confirmed is True
 
     reader.cancel()
     await asyncio.gather(reader, return_exceptions=True)
@@ -2063,7 +2253,7 @@ async def test_binance_subscription_confirmation_rejects_error_and_unknown_acks(
     [
         ({"spot"}, "perp", True),
         ({"perp"}, "spot", True),
-        ({"spot", "perp"}, "spot", False),
+        ({"spot", "perp"}, "spot", True),
     ],
 )
 async def test_binance_connect_only_requires_watched_market_sockets(
@@ -2114,8 +2304,9 @@ async def test_binance_connect_only_requires_watched_market_sockets(
 
     if should_connect:
         await stream.connect(instruments)
-        assert calls == [next(iter(required_market_types))]
-        assert set(stream._sockets) == required_market_types
+        assert set(calls) == required_market_types
+        assert set(stream._sockets) == required_market_types - {unavailable_market_type}
+        assert stream.health().connected is True
         await stream.close()
     else:
         with pytest.raises(RuntimeError, match="endpoint unavailable"):
@@ -2151,7 +2342,10 @@ async def test_binance_connect_uses_managed_proxy_session(monkeypatch):
     with pytest.raises(RuntimeError, match="stop_after_managed_session"):
         await stream.connect()
 
-    assert calls == [{"heartbeat": 30, "proxy": "http://managed-proxy.invalid:7890"}]
+    assert calls == [
+        {"heartbeat": 30, "proxy": "http://managed-proxy.invalid:7890"},
+        {"heartbeat": 30, "proxy": "http://managed-proxy.invalid:7890"},
+    ]
     assert session.closed is True
 
 
@@ -2549,7 +2743,7 @@ async def test_resting_maker_timeout_uses_orders_created_at_not_plan_age(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
+async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch):
     from types import SimpleNamespace
 
     from aletheia.agent_runtime import fast_trigger_watch as watch
@@ -2625,10 +2819,9 @@ async def test_maker_timeout_reconciles_orders_beyond_watcher_cap(monkeypatch):
     watched, _ = await watch._load_entry_plan_watchers(cfg)
 
     assert requested_limits == [None]
-    assert len(watched) == 10
+    assert len(watched) == 11
     assert cancellations == [
-        ("plan-10", "entry_plan_maker_timeout"),
-        ("plan-11", "entry_plan_monitoring_capacity_unavailable"),
+        ("plan-10", "maker_order_unfilled_until_expiry"),
     ]
 
 

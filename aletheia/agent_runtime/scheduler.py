@@ -2736,7 +2736,8 @@ def _run_fast_trigger_authorizer():
 
     cfg = load_config(persist_migrations=False)
     if (
-        cfg.fast_trigger.mode == "off"
+        not getattr(cfg.fast_trigger, "enabled", True)
+        or cfg.fast_trigger.mode == "off"
         or cfg.runtime.paused
         or cfg.runtime.kill_switch_active
     ):
@@ -4645,6 +4646,19 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     # Keep venue + market identity for primary-exchange collectors.
     instruments = _get_observed_instruments(cfg)
     derivative_symbols = _get_derivative_symbols(instruments)
+    funding_venue = str(cfg.market_data.ccxt_exchange or "").strip().lower()
+    try:
+        derivative_symbols = list(dict.fromkeys([
+            *derivative_symbols,
+            *(
+                str(row["symbol"])
+                for row in repo.list_watchable_entry_plans(None)
+                if row.get("venue") == funding_venue
+                and row.get("market_type") == "perp"
+            ),
+        ]))
+    except Exception:
+        logger.debug("Watchable Entry Plan funding targets unavailable", exc_info=True)
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro_result: dict = {}

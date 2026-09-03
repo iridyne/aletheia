@@ -54,13 +54,17 @@ def _iso_ms(hour: int, minute: int = 0, millisecond: int = 0) -> str:
 def _snapshot(*, rate: float, target_hour: int, observed_hour: int, observed_minute: int):
     from aletheia.storage import repositories as repo
 
+    observed = _iso(observed_hour, observed_minute)
     repo.insert_funding_rate_snapshot({
         "symbol": "BTC/USDT",
         "exchange": "okx",
         "funding_rate": rate,
         "funding_rate_annualized": rate * 3 * 365,
         "next_funding_time": _iso(target_hour),
-        "observed_at": _iso(observed_hour, observed_minute),
+        "observed_at": observed,
+        "source_observed_at": observed,
+        "acquired_at": observed,
+        "source_time_status": "provided",
     })
 
 
@@ -74,6 +78,9 @@ def _snapshot_at(*, rate: float, target: str, observed: str):
         "funding_rate_annualized": rate * 3 * 365,
         "next_funding_time": target,
         "observed_at": observed,
+        "source_observed_at": observed,
+        "acquired_at": observed,
+        "source_time_status": "provided",
     })
 
 
@@ -700,6 +707,7 @@ def test_scheduler_observed_instruments_include_all_open_paper_futures(
 
     collector_source = inspect.getsource(scheduler._async_data_collectors)
     assert "_get_derivative_symbols(instruments)" in collector_source
+    assert "list_watchable_entry_plans" in collector_source
     assert "deriv.collect(derivative_symbols)" in collector_source
 
 
@@ -719,7 +727,10 @@ def test_local_funding_entry_schedule_requires_fresh_primary_snapshot(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.portfolio.local_funding import has_fresh_local_funding_schedule
+    from aletheia.portfolio.local_funding import (
+        has_fresh_local_funding_schedule,
+        local_funding_schedule_readiness,
+    )
     from aletheia.storage import repositories as repo
 
     repo.insert_funding_rate_snapshot({
@@ -738,11 +749,32 @@ def test_local_funding_entry_schedule_requires_fresh_primary_snapshot(
         "next_funding_time": _iso(4),
         "observed_at": _iso(0, 10),
     })
+    repo.insert_funding_rate_snapshot({
+        "symbol": "BTC/USDT",
+        "exchange": "binance",
+        "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.1095,
+        "next_funding_time": _iso(4),
+        "observed_at": _iso(0, 29),
+        "source_observed_at": _iso(0, 29),
+        "acquired_at": _iso(0, 29),
+        "source_time_status": "provided",
+    })
 
-    assert has_fresh_local_funding_schedule("BTC/USDT", as_of=_iso(0, 30)) is False
+    assert has_fresh_local_funding_schedule(
+        "BTC/USDT", venue="okx", market_type="perp", as_of=_iso(0, 30)
+    ) is False
+    assert local_funding_schedule_readiness(
+        "BTC/USDT", venue="okx", market_type="perp", as_of=_iso(0, 30)
+    )["reason"] == "source_time_unavailable"
 
     _snapshot(rate=0.0001, target_hour=4, observed_hour=0, observed_minute=29)
-    assert has_fresh_local_funding_schedule("BTC/USDT", as_of=_iso(0, 30)) is True
+    assert has_fresh_local_funding_schedule(
+        "BTC/USDT", venue="okx", market_type="perp", as_of=_iso(0, 30)
+    ) is True
+    assert local_funding_schedule_readiness(
+        "BTC/USDT", venue="okx", market_type="perp", as_of=_iso(0, 30)
+    )["reason"] is None
 
 
 @spec_claim(

@@ -48,7 +48,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 |---|------|------|------------|---------|------|
 | 0 | Trading Brakes | global brake 阻断全部；demo/live mode brake 只阻断对应 pool；三者同时以带 scope/generation 的 durable pause owner 投影，resume authority 仍先检查独立 brake | `runtime.kill_switch_active/demo_brake_active/live_brake_active` + `runtime.pause_owners` | `kill_switch_active` / `demo_brake_active` / `live_brake_active` | engine.py / pause_ownership.py |
 | 1 | Symbol Filter | white/blacklist | `risk.symbol_filter_mode/symbol_list` | `symbol_blocked/not_allowed:{sym}` | :83 |
-| 1a | Local Paper Market Authority | authoritative `native + paper_internal` 只接受主数据 venue、canonical symbol、physical market 完全匹配的新鲜 mark（内存≤90s，SQLite≤120s）；Proposal.price 必须以极窄 `math.isclose` 容差等于该 mark，broker 只在批准后施加滑点；本地 limit 不受支持 | `market_data.ccxt_exchange` | `paper_market_data_unavailable:{venue}:{market}` / `proposal_price_not_current_mark` / `paper_internal_limit_not_supported` | engine.py local-paper authority block |
+| 1a | Local Paper Market Authority | generic `native + paper_internal` 仍要求 exact fresh mark 与 Proposal.price 一致。Entry Plan Limit 改为验证短期 `EntryExecutionReceiptV1`：exact Plan/instrument/generation/channel、fresh BBO、Maker passive 或 IOC BBO+depth 边界；Proposal.price 是 order constraint，不是第二条 current-mark 声明 | `market_data.ccxt_exchange` + execution receipt | `paper_market_data_unavailable:*` / `proposal_price_not_current_mark`（generic）/ `entry_execution_receipt_*`（Entry Plan） | engine.py local-paper authority block |
 | 1b | Local Paper Causal Identity | authoritative `native + paper_internal` 必须在 `opportunities` 与 `serenity_opportunities` 中恰有一个 durable carrier，且 canonical symbol、physical market、direction 完全一致 | —（始终启用） | `proposal_opportunity_required/not_found/ambiguous/symbol_mismatch/market_mismatch/direction_mismatch/check_error` | engine.py `_paper_opportunity_identity_violations` |
 | 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `spot_market_disabled`（market_type=='spot' 且 enabled_markets['spot']==False）/ `futures_market_disabled`（market_type=='usdt_futures' 且 enabled_markets['usdt_futures']==False） | :93 |
 | 2a | Local Futures Funding Ready | `paper_internal` 合约开仓前须有该 symbol 15 分钟内的主 venue 下一结算快照 | `funding_rate_snapshots` | `local_paper_futures_funding_unavailable` | engine.py check #2a |
@@ -76,10 +76,13 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
 >
-> **本地纸面入场不是“有一条新鲜行情就够了”**：Risk 会重新读取精确 venue+symbol+physical-market
-> mark，并核对 hash-covered Proposal.price。报价不一致、行情缺失/过期、两张 Opportunity 表发生同 ID
+> **本地纸面入场不是“有一条新鲜行情就够了”**：generic Proposal 仍重新读取精确 venue+symbol+
+> physical-market mark；Entry Plan 则只消费 hash-valid、未过期、exact instrument/generation/channel 的
+> execution receipt，并按 Maker/IOC tactic 验证 immutable order constraint，避免两条异步价格权威。
+> 报价/receipt 不一致、行情缺失/过期、两张 Opportunity 表发生同 ID
 > 冲突，或入场计划缺字段/数学自相矛盾/RR 超出 `[1.00, 10.00]` 合理性包络，都会在 authoritative RiskDecision 中拒绝且保持零
-> Order/Fill/Position。合法 Proposal 以 mark 获批后，paper broker 才按配置施加不利滑点。spec:
+> Order/Fill/Position。generic Proposal 获批后仍走既有 mark+slippage；Entry Plan 则由
+> `paper-order-fill/v1` 仅按 receipt depth 或后续 strict trade-through 形成模拟 Fill。spec:
 > `PL-RG-07~14`、`PL-EC-01~05`。
 >
 > ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓。paper_internal 没有可信的模拟账户权益序列：本地快照是持仓名义金额，外部账户快照属于另一账户，因此它跳过回撤缩放并继续受固定上限、日损和持仓数限制。spec: RE-B05(分段)+ RE-B05a(交易所数据源)+ RE-B05b(本地模拟)。
@@ -90,7 +93,10 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 
 > **Spot 杠杆身份**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`；其他值在 Risk admission 以 `invalid_spot_leverage` 稳定拒绝，paper proposal helper 也必须在持久化前拒绝。历史矛盾 spot Position 即使带有非 1x leverage，本地 paper 账本仍按完整 spot 名义占用现金，不能因坏数据释放购买力。期货的合法杠杆与保证金计算不变。spec: RE-B32。
 
-> **本地合约资金费前置门**：`paper_internal + usdt_futures` 只有在该 symbol 存在新鲜、非预测跨 venue 的下一结算快照时才可开仓。通过只代表本地模拟器已有起始锚点；平仓仍逐事件验证完整时间窗，任何断档都关闭仓位但保持净收益不可用。spec: RE-B22、PL-LF-01~06。
+> **本地合约资金费前置门**：`paper_internal + usdt_futures` 只有在配置的 exact physical venue、
+> canonical symbol、perp 上存在 source-time provided、近期采集且下一结算仍在未来的 schedule 时才可
+> 开仓；跨 venue、aggregate/predicted、stale 或 malformed 行均不可满足。通过只代表本地模拟器已有
+> 起始锚点；平仓仍逐事件验证完整时间窗，任何断档都关闭仓位但保持净收益不可用。spec: RE-B22、PL-LF-01~06。
 
 > **账户杠杆身份**：check #17 使用同一个账户池判断 open Position、未决 entry Order 和 pre-Order reservation；`paper_internal` 独立、每个 demo execution mode 独立，live 保持合并池。分母只读同一具名账户的新鲜健康本地 equity，过期、异常或具名账户缺失时拒绝，不以 starting capital 代替；相关 Position 的 market_type/quantity/entry_price/current_price/leverage 只要缺失、非正数、非有限数或自相矛盾，也会稳定拒绝而不是从分子消失。拒绝 token 携带 sanitized Position id 与稳定 field category，避免一条坏仓位只产生无法定位的泛化重复告警。唯一结构化例外是 spot Position：spot 本身无杠杆，历史/当前模型以 `leverage=NULL` 表示 1x，因此按 1x 计入；若 spot 显式写入非 1x，则视为数据矛盾并拒绝。合约或未知 market_type 的 NULL leverage 仍拒绝。spec: RE-B23~28。
 

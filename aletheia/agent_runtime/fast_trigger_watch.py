@@ -263,6 +263,7 @@ def _configured_block_reason(cfg) -> str | None:
 def _watch_config_identity(cfg) -> tuple[object, ...]:
     return (
         cfg.fast_trigger.mode,
+        getattr(cfg.fast_trigger, "enabled", True),
         cfg.fast_trigger.max_setups,
         cfg.fast_trigger.authorization_ttl_minutes,
         cfg.fast_trigger.trigger_behavior_version,
@@ -286,7 +287,10 @@ async def reconfigure_fast_trigger_watch(cfg, loop: asyncio.AbstractEventLoop) -
     """Apply a saved mode change to the lifecycle-owned watcher."""
 
     global _watch_task, _stop_event
-    if not _lifecycle_ready and cfg.fast_trigger.mode != "off":
+    if (
+        not _lifecycle_ready
+        and getattr(cfg.fast_trigger, "enabled", True)
+    ):
         return {
             "running": False,
             "reason": "fast_trigger_lifecycle_unavailable",
@@ -318,6 +322,8 @@ async def _load_watchers(
     cfg,
     existing: dict[str, TriggerEngine] | None = None,
 ) -> tuple[dict[str, UniverseSetup], dict[str, TriggerEngine]]:
+    if cfg.fast_trigger.mode == "off":
+        return {}, {}
     await asyncio.to_thread(repo.expire_universe_setups)
     rows = await asyncio.to_thread(repo.list_watchable_universe_setups, int(cfg.fast_trigger.max_setups))
     setups: dict[str, UniverseSetup] = {}
@@ -522,7 +528,6 @@ async def _load_entry_plan_watchers(
 
     plans: dict[str, EntryPlan] = {}
     engines: dict[str, TriggerEngine | MomentumTriggerEngineV2] = {}
-    monitoring_limit = int(cfg.fast_trigger.max_setups)
     now = datetime.now(timezone.utc)
     for row in await asyncio.to_thread(repo.list_watchable_entry_plans, None):
         payload = str(row["plan_json"])
@@ -608,7 +613,10 @@ async def _load_entry_plan_watchers(
             outcome = await _terminalize_entry_plan(
                 row,
                 status="expired",
-                reason="entry_plan_expired",
+                reason=_entry_plan_expiry_reason(
+                    row,
+                    existing.get(plan.plan_id) if existing else None,
+                ),
                 cancel_entry_plan_order=cancel_entry_plan_order,
                 now=now,
             )
@@ -647,21 +655,9 @@ async def _load_entry_plan_watchers(
                     await asyncio.to_thread(
                         cancel_entry_plan_order,
                         plan.plan_id,
-                        reason="entry_plan_maker_timeout",
+                        reason="maker_order_unfilled_until_expiry",
                     )
                     continue
-        if len(plans) >= monitoring_limit:
-            outcome = await _terminalize_entry_plan(
-                row,
-                status="invalidated",
-                reason="entry_plan_monitoring_capacity_unavailable",
-                cancel_entry_plan_order=cancel_entry_plan_order,
-                now=now,
-            )
-            if _entry_plan_outcome_is_unresolved(outcome):
-                # Never abandon unresolved execution authority at the cap.
-                plans[plan.plan_id] = plan
-            continue
         plans[plan.plan_id] = plan
         if _is_momentum_v2_trigger_plan(plan):
             shadow_state = await _shadow_plan_terminal_state(plan.plan_id)
@@ -760,6 +756,79 @@ def _watched_instruments(
     return instruments
 
 
+def _plan_required_channels(plan) -> tuple[str, ...]:
+    return tuple(
+        {"books5": "depth", "candle1m": "candle"}.get(channel, channel)
+        for channel in plan.trigger_data_requirements
+    )
+
+
+def _plan_monitoring_channels(plan) -> tuple[str, ...]:
+    if plan.order_tactic == "POST_ONLY_LIMIT" and plan.execution_mode == "RESTING_MAKER":
+        return ("quote", "trade")
+    return _plan_required_channels(plan)
+
+
+def _entry_plan_expiry_reason(row: dict, engine=None) -> str:
+    if row.get("status") in {"ordered", "partially_filled"}:
+        order = repo.get_order(row.get("order_id")) if row.get("order_id") else None
+        try:
+            monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            monitoring = {}
+        if order and (
+            monitoring.get("state") != "ready"
+            or monitoring.get("stream_generation_id")
+            != order.get("matching_stream_generation_id")
+            or monitoring.get("subscription_generation_id")
+            != order.get("matching_subscription_generation_id")
+        ):
+            return "expired_during_monitoring_gap"
+        return "maker_order_unfilled_until_expiry"
+    state = row.get("monitoring_state")
+    if state in {None, "warming"}:
+        return "monitoring_never_ready"
+    if state == "queued":
+        return "monitoring_queued_until_expiry"
+    if state == "degraded":
+        return "monitoring_stream_degraded"
+    if state == "unavailable":
+        try:
+            evidence = json.loads(row.get("monitoring_evidence_json") or "{}")
+            channel = next(
+                name
+                for name, facts in evidence.get("channels", {}).items()
+                if facts.get("state") == "unavailable"
+            )
+        except (StopIteration, TypeError, ValueError, json.JSONDecodeError):
+            return "monitoring_stream_unavailable"
+        return f"monitoring_channel_unavailable:{channel}"
+    if engine is not None:
+        final_reason = getattr(engine, "final_requirement_reason", None)
+        if final_reason:
+            return f"trigger_final_requirements_unsatisfied:{final_reason}"
+        return f"trigger_not_reached:{engine.state}"
+    return "entry_plan_expired"
+
+
+def _monitoring_ready(stream, instrument: InstrumentId, channels: tuple[str, ...]) -> bool:
+    return stream.monitoring_state(instrument, channels)["state"] == "ready"
+
+
+def _confirm_ready_engines(stream, engines, plan_engines, plans) -> None:
+    for engine in engines.values():
+        if _monitoring_ready(stream, engine.instrument, ("quote", "trade", "depth")):
+            engine.confirm_subscription()
+    for plan_id, engine in plan_engines.items():
+        plan = plans.get(plan_id)
+        if plan is not None and _monitoring_ready(
+            stream,
+            engine.instrument,
+            _plan_required_channels(plan),
+        ):
+            engine.confirm_subscription()
+
+
 async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
     from aletheia.execution.gateway import cancel_entry_plan_order
 
@@ -830,7 +899,9 @@ async def _watch_loop(cfg) -> None:
                 "running": True,
                 "reason": None,
                 "watched_setups": len(setups) + len(plans),
-                "watched_entry_plan_ids": list(plans.keys())[: int(cfg.fast_trigger.max_setups)],
+                "watched_entry_plan_ids": list(plans.keys()),
+                "watched_instruments": len(instruments),
+                "monitoring_queued": 0,
             }
             iterator = stream.events().__aiter__()
             subscribed = instruments
@@ -881,11 +952,11 @@ async def _watch_loop(cfg) -> None:
                         fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg)
                     setups, engines = fresh_setups, fresh_engines
                     plans, plan_engines = fresh_plans, fresh_plan_engines
-                    if stream.health().subscriptions_confirmed:
-                        for engine in (*engines.values(), *plan_engines.values()):
-                            engine.confirm_subscription()
+                    _confirm_ready_engines(stream, engines, plan_engines, plans)
                     _status["watched_setups"] = len(setups) + len(plans)
-                    _status["watched_entry_plan_ids"] = list(plans.keys())[: int(cfg.fast_trigger.max_setups)]
+                    _status["watched_entry_plan_ids"] = list(plans.keys())
+                    _status["watched_instruments"] = len(fresh_instruments)
+                    _status["monitoring_queued"] = 0
                     next_watcher_reload = now + _WATCHER_RELOAD_INTERVAL_SEC
                 if not done:
                     continue
@@ -895,10 +966,45 @@ async def _watch_loop(cfg) -> None:
                     break
                 finally:
                     event_task = None
-                if stream.health().subscriptions_confirmed:
-                    for engine in (*engines.values(), *plan_engines.values()):
-                        engine.confirm_subscription()
-                if event.event_type == "quote" and stream.health().subscriptions_confirmed:
+                for plan_id, plan in plans.items():
+                    instrument = InstrumentId.from_parts(
+                        plan.venue,
+                        plan.symbol,
+                        plan.market_type,
+                    )
+                    if instrument == event.instrument:
+                        await asyncio.to_thread(
+                            repo.record_entry_plan_monitoring,
+                            plan_id,
+                            stream.monitoring_state(
+                                instrument,
+                                _plan_monitoring_channels(plan),
+                            ),
+                        )
+                maker_monitoring = stream.monitoring_state(
+                    event.instrument,
+                    ("quote", "trade"),
+                )
+                if maker_monitoring["state"] == "ready":
+                    from aletheia.execution.gateway import (
+                        rebind_open_paper_orders_to_monitoring,
+                    )
+
+                    await asyncio.to_thread(
+                        rebind_open_paper_orders_to_monitoring,
+                        event.instrument,
+                        maker_monitoring,
+                    )
+                if event.event_type == "trade":
+                    from aletheia.execution.gateway import observe_paper_entry_order_event
+
+                    await asyncio.to_thread(observe_paper_entry_order_event, event)
+                _confirm_ready_engines(stream, engines, plan_engines, plans)
+                if event.event_type == "quote" and _monitoring_ready(
+                    stream,
+                    event.instrument,
+                    ("quote",),
+                ):
                     for plan_id, plan in tuple(plans.items()):
                         instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
                         if instrument != event.instrument:
@@ -944,6 +1050,11 @@ async def _watch_loop(cfg) -> None:
                                     source_observed_at=datetime.fromtimestamp(
                                         event.exchange_timestamp_ms / 1000, tz=timezone.utc
                                     ).isoformat(),
+                                    stream_generation_id=str(event.stream_generation_id or ""),
+                                    subscription_generation_id=str(
+                                        event.subscription_generation_id or ""
+                                    ),
+                                    quote_sequence=event.sequence,
                                 )
                             except ValueError as exc:
                                 if str(exc) != "post_only_would_cross_bbo":
@@ -964,6 +1075,11 @@ async def _watch_loop(cfg) -> None:
                                     event.exchange_timestamp_ms / 1000,
                                     tz=timezone.utc,
                                 ).isoformat(),
+                                stream_generation_id=str(event.stream_generation_id or ""),
+                                subscription_generation_id=str(
+                                    event.subscription_generation_id or ""
+                                ),
+                                quote_sequence=event.sequence,
                             )
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
@@ -1006,6 +1122,17 @@ async def _watch_loop(cfg) -> None:
                                 ready.quote_exchange_timestamp_ms / 1000,
                                 tz=timezone.utc,
                             ).isoformat(),
+                            stream_generation_id=str(ready.stream_generation_id or ""),
+                            subscription_generation_id=str(
+                                ready.subscription_generation_id or ""
+                            ),
+                            quote_sequence=ready.quote_sequence,
+                            required_channels=_plan_required_channels(plan),
+                            depth_bids=ready.depth_bids,
+                            depth_asks=ready.depth_asks,
+                            depth_exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
+                            depth_received_timestamp_ms=ready.depth_received_timestamp_ms,
+                            depth_sequence=ready.depth_sequence,
                             trigger_evidence=ready.entry_trigger,
                         )
                 for setup_id, engine in tuple(engines.items()):

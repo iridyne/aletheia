@@ -1029,6 +1029,7 @@ def update_app_config(req: AppConfigUpdate):
 # ---------------------------------------------------------------------------
 
 class FastTriggerConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
     mode: Optional[Literal["off", "shadow", "execute"]] = None
     max_setups: Optional[int] = None
     authorization_ttl_minutes: Optional[int] = None

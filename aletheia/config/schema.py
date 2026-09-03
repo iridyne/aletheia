@@ -1648,10 +1648,11 @@ class UniverseConfig(BaseModel):
 
 
 class FastTriggerConfig(BaseModel):
-    """Bounded Momentum trigger; the safe default observes without executing."""
+    """Deterministic trigger capability plus legacy Setup rollout compatibility."""
 
-    # Shadow prewarms/records the trigger path without granting order authority;
-    # execution remains an explicit opt-in.
+    enabled: bool = True
+    # Legacy UniverseSetup rows retain their historical rollout identity. Current
+    # Entry Plans use ``enabled`` and always proceed to canonical Risk/Gateway.
     mode: Literal["off", "shadow", "execute"] = "shadow"
     max_setups: int = Field(default=10, ge=1, le=10)
     authorization_ttl_minutes: int = Field(default=60, ge=1, le=60)
