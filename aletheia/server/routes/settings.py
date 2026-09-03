@@ -3,7 +3,6 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-import json
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -61,6 +60,15 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # AllowEditing/Auto) — this endpoint correctly governs only the worker side, so
 # the 3-value allowlist is intentional, not a bug (CR-AR-02 was a false positive).
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
+
+
+def _mutate_config_with_candidate_publication_permit(mutator):
+    """Serialize frozen Candidate identity writes with snapshot publication."""
+
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction(immediate=True):
+        return mutate_config(mutator)
 
 
 def _notify_ranker_config_change() -> None:
@@ -798,7 +806,7 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         changed = old != cfg.exchange.model_dump(mode="json")
         return True
 
-    mutate_config(mutator)
+    _mutate_config_with_candidate_publication_permit(mutator)
     cfg = load_config()
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
@@ -873,7 +881,7 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
         }
         return True
 
-    mutate_config(mutator)
+    _mutate_config_with_candidate_publication_permit(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human", "source": "dashboard",
@@ -1030,16 +1038,23 @@ class FastTriggerConfigUpdate(SettingsRequest):
 async def update_fast_trigger_config(req: FastTriggerConfigUpdate):
     """Persist bounded trigger authority and apply its watcher state immediately."""
 
-    cfg = load_config()
-    old = cfg.fast_trigger.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    cfg.fast_trigger = _validated_settings_section(
-        FastTriggerConfig,
-        old,
-        updates,
-        name="FastTriggerConfig",
-    )
-    save_config(cfg)
+    persisted: dict[str, Any] = {}
+
+    def apply_update(cfg) -> bool:
+        old = cfg.fast_trigger.model_dump(mode="json")
+        cfg.fast_trigger = _validated_settings_section(
+            FastTriggerConfig,
+            old,
+            updates,
+            name="FastTriggerConfig",
+        )
+        persisted.update({"cfg": cfg, "old": old})
+        return bool(updates)
+
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
     from aletheia.files.jsonl import write_audit
 
     write_audit({
@@ -1747,12 +1762,19 @@ class RegimeConfigUpdate(SettingsRequest):
 
 @router.post("/regime")
 def update_regime_config(req: RegimeConfigUpdate):
-    cfg = load_config()
-    old = cfg.regime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.regime, field, value)
-    save_config(cfg)
+    persisted: dict[str, Any] = {}
+
+    def apply_update(cfg) -> bool:
+        old = cfg.regime.model_dump(mode="json")
+        for field, value in updates.items():
+            setattr(cfg.regime, field, value)
+        persisted.update({"cfg": cfg, "old": old})
+        return bool(updates)
+
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "regime_config_changed",
                  "entity_type": "regime_config", "before": old,
@@ -2625,7 +2647,10 @@ async def update_trading_config(req: TradingConfigUpdate):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         setattr(cfg.trading, field, value)
 
-    save_config(cfg)
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction(immediate=True):
+        save_config(cfg)
     old_rollout_enabled = bool(old.get("persona_progressive_unlock_enabled")) and bool(
         old.get("persona_sizing_enabled")
     )
@@ -2749,26 +2774,39 @@ def update_market_data_config(req: MarketDataConfigUpdate):
         validated_updates[field] = value
 
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
-    next_data_exchange = str(
-        validated_updates.get("ccxt_exchange", cfg.market_data.ccxt_exchange),
-    )
-    alignment = exchange_alignment_for_values(
-        paper_execution_mode=cfg.exchange.paper_execution_mode,
-        data_exchange=next_data_exchange,
-        configured_exchange=cfg.exchange.name,
-    )
-    if (
-        "ccxt_exchange" in validated_updates
-        and next_data_exchange != cfg.market_data.ccxt_exchange
-    ):
-        _require_exchange_divergence_confirmation(
-            alignment, req.confirm_exchange_divergence,
+
+    persisted: dict[str, Any] = {}
+
+    def apply_update(latest) -> bool:
+        latest_old = latest.market_data.model_dump(mode="json")
+        next_data_exchange = str(
+            validated_updates.get("ccxt_exchange", latest.market_data.ccxt_exchange),
         )
+        latest_alignment = exchange_alignment_for_values(
+            paper_execution_mode=latest.exchange.paper_execution_mode,
+            data_exchange=next_data_exchange,
+            configured_exchange=latest.exchange.name,
+        )
+        if (
+            "ccxt_exchange" in validated_updates
+            and next_data_exchange != latest.market_data.ccxt_exchange
+        ):
+            _require_exchange_divergence_confirmation(
+                latest_alignment, req.confirm_exchange_divergence,
+            )
+        for field, value in validated_updates.items():
+            setattr(latest.market_data, field, value)
+        persisted.update({
+            "cfg": latest,
+            "old": latest_old,
+            "alignment": latest_alignment,
+        })
+        return bool(validated_updates)
 
-    for field, value in validated_updates.items():
-        setattr(cfg.market_data, field, value)
-
-    save_config(cfg)
+    _mutate_config_with_candidate_publication_permit(apply_update)
+    cfg = persisted["cfg"]
+    old = persisted["old"]
+    alignment = persisted["alignment"]
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "market_data_config_changed",
                  "entity_type": "market_data_config", "before": old,
@@ -3048,7 +3086,7 @@ def update_universe_config(req: UniverseConfigUpdate):
         persisted.update({"cfg": latest, "old": latest_old})
         return bool(normalized_updates)
 
-    mutate_config(apply_update)
+    _mutate_config_with_candidate_publication_permit(apply_update)
     cfg = persisted["cfg"]
     old = persisted["old"]
 

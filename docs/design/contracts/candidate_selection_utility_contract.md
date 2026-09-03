@@ -54,8 +54,9 @@ When estimator support first becomes available, the path freezes its training
 cutoff, complete eligible training-dataset fingerprint, and selection settings
 including the exact Fast Monitoring mode, venue, and paper execution route
 plus the configured execution fee and slippage assumptions and the legacy
-control's explore ratio, family quotas, regime quotas, and scanner weights into
-a new behavior/policy identity. The frozen training cutoff is looked up only
+control's explore ratio, family quotas, regime quotas, scanner weights, and
+complete Regime detector configuration/behavior version into a new
+behavior/policy identity. The frozen training cutoff is looked up only
 within that exact identity; changing those inputs independently earns support
 and freezes a new cutoff instead of reusing incompatible training rows.
 Per-cell source fingerprints remain in
@@ -97,7 +98,9 @@ file cannot share one physical transaction, a durable transition journal is
 written before the config replacement. Recovery holds the SQLite writer permit
 and restores the before-state when the audit did not commit, or confirms the
 after-state when it did, before deleting the journal. Target refresh publication revalidates that exact
-configured epoch under the shared permit, so a failed/compensated admission
+configured epoch under the shared permit. Every Settings writer for a frozen
+selection input uses that same permit, so no identity mutation can commit
+between revalidation and snapshot publication. A failed/compensated admission
 cannot publish a stale target snapshot. The same exclusion applies in reverse:
 Universe-family Learning admission and later Paper progression refuse to run
 while target Candidate authority is configured. Admission and rollback
@@ -113,8 +116,10 @@ runtime identity frozen in the policy epoch. Missing, mixed, or unattested
 provenance is invalid evidence, never a local-checkout inference.
 
 An active target snapshot may intentionally contain no members when every row
-is below-floor or unavailable. Reads preserve that empty Candidate set and do
-not replace it with legacy static fallback rows.
+is below-floor or unavailable. An admitted scan with no currently available
+estimate retains the admitted epoch and frozen training cutoff, so it can renew
+that intentionally empty snapshot. Reads preserve the empty Candidate set and
+do not replace it with legacy static fallback rows.
 
 Within a mechanism, usable Long and Short witnesses are an unresolved conflict
 and make that mechanism unavailable. Target allocation keeps the full

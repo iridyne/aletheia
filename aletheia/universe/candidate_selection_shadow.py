@@ -247,9 +247,12 @@ def build_candidate_selection_shadow_bundle(
         for estimate in decision.economic_estimates
         if estimate.estimate_status == "available" and estimate.source_outcome_fingerprint
     })
+    frozen_epoch_available = bool(available_source_fingerprints) or bool(
+        authority_applied and estimator_training_cutoff
+    )
     effective_training_cutoff = (
         estimator_training_cutoff
-        if available_source_fingerprints and estimator_training_cutoff
+        if frozen_epoch_available and estimator_training_cutoff
         else captured_at if available_source_fingerprints else None
     )
     training_outcome_fingerprint = (
@@ -269,11 +272,11 @@ def build_candidate_selection_shadow_bundle(
     })
     policy_epoch_id = (
         f"candidate-selection-utility:{behavior_contract_hash[:24]}"
-        if available_source_fingerprints else None
+        if frozen_epoch_available else None
     )
     experiment_id = (
         f"candidate-selection-utility-shadow:{behavior_contract_hash[:24]}"
-        if available_source_fingerprints else None
+        if frozen_epoch_available else None
     )
     qualified = bool(
         authority_applied

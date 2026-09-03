@@ -167,6 +167,13 @@ def candidate_selection_policy_identity(
             "execution_fee_pct": cfg.trading.execution_fee_pct,
             "slippage_bps": cfg.trading.slippage_bps,
         }
+    if hasattr(cfg, "regime"):
+        from aletheia.regime.detector import REGIME_DETECTOR_BEHAVIOR_VERSION
+
+        identity["legacy_control"]["regime_detection"] = {
+            "behavior_version": REGIME_DETECTOR_BEHAVIOR_VERSION,
+            **cfg.regime.model_dump(mode="json"),
+        }
     try:
         from aletheia.agent_runtime.runtime_session import current_provenance
 

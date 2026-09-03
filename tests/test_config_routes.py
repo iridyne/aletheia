@@ -853,6 +853,40 @@ async def test_universe_policy_inputs_recheck_latest_config_under_writer_permit(
 
 
 @pytest.mark.anyio
+async def test_candidate_identity_config_write_holds_publication_permit(
+    client, monkeypatch,
+):
+    from contextlib import contextmanager
+
+    from aletheia.server.routes import settings
+    from aletheia.storage import repositories as repo
+
+    inside_publication_permit = False
+    real_transaction = repo.transaction
+    real_mutate_config = settings.mutate_config
+
+    @contextmanager
+    def tracked_transaction(*, immediate=False, savepoint=False):
+        nonlocal inside_publication_permit
+        with real_transaction(immediate=immediate, savepoint=savepoint):
+            inside_publication_permit = True
+            try:
+                yield
+            finally:
+                inside_publication_permit = False
+
+    def checked_mutation(mutator):
+        assert inside_publication_permit
+        return real_mutate_config(mutator)
+
+    monkeypatch.setattr(repo, "transaction", tracked_transaction)
+    monkeypatch.setattr(settings, "mutate_config", checked_mutation)
+    response = await client.post("/api/settings/fast-trigger", json={"mode": "off"})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.anyio
 async def test_candidate_selection_admission_fails_closed_when_evidence_unavailable(
     client, monkeypatch,
 ):

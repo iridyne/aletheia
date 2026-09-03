@@ -779,6 +779,32 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     assert 0 < len(projected) <= 3
     assert all(item["candidate_selection_policy"] == "candidate_selection_utility_v1" for item in projected)
     assert all(item["candidate_selection_utility_pct"] > 0 for item in projected)
+    unavailable_population = [
+        {**item, "spread_bps": None} for item in population
+    ]
+    unavailable_legacy = [
+        {**item, "spread_bps": None} for item in legacy_scored
+    ]
+    unavailable_authority = build_candidate_selection_shadow_bundle(
+        **{
+            **kwargs,
+            "population": unavailable_population,
+            "legacy_scored": unavailable_legacy,
+            "legacy_allocated": unavailable_legacy[-3:],
+            "estimator_training_cutoff": kwargs["captured_at"],
+        },
+        authority_applied=True,
+        qualification_evidence={
+            "verdict": "positive",
+            "promotion_eligible": True,
+            "policy_epoch_id": shadow.batch.policy_epoch_id,
+            "selection_policy": kwargs["selection_policy"],
+            "blocking_reasons": [],
+            "invalid_reasons": [],
+        },
+    )
+    assert unavailable_authority.batch.policy_epoch_id == shadow.batch.policy_epoch_id
+    assert target_candidates_from_bundle(unavailable_authority, unavailable_legacy) == []
     assert repo.insert_universe_twin_shadow_bundle(
         authority.batch,
         authority.evidence,
@@ -818,6 +844,24 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
         "candidate_selection_policy_epoch",
         "candidate_selection_utility_pct",
     } <= columns
+
+
+def test_candidate_selection_identity_includes_regime_detection_policy():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity,
+    )
+
+    control = AletheiaConfig()
+    changed = control.model_copy(deep=True)
+    changed.regime.min_hold_periods += 1
+
+    control_identity = candidate_selection_policy_identity(control)
+    changed_identity = candidate_selection_policy_identity(changed)
+    assert control_identity != changed_identity
+    assert control_identity["legacy_control"]["regime_detection"][
+        "behavior_version"
+    ] == "regime-detector/v1"
 
 
 def test_candidate_selection_epoch_identity_includes_cost_route_and_legacy_control():
