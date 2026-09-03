@@ -25,6 +25,7 @@ COLLECTOR_CADENCE_SEC: dict[str, int] = {
 }
 
 _PROBLEM_STATUSES = {"failed", "timed_out"}
+_ATTENTION_STATUSES = _PROBLEM_STATUSES | {"partial", "empty"}
 _COMPLETED_STATUSES = {"success", "partial", "empty"}
 _ATTEMPTED_STATUSES = _COMPLETED_STATUSES | {"failed", "timed_out", "not_configured"}
 _VALID_STATUSES = _ATTEMPTED_STATUSES | {"skipped_budget", "disabled"}
@@ -315,6 +316,8 @@ def get_collector_health_report(
     domains: list[dict[str, Any]] = []
     degraded = 0
     transient = 0
+    attention = 0
+    never_run = 0
     completed = 0
 
     for domain, cadence_sec in COLLECTOR_CADENCE_SEC.items():
@@ -326,6 +329,7 @@ def get_collector_health_report(
             else (None, None)
         )
         status = str(row.get("last_status") or "never_run")
+        never_run += int(status == "never_run")
         overdue = bool(
             age_sec is not None
             and status not in {"disabled", "not_configured"}
@@ -337,6 +341,8 @@ def get_collector_health_report(
             degraded += 1
         elif status in _PROBLEM_STATUSES:
             transient += 1
+        elif status in _ATTENTION_STATUSES:
+            attention += 1
         if status in _COMPLETED_STATUSES:
             completed += 1
         # Error codes are already constrained to a safe identifier. When a
@@ -355,8 +361,8 @@ def get_collector_health_report(
             "last_error_summary": error_summary,
             "display_severity": (
                 "warning"
-                if is_degraded or status in _PROBLEM_STATUSES
-                else "info" if status == "skipped_budget"
+                if is_degraded or status in _PROBLEM_STATUSES or status == "partial"
+                else "info" if status in {"skipped_budget", "empty"}
                 else "muted" if status in {"disabled", "not_configured", "never_run"}
                 else "ok"
             ),
@@ -369,9 +375,9 @@ def get_collector_health_report(
     recorded = len(stored)
     overall = (
         "degraded" if degraded
-        else "attention" if transient
-        else "healthy" if recorded
-        else "initializing"
+        else "attention" if transient or attention
+        else "initializing" if never_run
+        else "healthy"
     )
     if connectivity_status is None:
         try:
