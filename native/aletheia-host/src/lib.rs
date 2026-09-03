@@ -309,10 +309,22 @@ pub fn payload_command(paths: &HostPaths, args: &[String]) -> Result<Command> {
     Ok(command)
 }
 
+const PAYLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+// Packaged staging permits 120s for download and 180s for candidate preflight.
+// Keep another 300s for feed verification, extraction, backup, and state writes.
+const PACKAGED_UPDATE_STAGE_TIMEOUT: Duration = Duration::from_secs(600);
+
+fn payload_timeout(args: &[String]) -> Duration {
+    match args.first().map(String::as_str) {
+        Some("__packaged_update_stage") => PACKAGED_UPDATE_STAGE_TIMEOUT,
+        _ => PAYLOAD_TIMEOUT,
+    }
+}
+
 pub fn run_payload(paths: &HostPaths, args: &[String]) -> Result<ExitStatus> {
     run_command_with_timeout(
         payload_command(paths, args)?,
-        Duration::from_secs(300),
+        payload_timeout(args),
         &format!("run selected Aletheia payload with arguments {args:?}"),
     )
 }
@@ -475,6 +487,18 @@ mod tests {
         assert_eq!(dashboard_port_from_values(Some("1"), Some("18787")), 18787);
         assert_eq!(dashboard_port_from_values(Some("1"), Some("invalid")), 8787);
         assert_eq!(dashboard_port_from_values(Some("1"), Some("0")), 8787);
+    }
+
+    #[test]
+    fn packaged_update_stage_has_a_composed_timeout_budget() {
+        assert_eq!(
+            payload_timeout(&["__packaged_update_stage".into()]),
+            Duration::from_secs(600),
+        );
+        assert_eq!(
+            payload_timeout(&["gateway".into(), "restart".into()]),
+            Duration::from_secs(300),
+        );
     }
 
     #[test]
