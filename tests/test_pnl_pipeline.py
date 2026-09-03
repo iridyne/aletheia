@@ -798,6 +798,55 @@ class TestSnapshotConsistency:
         row = repo.list_account_equity_snapshots("paper_internal")[0]
         assert row["account_equity_usdt"] == 410.0
 
+    def test_snapshot_uses_one_mark_set_for_positions_and_summary(self, db, monkeypatch):
+        """The persisted Position mark and snapshot must share one price read."""
+        import aletheia.config.loader as loader
+        from aletheia.portfolio import pnl
+        from aletheia.portfolio.paper_account import set_cash_balance
+
+        config = loader.load_config()
+        config.exchange.paper_execution_mode = "paper_internal"
+        monkeypatch.setattr(loader, "load_config", lambda: config)
+        set_cash_balance(400.0, note="test account baseline")
+        repo.insert_position(Position(
+            id="snapshot-single-mark",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            execution_mode="paper_internal",
+            status="open",
+        ))
+        prices = iter([110.0, 120.0])
+        calls = []
+
+        def fresh_price(*_args, **_kwargs):
+            calls.append(1)
+            return next(prices)
+
+        monkeypatch.setattr(
+            "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+            fresh_price,
+        )
+        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+
+        snap = compute_and_store_snapshot(execution_mode="paper_internal")
+
+        stored = repo._select_one("positions", "snapshot-single-mark")
+        assert len(calls) == 1
+        assert stored["current_price"] == 110.0
+        assert stored["unrealized_pnl"] == 10.0
+        assert snap.unrealized_pnl == 10.0
+
+        prices = iter([120.0])
+        monkeypatch.setattr(
+            "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+            lambda *_args, **_kwargs: next(prices),
+        )
+        compute_portfolio(execution_mode="paper_internal", persist_marks=False)
+        assert repo._select_one("positions", "snapshot-single-mark")["current_price"] == 110.0
+
 
 # ---------- P1-1 + P1-4: /equity-curve endpoint filters ----------
 
