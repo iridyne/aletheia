@@ -188,9 +188,13 @@ class TelegramBot:
 
     def _cmd_pnl(self) -> str:
         try:
-            from aletheia.portfolio.pnl import today_realized_pnl, compute_portfolio
-            realized = today_realized_pnl()
+            from aletheia.portfolio.pnl import compute_portfolio
             portfolio = compute_portfolio()
+            realized = (
+                portfolio.get("today_realized_pnl")
+                if portfolio.get("today_realized_pnl_complete") is True
+                else None
+            )
             unrealized = float(portfolio.get("unrealized_pnl") or 0.0)
             if realized is None:
                 return (

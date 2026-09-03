@@ -270,11 +270,21 @@ def test_trade_and_summary_channels_are_independent(
         )
     else:
         import aletheia.portfolio.pnl as pnl
-        monkeypatch.setattr(pnl, "today_realized_pnl", lambda: 12.34)
+        monkeypatch.setattr(
+            pnl,
+            "today_realized_pnl",
+            lambda: pytest.fail("must not read unscoped realized PnL"),
+        )
         monkeypatch.setattr(
             pnl,
             "compute_portfolio",
-            lambda: {"unrealized_pnl": 5.67, "positions_count": 2, "total_value_usdt": 123.45},
+            lambda: {
+                "today_realized_pnl": 12.34,
+                "today_realized_pnl_complete": True,
+                "unrealized_pnl": 5.67,
+                "positions_count": 2,
+                "total_value_usdt": 123.45,
+            },
         )
         notifications.notify_daily_summary()
 
@@ -370,11 +380,17 @@ def test_daily_summary_reaches_final_telegram_boundary_without_literal_markup(
     monkeypatch.setattr(TelegramBot, "configure", configure)
     monkeypatch.setattr(TelegramBot, "send_message", send_message)
     monkeypatch.setattr(notifications, "_send_webhook", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pnl, "today_realized_pnl", lambda: 9.99)
+    monkeypatch.setattr(
+        pnl,
+        "today_realized_pnl",
+        lambda: pytest.fail("must not read unscoped realized PnL"),
+    )
     monkeypatch.setattr(
         pnl,
         "compute_portfolio",
         lambda: {
+            "today_realized_pnl": 9.99,
+            "today_realized_pnl_complete": True,
             "unrealized_pnl": 1.23,
             "positions_count": 3,
             "total_value_usdt": 500.0,
@@ -390,6 +406,53 @@ def test_daily_summary_reaches_final_telegram_boundary_without_literal_markup(
     assert text.startswith("⚠️ <b>Aletheia:</b> Daily Summary")
     assert "<code>" not in text
     assert "Realized: +9.99 USDT" in text
+
+
+def test_daily_summary_webhook_preserves_incomplete_mode_scoped_realized_pnl(
+    tmp_path,
+    monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import notifications
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.portfolio.pnl as pnl
+
+    cfg = load_config()
+    cfg.telegram.enabled = False
+    cfg.webhook.url = "http://example.test/hook"
+    cfg.webhook.enabled = True
+    cfg.webhook.notify_daily_summary = True
+    save_config(cfg)
+    delivered = []
+    monkeypatch.setattr(
+        pnl,
+        "today_realized_pnl",
+        lambda: pytest.fail("must not read unscoped realized PnL"),
+    )
+    monkeypatch.setattr(
+        pnl,
+        "compute_portfolio",
+        lambda: {
+            "today_realized_pnl": 20.0,
+            "today_realized_pnl_complete": False,
+            "unrealized_pnl": -5.0,
+            "positions_count": 1,
+            "total_value_usdt": 95.0,
+        },
+    )
+    monkeypatch.setattr(
+        notifications,
+        "_send_webhook",
+        lambda payload, *, event_type: delivered.append((payload, event_type)),
+    )
+
+    notifications.notify_daily_summary()
+
+    [(payload, event_type)] = delivered
+    assert event_type == "daily_summary"
+    assert payload["realized_pnl"] is None
+    assert payload["realized_pnl_complete"] is False
+    assert payload["unrealized_pnl"] == -5.0
 
 
 @pytest.mark.anyio
