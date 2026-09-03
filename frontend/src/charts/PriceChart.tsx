@@ -377,6 +377,7 @@ export default function PriceChart({
     let cancelled = false
     let loadingOlder = false
     let exhausted = false
+    let livePollInFlight = false
     setStatus('loading')
     metaChangeRef.current?.(null)
     const startingSettings = settingsRef.current
@@ -457,7 +458,8 @@ export default function PriceChart({
       }
     }
     const pollLatest = async () => {
-      if (cancelled || !initializedRef.current || !barsRef.current.length) return
+      if (cancelled || livePollInFlight || !initializedRef.current || !barsRef.current.length) return
+      livePollInFlight = true
       try {
         const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchange)
         if (cancelled) return
@@ -471,6 +473,8 @@ export default function PriceChart({
         setAllData()
       } catch {
         // The next live tick retries without replacing visible data.
+      } finally {
+        livePollInFlight = false
       }
     }
     void (async () => {
