@@ -14,6 +14,7 @@ logger = logging.getLogger("aletheia.telegram")
 
 _KILL_CONFIRM_TIMEOUT_SEC = 300.0  # 5 minutes to confirm kill
 _RATE_LIMIT_PER_SEC = 1.0  # max 1 message per second per chat (well under Telegram's 30/s)
+_UPDATE_FAILURE_RETRY_LIMIT = 5
 _rate_limit_last_send: dict[int, float] = {}  # chat_id → monotonic time of last send
 
 
@@ -317,8 +318,18 @@ class TelegramBot:
                             self._consecutive_update_failures,
                             type(exc).__name__,
                         )
-                        if self._consecutive_update_failures == 5:
-                            self._escalate_update_failure(update, exc)
+                        if (
+                            self._consecutive_update_failures
+                            >= _UPDATE_FAILURE_RETRY_LIMIT
+                            and self._escalate_update_failure(update, exc)
+                        ):
+                            self._offset = max(
+                                self._offset,
+                                int(update["update_id"]) + 1,
+                            )
+                            self._consecutive_update_failures = 0
+                            update_backoff = poll_interval
+                            continue
                         await asyncio.sleep(update_backoff)
                         update_backoff = min(update_backoff * 2, 60.0)
                         update_failed = True
@@ -363,20 +374,20 @@ class TelegramBot:
         except Exception:
             pass
 
-    def _escalate_update_failure(self, update: dict[str, Any], exc: Exception) -> None:
-        """Report repeated local command failures without claiming disconnect."""
+    def _escalate_update_failure(self, update: dict[str, Any], exc: Exception) -> bool:
+        """Durably quarantine a repeatedly failing update without claiming disconnect."""
         try:
             from aletheia.files.jsonl import write_error
 
             write_error({
                 "source": "telegram_bot",
                 "message": (
-                    "Telegram update processing failed 5 consecutive times "
+                    "Telegram update quarantined after repeated processing failures "
                     f"for update_id={update.get('update_id')}: {type(exc).__name__}"
                 ),
             })
         except Exception:
-            pass
+            return False
         try:
             from aletheia.notifications import send_windows_toast
 
@@ -386,13 +397,22 @@ class TelegramBot:
             )
         except Exception:
             pass
+        return True
 
     async def _fetch_updates(self, client) -> list[dict[str, Any]]:
         resp = await client.get(self._api_url("getUpdates"), params={"offset": self._offset, "timeout": 20})
         payload = resp.json()
         if not payload.get("ok"):
             raise RuntimeError(f"Telegram API error: {payload}")
-        return payload.get("result", [])
+        updates = payload.get("result")
+        if not isinstance(updates, list) or any(
+            not isinstance(update, dict)
+            or isinstance(update.get("update_id"), bool)
+            or not isinstance(update.get("update_id"), int)
+            for update in updates
+        ):
+            raise RuntimeError("Telegram API returned malformed updates")
+        return updates
 
     async def _handle_update(self, update: dict[str, Any], client) -> None:
         message = update.get("message") or {}

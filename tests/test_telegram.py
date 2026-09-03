@@ -388,15 +388,15 @@ async def test_repeated_command_failure_uses_update_escalation(monkeypatch):
     monkeypatch.setattr(bot, "configure", lambda: True)
 
     update = {"update_id": 7, "message": {"chat": {"id": 123}, "text": "/pause"}}
-    client = _FakeTelegramClient([[update]] * 6)
-    attempts = 0
+    later = {"update_id": 8, "message": {"chat": {"id": 123}, "text": "/status"}}
+    client = _FakeTelegramClient([[update]] * 4 + [[update, later]])
+    handled = []
     update_escalations = []
     poll_escalations = []
 
-    async def handle(_chat_id, _text):
-        nonlocal attempts
-        attempts += 1
-        if attempts <= 5:
+    async def handle(_chat_id, text):
+        handled.append(text)
+        if text == "/pause":
             raise RuntimeError("command failed")
         bot.stop()
         return None
@@ -409,8 +409,11 @@ async def test_repeated_command_failure_uses_update_escalation(monkeypatch):
     monkeypatch.setattr(
         bot,
         "_escalate_update_failure",
-        lambda failed_update, exc: update_escalations.append(
-            (failed_update["update_id"], type(exc).__name__)
+        lambda failed_update, exc: (
+            update_escalations.append(
+                (failed_update["update_id"], type(exc).__name__)
+            )
+            or True
         ),
     )
     monkeypatch.setattr(
@@ -423,7 +426,72 @@ async def test_repeated_command_failure_uses_update_escalation(monkeypatch):
 
     assert update_escalations == [(7, "RuntimeError")]
     assert poll_escalations == []
-    assert bot._offset == 8
+    assert handled == ["/pause"] * 5 + ["/status"]
+    assert bot._offset == 9
+
+
+@pytest.mark.anyio
+async def test_failed_update_escalation_does_not_advance_offset(monkeypatch):
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}
+    monkeypatch.setattr(bot, "configure", lambda: True)
+
+    update = {"update_id": 7, "message": {"chat": {"id": 123}, "text": "/pause"}}
+    later = {"update_id": 8, "message": {"chat": {"id": 123}, "text": "/status"}}
+    client = _FakeTelegramClient([[update]] * 5 + [[update, later]])
+    handled = []
+    escalation_results = iter([False, True])
+
+    async def handle(_chat_id, text):
+        handled.append(text)
+        if text == "/pause":
+            raise RuntimeError("command failed")
+        bot.stop()
+        return None
+
+    monkeypatch.setattr(
+        bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
+    )
+    monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
+    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(
+        bot,
+        "_escalate_update_failure",
+        lambda _failed_update, _exc: next(escalation_results),
+    )
+
+    await bot.run(poll_interval=0)
+
+    assert client.seen_offsets == [0] * 6
+    assert handled == ["/pause"] * 6 + ["/status"]
+    assert bot._offset == 9
+
+
+@pytest.mark.anyio
+async def test_malformed_update_batch_retries_as_poll_failure(monkeypatch, caplog):
+    bot = TelegramBot()
+    bot.allowed_chat_ids = {123}
+    monkeypatch.setattr(bot, "configure", lambda: True)
+
+    valid = {"update_id": 2, "message": {"chat": {"id": 123}, "text": "/status"}}
+    client = _FakeTelegramClient([None, [valid]])
+
+    async def handle(_chat_id, _text):
+        bot.stop()
+        return None
+
+    monkeypatch.setattr(
+        bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
+    )
+    monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
+    monkeypatch.setattr(bot, "handle_message", handle)
+
+    await bot.run(poll_interval=0)
+
+    assert client.seen_offsets == [0, 0]
+    assert bot._offset == 3
+    assert bot._consecutive_poll_failures == 0
+    assert "Telegram polling failed (1 consecutive): RuntimeError" in caplog.text
 
 
 async def _async_noop() -> None:
