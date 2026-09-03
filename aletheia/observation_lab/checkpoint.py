@@ -111,15 +111,20 @@ def _read_app_migration_state() -> tuple[str, int]:
     return (head, len(rows))
 
 
-def _read_app_outbox_state() -> tuple[int, int, str]:
+def _read_app_outbox_state(*, through_sequence: int | None = None) -> tuple[int, int, str]:
     """Return the durable Main receipt cut included in a joint checkpoint."""
     from aletheia.storage.sqlite import get_db
 
     try:
-        rows = get_db().execute(
+        sql = (
             "SELECT sequence, receipt_id, manifest_hash, acknowledged_at "
-            "FROM observation_delivery_outbox ORDER BY sequence"
-        ).fetchall()
+            "FROM observation_delivery_outbox"
+        )
+        params: tuple[int, ...] = ()
+        if through_sequence is not None:
+            sql += " WHERE sequence<=?"
+            params = (int(through_sequence),)
+        rows = get_db().execute(f"{sql} ORDER BY sequence", params).fetchall()
     except Exception:
         return (-1, -1, "<unavailable>")
     pending = sum(1 for row in rows if row[3] is None)
@@ -128,6 +133,33 @@ def _read_app_outbox_state() -> tuple[int, int, str]:
         _canonical_json([tuple(row) for row in rows]).encode("utf-8")
     ).hexdigest()
     return watermark, pending, fingerprint
+
+
+def _main_outbox_advanced_append_only(
+    last: JointCheckpoint,
+    current: JointCheckpoint,
+) -> bool:
+    """Accept new receipts only when the previously checkpointed prefix is intact."""
+    if current.main_outbox_high_watermark <= last.main_outbox_high_watermark:
+        return False
+    if (
+        current.app_migration_head != last.app_migration_head
+        or current.app_migration_count != last.app_migration_count
+        or current.active_manifest_hashes != last.active_manifest_hashes
+        or current.lab_schema_head != last.lab_schema_head
+        or current.lab_schema_count != last.lab_schema_count
+        or current.lab_state_fingerprint != last.lab_state_fingerprint
+        or current.checkpoint_ledger_fingerprint != last.checkpoint_ledger_fingerprint
+    ):
+        return False
+    prefix = _read_app_outbox_state(
+        through_sequence=last.main_outbox_high_watermark
+    )
+    return prefix == (
+        last.main_outbox_high_watermark,
+        last.main_outbox_pending_count,
+        last.main_outbox_fingerprint,
+    )
 
 
 def _active_manifest_hashes(
@@ -471,6 +503,13 @@ def verify_joint_checkpoint(*, create_lab: bool = True) -> CheckpointVerificatio
             last=last,
             current_fingerprint=current.joint_fingerprint,
             reason="fingerprint_match",
+        )
+    if _main_outbox_advanced_append_only(last, current):
+        return CheckpointVerification(
+            ok=True,
+            last=last,
+            current_fingerprint=current.joint_fingerprint,
+            reason="main_outbox_append_only",
         )
     return CheckpointVerification(
         ok=False,

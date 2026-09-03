@@ -48,6 +48,61 @@ def test_second_pass_with_no_state_change_verifies_match():
     assert verdict.reason == "fingerprint_match"
 
 
+def test_appended_main_receipt_preserves_checkpoint_continuity():
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+
+    save_joint_checkpoint(compute_joint_checkpoint())
+    append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-new-receipt",
+        candidate_key="candidate-checkpoint",
+        resolution_reason="adapter_unavailable",
+    )
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is True
+    assert verdict.reason == "main_outbox_append_only"
+
+
+def test_appended_main_receipt_does_not_hide_checkpointed_prefix_change():
+    from aletheia.observation_lab.canonical import append_delivery_receipt
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-existing-receipt",
+        candidate_key="candidate-existing",
+        resolution_reason="adapter_unavailable",
+    )
+    save_joint_checkpoint(compute_joint_checkpoint())
+    get_db().execute(
+        "UPDATE observation_delivery_outbox SET acknowledged_at=? WHERE receipt_id=?",
+        ("2026-09-03T00:00:00+00:00", receipt_id),
+    )
+    append_delivery_receipt(
+        receipt_kind="capture",
+        receipt_id="checkpoint-later-receipt",
+        candidate_key="candidate-later",
+        resolution_reason="adapter_unavailable",
+    )
+
+    verdict = verify_joint_checkpoint()
+
+    assert verdict.ok is False
+    assert "fingerprint_mismatch" in verdict.reason
+
+
 def test_manifest_set_change_causes_mismatch_verdict():
     """Publishing a new active manifest after a checkpoint = failed proof."""
     from aletheia.observation_lab.checkpoint import (
