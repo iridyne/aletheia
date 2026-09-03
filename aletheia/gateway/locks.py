@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import execute_write, get_db
 
 
 def _utcnow() -> datetime:
@@ -21,49 +21,20 @@ class GatewayLockService:
 
     def acquire(self, lock_name: str, owner_id: str) -> bool:
         """Try to acquire or renew a lock. Returns True on success."""
-        db = get_db()
-        was_in_tx = db.in_transaction
         now = _utcnow()
         now_iso = now.isoformat()
         lease_until = (now + timedelta(seconds=self._lease_seconds)).isoformat()
-
-        row = db.execute(
-            "SELECT * FROM ps_gateway_locks WHERE lock_name = ?", (lock_name,)
-        ).fetchone()
-
-        if row is None:
-            db.execute(
-                "INSERT INTO ps_gateway_locks (lock_name, owner_id, lease_until, heartbeat_at) VALUES (?, ?, ?, ?)",
-                (lock_name, owner_id, lease_until, now_iso),
-            )
-            if not was_in_tx:
-                db.commit()
-            return True
-
-        if row["lease_until"] < now_iso:
-            # Expired — take over
-            db.execute(
-                "UPDATE ps_gateway_locks SET owner_id = ?, lease_until = ?, heartbeat_at = ? WHERE lock_name = ?",
-                (owner_id, lease_until, now_iso, lock_name),
-            )
-            if not was_in_tx:
-                db.commit()
-            return True
-
-        if row["owner_id"] == owner_id:
-            # Renew
-            db.execute(
-                "UPDATE ps_gateway_locks SET lease_until = ?, heartbeat_at = ? WHERE lock_name = ?",
-                (lease_until, now_iso, lock_name),
-            )
-            if not was_in_tx:
-                db.commit()
-            return True
-
-        # Another owner holds the lock
-        if not was_in_tx:
-            db.commit()
-        return False
+        result = execute_write(
+            "INSERT INTO ps_gateway_locks "
+            "(lock_name, owner_id, lease_until, heartbeat_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(lock_name) DO UPDATE SET owner_id=excluded.owner_id, "
+            "lease_until=excluded.lease_until, heartbeat_at=excluded.heartbeat_at "
+            "WHERE ps_gateway_locks.owner_id=excluded.owner_id "
+            "OR ps_gateway_locks.lease_until < excluded.heartbeat_at",
+            (lock_name, owner_id, lease_until, now_iso),
+            immediate=True,
+        )
+        return result.rowcount == 1
 
     def release(self, lock_name: str, owner_id: str) -> bool:
         """Release a lock. Returns True if we were the owner."""
