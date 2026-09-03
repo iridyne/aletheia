@@ -526,6 +526,44 @@ def test_wrapper_accepts_initializing_after_structural_proof(monkeypatch):
     assert "main_health_initializing" in result["continuity"]["comparison"]["warnings"]
 
 
+def test_postflight_readiness_uses_target_fresh_capture(monkeypatch):
+    """A target config schema must not be parsed by the pre-pull updater."""
+    from aletheia.update import applier, continuity
+
+    before = _snapshot(capture_source="in_process")
+    after = _snapshot(disk_sha="new222", gateway_sha="new222")
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(
+        continuity,
+        "_gateway_status",
+        lambda **_: (_ for _ in ()).throw(AssertionError("pre-pull gateway loader must not be used")),
+    )
+    fresh_calls = []
+
+    def fresh_capture(**kwargs):
+        fresh_calls.append(kwargs)
+        return after
+
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", fresh_capture)
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart, progress=None: {
+            "applied": True,
+            "mode": "development",
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        },
+    )
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["continuity_verified"] is True
+    assert fresh_calls, "postflight readiness must use target-fresh capture"
+
+
 def test_wrapper_rolls_back_postflight_failure(monkeypatch):
     from aletheia.update import applier, continuity
 
