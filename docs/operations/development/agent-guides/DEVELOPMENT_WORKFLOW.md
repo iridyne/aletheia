@@ -52,8 +52,8 @@ Before changing code:
 For PR review budgets, feedback validity, lifecycle states, and merge readiness,
 use the single-authority [`PR_REVIEW_LIFECYCLE.md`](PR_REVIEW_LIFECYCLE.md).
 
-Before the first CI-triggering PR create/update and before pushing an
-exact-head repair, prepare the intended PR body from
+Before the first PR create/update and before pushing an exact-head repair,
+prepare the intended PR body from
 [`.github/PULL_REQUEST_TEMPLATE.md`](../../../../.github/PULL_REQUEST_TEMPLATE.md)
 and run the repository-native deterministic preflight:
 
@@ -61,16 +61,16 @@ and run the repository-native deterministic preflight:
 uv run --no-sync python scripts/ci_preflight.py --pr-body-file /path/to/pr-body.md
 ```
 
-When `scripts/ci_local.py` is available, run it before publishing a
-CI-triggering PR head:
+When `scripts/ci_local.py` is available, it may validate the PR head locally:
 
 ```sh
 uv run python scripts/ci_local.py --pr-body-file /path/to/pr-body.md
 ```
 
-Do not choose CI depth manually. `scripts/ci_plan.py` is the repository
-authority for Quick/Affected/Deep/Full selection, and GitHub recomputes the
-plan from exact repository facts before accepting merge authority.
+These scripts are local validators, not authorization to start GitHub Actions.
+Remote GitHub CI is manual-only: never dispatch, start, or rerun it unless the
+owner explicitly requests remote CI in the current task. Release, deployment,
+merge, or broad-verification intent does not imply that permission.
 
 It validates the same Change Contract parser and changed-file exemption logic
 as GitHub CI, needs no fabricated GitHub event payload, performs no network I/O
@@ -97,10 +97,9 @@ head. Auto-merge reads metadata and deep checks as separate exact-head gates.
 - Commit only scoped files and publish through the normal PR workflow. GitHub
   Actions uses self-hosted runners only. Disable a broken workflow; do not
   archive the repository.
-- Heavy Python regression validation runs first through PR CI on the repository's
-  self-hosted GitHub Actions runners. Those configured tiers are the PR gate,
-  not a claim that every test module has run. If a complete suite is required
-  and the result cannot wait, use an isolated Fedora CI/Test process in a
+- Run focused local regression tests proportional to the change. If the owner
+  explicitly requests a complete suite and the result cannot wait, use an
+  isolated Fedora CI/Test process in a
   dedicated Worktree with a temporary data root, no secrets, and no execution
   authority; never use the stable Runtime checkout or primary data. Windows is
   not a validation dependency or fallback.
@@ -117,14 +116,13 @@ head. Auto-merge reads metadata and deep checks as separate exact-head gates.
 
   A Worktree alone does not provide this isolation.
 - `Prepare and tag releases` runs only after an owner selects the explicit
-  `operational_need` input for an accumulated batch; candidate CI, exact-head
-  auto-merge, immutable Tag/Release creation, and Paper-role Fedora tag polling
-  then continue without further release operations. An active candidate is
-  automatically refreshed and re-verified when an ordinary PR advances
-  `master`; qualification runtimes
-  remain pinned unless an owner explicitly selects a deployment. See the
+  `operational_need` input for an accumulated batch. It may create or refresh a
+  held release candidate, but it never starts CI. Agents must not start CI to
+  clear that hold without a separate explicit owner request for remote CI.
+  Qualification runtimes remain pinned unless an owner explicitly selects a
+  deployment. See the
   [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
-- When CI is pending, inspect checks, the registered runner/queue state, and any
+- When owner-requested CI is pending, inspect checks, the registered runner/queue state, and any
   failing log once. Continue independent work and monitor non-blockingly at
   intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.
 - The gateway is global: do not restart it casually or from competing worktrees.
@@ -143,9 +141,9 @@ head. Auto-merge reads metadata and deep checks as separate exact-head gates.
   Path observer, and durable pause owners; it is read-only and may report
   explicit `unavailable` reasons). The command uses SQLite `mode=ro`; a missing
   database remains unavailable and is never created by inspection.
-- Full suite: PR CI proves its configured regression tiers. Run the complete
-  suite only through the isolated Fedora process above; never run it on macOS
-  or use Windows as a validation fallback.
+- Full suite: run it only when explicitly requested, through remote CI or the
+  isolated Fedora process above; never run it on macOS or use Windows as a
+  validation fallback.
 - Gateway: `uv run aletheia gateway <start|stop|restart|status|logs>`
 - Daily/release UI: `http://127.0.0.1:8787/`
 - Worktree HMR: Vite `http://127.0.0.1:5173/`; read

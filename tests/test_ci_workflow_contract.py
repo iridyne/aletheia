@@ -11,6 +11,12 @@ pytestmark = pytest.mark.tier_unit
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release-please.yml"
+REMOTE_CI_POLICY_PATHS = (
+    ROOT / "AGENTS.md",
+    WORKFLOW_PATH,
+    ROOT / "docs" / "operations" / "development" / "agent-guides" / "DEVELOPMENT_WORKFLOW.md",
+    ROOT / "docs" / "operations" / "deployment" / "MODULAR_MONOLITH_RELEASE.md",
+)
 
 
 def _workflow() -> dict:
@@ -33,6 +39,12 @@ def test_release_preparation_does_not_dispatch_ci() -> None:
     assert "workflow_id: 'ci.yml'" not in release_workflow
     assert "actions.createWorkflowDispatch" not in release_workflow
     assert "labels: ['do-not-auto-merge']" in release_workflow
+
+
+def test_active_agent_guides_require_explicit_remote_ci_request() -> None:
+    for path in REMOTE_CI_POLICY_PATHS:
+        policy = path.read_text(encoding="utf-8")
+        assert "Remote GitHub CI is manual-only" in policy or "explicit current owner request" in policy
 
 
 def test_manual_full_validation_keeps_repository_test_surfaces_available() -> None:

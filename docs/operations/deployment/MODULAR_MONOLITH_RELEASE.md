@@ -31,8 +31,9 @@ then computes one Ready-for-review release PR from the history since the
 previous tag. Ordinary `feat`, `fix`, and `perf` changes therefore accumulate
 instead of creating one product version per merge, and hidden `docs`, `ci`, and
 `chore` changes remain accumulated. Release preparation never dispatches CI.
-If full remote validation is needed, an owner starts `Aletheia CI` explicitly
-on the release branch; its successful exact-head handoff may then continue
+Only an explicit current owner request for remote CI permits starting
+`Aletheia CI` on the release branch; release or deployment intent alone does
+not. Its successful exact-head handoff may then continue
 merge, immutable Tag/Release, and Paper-role deployment unattended.
 
 If an ordinary PR advances `master` while the release candidate is still open,
@@ -45,7 +46,8 @@ original release-intent gate.
 
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 adds `do-not-auto-merge` until an explicitly requested validation succeeds.
-When an owner explicitly requests CI and it succeeds, a metadata-only job dispatches the exact
+When an owner explicitly requests remote CI in the current task and it succeeds,
+a metadata-only job dispatches the exact
 candidate branch, SHA, and merge-base SHA to the trusted auto-merge workflow.
 The candidate is refreshed without automatically starting CI when `master` advances.
 Merging the exact candidate emits a tag-only follow-up; that follow-up verifies
@@ -65,7 +67,8 @@ third-party Action.
 正常路径只保留一个显式发布意图动作：repository admin 在 GitHub Actions 运行
 `Prepare and tag releases` 并设置 `operational_need=true`；workflow 会通过 GitHub API
 fail-closed 验证触发者的 repository admin 权限并生成候选，但不会自动启动 CI。
-需要远程全量验证时，由 owner 在候选分支上显式运行 `Aletheia CI`；成功后才会
+只有 owner 在当前任务中明确要求远程 CI，才可在候选分支运行 `Aletheia CI`；
+发布、部署或“完整验证”的表述本身不构成授权。成功后才会
 继续解除候选 hold、合并、创建不可变 Tag/Release，并由 Fedora Paper timer 部署。
 无需手动指定版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条
 自动部署链，必须保持 owner 选定的固定 SHA。
@@ -100,7 +103,8 @@ with:
 gh run rerun <run-id> --repo iridyne/aletheia
 ```
 
-Do not bypass the candidate hold or exact-SHA CI, or tag the commit manually.
+Do not start CI merely to clear the candidate hold. Only an explicit current
+owner request authorizes remote CI; do not tag the commit manually.
 Fedora Paper deployment and Observation-window admission remain separate
 downstream gates; deployment success does not open an Observation window.
 
@@ -271,10 +275,11 @@ pwsh -File scripts/runtime/health-check.ps1
 the gateway without opening a browser. `-DataDir C:\absolute\override` is optional;
 when omitted, Python selects the running user's `~/.aletheia`.
 
-## CI validation
+## Optional manual CI validation
 
-The active pull-request CI runs the release bundle and packaged-runtime contract
-tests but deliberately does not build or distribute release artifacts. There is
+There is no automatic pull-request or release-candidate CI. Only an explicit
+current owner request may start the manual workflow, which runs release bundle
+and packaged-runtime contract tests but does not distribute artifacts. There is
 currently no active artifact publication workflow. A future publication workflow
 must prove the exact final digest on its target platform before distribution;
 the version tag alone is not that proof.
