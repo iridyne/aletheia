@@ -96,6 +96,7 @@ function HealthCard({ settings, qc, onDirty }: { settings?: Record<string, unkno
 interface WebhookConfig {
 	enabled?: boolean;
 	url?: string;
+	secret_configured?: boolean;
 	notify_trade_fills?: boolean;
 	notify_alerts?: boolean;
 	notify_daily_summary?: boolean;
@@ -113,11 +114,12 @@ interface WebhookConfig {
 	} | null;
 }
 
-function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unknown>; qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
+export function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unknown>; qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
 	const webhook = (settings?.webhook as WebhookConfig | undefined) ?? {};
 	const [enabled, setEnabled] = useState(false);
 	const [url, setUrl] = useState("");
 	const [secret, setSecret] = useState("");
+	const [removeSecret, setRemoveSecret] = useState(false);
 	const [notifyFills, setNotifyFills] = useState(true);
 	const [notifyAlerts, setNotifyAlerts] = useState(true);
 	const [notifySummary, setNotifySummary] = useState(true);
@@ -129,23 +131,36 @@ function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unkn
 			api.updateWebhookConfig({
 				enabled,
 				url,
-				secret: secret || undefined,
+				secret: removeSecret ? "" : secret || undefined,
 				notify_trade_fills: notifyFills,
 				notify_alerts: notifyAlerts,
 				notify_daily_summary: notifySummary,
 				timeout_sec: timeoutSec,
 			}),
-		onSuccess: () => {
-			setMsg({ ok: true, text: "✓ saved" });
-			setSecret("");
+		onSuccess: (data) => {
+			qc.setQueryData<Record<string, unknown> | undefined>(["settings"], (current) => {
+				const base = current ?? settings;
+				if (!base) return current;
+				return {
+					...base,
+					webhook: {
+						...((base.webhook as Record<string, unknown> | undefined) ?? {}),
+						...data.updated,
+					},
+				};
+			});
+				setMsg({ ok: true, text: "✓ saved" });
+				setSecret("");
+				setRemoveSecret(false);
 			qc.invalidateQueries({ queryKey: ["settings"] });
 		},
 		onError: (error) =>
 			setMsg({ ok: false, text: `✗ ${errorMessage(error)}` }),
 	});
 	const dirty = enabled !== !!webhook.enabled
-		|| url !== (webhook.url || "")
-		|| secret !== ""
+			|| url !== (webhook.url || "")
+			|| secret !== ""
+			|| removeSecret
 		|| notifyFills !== (webhook.notify_trade_fills !== false)
 		|| notifyAlerts !== (webhook.notify_alerts !== false)
 		|| notifySummary !== (webhook.notify_daily_summary !== false)
@@ -155,10 +170,11 @@ function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unkn
 		dirty,
 		onDirty,
 		serverKey: settings,
-		adoptServer: () => {
-			setEnabled(!!webhook.enabled);
-			setUrl(webhook.url || "");
-			setSecret("");
+			adoptServer: () => {
+				setEnabled(!!webhook.enabled);
+				setUrl(webhook.url || "");
+				setSecret("");
+				setRemoveSecret(false);
 			setNotifyFills(webhook.notify_trade_fills !== false);
 			setNotifyAlerts(webhook.notify_alerts !== false);
 			setNotifySummary(webhook.notify_daily_summary !== false);
@@ -188,17 +204,31 @@ function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unkn
 				</label>
 				<label className="col-full">
 					<span>HMAC secret (write-only)</span>
-					<input
-						type="password"
-						value={secret}
-						placeholder={webhook.url ? "••••••• (unchanged)" : "optional"}
-						onChange={(event) => {
-							setSecret(event.target.value);
-							setMsg(null);
-						}}
-						className="mono"
-					/>
-				</label>
+						<input
+							type="password"
+							value={secret}
+							placeholder={webhook.secret_configured ? "••••••• (unchanged)" : "optional"}
+							onChange={(event) => {
+								setSecret(event.target.value);
+								setRemoveSecret(false);
+								setMsg(null);
+							}}
+							className="mono"
+						/>
+					</label>
+					{webhook.secret_configured && (
+						<button
+							type="button"
+							onClick={() => {
+								setSecret("");
+								setRemoveSecret(true);
+								setMsg(null);
+							}}
+							disabled={mutation.isPending || removeSecret}
+						>
+							{removeSecret ? "HMAC secret will be removed" : "Remove HMAC secret"}
+						</button>
+					)}
 				<label>
 					<span>Timeout (sec)</span>
 					<input
@@ -231,10 +261,10 @@ function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unkn
 				</button>
 			</div>
 			<SaveMsg msg={msg} />
-			<p className="hint">
-				Payload is signed with <code>X-Aletheia-Signature</code> (HMAC SHA-256)
-				when a secret is set. Secret is write-only — leave blank to keep the
-				current value.
+				<p className="hint">
+					Payload is signed with <code>X-Aletheia-Signature</code> (HMAC SHA-256)
+					when a secret is set. Secret is write-only — leave blank to keep the
+					current value, or choose Remove HMAC secret to clear it.
 			</p>
 		</div>
 	);
