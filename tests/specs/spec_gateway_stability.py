@@ -582,6 +582,132 @@ def test_derivatives_persistence_failure_degrades_domain_and_job(
 
 @spec_claim(
     SpecClaim(
+        "GS-B12",
+        _CONTRACT,
+        "§collector persistence truthfulness",
+        "L2b",
+        "Scheduler-owned collector rows publish completed health only after their "
+        "own persistence boundary succeeds; failures publish a stable domain code.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    "domain",
+    ["microstructure", "volume_scanner", "coingecko_top", "macro", "coinalyze"],
+)
+def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch, domain):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import scheduler as sch
+    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from aletheia.data.collectors.coinalyze import CoinalyzeCollector
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.data.collectors.macro import MacroCollector
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.storage import repositories as repo
+
+    row = SimpleNamespace(model_dump=lambda: {"id": "row"})
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+    health: list[tuple[str, str, str | None]] = []
+
+    async def collect_microstructure(_self, _instruments):
+        return {"snapshots": [row] if domain == "microstructure" else [], "errors": []}
+
+    async def collect_derivatives(_self, _symbols):
+        return {"funding": [], "open_interest": [], "errors": []}
+
+    async def collect_volume(_self, _instruments):
+        return {
+            "top_symbols": ["BTC/USDT"] if domain == "volume_scanner" else [],
+            "observed_at": "2026-01-01T00:00:00+00:00",
+            "errors": [],
+        }
+
+    async def collect_coingecko(_self, *, top_n):
+        return {
+            "rows": [{"id": "row"}] if domain == "coingecko_top" else [],
+            "movers_summary": None,
+            "errors": [],
+        }
+
+    async def collect_macro(_self, _symbols):
+        return {"snapshot": row if domain == "macro" else None, "errors": []}
+
+    async def collect_coinalyze(_self, _symbols):
+        return {
+            "open_interest": [row] if domain == "coinalyze" else [],
+            "liquidations": [],
+            "errors": [],
+        }
+
+    def fail(domain_name):
+        def operation(*_args, **_kwargs):
+            if domain == domain_name:
+                raise RuntimeError("disk")
+
+        return operation
+
+    monkeypatch.setattr(sch, "_get_observed_instruments", lambda _cfg: [instrument])
+    monkeypatch.setattr(sch, "_get_derivative_symbols", lambda _items: ["BTC/USDT"])
+    monkeypatch.setattr(MicrostructureCollector, "collect", collect_microstructure)
+    monkeypatch.setattr(DerivativesCollector, "collect", collect_derivatives)
+    monkeypatch.setattr(VolumeScannerCollector, "collect", collect_volume)
+    monkeypatch.setattr(CoinGeckoTopCollector, "collect", collect_coingecko)
+    monkeypatch.setattr(MacroCollector, "collect", collect_macro)
+    monkeypatch.setattr(CoinalyzeCollector, "collect", collect_coinalyze)
+    monkeypatch.setattr(repo, "transaction", lambda **_kwargs: nullcontext())
+
+    def persist_collector_batch(**_kwargs):
+        if domain == "microstructure":
+            raise repo.CollectorBatchPersistError("orderbooks", RuntimeError("disk"))
+        if domain == "coinalyze":
+            raise RuntimeError("disk")
+
+    monkeypatch.setattr(repo, "insert_collector_snapshot_batch", persist_collector_batch)
+    monkeypatch.setattr(repo, "save_volume_ranking_snapshot", fail("volume_scanner"))
+    monkeypatch.setattr(repo, "insert_coingecko_top_rows", fail("coingecko_top"))
+    monkeypatch.setattr(repo, "insert_macro_snapshot", fail("macro"))
+    monkeypatch.setattr(
+        sch,
+        "_record_collector_health",
+        lambda label, status, **kwargs: health.append(
+            (label, status, kwargs.get("error_code"))
+        ),
+    )
+
+    cfg = SimpleNamespace(
+        market_data=SimpleNamespace(
+            ccxt_exchange="binance",
+            enable_hyperliquid=False,
+            enable_defillama=False,
+            enable_options_structure=False,
+            enable_coinalyze=True,
+            enable_coingecko_top=True,
+            coingecko_top_n=10,
+            derivatives_history_hours=0,
+        )
+    )
+
+    result = asyncio.run(
+        sch._async_data_collectors(cfg, tick=1)
+        if domain == "microstructure"
+        else sch._async_data_collector_context(cfg, tick=1)
+    )
+
+    assert result == {
+        "status": "partial",
+        "error_codes": [f"{domain}_persist_failed"],
+    }
+    assert [event for event in health if event[0] == domain] == [
+        (domain, "failed", f"{domain}_persist_failed")
+    ]
+
+
+@spec_claim(
+    SpecClaim(
         "GS-B10",
         _CONTRACT,
         "§universe refresh truthfulness",
