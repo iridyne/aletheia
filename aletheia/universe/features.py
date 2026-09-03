@@ -755,15 +755,18 @@ async def _fetch_single_feature(
                 exchange.fetch_funding_rate(perp_sym),
                 timeout=5.0,
             )
+            received_at = datetime.now(timezone.utc)
             if fr_data:
                 mark_price = fr_data.get("markPrice")
                 live_rate = fr_data.get("fundingRate")
                 if live_rate is not None and not isinstance(live_rate, bool):
                     live_funding_rate = float(live_rate)
                     if math.isfinite(live_funding_rate):
-                        observed_at = _provider_observed_at(fr_data, received_at=now)
+                        observed_at = _provider_observed_at(
+                            fr_data, received_at=received_at,
+                        )
                         if observed_at and fresh_row(
-                            {"observed_at": observed_at}, "funding", now=now,
+                            {"observed_at": observed_at}, "funding", now=received_at,
                         ):
                             funding_rate = live_funding_rate
                             funding_observed_at = observed_at
@@ -781,9 +784,12 @@ async def _fetch_single_feature(
                 exchange.fetch_open_interest(perp_sym),
                 timeout=5.0,
             )
-            observed_at = _provider_observed_at(oi_data or {}, received_at=now)
+            received_at = datetime.now(timezone.utc)
+            observed_at = _provider_observed_at(
+                oi_data or {}, received_at=received_at,
+            )
             if observed_at and fresh_row(
-                {"observed_at": observed_at}, "open_interest", now=now,
+                {"observed_at": observed_at}, "open_interest", now=received_at,
             ):
                 extracted = extract_oi_usd(oi_data or {}, mark_price)
                 if extracted is not None:
@@ -900,9 +906,10 @@ async def _fetch_single_feature(
         else:
             oi_price_divergence = 0
 
+    assembled_at = datetime.now(timezone.utc)
     snap = UniverseFeatureSnapshot(
         asset_id=asset_id,
-        ts=now.isoformat(),
+        ts=assembled_at.isoformat(),
         quote_volume_24h=quote_volume_24h,
         volume_1h=volume_1h,
         spread_bps=spread,
@@ -962,7 +969,7 @@ async def _fetch_single_feature(
     prev_row = repo.get_latest_feature_snapshot(asset_id)
     should_write = True
     if prev_row is not None and not force_persist:
-        age_sec = _seconds_between(prev_row.get("ts"), now)
+        age_sec = _seconds_between(prev_row.get("ts"), assembled_at)
         if age_sec is not None:
             if age_sec < _FEATURE_SUPPRESSION_MIN_SEC:
                 # Within the 30-min minimum-interval window — never write.

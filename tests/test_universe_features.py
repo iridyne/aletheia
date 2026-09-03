@@ -407,3 +407,72 @@ async def test_live_funding_override_requires_finite_rate(
     assert feature is not None
     assert feature["funding_rate"] == expected
     assert feature["open_interest"] == expected_oi
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_delay_minutes", [4, 6])
+async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
+    monkeypatch, response_delay_minutes,
+):
+    from aletheia.storage import repositories as repo
+    from aletheia.universe import features
+
+    scan_started_at = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    funding_received_at = scan_started_at + timedelta(
+        minutes=response_delay_minutes,
+    )
+    oi_received_at = funding_received_at + timedelta(minutes=1)
+    assembled_at = oi_received_at + timedelta(minutes=1)
+    receipt_times = iter([funding_received_at, oi_received_at, assembled_at])
+
+    class ResponseClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            current = next(receipt_times)
+            return current if tz is not None else current.replace(tzinfo=None)
+
+    monkeypatch.setattr(features, "datetime", ResponseClock)
+    monkeypatch.setattr(repo, "latest_orderbook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "latest_funding_rate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "latest_open_interest", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "get_latest_feature_snapshot", lambda *args: None)
+
+    class Exchange:
+        id = "okx"
+
+        async def fetch_ohlcv(self, *args, **kwargs):
+            return []
+
+        async def fetch_funding_rate(self, *args, **kwargs):
+            return {
+                "fundingRate": -0.0002,
+                "timestamp": int(funding_received_at.timestamp() * 1000),
+            }
+
+        async def fetch_open_interest(self, *args, **kwargs):
+            return {
+                "openInterestValue": 123.0,
+                "timestamp": int(oi_received_at.timestamp() * 1000),
+            }
+
+    snapshots = []
+    feature = await features._fetch_single_feature(
+        Exchange(),
+        {
+            "id": "asset-btc",
+            "symbol": "BTC/USDT",
+            "venue": "okx",
+            "market_type": "perp",
+        },
+        {"quoteVolume": 1_000_000, "bid": 100, "ask": 101},
+        scan_started_at,
+        lambda symbol: f"{symbol}:USDT",
+        snapshot_buffer=snapshots,
+    )
+
+    assert feature is not None
+    assert feature["funding_rate"] == -0.0002
+    assert feature["funding_observed_at"] == funding_received_at.isoformat()
+    assert feature["open_interest"] == 123.0
+    assert feature["feature_snapshot_ts"] == assembled_at.isoformat()
+    assert [snapshot.ts for snapshot in snapshots] == [assembled_at.isoformat()]

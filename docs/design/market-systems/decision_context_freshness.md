@@ -68,7 +68,9 @@ This prevents aggregate OI from silently replacing the execution venue's OI.
   it separately freshness-gates on-chain, cross-venue, and perp-structure blocks.
 - `universe/features.py` applies the same policy to DB fallbacks. A successful
   live funding fetch may replace the fallback; a failed fetch cannot revive a
-  stale cached value.
+  stale cached value. Live funding and OI use a receipt time captured after each
+  response, while the feature snapshot timestamp records completed assembly;
+  the scan-start clock remains the OHLCV cutoff and DB-fallback reference.
 
 ## Non-goals
 
