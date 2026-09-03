@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 NOW = datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
 
@@ -37,6 +39,109 @@ def test_data_coverage_distinguishes_fresh_stale_empty_and_idle(monkeypatch):
     assert states["ohlcv"] == "fresh"
     assert report["status"] == "attention"
     assert report["critical_problem_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("source_time_status", "source_observed_at", "acquired_at", "expected_state"),
+    (
+        (
+            "provided",
+            (NOW - timedelta(minutes=2)).isoformat(),
+            (NOW - timedelta(minutes=16)).isoformat(),
+            "stale",
+        ),
+        (
+            "provided",
+            (NOW - timedelta(minutes=2)).isoformat(),
+            (NOW - timedelta(minutes=2)).isoformat(),
+            "fresh",
+        ),
+        ("missing", None, (NOW - timedelta(minutes=2)).isoformat(), "invalid"),
+        ("invalid", None, (NOW - timedelta(minutes=2)).isoformat(), "invalid"),
+        (
+            "future",
+            (NOW + timedelta(minutes=6)).isoformat(),
+            (NOW - timedelta(minutes=2)).isoformat(),
+            "invalid",
+        ),
+    ),
+)
+def test_primary_derivative_coverage_uses_canonical_two_clock_freshness(
+    monkeypatch,
+    source_time_status,
+    source_observed_at,
+    acquired_at,
+    expected_state,
+):
+    from aletheia.data import data_coverage
+
+    def query(definition):
+        values = {
+            "row_count": 1,
+            "symbol_count": 1,
+            "newest": source_observed_at or acquired_at,
+            "source_counts": {"okx": 1},
+        }
+        if definition.domain == "primary_funding":
+            values["freshness_rows"] = [{
+                "observed_at": source_observed_at or "",
+                "source_observed_at": source_observed_at,
+                "acquired_at": acquired_at,
+                "source_time_status": source_time_status,
+            }]
+        return values
+
+    monkeypatch.setattr(data_coverage, "_query_domain", query)
+
+    report = data_coverage.get_data_coverage_report(now=NOW)
+    funding = next(
+        row for row in report["domains"] if row["domain"] == "primary_funding"
+    )
+
+    assert funding["state"] == expected_state
+    assert funding["fresh_row_count"] == (1 if expected_state == "fresh" else 0)
+    assert funding["stale_row_count"] == (1 if expected_state == "stale" else 0)
+    assert funding["unavailable_row_count"] == (
+        1 if expected_state == "invalid" else 0
+    )
+
+
+def test_primary_derivative_coverage_uses_latest_acquisition_from_sqlite():
+    from aletheia.data.data_coverage import get_data_coverage_report
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    financial = {
+        "symbol": "BTC/USDT",
+        "exchange": "okx",
+        "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.1095,
+        "next_funding_time": None,
+        "mark_price": 50_000.0,
+    }
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": (NOW - timedelta(minutes=3)).isoformat(),
+        "acquired_at": (NOW - timedelta(minutes=3)).isoformat(),
+        "source_time_status": "provided",
+        "observed_at": (NOW - timedelta(minutes=3)).isoformat(),
+    })
+    insert_funding_rate_snapshot({
+        **financial,
+        "source_observed_at": None,
+        "acquired_at": (NOW - timedelta(minutes=1)).isoformat(),
+        "source_time_status": "missing",
+        "observed_at": "",
+    })
+
+    report = get_data_coverage_report(now=NOW)
+    funding = next(
+        row for row in report["domains"] if row["domain"] == "primary_funding"
+    )
+
+    assert funding["state"] == "invalid"
+    assert funding["fresh_row_count"] == 0
+    assert funding["unavailable_row_count"] == 1
+    assert funding["freshness_state_counts"] == {"missing": 1}
 
 
 def test_inspect_microstructure_uses_exact_venue_and_real_imbalance(monkeypatch, capsys):

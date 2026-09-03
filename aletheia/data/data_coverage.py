@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
+from collections import Counter
 import logging
 import time
 
+from aletheia.data.freshness import assess_freshness
 from aletheia.storage.sqlite import get_db
 
 
@@ -41,6 +43,11 @@ _SECONDARY_PLACEHOLDERS = ",".join("?" for _ in _SECONDARY_DERIVATIVE_SOURCES)
 _PRIMARY_DERIVATIVE_WHERE = (
     f"exchange IS NULL OR exchange NOT IN ({_SECONDARY_PLACEHOLDERS})"
 )
+_PRIMARY_FRESHNESS_DOMAINS = {
+    "primary_funding": "funding",
+    "primary_open_interest": "open_interest",
+    "long_short_ratio": "open_interest",
+}
 
 DOMAIN_DEFINITIONS = (
     DomainDefinition(
@@ -105,12 +112,29 @@ def _query_domain(definition: DomainDefinition) -> dict:
         ).fetchall()
         source_counts = {str(item["source"]): int(item["count"]) for item in source_rows}
 
-    return {
+    freshness_rows: list[dict] | None = None
+    if definition.domain in _PRIMARY_FRESHNESS_DOMAINS:
+        latest_rows = db.execute(
+            "SELECT observed_at, source_observed_at, acquired_at, source_time_status "
+            "FROM (SELECT observed_at, source_observed_at, acquired_at, "
+            "source_time_status, ROW_NUMBER() OVER ("
+            "PARTITION BY symbol, COALESCE(exchange, '') "
+            "ORDER BY COALESCE(acquired_at, observed_at) DESC, rowid DESC) "
+            "AS freshness_rank "
+            f"FROM {definition.table}{where}) WHERE freshness_rank=1",
+            definition.where_params,
+        ).fetchall()
+        freshness_rows = [dict(item) for item in latest_rows]
+
+    result = {
         "row_count": int(row["row_count"] or 0),
         "symbol_count": int(row["symbol_count"] or 0),
         "newest": row["newest"],
         "source_counts": source_counts,
     }
+    if freshness_rows is not None:
+        result["freshness_rows"] = freshness_rows
+    return result
 
 
 def _parse_newest(value: object, *, timestamp_ms: bool) -> datetime | None:
@@ -142,7 +166,42 @@ def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dic
             timings[definition.domain] = (time.perf_counter() - started) * 1000.0
         newest = _parse_newest(values["newest"], timestamp_ms=definition.timestamp_ms)
         age_sec = max(0.0, (now - newest).total_seconds()) if newest else None
-        if values["row_count"] == 0:
+        freshness_state_counts: Counter[str] = Counter()
+        unavailable_count = 0
+        freshness_rows = values.get("freshness_rows")
+        if freshness_rows is not None:
+            verdicts = [
+                assess_freshness(
+                    {
+                        **row,
+                        "source_time_status": row.get("source_time_status")
+                        or "missing",
+                    },
+                    _PRIMARY_FRESHNESS_DOMAINS[definition.domain],
+                    now=now,
+                )
+                for row in freshness_rows
+            ]
+            freshness_state_counts.update(verdict.state for verdict in verdicts)
+            ages = [
+                verdict.age_seconds
+                for verdict in verdicts
+                if verdict.age_seconds is not None
+            ]
+            age_sec = max(0.0, max(ages)) if ages else None
+            unavailable_count = sum(
+                freshness_state_counts[state]
+                for state in ("missing", "invalid", "future")
+            )
+            if values["row_count"] == 0:
+                state = "idle" if definition.idle_when_old else "empty"
+            elif unavailable_count or not verdicts:
+                state = "invalid"
+            elif freshness_state_counts["stale"]:
+                state = "idle" if definition.idle_when_old else "stale"
+            else:
+                state = "fresh"
+        elif values["row_count"] == 0:
             state = "idle" if definition.idle_when_old else "empty"
         elif newest is None:
             state = "invalid"
@@ -156,7 +215,7 @@ def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dic
             problem_count += 1
             if definition.critical:
                 critical_problem_count += 1
-        domain_rows.append({
+        domain_row = {
             "domain": definition.domain,
             "label": definition.label,
             "state": state,
@@ -167,7 +226,15 @@ def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dic
             "newest_observed_at": newest.isoformat() if newest else None,
             "age_sec": round(age_sec, 1) if age_sec is not None else None,
             "max_age_sec": definition.max_age_sec,
-        })
+        }
+        if freshness_rows is not None:
+            domain_row.update({
+                "fresh_row_count": freshness_state_counts["fresh"],
+                "stale_row_count": freshness_state_counts["stale"],
+                "unavailable_row_count": unavailable_count,
+                "freshness_state_counts": dict(sorted(freshness_state_counts.items())),
+            })
+        domain_rows.append(domain_row)
 
     status = "healthy" if problem_count == 0 else "attention"
     if all(row["state"] == "empty" for row in domain_rows):
