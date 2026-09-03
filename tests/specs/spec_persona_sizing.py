@@ -653,6 +653,39 @@ def test_progressive_rollout_identity_is_restart_safe_and_switching_refreezes(tm
     assert policy_changed and policy_changed["rollout_id"] != switched["rollout_id"]
 
 
+def test_progressive_rollout_disable_fence_survives_process_restart(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading import persona_rollout
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
+    cfg.trading.active_persona = "roll"
+    first = persona_rollout.start_persona_rollout(
+        cfg, now=datetime(2026, 8, 1, tzinfo=timezone.utc)
+    )
+    assert first
+
+    persisted = cfg.model_dump(mode="python")
+    persisted["trading"]["persona_rollout_generation"] = 1
+    restarted_cfg = AletheiaConfig.model_validate(persisted)
+    monkeypatch.setattr(persona_rollout, "_pending_refreeze_reason", None)
+
+    restarted = persona_rollout.current_persona_rollout(
+        restarted_cfg, create=True, now=datetime(2026, 8, 2, tzinfo=timezone.utc)
+    )
+
+    assert restarted and restarted["rollout_id"] != first["rollout_id"]
+    old = conn.execute(
+        "SELECT status, ended_at FROM persona_rollouts WHERE rollout_id=?",
+        (first["rollout_id"],),
+    ).fetchone()
+    assert old and old[0] == "refrozen" and old[1] is not None
+
+
 def test_progressive_rollout_negative_exact_cohort_refreezes(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone

@@ -2090,6 +2090,56 @@ async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
 
 
 @pytest.mark.anyio
+async def test_trading_disable_persists_rollout_fence_and_reports_invalidation_failure(
+    client, monkeypatch,
+):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
+    save_config(cfg)
+    monkeypatch.setattr(
+        "aletheia.trading.persona_rollout.invalidate_persona_rollouts",
+        lambda **_kwargs: None,
+    )
+
+    response = await client.post(
+        "/api/settings/trading",
+        json={"persona_progressive_unlock_enabled": False},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "persona_rollout_invalidation_failed"
+    saved = load_config().trading
+    assert saved.persona_progressive_unlock_enabled is False
+    assert saved.persona_rollout_generation == 1
+
+
+@pytest.mark.anyio
+async def test_trading_enable_reports_rollout_creation_failure(client, monkeypatch):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = False
+    save_config(cfg)
+    monkeypatch.setattr(
+        "aletheia.trading.persona_rollout.current_persona_rollout",
+        lambda *_args, **_kwargs: None,
+    )
+
+    response = await client.post(
+        "/api/settings/trading",
+        json={"persona_progressive_unlock_enabled": True},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "persona_rollout_creation_failed"
+    assert load_config().trading.persona_progressive_unlock_enabled is True
+
+
+@pytest.mark.anyio
 async def test_universe_candidate_attention_pair_updates_atomically(client):
     from aletheia.config.loader import load_config
 

@@ -1471,6 +1471,9 @@ class TradingConfig(BaseModel):
     # and a stable non-degrading verdict; distress/provenance failures refreeze all.
     # Default OFF → the static operator_decidable dict applies (P1-P3 behavior).
     persona_progressive_unlock_enabled: bool = False
+    # Durable invalidation fence. A disable transition increments this before
+    # publishing config so an old cohort cannot match after a process restart.
+    persona_rollout_generation: int = Field(default=0, ge=0)
     persona_unlock_step_samples: int = 25
     # --- Pyramid add-on policy helper (P4, roll persona) ---
     # DEFAULT OFF. The pure helper can calculate a bounded add plan, but no production

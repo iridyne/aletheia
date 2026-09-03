@@ -2648,10 +2648,6 @@ async def update_trading_config(req: TradingConfigUpdate):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
         setattr(cfg.trading, field, value)
 
-    from aletheia.storage import repositories as repo
-
-    with repo.transaction(immediate=True):
-        save_config(cfg)
     old_rollout_enabled = bool(old.get("persona_progressive_unlock_enabled")) and bool(
         old.get("persona_sizing_enabled")
     )
@@ -2659,11 +2655,20 @@ async def update_trading_config(req: TradingConfigUpdate):
         cfg.trading.persona_sizing_enabled
     )
     if old_rollout_enabled and not new_rollout_enabled:
+        cfg.trading.persona_rollout_generation += 1
+
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction(immediate=True):
+        save_config(cfg)
+    rollout_error = None
+    if old_rollout_enabled and not new_rollout_enabled:
         # Disabling either prerequisite ends the cohort. Re-enabling must not
         # resurrect evidence collected before the off interval.
         from aletheia.trading.persona_rollout import invalidate_persona_rollouts
 
-        invalidate_persona_rollouts(reason="progressive_rollout_disabled")
+        if invalidate_persona_rollouts(reason="progressive_rollout_disabled") is None:
+            rollout_error = "persona_rollout_invalidation_failed"
     if (
         cfg.trading.persona_progressive_unlock_enabled
         and cfg.trading.persona_sizing_enabled
@@ -2673,7 +2678,8 @@ async def update_trading_config(req: TradingConfigUpdate):
         # old rollout before a new one can collect evidence.
         from aletheia.trading.persona_rollout import current_persona_rollout
 
-        current_persona_rollout(cfg, create=True)
+        if current_persona_rollout(cfg, create=True) is None:
+            rollout_error = "persona_rollout_creation_failed"
     from aletheia.trading.persona_rollout import persona_rollout_status
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "trading_config_changed",
@@ -2682,6 +2688,15 @@ async def update_trading_config(req: TradingConfigUpdate):
                  "message": f"Trading config updated: {list(updates.keys())}"})
     if "min_confidence_to_trade" in updates:
         _notify_ranker_config_change()
+    if rollout_error is not None:
+        raise HTTPException(
+            503,
+            detail={
+                "code": rollout_error,
+                "config_saved": True,
+                "desired_progressive_unlock": new_rollout_enabled,
+            },
+        )
     rollout_status = await asyncio.to_thread(persona_rollout_status, cfg)
     return {
         "updated": updates,
