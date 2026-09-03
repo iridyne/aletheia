@@ -167,6 +167,7 @@ _FakeClient = _FakeProvider
 
 def test_build_context_renders_markdown_tables():
     from aletheia.trading.market_context import build_market_context
+    from aletheia.agents.market_observer import _evaluate_pre_filter
     provider = _FakeProvider()
     ctx, debug = asyncio.run(build_market_context(["BTCUSDT", "ETHUSDT"], provider=provider))
     assert "Verified market data snapshot" in ctx
@@ -193,10 +194,12 @@ def test_build_context_renders_markdown_tables():
     )
     assert all(item["observed_at"] for item in technical["artifacts"])
     assert debug["fallback"] is False
+    assert _evaluate_pre_filter(debug)["passed"] is True
 
 
-def test_build_context_uses_returned_candle_venue_for_identity():
+def test_build_context_rejects_consistent_foreign_candle_venue():
     from aletheia.data.cache import get_cache
+    from aletheia.agents.market_observer import _evaluate_pre_filter
     from aletheia.trading.market_context import build_market_context
 
     class FallbackVenueProvider(_FakeProvider):
@@ -211,14 +214,16 @@ def test_build_context_uses_returned_candle_venue_for_identity():
         ["BTC/USDT"], exchange="bitget", provider=FallbackVenueProvider(),
     ))
 
-    assert "technical-context-v1 (okx spot; closed bars)" in ctx
-    assert debug["technical_context"]["artifacts"][0]["stable_id"].startswith(
-        "technical-context-v1:okx:"
-    )
+    assert debug["fallback"] is True
+    assert debug["technical_context"]["artifacts"] == []
+    assert any("foreign_timeframe_venue" in error for error in debug["errors"])
+    assert "technical-context-v1 (okx" not in ctx
+    assert _evaluate_pre_filter(debug)["passed"] is False
 
 
 def test_build_context_fails_closed_on_inconsistent_timeframe_venues():
     from aletheia.data.cache import get_cache
+    from aletheia.agents.market_observer import _evaluate_pre_filter
     from aletheia.trading.market_context import build_market_context
 
     class MixedVenueProvider(_FakeProvider):
@@ -238,6 +243,7 @@ def test_build_context_fails_closed_on_inconsistent_timeframe_venues():
     assert debug["technical_context"]["artifacts"] == []
     assert any("inconsistent_timeframe_venues" in error for error in debug["errors"])
     assert "technical-context-v1 (bitget" not in ctx
+    assert _evaluate_pre_filter(debug)["passed"] is False
 
 
 def test_build_context_marks_missing_timeframe_in_partial_bundle():
@@ -300,6 +306,7 @@ def test_observer_pre_filter_uses_structured_1h_debug_only():
     from aletheia.agents.market_observer import _evaluate_pre_filter
 
     debug = {
+        "technical_context": {"artifacts": [{"stable_id": "exact"}]},
         "symbols": {
             "BTC/USDT": {
                 "1h": {"rsi_14": 71.0, "atr_pct": 1.25},
@@ -320,6 +327,7 @@ def test_observer_pre_filter_does_not_promote_markdown_or_news_keywords():
     from aletheia.agents.market_observer import _evaluate_pre_filter
 
     debug = {
+        "technical_context": {"artifacts": [{"stable_id": "exact"}]},
         "symbols": {
             "BTC/USDT": {
                 "1h": {"rsi_14": 51.0, "atr_pct": 0.2},

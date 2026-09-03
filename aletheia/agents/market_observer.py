@@ -410,7 +410,21 @@ def _evaluate_pre_filter(context_debug: dict) -> dict:
     atr_pct: float | None = None
     matched_rules: list[str] = []
 
-    symbols = context_debug.get("symbols") if isinstance(context_debug, dict) else None
+    technical_context = (
+        context_debug.get("technical_context")
+        if isinstance(context_debug, dict)
+        else None
+    )
+    artifacts = (
+        technical_context.get("artifacts")
+        if isinstance(technical_context, dict)
+        else None
+    )
+    symbols = (
+        context_debug.get("symbols")
+        if isinstance(context_debug, dict) and artifacts
+        else None
+    )
     symbol_debug = next(iter(symbols.values()), {}) if isinstance(symbols, dict) else {}
     one_hour = symbol_debug.get("1h") if isinstance(symbol_debug, dict) else None
     if isinstance(one_hour, dict):
