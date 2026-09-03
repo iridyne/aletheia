@@ -71,6 +71,20 @@ function evidenceLabel(value?: string | null) {
   }
 }
 
+function monitoringLabel(plan: EntryPlan) {
+  try {
+    const evidence = JSON.parse(plan.monitoring_evidence_json ?? '{}') as {
+      channels?: Record<string, { state?: string; reason?: string | null }>
+    }
+    const gaps = Object.entries(evidence.channels ?? {})
+      .filter(([, channel]) => channel.state !== 'ready')
+      .map(([name, channel]) => `${name}: ${humanize(channel.reason ?? channel.state)}`)
+    return `${humanize(plan.monitoring_state)}${gaps.length ? ` (${gaps.join(', ')})` : ''}`
+  } catch {
+    return 'Unavailable'
+  }
+}
+
 function selectionMetric(row: Pick<CandidateWorkbenchRow, 'candidate_selection_policy' | 'candidate_selection_utility_pct' | 'total_score'> | CandidateAttention) {
   return row.candidate_selection_policy === 'candidate_selection_utility_v1'
     ? `Utility ${row.candidate_selection_utility_pct == null ? '—' : `${fmtNum(row.candidate_selection_utility_pct)}%`}`
@@ -296,6 +310,20 @@ export default function Universe() {
       {operatorStatus.isPending ? 'Checking planning health…' : operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
     </Card>
 
+    <Card className="entry-workbench-notice" aria-label="Fast monitoring evidence">
+      <strong>Fast monitoring:</strong>{' '}
+      {plans == null
+        ? 'not available.'
+        : plans.length === 0
+          ? 'no active Entry Plans.'
+          : plans.map(plan => {
+            const funding = plan.market_type === 'perp'
+              ? ` · funding ${plan.funding_readiness?.ready ? 'ready' : humanize(plan.funding_readiness?.reason)}`
+              : ''
+            return `${plan.venue} ${fmtSymbol(plan.symbol)} ${plan.market_type}: ${monitoringLabel(plan)}${funding}`
+          }).join(' · ')}
+    </Card>
+
     {workbenchUnavailable ? <Card role="alert">Entry Workbench is unavailable. Summary counts and rows are not inferred.</Card> : null}
 
     {data?.universe.fallback_instruments.length ? <Card className="entry-workbench-notice">
@@ -325,6 +353,10 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
         <DrawerField label="Side" value={humanize(plan.direction)} />
         <DrawerField label="Contract" value={plan.contract_valid ? 'Validated' : 'Invalid'} />
         <DrawerField label="Status" value={humanize(plan.status)} />
+        <DrawerField label="Terminal reason" value={plan.terminal_reason ? humanize(plan.terminal_reason) : 'Not applicable'} />
+        <DrawerField label="Monitoring" value={monitoringLabel(plan)} />
+        <DrawerField label="Monitoring evidence" value={plan.monitoring_evidence_json ?? 'Not available'} mono />
+        <DrawerField label="Funding readiness" value={plan.market_type === 'perp' ? plan.funding_readiness?.ready ? 'Ready' : humanize(plan.funding_readiness?.reason) : 'Not applicable'} />
         <DrawerField label="Expiry / countdown" value={expiryLabel(plan.plan?.expires_at)} />
       </DrawerSection>
       <DrawerSection label="Entry Geometry">

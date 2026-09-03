@@ -285,3 +285,44 @@ def test_momentum_geometry_measurement_is_read_only_and_fail_closed():
     assert "include_provenance=True" in load_source
     assert "insert_" not in load_source
     assert "execute_write" not in load_source
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S11",
+        "execution_contract",
+        "§3.0a Entry Plan Order Policy",
+        "L2a",
+        "Legacy instant-fill Paper outcomes cannot enter the paper-order-fill/v1 economic cohort.",
+        status="implemented",
+    )
+)
+def test_paper_outcome_cohort_requires_the_current_entry_fill_model():
+    from aletheia.analytics import outcome_integrity
+
+    source = inspect.getsource(outcome_integrity.assess_reportable_outcome)
+    read_source = inspect.getsource(outcome_integrity.raw_account_events)
+    assert "CURRENT_PAPER_FILL_MODEL_VERSION" in source
+    assert "_paper_fill_model_version" in read_source
+    assert "unverified_paper_fill_model" in outcome_integrity.OUTCOME_EXCLUSION_REASONS
+
+
+@spec_claim(
+    SpecClaim(
+        "EP-S12",
+        "entry_plan_contract",
+        "Operator observability",
+        "L2a",
+        "The Workbench projects persisted per-Plan monitoring evidence and exact-venue funding readiness.",
+        status="implemented",
+    )
+)
+def test_workbench_projects_monitoring_and_exact_funding_readiness():
+    from aletheia.server.routes.universe import _entry_plan_projection
+    from aletheia.storage.models import EntryPlanRecord
+
+    source = inspect.getsource(_entry_plan_projection)
+    assert "local_funding_schedule_readiness" in source
+    assert "venue=plan.venue" in source
+    assert "monitoring_state" in EntryPlanRecord.model_fields
+    assert "monitoring_evidence_json" in EntryPlanRecord.model_fields

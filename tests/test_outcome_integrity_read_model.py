@@ -25,6 +25,7 @@ def _closed_row(**overrides) -> dict:
         "funding_source": "local_simulation",
         "realized_pnl": 25.0,
         "execution_mode": "paper_internal",
+        "_paper_fill_model_version": "paper-order-fill/v1",
         "opportunity_id": "opportunity-1",
         "proposal_id": "proposal-1",
         "order_id": "order-1",
@@ -72,6 +73,17 @@ def test_verified_structured_strategy_close_is_eligible():
     assert assessment.outcome_key == "position:position-1"
     assert assessment.net_return_pct == pytest.approx(0.5)
     assert assessment.evidence_source == "structured"
+
+
+def test_legacy_paper_fill_is_excluded_from_the_current_economic_cohort():
+    from aletheia.analytics.outcome_integrity import assess_reportable_outcome
+
+    assessment = assess_reportable_outcome(
+        _closed_row(_paper_fill_model_version=None)
+    )
+
+    assert assessment.eligible is False
+    assert assessment.reason == "unverified_paper_fill_model"
 
 
 @pytest.mark.parametrize(
@@ -270,6 +282,14 @@ def test_explicit_read_models_partition_closed_positions():
     assert {row["id"] for row in administrative_closures(**kwargs)} == {
         "admin", "maintenance",
     }
+    repo.get_db().execute(
+        "UPDATE fills SET paper_fill_model_version=NULL WHERE order_id=?",
+        (eligible_order,),
+    )
+    repo.get_db().commit()
+    legacy = next(row for row in raw_account_events(**kwargs) if row["id"] == "eligible")
+    assert legacy["_paper_fill_model_version"] is None
+    assert eligible_strategy_outcomes(**kwargs) == []
 
 
 def test_raw_account_events_caps_the_latest_rows_then_restores_chronological_order():

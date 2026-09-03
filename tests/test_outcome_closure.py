@@ -384,6 +384,9 @@ def _insert_entry_chain(
             None if execution_mode == "paper_internal" else proposal.id
         ),
         status="filled",
+        paper_fill_model_version=(
+            "paper-order-fill/v1" if execution_mode == "paper_internal" else None
+        ),
         created_at=entry_at,
         filled_at=entry_at,
     ))
@@ -407,6 +410,9 @@ def _insert_entry_chain(
         fill_quantity=quantity,
         fee=entry_fee,
         fee_source=fee_source,
+        paper_fill_model_version=(
+            "paper-order-fill/v1" if execution_mode == "paper_internal" else None
+        ),
         filled_at=entry_at,
     ))
     return opportunity.id, proposal.id, order_id
