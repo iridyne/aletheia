@@ -341,13 +341,19 @@ def settle_observation_continuity(**kwargs) -> dict[str, Any]:
 
 
 @contextmanager
-def observation_settlement_barrier(**kwargs):
-    """Keep the cycle lock held after settlement through caller activation."""
-    from aletheia.observation_lab.worker_lock import WorkerCycleLockError, worker_cycle_exclusion
+def observation_settlement_barrier():
+    """Keep the minimal update cut locked through backup and activation."""
+    from aletheia.observation_lab.update_settlement import (
+        settle_update_continuity_locked,
+    )
+    from aletheia.observation_lab.worker_lock import (
+        WorkerCycleLockError,
+        worker_cycle_exclusion,
+    )
 
     try:
         with worker_cycle_exclusion():
-            yield settle_observation_continuity(**kwargs)
+            yield settle_update_continuity_locked()
     except WorkerCycleLockError:
         yield {"ok": False, "reason": "cycle_lock_contended"}
 
