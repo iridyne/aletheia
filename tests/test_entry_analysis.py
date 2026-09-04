@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+import json
 
 from datetime import datetime, timezone
 
@@ -11,6 +13,8 @@ from aletheia.trading.entry_analysis import (
     EntryHypothesisV1,
     EntryHypothesisV2,
     _candidate_opportunity_evidence_refs,
+    canonical_json,
+    entry_model_view,
     validate_hypothesis_references,
 )
 
@@ -76,6 +80,101 @@ def _context_v2(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV2:
         },
     )
     return EntryAnalysisContextV2(**base)
+
+
+def _maximal_context() -> EntryAnalysisContextV2:
+    primary = _anchor("candidate_reference", 100.0, "candidate:c1")
+    invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
+    data = _context_v2((primary, invalidation)).model_dump(
+        mode="json", exclude={"context_fingerprint"}
+    )
+    for timeframe, size in (("4h", 30), ("1h", 48), ("15m", 96)):
+        data["candle_windows"][timeframe] = {
+            "availability": "available",
+            "source_fingerprint": f"candles:{timeframe}",
+            "bars": [
+                {"ts": index, "open": 1, "high": 2, "low": 0.5, "close": 1.5,
+                 "volume": 10, "provider": "test", "provenance": "raw" * 20}
+                for index in range(size)
+            ],
+        }
+        data["market_structure"][timeframe] = {
+            "availability": "available", "state": "uptrend", "atr14": 2.0,
+            "geometry_fingerprint": f"geometry:{timeframe}",
+            "fact_refs": [invalidation.anchor_id],
+            "swings": [{"id": f"swing:{index}", "raw": "x" * 200} for index in range(30)],
+            "events": [{"id": f"event:{index}", "raw": "y" * 200} for index in range(30)],
+            "provenance": {"raw": "z" * 5000},
+        }
+    data["entry_profiles"] = ({
+        "id": "grounded-anchor-resting-maker", "version": "v1",
+        "supported_mechanisms": ("reversal",),
+        "required_fact_sections": ("market_structure", "execution_context"),
+        "primary_anchor_kinds": ("candidate_reference",),
+        "invalidation_anchor_kinds": ("confirmed_swing",),
+        "supported_timeframes": ("15m",),
+    },)
+    return EntryAnalysisContextV2.model_validate(data)
+
+
+def test_entry_model_view_excludes_raw_evidence_and_retains_grounding_identities():
+    context = _maximal_context()
+    view = entry_model_view(context)
+
+    assert all("bars" not in window for window in view["candle_windows"].values())
+    assert all(
+        not {"swings", "events", "provenance"} & section.keys()
+        for name, section in view["market_structure"].items()
+        if name != "fact_refs"
+    )
+    assert view["planning_generation"] == {
+        "id": "g1", "candidate_id": "c1", "candidate_family": "mean_reversion",
+    }
+    assert view["candidate"]["fact_refs"] == ["candidate:c1"]
+    assert view["market_structure"]["fact_refs"] == list(context.market_structure["fact_refs"])
+    assert {item["anchor_id"] for item in view["anchors"]} == {
+        item.anchor_id for item in context.anchors
+    }
+    assert view["entry_profiles"][0]["id"] == "grounded-anchor-resting-maker"
+
+
+def test_entry_model_view_is_deterministic_bounded_and_does_not_mutate_context():
+    context = _maximal_context()
+    frozen_before = canonical_json(context.model_dump(mode="json"))
+
+    first = canonical_json(entry_model_view(context))
+    second = canonical_json(entry_model_view(context))
+
+    assert first == second
+    assert len(first.encode()) < 24 * 1024
+    assert len(frozen_before.encode()) > 24 * 1024
+    assert canonical_json(context.model_dump(mode="json")) == frozen_before
+
+
+def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(monkeypatch):
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+
+    context = _maximal_context()
+    captured = {}
+
+    async def structured(_system, user, **kwargs):
+        captured.update({"user": user, **kwargs})
+        return {
+            "decision": "NO_PLAN", "reason_code": "CONFLICTING_SIGNALS",
+            "mechanism": "reversal", "direction": "long",
+            "risk_tier": "NONE", "horizon": "NONE",
+        }, None
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
+
+    result = asyncio.run(system_operator_entry_planner(context.model_dump(mode="json"), "test"))
+    prompt = json.loads(captured["user"])
+
+    assert result.decision == "NO_PLAN"
+    assert prompt == entry_model_view(context)
+    assert all("bars" not in window for window in prompt["candle_windows"].values())
+    assert captured["context_artifacts"][0]["rendered_chars"] == len(captured["user"])
+    assert context.candle_windows["15m"]["bars"]
 
 
 def test_anchor_and_context_hashes_are_stable_and_aliases_do_not_vote_twice():

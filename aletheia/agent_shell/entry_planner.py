@@ -18,6 +18,7 @@ from aletheia.trading.entry_analysis import (
     EntryHypothesis,
     build_entry_analysis_context,
     canonical_json,
+    entry_model_view,
     fingerprint,
     validate_hypothesis_references,
 )
@@ -428,9 +429,11 @@ async def system_operator_entry_planner(
     from aletheia.model_provider.broker import InferencePriority, inference_priority
     from aletheia.model_provider.router import get_provider_for_tier
 
+    context_model = EntryAnalysisContext.model_validate(context)
+    model_view = entry_model_view(context_model)
     provider_name = provider_name or get_provider_for_tier("deep")
     planning_generation_id = str(
-        (context.get("planning_generation") or {}).get("id") or ""
+        (model_view.get("planning_generation") or {}).get("id") or ""
     )
     from aletheia.trading.entry_contract import CANONICAL_ENTRY_SYSTEM_PROMPT
     call_kwargs = {
@@ -438,7 +441,7 @@ async def system_operator_entry_planner(
         "max_tokens": 768,
         "provider": provider_name,
         "fallback_to_defaults": False,
-        "context_symbol": str((context.get("candidate") or {}).get("symbol") or ""),
+        "context_symbol": str((model_view.get("instrument") or {}).get("symbol") or ""),
         "context_artifacts": (
             [{
                 "kind": "environment",
@@ -447,14 +450,14 @@ async def system_operator_entry_planner(
                 "selected_reason": "exact_grounded_entry_input",
                 "trust_class": "internal_fact",
                 "freshness_status": "fresh",
-                "observed_at": context.get("analysis_cutoff_at"),
-                "rendered_chars": len(json.dumps(context, sort_keys=True, default=str)),
+                "observed_at": model_view.get("analysis_cutoff_at"),
+                "rendered_chars": len(canonical_json(model_view)),
             }]
             if planning_generation_id else None
         ),
         "reasoning_effort": "medium",
     }
-    prompt_payload = json.dumps(context, sort_keys=True, default=str)
+    prompt_payload = canonical_json(model_view)
     with inference_priority(InferencePriority.DEFAULT):
         result, error = await llm_structured(
             CANONICAL_ENTRY_SYSTEM_PROMPT, prompt_payload,
