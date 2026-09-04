@@ -370,6 +370,24 @@ def test_schema_bearing_tag_reanchor_failure_rolls_back_before_postflight(tmp_pa
         "_observer_auto_postflight",
         lambda *_args, **_kwargs: pytest.fail("failed strict reanchor must not reach postflight"),
     )
+    worker_guard = {
+        "required": True,
+        "ok": True,
+        "before": {"observation": {"worker": {"acquired_at": "settled-cut"}}},
+        "preflight": {"ok": True},
+    }
+    monkeypatch.setattr(auto, "_observer_auto_preflight", lambda: worker_guard)
+
+    @contextmanager
+    def rollback_guard(guard):
+        assert guard is worker_guard
+        events.append("rollback-guard:enter")
+        try:
+            yield True
+        finally:
+            events.append("rollback-guard:exit")
+
+    monkeypatch.setattr(auto, "_observer_rollback_guard", rollback_guard)
     monkeypatch.setattr(
         auto,
         "_rollback_to_old_runtime",
@@ -389,8 +407,10 @@ def test_schema_bearing_tag_reanchor_failure_rolls_back_before_postflight(tmp_pa
         "gateway:start",
         "runtime:verified",
         "reanchor:failed",
-        "barrier:exit",
+        "rollback-guard:enter",
         "rollback",
+        "rollback-guard:exit",
+        "barrier:exit",
     ]
     assert [call.kwargs["profile"] for call in service.create_backup.call_args_list] == [
         "online",

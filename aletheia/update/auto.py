@@ -755,11 +755,11 @@ def run() -> dict[str, Any]:
                     },
                 )
         except AutoUpdateError as exc:
-            if activation_barrier is not None:
-                activation_barrier.__exit__(None, None, None)
-                activation_barrier = None
             _remove_candidate(worktree)
             if not source_switched:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
                 shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
                 if dependencies_synced:
                     _install_source_dependencies()
@@ -775,51 +775,61 @@ def run() -> dict[str, Any]:
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
                                hold=not recovery.get("ok"), blacklist=exc.reason not in _TRANSIENT_CANDIDATE_FAILURES)
-            with _observer_rollback_guard(observer_guard) as rollback_safe:
-                if not rollback_safe:
-                    return _observer_hold_after_activation(
-                        state,
-                        tag=tag,
-                        target=target,
-                        reason="observer_advanced_during_failed_activation",
-                        detail=(
-                            "Target activation failed, but Worker progress changed or could not be "
-                            "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
-                        ),
-                    )
-                state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
-                recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                                    restore_static=static_activated)
-                return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
-                               hold=not recovery.get("ok"), blacklist=True)
+            try:
+                with _observer_rollback_guard(observer_guard) as rollback_safe:
+                    if not rollback_safe:
+                        return _observer_hold_after_activation(
+                            state,
+                            tag=tag,
+                            target=target,
+                            reason="observer_advanced_during_failed_activation",
+                            detail=(
+                                "Target activation failed, but Worker progress changed or could not be "
+                                "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
+                            ),
+                        )
+                    state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
+                    recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                        restore_static=static_activated)
+                    return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
+                                   hold=not recovery.get("ok"), blacklist=True)
+            finally:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
         except Exception as exc:
-            if activation_barrier is not None:
-                activation_barrier.__exit__(None, None, None)
-                activation_barrier = None
             _remove_candidate(worktree)
             reason = f"unexpected_{type(exc).__name__}"
             if not source_switched:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
                 shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
                 if dependencies_synced:
                     _install_source_dependencies()
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"))
-            with _observer_rollback_guard(observer_guard) as rollback_safe:
-                if not rollback_safe:
-                    return _observer_hold_after_activation(
-                        state,
-                        tag=tag,
-                        target=target,
-                        reason="observer_advanced_during_failed_activation",
-                        detail=(
-                            f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
-                            "progress changed or could not be proven unchanged; refusing cross-time rollback."
-                        ),
-                    )
-                state = _write_state(state, phase="rolling_back", status="running", reason=reason)
-                recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                                    restore_static=static_activated)
-                return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
+            try:
+                with _observer_rollback_guard(observer_guard) as rollback_safe:
+                    if not rollback_safe:
+                        return _observer_hold_after_activation(
+                            state,
+                            tag=tag,
+                            target=target,
+                            reason="observer_advanced_during_failed_activation",
+                            detail=(
+                                f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
+                                "progress changed or could not be proven unchanged; refusing cross-time rollback."
+                            ),
+                        )
+                    state = _write_state(state, phase="rolling_back", status="running", reason=reason)
+                    recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                        restore_static=static_activated)
+                    return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
+            finally:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
 
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
         observer_summary = None
