@@ -1,0 +1,111 @@
+schema_version: "1.0"
+workflow:
+  id: aletheia-sdd-shadow-prechange
+  name: Aletheia SDD shadow pre-change
+  version: "1.0.4"
+  author: Aletheia
+  description: >-
+    Advisory pre-change semantic audit. Aletheia remains the Knowledge Plane;
+    this workflow is an ephemeral, non-authoritative Process Plane.
+  integration: omp
+requires:
+  speckit_version: "1.0.4"
+  integrations:
+    - omp
+steps:
+  - id: authority-resolution
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      authority_resolution stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/authority_resolution.json.
+  - id: validate-authority-resolution
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage authority_resolution --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: clarification
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      clarification stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/clarification.json.
+  - id: validate-clarification
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage clarification --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: transaction-durability
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      transaction_durability stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/transaction_durability.json.
+  - id: validate-transaction-durability
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage transaction_durability --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: concurrency-lifetime
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      concurrency_lifetime stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/concurrency_lifetime.json.
+  - id: validate-concurrency-lifetime
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage concurrency_lifetime --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: entrypoint
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      entrypoint stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/entrypoint.json.
+  - id: validate-entrypoint
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage entrypoint --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: failure-semantics
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      failure_semantics stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/failure_semantics.json.
+  - id: validate-failure-semantics
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage failure_semantics --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: verification
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/prechange.md and perform only the
+      verification stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/verification.json.
+  - id: validate-verification
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --stage verification --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: synthesis
+    type: prompt
+    prompt: >-
+      Read only the validated pre-change artifacts in
+      .shadow/{{ context.run_id }}/artifacts and perform the synthesis stage.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/synthesis.json.
+  - id: validate-synthesis
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase prechange
+      --run-dir .shadow/{{ context.run_id }}/artifacts

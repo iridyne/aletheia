@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/iridyne/aletheia/sdd-shadow/stage-output.schema.json",
+  "title": "Aletheia Spec Kit shadow stage output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stage",
+    "verdict",
+    "findings",
+    "blockers",
+    "clarifications",
+    "dependencies",
+    "non_goals_at_risk",
+    "verification_obligations",
+    "unknowns"
+  ],
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": [
+        "authority_resolution",
+        "clarification",
+        "transaction_durability",
+        "concurrency_lifetime",
+        "entrypoint",
+        "failure_semantics",
+        "verification",
+        "contract_implementation",
+        "authority_alignment",
+        "specclaim_coverage",
+        "scope_entrypoints",
+        "failure_recovery",
+        "review_evidence",
+        "qualification",
+        "synthesis"
+      ]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "GO",
+        "HOLD_FOR_CLARIFICATION",
+        "BLOCKED_BY_DEPENDENCY",
+        "ADVISORY",
+        "PASS",
+        "HOLD",
+        "BLOCKED"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "class", "evidence_refs", "rationale"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
+          "class": {"type": "string", "minLength": 1},
+          "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+          "rationale": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "blockers": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+    "clarifications": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+    "dependencies": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+    "non_goals_at_risk": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+    "verification_obligations": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+    "unknowns": {"type": "array", "items": {"type": "string"}, "maxItems": 200}
+  }
+}
