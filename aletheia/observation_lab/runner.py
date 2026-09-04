@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -111,6 +112,13 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
     Cluster 5's contract requires the fingerprint chain to survive a
     misbehaving app.db read.
     """
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        return _run_lab_windows_locked(max_windows=max_windows)
+
+
+def _run_lab_windows_locked(*, max_windows: int | None = None) -> dict[str, Any]:
     ordered = registered_windows()
     if max_windows is not None:
         ordered = ordered[: max(0, int(max_windows))]
@@ -208,6 +216,13 @@ def _save_checkpoint(summary: dict[str, Any]) -> None:
         )
 
         current = compute_joint_checkpoint()
+        if (
+            current.main_outbox_high_watermark < 0
+            or current.main_outbox_pending_count < 0
+            or current.main_outbox_fingerprint == "<unavailable>"
+        ):
+            summary.update(ok=False, reason="main_outbox_unavailable")
+            return
         save_joint_checkpoint(current)
         summary.update(
             current_fingerprint=current.joint_fingerprint,
@@ -216,6 +231,125 @@ def _save_checkpoint(summary: dict[str, Any]) -> None:
         )
     except Exception as exc:
         summary.update(ok=False, reason=f"checkpoint_save_error:{exc!r}"[:400])
+
+
+def _settle_observation_continuity(
+    *, advance_windows: bool = False, batch_size: int = 500, max_batches: int = 100
+) -> dict[str, Any]:
+    """Settle Main/Lab transport and persist only one strictly verified cut."""
+    from aletheia.config.loader import get_data_dir
+
+    if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
+        return {"ok": False, "reason": "lab_unavailable"}
+    from aletheia.observation_lab.canonical import (
+        compact_finalized_generations,
+        delivery_import_interruption_status,
+        import_delivery_receipts,
+        mirror_lab_audit_outbox,
+        prune_observation_delivery_outbox,
+    )
+    from aletheia.observation_lab.checkpoint import verify_joint_checkpoint
+    from aletheia.observation_lab.kernel import advance_windows as advance
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        checkpoint = _pass_checkpoint()
+        if not checkpoint.get("ok"):
+            interruption = delivery_import_interruption_status()
+            return {
+                "ok": False,
+                "reason": checkpoint.get("reason"),
+                "checkpoint": checkpoint,
+                "delivery_import_interruption": interruption,
+            }
+        def failed(reason: str, **details: Any) -> dict[str, Any]:
+            return {"ok": False, "reason": reason, "checkpoint": checkpoint, **details}
+        imported_total = 0
+        imported: dict[str, Any] = {}
+        batch = max(1, min(int(batch_size), 1000))
+        limit = max(1, int(max_batches))
+        import_limit_reached = False
+        for index in range(limit):
+            imported = import_delivery_receipts(limit=batch)
+            imported_total += int(imported.get("processed") or 0)
+            if (
+                imported.get("available") is not True
+                or imported.get("failed_sequence") is not None
+                or imported.get("retry_sequences")
+            ):
+                return failed(
+                    imported.get("reason") or imported.get("failed_reason") or "delivery_import_failed",
+                    delivery_import=imported,
+                )
+            if int(imported.get("processed") or 0) < batch:
+                break
+        else:
+            import_limit_reached = True
+        mirrored_total = 0
+        mirrored: dict[str, Any] = {}
+        mirror_limit_reached = False
+        for index in range(limit):
+            mirrored = mirror_lab_audit_outbox(limit=batch)
+            mirrored_total += int(mirrored.get("processed") or 0)
+            if mirrored.get("available") is not True or mirrored.get("failed"):
+                return failed(mirrored.get("reason") or "audit_mirror_failed", audit_mirror=mirrored)
+            if int(mirrored.get("processed") or 0) < batch:
+                break
+        else:
+            mirror_limit_reached = True
+        advanced = advance(limit=10) if advance_windows else None
+        if advanced is not None and any(
+            item.get("status") in {"error", "unavailable"}
+            for item in advanced.get("results", {}).values()
+        ):
+            return failed("window_advance_failed", windows=advanced)
+        pruned = prune_observation_delivery_outbox()
+        compacted = compact_finalized_generations(limit=10)
+        if pruned.get("available") is not True or compacted.get("skipped"):
+            return failed(pruned.get("reason") or "compaction_failed")
+        _save_checkpoint(checkpoint)
+        if not checkpoint.get("ok"):
+            return {"ok": False, "reason": checkpoint.get("reason"), "checkpoint": checkpoint}
+        strict = verify_joint_checkpoint()
+        if not strict.ok or strict.reason != "fingerprint_match":
+            return {"ok": False, "reason": strict.reason, "checkpoint": checkpoint}
+        if import_limit_reached or mirror_limit_reached:
+            return {
+                "ok": False,
+                "reason": "delivery_import_batch_limit" if import_limit_reached else "audit_mirror_batch_limit",
+                "checkpoint": checkpoint,
+            }
+        return {
+            "ok": True,
+            "reason": strict.reason,
+            "delivery_import": {**imported, "processed": imported_total},
+            "audit_mirror": {**mirrored, "processed": mirrored_total},
+            "windows": advanced,
+            "pruning": pruned,
+            "compaction": compacted,
+            "checkpoint": checkpoint,
+        }
+
+
+def settle_observation_continuity(**kwargs) -> dict[str, Any]:
+    from aletheia.observation_lab.worker_lock import WorkerCycleLockError
+
+    try:
+        return _settle_observation_continuity(**kwargs)
+    except WorkerCycleLockError:
+        return {"ok": False, "reason": "cycle_lock_contended"}
+
+
+@contextmanager
+def observation_settlement_barrier(**kwargs):
+    """Keep the cycle lock held after settlement through caller activation."""
+    from aletheia.observation_lab.worker_lock import WorkerCycleLockError, worker_cycle_exclusion
+
+    try:
+        with worker_cycle_exclusion():
+            yield settle_observation_continuity(**kwargs)
+    except WorkerCycleLockError:
+        yield {"ok": False, "reason": "cycle_lock_contended"}
 
 
 def register_builtin_handlers() -> None:

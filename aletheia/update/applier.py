@@ -333,6 +333,23 @@ def _restart_gateway() -> dict:
     return {"ok": True}
 
 
+def _stop_gateway() -> dict:
+    """Stop receipt producers before the final Observation continuity cut."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "from aletheia.gateway.lifecycle import do_stop; do_stop()"],
+            cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=90,
+            **_no_window_kwargs(),
+        )
+    except Exception as exc:
+        return {"ok": False, "reason": type(exc).__name__}
+    return {
+        "ok": result.returncode == 0,
+        "reason": None if result.returncode == 0 else "gateway_stop_failed",
+        "detail": (result.stderr or result.stdout).strip()[-500:],
+    }
+
+
 def _gateway_ready_after_restart_error(*, timeout_sec: float = 5.0) -> bool:
     """Accept a canceled systemd start only after the front door recovers."""
     try:
@@ -597,7 +614,7 @@ def rollback_applied_update(result: dict) -> dict:
     }
 
 
-def apply_update(*, restart: bool = False, progress=None) -> dict:
+def apply_update(*, restart: bool = False, progress=None, preactivation_backup: str = "") -> dict:
     """Apply an update according to the current execution mode."""
     if _is_packaged():
         try:
@@ -876,18 +893,20 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         if schema_changed:
             from aletheia.backup.service import BackupService
 
-            try:
-                schema_backup = str(BackupService(get_data_dir()).create_backup(label="interactive_schema_activate"))
-            except Exception as exc:
-                return _rollback_update(
-                    old,
-                    new,
-                    python_deps_changed=python_deps_changed,
-                    frontend_deps_changed=frontend_deps_changed,
-                    restart=False,
-                    failure_reason="schema_activation_backup_failed",
-                    failure_detail=type(exc).__name__,
-                )
+            schema_backup = preactivation_backup
+            if not schema_backup:
+                try:
+                    schema_backup = str(BackupService(get_data_dir()).create_backup(label="interactive_schema_activate"))
+                except Exception as exc:
+                    return _rollback_update(
+                        old,
+                        new,
+                        python_deps_changed=python_deps_changed,
+                        frontend_deps_changed=frontend_deps_changed,
+                        restart=False,
+                        failure_reason="schema_activation_backup_failed",
+                        failure_detail=type(exc).__name__,
+                    )
         if dashboard_build_required:
             had_previous_static = _activate_frontend_build()
             frontend_built = True

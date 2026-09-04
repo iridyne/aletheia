@@ -5,6 +5,26 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _settled_update_boundary(monkeypatch):
+    from aletheia.observation_lab import runner
+    from aletheia.update import applier, target_fresh
+    monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(
+        runner,
+        "settle_observation_continuity",
+        lambda: {"ok": True, "checkpoint": {"current_fingerprint": "trusted"}},
+    )
+    monkeypatch.setattr(
+        target_fresh,
+        "reanchor_joint_checkpoint",
+        lambda **_: {"ok": True, "reason": "fingerprint_match"},
+    )
+
 
 def _snapshot(
     *,
@@ -407,7 +427,7 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
     monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
     seen = {}
 
-    def apply_update(*, restart, progress=None):
+    def apply_update(*, restart, progress=None, **_kwargs):
         seen["restart"] = restart
         return {
             "applied": True,
@@ -445,7 +465,7 @@ def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeyp
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "target-sha",
@@ -502,7 +522,7 @@ def test_wrapper_accepts_initializing_after_structural_proof(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -548,7 +568,7 @@ def test_postflight_readiness_uses_target_fresh_capture(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -586,7 +606,7 @@ def test_wrapper_rolls_back_postflight_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -613,6 +633,9 @@ def test_wrapper_rolls_back_postflight_failure(monkeypatch):
 def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     """After apply_update succeeds, the observation checkpoint is immediately
     re-anchored so the next preflight doesn't see stale migration state."""
+    from contextlib import contextmanager
+
+    from aletheia.observation_lab import runner
     from aletheia.update import applier, continuity
 
     before = _snapshot()
@@ -620,29 +643,39 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
     monkeypatch.setattr(continuity, "_gateway_status", lambda **_: after["gateway"])
     monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
-    monkeypatch.setattr(
-        applier,
-        "apply_update",
-        lambda *, restart, progress=None: {
+    events = []
+
+    @contextmanager
+    def barrier():
+        events.append("barrier-enter")
+        yield {"ok": True, "checkpoint": {"current_fingerprint": "trusted"}}
+        events.append("barrier-exit")
+
+    monkeypatch.setattr(runner, "observation_settlement_barrier", barrier)
+    def apply(*, restart, progress=None, **_kwargs):
+        events.append("apply")
+        return {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
             "new_commit": "new222",
             "deps_reinstalled": False,
-        },
-    )
+        }
+
+    monkeypatch.setattr(applier, "apply_update", apply)
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
 
     anchored = []
     monkeypatch.setattr(
         "aletheia.update.target_fresh.reanchor_joint_checkpoint",
-        lambda **_: anchored.append("target-fresh") or {"ok": True},
+        lambda **_: events.append("reanchor") or anchored.append("target-fresh") or {"ok": True},
     )
 
     result = continuity.apply_update_with_continuity(restart=True)
 
     assert result["applied"] is True
     assert anchored == ["target-fresh"], "checkpoint must be re-anchored after successful apply"
+    assert events == ["barrier-enter", "apply", "reanchor", "barrier-exit"]
 
 
 def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
@@ -653,7 +686,7 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {"applied": False, "reason": "git_pull_failed"},
+        lambda *, restart, progress=None, **_kwargs: {"applied": False, "reason": "git_pull_failed"},
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
 
@@ -669,7 +702,10 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
     assert anchored == [], "checkpoint must not be re-anchored when apply fails"
 
 
-def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
+def test_wrapper_rolls_back_before_barrier_exit_when_reanchor_fails(monkeypatch):
+    from contextlib import contextmanager
+
+    from aletheia.observation_lab import runner
     from aletheia.update import applier, continuity
 
     before = _snapshot()
@@ -680,7 +716,7 @@ def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -688,8 +724,20 @@ def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
             "deps_reinstalled": False,
         },
     )
-    audits = []
-    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: audits.append((args, kwargs)))
+    events = []
+
+    @contextmanager
+    def barrier():
+        events.append("barrier-enter")
+        yield {"ok": True, "checkpoint": {"current_fingerprint": "trusted"}}
+        events.append("barrier-exit")
+
+    monkeypatch.setattr(runner, "observation_settlement_barrier", barrier)
+    monkeypatch.setattr(
+        applier,
+        "rollback_applied_update",
+        lambda _result: events.append("rollback") or {"rolled_back": True},
+    )
     monkeypatch.setattr(
         "aletheia.update.target_fresh.reanchor_joint_checkpoint",
         lambda **_: {"ok": False, "reason": "target_fresh_process_failed"},
@@ -697,6 +745,7 @@ def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
 
     result = continuity.apply_update_with_continuity(restart=True)
 
-    assert result["applied"] is True
-    assert "observation_checkpoint_reanchor_failed" in result["continuity"]["comparison"]["warnings"]
-    assert any(args[0] == "update_observer_checkpoint_reanchor_failed" for args, _kwargs in audits)
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
+    assert result["reason"] == "observation_checkpoint_reanchor_failed"
+    assert events == ["barrier-enter", "rollback", "barrier-exit"]

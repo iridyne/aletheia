@@ -255,29 +255,42 @@ def prepare_activation_data() -> dict[str, Any]:
     if request.get("backup_profile") not in {"online", "authoritative"}:
         raise PackagedUpdateError("update_backup_profile_unproven")
 
-    # The staging snapshot was intentionally created while the old Gateway was
-    # serving writes and is therefore non-recovery. The tray calls this command
-    # only after quiescing/stopping that runtime; publish the authoritative
-    # checkpoint before migrations so Rust can refresh the rollback request.
-    backup_value = request.get("backup_path")
-    backup = Path(backup_value) if isinstance(backup_value, str) else None
-    checkpoint_valid = False
-    if request.get("backup_profile") == "authoritative" and backup is not None and backup.is_file():
-        from aletheia.backup.verify import verify_backup
+    from aletheia.observation_lab.execution_owner import get_execution_owner
+    from aletheia.observation_lab.runner import observation_settlement_barrier
 
-        checked = verify_backup(backup)
-        checkpoint_valid = checked.valid and checked.recovery_eligible
-    if not checkpoint_valid:
-        from aletheia.backup.service import BackupService
+    if get_execution_owner() != "main":
+        raise PackagedUpdateError("packaged_worker_owner_not_quiesced")
+    with observation_settlement_barrier() as settlement:
+        if not settlement.get("ok"):
+            raise PackagedUpdateError(
+                "observation_settlement_failed",
+                str(settlement.get("reason") or "settlement_unavailable"),
+            )
 
-        authoritative = BackupService(packaged.get_data_dir()).create_backup(
-            label=f"pre_update_authoritative_{str(request.get('operation_id') or '')[:12]}",
-            profile="authoritative",
-        )
-        request["backup_path"] = str(authoritative)
-        request["backup_profile"] = "authoritative"
-        packaged._atomic_json(request_path, request)  # noqa: SLF001
-    return {"ok": True, "action": "activate", "validation": packaged.validate_current_data()}
+        # The staging snapshot was intentionally created while the old Gateway was
+        # serving writes and is therefore non-recovery. The tray calls this command
+        # only after quiescing/stopping that main-owned runtime; keep the shared lock
+        # through the authoritative backup and candidate validation.
+        backup_value = request.get("backup_path")
+        backup = Path(backup_value) if isinstance(backup_value, str) else None
+        checkpoint_valid = False
+        if request.get("backup_profile") == "authoritative" and backup is not None and backup.is_file():
+            from aletheia.backup.verify import verify_backup
+
+            checked = verify_backup(backup)
+            checkpoint_valid = checked.valid and checked.recovery_eligible
+        if not checkpoint_valid:
+            from aletheia.backup.service import BackupService
+
+            authoritative = BackupService(packaged.get_data_dir()).create_backup(
+                label=f"pre_update_authoritative_{str(request.get('operation_id') or '')[:12]}",
+                profile="authoritative",
+            )
+            request["backup_path"] = str(authoritative)
+            request["backup_profile"] = "authoritative"
+            packaged._atomic_json(request_path, request)  # noqa: SLF001
+        validation = packaged.validate_current_data()
+    return {"ok": True, "action": "activate", "validation": validation}
 
 
 def _committed_timestamp(state: dict[str, Any]) -> float | None:

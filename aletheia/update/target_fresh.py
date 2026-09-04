@@ -168,12 +168,30 @@ def persist_current_commit(
     return result
 
 
+def checkpoint_delta_allowed(verdict: Any, expected_fingerprint: str) -> bool:
+    """Allow only the target's migration/schema delta from the locked checkpoint."""
+    last = getattr(verdict, "last", None)
+    if not expected_fingerprint or last is None:
+        return False
+    if getattr(last, "joint_fingerprint", None) != expected_fingerprint:
+        return False
+    if bool(getattr(verdict, "ok", False)):
+        return True
+    components = set(getattr(verdict, "mismatch_components", ()))
+    allowed = {"app_migration", "lab_schema", "lab_state", "checkpoint_ledger"}
+    return bool(components) and components <= allowed and (
+        not ({"lab_state", "checkpoint_ledger"} & components)
+        or "lab_schema" in components
+    )
+
+
 def reanchor_joint_checkpoint(
     *,
     project_root: Path,
     data_dir: Path,
     env: dict[str, str],
     python_executable: str,
+    expected_checkpoint_fingerprint: str,
 ) -> dict[str, Any]:
     """Re-anchor the cross-store checkpoint with target-loaded code.
 
@@ -184,11 +202,21 @@ def reanchor_joint_checkpoint(
     """
     child_env = dict(env)
     child_env["ALETHEIA_DATA_DIR"] = str(data_dir)
+    expected = repr(str(expected_checkpoint_fingerprint))
     script = (
         "import json\n"
         "from aletheia.observation_lab.checkpoint import (\n"
         "    compute_joint_checkpoint, save_joint_checkpoint, verify_joint_checkpoint,\n"
         ")\n"
+        "from aletheia.update.target_fresh import checkpoint_delta_allowed\n"
+        "before = verify_joint_checkpoint(create_lab=False)\n"
+        f"expected = {expected}\n"
+        "components = set(before.mismatch_components)\n"
+        "if not checkpoint_delta_allowed(before, expected):\n"
+        "    payload = {'ok': False, 'reason': 'target_checkpoint_delta_unproven', "
+        "'mismatch_components': sorted(components)}\n"
+        f"    print({_RESULT_PREFIX!r} + json.dumps(payload, sort_keys=True))\n"
+        "    raise SystemExit(0)\n"
         "checkpoint = compute_joint_checkpoint()\n"
         "save_joint_checkpoint(checkpoint)\n"
         "verdict = verify_joint_checkpoint(create_lab=False)\n"
@@ -210,6 +238,7 @@ def reanchor_joint_checkpoint(
 
 
 __all__ = [
+    "checkpoint_delta_allowed",
     "persist_current_commit",
     "reanchor_joint_checkpoint",
     "run_smoke_check",

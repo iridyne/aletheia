@@ -249,16 +249,19 @@ def test_lab_runner_does_not_import_legacy_experiment_runtime():
 
 
 @spec_claim(SpecClaim(
-    "OEO-S06", _CHECKPOINT_CONTRACT, "Runner-only transport progress", "L2a",
-    "Only the scheduled Lab runner may relax exact checkpoint matching for pending Main receipts.",
+    "OEO-S06", _CHECKPOINT_CONTRACT, "Bounded transport progress", "L2a",
+    "Only settlement and the updater diagnostic may recognize pending-only Main progress; deployment remains strict.",
 ))
-def test_only_lab_runner_accepts_main_outbox_progress():
+def test_only_settlement_and_update_diagnostic_accept_main_outbox_progress():
     callers = {
         path
         for path, source in _production_sources().items()
         if "allow_main_outbox_progress=True" in source
     }
-    assert callers == {"aletheia/observation_lab/runner.py"}
+    assert callers == {
+        "aletheia/observation_lab/runner.py",
+        "aletheia/update/continuity.py",
+    }
 
 
 @spec_claim(SpecClaim(

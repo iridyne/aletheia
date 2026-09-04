@@ -33,6 +33,13 @@ The continuity layer fails closed when it can directly prove a structural deploy
 
 A joint-checkpoint mismatch caused only by the time-dependent active-manifest set is warning-only. This matches the canonical Observation runner, which records and re-anchors such lifecycle drift instead of treating normal manifest expiry/activation as a deployment fault.
 
+A pending-only Main receipt suffix whose checkpointed prefix is still exact is
+settleable progress, not corruption. Before the authoritative backup or source
+switch, the updater stops producers, holds the existing Observation cycle lock,
+drains the shared bridge, rejects failed/retry/unavailable state, and requires a
+strict `fingerprint_match`. Failure restarts the unchanged old runtime; it never
+replaces an unproven checkpoint baseline.
+
 ## Target-loaded post-pull boundary
 
 The interactive updater process necessarily starts under the pre-update checkout. After `git pull`, its existing Python objects and `sys.modules` entries are therefore treated as stale for target-owned semantics.

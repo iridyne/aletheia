@@ -5,6 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _settled_update_boundary(monkeypatch):
+    from aletheia.observation_lab import runner
+    from aletheia.update import applier
+    monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(
+        runner,
+        "settle_observation_continuity",
+        lambda: {"ok": True, "checkpoint": {"current_fingerprint": "trusted"}},
+    )
+
 
 def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch):
     from aletheia.config import loader
@@ -93,15 +108,49 @@ def test_target_fresh_reanchors_checkpoint_with_target_modules(monkeypatch, tmp_
         data_dir=tmp_path / "data",
         env={"SENTINEL": "kept"},
         python_executable="python-test",
+        expected_checkpoint_fingerprint="trusted-before-activation",
     )
 
     assert result["ok"] is True
     assert "compute_joint_checkpoint" in seen["command"][2]
     assert "save_joint_checkpoint" in seen["command"][2]
     assert "verify_joint_checkpoint" in seen["command"][2]
+    assert "target_checkpoint_delta_unproven" in seen["command"][2]
     assert seen["kwargs"]["cwd"] == str(tmp_path / "checkout")
     assert seen["kwargs"]["env"]["ALETHEIA_DATA_DIR"] == str(tmp_path / "data")
     assert seen["kwargs"]["env"]["SENTINEL"] == "kept"
+
+
+def test_target_checkpoint_delta_allows_only_migration_bound_lab_changes():
+    from aletheia.update.target_fresh import checkpoint_delta_allowed
+
+    last = SimpleNamespace(joint_fingerprint="trusted")
+    assert checkpoint_delta_allowed(
+        SimpleNamespace(ok=False, last=last, mismatch_components=("app_migration",)),
+        "trusted",
+    )
+    assert checkpoint_delta_allowed(
+        SimpleNamespace(
+            ok=False,
+            last=last,
+            mismatch_components=(
+                "app_migration", "lab_schema", "lab_state", "checkpoint_ledger"
+            ),
+        ),
+        "trusted",
+    )
+    assert not checkpoint_delta_allowed(
+        SimpleNamespace(ok=False, last=last, mismatch_components=("lab_state",)),
+        "trusted",
+    )
+    assert not checkpoint_delta_allowed(
+        SimpleNamespace(ok=False, last=last, mismatch_components=("main_outbox",)),
+        "trusted",
+    )
+    assert not checkpoint_delta_allowed(
+        SimpleNamespace(ok=False, last=last, mismatch_components=("app_migration",)),
+        "different-base",
+    )
 
 
 def test_target_fresh_smoke_loads_target_smoke_module(monkeypatch, tmp_path):
@@ -229,7 +278,7 @@ def _snapshot(*, disk_sha: str, health: str = "healthy") -> dict:
 
 
 def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
-    from aletheia.update import applier, continuity
+    from aletheia.update import applier, continuity, target_fresh
 
     before = _snapshot(disk_sha="old-sha")
     before["capture_source"] = "in_process"
@@ -244,7 +293,7 @@ def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old-sha",
@@ -255,6 +304,11 @@ def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
         },
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        target_fresh,
+        "reanchor_joint_checkpoint",
+        lambda **_: {"ok": True, "reason": "fingerprint_match"},
+    )
     monkeypatch.setattr(
         applier,
         "rollback_applied_update",

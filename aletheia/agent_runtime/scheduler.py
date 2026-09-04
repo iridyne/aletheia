@@ -3832,50 +3832,19 @@ def _run_observation_lab_bridge() -> None:
             # The compatibility scheduler must not create a Lab database on a
             # legacy-only install merely by running its health job.
             return
-        from aletheia.observation_lab.canonical import (
-            compact_finalized_generations,
-            import_delivery_receipts,
-            mirror_lab_audit_outbox,
-            prune_observation_delivery_outbox,
-        )
-        from aletheia.observation_lab.runner import _pass_checkpoint, _save_checkpoint
+        from aletheia.observation_lab.runner import settle_observation_continuity
 
-        checkpoint = _pass_checkpoint()
-        if not checkpoint.get("ok"):
-            _record_job_failure(
-                "observation_lab_bridge",
-                f"checkpoint_mismatch:{checkpoint.get('reason')}",
-            )
+        settled = settle_observation_continuity()
+        if not settled.get("ok"):
+            _record_job_failure("observation_lab_bridge", str(settled.get("reason")))
             return
-
-        imported = import_delivery_receipts(limit=500)
-        mirrored = mirror_lab_audit_outbox(limit=500)
-        pruned = prune_observation_delivery_outbox()
-        compacted = compact_finalized_generations(limit=10)
-        _save_checkpoint(checkpoint)
-        if not checkpoint.get("ok"):
-            _record_job_failure(
-                "observation_lab_bridge",
-                f"checkpoint_save_failed:{checkpoint.get('reason')}",
-            )
-        if not imported.get("available", False) and imported.get("reason") not in {
-            "lab_unavailable", "outbox_unavailable",
-        }:
-            _record_job_failure("observation_lab_bridge", str(imported.get("reason")))
-        if not mirrored.get("available", False) and mirrored.get("reason") != "lab_unavailable":
-            _record_job_failure("observation_lab_bridge", str(mirrored.get("reason")))
+        imported = settled["delivery_import"]
+        mirrored = settled["audit_mirror"]
         logger.info(
             "observation_lab_bridge: imported=%s mirrored=%s pending=%s",
             imported.get("processed", 0), mirrored.get("processed", 0),
             imported.get("backlog_count", 0),
         )
-        if not pruned.get("available", False):
-            _record_job_failure("observation_lab_bridge", str(pruned.get("reason")))
-        if compacted.get("skipped"):
-            _record_job_failure(
-                "observation_lab_bridge",
-                f"compaction_skipped:{compacted['skipped']}",
-            )
     except Exception as e:
         logger.warning("observation_lab_bridge job failed: %s", e)
         _record_job_failure("observation_lab_bridge", str(e))
