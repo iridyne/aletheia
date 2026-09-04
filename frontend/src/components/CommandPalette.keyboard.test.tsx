@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -22,11 +22,13 @@ it('closes on Escape and restores focus to the keyboard opener', async () => {
   const root = createRoot(host)
 
   await act(async () => root.render(
-    <MemoryRouter>
-      <QueryClientProvider client={new QueryClient()}>
-        <CommandPalette initialOpen />
-      </QueryClientProvider>
-    </MemoryRouter>,
+    <StrictMode>
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient()}>
+          <CommandPalette initialOpen />
+        </QueryClientProvider>
+      </MemoryRouter>
+    </StrictMode>,
   ))
 
   const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
@@ -35,9 +37,13 @@ it('closes on Escape and restores focus to the keyboard opener', async () => {
   expect(input).not.toBeNull()
   expect(document.activeElement).toBe(input)
 
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+  const forwardTab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+  document.dispatchEvent(forwardTab)
+  expect(forwardTab.defaultPrevented).toBe(true)
   expect(document.activeElement).toBe(input)
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+  const reverseTab = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+  document.dispatchEvent(reverseTab)
+  expect(reverseTab.defaultPrevented).toBe(true)
   expect(document.activeElement).toBe(input)
 
   await act(async () => input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
@@ -55,11 +61,13 @@ it('refuses Escape, backdrop, and shortcut dismissal while a command is pending'
   const root = createRoot(host)
 
   await act(async () => root.render(
-    <MemoryRouter>
-      <QueryClientProvider client={new QueryClient()}>
-        <CommandPalette initialOpen />
-      </QueryClientProvider>
-    </MemoryRouter>,
+    <StrictMode>
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient()}>
+          <CommandPalette initialOpen />
+        </QueryClientProvider>
+      </MemoryRouter>
+    </StrictMode>,
   ))
 
   const pause = [...document.querySelectorAll<HTMLElement>('[cmdk-item]')]

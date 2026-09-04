@@ -61,6 +61,7 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   const [executingCommand, setExecutingCommand] = useState<string | null>(null)
   const executingRef = useRef(false)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const confirm = useConfirm()
@@ -69,6 +70,9 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   }, [])
 
   useDialogFocus(open, dialogRef, close)
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -170,6 +174,7 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
           }}
         >
           <Command.Input
+            ref={inputRef}
             className="cmd-input"
             placeholder="Jump somewhere, or type a natural-language command (20+ chars) for AI..."
             autoFocus
