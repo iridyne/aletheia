@@ -770,6 +770,36 @@ def test_v4_no_plan_invalid_identity_is_replaced_before_persistence(monkeypatch)
     assert persisted["source"] == "deterministic_validation"
 
 
+def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_shell.entry_planner import PlanIntentError
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    context = SimpleNamespace(
+        candle_windows={"15m": {"availability": "available"}},
+        anchors=(SimpleNamespace(anchor_id="anchor"),),
+        entry_profiles=({"id": "grounded-anchor-resting-maker"},),
+        model_dump=lambda **_kwargs: {"full_context": True},
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
+        lambda *_args, **_kwargs: context,
+    )
+
+    async def planner(_context):
+        raise PlanIntentError("PLANNER_SEMANTIC_INVALID:hypothesis_fact_ref_not_supplied")
+
+    result = asyncio.run(plan_next_candidate(planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+
+    assert result["status"] == "failed", (result, stored["result_json"])
+    assert stored["compiler_invoked"] == 0
+    assert json.loads(stored["result_json"])["reason"].startswith(
+        "PLANNER_SEMANTIC_INVALID:hypothesis_fact_ref_not_supplied"
+    )
+
+
 def test_entry_planner_persists_plan_for_paper_internal():
     from aletheia.config.loader import load_config
 
@@ -1062,10 +1092,39 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
         (input_payload, fingerprint(context.model_dump(mode="json")), generation["id"]),
     )
 
+    from aletheia.agents import helpers
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
+    from aletheia.model_provider.base import ModelResponse
+
+    requests = []
+    responses = iter([
+        ModelResponse(
+            content=json.dumps({
+                **hypothesis.model_dump(mode="json"),
+                "supporting_fact_refs": ["missing:fact"],
+            }),
+            model="test-model", raw={"usage": {}},
+        ),
+        ModelResponse(
+            content=hypothesis.model_dump_json(),
+            model="test-model", raw={"usage": {}},
+        ),
+    ])
+
+    async def complete(request, **_kwargs):
+        requests.append(request)
+        return next(responses)
+
+    async def provider(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+
     async def planner(planner_context):
         assert planner_context["candle_windows"]["15m"]["bars"] == [{} for _ in range(96)]
         assert planner_context["market_structure"]["fact_refs"] == [invalidation.anchor_id]
-        return hypothesis
+        return await system_operator_entry_planner(planner_context, "test")
 
     result = asyncio.run(
         plan_next_candidate(planner, cfg=cfg, owner_token="canonical-owner")
@@ -1085,6 +1144,8 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     assert plan.execution_account_mode == "paper_internal"
     assert stored["model_invoked"] == stored["compiler_invoked"] == 1
     assert stored["outcome_class"] == "entry_plan"
+    assert len(requests) == 2
+    assert requests[1].exclude_models == ()
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_kwargs: cfg)
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
 

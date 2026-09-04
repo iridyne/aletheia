@@ -47,6 +47,7 @@ _STRUCTURED_ATTEMPT_OUTCOMES = frozenset(
         "parse_error",
         "truncated_output",
         "schema_invalid",
+        "structured_semantic_invalid",
     }
 )
 
