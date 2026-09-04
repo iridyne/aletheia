@@ -28,7 +28,7 @@ export default class RouteErrorBoundary extends Component<Props, State> {
         <h2 id="route-error-title">Page could not be rendered</h2>
         <p className="text-muted">The application shell is still available. Destination: {this.props.destination}</p>
         <div className="actions">
-          <button className="btn btn-secondary" onClick={() => this.setState({ failed: false })}>Retry</button>
+          <button className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>
           <a className="btn btn-secondary" href="/">Return to Overview</a>
         </div>
       </section>

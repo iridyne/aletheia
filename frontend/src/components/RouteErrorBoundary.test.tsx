@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { Component, type ReactNode } from 'react'
+import { Component, lazy, Suspense, type ReactNode } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -31,6 +31,28 @@ describe('RouteErrorBoundary', () => {
     expect(container.textContent).toContain('/broken')
     expect(container.querySelector('button')?.textContent).toBe('Retry')
     expect(container.querySelector('a')?.getAttribute('href')).toBe('/')
+
+    await act(async () => root.unmount())
+  })
+
+  it('reloads the page to recover a rejected lazy route import', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
+    const BrokenLazyRoute = lazy(() => Promise.reject(new Error('chunk failed')))
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <RouteErrorBoundary destination="/lazy-broken">
+          <Suspense fallback={null}><BrokenLazyRoute /></Suspense>
+        </RouteErrorBoundary>,
+      )
+    })
+
+    await act(async () => container.querySelector('button')?.click())
+
+    expect(reload).toHaveBeenCalledOnce()
     await act(async () => root.unmount())
   })
 })
