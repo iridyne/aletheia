@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import { api } from '../api/client'
 import { useConfirm } from './ui'
+import { useDialogFocus } from './ui/useDialogFocus'
 
 interface CmdAction {
   id: string
@@ -59,9 +60,19 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   const [commandError, setCommandError] = useState('')
   const [executingCommand, setExecutingCommand] = useState<string | null>(null)
   const executingRef = useRef(false)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const close = useCallback(() => {
+    if (!executingRef.current) setOpen(false)
+  }, [])
+
+  useDialogFocus(open, dialogRef, close)
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -140,8 +151,8 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   if (!open) return null
 
   return (
-    <div className="cmd-backdrop" onClick={() => { if (!executingRef.current) setOpen(false) }}>
-      <div className="cmd-dialog" onClick={e => e.stopPropagation()}>
+    <div className="cmd-backdrop" onClick={close}>
+      <div ref={dialogRef} tabIndex={-1} className="cmd-dialog" role="dialog" aria-modal="true" aria-label="Command palette" onClick={e => e.stopPropagation()}>
         <Command
           onKeyDown={(e) => {
             // #126 fix: previously ANY non-empty input intercepted Enter and
@@ -163,6 +174,7 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
           }}
         >
           <Command.Input
+            ref={inputRef}
             className="cmd-input"
             placeholder="Jump somewhere, or type a natural-language command (20+ chars) for AI..."
             autoFocus
