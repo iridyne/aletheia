@@ -303,10 +303,12 @@ def test_packaged_host_settles_data_before_selecting_candidate_release():
         ROOT / "native" / "aletheia-host" / "src" / "update.rs"
     ).read_text(encoding="utf-8")
 
-    stop = host_update.index("stop_release(paths, &request.previous_release);")
+    stop = host_update.index("stop_release(paths, &request.previous_release)?;")
     settle = host_update.index("validate_real_data(paths, &request.candidate_release)?;")
     activate = host_update.index("activate_release(paths, &request.candidate_release)?;")
     assert stop < settle < activate
+    assert "fn stop_release(paths: &HostPaths, release_id: &str) -> Result<()>" in host_update
+    assert host_update.count("stop_release(paths, &request.candidate_release)?;") == 2
 
 
 def test_rust_host_contract_keeps_tray_cli_and_payload_separate():

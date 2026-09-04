@@ -187,8 +187,11 @@ fn require_success(status: ExitStatus, operation: &str) -> Result<()> {
     }
 }
 
-fn stop_release(paths: &HostPaths, release_id: &str) {
-    let _ = run_release(paths, release_id, &["gateway", "stop"]);
+fn stop_release(paths: &HostPaths, release_id: &str) -> Result<()> {
+    require_success(
+        run_release(paths, release_id, &["gateway", "stop"])?,
+        "stop selected runtime",
+    )
 }
 
 fn pause_release(paths: &HostPaths, release_id: &str) -> Result<()> {
@@ -285,7 +288,7 @@ fn recover_previous(
     if request.backup_profile.as_deref() != Some("authoritative") {
         bail!("automatic rollback requires an authoritative recovery checkpoint");
     }
-    stop_release(paths, &request.candidate_release);
+    stop_release(paths, &request.candidate_release)?;
     activate_release(paths, &request.previous_release)?;
     if let Some(backup_path) = &request.backup_path {
         restore_backup(paths, &request.previous_release, Path::new(backup_path))?;
@@ -347,11 +350,11 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
             if !request.was_paused {
                 pause_release(paths, &request.previous_release)?;
             }
-            stop_release(paths, &request.previous_release);
+            stop_release(paths, &request.previous_release)?;
         } else {
             // Tray restart during an incomplete transaction: stop the selected
             // candidate and resume the idempotent migrate/start sequence.
-            stop_release(paths, &request.candidate_release);
+            stop_release(paths, &request.candidate_release)?;
         }
 
         write_state(
