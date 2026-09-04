@@ -37,16 +37,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _gateway_status(*, timeout_sec: float = 2.0) -> dict[str, Any]:
+def _gateway_status(*, timeout_sec: float = 2.0, port: int | None = None) -> dict[str, Any]:
     """Read the running Gateway status contract without invoking another CLI."""
     try:
-        from aletheia.config.loader import load_config
+        if port is None:
+            from aletheia.config.loader import load_config
 
-        try:
-            cfg = load_config(persist_migrations=False)
-        except TypeError:  # compatibility with older/custom loaders
-            cfg = load_config()
-        url = f"http://127.0.0.1:{cfg.app.dashboard_port}/api/status"
+            try:
+                cfg = load_config(persist_migrations=False)
+            except TypeError:  # compatibility with older/custom loaders
+                cfg = load_config()
+            port = int(cfg.app.dashboard_port)
+        url = f"http://127.0.0.1:{int(port)}/api/status"
         request = urllib.request.Request(url, headers={"User-Agent": "aletheia-update-continuity"})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(request, timeout=max(0.001, min(2.0, float(timeout_sec)))) as response:
@@ -58,6 +60,7 @@ def _gateway_status(*, timeout_sec: float = 2.0) -> dict[str, Any]:
         return {
             "available": True,
             "unavailable_reason": None,
+            "port": port,
             "boot_commit": payload.get("boot_commit"),
             "current_commit": payload.get("current_commit") or payload.get("head_commit"),
             "scheduler_running": payload.get("scheduler_running"),
@@ -71,6 +74,7 @@ def _gateway_status(*, timeout_sec: float = 2.0) -> dict[str, Any]:
             "available": False,
             "unavailable_reason": "gateway_status_unavailable",
             "error": type(exc).__name__,
+            "port": port,
             "boot_commit": None,
             "current_commit": None,
             "scheduler_running": None,
@@ -869,36 +873,28 @@ def capture_update_continuity_until_settled(
     *,
     timeout_sec: float = _POSTFLIGHT_SETTLE_TIMEOUT_SEC,
     poll_sec: float = _POSTFLIGHT_POLL_SEC,
+    gateway_port: int | None = None,
 ) -> dict[str, Any]:
-    """Wait for Gateway readiness, then capture target structural evidence.
-
-    The updater process may still have pre-pull config modules loaded.  Probe
-    readiness through the target-fresh capture so a target schema/config change
-    cannot make the old loader report a running Gateway as unavailable.
-    """
+    """Wait for Gateway readiness, then capture target structural evidence once."""
     started = time.monotonic()
     deadline = started + max(0.0, float(timeout_sec))
     poll = max(0.1, float(poll_sec))
     gateway_started = time.monotonic()
-    remaining = deadline - gateway_started
-    if remaining > 0:
-        after = capture_update_continuity_fresh(timeout_sec=min(20.0, remaining))
-        gateway = after.get("gateway") if isinstance(after, dict) else None
-        gateway = gateway if isinstance(gateway, dict) else {"available": False, "health_status": None}
-    else:
-        after = _unavailable_fresh_snapshot("target_postflight_projection_unavailable")
+    if deadline <= gateway_started:
         gateway = {"available": False, "health_status": None}
+    else:
+        gateway = _gateway_status(timeout_sec=deadline - gateway_started, port=gateway_port)
     while not _postflight_settled({"gateway": gateway}, target):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         time.sleep(min(poll, remaining))
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if deadline - time.monotonic() <= 0:
             break
-        after = capture_update_continuity_fresh(timeout_sec=min(20.0, remaining))
-        gateway = after.get("gateway") if isinstance(after, dict) else None
-        gateway = gateway if isinstance(gateway, dict) else {"available": False, "health_status": None}
+        gateway = _gateway_status(
+            timeout_sec=max(0.001, deadline - time.monotonic()),
+            port=gateway_port,
+        )
     gateway_done = time.monotonic()
 
     remaining = deadline - gateway_done
@@ -1165,7 +1161,10 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
 
     mark_phase("Verifying continuity")
     if expected_target and restart:
-        after = capture_update_continuity_until_settled(expected_target)
+        after = capture_update_continuity_until_settled(
+            expected_target,
+            gateway_port=before_gateway.get("port"),
+        )
     elif expected_target:
         after = capture_update_continuity_fresh()
     else:

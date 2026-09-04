@@ -288,7 +288,7 @@ def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
     monkeypatch.setattr(
         continuity,
         "capture_update_continuity_until_settled",
-        lambda target: after,
+        lambda target, **_: after,
     )
     monkeypatch.setattr(
         applier,

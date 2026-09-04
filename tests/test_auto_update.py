@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import fcntl
 from pathlib import Path
 import subprocess
@@ -29,6 +30,73 @@ def _linux_source(monkeypatch):
     monkeypatch.setattr(git_ops, "is_ancestor", lambda older, newer: True)
     monkeypatch.setattr(git_ops, "remote_tag_names", lambda: set(git_ops.tag_names()))
     monkeypatch.setattr(auto, "_record_audit", lambda *args, **kwargs: None)
+
+
+def _successful_activation_boundary(monkeypatch, events: list[str] | None = None):
+    from aletheia.observation_lab import runner
+    from aletheia.update import target_fresh
+
+    events = events if events is not None else []
+
+    @contextmanager
+    def barrier():
+        events.append("barrier:enter")
+        try:
+            yield {"ok": True, "checkpoint": {"current_fingerprint": "settled-cut"}}
+        finally:
+            events.append("barrier:exit")
+
+    def reanchor(**kwargs):
+        assert kwargs["expected_checkpoint_fingerprint"] == "settled-cut"
+        events.append("reanchor")
+        return {"ok": True, "reason": "fingerprint_match"}
+
+    monkeypatch.setattr(runner, "observation_settlement_barrier", barrier)
+    monkeypatch.setattr(target_fresh, "reanchor_joint_checkpoint", reanchor)
+    return events
+
+
+def _configured_candidate_run(tmp_path, monkeypatch, events: list[str]):
+    from aletheia.update import auto, git_ops
+
+    _linux_source(monkeypatch)
+    _successful_activation_boundary(monkeypatch, events)
+    monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
+    monkeypatch.setattr(git_ops, "tag_names", lambda: ["v1.1.0"])
+    monkeypatch.setattr(git_ops, "tag_commit", lambda tag: "target-sha")
+    monkeypatch.setattr(
+        git_ops,
+        "version_at_ref",
+        lambda ref: '__version__ = "1.0.0"\n' if ref == "HEAD" else '__version__ = "1.1.0"\n',
+    )
+    monkeypatch.setattr(auto, "_runtime_gate", lambda **kwargs: {"ok": True})
+    monkeypatch.setattr(auto, "_doctor_healthy", lambda: {"ok": True})
+    monkeypatch.setattr(auto, "_observer_auto_preflight", lambda: {"required": False})
+    service = MagicMock()
+    service.create_backup.side_effect = [tmp_path / "preflight", tmp_path / "activation"]
+    monkeypatch.setattr(auto, "BackupService", lambda data_dir: service)
+    monkeypatch.setattr(auto, "_candidate_preflight", lambda target, backup: tmp_path / "candidate")
+    monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
+    monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
+    monkeypatch.setattr(auto, "_remove_candidate", lambda worktree: None)
+    monkeypatch.setattr(
+        auto,
+        "_gateway_command",
+        lambda action: events.append(f"gateway:{action}") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        git_ops,
+        "merge_fast_forward",
+        lambda target: events.append("source:activate") or {"ok": True},
+    )
+    monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
+    monkeypatch.setattr(auto, "_activate_frontend_build", lambda: True)
+    monkeypatch.setattr(
+        auto,
+        "_wait_for_runtime",
+        lambda sha, version: events.append("runtime:verified") or {"ok": True},
+    )
+    return auto, git_ops, service
 
 
 def test_only_strict_stable_semver_tags_are_candidates(tmp_path, monkeypatch):
@@ -177,6 +245,7 @@ def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, 
     from aletheia.update import auto, git_ops
 
     _linux_source(monkeypatch)
+    boundary_events = _successful_activation_boundary(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
     monkeypatch.setattr(git_ops, "tag_names", lambda: ["v1.1.0"])
     monkeypatch.setattr(git_ops, "tag_commit", lambda tag: "target-sha")
@@ -215,12 +284,14 @@ def test_start_failure_restores_old_runtime_and_permanently_skips_tag(tmp_path, 
     assert result["state"]["hold"] is False
     assert result["state"]["failed_tags"]["v1.1.0"]["sha"] == "target-sha"
     assert restored == [("old-sha", backups[1], True, True)]
+    assert boundary_events == ["barrier:enter", "barrier:exit"]
 
 
 def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monkeypatch):
     from aletheia.update import auto, git_ops
 
     _linux_source(monkeypatch)
+    boundary_events = _successful_activation_boundary(monkeypatch)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
     monkeypatch.setattr(git_ops, "tag_names", lambda: ["v1.1.0"])
     monkeypatch.setattr(git_ops, "tag_commit", lambda tag: "target-sha")
@@ -261,6 +332,90 @@ def test_unknown_source_mutation_holds_without_restarting_gateway(tmp_path, monk
     assert result["reason"] == "git_mutation_state_unknown"
     assert result["state"]["hold"] is True
     assert actions == ["stop"]
+    assert boundary_events == ["barrier:enter", "barrier:exit"]
+
+
+def test_settlement_failure_keeps_old_source_and_release_retryable(tmp_path, monkeypatch):
+    from aletheia.observation_lab import runner
+    events: list[str] = []
+    auto, _, service = _configured_candidate_run(tmp_path, monkeypatch, events)
+
+    @contextmanager
+    def failed_barrier():
+        yield {"ok": False, "reason": "poison_receipt"}
+
+    monkeypatch.setattr(runner, "observation_settlement_barrier", failed_barrier)
+
+    result = auto.run()
+
+    assert result["reason"] == "observation_settlement_failed"
+    assert result["state"].get("failed_tags") in (None, {})
+    assert events == ["gateway:stop", "gateway:start"]
+    assert [call.kwargs["profile"] for call in service.create_backup.call_args_list] == ["online"]
+
+
+def test_schema_bearing_tag_reanchor_failure_rolls_back_before_postflight(tmp_path, monkeypatch):
+    from aletheia.update import target_fresh
+
+    events: list[str] = []
+    auto, _, service = _configured_candidate_run(tmp_path, monkeypatch, events)
+    monkeypatch.setattr(
+        target_fresh,
+        "reanchor_joint_checkpoint",
+        lambda **kwargs: events.append("reanchor:failed")
+        or {"ok": False, "reason": "target_checkpoint_delta_unproven"},
+    )
+    monkeypatch.setattr(
+        auto,
+        "_observer_auto_postflight",
+        lambda *_args, **_kwargs: pytest.fail("failed strict reanchor must not reach postflight"),
+    )
+    worker_guard = {
+        "required": True,
+        "ok": True,
+        "before": {"observation": {"worker": {"acquired_at": "settled-cut"}}},
+        "preflight": {"ok": True},
+    }
+    monkeypatch.setattr(auto, "_observer_auto_preflight", lambda: worker_guard)
+
+    @contextmanager
+    def rollback_guard(guard):
+        assert guard is worker_guard
+        events.append("rollback-guard:enter")
+        try:
+            yield True
+        finally:
+            events.append("rollback-guard:exit")
+
+    monkeypatch.setattr(auto, "_observer_rollback_guard", rollback_guard)
+    monkeypatch.setattr(
+        auto,
+        "_rollback_to_old_runtime",
+        lambda old, backup, had_previous_static, *, restore_static: events.append("rollback")
+        or {"ok": True},
+    )
+
+    result = auto.run()
+
+    assert result["reason"] == "observation_checkpoint_reanchor_failed"
+    assert result["state"]["hold"] is False
+    assert result["state"]["failed_tags"]["v1.1.0"]["sha"] == "target-sha"
+    assert events == [
+        "gateway:stop",
+        "barrier:enter",
+        "source:activate",
+        "gateway:start",
+        "runtime:verified",
+        "reanchor:failed",
+        "rollback-guard:enter",
+        "rollback",
+        "rollback-guard:exit",
+        "barrier:exit",
+    ]
+    assert [call.kwargs["profile"] for call in service.create_backup.call_args_list] == [
+        "online",
+        "authoritative",
+    ]
 
 
 def test_state_is_atomic_and_resume_only_clears_global_hold(tmp_path, monkeypatch):
@@ -417,6 +572,8 @@ def test_success_removes_previous_static_tree(tmp_path, monkeypatch):
     from aletheia.update import auto, git_ops
 
     _linux_source(monkeypatch)
+    activation_events: list[str] = []
+    _successful_activation_boundary(monkeypatch, activation_events)
     monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
     monkeypatch.setattr(git_ops, "tag_names", lambda: ["v1.1.0"])
     monkeypatch.setattr(git_ops, "tag_commit", lambda tag: "target-sha")
@@ -432,16 +589,41 @@ def test_success_removes_previous_static_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(auto, "_sync_candidate_dependencies", lambda worktree: None)
     monkeypatch.setattr(auto, "_build_candidate_frontend", lambda *args, **kwargs: None)
     monkeypatch.setattr(auto, "_remove_candidate", lambda worktree: None)
-    monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": True})
-    monkeypatch.setattr(git_ops, "merge_fast_forward", lambda target: {"ok": True})
+    monkeypatch.setattr(
+        auto,
+        "_gateway_command",
+        lambda action: activation_events.append(f"gateway:{action}") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        git_ops,
+        "merge_fast_forward",
+        lambda target: activation_events.append("source:activate") or {"ok": True},
+    )
     monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
     monkeypatch.setattr(auto, "_activate_frontend_build", lambda: True)
-    monkeypatch.setattr(auto, "_wait_for_runtime", lambda sha, version: {"ok": True})
+    monkeypatch.setattr(
+        auto,
+        "_wait_for_runtime",
+        lambda sha, version: activation_events.append("runtime:verified") or {"ok": True},
+    )
     cleaned = []
     monkeypatch.setattr(auto.shutil, "rmtree", lambda path, **kwargs: cleaned.append(path))
 
     assert auto.run()["reason"] == "deployed"
     assert auto._PREVIOUS_DASHBOARD_STATIC in cleaned
+    assert activation_events == [
+        "gateway:stop",
+        "barrier:enter",
+        "source:activate",
+        "gateway:start",
+        "runtime:verified",
+        "reanchor",
+        "barrier:exit",
+    ]
+    assert [call.kwargs["profile"] for call in service.create_backup.call_args_list] == [
+        "online",
+        "authoritative",
+    ]
 
 
 def test_rollback_stops_candidate_before_restoring(monkeypatch, tmp_path):

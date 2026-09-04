@@ -46,7 +46,7 @@ _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
 _SYSTEMCTL_TIMEOUT_SEC = 30
-_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
+_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed", "observation_settlement_failed"}
 _RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
 _AUTO_DEPLOY_ROLE = "paper"
 _ROLE_MIGRATION_DETAIL = (
@@ -288,6 +288,7 @@ def _observer_auto_postflight(guard: dict[str, Any], target: str) -> dict[str, A
         target,
         timeout_sec=10,
         poll_sec=1,
+        gateway_port=(before.get("gateway") or {}).get("port"),
     )
     comparison = continuity.compare_update_continuity(
         before,
@@ -708,14 +709,30 @@ def run() -> dict[str, Any]:
                 raise AutoUpdateError("target_dependency_bind_failed")
             had_previous_static = _activate_frontend_build()
             static_activated = True
-            activation_barrier.__exit__(None, None, None)
-            activation_barrier = None
             started = _gateway_command("start")
             if not started.get("ok"):
                 raise AutoUpdateError(started.get("reason", "gateway_start_failed"), started.get("detail", ""))
             verified = _wait_for_runtime(target, version)
             if not verified.get("ok"):
                 raise AutoUpdateError(verified.get("reason", "runtime_verification_failed"), str(verified.get("detail", "")))
+            from aletheia.update import target_fresh
+
+            reanchor = target_fresh.reanchor_joint_checkpoint(
+                project_root=_PROJECT_ROOT,
+                data_dir=get_data_dir(),
+                env=_safe_env(),
+                python_executable=sys.executable,
+                expected_checkpoint_fingerprint=str(
+                    (settlement.get("checkpoint") or {}).get("current_fingerprint") or ""
+                ),
+            )
+            if reanchor.get("ok") is not True:
+                raise AutoUpdateError(
+                    "observation_checkpoint_reanchor_failed",
+                    str(reanchor.get("detail") or reanchor.get("reason") or "target_fresh_reanchor_failed"),
+                )
+            activation_barrier.__exit__(None, None, None)
+            activation_barrier = None
 
             observer_postflight = _observer_auto_postflight(observer_guard, target)
             if observer_postflight.get("required") and not observer_postflight.get("ok"):
@@ -738,11 +755,11 @@ def run() -> dict[str, Any]:
                     },
                 )
         except AutoUpdateError as exc:
-            if activation_barrier is not None:
-                activation_barrier.__exit__(None, None, None)
-                activation_barrier = None
             _remove_candidate(worktree)
             if not source_switched:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
                 shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
                 if dependencies_synced:
                     _install_source_dependencies()
@@ -758,51 +775,61 @@ def run() -> dict[str, Any]:
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
                                hold=not recovery.get("ok"), blacklist=exc.reason not in _TRANSIENT_CANDIDATE_FAILURES)
-            with _observer_rollback_guard(observer_guard) as rollback_safe:
-                if not rollback_safe:
-                    return _observer_hold_after_activation(
-                        state,
-                        tag=tag,
-                        target=target,
-                        reason="observer_advanced_during_failed_activation",
-                        detail=(
-                            "Target activation failed, but Worker progress changed or could not be "
-                            "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
-                        ),
-                    )
-                state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
-                recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                                    restore_static=static_activated)
-                return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
-                               hold=not recovery.get("ok"), blacklist=True)
+            try:
+                with _observer_rollback_guard(observer_guard) as rollback_safe:
+                    if not rollback_safe:
+                        return _observer_hold_after_activation(
+                            state,
+                            tag=tag,
+                            target=target,
+                            reason="observer_advanced_during_failed_activation",
+                            detail=(
+                                "Target activation failed, but Worker progress changed or could not be "
+                                "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
+                            ),
+                        )
+                    state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
+                    recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                        restore_static=static_activated)
+                    return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
+                                   hold=not recovery.get("ok"), blacklist=True)
+            finally:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
         except Exception as exc:
-            if activation_barrier is not None:
-                activation_barrier.__exit__(None, None, None)
-                activation_barrier = None
             _remove_candidate(worktree)
             reason = f"unexpected_{type(exc).__name__}"
             if not source_switched:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
                 shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
                 if dependencies_synced:
                     _install_source_dependencies()
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"))
-            with _observer_rollback_guard(observer_guard) as rollback_safe:
-                if not rollback_safe:
-                    return _observer_hold_after_activation(
-                        state,
-                        tag=tag,
-                        target=target,
-                        reason="observer_advanced_during_failed_activation",
-                        detail=(
-                            f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
-                            "progress changed or could not be proven unchanged; refusing cross-time rollback."
-                        ),
-                    )
-                state = _write_state(state, phase="rolling_back", status="running", reason=reason)
-                recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                                    restore_static=static_activated)
-                return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
+            try:
+                with _observer_rollback_guard(observer_guard) as rollback_safe:
+                    if not rollback_safe:
+                        return _observer_hold_after_activation(
+                            state,
+                            tag=tag,
+                            target=target,
+                            reason="observer_advanced_during_failed_activation",
+                            detail=(
+                                f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
+                                "progress changed or could not be proven unchanged; refusing cross-time rollback."
+                            ),
+                        )
+                    state = _write_state(state, phase="rolling_back", status="running", reason=reason)
+                    recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                        restore_static=static_activated)
+                    return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
+            finally:
+                if activation_barrier is not None:
+                    activation_barrier.__exit__(None, None, None)
+                    activation_barrier = None
 
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
         observer_summary = None
