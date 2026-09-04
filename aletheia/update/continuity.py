@@ -1002,6 +1002,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     from aletheia.update import applier
 
     gateway_quiesced = False
+    settlement: dict[str, Any] = {}
     if restart:
         mark_phase("Settling Observation data")
         stopped = applier._stop_gateway()
@@ -1066,10 +1067,15 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             progress=mark_phase,
             preactivation_backup=preactivation_backup,
         )
-    finally:
+    except Exception:
         if barrier is not None:
             barrier.__exit__(None, None, None)
+            barrier = None
+        raise
     if not result.get("applied"):
+        if barrier is not None:
+            barrier.__exit__(None, None, None)
+            barrier = None
         if gateway_quiesced:
             restarted = applier._restart_gateway()
             if not restarted.get("ok"):
@@ -1094,35 +1100,56 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             },
         }
 
-    # Re-anchor the observation checkpoint immediately after migrations run so
-    # the next preflight sees the current migration state instead of the
-    # pre-update one (which would trigger observation_checkpoint_app_migration_drift).
     checkpoint_reanchor_error: str | None = None
-    try:
-        from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
-        from aletheia.update import target_fresh
+    if barrier is not None:
+        try:
+            from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
+            from aletheia.update import target_fresh
 
-        reanchor = target_fresh.reanchor_joint_checkpoint(
-            project_root=_PROJECT_ROOT,
-            data_dir=get_data_dir(),
-            env=safe_env(),
-            python_executable=sys.executable,
-        )
-        if reanchor.get("ok") is not True:
-            checkpoint_reanchor_error = str(
-                reanchor.get("detail")
-                or reanchor.get("reason")
-                or "target_fresh_reanchor_failed"
+            reanchor = target_fresh.reanchor_joint_checkpoint(
+                project_root=_PROJECT_ROOT,
+                data_dir=get_data_dir(),
+                env=safe_env(),
+                python_executable=sys.executable,
+                expected_checkpoint_fingerprint=str(
+                    (settlement.get("checkpoint") or {}).get("current_fingerprint") or ""
+                ),
             )
-    except Exception as exc:
-        checkpoint_reanchor_error = type(exc).__name__
+            if reanchor.get("ok") is not True:
+                checkpoint_reanchor_error = str(
+                    reanchor.get("detail")
+                    or reanchor.get("reason")
+                    or "target_fresh_reanchor_failed"
+                )
+        except Exception as exc:
+            checkpoint_reanchor_error = type(exc).__name__
     if checkpoint_reanchor_error:
-        _record(
-            "update_observer_checkpoint_reanchor_failed",
-            str(result.get("new_commit") or "unknown"),
-            "Update checkpoint re-anchor failed; continuing to postflight verification",
-            error=checkpoint_reanchor_error,
-        )
+        try:
+            recovery = applier.rollback_applied_update(result)
+        except Exception as exc:
+            recovery = {"rolled_back": False, "reason": type(exc).__name__}
+        finally:
+            barrier.__exit__(None, None, None)
+            barrier = None
+        finish_phase()
+        return {
+            **result,
+            "applied": False,
+            "rolled_back": bool(recovery.get("rolled_back")),
+            "reason": "observation_checkpoint_reanchor_failed",
+            "reanchor_error": checkpoint_reanchor_error,
+            "recovery": recovery,
+            "continuity_verified": False,
+            "continuity_state": "failed",
+            "continuity": {
+                "preflight": preflight,
+                "before": before,
+                "settlement": settlement,
+            },
+        }
+    if barrier is not None:
+        barrier.__exit__(None, None, None)
+        barrier = None
 
     before_gateway = before.get("gateway") or {}
     before_control = before.get("control") or {}
@@ -1151,10 +1178,6 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
         expected_target=expected_target,
         restart=restart,
     )
-    if checkpoint_reanchor_error:
-        comparison["warnings"] = sorted(
-            set((comparison.get("warnings") or []) + ["observation_checkpoint_reanchor_failed"])
-        )
     comparison_ms = round((time.monotonic() - comparison_started) * 1000)
     finish_phase()
     after_timings = after.get("timings_ms") or {}
