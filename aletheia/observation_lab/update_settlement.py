@@ -32,7 +32,7 @@ def _delivery_transport_state(*, source_name: str = "main") -> dict[str, Any]:
     try:
         with read_snapshot() as main:
             row = main.execute(
-                "SELECT COUNT(*) FILTER (WHERE acknowledged_at IS NULL), "
+                "SELECT SUM(CASE WHEN acknowledged_at IS NULL THEN 1 ELSE 0 END), "
                 "MAX(sequence) FROM observation_delivery_outbox"
             ).fetchone()
             sequence_row = main.execute(
@@ -61,9 +61,11 @@ def _delivery_transport_state(*, source_name: str = "main") -> dict[str, Any]:
             ).fetchone()
 
         if cursor is None:
+            # A fresh Lab legitimately has no cursor. Sequence zero is its
+            # implicit starting cut; any existing Main suffix is importable.
             cursor_sequence = 0
             retry_sequences: list[int] = []
-            cursor_valid = outbox_high_watermark == 0
+            cursor_valid = True
         else:
             cursor_sequence = int(cursor[0])
             retry_sequences = json.loads(cursor[1] or "[]")
