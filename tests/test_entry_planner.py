@@ -1062,7 +1062,9 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
         (input_payload, fingerprint(context.model_dump(mode="json")), generation["id"]),
     )
 
-    async def planner(_context):
+    async def planner(planner_context):
+        assert planner_context["candle_windows"]["15m"]["bars"] == [{} for _ in range(96)]
+        assert planner_context["market_structure"]["fact_refs"] == [invalidation.anchor_id]
         return hypothesis
 
     result = asyncio.run(

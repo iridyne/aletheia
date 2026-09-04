@@ -297,6 +297,60 @@ EntryAnchor = EntryAnchorV1
 EntryAnalysisContext = EntryAnalysisContextV2
 EntryHypothesis = EntryHypothesisV2
 
+def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
+    """Project frozen evidence into the bounded facts exposed to the model."""
+
+    data = context.model_dump(mode="json")
+    planning = data["planning_generation"]
+    structures = data["market_structure"]
+    return {
+        "analysis_cutoff_at": data["analysis_cutoff_at"],
+        "context_fingerprint": data["context_fingerprint"],
+        "instrument": data["instrument"],
+        "planning_generation": {
+            key: planning.get(key)
+            for key in ("id", "candidate_id", "candidate_family")
+        },
+        "candidate": {"fact_refs": data["candidate"].get("fact_refs", [])},
+        "candidate_opportunity_context": data["candidate_opportunity_context"],
+        "candle_windows": {
+            timeframe: {
+                "availability": window.get("availability"),
+                "source_fingerprint": window.get("source_fingerprint"),
+            }
+            for timeframe, window in data["candle_windows"].items()
+        },
+        "market_structure": {
+            **{
+                timeframe: {
+                    key: section.get(key)
+                    for key in (
+                        "availability", "state", "atr14",
+                        "geometry_fingerprint", "fact_refs",
+                    )
+                }
+                for timeframe, section in structures.items()
+                if timeframe != "fact_refs" and isinstance(section, dict)
+            },
+            "fact_refs": structures.get("fact_refs", []),
+        },
+        "quant_context": data["quant_context"],
+        "portfolio_context": data["portfolio_context"],
+        "execution_context": data["execution_context"],
+        "anchors": [
+            {
+                key: anchor.get(key)
+                for key in (
+                    "anchor_id", "kind", "timeframe", "price",
+                    "directional_role", "known_at_ms", "source_fact_refs",
+                )
+            }
+            for anchor in data["anchors"]
+        ],
+        "entry_profiles": data["entry_profiles"],
+        "learning_context": data["learning_context"],
+        "unavailable_sections": data["unavailable_sections"],
+    }
 
 def validate_hypothesis_references(
     hypothesis: EntryHypothesisV1 | EntryHypothesisV2,
