@@ -255,7 +255,7 @@ def test_metadata_persist_failure_forces_continuity_unproven(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old-sha",

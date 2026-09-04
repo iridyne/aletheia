@@ -418,7 +418,7 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
     monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda **_: after)
     seen = {}
 
-    def apply_update(*, restart, progress=None):
+    def apply_update(*, restart, progress=None, **_kwargs):
         seen["restart"] = restart
         return {
             "applied": True,
@@ -456,7 +456,7 @@ def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeyp
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "target-sha",
@@ -513,7 +513,7 @@ def test_wrapper_accepts_initializing_after_structural_proof(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -559,7 +559,7 @@ def test_postflight_readiness_uses_target_fresh_capture(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -597,7 +597,7 @@ def test_wrapper_rolls_back_postflight_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -634,7 +634,7 @@ def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -664,7 +664,7 @@ def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {"applied": False, "reason": "git_pull_failed"},
+        lambda *, restart, progress=None, **_kwargs: {"applied": False, "reason": "git_pull_failed"},
     )
     monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
 
@@ -691,7 +691,7 @@ def test_wrapper_records_checkpoint_reanchor_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart, progress=None: {
+        lambda *, restart, progress=None, **_kwargs: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",

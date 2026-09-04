@@ -666,6 +666,7 @@ def run() -> dict[str, Any]:
         source_switched = False
         static_activated = False
         observer_postflight: dict[str, Any] | None = None
+        activation_barrier = None
         try:
             state = _write_state(state, phase="preflight", status="running", target_tag=tag, target_sha=target)
             preflight_backup = BackupService(get_data_dir()).create_backup(
@@ -683,8 +684,9 @@ def run() -> dict[str, Any]:
             if not stopped_result.get("ok"):
                 raise AutoUpdateError(stopped_result.get("reason", "gateway_stop_failed"), stopped_result.get("detail", ""))
             stopped = True
-            from aletheia.observation_lab.runner import settle_observation_continuity
-            settlement = settle_observation_continuity()
+            from aletheia.observation_lab.runner import observation_settlement_barrier
+            activation_barrier = observation_settlement_barrier()
+            settlement = activation_barrier.__enter__()
             if not settlement.get("ok"):
                 raise AutoUpdateError(
                     "observation_settlement_failed",
@@ -706,6 +708,8 @@ def run() -> dict[str, Any]:
                 raise AutoUpdateError("target_dependency_bind_failed")
             had_previous_static = _activate_frontend_build()
             static_activated = True
+            activation_barrier.__exit__(None, None, None)
+            activation_barrier = None
             started = _gateway_command("start")
             if not started.get("ok"):
                 raise AutoUpdateError(started.get("reason", "gateway_start_failed"), started.get("detail", ""))
@@ -734,6 +738,9 @@ def run() -> dict[str, Any]:
                     },
                 )
         except AutoUpdateError as exc:
+            if activation_barrier is not None:
+                activation_barrier.__exit__(None, None, None)
+                activation_barrier = None
             _remove_candidate(worktree)
             if not source_switched:
                 shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
@@ -769,6 +776,9 @@ def run() -> dict[str, Any]:
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
                                hold=not recovery.get("ok"), blacklist=True)
         except Exception as exc:
+            if activation_barrier is not None:
+                activation_barrier.__exit__(None, None, None)
+                activation_barrier = None
             _remove_candidate(worktree)
             reason = f"unexpected_{type(exc).__name__}"
             if not source_switched:

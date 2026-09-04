@@ -1015,26 +1015,50 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "continuity": {"preflight": preflight, "before": before},
             }
         gateway_quiesced = True
+        from aletheia.observation_lab.runner import observation_settlement_barrier
         try:
-            from aletheia.observation_lab.runner import settle_observation_continuity
-            settlement = settle_observation_continuity()
+            barrier = observation_settlement_barrier()
+            settlement = barrier.__enter__()
         except Exception as exc:
             settlement = {"ok": False, "reason": type(exc).__name__}
+            barrier = None
         if not settlement.get("ok"):
-            applier._restart_gateway()
+            if barrier is not None:
+                barrier.__exit__(None, None, None)
+            restarted = applier._restart_gateway()
             finish_phase()
             return {
                 "applied": False, "mode": "development",
-                "reason": "observation_settlement_failed",
-                "message": str(settlement.get("reason") or "Observation data could not be settled safely."),
+                "reason": "observation_settlement_failed" if restarted.get("ok") else "old_runtime_restart_failed",
+                "message": str(settlement.get("reason") or restarted.get("reason") or "Observation data could not be settled safely."),
                 "continuity_verified": False, "continuity_state": "failed",
                 "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
             }
+        from aletheia.backup.service import BackupService
+        from aletheia.config.loader import get_data_dir
+        preactivation_backup = str(
+            BackupService(get_data_dir()).create_backup(
+                label="interactive_update_activate", profile="authoritative"
+            )
+        )
+    else:
+        barrier = None
+        preactivation_backup = ""
 
-    result = applier.apply_update(restart=restart, progress=mark_phase)
+    try:
+        result = applier.apply_update(
+            restart=restart,
+            progress=mark_phase,
+            preactivation_backup=preactivation_backup,
+        )
+    finally:
+        if barrier is not None:
+            barrier.__exit__(None, None, None)
     if not result.get("applied"):
         if gateway_quiesced:
-            applier._restart_gateway()
+            restarted = applier._restart_gateway()
+            if not restarted.get("ok"):
+                result = {**result, "reason": "old_runtime_restart_failed", "restart_error": restarted.get("reason")}
         finish_phase()
         return {
             **result,

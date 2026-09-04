@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -239,7 +240,7 @@ def settle_observation_continuity(
     from aletheia.config.loader import get_data_dir
 
     if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
-        return {"ok": True, "reason": "lab_absent"}
+        return {"ok": False, "reason": "lab_unavailable"}
     from aletheia.observation_lab.canonical import (
         compact_finalized_generations,
         import_delivery_receipts,
@@ -254,10 +255,15 @@ def settle_observation_continuity(
         checkpoint = _pass_checkpoint()
         if not checkpoint.get("ok"):
             return {"ok": False, "reason": checkpoint.get("reason"), "checkpoint": checkpoint}
+        def failed(reason: str, **details: Any) -> dict[str, Any]:
+            _save_checkpoint(checkpoint)
+            return {"ok": False, "reason": reason, "checkpoint": checkpoint, **details}
         imported_total = 0
         imported: dict[str, Any] = {}
         batch = max(1, min(int(batch_size), 1000))
-        for _ in range(max(1, int(max_batches))):
+        limit = max(1, int(max_batches))
+        import_limit_reached = False
+        for index in range(limit):
             imported = import_delivery_receipts(limit=batch)
             imported_total += int(imported.get("processed") or 0)
             if (
@@ -265,42 +271,67 @@ def settle_observation_continuity(
                 or imported.get("failed_sequence") is not None
                 or imported.get("retry_sequences")
             ):
-                return {
-                    "ok": False,
-                    "reason": imported.get("reason") or imported.get("failed_reason") or "delivery_import_failed",
-                    "delivery_import": imported,
-                    "checkpoint": checkpoint,
-                }
+                return failed(
+                    imported.get("reason") or imported.get("failed_reason") or "delivery_import_failed",
+                    delivery_import=imported,
+                )
             if int(imported.get("processed") or 0) < batch:
                 break
         else:
-            return {"ok": False, "reason": "delivery_import_batch_limit", "delivery_import": imported}
-        mirrored = mirror_lab_audit_outbox(limit=batch)
-        if mirrored.get("available") is not True or mirrored.get("failed"):
-            return {"ok": False, "reason": mirrored.get("reason") or "audit_mirror_failed", "audit_mirror": mirrored}
+            import_limit_reached = True
+        mirrored_total = 0
+        mirrored: dict[str, Any] = {}
+        mirror_limit_reached = False
+        for index in range(limit):
+            mirrored = mirror_lab_audit_outbox(limit=batch)
+            mirrored_total += int(mirrored.get("processed") or 0)
+            if mirrored.get("available") is not True or mirrored.get("failed"):
+                return failed(mirrored.get("reason") or "audit_mirror_failed", audit_mirror=mirrored)
+            if int(mirrored.get("processed") or 0) < batch:
+                break
+        else:
+            mirror_limit_reached = True
         advanced = advance(limit=10) if advance_windows else None
-        if advanced is not None and advanced.get("available") is False:
-            return {"ok": False, "reason": "window_advance_failed", "windows": advanced}
+        if advanced is not None and any(
+            item.get("status") in {"error", "unavailable"}
+            for item in advanced.get("results", {}).values()
+        ):
+            return failed("window_advance_failed", windows=advanced)
         pruned = prune_observation_delivery_outbox()
         compacted = compact_finalized_generations(limit=10)
         if pruned.get("available") is not True or compacted.get("skipped"):
-            return {"ok": False, "reason": pruned.get("reason") or "compaction_failed"}
+            return failed(pruned.get("reason") or "compaction_failed")
         _save_checkpoint(checkpoint)
         if not checkpoint.get("ok"):
             return {"ok": False, "reason": checkpoint.get("reason"), "checkpoint": checkpoint}
         strict = verify_joint_checkpoint()
         if not strict.ok or strict.reason != "fingerprint_match":
             return {"ok": False, "reason": strict.reason, "checkpoint": checkpoint}
+        if import_limit_reached or mirror_limit_reached:
+            return {
+                "ok": False,
+                "reason": "delivery_import_batch_limit" if import_limit_reached else "audit_mirror_batch_limit",
+                "checkpoint": checkpoint,
+            }
         return {
             "ok": True,
             "reason": strict.reason,
             "delivery_import": {**imported, "processed": imported_total},
-            "audit_mirror": mirrored,
+            "audit_mirror": {**mirrored, "processed": mirrored_total},
             "windows": advanced,
             "pruning": pruned,
             "compaction": compacted,
             "checkpoint": checkpoint,
         }
+
+
+@contextmanager
+def observation_settlement_barrier(**kwargs):
+    """Keep the cycle lock held after settlement through caller activation."""
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    with worker_cycle_exclusion():
+        yield settle_observation_continuity(**kwargs)
 
 
 def register_builtin_handlers() -> None:

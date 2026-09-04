@@ -614,7 +614,7 @@ def rollback_applied_update(result: dict) -> dict:
     }
 
 
-def apply_update(*, restart: bool = False, progress=None) -> dict:
+def apply_update(*, restart: bool = False, progress=None, preactivation_backup: str = "") -> dict:
     """Apply an update according to the current execution mode."""
     if _is_packaged():
         try:
@@ -893,18 +893,20 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         if schema_changed:
             from aletheia.backup.service import BackupService
 
-            try:
-                schema_backup = str(BackupService(get_data_dir()).create_backup(label="interactive_schema_activate"))
-            except Exception as exc:
-                return _rollback_update(
-                    old,
-                    new,
-                    python_deps_changed=python_deps_changed,
-                    frontend_deps_changed=frontend_deps_changed,
-                    restart=False,
-                    failure_reason="schema_activation_backup_failed",
-                    failure_detail=type(exc).__name__,
-                )
+            schema_backup = preactivation_backup
+            if not schema_backup:
+                try:
+                    schema_backup = str(BackupService(get_data_dir()).create_backup(label="interactive_schema_activate"))
+                except Exception as exc:
+                    return _rollback_update(
+                        old,
+                        new,
+                        python_deps_changed=python_deps_changed,
+                        frontend_deps_changed=frontend_deps_changed,
+                        restart=False,
+                        failure_reason="schema_activation_backup_failed",
+                        failure_detail=type(exc).__name__,
+                    )
         if dashboard_build_required:
             had_previous_static = _activate_frontend_build()
             frontend_built = True
