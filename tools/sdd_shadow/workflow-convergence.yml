@@ -1,0 +1,111 @@
+schema_version: "1.0"
+workflow:
+  id: aletheia-sdd-shadow-convergence
+  name: Aletheia SDD shadow convergence
+  version: "1.0.4"
+  author: Aletheia
+  description: >-
+    Advisory exact-head convergence semantic audit. Aletheia remains the
+    Knowledge Plane; this workflow is an ephemeral, non-authoritative Process Plane.
+  integration: omp
+requires:
+  speckit_version: "1.0.4"
+  integrations:
+    - omp
+steps:
+  - id: contract-implementation
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      contract_implementation stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/contract_implementation.json.
+  - id: validate-contract-implementation
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage contract_implementation --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: authority-alignment
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      authority_alignment stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/authority_alignment.json.
+  - id: validate-authority-alignment
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage authority_alignment --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: specclaim-coverage
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      specclaim_coverage stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/specclaim_coverage.json.
+  - id: validate-specclaim-coverage
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage specclaim_coverage --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: scope-entrypoints
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      scope_entrypoints stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/scope_entrypoints.json.
+  - id: validate-scope-entrypoints
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage scope_entrypoints --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: failure-recovery
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      failure_recovery stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/failure_recovery.json.
+  - id: validate-failure-recovery
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage failure_recovery --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: review-evidence
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      review_evidence stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/review_evidence.json.
+  - id: validate-review-evidence
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage review_evidence --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: qualification
+    type: prompt
+    prompt: >-
+      Read .sdd_shadow_runtime/prompts/convergence.md and perform only the
+      qualification stage against repo/ and input/change-contract.md.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/qualification.json.
+  - id: validate-qualification
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --stage qualification --run-dir .shadow/{{ context.run_id }}/artifacts
+  - id: synthesis
+    type: prompt
+    prompt: >-
+      Read only the validated convergence artifacts in
+      .shadow/{{ context.run_id }}/artifacts and perform the synthesis stage.
+      Write exactly one bounded JSON object to
+      .shadow/{{ context.run_id }}/artifacts/synthesis.json.
+  - id: validate-synthesis
+    type: shell
+    run: >-
+      python3 .sdd_shadow_runtime/validate.py --phase convergence
+      --run-dir .shadow/{{ context.run_id }}/artifacts

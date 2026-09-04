@@ -1,0 +1,23 @@
+{
+  "fixture": "2856-retrospective-expressiveness",
+  "kind": "retrospective_expressiveness_check",
+  "authoritative": false,
+  "bias": "hindsight",
+  "scope": "Historical evidence only; not an implementation specification.",
+  "excluded_implementation_scope": ["#2836"],
+  "obligations": [
+    {"id": "committed-prefix-resumability", "lens": "transaction_durability", "class": "partial_commit", "evidence": "later poison receipt must not erase a committed prefix"},
+    {"id": "activation-lock-lifetime", "lens": "concurrency_lifetime", "class": "exclusion_lifetime", "evidence": "Observation Worker exclusion spans backup/source switch"},
+    {"id": "full-audit-outbox-drain", "lens": "transaction_durability", "class": "drain_boundary", "evidence": "audit outbox drains fully, not only one clean bounded batch"},
+    {"id": "recovery-restart-failure", "lens": "failure_semantics", "class": "recovery_failure", "evidence": "restart failure propagates explicitly"},
+    {"id": "no-restart-settlement-bypass", "lens": "entrypoint", "class": "flag_bypass", "evidence": "--no-restart cannot bypass settlement"},
+    {"id": "packaged-recovery-ordering", "lens": "entrypoint", "class": "packaged_path", "evidence": "packaged recovery preserves ordering"},
+    {"id": "compaction-skip-semantics", "lens": "failure_semantics", "class": "maintenance_skip", "evidence": "normal compaction skip differs from continuity failure"},
+    {"id": "transient-settlement-vs-release-defect", "lens": "failure_semantics", "class": "retryable_local_state", "evidence": "settlement refusal remains retryable local state"},
+    {"id": "readiness-vs-structural-capture", "lens": "clarification", "class": "state_boundary", "evidence": "readiness is not structural capture"},
+    {"id": "pre-pull-target-config-boundary", "lens": "entrypoint", "class": "configuration_boundary", "evidence": "pre-pull target config is explicit"},
+    {"id": "target-re-anchor-inside-activation-barrier", "lens": "concurrency_lifetime", "class": "barrier_ownership", "evidence": "target re-anchor stays inside activation barrier"},
+    {"id": "independent-idle-cursor-prerequisite", "lens": "verification", "class": "dependency", "evidence": "idle-cursor prerequisite is independently repaired"},
+    {"id": "implementation-only-clean-host-fixture-gap", "lens": "verification", "class": "implementation_only", "evidence": "clean-host fixture gap is detectable by convergence", "implementation_only": true}
+  ]
+}
