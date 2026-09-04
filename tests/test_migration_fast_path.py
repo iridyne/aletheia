@@ -385,6 +385,67 @@ def test_entry_version_collapse_preserves_historical_rows_and_schema_objects():
     connection.close()
 
 
+def test_entry_version_collapse_survives_real_order_fk_reference():
+    """v70 migration must not fail when entry_plans.order_id references orders(id).
+
+    The original implementation used ``PRAGMA defer_foreign_keys=ON``, which defers
+    FK checks to savepoint commit. SQLite's deferred tracker fires on the
+    transaction-level insert history, not the post-rebuild set, causing
+    ``IntegrityError: FOREIGN KEY constraint failed`` on ``RELEASE SAVEPOINT``
+    even when all rows are consistent. The fix replaces ``defer_foreign_keys``
+    with ``foreign_keys=OFF`` / explicit ``PRAGMA foreign_key_check`` / ``foreign_keys=ON``.
+    """
+    import hashlib
+    import json
+
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    # Apply all migrations except v70 to reach v69 schema
+    for step in migrations._MIGRATIONS[:-1]:
+        step.apply(connection)
+
+    now = "2026-09-04T00:00:00+00:00"
+    payload = json.dumps({"version": "entry-plan/v2"})
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    # Insert an orders row so order_id FK can be satisfied
+    connection.execute(
+        "INSERT INTO orders (id,symbol,market_type,direction,order_type,quantity,execution_mode,status,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("ord1", "BTC/USDT", "perp", "long", "limit", 0.01, "RESTING_MAKER", "open", now),
+    )
+    connection.execute(
+        "INSERT INTO candidate_planning_generations "
+        "(id,planning_key,planning_identity,identity_version,candidate_id,last_candidate_id,"
+        "venue,symbol,market_type,candidate_family,direction,status,result_kind,entry_plan_id,"
+        "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("g2", "k2", "i2", "candidate-planning/v1", "c2", "c2",
+         "bitget", "BTC/USDT", "perp", "momentum", "long",
+         "planned", "entry_plan", "p2", now, now),
+    )
+    connection.execute(
+        "INSERT INTO entry_plans "
+        "(id,planning_generation_id,candidate_id,planning_key,version,venue,symbol,market_type,"
+        "direction,execution_mode,plan_json,plan_hash,status,order_id,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("p2", "g2", "c2", "k2", "entry-plan/v2", "bitget", "BTC/USDT", "perp",
+         "long", "TRIGGERED", payload, digest, "waiting", "ord1", now, now),
+    )
+
+    # Must not raise — this is the scenario that failed on Fedora with defer_foreign_keys
+    migrations._apply_entry_version_collapse_v70(connection)
+
+    plan = connection.execute(
+        "SELECT version, order_id FROM entry_plans WHERE id='p2'"
+    ).fetchone()
+    assert plan["version"] == "entry-plan/v2"
+    assert plan["order_id"] == "ord1"
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    connection.close()
+
+
 def test_candidate_mechanism_handoff_v65_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
