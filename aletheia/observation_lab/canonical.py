@@ -3754,16 +3754,56 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
         main = get_db()
         with lab_transaction(immediate=True) as lab:
             cursor = lab.execute(
-                "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json "
+                "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
+                "source_checkpoint_fingerprint "
                 "FROM observation_import_cursors WHERE source_name=?",
                 (source_name,),
             ).fetchone()
-            watermark = int(cursor[0]) if cursor else 0
-            retry: list[int] = json.loads(cursor[1]) if cursor else []
             try:
+                watermark = int(cursor[0]) if cursor else 0
+                retry: list[int] = json.loads(cursor[1]) if cursor else []
                 previous_checkpoint = json.loads(cursor[2]) if cursor and cursor[2] else {}
+                previous_checkpoint_fingerprint_valid = (
+                    cursor is not None
+                    and isinstance(cursor[3], str)
+                    and _hash(previous_checkpoint) == cursor[3]
+                )
             except (TypeError, ValueError, json.JSONDecodeError):
+                watermark = 0
+                retry = []
                 previous_checkpoint = {}
+                previous_checkpoint_fingerprint_valid = False
+            previous_checkpoint_valid = (
+                cursor is not None
+                and watermark >= 0
+                and isinstance(previous_checkpoint, dict)
+                and isinstance(retry, list)
+                and all(isinstance(item, int) and item >= 0 for item in retry)
+                and len(set(retry)) == len(retry)
+                and previous_checkpoint.get("source_name") == source_name
+                and previous_checkpoint.get("contiguous_sequence") == watermark
+                and previous_checkpoint.get("retry_sequences") == retry
+                and previous_checkpoint_fingerprint_valid
+                and isinstance(previous_checkpoint.get("receipt_chain_fingerprint"), str)
+                and len(previous_checkpoint["receipt_chain_fingerprint"]) == 64
+                and all(
+                    char in "0123456789abcdef"
+                    for char in previous_checkpoint["receipt_chain_fingerprint"]
+                )
+                and (
+                    watermark == 0
+                    or (
+                        isinstance(previous_checkpoint.get("last_receipt_id"), str)
+                        and bool(previous_checkpoint["last_receipt_id"])
+                    )
+                )
+            )
+            if cursor is not None and not previous_checkpoint_valid:
+                return {
+                    "available": False,
+                    "reason": "source_checkpoint_invalid",
+                    "processed": 0,
+                }
             receipt_chain = (
                 str(previous_checkpoint.get("receipt_chain_fingerprint"))
                 if isinstance(previous_checkpoint, dict)
@@ -4086,6 +4126,8 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
             last_receipt_id = (
                 str(rows[processed - 1]["receipt_id"])
                 if processed and processed <= len(rows)
+                else previous_checkpoint.get("last_receipt_id")
+                if previous_checkpoint_valid
                 else None
             )
             checkpoint = {
@@ -4097,14 +4139,15 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
             }
             checkpoint_json = _json(checkpoint)
             checkpoint_fingerprint = _hash(checkpoint)
-            lab.execute(
-                "INSERT INTO observation_import_cursors (source_name, contiguous_sequence, retry_sequences_json, "
-                "source_checkpoint_json, source_checkpoint_fingerprint, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(source_name) DO UPDATE SET contiguous_sequence=excluded.contiguous_sequence, "
-                "retry_sequences_json=excluded.retry_sequences_json, source_checkpoint_json=excluded.source_checkpoint_json, "
-                "source_checkpoint_fingerprint=excluded.source_checkpoint_fingerprint, updated_at=excluded.updated_at",
-                (source_name, watermark, _json(retry), checkpoint_json, checkpoint_fingerprint, _now()),
-            )
+            if processed or failed is not None:
+                lab.execute(
+                    "INSERT INTO observation_import_cursors (source_name, contiguous_sequence, retry_sequences_json, "
+                    "source_checkpoint_json, source_checkpoint_fingerprint, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(source_name) DO UPDATE SET contiguous_sequence=excluded.contiguous_sequence, "
+                    "retry_sequences_json=excluded.retry_sequences_json, source_checkpoint_json=excluded.source_checkpoint_json, "
+                    "source_checkpoint_fingerprint=excluded.source_checkpoint_fingerprint, updated_at=excluded.updated_at",
+                    (source_name, watermark, _json(retry), checkpoint_json, checkpoint_fingerprint, _now()),
+                )
             lab.execute(
                 "INSERT INTO observation_job_health (job_id, status, last_started_at, input_watermark, backlog_count, last_succeeded_at, "
                 "last_failed_at, consecutive_failures, last_error, updated_at) "
