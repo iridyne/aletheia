@@ -62,8 +62,8 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
     )
     planner_input = json.dumps({
         "inference_identity": {
-            "caller": "agent_shell.entry_planner.v2",
-            "prompt_version": "v2",
+            "caller": "agent_shell.entry_planner",
+            "prompt_fingerprint": "c" * 64,
             "model_provider": "test",
         },
         "entry_profiles": [],
@@ -93,8 +93,8 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
         "finished_at,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
         "?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            call_id, "llm-inference/v1", "agent_shell.entry_planner.v2", "entry-planner",
-            "v2", "a" * 64, "b" * 64, "none", "none", "c" * 64,
+            call_id, "llm-inference/v1", "agent_shell.entry_planner", "entry-planner",
+            "canonical", "c" * 64, "b" * 64, "none", "none", "d" * 64,
             "EntryHypothesisV2", "d" * 64, "test", 0.0, 768, 0, "success",
             1, 1, 1, 0, 0, "test", "test-model", created_at, created_at, "{}",
             created_at,
@@ -112,7 +112,7 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
     )
     db.commit()
     record_context_artifacts(
-        run_id=None, caller="agent_shell.entry_planner.v2", logical_call_id=call_id,
+        run_id=None, caller="agent_shell.entry_planner", logical_call_id=call_id,
         symbol=symbol, observed_at=created_at,
         artifacts=[{
             "kind": "environment",
@@ -125,17 +125,67 @@ def _generation(*, created_at: str, symbol: str = "BTC/USDT") -> dict:
 
 
 def _context(as_of_at: str):
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+
+    entry_behavior, schema = entry_contract_fingerprints()
     return build_entry_learning_context(
         as_of_at=as_of_at, mechanism="reversal", direction="long", market_type="perp",
         policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
         current_behavior_identity={
             "producer_commit": "commit-a", "behavior_fingerprint": "behavior-a",
-            "planner_contract_version": "entry-planner/v4",
+            "entry_behavior_fingerprint": entry_behavior, "schema_fingerprint": schema,
             "mechanism_version": "reversal/v1", "model_provider": "test",
-            "model": "test-model", "prompt_version": "v2",
+            "model": "test-model", "prompt_fingerprint": "c" * 64,
             "entry_profile_registry_hash": hashlib.sha256(b"[]").hexdigest(),
         },
     )
+
+
+def test_runtime_blocked_legacy_no_plan_is_excluded_from_learning_denominator():
+    generation = _generation(created_at="2026-09-01T00:00:00+00:00")
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET status='no_plan', result_kind='no_plan', "
+        "result_json=?, completed_at=? WHERE id=?",
+        (
+            json.dumps({"reason_code": "AI_ENTRY_RUNTIME_UNSUPPORTED"}),
+            "2026-09-01T00:01:00+00:00",
+            generation["id"],
+        ),
+    )
+
+    context = _context("2026-09-03T00:00:00+00:00")
+
+    assert context.status == "unavailable"
+    assert context.support["independent_n"] == 0
+    assert "entry_learning_no_eligible_units" in context.blocking_reasons
+
+
+def test_repeated_cycles_expose_one_planning_thread_not_two_independent_units():
+    first = _generation(created_at="2026-09-01T00:00:00+00:00")
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET status='no_plan',result_kind='no_plan',"
+        "completed_at='2026-09-01T00:01:00+00:00' WHERE id=?",
+        (first["id"],),
+    )
+    later = _candidate(created_at="2026-09-01T01:00:00+00:00")
+    second, created = repo.ensure_candidate_planning_generation(
+        later.id,
+        manual_replan=True,
+        now=datetime.fromisoformat("2026-09-01T01:00:00+00:00"),
+    )
+    assert created is True
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET status='no_plan',result_kind='no_plan',"
+        "completed_at='2026-09-01T01:01:00+00:00' WHERE id=?",
+        (second["id"],),
+    )
+
+    context = _context("2026-09-03T00:00:00+00:00")
+
+    assert context.support["cycle_n"] == 2
+    assert context.support["planning_thread_n"] == 1
+    assert context.support["independent_n"] == 1
+    assert context.support["max_cycles_per_thread"] == 2
 
 
 def _insert_plan(generation: dict, *, plan_id: str, status: str, mode: str) -> None:

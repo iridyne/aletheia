@@ -9201,6 +9201,36 @@ def get_candidate_planning_for_candidate(
     return _effective_candidate_attention(dict(row) if row else None, now=now)
 
 
+def list_candidate_planning_cycles(*, planning_key: str) -> list[dict]:
+    return [
+        dict(row)
+        for row in get_db().execute(
+            "SELECT pg.*, ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
+            "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
+            "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
+            "ep.terminal_reason AS entry_plan_terminal_reason "
+            "FROM candidate_planning_generations pg "
+            "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+            "WHERE pg.planning_key=? ORDER BY pg.cycle_number,pg.created_at,pg.id",
+            (planning_key,),
+        ).fetchall()
+    ]
+
+
+def get_candidate_entry_lifecycle(candidate_id: str) -> dict:
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    candidate = get_candidate(candidate_id)
+    if candidate is None:
+        raise ValueError("candidate_not_found")
+    generation = get_candidate_planning_for_candidate(candidate_id)
+    cycles = (
+        list_candidate_planning_cycles(planning_key=str(generation["planning_key"]))
+        if generation else []
+    )
+    return project_candidate_entry_lifecycle(candidate, cycles)
+
+
 def _candidate_attention_valid(row: dict, timestamp: str) -> bool:
     return (
         row.get("attention_status") == "active"
@@ -9351,14 +9381,12 @@ def ensure_candidate_planning_generation(
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
-    from aletheia.storage.models import (
-        AI_ENTRY_PLANNER_CONTRACT_VERSION,
-        MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION,
-    )
+    from aletheia.storage.models import MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION
     from aletheia.trading.entry_plan import (
         PLANNING_IDENTITY_V2_VERSION,
         candidate_planning_identity,
     )
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -9377,13 +9405,12 @@ def ensure_candidate_planning_generation(
             )
             if candidate.get("candidate_opportunity_context_json") else None
         )
-        planner_contract_version = (
-            MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION
-            if context is not None
-            else AI_ENTRY_PLANNER_CONTRACT_VERSION
-            if str(candidate.get("scanner_family") or "") == "momentum"
-            else PLANNER_CONTRACT_VERSION
-        )
+        if context is None:
+            raise ValueError("candidate_opportunity_context_missing")
+        entry_behavior_fingerprint, schema_fingerprint = entry_contract_fingerprints()
+        # Retained only because historical schema requires a legacy format label.
+        # Current reuse and routing use machine-derived fingerprints below.
+        planner_contract_version = MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION
         planning_key, planning_identity = candidate_planning_identity(candidate)
         existing_row = (
             get_db().execute(
@@ -9409,12 +9436,102 @@ def ensure_candidate_planning_generation(
                 or (existing_candidate is not None and not bool(existing_candidate.get("execution_eligible")))
             )
         )
+        existing_plan_row = (
+            get_db().execute(
+                "SELECT * FROM entry_plans WHERE planning_generation_id=?",
+                (existing["id"],),
+            ).fetchone()
+            if existing is not None else None
+        )
+        existing_plan = dict(existing_plan_row) if existing_plan_row else None
+        plan_expiry = None
+        if existing_plan is not None:
+            try:
+                plan_expiry = json.loads(str(existing_plan.get("plan_json") or ""))["expires_at"]
+            except (KeyError, TypeError, json.JSONDecodeError):
+                plan_expiry = None
+        candidate_snapshot_complete = bool(
+            get_db().execute(
+                "SELECT 1 FROM universe_snapshots WHERE id=? AND status='active'",
+                (candidate["snapshot_id"],),
+            ).fetchone()
+        )
+        try:
+            newer_requalification_cutoff = bool(
+                plan_expiry
+                and candidate.get("opportunity_source_cutoff_at")
+                and _normalized_utc_datetime(str(candidate["opportunity_source_cutoff_at"]))
+                > _normalized_utc_datetime(str(plan_expiry))
+            )
+        except (TypeError, ValueError):
+            newer_requalification_cutoff = False
+        try:
+            later_completed_requalification = bool(
+                existing_candidate
+                and str(existing.get("last_candidate_id")) != candidate_id
+                and candidate_snapshot_complete
+                and candidate.get("opportunity_source_cutoff_at")
+                and existing_candidate.get("opportunity_source_cutoff_at")
+                and _normalized_utc_datetime(str(candidate["opportunity_source_cutoff_at"]))
+                > _normalized_utc_datetime(
+                    str(existing_candidate["opportunity_source_cutoff_at"])
+                )
+            )
+        except (TypeError, ValueError):
+            later_completed_requalification = False
+        unresolved_execution = bool(
+            existing_plan is not None
+            and (
+                existing_plan.get("status") in {"ordered", "partially_filled"}
+                or get_db().execute(
+                    "SELECT 1 FROM orders o WHERE o.entry_plan_id=? AND ("
+                    "o.status IN ('open','pending','executing','submitted','partial','partially_filled',"
+                    "'submission_unknown','materialization_missing') OR "
+                    "EXISTS (SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='open') OR "
+                    "EXISTS (SELECT 1 FROM fills f WHERE f.order_id=o.id AND NOT EXISTS "
+                    "(SELECT 1 FROM positions p WHERE p.order_id=o.id AND p.status='closed'))) LIMIT 1",
+                    (existing_plan["id"],),
+                ).fetchone()
+            )
+        )
+        eligibility_recovered = bool(
+            eligibility_recovered
+            and later_completed_requalification
+            and not unresolved_execution
+        )
+        expired_requalified = bool(
+            existing is not None
+            and existing_plan is not None
+            and existing_plan.get("status") == "expired"
+            and str(existing.get("last_candidate_id")) != candidate_id
+            and candidate_snapshot_complete
+            and newer_requalification_cutoff
+            and not unresolved_execution
+        )
+        material_input_changed = bool(
+            existing is not None
+            and existing["planning_identity"] != planning_identity
+            and later_completed_requalification
+            and not unresolved_execution
+        )
+        compatibility_cutover = bool(
+            existing is not None
+            and existing.get("entry_behavior_fingerprint") != entry_behavior_fingerprint
+            and not unresolved_execution
+        )
+        manual_replan_allowed = bool(
+            manual_replan
+            and existing is not None
+            and later_completed_requalification
+            and not unresolved_execution
+        )
         if (
             existing is not None
-            and not manual_replan
+            and not manual_replan_allowed
             and not eligibility_recovered
-            and existing["planning_identity"] == planning_identity
-            and existing["planner_contract_version"] == planner_contract_version
+            and not expired_requalified
+            and not material_input_changed
+            and not compatibility_cutover
         ):
             execute_write(
                 "UPDATE candidate_planning_generations SET "
@@ -9429,18 +9546,21 @@ def ensure_candidate_planning_generation(
 
         reason = (
             "manual_replan"
-            if manual_replan
+            if manual_replan_allowed
+            else "plan_expired_requalified"
+            if expired_requalified
+            else "canonical_compatibility_cutover"
+            if compatibility_cutover
+            else "material_input_changed"
+            if material_input_changed
             else "execution_eligibility_recovered"
             if eligibility_recovered
-            else "planning_contract_superseded"
-            if existing is not None
-            and existing["planner_contract_version"] != planner_contract_version
             else "incompatible_planning_generation"
         )
         if existing is not None:
             terminal_reason = (
-                "planning_contract_superseded"
-                if reason == "planning_contract_superseded"
+                "canonical_compatibility_cutover"
+                if reason == "canonical_compatibility_cutover"
                 else "planning_generation_superseded"
             )
             execute_write(
@@ -9489,6 +9609,26 @@ def ensure_candidate_planning_generation(
             hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
             attention_max_age_sec=int(max_attention_age_sec),
             planner_contract_version=planner_contract_version,
+            cycle_number=(
+                int(
+                    get_db().execute(
+                        "SELECT COALESCE(MAX(cycle_number),0)+1 FROM candidate_planning_generations WHERE planning_key=?",
+                        (planning_key,),
+                    ).fetchone()[0]
+                )
+            ),
+            previous_generation_id=str(existing["id"]) if existing is not None else None,
+            cycle_reason=(
+                "explicit_owner_replan" if manual_replan_allowed
+                else "plan_expired_requalified" if expired_requalified
+                else "canonical_compatibility_cutover" if compatibility_cutover
+                else "runtime_authority_recovered" if eligibility_recovered
+                else "material_input_changed" if material_input_changed
+                else "initial_candidate"
+            ),
+            requalification_candidate_id=candidate_id,
+            entry_behavior_fingerprint=entry_behavior_fingerprint,
+            schema_fingerprint=schema_fingerprint,
         )
         data = _stamp_provenance(generation.model_dump())
         _insert("candidate_planning_generations", data)
@@ -9515,6 +9655,7 @@ def claim_next_candidate_planning(
                 "SELECT pg.* FROM candidate_planning_generations pg "
                 "JOIN universe_members um ON um.id=pg.last_candidate_id "
                 "WHERE pg.is_current=1 AND pg.attention_status='active' "
+                "AND pg.entry_behavior_fingerprint IS NOT NULL "
                 "AND um.execution_eligible=1 "
                 "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
                 "AND pg.attempt_count<? AND (pg.status='pending' "
@@ -9533,7 +9674,10 @@ def claim_next_candidate_planning(
         claimed = execute_write(
             "UPDATE candidate_planning_generations SET status='planning', "
             "owner_token=?, claim_expires_at=?, retry_not_before=NULL, "
-            "attempt_count=attempt_count+1, updated_at=? WHERE id=? AND is_current=1 "
+            "attempt_count=attempt_count+1, planning_started_at=COALESCE(planning_started_at,?), "
+            "last_stage='planning', outcome_class=NULL, outcome_reason=NULL, updated_at=? "
+            "WHERE id=? AND is_current=1 "
+            "AND entry_behavior_fingerprint IS NOT NULL "
             "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
             "AND attempt_count<? AND EXISTS (SELECT 1 FROM universe_members um "
             "WHERE um.id=candidate_planning_generations.last_candidate_id "
@@ -9543,6 +9687,7 @@ def claim_next_candidate_planning(
             (
                 owner_token,
                 lease_until,
+                timestamp,
                 timestamp,
                 generation_id,
                 timestamp,
@@ -9579,6 +9724,7 @@ def count_pending_candidate_planning(
             "SELECT COUNT(*) FROM candidate_planning_generations pg "
             "JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
+            "AND pg.entry_behavior_fingerprint IS NOT NULL "
             "AND um.execution_eligible=1 "
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
             "AND pg.attempt_count<? AND (pg.status='pending' "
@@ -9608,12 +9754,14 @@ def complete_candidate_planning_no_plan(
         "UPDATE candidate_planning_generations SET status='no_plan', "
         "result_kind='no_plan', result_json=?, owner_token=NULL, claim_expires_at=NULL, "
         "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
-        "attention_terminal_reason='no_plan', updated_at=? WHERE id=? AND is_current=1 "
+        "attention_terminal_reason='no_plan', last_stage='planning_decision', "
+        "outcome_class='no_plan', outcome_reason=json_extract(?,'$.reason_code'), "
+        "updated_at=? WHERE id=? AND is_current=1 "
         "AND attention_status='active' AND soft_expires_at>? AND hard_expires_at>? "
         "AND EXISTS (SELECT 1 FROM universe_members um "
         "WHERE um.id=candidate_planning_generations.last_candidate_id "
         "AND um.execution_eligible=1) AND status='planning' AND owner_token=?",
-        (payload, timestamp, timestamp, timestamp, generation_id, timestamp, timestamp, owner_token),
+        (payload, timestamp, timestamp, payload, timestamp, generation_id, timestamp, timestamp, owner_token),
     )
     if updated.rowcount != 1:
         execute_write(
@@ -9625,6 +9773,110 @@ def complete_candidate_planning_no_plan(
     return updated.rowcount == 1
 
 
+def block_candidate_planning(
+    generation_id: str,
+    owner_token: str,
+    reason: str,
+    *,
+    stage: str,
+    model_invoked: bool = False,
+    compiler_invoked: bool = False,
+    retry_seconds: int = 60,
+    now: datetime | None = None,
+) -> bool:
+    """Persist a resumable operational block without consuming a model attempt."""
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    payload = json.dumps(
+        {"outcome_class": "planning_blocked", "reason": str(reason)[:160], "stage": stage},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET status='unavailable', "
+        "result_kind='unavailable', result_json=?, retry_not_before=?, "
+        "owner_token=NULL, claim_expires_at=NULL, completed_at=NULL, "
+        "attempt_count=CASE WHEN ? THEN attempt_count ELSE MAX(attempt_count-1,0) END, "
+        "last_stage=?, "
+        "model_invoked=?, model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
+        "compiler_invoked=?, compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
+        "outcome_class='planning_blocked', outcome_reason=?, updated_at=? "
+        "WHERE id=? AND is_current=1 AND attention_status='active' "
+        "AND status='planning' AND owner_token=?",
+        (
+            payload, (current + timedelta(seconds=retry_seconds)).isoformat(),
+            model_invoked, stage, model_invoked, model_invoked, timestamp,
+            compiler_invoked, compiler_invoked, timestamp, str(reason)[:160], timestamp,
+            generation_id, owner_token,
+        ),
+    )
+    return updated.rowcount == 1
+
+
+def mark_candidate_planning_stage(
+    generation_id: str,
+    owner_token: str,
+    stage: str,
+    *,
+    model_invoked: bool = False,
+    compiler_invoked: bool = False,
+    now: datetime | None = None,
+) -> bool:
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET last_stage=?, "
+        "model_invoked=MAX(model_invoked,?), "
+        "model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
+        "compiler_invoked=MAX(compiler_invoked,?), "
+        "compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
+        "updated_at=? WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
+        (
+            stage, model_invoked, model_invoked, timestamp,
+            compiler_invoked, compiler_invoked, timestamp,
+            timestamp, generation_id, owner_token,
+        ),
+    )
+    return updated.rowcount == 1
+
+
+def fail_candidate_planning(
+    generation_id: str,
+    owner_token: str,
+    reason: str,
+    *,
+    stage: str,
+    model_invoked: bool,
+    compiler_invoked: bool,
+    now: datetime | None = None,
+) -> bool:
+    """Persist a terminal non-economic validation or Compiler failure."""
+
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    payload = json.dumps(
+        {"outcome_class": "planning_failed", "reason": str(reason)[:160], "stage": stage},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET status='unavailable', result_kind='unavailable', "
+        "result_json=?, retry_not_before=NULL, owner_token=NULL, claim_expires_at=NULL, "
+        "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
+        "attention_terminal_reason='planning_failed', last_stage=?, "
+        "model_invoked=?, model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
+        "compiler_invoked=?, compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
+        "outcome_class='planning_failed', outcome_reason=?, updated_at=? "
+        "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
+        (
+            payload, timestamp, timestamp, stage,
+            model_invoked, model_invoked, timestamp,
+            compiler_invoked, compiler_invoked, timestamp,
+            str(reason)[:160], timestamp, generation_id, owner_token,
+        ),
+    )
+    return updated.rowcount == 1
+
+
 def defer_candidate_planning(
     generation_id: str,
     owner_token: str,
@@ -9633,6 +9885,9 @@ def defer_candidate_planning(
     retry_seconds: int = 60,
     max_attempts: int = 3,
     now: datetime | None = None,
+    stage: str = "provider",
+    model_invoked: bool = False,
+    compiler_invoked: bool = False,
 ) -> bool:
     """Bound provider unavailability; never heartbeat-loop beyond max attempts."""
 
@@ -9659,6 +9914,11 @@ def defer_candidate_planning(
         "attention_status=CASE WHEN ? THEN 'terminal' ELSE attention_status END, "
         "attention_terminal_at=CASE WHEN ? THEN ? ELSE attention_terminal_at END, "
         "attention_terminal_reason=CASE WHEN ? THEN 'planning_unavailable' ELSE attention_terminal_reason END, "
+        "last_stage=?, model_invoked=MAX(model_invoked,?), "
+        "model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
+        "compiler_invoked=MAX(compiler_invoked,?), "
+        "compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
+        "outcome_class='planning_unavailable', outcome_reason=?, "
         "updated_at=? WHERE id=? AND is_current=1 AND attention_status='active' "
         "AND status='planning' AND owner_token=?",
         (
@@ -9669,6 +9929,14 @@ def defer_candidate_planning(
             terminal,
             timestamp,
             terminal,
+            stage,
+            model_invoked,
+            model_invoked,
+            timestamp,
+            compiler_invoked,
+            compiler_invoked,
+            timestamp,
+            str(reason)[:160],
             timestamp,
             generation_id,
             owner_token,
@@ -9686,6 +9954,9 @@ def defer_candidate_planning_with_code(
     retry_seconds: int = 60,
     max_attempts: int = 3,
     now: datetime | None = None,
+    stage: str = "provider",
+    model_invoked: bool = False,
+    compiler_invoked: bool = False,
 ) -> bool:
     """Persist a bounded planner reason code while retaining retry semantics."""
 
@@ -9697,6 +9968,9 @@ def defer_candidate_planning_with_code(
         retry_seconds=retry_seconds,
         max_attempts=max_attempts,
         now=now,
+        stage=stage,
+        model_invoked=model_invoked,
+        compiler_invoked=compiler_invoked,
     )
 
 
@@ -9787,50 +10061,42 @@ def complete_candidate_planning_with_plan(
         if row["status"] != "planning":
             return "claim_lost", None
         if plan.version == "entry-plan/v2":
-            from aletheia.trading.entry_analysis import (
-                EntryAnalysisContextV1,
-                EntryAnalysisContextV2,
-                fingerprint,
-            )
+            from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
 
             try:
-                context_type = (
-                    EntryAnalysisContextV2
-                    if row["planner_contract_version"] == "entry-planner/v4"
-                    else EntryAnalysisContextV1
-                )
-                frozen_context = context_type.model_validate_json(
+                frozen_context = EntryAnalysisContext.model_validate_json(
                     row["planner_input_json"] or ""
                 )
             except Exception as exc:
                 raise ValueError("entry_plan_frozen_context_invalid") from exc
             if (
-                row["planner_contract_version"] not in {
-                    "entry-planner/v3", "entry-planner/v4"
-                }
+                not row["entry_behavior_fingerprint"]
+                or not row["schema_fingerprint"]
                 or row["planner_input_hash"]
                 != fingerprint(frozen_context.model_dump(mode="json"))
                 or plan.analysis_context_fingerprint
                 != frozen_context.context_fingerprint
+                or frozen_context.planning_generation.get("entry_behavior_fingerprint")
+                != row["entry_behavior_fingerprint"]
+                or frozen_context.planning_generation.get("schema_fingerprint")
+                != row["schema_fingerprint"]
             ):
                 raise ValueError("entry_plan_frozen_context_mismatch")
-            if row["planner_contract_version"] == "entry-planner/v4":
-                opportunity = frozen_context.candidate_opportunity_context
-                selection = opportunity.get("candidate_selection") or {}
-                mechanism = opportunity.get("opportunity") or {}
-                if (
-                    opportunity.get("context_hash")
-                    != (get_candidate(str(row["last_candidate_id"])) or {}).get(
-                        "candidate_opportunity_context_hash"
-                    )
-                    or mechanism.get("primary_mechanism") != row["opportunity_mechanism"]
-                    or mechanism.get("direction") != row["direction"]
-                    or mechanism.get("mechanism_version") != row["mechanism_version"]
-                    or selection.get("policy") != row["candidate_selection_policy"]
-                    or selection.get("policy_epoch")
-                    != row["candidate_selection_policy_epoch"]
-                ):
-                    raise ValueError("entry_plan_candidate_opportunity_mismatch")
+            opportunity = frozen_context.candidate_opportunity_context
+            selection = opportunity.get("candidate_selection") or {}
+            mechanism = opportunity.get("opportunity") or {}
+            if (
+                opportunity.get("context_hash")
+                != (get_candidate(str(row["last_candidate_id"])) or {}).get(
+                    "candidate_opportunity_context_hash"
+                )
+                or mechanism.get("primary_mechanism") != row["opportunity_mechanism"]
+                or mechanism.get("direction") != row["direction"]
+                or mechanism.get("mechanism_version") != row["mechanism_version"]
+                or selection.get("policy") != row["candidate_selection_policy"]
+                or selection.get("policy_epoch") != row["candidate_selection_policy_epoch"]
+            ):
+                raise ValueError("entry_plan_candidate_opportunity_mismatch")
         if (
             plan.candidate_id != row["last_candidate_id"]
             or plan.venue != row["venue"]
@@ -9863,7 +10129,8 @@ def complete_candidate_planning_with_plan(
             "result_kind='entry_plan', result_json=?, entry_plan_id=?, "
             "owner_token=NULL, claim_expires_at=NULL, completed_at=?, "
             "attention_status='terminal', attention_terminal_at=?, "
-            "attention_terminal_reason='entry_plan_created', updated_at=? "
+            "attention_terminal_reason='entry_plan_created', last_stage='plan_created', "
+            "outcome_class='entry_plan', outcome_reason='entry_plan_created', updated_at=? "
             "WHERE id=? AND is_current=1 AND attention_status='active' "
             "AND soft_expires_at>? AND hard_expires_at>? "
             "AND EXISTS (SELECT 1 FROM universe_members um "
@@ -9942,9 +10209,8 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
     timestamp = datetime.now(timezone.utc).isoformat()
     active_plan_states = _ACTIVE_ENTRY_PLAN_STATUSES
     placeholders = ",".join("?" for _ in active_plan_states)
-    return [
-        dict(row)
-        for row in get_db()
+    rows = [
+        dict(row) for row in get_db()
         .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
@@ -9966,12 +10232,24 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
         )
         .fetchall()
     ]
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    projected = []
+    for row in rows:
+        row.pop("planner_contract_version", None)
+        projected.append({
+            **row,
+            **project_candidate_entry_lifecycle(
+                row, list_candidate_planning_cycles(planning_key=str(row["planning_key"]))
+            ),
+        })
+    return projected
 
 
 def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
     """Project every Candidate in one exact Snapshot with optional planning facts."""
 
-    return [
+    rows = [
         {
             **dict(row),
             "venue": row["venue"] or row["registry_venue"],
@@ -9980,10 +10258,11 @@ def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
         .execute(
             "SELECT um.*, ur.venue AS registry_venue, "
             "pg.id AS planning_generation_id, pg.status AS planning_status, "
-            "pg.planner_contract_version, "
             "pg.result_kind, pg.result_json AS planning_result_json, "
             "pg.attempt_count, pg.attention_status, pg.soft_expires_at, "
-            "pg.hard_expires_at, pg.attention_terminal_reason, "
+            "pg.hard_expires_at, pg.attention_terminal_reason, pg.planning_key, "
+            "pg.cycle_number, pg.last_stage, pg.model_invoked, pg.compiler_invoked, "
+            "pg.outcome_class, pg.outcome_reason, "
             "ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
             "ep.terminal_reason AS entry_plan_terminal_reason "
             "FROM universe_members um "
@@ -9995,6 +10274,19 @@ def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
             (snapshot_id,),
         )
         .fetchall()
+    ]
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    return [
+        {
+            **row,
+            **project_candidate_entry_lifecycle(
+                row,
+                list_candidate_planning_cycles(planning_key=str(row["planning_key"]))
+                if row.get("planning_key") else [],
+            ),
+        }
+        for row in rows
     ]
 
 
@@ -10011,6 +10303,7 @@ def get_entry_workbench_summary(*, now: datetime | None = None) -> dict[str, int
             "(SELECT COUNT(*) FROM candidate_planning_generations "
             " WHERE is_current=1 AND attention_status='active' "
             " AND soft_expires_at>? AND hard_expires_at>? AND attempt_count<3 "
+            " AND COALESCE(outcome_class,'')!='planning_blocked' "
             " AND (status='pending' OR status='unavailable')) AS needs_planning, "
             "(SELECT COUNT(*) FROM candidate_planning_generations "
             " WHERE is_current=1 AND attention_status='active' "
@@ -10047,7 +10340,7 @@ def list_planning_history(
         where = "WHERE (pg.updated_at < ? OR (pg.updated_at = ? AND pg.id < ?))"
         params.extend((before[0], before[0], before[1]))
     params.append(max(1, min(int(limit), 201)))
-    return [
+    rows = [
         _effective_candidate_attention(dict(row), now=now)
         for row in get_db()
         .execute(
@@ -10061,6 +10354,9 @@ def list_planning_history(
         )
         .fetchall()
     ]
+    for row in rows:
+        row.pop("planner_contract_version", None)
+    return rows
 
 
 def list_watchable_entry_plans(limit: int | None = 100) -> list[dict]:

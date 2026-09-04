@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v66"
+SCHEMA_VERSION = "aletheia-sqlite-v67"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3517,6 +3517,47 @@ _MECHANISM_AWARE_ENTRY_CHECKSUM = hashlib.sha256(
         + _MECHANISM_AWARE_ENTRY_SQL
         + "\nmechanism_aware_entry_v1"
     ).encode("utf-8")
+).hexdigest()
+
+_CANONICAL_ENTRY_LIFECYCLE_V67_COLUMNS = (
+    ("cycle_number", "candidate_planning_generations", "INTEGER"),
+    ("previous_generation_id", "candidate_planning_generations", "TEXT"),
+    ("cycle_reason", "candidate_planning_generations", "TEXT"),
+    ("requalification_candidate_id", "candidate_planning_generations", "TEXT"),
+    ("planning_started_at", "candidate_planning_generations", "TEXT"),
+    ("last_stage", "candidate_planning_generations", "TEXT"),
+    ("model_invoked", "candidate_planning_generations", "INTEGER NOT NULL DEFAULT 0 CHECK(model_invoked IN (0,1))"),
+    ("model_invoked_at", "candidate_planning_generations", "TEXT"),
+    ("compiler_invoked", "candidate_planning_generations", "INTEGER NOT NULL DEFAULT 0 CHECK(compiler_invoked IN (0,1))"),
+    ("compiler_invoked_at", "candidate_planning_generations", "TEXT"),
+    ("outcome_class", "candidate_planning_generations", "TEXT CHECK(outcome_class IN "
+     "('entry_plan','no_plan','planning_blocked','planning_failed','planning_unavailable') "
+     "OR outcome_class IS NULL)"),
+    ("outcome_reason", "candidate_planning_generations", "TEXT"),
+    ("entry_behavior_fingerprint", "candidate_planning_generations", "TEXT"),
+    ("schema_fingerprint", "candidate_planning_generations", "TEXT"),
+)
+_CANONICAL_ENTRY_LIFECYCLE_V67_SQL = """
+UPDATE candidate_planning_generations AS current
+SET cycle_number=(
+    SELECT COUNT(*) FROM candidate_planning_generations AS prior
+    WHERE prior.planning_key=current.planning_key
+      AND (prior.created_at<current.created_at
+           OR (prior.created_at=current.created_at AND prior.id<=current.id))
+)
+WHERE cycle_number IS NULL;
+UPDATE candidate_planning_generations
+SET cycle_reason=COALESCE(cycle_reason,'legacy_compatibility'),
+    last_stage=COALESCE(last_stage,
+        CASE status WHEN 'pending' THEN 'planning_queued'
+                    WHEN 'planning' THEN 'planning'
+                    WHEN 'planned' THEN 'plan_created'
+                    ELSE 'planning_completed' END);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_planning_cycle
+ON candidate_planning_generations(planning_key,cycle_number);
+"""
+_CANONICAL_ENTRY_LIFECYCLE_V67_CHECKSUM = hashlib.sha256(
+    (repr(_CANONICAL_ENTRY_LIFECYCLE_V67_COLUMNS) + _CANONICAL_ENTRY_LIFECYCLE_V67_SQL).encode("utf-8")
 ).hexdigest()
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
@@ -6233,6 +6274,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260903_0061_observation_authority_cutover_proof_v62": (
         "append-only migration, retention, checkpoint, runtime, and rollback proof for Lab authority"
     ),
+    "20260904_0066_canonical_entry_lifecycle_v67": (
+        "canonical Entry fingerprints, typed outcomes, and repeatable planning cycles"
+    ),
 }
 
 
@@ -7148,6 +7192,21 @@ def _apply_mechanism_aware_entry_v66(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_canonical_entry_lifecycle_v67(db: sqlite3.Connection) -> None:
+    if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'"
+    ).fetchone() is None:
+        return
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(candidate_planning_generations)")
+    }
+    for column, table, column_type in _CANONICAL_ENTRY_LIFECYCLE_V67_COLUMNS:
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_CANONICAL_ENTRY_LIFECYCLE_V67_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -7759,6 +7818,12 @@ _MIGRATIONS = (
         checksum=_MECHANISM_AWARE_ENTRY_CHECKSUM,
         schema_version="aletheia-sqlite-v66",
         apply=_apply_mechanism_aware_entry_v66,
+    ),
+    MigrationStep(
+        migration_id="20260904_0066_canonical_entry_lifecycle_v67",
+        checksum=_CANONICAL_ENTRY_LIFECYCLE_V67_CHECKSUM,
+        schema_version="aletheia-sqlite-v67",
+        apply=_apply_canonical_entry_lifecycle_v67,
     ),
 )
 

@@ -331,9 +331,7 @@ class EntryPlan(BaseModel):
             object.__setattr__(self, "trigger_params", params)
         elif self.trigger_spec_id is not None or self.trigger_spec_version is not None:
             raise ValueError("resting_maker_cannot_require_trigger")
-        strict_tactic_contract = self.behavior_version in {
-            "entry-planner/v3", "mechanism-aware-entry-hypothesis-compiler/v2",
-        }
+        strict_tactic_contract = self.version == ENTRY_PLAN_V2_VERSION
         if self.order_tactic == "POST_ONLY_LIMIT":
             if not self.maker_required or self.time_in_force != "POST_ONLY":
                 raise ValueError("maker_tactic_requires_post_only")
@@ -408,7 +406,15 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
             "mechanism_version": str(opportunity.get("mechanism_version") or ""),
         }
         identity_version = PLANNING_IDENTITY_V2_VERSION
-        material = ownership
+        material = {
+            **ownership,
+            "capability_status": str(opportunity.get("capability_status") or ""),
+            "capability_gaps": sorted(str(value) for value in opportunity.get("capability_gaps") or ()),
+            "primary_evidence_refs": sorted(
+                str(value) for value in opportunity.get("primary_evidence_refs") or ()
+            ),
+            "context": context.context,
+        }
     else:
         ownership = {
             "venue": str(candidate.get("venue") or "").lower(),

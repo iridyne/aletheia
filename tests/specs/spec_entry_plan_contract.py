@@ -28,11 +28,11 @@ def test_universe_publication_has_one_entry_planning_owner():
 @spec_claim(
     SpecClaim(
         "EP-S10", "entry_plan_contract", "AI Entry hypothesis authority", "L2a",
-        "Momentum defaults to Planner V3; Entry Plan V2 fails closed on provenance or global runtime authority mismatch.",
+        "One canonical Entry planner fails closed on machine provenance or shared runtime authority mismatch.",
         status="implemented",
     )
 )
-def test_ai_entry_v3_has_one_frozen_input_and_execution_gate():
+def test_canonical_ai_entry_has_one_frozen_input_and_execution_gate():
     from aletheia.config.schema import AgentConfig
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
     from aletheia.server.routes.settings import router as settings_router
@@ -40,22 +40,22 @@ def test_ai_entry_v3_has_one_frozen_input_and_execution_gate():
         bind_candidate_planner_input,
         ensure_candidate_planning_generation,
     )
-    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
+    from aletheia.trading.entry_plan_compiler import compile_entry_plan
     from aletheia.trading.entry_plan import EntryPlan
 
     assert "planner_input_hash" in inspect.getsource(bind_candidate_planner_input)
     authority_source = inspect.getsource(_require_ai_entry_authority)
     assert "ai_entry_runtime_authority_unavailable" in authority_source
-    assert 'permission_mode != "Paper"' in authority_source
+    assert "require_entry_runtime_authority" in authority_source
     assert "planner_input_json" in authority_source
     assert "activation_identity" not in authority_source
     generation_source = inspect.getsource(ensure_candidate_planning_generation)
-    assert "AI_ENTRY_PLANNER_CONTRACT_VERSION" in generation_source
+    assert "entry_contract_fingerprints" in generation_source
     assert "ai_entry_hypothesis" not in generation_source
     assert "ai_entry_hypothesis_enabled" not in AgentConfig.model_fields
     assert all(route.path != "/ai-entry-hypothesis" for route in settings_router.routes)
-    assert "candidate" not in inspect.signature(compile_ai_entry_plan).parameters
-    assert "feature" not in inspect.signature(compile_ai_entry_plan).parameters
+    assert "candidate" not in inspect.signature(compile_entry_plan).parameters
+    assert "feature" not in inspect.signature(compile_entry_plan).parameters
     assert "analysis_context_fingerprint" in EntryPlan.model_fields
 
 
@@ -165,51 +165,50 @@ def test_exact_venue_capability_is_one_shared_executable_invariant():
     SpecClaim(
         "EP-S06",
         "entry_plan_contract",
-        "PlanIntent authority and failure semantics",
+        "Canonical hypothesis authority and failure semantics",
         "L2a",
-        "PlanIntent exposes a strict wire matrix and canonicalizes non-authoritative NO_PLAN execution fields.",
+        "The canonical hypothesis exposes a strict wire matrix and canonicalizes non-authoritative NO_PLAN execution fields.",
         status="implemented",
     )
 )
-def test_plan_intent_and_trigger_registry_expose_complete_authority():
+def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
     import json
 
-    from aletheia.agent_shell.entry_planner import (
-        PlanIntent,
-        _PlanIntentWireSchema,
-        _canonicalize_no_plan,
-    )
     from aletheia.model_provider.base import portable_json_schema_payload
+    from aletheia.trading.entry_analysis import EntryHypothesis
     from aletheia.trading.trigger_specs import compatible_trigger_specs
 
-    schema = portable_json_schema_payload(_PlanIntentWireSchema)
+    schema = portable_json_schema_payload(EntryHypothesis)
     assert set(schema["required"]) == set(schema["properties"])
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["order_tactic"]["type"] == ["string", "null"]
+    assert schema["properties"]["entry_profile_id"]["type"] == ["string", "null"]
     encoded = json.dumps(schema)
     assert "$ref" not in encoded and "$defs" not in encoded and "anyOf" not in encoded
-    assert set(schema["properties"]) == set(PlanIntent.model_fields)
-    assert _canonicalize_no_plan(
-        {
+    assert set(schema["properties"]) == set(EntryHypothesis.model_fields)
+    no_plan = EntryHypothesis.model_validate({
+            "version": "entry-hypothesis/v2",
             "decision": "NO_PLAN",
             "reason_code": "CONFLICTING_SIGNALS",
-            "execution_mode": "RESTING_MAKER",
-            "order_tactic": "POST_ONLY_LIMIT",
-            "trigger_spec_id": None,
-            "trigger_spec_version": None,
+            "mechanism": "continuation",
+            "direction": "long",
+            "primary_anchor_ref": "anchor:ignored",
+            "invalidation_anchor_ref": "anchor:ignored-too",
+            "entry_profile_id": "anchor-resting-maker",
+            "entry_profile_version": "v1",
+            "execution_urgency": "PASSIVE",
             "risk_tier": "LOW",
             "horizon": "INTRADAY",
-        }
-    ) == {
-        "decision": "NO_PLAN",
-        "reason_code": "CONFLICTING_SIGNALS",
-        "execution_mode": None,
-        "order_tactic": None,
-        "trigger_spec_id": None,
-        "trigger_spec_version": None,
-        "risk_tier": "NONE",
-        "horizon": "NONE",
-    }
+            "supporting_fact_refs": [],
+            "opposing_fact_refs": [],
+            "learning_evidence_refs": [],
+        })
+    assert no_plan.primary_anchor_ref is None
+    assert no_plan.invalidation_anchor_ref is None
+    assert no_plan.entry_profile_id is None
+    assert no_plan.entry_profile_version is None
+    assert no_plan.execution_urgency is None
+    assert no_plan.risk_tier == "NONE"
+    assert no_plan.horizon == "NONE"
     assert [(spec.spec_id, spec.version) for spec in compatible_trigger_specs("momentum")] == [
         ("momentum-retrace-reclaim", "v1"),
     ]
@@ -242,18 +241,21 @@ def test_entry_planner_batch_captures_one_deep_provider_identity():
     SpecClaim(
         "EP-S09",
         "entry_plan_contract",
-        "Planner contract epoch",
+        "Machine-derived Entry contract identity",
         "L2a",
-        "Candidate generations are reusable only under the current explicit Planner contract epoch.",
+        "Candidate generations are reusable only under current schema and behavior fingerprints.",
         status="implemented",
     )
 )
-def test_candidate_planning_generation_binds_explicit_planner_epoch():
-    from aletheia.storage.models import CandidatePlanningGeneration, PLANNER_CONTRACT_VERSION
+def test_candidate_planning_generation_binds_machine_contract_identity():
+    from aletheia.storage.models import CandidatePlanningGeneration
     from aletheia.storage.repositories import ensure_candidate_planning_generation
 
-    assert CandidatePlanningGeneration.model_fields["planner_contract_version"].default == PLANNER_CONTRACT_VERSION
-    assert "planner_contract_version" in inspect.getsource(ensure_candidate_planning_generation)
+    assert "entry_behavior_fingerprint" in CandidatePlanningGeneration.model_fields
+    assert "schema_fingerprint" in CandidatePlanningGeneration.model_fields
+    source = inspect.getsource(ensure_candidate_planning_generation)
+    assert "entry_contract_fingerprints" in source
+    assert "existing.get(\"entry_behavior_fingerprint\")" in source
 @spec_claim(
     SpecClaim(
         "EP-S08",

@@ -18,6 +18,12 @@ EXECUTION_MODE_TO_VENUE: dict[str, str] = {
     "binance_live_limited": "binance",
 }
 
+# Entry execution currently has one proven exchange-Demo handoff. Extend this
+# registry only with matching Planner, Risk/Gateway, and execution tests.
+ENTRY_EXECUTION_MINIMUM_PERMISSION: dict[str, str] = {
+    "bitget_demo": "Full",
+}
+
 _REGISTRY_CACHE_TTL = 14400  # 4h — same cadence as the OKX demo capability cache
 _registry_symbol_cache: dict[str, tuple[dict, float]] = {}
 _registry_cache_lock = threading.Lock()

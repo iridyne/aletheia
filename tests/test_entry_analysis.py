@@ -70,8 +70,8 @@ def _context_v2(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV2:
             },
         },
         inference_identity={
-            "caller": "agent_shell.entry_planner.v2",
-            "prompt_version": "v2",
+            "caller": "agent_shell.entry_planner",
+            "prompt_fingerprint": "f" * 64,
             "model_provider": "test",
         },
     )
@@ -263,6 +263,7 @@ def test_entry_hypothesis_requires_roles_urgency_and_nonempty_text():
 
 def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
     from aletheia.trading.entry_analysis import build_entry_analysis_context
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
     bar_ms = 15 * 60 * 1000
     cutoff_ms = 96 * bar_ms
@@ -279,12 +280,23 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
     generation = {
         "id": "g1", "last_candidate_id": "c1", "venue": "bitget", "symbol": "BTC/USDT",
         "market_type": "perp", "candidate_family": "momentum", "direction": "long",
-        "planner_contract_version": "entry-planner/v3",
+        "entry_behavior_fingerprint": "a" * 64, "schema_fingerprint": "b" * 64,
+        "opportunity_mechanism": "continuation", "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "epoch-1", "mechanism_version": "continuation/v1",
     }
+    opportunity = CandidateOpportunityContextV1(
+        candidate_id="c1",
+        candidate_selection={"policy": "candidate_selection_utility_v1", "policy_epoch": "epoch-1", "source_record_hash": "a" * 64},
+        source={"detected_at": instant(2), "source_cutoff_at": instant(2), "feature_snapshot_id": "f1"},
+        opportunity={"primary_mechanism": "continuation", "mechanism_version": "continuation/v1", "mechanism_source": "target_authority", "source_component_id": "momentum", "direction": "long", "horizon": "4h", "economic_utility_pct": 1.0, "capability_status": "supported", "capability_gaps": (), "primary_evidence_refs": (), "secondary_mechanisms": ()},
+        context={},
+    )
     candidate = {
         "id": "c1", "snapshot_id": "s1", "asset_id": "asset-btc", "venue": "bitget",
         "symbol": "BTC/USDT", "market_type": "perp", "scanner_family": "momentum",
         "scanner_direction": "long", "entry_price_usd": 101.5, "estimated_cost": 0.1,
+        "candidate_opportunity_context_json": opportunity.model_dump_json(),
+        "candidate_opportunity_context_hash": opportunity.context_hash,
     }
     feature = {
         "id": "f1", "asset_id": "asset-btc", "ts": instant(95 * bar_ms),

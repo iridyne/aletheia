@@ -308,7 +308,11 @@ def get_candidate(candidate_id: str):
     """Canonical Candidate detail alias; /members remains compatibility."""
 
     detail = get_member(candidate_id)
-    detail["attention"] = repo.get_candidate_planning_for_candidate(candidate_id)
+    attention = repo.get_candidate_planning_for_candidate(candidate_id)
+    if attention:
+        attention.pop("planner_contract_version", None)
+    detail["attention"] = attention
+    detail["lifecycle"] = repo.get_candidate_entry_lifecycle(candidate_id)
     return detail
 
 
