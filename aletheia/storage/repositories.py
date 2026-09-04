@@ -9417,9 +9417,10 @@ def ensure_candidate_planning_generation(
                 "SELECT * FROM candidate_planning_generations "
                 + (
                     "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
-                    "ORDER BY created_at DESC,id DESC LIMIT 1"
+                    "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1"
                     if context is not None else
-                    "WHERE planning_key=? AND is_current=1 LIMIT 1"
+                    "WHERE planning_key=? AND is_current=1 "
+                    "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1"
                 ),
                 (
                     (str(candidate["venue"]), str(candidate["symbol"]), str(candidate["market_type"]))
@@ -9519,6 +9520,13 @@ def ensure_candidate_planning_generation(
             and existing.get("entry_behavior_fingerprint") != entry_behavior_fingerprint
             and not unresolved_execution
         )
+        immutable_legacy_runtime_no_plan = bool(
+            compatibility_cutover
+            and existing is not None
+            and existing.get("entry_behavior_fingerprint") is None
+            and existing.get("result_kind") == "no_plan"
+            and "AI_ENTRY_RUNTIME_UNSUPPORTED" in str(existing.get("result_json") or "")
+        )
         manual_replan_allowed = bool(
             manual_replan
             and existing is not None
@@ -9557,7 +9565,7 @@ def ensure_candidate_planning_generation(
             if eligibility_recovered
             else "incompatible_planning_generation"
         )
-        if existing is not None:
+        if existing is not None and not immutable_legacy_runtime_no_plan:
             terminal_reason = (
                 "canonical_compatibility_cutover"
                 if reason == "canonical_compatibility_cutover"

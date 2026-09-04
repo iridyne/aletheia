@@ -393,6 +393,67 @@ def test_behavior_fingerprint_upgrade_supersedes_each_durable_result_once(termin
         assert stored_plan["terminal_reason"] == "canonical_compatibility_cutover"
 
 
+def test_legacy_false_no_plan_remains_immutable_during_canonical_cutover():
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    completed_at = datetime.now(timezone.utc).isoformat()
+    legacy_result = json.dumps({"reason_code": "AI_ENTRY_RUNTIME_UNSUPPORTED"})
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET entry_behavior_fingerprint=NULL, "
+        "status='no_plan', result_kind='no_plan', result_json=?, attention_status='terminal', "
+        "attention_terminal_at=?, attention_terminal_reason='no_plan', completed_at=?, updated_at=? "
+        "WHERE id=?",
+        (legacy_result, completed_at, completed_at, completed_at, generation["id"]),
+    )
+    before = repo.get_candidate_planning_generation(generation["id"])
+
+    refreshed = _typed_candidate(
+        mechanism="reversal", family="mean_reversion", rank=9, price=104
+    )
+    current, created = repo.ensure_candidate_planning_generation(refreshed.id)
+
+    assert created is True
+    assert current["previous_generation_id"] == generation["id"]
+    assert current["cycle_reason"] == "canonical_compatibility_cutover"
+    assert repo.get_candidate_planning_generation(generation["id"]) == before
+
+
+def test_v68_restores_false_no_plan_rows_mutated_by_v67_cutover():
+    from aletheia.storage.migrations import _apply_immutable_legacy_entry_cutover_v68
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    completed_at = datetime.now(timezone.utc).isoformat()
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET entry_behavior_fingerprint=NULL, "
+        "status='no_plan', result_kind='no_plan', result_json=?, attention_status='terminal', "
+        "attention_terminal_at=?, attention_terminal_reason='no_plan', completed_at=?, updated_at=? "
+        "WHERE id=?",
+        (
+            json.dumps({"reason_code": "AI_ENTRY_RUNTIME_UNSUPPORTED"}),
+            completed_at,
+            completed_at,
+            completed_at,
+            generation["id"],
+        ),
+    )
+    before = repo.get_candidate_planning_generation(generation["id"])
+    refreshed = _typed_candidate(
+        mechanism="reversal", family="mean_reversion", rank=9, price=104
+    )
+    current, _ = repo.ensure_candidate_planning_generation(refreshed.id)
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET is_current=0, status='superseded', "
+        "updated_at=?, attention_terminal_at=?, "
+        "attention_terminal_reason='canonical_compatibility_cutover' WHERE id=?",
+        (current["created_at"], current["created_at"], generation["id"]),
+    )
+
+    _apply_immutable_legacy_entry_cutover_v68(repo.get_db())
+
+    assert repo.get_candidate_planning_generation(generation["id"]) == before
+
+
 def test_candidate_planning_claim_prefers_current_rank_over_fifo_age():
     start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
     rank_twenty = _candidate(
