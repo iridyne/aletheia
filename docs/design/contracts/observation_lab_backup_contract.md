@@ -56,13 +56,16 @@ Sorted + deduplicated so the fingerprint is order-independent. `canonical_json` 
 3. `ok=True, reason="fingerprint_match"` — no drift. Continue.
 4. `ok=False` — at least one input was restored to a different point than the others. The mismatch remains a durable diagnostic fact. Any behavior-bearing consumer must fail closed to its deterministic baseline; the v1 runner may continue observe-only collection and must not claim continuity verified or authorize a treatment from the mismatched state.
 
-The scheduled runner alone calls verification with
-`allow_main_outbox_progress=True`. It may additionally receive
+The scheduled runner and updater's read-only diagnostic call verification with
+`allow_main_outbox_progress=True`. They may additionally receive
 `ok=True, reason="main_outbox_append_only"` when every non-outbox input and the
 previously checkpointed Main prefix still match and every later receipt remains
-unacknowledged. The runner then imports those receipts and records the exact
-post-pass checkpoint. Backup, restore, authority cutover/rollback, CLI, update,
-and behavior-bearing consumers retain strict verification by default.
+unacknowledged. This permits entry into the shared cycle-locked settlement
+barrier, not deployment. The barrier drains transport, rejects failed, retrying,
+or unavailable state, saves the completed cut, and requires a strict
+`fingerprint_match` before an authoritative backup or source switch. Backup,
+restore, authority cutover/rollback, ordinary CLI verification, and
+behavior-bearing consumers retain strict verification by default.
 
 ## 4. Why the fingerprint uses these inputs
 

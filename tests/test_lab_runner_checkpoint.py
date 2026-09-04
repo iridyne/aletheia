@@ -212,3 +212,51 @@ def test_main_bridge_checkpoints_imported_receipts_and_refuses_existing_drift():
         "SELECT acknowledged_at FROM observation_delivery_outbox WHERE receipt_id=?",
         (blocked_receipt,),
     ).fetchone()[0] is None
+
+
+def test_settlement_drains_batches_and_refuses_poison(monkeypatch):
+    from aletheia.observation_lab import canonical, checkpoint, runner
+
+    batches = iter((
+        {"available": True, "processed": 2, "failed_sequence": None, "retry_sequences": []},
+        {"available": True, "processed": 1, "failed_sequence": None, "retry_sequences": []},
+    ))
+    monkeypatch.setattr(runner, "_pass_checkpoint", lambda: {"ok": True})
+    monkeypatch.setattr(runner, "_save_checkpoint", lambda summary: summary.update(saved=True))
+    monkeypatch.setattr(canonical, "import_delivery_receipts", lambda **_: next(batches))
+    monkeypatch.setattr(canonical, "mirror_lab_audit_outbox", lambda **_: {"available": True, "failed": [], "processed": 0})
+    monkeypatch.setattr(canonical, "prune_observation_delivery_outbox", lambda: {"available": True})
+    monkeypatch.setattr(canonical, "compact_finalized_generations", lambda **_: {"skipped": 0})
+    monkeypatch.setattr(checkpoint, "verify_joint_checkpoint", lambda: type("V", (), {"ok": True, "reason": "fingerprint_match"})())
+    settled = runner.settle_observation_continuity(batch_size=2)
+    assert settled["ok"] is True
+    assert settled["delivery_import"]["processed"] == 3
+
+    monkeypatch.setattr(canonical, "import_delivery_receipts", lambda **_: {
+        "available": True, "processed": 0, "failed_sequence": 6144,
+        "failed_reason": "unclassified_receipt_identity", "retry_sequences": [6144],
+    })
+    poisoned = runner.settle_observation_continuity()
+    assert poisoned["ok"] is False
+    assert poisoned["reason"] == "unclassified_receipt_identity"
+
+
+def test_checkpoint_save_refuses_unavailable_outbox(monkeypatch):
+    from aletheia.observation_lab import checkpoint, runner
+
+    current = checkpoint.JointCheckpoint(
+        checkpoint_id="bad", recorded_at="2026-09-04T00:00:00+00:00",
+        app_migration_head="head", app_migration_count=1,
+        active_manifest_hashes=(), active_manifest_count=0,
+        lab_schema_head="head", lab_schema_count=1,
+        lab_state_fingerprint="lab", checkpoint_ledger_fingerprint="ledger",
+        main_outbox_high_watermark=-1, main_outbox_pending_count=-1,
+        main_outbox_fingerprint="<unavailable>", joint_fingerprint="bad",
+    )
+    saved = []
+    monkeypatch.setattr(checkpoint, "compute_joint_checkpoint", lambda: current)
+    monkeypatch.setattr(checkpoint, "save_joint_checkpoint", saved.append)
+    summary = {"ok": True}
+    runner._save_checkpoint(summary)
+    assert summary == {"ok": False, "reason": "main_outbox_unavailable"}
+    assert saved == []

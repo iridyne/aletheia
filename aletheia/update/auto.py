@@ -683,6 +683,13 @@ def run() -> dict[str, Any]:
             if not stopped_result.get("ok"):
                 raise AutoUpdateError(stopped_result.get("reason", "gateway_stop_failed"), stopped_result.get("detail", ""))
             stopped = True
+            from aletheia.observation_lab.runner import settle_observation_continuity
+            settlement = settle_observation_continuity()
+            if not settlement.get("ok"):
+                raise AutoUpdateError(
+                    "observation_settlement_failed",
+                    str(settlement.get("reason") or "settlement_unavailable"),
+                )
             final_backup = BackupService(get_data_dir()).create_backup(
                 label=f"auto_activate_{tag[1:]}", profile="authoritative"
             )

@@ -210,6 +210,7 @@ def capture_update_continuity() -> dict[str, Any]:
             identities = _observation_ids()
             manifest_generations = {str(item.observation_id): int(item.generation) for item in load_active_manifests()}
             verified = verify_joint_checkpoint()
+            settleable = verify_joint_checkpoint(allow_main_outbox_progress=True)
             checkpoint = {
                 "verified": {
                     "ok": verified.ok,
@@ -218,7 +219,8 @@ def capture_update_continuity() -> dict[str, Any]:
                     "mismatch_components": list(
                         getattr(verified, "mismatch_components", ())
                     ),
-                }
+                },
+                "settleable": {"ok": settleable.ok, "reason": settleable.reason},
             }
         observation_available = identities.get("available") is True
     except Exception as exc:
@@ -338,6 +340,13 @@ def _checkpoint_preflight_verdict(checkpoint: dict[str, Any]) -> tuple[str | Non
     if not isinstance(verified, dict) or verified.get("ok") is not False:
         return (None, None)
     reason = str(verified.get("reason") or "")
+    settleable = checkpoint.get("settleable")
+    if (
+        isinstance(settleable, dict)
+        and settleable.get("ok") is True
+        and settleable.get("reason") == "main_outbox_append_only"
+    ):
+        return ("warning", "observation_settlement_required")
     components = verified.get("mismatch_components")
     if isinstance(components, list) and all(isinstance(item, str) for item in components):
         changed = set(components)
@@ -990,10 +999,42 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             },
         }
 
-    from aletheia.update.applier import apply_update
+    from aletheia.update import applier
 
-    result = apply_update(restart=restart, progress=mark_phase)
+    gateway_quiesced = False
+    if restart:
+        mark_phase("Settling Observation data")
+        stopped = applier._stop_gateway()
+        if not stopped.get("ok"):
+            finish_phase()
+            return {
+                "applied": False, "mode": "development",
+                "reason": stopped.get("reason") or "gateway_stop_failed",
+                "message": stopped.get("detail") or "Could not stop the old runtime safely.",
+                "continuity_verified": False, "continuity_state": "failed",
+                "continuity": {"preflight": preflight, "before": before},
+            }
+        gateway_quiesced = True
+        try:
+            from aletheia.observation_lab.runner import settle_observation_continuity
+            settlement = settle_observation_continuity()
+        except Exception as exc:
+            settlement = {"ok": False, "reason": type(exc).__name__}
+        if not settlement.get("ok"):
+            applier._restart_gateway()
+            finish_phase()
+            return {
+                "applied": False, "mode": "development",
+                "reason": "observation_settlement_failed",
+                "message": str(settlement.get("reason") or "Observation data could not be settled safely."),
+                "continuity_verified": False, "continuity_state": "failed",
+                "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
+            }
+
+    result = applier.apply_update(restart=restart, progress=mark_phase)
     if not result.get("applied"):
+        if gateway_quiesced:
+            applier._restart_gateway()
         finish_phase()
         return {
             **result,

@@ -693,30 +693,26 @@ def sync_all(
     an operator wants an immediate refresh without waiting for the next cycle.
     """
     if _require_experiment_authority() == "lab":
-        from aletheia.observation_lab.canonical import (
-            compact_finalized_generations,
-            import_delivery_receipts,
-            mirror_lab_audit_outbox,
-        )
-        from aletheia.observation_lab.kernel import advance_windows
+        from aletheia.observation_lab.runner import settle_observation_continuity
 
-        imported = import_delivery_receipts()
-        mirrored = mirror_lab_audit_outbox()
-        advanced = advance_windows(limit=10)
-        compacted = compact_finalized_generations(limit=10)
+        settled = settle_observation_continuity(advance_windows=True)
         payload = {
-            "delivery_import": imported,
-            "audit_mirror": mirrored,
-            "windows": advanced,
-            "compaction": compacted,
+            "delivery_import": settled.get("delivery_import"),
+            "audit_mirror": settled.get("audit_mirror"),
+            "windows": settled.get("windows"),
+            "compaction": settled.get("compaction"),
+            "ok": settled.get("ok"),
+            "reason": settled.get("reason"),
         }
         if json_output:
             typer.echo(json.dumps(payload, indent=2, default=str))
         else:
-            typer.echo(f"delivery import: {imported}")
-            typer.echo(f"audit mirror: {mirrored}")
-            typer.echo(f"windows: {advanced}")
-            typer.echo(f"compaction: {compacted}")
+            typer.echo(f"delivery import: {payload['delivery_import']}")
+            typer.echo(f"audit mirror: {payload['audit_mirror']}")
+            typer.echo(f"windows: {payload['windows']}")
+            typer.echo(f"compaction: {payload['compaction']}")
+        if not settled.get("ok"):
+            raise typer.Exit(code=1)
         return
 
     from aletheia.counterfactual.filter_experiments import (

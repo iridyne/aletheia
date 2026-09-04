@@ -255,6 +255,14 @@ def prepare_activation_data() -> dict[str, Any]:
     if request.get("backup_profile") not in {"online", "authoritative"}:
         raise PackagedUpdateError("update_backup_profile_unproven")
 
+    from aletheia.observation_lab.runner import settle_observation_continuity
+    settlement = settle_observation_continuity()
+    if not settlement.get("ok"):
+        raise PackagedUpdateError(
+            "observation_settlement_failed",
+            str(settlement.get("reason") or "settlement_unavailable"),
+        )
+
     # The staging snapshot was intentionally created while the old Gateway was
     # serving writes and is therefore non-recovery. The tray calls this command
     # only after quiescing/stopping that runtime; publish the authoritative

@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _settled_update_boundary(monkeypatch):
+    from aletheia.observation_lab import runner
+    from aletheia.update import applier
+    monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(runner, "settle_observation_continuity", lambda: {"ok": True})
+
 
 def _minimal_snapshot(*, checkpoint_reason: str = "fingerprint_match") -> dict:
     checkpoint_ok = checkpoint_reason == "fingerprint_match"
@@ -78,6 +89,19 @@ def test_preflight_classifies_structured_outbox_drift():
 
     assert result["ok"] is False
     assert result["failures"] == ["observation_checkpoint_outbox_drift"]
+
+
+def test_preflight_marks_proven_pending_suffix_for_settlement():
+    from aletheia.update.continuity import evaluate_preflight
+
+    snapshot = _minimal_snapshot(checkpoint_reason="fingerprint_mismatch")
+    snapshot["observation"]["checkpoint"] = {
+        "verified": {"ok": False, "reason": "fingerprint_mismatch", "mismatch_components": ["main_outbox"]},
+        "settleable": {"ok": True, "reason": "main_outbox_append_only"},
+    }
+    result = evaluate_preflight(snapshot)
+    assert result["ok"] is True
+    assert result["warnings"] == ["observation_settlement_required"]
 
 
 def test_preflight_classifies_six_field_lab_schema_drift():

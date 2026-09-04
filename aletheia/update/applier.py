@@ -333,6 +333,23 @@ def _restart_gateway() -> dict:
     return {"ok": True}
 
 
+def _stop_gateway() -> dict:
+    """Stop receipt producers before the final Observation continuity cut."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "from aletheia.gateway.lifecycle import do_stop; do_stop()"],
+            cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=90,
+            **_no_window_kwargs(),
+        )
+    except Exception as exc:
+        return {"ok": False, "reason": type(exc).__name__}
+    return {
+        "ok": result.returncode == 0,
+        "reason": None if result.returncode == 0 else "gateway_stop_failed",
+        "detail": (result.stderr or result.stdout).strip()[-500:],
+    }
+
+
 def _gateway_ready_after_restart_error(*, timeout_sec: float = 5.0) -> bool:
     """Accept a canceled systemd start only after the front door recovers."""
     try:

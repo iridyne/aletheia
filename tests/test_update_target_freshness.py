@@ -5,6 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _settled_update_boundary(monkeypatch):
+    from aletheia.observation_lab import runner
+    from aletheia.update import applier
+    monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
+    monkeypatch.setattr(runner, "settle_observation_continuity", lambda: {"ok": True})
+
 
 def test_check_for_update_mutates_latest_config_not_prepull_snapshot(monkeypatch):
     from aletheia.config import loader
