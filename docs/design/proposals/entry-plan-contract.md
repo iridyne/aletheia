@@ -85,7 +85,7 @@ Implemented atomically with #2288. Any wording in the Issue body or earlier
 comments that conflicts with the 2026-08-27 Implementation Review Amendment is
 superseded by that amendment and the normative contracts above.
 
-## Accepted 2026-09-02 AI Entry amendment (#2725)
+## Superseded 2026-09-02 AI Entry amendment (#2725)
 
 New eligible Momentum Candidates use `entry-planner/v3` by default. Those
 generations freeze `entry-analysis-context/v1`, accept only strict
@@ -99,3 +99,7 @@ The generic Universe Discovery Benchmark Observation Window continues across
 unrelated Entry/Main Runtime deployments. Deployment does not wait for #2556;
 only a change to that window's frozen scanner, allocator, outcome, or cost
 semantics rotates its affected generation under its own contract.
+
+The numeric V3 amendment is retained as historical rationale. The accepted
+[canonical Entry lifecycle cutover](canonical_entry_lifecycle.md) supersedes its
+runtime version selection without rewriting historical plans or evidence.

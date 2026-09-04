@@ -117,7 +117,7 @@ def _require_trigger(
         raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
 
 
-def compile_entry_plan(
+def _compile_bounded_risk_envelope(
     generation: dict,
     candidate: dict,
     feature: dict,
@@ -353,7 +353,7 @@ def compile_entry_plan(
         ) if geometry is not None else (
             candidate_price * (1.002 if direction == "long" else 0.998)
         )
-        behavior_version = "entry-planner/momentum-geometry-v2" if geometry is not None else "entry-planner/v3"
+        behavior_version = "bounded-risk-envelope/internal"
         try:
             return EntryPlan(
                 planning_generation_id=generation["id"],
@@ -412,7 +412,7 @@ def compile_entry_plan(
         raise PlanIntentError("COMPILER_INTERNAL", type(exc).__name__) from exc
 
 
-def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
+def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
     from aletheia.agent_shell.entry_planner import PlanIntent, PlanIntentError
     from aletheia.trading.entry_analysis import (
@@ -422,6 +422,10 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     )
 
     validate_hypothesis_references(hypothesis, context)
+
+    from aletheia.trading.entry_authority import require_entry_runtime_authority
+
+    authority = require_entry_runtime_authority(cfg)
 
     if context.execution_context.get("availability") != "available":
         raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
@@ -457,7 +461,6 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     tolerance = float(structure.get("break_tolerance") or 0.05 * atr)
     stop = invalidation.price - tolerance if direction == "long" else invalidation.price + tolerance
     rr = _RISK_REWARD_TARGET[hypothesis.risk_tier]
-    is_v2 = hypothesis.version == "entry-hypothesis/v2"
     retrace = hypothesis.entry_profile_id in {
         "anchor-retrace-reclaim", "grounded-anchor-retrace-reclaim",
     }
@@ -481,8 +484,10 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     instrument = context.instrument
     if (
         context_generation.get("id") != generation.get("id")
-        or context_generation.get("planner_contract_version")
-        != ("entry-planner/v4" if is_v2 else "entry-planner/v3")
+        or context_generation.get("entry_behavior_fingerprint")
+        != generation.get("entry_behavior_fingerprint")
+        or context_generation.get("schema_fingerprint")
+        != generation.get("schema_fingerprint")
         or instrument.get("venue") != generation.get("venue")
         or instrument.get("symbol") != generation.get("symbol")
         or instrument.get("market_type") != generation.get("market_type")
@@ -529,12 +534,8 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
             {key: value for key, value in trigger_params.items() if key != "geometry_fingerprint"}
         )
         geometry_material["trigger_params"] = trigger_params
-    thesis = (
-        f"{hypothesis.mechanism} grounded entry" if is_v2 else hypothesis.thesis
-    )
-    scenario = (
-        str(hypothesis.entry_profile_id) if is_v2 else hypothesis.scenario
-    )
+    thesis = f"{hypothesis.mechanism} grounded entry"
+    scenario = str(hypothesis.entry_profile_id)
     synthetic = PlanIntent(
         decision="ENTRY_PLAN", reason_code="OK", thesis=thesis,
         scenario=scenario, evidence_refs=list(hypothesis.supporting_fact_refs),
@@ -542,7 +543,9 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         trigger_spec_id=None, trigger_spec_version=None,
         risk_tier=hypothesis.risk_tier, horizon=hypothesis.horizon,
     )
-    base = compile_entry_plan(frozen_generation, frozen_candidate, frozen_feature, synthetic, cfg)
+    base = _compile_bounded_risk_envelope(
+        frozen_generation, frozen_candidate, frozen_feature, synthetic, cfg
+    )
     old_entry = base.entry_zone[1] if direction == "long" else base.entry_zone[0]
     old_fraction = abs(old_entry - base.stop_price) / old_entry
     new_fraction = abs(worst_entry - stop) / worst_entry
@@ -577,9 +580,11 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "worst_price": (worst_entry if not maker else None),
         "max_notional": bounded_notional,
         "behavior_version": (
-            "mechanism-aware-entry-hypothesis-compiler/v2"
-            if is_v2 else "ai-entry-hypothesis-compiler/v1"
+            generation.get("entry_behavior_fingerprint")
+            or "canonical-entry-behavior-unavailable"
         ),
+        "required_permission": authority.minimum_permission,
+        "execution_account_mode": authority.execution_route,
         "treatment_exposure_id": None,
         "analysis_context_version": context.context_version,
         "analysis_context_fingerprint": context.context_fingerprint,
@@ -593,3 +598,7 @@ def compile_ai_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "compiled_geometry_fingerprint": fingerprint(geometry_material),
     }
     return EntryPlan.model_validate({**base.model_dump(mode="json"), **updates})
+
+
+# Historical import compatibility; current runtime imports compile_entry_plan.
+compile_ai_entry_plan = compile_entry_plan

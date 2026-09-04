@@ -57,6 +57,10 @@ def compatible_entry_profiles(mechanism: str) -> tuple[EntryProfileCapability, .
     return tuple(profile for profile in _REGISTRY if mechanism in profile.supported_mechanisms)
 
 
+def registered_entry_profiles() -> tuple[EntryProfileCapability, ...]:
+    return _REGISTRY
+
+
 def require_compatible_entry_profile(
     mechanism: str,
     profile_id: str,
@@ -77,6 +81,6 @@ def require_compatible_entry_profile(
 
 
 __all__ = [
-    "EntryProfileCapability", "compatible_entry_profiles",
+    "EntryProfileCapability", "compatible_entry_profiles", "registered_entry_profiles",
     "require_compatible_entry_profile",
 ]

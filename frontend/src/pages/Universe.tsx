@@ -91,6 +91,14 @@ function selectionMetric(row: Pick<CandidateWorkbenchRow, 'candidate_selection_p
     : `Legacy score ${row.total_score ?? '—'}`
 }
 
+function lifecycleLabel(row: Pick<CandidateWorkbenchRow, 'lifecycle_state' | 'current_cycle_number' | 'expired_plan_count' | 'lifecycle_reason'> | CandidateAttention) {
+  if (!row.lifecycle_state) return 'Lifecycle unavailable'
+  const cycle = row.current_cycle_number ? ` · cycle ${row.current_cycle_number}` : ''
+  const expired = row.expired_plan_count ? ` · expired ${row.expired_plan_count}×` : ''
+  const reason = row.lifecycle_reason ? ` · ${humanize(row.lifecycle_reason)}` : ''
+  return `${humanize(row.lifecycle_state.toLowerCase())}${cycle}${expired}${reason}`
+}
+
 // Calibration compatibility: by_cohort_horizon rows remain isolated by
 // row.direction and row.market_type across the owner-facing projection.
 const planColumns = [
@@ -116,7 +124,7 @@ const candidateColumns = [
   }),
   candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why selected' }),
   candidateCol.accessor(row => `Rank ${row.rank ?? '—'} · ${selectionMetric(row)} · Liquidity ${row.liquidity_score ?? '—'} · Spread ${row.spread_bps ?? '—'} bps`, { id: 'quality', header: 'Selection metric / market quality' }),
-  candidateCol.accessor(row => `${humanize(row.status)} · ${humanize(row.attention_status)}`, { id: 'state', header: 'Planning / attention' }),
+  candidateCol.accessor(row => lifecycleLabel(row), { id: 'state', header: 'Entry lifecycle' }),
   candidateCol.accessor('last_requalified_at', { header: 'Last requalified', cell: info => fmtTimestamp(info.getValue()) }),
   candidateCol.accessor(row => `${fmtTimestamp(row.soft_expires_at)} / ${fmtTimestamp(row.hard_expires_at)}`, { id: 'deadlines', header: 'Soft / hard deadline' }),
   candidateCol.accessor('attention_terminal_reason', { header: 'Terminal reason', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
@@ -132,14 +140,14 @@ const currentCandidateColumns = [
     id: 'eligible', header: 'Planning eligible', cell: info => <Badge tone={info.row.original.execution_eligible ? 'green' : 'red'}>{info.getValue()}</Badge>,
   }),
   currentCandidateCol.accessor(row => evidenceLabel(row.risk_flags), { id: 'risk', header: 'Risk reason' }),
-  currentCandidateCol.accessor(row => row.planning_status ? `${humanize(row.planning_status)} · ${row.attempt_count ?? 0} attempts` : 'No Planning Generation yet', { id: 'planning', header: 'Planning' }),
+  currentCandidateCol.accessor(row => row.planning_generation_id ? lifecycleLabel(row) : 'No Planning Generation yet', { id: 'planning', header: 'Entry lifecycle' }),
   currentCandidateCol.accessor(row => row.entry_plan_status ? humanize(row.entry_plan_status) : row.result_kind === 'no_plan' ? 'No plan' : '—', { id: 'plan', header: 'Entry Plan' }),
 ]
 
 const historyColumns = [
   historyCol.accessor('symbol', { header: 'Instrument', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   historyCol.accessor('updated_at', { header: 'Updated', cell: info => fmtTimestamp(info.getValue()) }),
-  historyCol.accessor('status', { header: 'Planning result', cell: info => humanize(info.getValue()) }),
+  historyCol.accessor(row => `${humanize(row.outcome_class ?? row.status)} · cycle ${row.cycle_number ?? 1}`, { id: 'outcome', header: 'Planning outcome' }),
   historyCol.accessor('attention_terminal_reason', { header: 'Attention result', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
   historyCol.accessor('entry_plan_status', { header: 'Entry Plan', cell: info => info.getValue() ? humanize(info.getValue()!) : '—' }),
 ]
@@ -180,9 +188,10 @@ export default function Universe() {
   const currentCandidates = data?.current_candidates
   const candidates = data?.candidate_attention
   const stageCounts = useMemo(() => {
-    const counts: Record<string, number> = { no_generation: 0, pending: 0, planning: 0, unavailable: 0, no_plan: 0, planned: 0, active: 0, terminal: 0 }
+    const counts: Record<string, number> = { no_generation: 0, pending: 0, planning: 0, unavailable: 0, blocked: 0, no_plan: 0, planned: 0, active: 0, terminal: 0 }
     for (const row of currentCandidates ?? []) {
       if (!row.planning_generation_id) counts.no_generation += 1
+      else if (row.lifecycle_state === 'PLANNING_BLOCKED') counts.blocked += 1
       else if (row.planning_status && row.planning_status in counts) counts[row.planning_status] += 1
       if (row.entry_plan_status) counts[row.entry_plan_status && ['waiting', 'risk_reserved', 'triggered', 'ordered', 'partially_filled'].includes(row.entry_plan_status) ? 'active' : 'terminal'] += 1
     }
@@ -199,7 +208,7 @@ export default function Universe() {
     ) - now <= 5 * 60_000)
     if (candidateFilter === 'flagged') return rows.filter(row => row.execution_eligible === 0 || evidenceLabel(row.risk_flags) !== 'Not recorded')
     if (candidateFilter === 'stale') return rows.filter(row => row.candidate_expires_at && new Date(row.candidate_expires_at).getTime() <= now)
-    return rows.filter(row => ['pending', 'planning', 'unavailable'].includes(row.status))
+    return rows.filter(row => row.lifecycle_state !== 'PLANNING_BLOCKED' && ['pending', 'planning', 'unavailable'].includes(row.status))
   }, [candidateFilter, candidates])
   const setTab = (next: string) => {
     const params = new URLSearchParams(search)
@@ -305,7 +314,7 @@ export default function Universe() {
     </section>
 
     <Card className="entry-workbench-notice">
-      {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Current-Snapshot terminal Entry Plans: {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
+      {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, blocked {stageCounts.blocked}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Current-Snapshot terminal Entry Plans: {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
       Active Entry Plans: {plans == null ? 'not available' : plans.length}. {' '}
       {operatorStatus.isPending ? 'Checking planning health…' : operatorStatus.isError ? 'Planning health unavailable.' : operatorStatus.data?.trading_daemon ? `Planning daemon: ${humanize(operatorStatus.data.trading_daemon.state)}${operatorStatus.data.trading_daemon.fallback_blocker ? ` · ${humanize(operatorStatus.data.trading_daemon.fallback_blocker)}` : ''}.` : 'Planning health unavailable.'}
     </Card>
@@ -406,6 +415,7 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
     queryFn: () => api.getCandidate(candidateId),
   })
   const attention = candidate ?? detail.data?.attention
+  const lifecycle = detail.data?.lifecycle ?? candidate ?? currentCandidate
   return <DetailDrawer open title={`${candidate?.symbol ?? currentCandidate?.symbol ?? 'Candidate'} Candidate`} onClose={onClose}>
     {detail.isError ? <p>Candidate detail is unavailable.</p> : <>
       {attention ? <DrawerSection label="Attention">
@@ -415,11 +425,23 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <DrawerField label="Soft deadline" value={fmtTimestamp(attention?.soft_expires_at)} />
         <DrawerField label="Hard deadline" value={fmtTimestamp(attention?.hard_expires_at)} />
         <DrawerField label="Planning" value={attention?.status ? humanize(attention.status) : '—'} />
+        <DrawerField label="Entry lifecycle" value={lifecycle ? lifecycleLabel(lifecycle) : 'Unavailable'} />
+        <DrawerField label="Last stage" value={lifecycle?.last_stage ? humanize(lifecycle.last_stage) : 'Not recorded'} />
+        <DrawerField label="Model / compiler invoked" value={lifecycle ? `${lifecycle.model_invoked ? 'yes' : 'no'} / ${lifecycle.compiler_invoked ? 'yes' : 'no'}` : 'Unavailable'} />
+        <DrawerField label="State changed" value={fmtTimestamp(lifecycle?.state_changed_at)} />
+        <DrawerField label="Next action" value={lifecycle?.next_action ? humanize(lifecycle.next_action) : 'Unavailable'} />
         <DrawerField label="Terminal reason" value={attention?.attention_terminal_reason ? humanize(attention.attention_terminal_reason) : attention?.attention_status === 'active' ? 'Active' : '—'} />
       </DrawerSection> : <DrawerSection label="Planning">
         <DrawerField label="Planning Generation" value="Not created" />
         <DrawerField label="Status" value="Candidate is visible independently of planning" />
       </DrawerSection>}
+      {lifecycle?.cycles?.length ? <DrawerSection label="Planning cycles">
+        {lifecycle.cycles.map(cycle => <DrawerField
+          key={cycle.generation_id}
+          label={`Cycle ${cycle.cycle_number}`}
+          value={`${humanize(cycle.outcome_class ?? cycle.entry_plan_status ?? cycle.last_stage)} · ${cycle.events.map(event => `${humanize(event.event)} ${fmtTimestamp(event.at)}`).join(' · ')}`}
+        />)}
+      </DrawerSection> : null}
       <DrawerSection label="Candidate evidence">
         <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family ?? currentCandidate?.scanner_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason ?? currentCandidate?.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />

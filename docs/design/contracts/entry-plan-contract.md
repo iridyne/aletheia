@@ -18,17 +18,19 @@ hash are not rewritten. Grounded planning uses `entry-plan/v2`, which
 additionally requires exact context, hypothesis, selected Anchor, Profile, and
 compiled geometry identities.
 
-## AI Entry hypothesis authority
+## Canonical Entry hypothesis authority
 
-Every newly produced eligible Momentum Candidate receives `entry-planner/v3`.
-There is no independent feature flag, activation timestamp, cohort gate, or
-activation identity. Planner and execution retain the global Paper account-mode
-and Live-disabled authority checks.
+Every newly produced eligible typed Candidate enters one canonical Planner →
+Compiler implementation. Historical numeric planner labels remain stored only
+for compatibility and never select current behavior. Reuse is authorized by
+machine-derived schema and behavior fingerprints; Git provenance remains the
+source identity. There is no independent feature flag, activation timestamp,
+cohort gate, or activation identity.
 
-Planner V3 binds one immutable canonical `planner_input_json/hash` per generation.
+The Planner binds one immutable canonical `planner_input_json/hash` per cycle.
 It contains bounded completed exact-instrument windows (30×4h, 48×1h, 96×15m),
 existing causal Market Structure facts, at most 12 canonical 15m Anchors, and
-explicit unavailable sections. The model emits `entry-hypothesis/v1`: controlled
+explicit unavailable sections. The model emits `entry-hypothesis/v2`: controlled
 enums and supplied references only, with no price, size, leverage, ATR multiplier,
 slippage, or other numeric execution authority. `NO_PLAN` clears every execution
 field and requires a stable non-OK reason.
@@ -36,12 +38,13 @@ field and requires a stable non-OK reason.
 `anchor-resting-maker/v1` and `anchor-retrace-reclaim/v1` are deterministic
 compiler Profiles. The latter reuses the existing retrace/sweep/reclaim engine
 and 0.25 ATR semantics under its own identity; Fast Monitoring never invokes AI.
-Plan activation and execution revalidate the V3 generation, Paper/Live gate,
-immutable hashes, and V2 provenance before Proposal or Risk.
+Plan activation and execution revalidate the current generation fingerprints,
+shared runtime authority, immutable hashes, and `entry-plan/v2` provenance before
+Proposal or Risk.
 
 ## Mechanism-aware Grounded Entry
 
-`entry-planner/v4` consumes `candidate-opportunity-context/v1` through one
+The canonical implementation consumes `candidate-opportunity-context/v1` through one
 `entry-analysis-context/v2` and one `entry-hypothesis/v2` path for Continuation,
 Reversal, Positioning/Forced Flow, and Information/Catalyst. Mechanism and
 direction are upstream facts and must match exactly. Candidate T0 evidence,
@@ -69,8 +72,10 @@ NO_PLAN, no-trigger, and no-fill terminal units contribute zero ITT utility only
 after the 4h look; filled units use cost-complete `filter_candidate_outcomes`
 registered at each exact Fill T0 and aggregated by fill notional. Candidate-T0
 forward outcomes are context only and are never re-anchored as Entry outcomes.
-The cohort must match the current code, behavior, planner, mechanism, provider,
-model, prompt, profile-registry, market, and policy identities. Profile results
+The cohort must match the current source provenance, behavior/schema fingerprints,
+mechanism, provider, model, prompt, profile-registry, market, and policy identities.
+Runtime blocks and validation/compiler failures are excluded rather than counted
+as economic refusals. Profile results
 are explicitly an exact profile or the declared `mechanism-aware-grounded/v1`
 parent summary. Any unavailable or mixed evidence is replaced by the deterministic
 empty context before inference. Observation Lab measures this path under
@@ -78,18 +83,18 @@ empty context before inference. Observation Lab measures this path under
 An unsupported mechanism, currently Information/Catalyst, has no visible
 Profile and reaches `NO_PLAN` without a model call.
 
-## Planner contract epoch
+## Contract identity and planning cycles
 
-`planner_contract_version` is an explicit, manually maintained semantic epoch
-for PlanIntent validation, deterministic compilation, and planning outcome
-meaning. It is not a commit, release, or Universe Snapshot version. A current
-generation is reusable only when both its thesis identity and Planner contract
-version match.
+`entry_behavior_fingerprint` and `schema_fingerprint` are derived from the
+canonical schemas, prompt, compiler/profile registry, and execution-route
+capabilities. A mismatch creates one compatibility-cutover cycle while retaining
+the old row and JSON unchanged. `cycle_number`, predecessor, reason, model/compiler
+invocation facts, last stage, and typed outcome are durable audit facts.
 
-On an epoch mismatch, the old generation is retained as non-current with
-`planning_contract_superseded`. Its active Entry Plan is fail-closed invalidated;
-terminal plans remain terminal. An execution-eligible Candidate receives one new
-generation for the current epoch, and subsequent Snapshot churn reuses it.
+An expired Plan may open a later cycle only after a newer completed Universe
+requalification with a later source cutoff and no unresolved Order, Fill, or
+Position. Runtime/config/capability blocks resume the same cycle and never count
+as economic `NO_PLAN`; validation/compiler failures are also non-economic.
 
 ## Exact-venue execution eligibility
 
@@ -105,9 +110,9 @@ book. External execution modes retain their execution venue as the authority.
 An unmonitorable Candidate remains visible in Universe and Workbench, but is
 persisted with `execution_eligible=false` and the
 `fast_market_data_venue_unavailable` risk flag. It receives no new Candidate
-Planning Generation. A legacy generation claimed from stale eligibility is
-completed as terminal `NO_PLAN` with
-`EXECUTION_VENUE_UNAVAILABLE:<stable-reason>` before any provider call.
+Planning Generation. A runtime-ineligible generation is persisted as typed
+`PLANNING_BLOCKED` before any provider call and resumes the same cycle when
+authority recovers.
 
 If a plan becomes unmonitorable, Fast Monitoring makes the loss explicit:
 pre-order states are invalidated with a reason; `ordered` and

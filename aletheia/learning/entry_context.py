@@ -132,7 +132,7 @@ def _planning_inference_evidence(
     calls = [dict(row) for row in db.execute(
         "SELECT DISTINCT c.* FROM llm_context_artifacts a "
         "JOIN llm_inference_calls c ON c.logical_call_id=a.logical_call_id "
-        "WHERE a.stable_id=? AND a.caller='agent_shell.entry_planner.v2' "
+        "WHERE a.stable_id=? AND a.caller='agent_shell.entry_planner' "
         "AND c.finished_at IS NOT NULL AND julianday(c.finished_at)<=julianday(?) "
         "ORDER BY c.started_at,c.logical_call_id",
         (f"planning-generation:{generation_id}", cutoff.isoformat()),
@@ -143,7 +143,6 @@ def _planning_inference_evidence(
         (
             str(row.get("final_provider") or ""),
             str(row.get("final_model") or ""),
-            str(row.get("prompt_version") or ""),
             str(row.get("prompt_static_sha256") or ""),
             str(row.get("output_schema_sha256") or ""),
         )
@@ -333,6 +332,7 @@ def empty_entry_learning_context(
         },
         support={
             "independent_n": 0, "distinct_symbols": 0, "distinct_dates": 0,
+            "cycle_n": 0, "planning_thread_n": 0, "max_cycles_per_thread": 0,
             "complete_outcome_coverage": 0.0,
             "evidence_ref_total": 0, "evidence_refs_truncated": False,
         },
@@ -377,6 +377,20 @@ def build_entry_learning_context(
             exclude_generation_id, cutoff.isoformat(),
         ),
     ).fetchall()
+    from aletheia.trading.entry_compat import classify_legacy_planning_outcome
+
+    eligible_rows = []
+    for raw in rows:
+        row = dict(raw)
+        outcome = (
+            str(row.get("outcome_class"))
+            if row.get("outcome_class")
+            else classify_legacy_planning_outcome(row).outcome_class
+        )
+        if outcome in {"planning_blocked", "planning_failed", "planning_unavailable"}:
+            continue
+        eligible_rows.append(row)
+    rows = eligible_rows
     if not rows:
         return empty_entry_learning_context(
             as_of_at=cutoff.isoformat(), mechanism=mechanism, direction=direction,
@@ -396,11 +410,13 @@ def build_entry_learning_context(
     maes: list[float] = []
     mfes: list[float] = []
     captures: list[float] = []
+    planning_thread_counts: dict[str, int] = {}
     invalid_reasons: set[str] = set()
     current_identity = current_behavior_identity or {}
     required_current_identity = (
-        "producer_commit", "behavior_fingerprint", "planner_contract_version",
-        "mechanism_version", "model_provider", "model", "prompt_version",
+        "producer_commit", "behavior_fingerprint", "entry_behavior_fingerprint",
+        "schema_fingerprint", "mechanism_version", "model_provider", "model",
+        "prompt_fingerprint",
         "entry_profile_registry_hash",
     )
     if not all(current_identity.get(key) for key in required_current_identity):
@@ -414,6 +430,8 @@ def build_entry_learning_context(
             continue
         symbols.add(str(row["candidate_symbol"]))
         dates.add(created.date().isoformat())
+        planning_key = str(row.get("planning_key") or row["id"])
+        planning_thread_counts[planning_key] = planning_thread_counts.get(planning_key, 0) + 1
         evidence_refs.append(f"planning-generation:{row['id']}")
         planner_input = str(row.get("planner_input_json") or "")
         frozen: dict[str, Any] = {}
@@ -423,8 +441,8 @@ def build_entry_learning_context(
             if (
                 hashlib.sha256(planner_input.encode()).hexdigest()
                 != row.get("planner_input_hash")
-                or inference.get("caller") != "agent_shell.entry_planner.v2"
-                or inference.get("prompt_version") != "v2"
+                or inference.get("caller") != "agent_shell.entry_planner"
+                or len(str(inference.get("prompt_fingerprint") or "")) != 64
                 or not inference.get("model_provider")
             ):
                 raise ValueError
@@ -434,10 +452,11 @@ def build_entry_learning_context(
         identity_values.add((
             str(row.get("producer_commit") or "unavailable"),
             str(row.get("behavior_fingerprint") or "unavailable"),
-            str(row.get("planner_contract_version") or "unavailable"),
+            str(row.get("entry_behavior_fingerprint") or "unavailable"),
+            str(row.get("schema_fingerprint") or "unavailable"),
             str(row.get("mechanism_version") or "unavailable"),
             str(inference.get("model_provider") or "unavailable"),
-            str(inference.get("prompt_version") or "unavailable"),
+            str(inference.get("prompt_fingerprint") or "unavailable"),
             _fingerprint(frozen.get("entry_profiles") or []),
         ))
         call_identities, inference_cost, inference_refs, inference_reasons = (
@@ -566,10 +585,11 @@ def build_entry_learning_context(
         (
             str(current_identity.get("producer_commit") or "unavailable"),
             str(current_identity.get("behavior_fingerprint") or "unavailable"),
-            str(current_identity.get("planner_contract_version") or "unavailable"),
+            str(current_identity.get("entry_behavior_fingerprint") or "unavailable"),
+            str(current_identity.get("schema_fingerprint") or "unavailable"),
             str(current_identity.get("mechanism_version") or "unavailable"),
             str(current_identity.get("model_provider") or "unavailable"),
-            str(current_identity.get("prompt_version") or "unavailable"),
+            str(current_identity.get("prompt_fingerprint") or "unavailable"),
             str(current_identity.get("entry_profile_registry_hash") or "unavailable"),
         )
     }
@@ -581,7 +601,7 @@ def build_entry_learning_context(
             identity[:3] != (
                 str(current_identity.get("model_provider") or "unavailable"),
                 str(current_identity.get("model") or "unavailable"),
-                str(current_identity.get("prompt_version") or "unavailable"),
+                str(current_identity.get("prompt_fingerprint") or "unavailable"),
             )
             for identity in inference_identities
         )
@@ -597,8 +617,10 @@ def build_entry_learning_context(
         "candidate_selection_policy": policy, "policy_epoch": policy_epoch,
     }
     support = {
-        "independent_n": total, "distinct_symbols": len(symbols),
+        "independent_n": len(planning_thread_counts), "distinct_symbols": len(symbols),
         "distinct_dates": len(dates), "complete_outcome_coverage": coverage,
+        "cycle_n": total, "planning_thread_n": len(planning_thread_counts),
+        "max_cycles_per_thread": max(planning_thread_counts.values(), default=0),
         "entry_profile_scope": "parent_summary",
         "entry_profile_identities": [list(item) for item in sorted(profile_identities)],
         "current_behavior_identity": dict(sorted(current_identity.items())),

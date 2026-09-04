@@ -128,7 +128,7 @@ def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
         )
 
 
-def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monkeypatch):
+def test_ai_entry_runtime_authority_rejects_legacy_version_lineage(monkeypatch):
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
     from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
 
@@ -162,14 +162,7 @@ def test_ai_entry_runtime_authority_requires_exact_paper_and_frozen_lineage(monk
     )
     monkeypatch.setattr(repo, "get_candidate_planning_generation", lambda _id: generation)
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_kwargs: cfg)
-    _require_ai_entry_authority(plan)
-
-    cfg.agent.permission_mode = "Manual"
-    with pytest.raises(ValueError, match="ai_entry_runtime_authority_unavailable"):
-        _require_ai_entry_authority(plan)
-    cfg.agent.permission_mode = "Paper"
-    generation["planner_input_hash"] = "0" * 64
-    with pytest.raises(ValueError, match="ai_entry_context_identity_mismatch"):
+    with pytest.raises(ValueError, match="ai_entry_generation_contract_mismatch"):
         _require_ai_entry_authority(plan)
 
 
@@ -598,6 +591,8 @@ def _persist_waiting_plan(
     candidate_id="candidate-1",
     candidate_family="momentum",
 ) -> EntryPlan:
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
     repo.upsert_universe_asset(
         UniverseAsset(
             id="asset-btc",
@@ -611,6 +606,35 @@ def _persist_waiting_plan(
     )
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_snapshot(snapshot)
+    detected_at = datetime.now(timezone.utc).isoformat()
+    mechanism = "reversal" if candidate_family == "mean_reversion" else "continuation"
+    opportunity = CandidateOpportunityContextV1(
+        candidate_id=candidate_id,
+        candidate_selection={
+            "policy": "candidate_selection_utility_v1",
+            "policy_epoch": "epoch-1",
+            "source_record_hash": "a" * 64,
+        },
+        source={
+            "detected_at": detected_at,
+            "source_cutoff_at": detected_at,
+            "feature_snapshot_id": "fixture",
+        },
+        opportunity={
+            "primary_mechanism": mechanism,
+            "mechanism_version": f"{mechanism}/v1",
+            "mechanism_source": "target_authority",
+            "source_component_id": candidate_family,
+            "direction": "long",
+            "horizon": "4h",
+            "economic_utility_pct": 1.0,
+            "capability_status": "supported",
+            "capability_gaps": (),
+            "primary_evidence_refs": (),
+            "secondary_mechanisms": (),
+        },
+        context={"regime": "trending"},
+    )
     candidate = UniverseMember(
         id=candidate_id,
         snapshot_id=snapshot.id,
@@ -624,6 +648,17 @@ def _persist_waiting_plan(
         scanner_direction="long",
         regime_tag="trending",
         expires_at="2099-01-01T00:00:00+00:00",
+        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy_epoch="epoch-1",
+        candidate_selection_utility_pct=1.0,
+        opportunity_mechanism=mechanism,
+        opportunity_mechanism_version=f"{mechanism}/v1",
+        opportunity_source_component=candidate_family,
+        opportunity_source_cutoff_at=detected_at,
+        opportunity_evidence_hash="b" * 64,
+        candidate_opportunity_context_version=opportunity.version,
+        candidate_opportunity_context_json=opportunity.model_dump_json(),
+        candidate_opportunity_context_hash=opportunity.context_hash,
     )
     repo.insert_candidate(candidate)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
@@ -1454,14 +1489,44 @@ def test_one_trade_budget_is_shared_by_paper_orders_in_price_priority(monkeypatc
         candidate_id="candidate-high",
         plan_updates={**common, "limit_price": 100.1},
     )
-    low = _persist_waiting_plan(
-        account_mode="paper_internal",
-        mode="RESTING_MAKER",
-        tactic="POST_ONLY_LIMIT",
-        candidate_id="candidate-low",
-        candidate_family="breakout",
-        plan_updates={**common, "limit_price": 100.0},
-    )
+    snapshot_id = repo.get_candidate("candidate-high")["snapshot_id"]
+    repo.insert_candidate(UniverseMember(
+        id="candidate-low", snapshot_id=snapshot_id, asset_id="asset-btc",
+        venue="bitget", symbol="BTC/USDT", market_type="perp", rank=2,
+        total_score=80, scanner_family="mean_reversion", scanner_direction="long",
+        expires_at="2099-01-01T00:00:00+00:00",
+    ))
+    low = _plan(
+        account_mode="paper_internal", mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT"
+    ).model_copy(update={
+        "planning_generation_id": "legacy-paper-budget-low-generation",
+        "candidate_id": "candidate-low", "candidate_family": "mean_reversion",
+        **common, "limit_price": 100.0,
+    })
+    low_generation = repo.get_candidate_planning_generation(high.planning_generation_id)
+    low_generation.update({
+        "id": low.planning_generation_id,
+        "planning_key": "legacy-paper-budget-low",
+        "planning_identity": "legacy-paper-budget-low",
+        "candidate_id": low.candidate_id,
+        "last_candidate_id": low.candidate_id,
+        "is_current": 0,
+        "status": "planned",
+        "entry_plan_id": low.plan_id,
+        "cycle_number": 1,
+    })
+    repo._insert("candidate_planning_generations", low_generation)
+    low_payload, low_hash = entry_plan_payload(low)
+    repo._insert("entry_plans", {
+        "id": low.plan_id, "planning_generation_id": low.planning_generation_id,
+        "candidate_id": low.candidate_id, "planning_key": "legacy-paper-budget-low",
+        "version": low.version, "venue": low.venue, "symbol": low.symbol,
+        "market_type": low.market_type, "direction": low.direction,
+        "execution_mode": low.execution_mode, "plan_json": low_payload,
+        "plan_hash": low_hash, "status": "waiting",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
     monkeypatch.setattr(
         local_funding,
         "has_fresh_local_funding_schedule",

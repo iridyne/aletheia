@@ -935,8 +935,10 @@ export interface CandidateAttention {
   market_type: 'spot' | 'perp'
   candidate_family: string
   direction: 'long' | 'short'
-  planner_contract_version: string
   status: string
+  cycle_number?: number
+  outcome_class?: string | null
+  outcome_reason?: string | null
   attempt_count: number
   attention_status: 'active' | 'terminal'
   attention_started_at: string
@@ -964,6 +966,55 @@ export interface CandidateAttention {
   candidate_expires_at: string | null
   active_entry_plan_id: string | null
   active_entry_plan_status: string | null
+  lifecycle_state?: string
+  lifecycle_reason?: string | null
+  current_cycle_number?: number | null
+  expired_plan_count?: number
+  current_generation_id?: string | null
+  current_plan_id?: string | null
+  last_stage?: string | null
+  model_invoked?: boolean
+  compiler_invoked?: boolean
+  state_changed_at?: string | null
+  next_action?: string
+  cycles?: EntryLifecycleCycle[]
+}
+
+export interface EntryLifecycleEvent {
+  event: string
+  at: string | null
+  reason: string | null
+}
+
+export interface EntryLifecycleCycle {
+  generation_id: string
+  cycle_number: number
+  previous_generation_id: string | null
+  cycle_reason: string | null
+  requalification_candidate_id: string | null
+  last_stage: string | null
+  model_invoked: boolean
+  compiler_invoked: boolean
+  outcome_class: string | null
+  outcome_reason: string | null
+  entry_plan_id: string | null
+  entry_plan_status: string | null
+  events: EntryLifecycleEvent[]
+}
+
+export interface EntryLifecycleProjection {
+  lifecycle_state: string
+  lifecycle_reason: string | null
+  current_cycle_number: number | null
+  expired_plan_count: number
+  current_generation_id: string | null
+  current_plan_id: string | null
+  last_stage: string | null
+  model_invoked: boolean
+  compiler_invoked: boolean
+  state_changed_at: string | null
+  next_action: string
+  cycles: EntryLifecycleCycle[]
 }
 
 export interface CandidateWorkbenchRow {
@@ -990,7 +1041,6 @@ export interface CandidateWorkbenchRow {
   execution_eligible: number
   expires_at: string
   planning_generation_id: string | null
-  planner_contract_version: string | null
   planning_status: string | null
   result_kind: string | null
   planning_result_json: string | null
@@ -1002,6 +1052,18 @@ export interface CandidateWorkbenchRow {
   entry_plan_id: string | null
   entry_plan_status: string | null
   entry_plan_terminal_reason: string | null
+  lifecycle_state: string
+  lifecycle_reason: string | null
+  current_cycle_number: number | null
+  expired_plan_count: number
+  current_generation_id: string | null
+  current_plan_id: string | null
+  last_stage: string | null
+  model_invoked: boolean
+  compiler_invoked: boolean
+  state_changed_at: string | null
+  next_action: string
+  cycles: EntryLifecycleCycle[]
 }
 
 export interface EntryWorkbenchResponse {
@@ -1071,6 +1133,7 @@ export interface UniverseFeatureSnapshot {
 export interface CandidateDetail {
   member: Candidate
   attention: CandidateAttention | null
+  lifecycle: EntryLifecycleProjection
   features: UniverseFeatureSnapshot | null
   entry_plans: Array<{ id: string; status: string; execution_mode: string; created_at: string }>
   opportunities: Array<{ id: string; symbol: string; status: string; direction_bias: string | null; created_at: string }>

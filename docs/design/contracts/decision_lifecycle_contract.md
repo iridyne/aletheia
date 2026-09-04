@@ -96,22 +96,18 @@ policy epoch 只有在自身前瞻资格为 positive 且 owner 通过受保护 S
 
 ### 2.1a Candidate Planning Generation 与 Entry Plan
 
-`entry-planner/v3` 是新产生的合格 Momentum Candidate 的默认合约，冻结 Context →
-Hypothesis → `entry-plan/v2` provenance。它没有独立 feature flag、activation timestamp、
-activation identity 或 fresh-cohort 权限；Planner 与执行仍受全局 Paper/Live/Risk/Gateway
-约束。旧 generation、`entry-plan/v1` 与既有 Position 不重规划、不回填。
-
-携带有效 `candidate-opportunity-context/v1` 的新 Candidate 使用
-`entry-planner/v4` 与 `candidate-planning/v2`。其 ownership identity 由 exact instrument、
+携带有效 `candidate-opportunity-context/v1` 的新 Candidate 只进入一个 canonical
+Context → Hypothesis → Compiler → `entry-plan/v2` 实现。历史 numeric planner label 只读保留，
+不能选择当前行为；当前兼容与复用由 schema/behavior fingerprint 决定。其 ownership identity 由 exact instrument、
 Opportunity mechanism/direction、Candidate-selection policy/epoch 与 mechanism version 组成；
 family、rank、score、Utility、price 与普通 snapshot churn 不进入身份。机制或 policy epoch
 变化会保留并 supersede 旧 generation，同时 fail-closed 终结旧的 pre-order Entry Plan。
 
-`candidate_planning_generations` 以 exact instrument、family、direction 和 thesis-level material facts
-建立耐久 planning identity；snapshot/member/rank/score/price churn 不在 ownership identity 中。每代
-最多一个 planning owner；No-Plan 耐久；unavailable 仅有界重试；旧 plan expiry/invalidation 不自动
-重问模型。新 generation 或显式 manual replan 才能重新开放。模型返回必须 CAS 当前 generation；
-stale result 可审计但不可激活。
+`candidate_planning_generations` 以 planning thread 与递增 `cycle_number` 建立耐久生命周期。
+每周期最多一个 planning owner；经济性 No-Plan 在相同 frozen material input 下耐久。Runtime/config/
+capability block 在同一周期恢复且不算 No-Plan；validation/compiler failure 也不进入经济学习分母。
+Plan expiry 仅在后续完成的 Universe requalification、更新 source cutoff 且无未决 Order/Fill/Position
+时创建下一周期。模型返回必须 CAS 当前周期；stale result 可审计但不可激活。
 
 `entry_plans` 是唯一 active plan ledger。不可变 JSON 固定 instrument、generation、方向、thesis、
 execution mode、注册 TriggerSpec、entry/invalidation/stop/target/horizon、风险上限、order tactic、

@@ -75,9 +75,13 @@ const workbench: EntryWorkbenchResponse = {
     risk_flags: '[]', execution_eligible: 1, expires_at: '2026-08-28T01:00:00Z',
     planning_generation_id: null, planning_status: null, result_kind: null,
     planning_result_json: null, attempt_count: null, attention_status: null,
-    planner_contract_version: null,
     soft_expires_at: null, hard_expires_at: null, attention_terminal_reason: null,
     entry_plan_id: null, entry_plan_status: null, entry_plan_terminal_reason: null,
+    lifecycle_state: 'AWAITING_PLANNING', lifecycle_reason: 'candidate_selected',
+    current_cycle_number: null, expired_plan_count: 0,
+    current_generation_id: null, current_plan_id: null, last_stage: null,
+    model_invoked: false, compiler_invoked: false, next_action: 'await_planner', cycles: [],
+    state_changed_at: null,
   }],
   candidate_attention: [],
 }
@@ -121,6 +125,25 @@ describe('Entry Workbench', () => {
     expect(html).toContain('trade: Channel Event Stale')
     expect(html).toContain('funding Exact Schedule Missing')
     expect(html).not.toContain('Manual Review')
+  })
+
+  it('projects repeated expiry and replanning cycles without collapsing history', () => {
+    const base = workbench.current_candidates![0]
+    const renderState = (lifecycle_state: string, cycle: number, expired: number) => renderWorkbench({
+      ...workbench,
+      current_candidates: [{
+        ...base,
+        planning_generation_id: `generation-${cycle}`,
+        lifecycle_state,
+        lifecycle_reason: null,
+        current_cycle_number: cycle,
+        expired_plan_count: expired,
+      }],
+    })
+
+    expect(renderState('PLAN_EXPIRED', 1, 1)).toContain('Plan Expired · cycle 1 · expired 1×')
+    expect(renderState('REPLANNING', 2, 1)).toContain('Replanning · cycle 2 · expired 1×')
+    expect(renderState('PLAN_EXPIRED', 2, 2)).toContain('Plan Expired · cycle 2 · expired 2×')
   })
 
   it('labels target utility without reinterpreting the legacy score', () => {

@@ -1787,6 +1787,23 @@ class CandidatePlanningGeneration(_Provenanced):
     planner_input_hash: str | None = Field(default=None, min_length=64, max_length=64)
     # Deprecated schema field retained for historical row compatibility.
     activation_identity: str | None = None
+    cycle_number: int = Field(default=1, ge=1)
+    previous_generation_id: str | None = None
+    cycle_reason: str = "initial_candidate"
+    requalification_candidate_id: str | None = None
+    planning_started_at: str | None = None
+    last_stage: str = "planning_queued"
+    model_invoked: bool = False
+    model_invoked_at: str | None = None
+    compiler_invoked: bool = False
+    compiler_invoked_at: str | None = None
+    outcome_class: Literal[
+        "entry_plan", "no_plan", "planning_blocked", "planning_failed",
+        "planning_unavailable",
+    ] | None = None
+    outcome_reason: str | None = None
+    entry_behavior_fingerprint: str | None = None
+    schema_fingerprint: str | None = None
 
     @model_validator(mode="after")
     def _mechanism_identity_is_complete(self):

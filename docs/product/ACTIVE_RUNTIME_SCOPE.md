@@ -69,11 +69,14 @@ adapters, but are not part of this active-scope proof until an owner-selected de
 mode is added here with matching Golden Path and replay evidence.
 
 For Universe-linked entry, the same System Operator authority is expressed as
-Candidate → Candidate Planning Generation → immutable Entry Plan → Proposal.
-Planner V2 remains the legacy/non-Momentum contract; eligible new Momentum
-Candidates default to Planner V3 and `entry-plan/v2` through the bounded
-Context/Hypothesis compiler. This is not an additional decision authority and
-does not alter the independent-Opportunity path declared in the front matter.
+Candidate → canonical Planning Cycle → immutable Entry Plan → Proposal. All new
+typed Candidates use one bounded Context/Hypothesis/Compiler implementation;
+historical numeric planner labels are compatibility data, not runtime selectors.
+The active `paper_internal` route requires at least Paper permission; the proven
+Bitget Demo route requires Full permission. Observe, unsupported routes, and any
+effective Live state fail closed before model invocation. This is not an
+additional decision authority and does not alter the independent-Opportunity
+path declared in the front matter.
 
 The `authorized_extensions.cn_equity` declaration admits only the bounded
 implementation work approved by its Proposal. It does not add CN Equity to the

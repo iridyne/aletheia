@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aletheia.learning.entry_context import EntryLearningContextV1
+from aletheia.trading.entry_contract import entry_prompt_fingerprint
 
 
 CONTEXT_VERSION = "entry-analysis-context/v1"
@@ -101,7 +102,7 @@ class EntryAnalysisContextV1(BaseModel):
     portfolio_context: dict[str, Any]
     execution_context: dict[str, Any]
     anchors: tuple[EntryAnchorV1, ...]
-    entry_profiles: tuple[dict[str, str], ...]
+    entry_profiles: tuple[dict[str, Any], ...]
     learning_context: dict[str, Any]
     unavailable_sections: tuple[str, ...] = ()
 
@@ -155,8 +156,8 @@ class EntryAnalysisContextV2(EntryAnalysisContextV1):
     @model_validator(mode="after")
     def _inference_identity_is_exact(self) -> "EntryAnalysisContextV2":
         if (
-            self.inference_identity.get("caller") != "agent_shell.entry_planner.v2"
-            or self.inference_identity.get("prompt_version") != "v2"
+            self.inference_identity.get("caller") != "agent_shell.entry_planner"
+            or len(str(self.inference_identity.get("prompt_fingerprint") or "")) != 64
             or not str(self.inference_identity.get("model_provider") or "").strip()
         ):
             raise ValueError("entry_inference_identity_invalid")
@@ -290,6 +291,13 @@ class EntryHypothesisV2(BaseModel):
         return self
 
 
+# Unsuffixed names are the only current writer/runtime contract. Suffixed names
+# remain importable solely to decode immutable historical payloads.
+EntryAnchor = EntryAnchorV1
+EntryAnalysisContext = EntryAnalysisContextV2
+EntryHypothesis = EntryHypothesisV2
+
+
 def validate_hypothesis_references(
     hypothesis: EntryHypothesisV1 | EntryHypothesisV2,
     context: EntryAnalysisContextV1 | EntryAnalysisContextV2,
@@ -407,7 +415,7 @@ def build_entry_analysis_context(
     positions: list[dict] | None = None,
     orderbook: dict | None = None,
     model_provider: str = "custom_planner",
-) -> EntryAnalysisContextV1 | EntryAnalysisContextV2:
+) -> EntryAnalysisContext:
     """Freeze exact stored bars and existing causal structure into one model input."""
     from aletheia.data.ccxt_provider import timeframe_ms
     from aletheia.data.market_structure import (
@@ -430,7 +438,7 @@ def build_entry_analysis_context(
         str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"])
     )
     opportunity_context = None
-    if generation.get("planner_contract_version") == "entry-planner/v4":
+    if generation.get("entry_behavior_fingerprint"):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
         opportunity_context = CandidateOpportunityContextV1.model_validate_json(
@@ -712,11 +720,12 @@ def build_entry_analysis_context(
             current_behavior_identity = {
                 "producer_commit": str(generation.get("producer_commit") or ""),
                 "behavior_fingerprint": str(generation.get("behavior_fingerprint") or ""),
-                "planner_contract_version": str(generation.get("planner_contract_version") or ""),
+                "entry_behavior_fingerprint": str(generation.get("entry_behavior_fingerprint") or ""),
+                "schema_fingerprint": str(generation.get("schema_fingerprint") or ""),
                 "mechanism_version": str(generation.get("mechanism_version") or ""),
                 "model_provider": str(model_provider),
                 "model": str(getattr(provider_config, "model", "") or ""),
-                "prompt_version": "v2",
+                "prompt_fingerprint": entry_prompt_fingerprint(),
                 "entry_profile_registry_hash": fingerprint(profiles),
             }
             learning_context = build_entry_learning_context(
@@ -740,7 +749,14 @@ def build_entry_analysis_context(
     context_fields = dict(
         analysis_cutoff_at=cutoff.isoformat(),
         instrument={"venue": venue, "symbol": symbol, "market_type": market_type, "direction": generation["direction"]},
-        planning_generation={"id": generation["id"], "planner_contract_version": generation["planner_contract_version"], "candidate_id": candidate["id"], "candidate_family": generation["candidate_family"]},
+        planning_generation={
+            "id": generation["id"],
+            "candidate_id": candidate["id"],
+            "candidate_family": generation["candidate_family"],
+            "cycle_number": generation.get("cycle_number", 1),
+            "entry_behavior_fingerprint": generation.get("entry_behavior_fingerprint"),
+            "schema_fingerprint": generation.get("schema_fingerprint"),
+        },
         candidate={
             "candidate_price": candidate["entry_price_usd"],
             "detected_at": detected.isoformat(),
@@ -780,12 +796,12 @@ def build_entry_analysis_context(
         learning_context=learning_context,
         unavailable_sections=tuple(key for key, value in serialized.items() if value["availability"] == "unavailable"),
     )
-    if opportunity_context is not None:
-        context_fields["candidate_opportunity_context"] = opportunity_context.model_dump(mode="json")
-        context_fields["inference_identity"] = {
-            "caller": "agent_shell.entry_planner.v2",
-            "prompt_version": "v2",
-            "model_provider": str(model_provider),
-        }
-        return EntryAnalysisContextV2(**context_fields)
-    return EntryAnalysisContextV1(**context_fields)
+    if opportunity_context is None:
+        raise ValueError("candidate_opportunity_context_missing")
+    context_fields["candidate_opportunity_context"] = opportunity_context.model_dump(mode="json")
+    context_fields["inference_identity"] = {
+        "caller": "agent_shell.entry_planner",
+        "prompt_fingerprint": entry_prompt_fingerprint(),
+        "model_provider": str(model_provider),
+    }
+    return EntryAnalysisContext(**context_fields)
