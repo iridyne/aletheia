@@ -7612,7 +7612,7 @@ def _apply_entry_version_collapse_v70(db: sqlite3.Connection) -> None:
     )
     plan_count = int(db.execute("SELECT COUNT(*) FROM entry_plans").fetchone()[0])
 
-    db.execute("PRAGMA defer_foreign_keys=ON")
+    db.execute("PRAGMA foreign_keys=OFF")
     db.execute("SAVEPOINT entry_version_collapse_v70")
     try:
         for object_type, name, _sql in objects:
@@ -7652,8 +7652,10 @@ def _apply_entry_version_collapse_v70(db: sqlite3.Connection) -> None:
             raise MigrationStateError("entry_version_collapse_plan_count_mismatch")
         if db.execute("PRAGMA foreign_key_check").fetchall():
             raise MigrationStateError("entry_version_collapse_foreign_key_invalid")
+        db.execute("PRAGMA foreign_keys=ON")
         db.execute("RELEASE SAVEPOINT entry_version_collapse_v70")
     except Exception:
+        db.execute("PRAGMA foreign_keys=ON")
         db.execute("ROLLBACK TO SAVEPOINT entry_version_collapse_v70")
         db.execute("RELEASE SAVEPOINT entry_version_collapse_v70")
         raise

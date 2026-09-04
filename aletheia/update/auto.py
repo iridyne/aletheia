@@ -447,7 +447,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
             "smoke=run_smoke_check()\n"
             "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
         )
-        result = _run([_uv(), "run", "--directory", str(worktree), "python", "-c", check], cwd=worktree, env=env)
+        result = _run([_uv(), "run", "--directory", str(worktree), "python", "-c", check], cwd=worktree, env=env, timeout=120)
         if result.returncode:
             raise AutoUpdateError("candidate_preflight_failed", (result.stderr or result.stdout)[-1000:])
         return worktree
