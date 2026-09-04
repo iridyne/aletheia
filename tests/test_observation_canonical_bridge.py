@@ -223,7 +223,8 @@ def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
     ).fetchone()
     assert tuple(claim) == ("candidate-1", "filter_candidate_outcomes", "active")
     # At-least-once retry is exactly-once at the Lab ledger.
-    assert import_delivery_receipts()["processed"] == 0
+    for _ in range(3):
+        assert import_delivery_receipts()["processed"] == 0
     cursor_after_idle = get_lab_db().execute(
         "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
         "source_checkpoint_fingerprint FROM observation_import_cursors WHERE source_name='main'"
@@ -274,7 +275,11 @@ def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
 
 @pytest.mark.parametrize(
     "corruption",
-    ["missing_identity", "cursor_rollback", "bad_fingerprint", "malformed_json"],
+    [
+        "missing_identity", "cursor_rollback", "bad_fingerprint", "malformed_json",
+        "zero_missing_chain", "negative_sequence", "source_mismatch",
+        "retry_mismatch", "chain_mismatch",
+    ],
 )
 def test_importer_idle_rejects_unproved_prior_cursor_identity(corruption):
     from aletheia.observation_lab.canonical import import_delivery_receipts
@@ -292,18 +297,40 @@ def test_importer_idle_rejects_unproved_prior_cursor_identity(corruption):
         checkpoint["last_receipt_id"] = None
     elif corruption == "cursor_rollback":
         checkpoint["contiguous_sequence"] = 0
+    elif corruption == "zero_missing_chain":
+        checkpoint.update(
+            contiguous_sequence=0,
+            last_receipt_id=None,
+            receipt_chain_fingerprint=None,
+        )
+    elif corruption == "negative_sequence":
+        checkpoint["contiguous_sequence"] = -1
+    elif corruption == "source_mismatch":
+        checkpoint["source_name"] = "other"
+    elif corruption == "retry_mismatch":
+        checkpoint["retry_sequences"] = [2]
+    elif corruption == "chain_mismatch":
+        checkpoint["receipt_chain_fingerprint"] = "A" * 64
     checkpoint_json = json.dumps(checkpoint, sort_keys=True, separators=(",", ":"))
     if corruption == "malformed_json":
         checkpoint_json = "{"
     fingerprint = hashlib.sha256(checkpoint_json.encode()).hexdigest()
     if corruption == "bad_fingerprint":
         fingerprint = "0" * 64
+    cursor_sequence = {
+        "zero_missing_chain": 0,
+        "negative_sequence": -1,
+    }.get(corruption, 1)
+    if corruption == "negative_sequence":
+        lab.execute("PRAGMA ignore_check_constraints=ON")
     lab.execute(
         "INSERT INTO observation_import_cursors "
         "(source_name, contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
-        "source_checkpoint_fingerprint, updated_at) VALUES ('main', 1, '[]', ?, ?, 'before')",
-        (checkpoint_json, fingerprint),
+        "source_checkpoint_fingerprint, updated_at) VALUES ('main', ?, '[]', ?, ?, 'before')",
+        (cursor_sequence, checkpoint_json, fingerprint),
     )
+    if corruption == "negative_sequence":
+        lab.execute("PRAGMA ignore_check_constraints=OFF")
     corrupted = tuple(lab.execute(
         "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
         "source_checkpoint_fingerprint FROM observation_import_cursors WHERE source_name='main'"
@@ -316,6 +343,52 @@ def test_importer_idle_rejects_unproved_prior_cursor_identity(corruption):
         "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
         "source_checkpoint_fingerprint FROM observation_import_cursors WHERE source_name='main'"
     ).fetchone()) == corrupted
+
+
+def test_importer_fresh_empty_pass_does_not_create_cursor():
+    from aletheia.observation_lab.canonical import import_delivery_receipts
+    from aletheia.observation_lab.db import get_lab_db
+
+    lab = get_lab_db()
+    result = import_delivery_receipts()
+    assert result["available"] is True
+    assert result["processed"] == 0
+    assert lab.execute(
+        "SELECT 1 FROM observation_import_cursors WHERE source_name='main'"
+    ).fetchone() is None
+
+
+def test_importer_exact_limit_then_idle_preserves_last_processed_receipt():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt,
+        import_delivery_receipts,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+
+    get_lab_db()
+    receipt_ids = [
+        append_delivery_receipt(
+            receipt_kind="capture",
+            receipt_id=f"limit-receipt-{index}",
+            candidate_key=f"limit-candidate-{index}",
+            resolution_reason="authority_source_legacy",
+        )
+        for index in range(2)
+    ]
+
+    first = import_delivery_receipts(limit=1)
+    assert first["processed"] == 1, first
+    assert import_delivery_receipts(limit=1)["processed"] == 1
+    cursor_before_idle = tuple(get_lab_db().execute(
+        "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
+        "source_checkpoint_fingerprint FROM observation_import_cursors WHERE source_name='main'"
+    ).fetchone())
+    assert json.loads(cursor_before_idle[2])["last_receipt_id"] == receipt_ids[-1]
+    assert import_delivery_receipts(limit=1)["processed"] == 0
+    assert tuple(get_lab_db().execute(
+        "SELECT contiguous_sequence, retry_sequences_json, source_checkpoint_json, "
+        "source_checkpoint_fingerprint FROM observation_import_cursors WHERE source_name='main'"
+    ).fetchone()) == cursor_before_idle
 
 
 def test_importer_retries_main_ack_for_already_imported_receipt(monkeypatch):

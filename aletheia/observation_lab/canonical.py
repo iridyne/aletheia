@@ -3775,6 +3775,7 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                 previous_checkpoint_fingerprint_valid = False
             previous_checkpoint_valid = (
                 cursor is not None
+                and watermark >= 0
                 and isinstance(previous_checkpoint, dict)
                 and isinstance(retry, list)
                 and all(isinstance(item, int) and item >= 0 for item in retry)
@@ -3783,17 +3784,17 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
                 and previous_checkpoint.get("contiguous_sequence") == watermark
                 and previous_checkpoint.get("retry_sequences") == retry
                 and previous_checkpoint_fingerprint_valid
+                and isinstance(previous_checkpoint.get("receipt_chain_fingerprint"), str)
+                and len(previous_checkpoint["receipt_chain_fingerprint"]) == 64
+                and all(
+                    char in "0123456789abcdef"
+                    for char in previous_checkpoint["receipt_chain_fingerprint"]
+                )
                 and (
                     watermark == 0
                     or (
                         isinstance(previous_checkpoint.get("last_receipt_id"), str)
                         and bool(previous_checkpoint["last_receipt_id"])
-                        and isinstance(previous_checkpoint.get("receipt_chain_fingerprint"), str)
-                        and len(previous_checkpoint["receipt_chain_fingerprint"]) == 64
-                        and all(
-                            char in "0123456789abcdef"
-                            for char in previous_checkpoint["receipt_chain_fingerprint"]
-                        )
                     )
                 )
             )
