@@ -331,19 +331,35 @@ function ObserverRunsTab({ runs, state }: { runs: PredictionObserverRun[]; state
 
 // --- Preferences Tab ---
 function PreferencesTab({
-  prefs, cats, setCats, isSaving, saveCategories,
+  prefs, state, cats, setCats, isSaving, saveCategories,
 }: {
   prefs: PredictionPreferences | undefined
+  state: PredictionDataState
   cats: string
   setCats: (value: string) => void
   isSaving: boolean
   saveCategories: (categories: string[]) => void
 }) {
   const currentCats = prefs?.categories ?? []
+  const canMutate = state === 'available' && !isSaving
 
   return (
     <Card>
       <h3>Observer Preferences</h3>
+      {(state === 'loading' || state === 'unavailable') && (
+        <DataStateMessage
+          state={state}
+          message={state === 'loading'
+            ? 'Observer preferences are loading…'
+            : 'Observer preferences unavailable. The read failed; no categories or interval are implied.'}
+        />
+      )}
+      {state === 'stale' && (
+        <DataStateMessage
+          state="stale"
+          message="Observer preferences are stale. Retained values may not reflect the latest read; editing is disabled."
+        />
+      )}
       <div className="pred-pref-section">
         <label className="pred-pref-label">Observed Categories</label>
         <p className="text-muted text-sm">Keywords that filter which Polymarket events the observer tracks.</p>
@@ -358,9 +374,9 @@ function PreferencesTab({
             placeholder="Add categories (comma-separated)"
             value={cats}
             onChange={e => setCats(e.target.value)}
-            disabled={isSaving}
+            disabled={!canMutate}
             onKeyDown={e => {
-              if (e.key === 'Enter' && cats.trim() && !isSaving) {
+              if (e.key === 'Enter' && cats.trim() && canMutate) {
                 const newCats = [...currentCats, ...cats.split(',').map(s => s.trim()).filter(Boolean)]
                 saveCategories([...new Set(newCats)])
               }
@@ -368,7 +384,7 @@ function PreferencesTab({
           />
           <Button
             variant="secondary"
-            disabled={!cats.trim() || isSaving}
+            disabled={!cats.trim() || !canMutate}
             onClick={() => {
               const newCats = [...currentCats, ...cats.split(',').map(s => s.trim()).filter(Boolean)]
               saveCategories([...new Set(newCats)])
@@ -383,19 +399,19 @@ function PreferencesTab({
               variant="secondary"
               className="text-sm"
               onClick={() => saveCategories([])}
-              disabled={isSaving}
+              disabled={!canMutate}
             >
               Clear all categories
             </Button>
           </div>
         )}
       </div>
-      <div className="pred-pref-section mt-2">
+      {prefs && <div className="pred-pref-section mt-2">
         <label className="pred-pref-label">Observer Interval</label>
         <p className="text-muted text-sm">
-          The prediction observer runs every {prefs?.observer_interval_minutes ?? 30} minutes (configured in scheduler).
+          The prediction observer runs every {prefs.observer_interval_minutes} minutes (configured in scheduler).
         </p>
-      </div>
+      </div>}
     </Card>
   )
 }
@@ -607,6 +623,13 @@ export default function PredictionLens() {
     queryKey: ['prediction-preferences'],
     queryFn: api.getPredictionPreferences,
   })
+  const preferencesState = preferencesQuery.data && preferencesQuery.isFetching
+    ? 'stale'
+    : resolvePredictionDataState(
+      preferencesQuery.data ? [preferencesQuery.data] : undefined,
+      preferencesQuery.isPending,
+      preferencesQuery.isError,
+    )
   const exactMarketQuery = useQuery({
     queryKey: ['prediction-market-detail', selectedMarketId],
     queryFn: () => api.getPredictionMarketDetail(selectedMarketId!),
@@ -699,10 +722,13 @@ export default function PredictionLens() {
           ] : []),
           { id: 'preferences', label: preferenceLabel, render: () => <PreferencesTab
             prefs={preferencesQuery.data}
+            state={preferencesState}
             cats={preferenceDraft}
             setCats={setPreferenceDraft}
             isSaving={updatePreferences.isPending}
-            saveCategories={categories => updatePreferences.mutate(categories)}
+            saveCategories={categories => {
+              if (preferencesState === 'available') updatePreferences.mutate(categories)
+            }}
           /> },
         ]) as TabDef[]}
       />
