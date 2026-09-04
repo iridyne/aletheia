@@ -6,7 +6,7 @@ import json
 import re
 import time
 from uuid import uuid4
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import StrEnum
@@ -672,6 +672,7 @@ async def llm_structured(
     evaluation: dict[str, object] | None = None,
     deadline: float | None = None,
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None,
+    semantic_validator: Callable[[dict[str, object]], str | None] | None = None,
 ) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
@@ -707,6 +708,8 @@ async def llm_structured(
     last_response = None
     last_response_shape: str | None = None
     last_schema_error_code: str | None = None
+    last_semantic_error_code: str | None = None
+    semantic_validator_exception: BaseException | None = None
     active_structured_attempt: int | None = None
     recorded_structured_attempts: set[int] = set()
 
@@ -730,7 +733,10 @@ async def llm_structured(
         nonlocal inference_finished
         if inference_call is not None and not inference_finished:
             failure_diagnostics: dict[str, str] = {}
-            if error.startswith(("structured_parse_error", "structured_schema_invalid")):
+            if error.startswith((
+                "structured_parse_error", "structured_schema_invalid",
+                "structured_semantic_invalid",
+            )):
                 if last_response_shape:
                     failure_diagnostics["response_shape"] = last_response_shape
                 if error.startswith("structured_schema_invalid"):
@@ -741,7 +747,10 @@ async def llm_structured(
                 status="error",
                 response=last_response,
                 parse_valid=not error.startswith("structured_parse_error"),
-                schema_valid=False if error.startswith("structured_schema_invalid") else None,
+                schema_valid=(
+                    True if error.startswith("structured_semantic_invalid")
+                    else False if error.startswith("structured_schema_invalid") else None
+                ),
                 error_type=error.split(":", 1)[0],
                 failure_diagnostics=failure_diagnostics or None,
             )
@@ -785,6 +794,7 @@ async def llm_structured(
 
         # Two strict-schema attempts: a fresh request and one nonce-bearing repair.
         last_schema_error_text = ""
+        last_semantic_error_code = None
         last_err = "structured_parse_error: no valid JSON object found in response"
         max_attempts = 2
         failed_models: list[str] = []
@@ -806,9 +816,14 @@ async def llm_structured(
                     "Output ONLY the JSON object now. Do not include thinking, "
                     "explanation, markdown, or any text outside the object."
                 )
-                if last_schema_error_text:
+                if last_semantic_error_code:
                     repair_message += (
-                        f"\nThe exact validator error from the previous response was:\n"
+                        "\nThe semantic validator error code from the previous response was:\n"
+                        f"{last_semantic_error_code}"
+                    )
+                elif last_schema_error_text:
+                    repair_message += (
+                        "\nThe exact validator error from the previous response was:\n"
                         f"{last_schema_error_text}"
                     )
                 messages.append({"role": "user", "content": repair_message})
@@ -890,6 +905,44 @@ async def llm_structured(
                         )
                         continue
                     break
+                if semantic_validator is not None:
+                    semantic_error: str | None = None
+                    code = ""
+                    try:
+                        semantic_error = semantic_validator(data)
+                        if semantic_error is not None:
+                            code = str(semantic_error).strip()
+                            if (
+                                not code
+                                or len(code) > 100
+                                or re.fullmatch(r"[A-Za-z0-9_.:-]+", code) is None
+                            ):
+                                raise ValueError("semantic_validator_error_code_invalid")
+                    except Exception as exc:
+                        semantic_validator_exception = exc
+                        _record_call_finished(
+                            inference_call,
+                            status="error",
+                            response=resp,
+                            parse_valid=True,
+                            schema_valid=True,
+                            error_type="semantic_validator_error",
+                        )
+                        inference_finished = True
+                        raise
+                    if semantic_error is not None:
+                        last_semantic_error_code = code
+                        last_err = f"structured_semantic_invalid:{code}"
+                        _record_structured_outcome("structured_semantic_invalid")
+                        if attempt < max_attempts - 1:
+                            logger.warning(
+                                "LLM structured call: semantic validation failed "
+                                "(attempt %d/%d) — retrying",
+                                attempt + 1,
+                                max_attempts,
+                            )
+                            continue
+                        break
                 _record_call_finished(
                     inference_call,
                     status="success",
@@ -958,6 +1011,8 @@ async def llm_structured(
         _record_structured_outcome("parse_error")
         return _failure(f"structured_parse_error: {e}")
     except Exception as e:
+        if e is semantic_validator_exception:
+            raise
         detail = _exception_detail(e)
         logger.warning("LLM structured call failed: %s", detail)
         _record_structured_outcome("provider_error")

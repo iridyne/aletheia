@@ -175,6 +175,21 @@ def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(m
     assert all("bars" not in window for window in prompt["candle_windows"].values())
     assert captured["context_artifacts"][0]["rendered_chars"] == len(captured["user"])
     assert context.candle_windows["15m"]["bars"]
+    semantic_validator = captured["semantic_validator"]
+    assert semantic_validator({
+        **result.model_dump(mode="json"),
+        "supporting_fact_refs": ["missing:fact"],
+    }) == "hypothesis_fact_ref_not_supplied"
+    assert semantic_validator({
+        "decision": "ENTRY_PLAN", "reason_code": "OK",
+        "mechanism": "reversal", "direction": "long",
+        "primary_anchor_ref": context.anchors[0].anchor_id,
+        "invalidation_anchor_ref": context.anchors[1].anchor_id,
+        "entry_profile_id": "missing-profile", "entry_profile_version": "v1",
+        "execution_urgency": "PASSIVE", "risk_tier": "LOW", "horizon": "INTRADAY",
+        "supporting_fact_refs": [context.anchors[1].anchor_id],
+    }) == "entry_profile_not_registered"
+    assert semantic_validator(result.model_dump(mode="json")) is None
 
 
 def test_anchor_and_context_hashes_are_stable_and_aliases_do_not_vote_twice():

@@ -417,6 +417,111 @@ async def test_llm_structured_repair_attempt_uses_a_nonce_and_new_messages(tmp_p
     assert captured[0].messages != captured[1].messages
     assert captured[1].messages[-1]["content"].startswith("[repair:")
 
+@pytest.mark.asyncio
+async def test_llm_structured_repairs_semantic_rejection_with_same_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+    from aletheia.economics import inference_calls
+
+    captured = []
+    outcomes = []
+    responses = iter([
+        ModelResponse(content='{"value": 1}', model="m1", raw={"usage": {}}),
+        ModelResponse(content='{"value": 2}', model="m1", raw={"usage": {}}),
+    ])
+
+    async def complete(request, **_kwargs):
+        captured.append(request)
+        return next(responses)
+
+    async def provider(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    monkeypatch.setattr(
+        inference_calls, "record_structured_attempt_outcome",
+        lambda _call_id, attempt, outcome: outcomes.append((attempt, outcome)) or True,
+    )
+
+    data, error = await helpers.llm_structured(
+        "sys", "user", schema=_ObjectSchema,
+        semantic_validator=lambda item: "value_not_grounded" if item["value"] == 1 else None,
+    )
+
+    assert (data, error) == ({"value": 2}, None)
+    assert [request.exclude_models for request in captured] == [(), ()]
+    repair = captured[1].messages[-1]["content"]
+    assert repair.startswith("[repair:")
+    assert "value_not_grounded" in repair
+    assert outcomes == [(0, "structured_semantic_invalid"), (1, "accepted")]
+
+
+@pytest.mark.asyncio
+async def test_llm_structured_semantic_exhaustion_keeps_parse_and_schema_valid(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+
+    calls = []
+    finished = []
+
+    async def complete(request, **_kwargs):
+        calls.append(request)
+        return ModelResponse(content='{"value": 1}', model="m1", raw={"usage": {}})
+
+    async def provider(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    monkeypatch.setattr(
+        helpers, "_record_call_finished",
+        lambda _call, **kwargs: finished.append(kwargs),
+    )
+
+    data, error = await helpers.llm_structured(
+        "sys", "user", schema=_ObjectSchema,
+        semantic_validator=lambda _item: "fact_ref_not_supplied",
+    )
+
+    assert data is None
+    assert error == "structured_semantic_invalid:fact_ref_not_supplied"
+    assert len(calls) == 2
+    assert finished[-1]["status"] == "error"
+    assert finished[-1]["parse_valid"] is True
+    assert finished[-1]["schema_valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_llm_structured_propagates_semantic_callback_exception_without_retry(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+
+    calls = 0
+
+    async def complete(_request, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(content='{"value": 1}', model="m1", raw={"usage": {}})
+
+    async def provider(_name):
+        return object()
+
+    def broken(_item):
+        raise RuntimeError("validator_bug")
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+
+    with pytest.raises(RuntimeError, match="validator_bug"):
+        await helpers.llm_structured(
+            "sys", "user", schema=_ObjectSchema, semantic_validator=broken,
+        )
+    assert calls == 1
+
+
 def test_portable_schema_keeps_conditional_skip_sparse_and_locally_valid():
     from aletheia.agent_shell.trading_decision import _DECISION_SCHEMA
     from aletheia.agents.helpers import _validate_structured_payload

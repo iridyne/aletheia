@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -289,7 +288,10 @@ async def plan_next_candidate(
             "model_invoked": False,
         }
     except PlanIntentError as exc:
-        if exc.code.startswith(("PLANNER_SCHEMA_INVALID", "PLANNER_INVALID_JSON")):
+        if exc.code.startswith((
+            "PLANNER_SCHEMA_INVALID", "PLANNER_INVALID_JSON",
+            "PLANNER_SEMANTIC_INVALID",
+        )):
             repo.fail_candidate_planning(
                 generation["id"], owner, exc.code, stage="validation",
                 model_invoked=True, compiler_invoked=False,
@@ -432,16 +434,22 @@ async def system_operator_entry_planner(
     context_model = EntryAnalysisContext.model_validate(context)
     model_view = entry_model_view(context_model)
     provider_name = provider_name or get_provider_for_tier("deep")
-    planning_generation_id = str(
-        (model_view.get("planning_generation") or {}).get("id") or ""
-    )
+    planning_generation_id = str(context_model.planning_generation.get("id") or "")
     from aletheia.trading.entry_contract import CANONICAL_ENTRY_SYSTEM_PROMPT
+    def _validate_semantics(data: dict[str, object]) -> str | None:
+        hypothesis = EntryHypothesis.model_validate(data)
+        try:
+            validate_hypothesis_references(hypothesis, context_model)
+        except ValueError as exc:
+            return str(exc).splitlines()[0][:100]
+        return None
+
     call_kwargs = {
         "schema": EntryHypothesis,
         "max_tokens": 768,
         "provider": provider_name,
         "fallback_to_defaults": False,
-        "context_symbol": str((model_view.get("instrument") or {}).get("symbol") or ""),
+        "context_symbol": str(context_model.instrument.get("symbol") or ""),
         "context_artifacts": (
             [{
                 "kind": "environment",
@@ -456,6 +464,7 @@ async def system_operator_entry_planner(
             if planning_generation_id else None
         ),
         "reasoning_effort": "medium",
+        "semantic_validator": _validate_semantics,
     }
     prompt_payload = canonical_json(model_view)
     with inference_priority(InferencePriority.DEFAULT):
@@ -475,6 +484,9 @@ async def system_operator_entry_planner(
         if error_text.startswith("structured_schema_invalid"):
             detail = error_text.split(":", 1)[1][:80] if ":" in error_text else ""
             raise PlanIntentError(f"PLANNER_SCHEMA_INVALID:{detail}")
+        if error_text.startswith("structured_semantic_invalid"):
+            detail = error_text.split(":", 1)[1][:100] if ":" in error_text else "unknown"
+            raise PlanIntentError(f"PLANNER_SEMANTIC_INVALID:{detail}")
         if error_text.startswith("llm_unavailable"):
             if "structured_timeout" in error_text:
                 raise PlanIntentError("PLANNER_TIMEOUT")
