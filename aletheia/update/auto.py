@@ -46,7 +46,7 @@ _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
 _SYSTEMCTL_TIMEOUT_SEC = 30
-_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
+_TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed", "observation_settlement_failed"}
 _RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
 _AUTO_DEPLOY_ROLE = "paper"
 _ROLE_MIGRATION_DETAIL = (
@@ -709,14 +709,30 @@ def run() -> dict[str, Any]:
                 raise AutoUpdateError("target_dependency_bind_failed")
             had_previous_static = _activate_frontend_build()
             static_activated = True
-            activation_barrier.__exit__(None, None, None)
-            activation_barrier = None
             started = _gateway_command("start")
             if not started.get("ok"):
                 raise AutoUpdateError(started.get("reason", "gateway_start_failed"), started.get("detail", ""))
             verified = _wait_for_runtime(target, version)
             if not verified.get("ok"):
                 raise AutoUpdateError(verified.get("reason", "runtime_verification_failed"), str(verified.get("detail", "")))
+            from aletheia.update import target_fresh
+
+            reanchor = target_fresh.reanchor_joint_checkpoint(
+                project_root=_PROJECT_ROOT,
+                data_dir=get_data_dir(),
+                env=_safe_env(),
+                python_executable=sys.executable,
+                expected_checkpoint_fingerprint=str(
+                    (settlement.get("checkpoint") or {}).get("current_fingerprint") or ""
+                ),
+            )
+            if reanchor.get("ok") is not True:
+                raise AutoUpdateError(
+                    "observation_checkpoint_reanchor_failed",
+                    str(reanchor.get("detail") or reanchor.get("reason") or "target_fresh_reanchor_failed"),
+                )
+            activation_barrier.__exit__(None, None, None)
+            activation_barrier = None
 
             observer_postflight = _observer_auto_postflight(observer_guard, target)
             if observer_postflight.get("required") and not observer_postflight.get("ok"):
