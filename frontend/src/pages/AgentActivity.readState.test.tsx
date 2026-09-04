@@ -89,14 +89,22 @@ it('renders an intentional empty catalog only after a successful read', async ()
 })
 
 it('retains a cached catalog as stale without authorizing manual runs', async () => {
+  let rejectCatalog!: (error: Error) => void
   client.setQueryData(['agent-catalog'], { agents: [{
     name: 'research_agent', side_effect_class: 'research', cost_class: 'high', gate_check: false,
   }] })
-  mocks.getAgentCatalog.mockRejectedValue(new Error('catalog refresh failed'))
+  mocks.getAgentCatalog.mockReturnValue(new Promise((_, reject) => { rejectCatalog = reject }))
   await renderActivity()
   await waitForText('Agent catalog is stale')
 
   const runButton = host.querySelector('button[aria-label="research_agent"]') as HTMLButtonElement
+  expect(runButton).not.toBeNull()
+  expect(runButton.disabled).toBe(true)
+  act(() => runButton.click())
+  expect(mocks.startAgentRun).not.toHaveBeenCalled()
+
+  await act(async () => rejectCatalog(new Error('catalog refresh failed')))
+  expect(host.textContent).toContain('Agent catalog is stale')
   expect(runButton.disabled).toBe(true)
   act(() => runButton.click())
   expect(mocks.startAgentRun).not.toHaveBeenCalled()
