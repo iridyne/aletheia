@@ -47,12 +47,6 @@ Before changing code:
 6. **Determine Verification**: executable tests, runtime observations, or
    economic evidence required to prove the change.
 
-For D1/D2 or an explicitly selected high-risk D0, an optional pre-change shadow
-audit may be run before step 1 to surface semantic gaps early. Run convergence
-against the exact candidate head after implementation. Both phases are advisory
-only and never a required gate. See
-[SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md).
-
 ## PR metadata preflight (Phase 1)
 
 For PR review budgets, feedback validity, lifecycle states, and merge readiness,
