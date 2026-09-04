@@ -214,7 +214,11 @@ def capture_update_continuity() -> dict[str, Any]:
             identities = _observation_ids()
             manifest_generations = {str(item.observation_id): int(item.generation) for item in load_active_manifests()}
             verified = verify_joint_checkpoint()
-            settleable = verify_joint_checkpoint(allow_main_outbox_progress=True)
+            settleable = (
+                verified
+                if verified.ok
+                else verify_joint_checkpoint(allow_main_outbox_progress=True)
+            )
             checkpoint = {
                 "verified": {
                     "ok": verified.ok,
@@ -1000,7 +1004,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     gateway_quiesced = False
     settlement: dict[str, Any] = {}
     if restart:
-        mark_phase("Settling Observation data")
+        mark_phase("Stopping runtime")
         stopped = applier._stop_gateway()
         if not stopped.get("ok"):
             finish_phase()
@@ -1012,6 +1016,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "continuity": {"preflight": preflight, "before": before},
             }
         gateway_quiesced = True
+        mark_phase("Settling Observation data")
         from aletheia.observation_lab.runner import observation_settlement_barrier
         try:
             barrier = observation_settlement_barrier()
@@ -1031,6 +1036,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "continuity_verified": False, "continuity_state": "failed",
                 "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
             }
+        mark_phase("Creating recovery backup")
         try:
             from aletheia.backup.service import BackupService
             from aletheia.config.loader import get_data_dir
@@ -1084,6 +1090,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             "continuity": {
                 "preflight": preflight,
                 "before": before,
+                "settlement": settlement,
                 "timings_ms": {
                     "preflight_capture": preflight_capture_ms,
                     "gateway_wait": 0,
@@ -1201,6 +1208,7 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     continuity = {
         "preflight": preflight,
         "before": before,
+        "settlement": settlement,
         "after": after,
         "comparison": comparison,
         "timings_ms": timings_ms,
