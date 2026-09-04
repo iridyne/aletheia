@@ -348,7 +348,6 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
                 pause_release(paths, &request.previous_release)?;
             }
             stop_release(paths, &request.previous_release);
-            activate_release(paths, &request.candidate_release)?;
         } else {
             // Tray restart during an incomplete transaction: stop the selected
             // candidate and resume the idempotent migrate/start sequence.
@@ -373,6 +372,13 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
             bail!("activation changed the pending update operation identity");
         }
         request = refreshed;
+
+        // The candidate hook above settles Observation data and creates the
+        // authoritative rollback backup while the old runtime is stopped.
+        // Select new code only after that quiesced data boundary succeeds.
+        if current.current == request.previous_release {
+            activate_release(paths, &request.candidate_release)?;
+        }
 
         write_state(
             paths,

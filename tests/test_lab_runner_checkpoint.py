@@ -260,3 +260,26 @@ def test_checkpoint_save_refuses_unavailable_outbox(monkeypatch):
     runner._save_checkpoint(summary)
     assert summary == {"ok": False, "reason": "main_outbox_unavailable"}
     assert saved == []
+
+
+def test_settlement_reports_cycle_lock_contention_without_mutation(monkeypatch):
+    from contextlib import contextmanager
+
+    from aletheia.observation_lab import canonical, runner, worker_lock
+
+    @contextmanager
+    def contended():
+        raise worker_lock.WorkerCycleLockError("busy")
+        yield
+
+    monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", contended)
+    monkeypatch.setattr(
+        canonical,
+        "import_delivery_receipts",
+        lambda **_: pytest.fail("contention must not enter the importer"),
+    )
+
+    assert runner.settle_observation_continuity() == {
+        "ok": False,
+        "reason": "cycle_lock_contended",
+    }

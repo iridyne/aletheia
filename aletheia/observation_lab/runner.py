@@ -233,7 +233,7 @@ def _save_checkpoint(summary: dict[str, Any]) -> None:
         summary.update(ok=False, reason=f"checkpoint_save_error:{exc!r}"[:400])
 
 
-def settle_observation_continuity(
+def _settle_observation_continuity(
     *, advance_windows: bool = False, batch_size: int = 500, max_batches: int = 100
 ) -> dict[str, Any]:
     """Settle Main/Lab transport and persist only one strictly verified cut."""
@@ -324,13 +324,25 @@ def settle_observation_continuity(
         }
 
 
+def settle_observation_continuity(**kwargs) -> dict[str, Any]:
+    from aletheia.observation_lab.worker_lock import WorkerCycleLockError
+
+    try:
+        return _settle_observation_continuity(**kwargs)
+    except WorkerCycleLockError:
+        return {"ok": False, "reason": "cycle_lock_contended"}
+
+
 @contextmanager
 def observation_settlement_barrier(**kwargs):
     """Keep the cycle lock held after settlement through caller activation."""
-    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+    from aletheia.observation_lab.worker_lock import WorkerCycleLockError, worker_cycle_exclusion
 
-    with worker_cycle_exclusion():
-        yield settle_observation_continuity(**kwargs)
+    try:
+        with worker_cycle_exclusion():
+            yield settle_observation_continuity(**kwargs)
+    except WorkerCycleLockError:
+        yield {"ok": False, "reason": "cycle_lock_contended"}
 
 
 def register_builtin_handlers() -> None:
