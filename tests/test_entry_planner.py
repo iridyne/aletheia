@@ -418,29 +418,43 @@ def test_legacy_false_no_plan_remains_immutable_during_canonical_cutover():
     assert repo.get_candidate_planning_generation(generation["id"]) == before
 
 
-def test_v68_restores_false_no_plan_rows_mutated_by_v67_cutover():
-    from aletheia.storage.migrations import _apply_immutable_legacy_entry_cutover_v68
+def test_v68_v69_restore_false_no_plan_rows_mutated_by_v67_cutover():
+    from aletheia.storage.migrations import (
+        _apply_immutable_legacy_entry_cutover_v68,
+        _apply_legacy_entry_updated_at_v69,
+    )
 
-    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    candidate = _typed_candidate(
+        mechanism="reversal",
+        family="mean_reversion",
+        source_at="2026-09-03T00:00:00+00:00",
+    )
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    completed_at = datetime.now(timezone.utc).isoformat()
+    completed_at = "2026-09-03T00:01:00+00:00"
+    refreshed_at = "2026-09-04T00:00:00+00:00"
+    refreshed = _typed_candidate(
+        mechanism="reversal",
+        family="mean_reversion",
+        rank=9,
+        price=104,
+        source_at=refreshed_at,
+    )
     repo.execute_write(
         "UPDATE candidate_planning_generations SET entry_behavior_fingerprint=NULL, "
         "status='no_plan', result_kind='no_plan', result_json=?, attention_status='terminal', "
-        "attention_terminal_at=?, attention_terminal_reason='no_plan', completed_at=?, updated_at=? "
+        "attention_terminal_at=?, attention_terminal_reason='no_plan', completed_at=?, "
+        "last_candidate_id=?, updated_at=? "
         "WHERE id=?",
         (
             json.dumps({"reason_code": "AI_ENTRY_RUNTIME_UNSUPPORTED"}),
             completed_at,
             completed_at,
-            completed_at,
+            refreshed.id,
+            refreshed_at,
             generation["id"],
         ),
     )
     before = repo.get_candidate_planning_generation(generation["id"])
-    refreshed = _typed_candidate(
-        mechanism="reversal", family="mean_reversion", rank=9, price=104
-    )
     current, _ = repo.ensure_candidate_planning_generation(refreshed.id)
     repo.execute_write(
         "UPDATE candidate_planning_generations SET is_current=0, status='superseded', "
@@ -450,6 +464,7 @@ def test_v68_restores_false_no_plan_rows_mutated_by_v67_cutover():
     )
 
     _apply_immutable_legacy_entry_cutover_v68(repo.get_db())
+    _apply_legacy_entry_updated_at_v69(repo.get_db())
 
     assert repo.get_candidate_planning_generation(generation["id"]) == before
 
