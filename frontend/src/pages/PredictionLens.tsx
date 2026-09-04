@@ -623,11 +623,13 @@ export default function PredictionLens() {
     queryKey: ['prediction-preferences'],
     queryFn: api.getPredictionPreferences,
   })
-  const preferencesState = resolvePredictionDataState(
-    preferencesQuery.data ? [preferencesQuery.data] : undefined,
-    preferencesQuery.isPending,
-    preferencesQuery.isError,
-  )
+  const preferencesState = preferencesQuery.data && preferencesQuery.isFetching
+    ? 'stale'
+    : resolvePredictionDataState(
+      preferencesQuery.data ? [preferencesQuery.data] : undefined,
+      preferencesQuery.isPending,
+      preferencesQuery.isError,
+    )
   const exactMarketQuery = useQuery({
     queryKey: ['prediction-market-detail', selectedMarketId],
     queryFn: () => api.getPredictionMarketDetail(selectedMarketId!),

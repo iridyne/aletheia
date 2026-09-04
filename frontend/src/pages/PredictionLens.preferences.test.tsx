@@ -90,6 +90,33 @@ it('allows the first category after a successful empty preferences read', async 
   expect(mocks.updatePredictionPreferences).toHaveBeenCalledWith({ categories: ['energy'] })
 })
 
+it('blocks cached preferences while a background refresh is pending and after it fails', async () => {
+  let rejectRead!: (error: Error) => void
+  client.setQueryData(['prediction-preferences'], { categories: ['macro'], observer_interval_minutes: 30 })
+  mocks.getPredictionPreferences.mockReturnValue(new Promise((_, reject) => { rejectRead = reject }))
+  await renderLens()
+
+  const input = host.querySelector('input[placeholder^="Add categories"]') as HTMLInputElement
+  expect(host.textContent).toContain('Observer preferences are stale')
+  expect(input.disabled).toBe(true)
+  expect(button('Add').disabled).toBe(true)
+  expect(button('Clear all categories').disabled).toBe(true)
+  setInput(input, 'energy')
+  act(() => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    button('Add').click()
+    button('Clear all categories').click()
+  })
+  expect(mocks.updatePredictionPreferences).not.toHaveBeenCalled()
+
+  await act(async () => rejectRead(new Error('preferences refresh failed')))
+  expect(host.textContent).toContain('Observer preferences are stale')
+  expect(input.disabled).toBe(true)
+  expect(button('Add').disabled).toBe(true)
+  expect(button('Clear all categories').disabled).toBe(true)
+  expect(mocks.updatePredictionPreferences).not.toHaveBeenCalled()
+})
+
 it('keeps a preference write locked across tab remounts and reports PATCH success when refresh fails', async () => {
   let resolveSave!: (value: { status: string; categories: string[] }) => void
   const save = new Promise<{ status: string; categories: string[] }>(resolve => { resolveSave = resolve })
