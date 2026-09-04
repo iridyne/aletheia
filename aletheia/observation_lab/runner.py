@@ -256,7 +256,6 @@ def settle_observation_continuity(
         if not checkpoint.get("ok"):
             return {"ok": False, "reason": checkpoint.get("reason"), "checkpoint": checkpoint}
         def failed(reason: str, **details: Any) -> dict[str, Any]:
-            _save_checkpoint(checkpoint)
             return {"ok": False, "reason": reason, "checkpoint": checkpoint, **details}
         imported_total = 0
         imported: dict[str, Any] = {}

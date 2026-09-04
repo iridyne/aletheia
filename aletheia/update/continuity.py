@@ -1034,13 +1034,28 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "continuity_verified": False, "continuity_state": "failed",
                 "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
             }
-        from aletheia.backup.service import BackupService
-        from aletheia.config.loader import get_data_dir
-        preactivation_backup = str(
-            BackupService(get_data_dir()).create_backup(
-                label="interactive_update_activate", profile="authoritative"
+        try:
+            from aletheia.backup.service import BackupService
+            from aletheia.config.loader import get_data_dir
+            preactivation_backup = str(
+                BackupService(get_data_dir()).create_backup(
+                    label="interactive_update_activate", profile="authoritative"
+                )
             )
-        )
+        except Exception as exc:
+            barrier.__exit__(None, None, None)
+            barrier = None
+            restarted = applier._restart_gateway()
+            finish_phase()
+            return {
+                "applied": False,
+                "mode": "development",
+                "reason": "observation_backup_failed" if restarted.get("ok") else "old_runtime_restart_failed",
+                "message": type(exc).__name__,
+                "continuity_verified": False,
+                "continuity_state": "failed",
+                "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
+            }
     else:
         barrier = None
         preactivation_backup = ""
