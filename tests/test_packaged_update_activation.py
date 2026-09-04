@@ -18,6 +18,10 @@ def _configure_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request:
 
 
 def test_normal_activation_runs_migrations_without_restoring_backup(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    from aletheia.observation_lab import execution_owner, runner
+
     _configure_request(
         monkeypatch,
         tmp_path,
@@ -41,6 +45,13 @@ def test_normal_activation_runs_migrations_without_restoring_backup(monkeypatch,
         "validate_current_data",
         lambda: {"ok": True, "sqlite": "ok", "audit_records": 7},
     )
+    monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: "main")
+
+    @contextmanager
+    def settled():
+        yield {"ok": True, "reason": "fingerprint_match"}
+
+    monkeypatch.setattr(runner, "observation_settlement_barrier", settled)
     class FakeBackupService:
         def __init__(self, *_args, **_kwargs):
             pass
@@ -95,6 +106,34 @@ def test_manual_rollback_restores_exact_checkpoint_before_validation(monkeypatch
         "action": "rollback",
         "restored": {"success": True, "files_restored": 12},
     }
+
+
+def test_packaged_activation_rejects_unquiesced_worker_owner(monkeypatch, tmp_path):
+    from aletheia.observation_lab import execution_owner, runner
+
+    _configure_request(
+        monkeypatch,
+        tmp_path,
+        {
+            "schema_version": 1,
+            "operation_id": "update-worker-owner",
+            "action": "activate",
+            "candidate_release": "new",
+            "previous_release": "old",
+            "backup_path": str(tmp_path / "backup.tar.gz"),
+            "backup_profile": "online",
+        },
+    )
+    monkeypatch.setattr(execution_owner, "get_execution_owner", lambda: "worker")
+    monkeypatch.setattr(
+        runner,
+        "observation_settlement_barrier",
+        lambda: pytest.fail("worker-owned packaged runtime must fail before settlement"),
+    )
+
+    with pytest.raises(packaged.PackagedUpdateError) as caught:
+        packaged_commands.prepare_activation_data()
+    assert caught.value.reason == "packaged_worker_owner_not_quiesced"
 
 
 def test_rollback_data_preparation_rejects_missing_checkpoint(monkeypatch, tmp_path):

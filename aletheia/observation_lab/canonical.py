@@ -4155,6 +4155,76 @@ def import_delivery_receipts(*, limit: int = 100, source_name: str = "main") -> 
         return {"available": False, "reason": "outbox_unavailable", "error": type(exc).__name__, "processed": 0}
 
 
+def delivery_import_interruption_status(*, source_name: str = "main") -> dict[str, Any]:
+    """Report durable importer crash evidence without authorizing a checkpoint."""
+    from aletheia.observation_lab.checkpoint import latest_joint_checkpoint
+    from aletheia.storage.sqlite import get_db
+
+    if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
+        return {"available": False, "reason": "lab_unavailable"}
+    try:
+        main = get_db()
+        with lab_transaction() as lab:
+            cursor = lab.execute(
+                "SELECT contiguous_sequence, retry_sequences_json, updated_at FROM "
+                "observation_import_cursors WHERE source_name=?",
+                (source_name,),
+            ).fetchone()
+            if cursor is None:
+                return {"available": True, "reason": "delivery_import_not_started"}
+            trusted = latest_joint_checkpoint()
+            if trusted is None or str(cursor[2] or "") <= trusted.recorded_at:
+                return {"available": True, "reason": "delivery_import_not_interrupted"}
+            watermark = int(cursor[0])
+            retry = json.loads(cursor[1] or "[]")
+            if retry:
+                health = lab.execute(
+                    "SELECT last_error FROM observation_job_health "
+                    "WHERE job_id='delivery_importer'"
+                ).fetchone()
+                return {
+                    "available": True,
+                    "reason": str(health[0] if health and health[0] else "delivery_import_failed")[:400],
+                    "cut": "possible_delivery_import_poison_retry",
+                    "retry_sequences": retry,
+                }
+            pending = main.execute(
+                "SELECT * FROM observation_delivery_outbox "
+                "WHERE sequence<=? AND acknowledged_at IS NULL "
+                "ORDER BY sequence",
+                (watermark,),
+            ).fetchall()
+            for row in pending:
+                if _lab_receipt_application_update(lab, row) is None:
+                    return {
+                        "available": True,
+                        "reason": "delivery_import_evidence_incomplete",
+                    }
+            if pending:
+                return {
+                    "available": True,
+                    "reason": "possible_delivery_import_interrupted_after_lab_commit_before_main_ack",
+                    "cut": "possible_lab_committed_main_ack_pending",
+                    "contiguous_sequence": watermark,
+                    "pending_ack_sequences": [int(row["sequence"]) for row in pending],
+                }
+            last = main.execute(
+                "SELECT * FROM observation_delivery_outbox WHERE sequence=? AND "
+                "acknowledged_at IS NOT NULL",
+                (watermark,),
+            ).fetchone()
+            if last is None or _lab_receipt_application_update(lab, last) is None:
+                return {"available": True, "reason": "delivery_import_evidence_incomplete"}
+            return {
+                "available": True,
+                "reason": "possible_delivery_import_interrupted_after_main_ack_before_checkpoint",
+                "cut": "possible_main_ack_committed_checkpoint_pending",
+                "contiguous_sequence": watermark,
+            }
+    except (FileNotFoundError, sqlite3.Error, TypeError, ValueError) as exc:
+        return {"available": False, "reason": "outbox_unavailable", "error": type(exc).__name__}
+
+
 def prune_observation_delivery_outbox(
     *, keep_acknowledged: int = 1000, limit: int = 1000,
     safety_grace_seconds: int = 3600,
@@ -4656,6 +4726,7 @@ __all__ = [
     "build_authority_cutover_proof",
     "compact_finalized_generations",
     "consume_inference_plan",
+    "delivery_import_interruption_status",
     "enqueue_lab_audit",
     "freeze_inference_plan",
     "get_authority_source",

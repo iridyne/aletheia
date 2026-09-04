@@ -243,6 +243,7 @@ def _settle_observation_continuity(
         return {"ok": False, "reason": "lab_unavailable"}
     from aletheia.observation_lab.canonical import (
         compact_finalized_generations,
+        delivery_import_interruption_status,
         import_delivery_receipts,
         mirror_lab_audit_outbox,
         prune_observation_delivery_outbox,
@@ -254,7 +255,13 @@ def _settle_observation_continuity(
     with worker_cycle_exclusion():
         checkpoint = _pass_checkpoint()
         if not checkpoint.get("ok"):
-            return {"ok": False, "reason": checkpoint.get("reason"), "checkpoint": checkpoint}
+            interruption = delivery_import_interruption_status()
+            return {
+                "ok": False,
+                "reason": checkpoint.get("reason"),
+                "checkpoint": checkpoint,
+                "delivery_import_interruption": interruption,
+            }
         def failed(reason: str, **details: Any) -> dict[str, Any]:
             return {"ok": False, "reason": reason, "checkpoint": checkpoint, **details}
         imported_total = 0

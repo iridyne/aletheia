@@ -711,6 +711,8 @@ def sync_all(
             typer.echo(f"audit mirror: {payload['audit_mirror']}")
             typer.echo(f"windows: {payload['windows']}")
             typer.echo(f"compaction: {payload['compaction']}")
+            if not settled.get("ok"):
+                typer.echo(f"sync failed: {payload['reason']}", err=True)
         if not settled.get("ok"):
             raise typer.Exit(code=1)
         return
