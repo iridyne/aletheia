@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v68"
+SCHEMA_VERSION = "aletheia-sqlite-v69"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3584,6 +3584,34 @@ WHERE entry_behavior_fingerprint IS NULL
 """
 _IMMUTABLE_LEGACY_ENTRY_CUTOVER_V68_CHECKSUM = hashlib.sha256(
     _IMMUTABLE_LEGACY_ENTRY_CUTOVER_V68_SQL.encode("utf-8")
+).hexdigest()
+
+_LEGACY_ENTRY_UPDATED_AT_V69_SQL = """
+UPDATE candidate_planning_generations AS legacy
+SET updated_at=MAX(
+    completed_at,
+    COALESCE(
+        (
+            SELECT json_extract(member.candidate_opportunity_context_json, '$.source.detected_at')
+            FROM universe_members AS member
+            WHERE member.id=legacy.last_candidate_id
+        ),
+        completed_at
+    )
+)
+WHERE entry_behavior_fingerprint IS NULL
+  AND result_kind='no_plan'
+  AND result_json LIKE '%AI_ENTRY_RUNTIME_UNSUPPORTED%'
+  AND attention_terminal_reason='no_plan'
+  AND completed_at IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM candidate_planning_generations AS successor
+      WHERE successor.previous_generation_id=legacy.id
+        AND successor.entry_behavior_fingerprint IS NOT NULL
+  );
+"""
+_LEGACY_ENTRY_UPDATED_AT_V69_CHECKSUM = hashlib.sha256(
+    _LEGACY_ENTRY_UPDATED_AT_V69_SQL.encode("utf-8")
 ).hexdigest()
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
@@ -6306,6 +6334,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260904_0067_immutable_legacy_entry_cutover_v68": (
         "preserve legacy false no-plan rows while canonical cycles own current behavior"
     ),
+    "20260904_0068_legacy_entry_updated_at_v69": (
+        "restore the last pre-cutover Candidate refresh timestamp on legacy false no-plan rows"
+    ),
 }
 
 
@@ -7241,6 +7272,20 @@ def _apply_immutable_legacy_entry_cutover_v68(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_legacy_entry_updated_at_v69(db: sqlite3.Connection) -> None:
+    tables = {
+        str(row[0])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('candidate_planning_generations','universe_members')"
+        )
+    }
+    if tables != {"candidate_planning_generations", "universe_members"}:
+        return
+    db.executescript(_LEGACY_ENTRY_UPDATED_AT_V69_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     """Persist the narrow retry queue for transiently unavailable path buckets."""
 
@@ -7864,6 +7909,12 @@ _MIGRATIONS = (
         checksum=_IMMUTABLE_LEGACY_ENTRY_CUTOVER_V68_CHECKSUM,
         schema_version="aletheia-sqlite-v68",
         apply=_apply_immutable_legacy_entry_cutover_v68,
+    ),
+    MigrationStep(
+        migration_id="20260904_0068_legacy_entry_updated_at_v69",
+        checksum=_LEGACY_ENTRY_UPDATED_AT_V69_CHECKSUM,
+        schema_version="aletheia-sqlite-v69",
+        apply=_apply_legacy_entry_updated_at_v69,
     ),
 )
 
