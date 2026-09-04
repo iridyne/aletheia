@@ -905,7 +905,7 @@ def test_ai_entry_compiler_emits_v2_without_momentum_treatment(monkeypatch):
     assert plan.trigger_spec_id == "anchor-retrace-reclaim"
 
 
-def test_mechanism_aware_compiler_preserves_upstream_identity_without_numeric_ai_authority(monkeypatch):
+def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     from types import SimpleNamespace
 
     from aletheia.config.loader import load_config
@@ -915,14 +915,12 @@ def test_mechanism_aware_compiler_preserves_upstream_identity_without_numeric_ai
         canonical_json, fingerprint,
     )
     from aletheia.trading.entry_contract import entry_prompt_fingerprint
-    from aletheia.trading.entry_plan_compiler import compile_entry_plan
 
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "paper_internal"
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    assert repo.claim_next_candidate_planning("v4-owner")["id"] == generation["id"]
     policy = SimpleNamespace(
         policy_id="test", revision=1,
         capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100),
@@ -982,11 +980,23 @@ def test_mechanism_aware_compiler_preserves_upstream_identity_without_numeric_ai
         supporting_fact_refs=(invalidation.anchor_id,),
     )
     input_payload = canonical_json(context.model_dump(mode="json"))
-    assert repo.bind_candidate_planner_input(
-        generation["id"], "v4-owner", input_payload,
-        fingerprint(context.model_dump(mode="json")),
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET planner_input_json=?, "
+        "planner_input_hash=? WHERE id=?",
+        (input_payload, fingerprint(context.model_dump(mode="json")), generation["id"]),
     )
-    plan = compile_entry_plan(generation, context, hypothesis, cfg)
+
+    async def planner(_context):
+        return hypothesis
+
+    result = asyncio.run(
+        plan_next_candidate(planner, cfg=cfg, owner_token="canonical-owner")
+    )
+    assert result["status"] == "planned", result
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    plan = EntryPlan.model_validate_json(
+        repo.get_entry_plan(result["entry_plan_id"])["plan_json"]
+    )
 
     assert plan.entry_hypothesis_version == "entry-hypothesis/v2"
     assert plan.analysis_context_version == "entry-analysis-context/v2"
@@ -995,9 +1005,8 @@ def test_mechanism_aware_compiler_preserves_upstream_identity_without_numeric_ai
     assert plan.thesis == "reversal grounded entry"
     assert plan.required_permission == "Paper"
     assert plan.execution_account_mode == "paper_internal"
-    assert repo.complete_candidate_planning_with_plan(
-        generation["id"], "v4-owner", plan,
-    )[0] == "planned"
+    assert stored["model_invoked"] == stored["compiler_invoked"] == 1
+    assert stored["outcome_class"] == "entry_plan"
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_kwargs: cfg)
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
 
