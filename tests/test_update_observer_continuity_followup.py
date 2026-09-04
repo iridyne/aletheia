@@ -8,10 +8,15 @@ import pytest
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
     from aletheia.observation_lab import runner
-    from aletheia.update import applier
+    from aletheia.update import applier, target_fresh
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
     monkeypatch.setattr(runner, "settle_observation_continuity", lambda: {"ok": True})
+    monkeypatch.setattr(
+        target_fresh,
+        "reanchor_joint_checkpoint",
+        lambda **_: {"ok": True, "reason": "fingerprint_match"},
+    )
 
 
 def _minimal_snapshot(*, checkpoint_reason: str = "fingerprint_match") -> dict:
@@ -258,7 +263,7 @@ def test_preflight_proof_gap_cannot_be_erased_by_healthy_postflight(monkeypatch)
     monkeypatch.setattr(
         continuity,
         "capture_update_continuity_until_settled",
-        lambda target: after,
+        lambda target, **_: after,
     )
     monkeypatch.setattr(
         applier,
@@ -303,6 +308,32 @@ def test_auto_worker_preflight_requires_complete_evidence(monkeypatch):
     assert result["required"] is True
     assert result["ok"] is False
     assert "data_root_baseline_unavailable" in result["preflight"]["proof_gaps"]
+
+
+def test_auto_postflight_reuses_preflight_gateway_port(monkeypatch):
+    from aletheia.update import auto, continuity
+
+    before = _minimal_snapshot()
+    before["gateway"]["port"] = 8787
+    after = _minimal_snapshot()
+    seen = {}
+
+    def capture(target, **kwargs):
+        seen.update(target=target, **kwargs)
+        return after
+
+    monkeypatch.setattr(continuity, "capture_update_continuity_until_settled", capture)
+    monkeypatch.setattr(continuity, "compare_update_continuity", lambda *_args, **_kwargs: {"ok": True})
+
+    result = auto._observer_auto_postflight({"required": True, "before": before}, "target-sha")
+
+    assert result["ok"] is True
+    assert seen == {
+        "target": "target-sha",
+        "timeout_sec": 10,
+        "poll_sec": 1,
+        "gateway_port": 8787,
+    }
 
 
 def test_auto_main_owner_does_not_create_worker_coupling(monkeypatch):

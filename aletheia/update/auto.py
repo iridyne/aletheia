@@ -288,6 +288,7 @@ def _observer_auto_postflight(guard: dict[str, Any], target: str) -> dict[str, A
         target,
         timeout_sec=10,
         poll_sec=1,
+        gateway_port=(before.get("gateway") or {}).get("port"),
     )
     comparison = continuity.compare_update_continuity(
         before,
