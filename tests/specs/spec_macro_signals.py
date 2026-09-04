@@ -65,7 +65,7 @@ def test_primary_derivatives_source_time_contract_is_explicit():
         assert models.count(field) >= 2
         assert field in derivatives
     assert "provider_source_time" in derivatives
-    assert 'observed_at=source_observed_at or ""' in derivatives
+    assert 'observed_at=source_observed_at or acquired_at.isoformat()' in derivatives
 
 
 # ---------------------------------------------------------------------------

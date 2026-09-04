@@ -293,7 +293,7 @@ def _parse_funding(
             source_observed_at=source_observed_at,
             acquired_at=acquired_at.isoformat(),
             source_time_status=source_time_status,
-            observed_at=source_observed_at or "",
+            observed_at=source_observed_at or acquired_at.isoformat(),
         )
     except ValueError:
         return None
@@ -444,7 +444,7 @@ def _parse_oi(
             source_observed_at=source_observed_at,
             acquired_at=acquired_at.isoformat(),
             source_time_status=source_time_status,
-            observed_at=source_observed_at or "",
+            observed_at=source_observed_at or acquired_at.isoformat(),
         )
     except ValueError:
         return None

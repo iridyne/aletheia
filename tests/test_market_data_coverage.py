@@ -56,7 +56,7 @@ def test_data_coverage_distinguishes_fresh_stale_empty_and_idle(monkeypatch):
             (NOW - timedelta(minutes=2)).isoformat(),
             "fresh",
         ),
-        ("missing", None, (NOW - timedelta(minutes=2)).isoformat(), "invalid"),
+        ("missing", None, (NOW - timedelta(minutes=2)).isoformat(), "fresh"),
         ("invalid", None, (NOW - timedelta(minutes=2)).isoformat(), "invalid"),
         (
             "future",
@@ -84,7 +84,7 @@ def test_primary_derivative_coverage_uses_canonical_two_clock_freshness(
         }
         if definition.domain == "primary_funding":
             values["freshness_rows"] = [{
-                "observed_at": source_observed_at or "",
+                "observed_at": source_observed_at or acquired_at,
                 "source_observed_at": source_observed_at,
                 "acquired_at": acquired_at,
                 "source_time_status": source_time_status,
@@ -130,7 +130,7 @@ def test_primary_derivative_coverage_uses_latest_acquisition_from_sqlite():
         "source_observed_at": None,
         "acquired_at": (NOW - timedelta(minutes=1)).isoformat(),
         "source_time_status": "missing",
-        "observed_at": "",
+        "observed_at": (NOW - timedelta(minutes=1)).isoformat(),
     })
 
     report = get_data_coverage_report(now=NOW)
@@ -138,10 +138,10 @@ def test_primary_derivative_coverage_uses_latest_acquisition_from_sqlite():
         row for row in report["domains"] if row["domain"] == "primary_funding"
     )
 
-    assert funding["state"] == "invalid"
-    assert funding["fresh_row_count"] == 0
-    assert funding["unavailable_row_count"] == 1
-    assert funding["freshness_state_counts"] == {"missing": 1}
+    assert funding["state"] == "fresh"
+    assert funding["fresh_row_count"] == 1
+    assert funding["unavailable_row_count"] == 0
+    assert funding["freshness_state_counts"] == {"fresh": 1}
 
 
 def test_inspect_microstructure_uses_exact_venue_and_real_imbalance(monkeypatch, capsys):

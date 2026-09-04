@@ -94,8 +94,15 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     assert fresh_row(persisted, "funding", now=acquired_at) is None
 
     future_ms = int((acquired_at + timedelta(minutes=6)).timestamp() * 1000)
+    # "missing": no exchange timestamp, but acquired_at is populated → usable via
+    # acquired_at fallback (exchange captures data without providing a source time).
+    missing_snap = mod._parse_funding("SOL/USDT", "okx", {"fundingRate": 0.0001})
+    assert missing_snap is not None
+    assert missing_snap.source_time_status == "missing"
+    assert missing_snap.source_observed_at is None
+    assert fresh_row(missing_snap.model_dump(), "funding", now=acquired_at) is not None
+    # "invalid" and "future": malformed/future source time → not usable.
     for raw, expected_status, expected_source_time in (
-        ({"fundingRate": 0.0001}, "missing", None),
         ({"fundingRate": 0.0001, "timestamp": "bad"}, "invalid", None),
         (
             {"fundingRate": 0.0001, "timestamp": future_ms},

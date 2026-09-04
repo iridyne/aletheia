@@ -80,14 +80,22 @@ def assess_freshness(
     if source_status is not None:
         if source_status not in {"provided", "missing", "invalid", "future"}:
             source_status = "invalid"
-        if source_status != "provided":
+        if source_status not in {"provided", "missing"}:
             return FreshnessVerdict(
                 False,
                 source_status,
                 None,
                 max_age.total_seconds(),
             )
-        timestamp_values = [row.get("source_observed_at"), row.get("acquired_at")]
+        # "provided": use the exchange-sourced timestamp + acquisition time as
+        # the two-clock bound.  "missing": the exchange gave no timestamp but
+        # the data itself is valid; fall back to acquired_at for staleness so
+        # the domain does not stay permanently "invalid" on exchanges that do
+        # not emit a source timestamp (e.g. Bitget funding via CCXT).
+        if source_status == "provided":
+            timestamp_values = [row.get("source_observed_at"), row.get("acquired_at")]
+        else:  # "missing"
+            timestamp_values = [row.get("acquired_at")]
 
     ages: list[timedelta] = []
     for value in timestamp_values:
