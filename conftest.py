@@ -25,7 +25,8 @@ _UPDATE_CONTINUITY_MODULES = frozenset({
 @pytest.fixture(autouse=True)
 def _settled_update_activation_boundary(request, monkeypatch):
     """Preserve the established isolated cut for legacy update unit tests."""
-    if request.module.__name__ not in _UPDATE_CONTINUITY_MODULES:
+    module_name = getattr(request.module, "__name__", "")
+    if module_name not in _UPDATE_CONTINUITY_MODULES:
         return
 
     from aletheia.observation_lab import runner
