@@ -5,7 +5,7 @@ import { createColumnHelper } from '@tanstack/react-table'
 import { ApiError, api } from '../api/client'
 import type { AgentRun, Opportunity } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
-import { type DataState } from '../components/DataState'
+import { DataStateMessage, type DataState } from '../components/DataState'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
@@ -49,6 +49,20 @@ function parseJson(raw: string | null): any[] {
 
 function isMissingAgentRun(error: unknown): boolean {
   return error instanceof ApiError && error.code === 'agent_run_not_found'
+}
+
+type ArrayReadState = Extract<DataState, 'loading' | 'available' | 'empty' | 'stale' | 'unavailable'>
+
+function resolveArrayReadState(
+  data: unknown[] | undefined,
+  isPending: boolean,
+  isError: boolean,
+  isFetching: boolean,
+): ArrayReadState {
+  if (data && (isError || isFetching)) return 'stale'
+  if (isError) return 'unavailable'
+  if (isPending || !data) return 'loading'
+  return data.length > 0 ? 'available' : 'empty'
 }
 
 const runColumns = [
@@ -145,8 +159,14 @@ function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
   const qc = useQueryClient()
   const { toast } = useToast()
   const [selected, setSelected] = useState<AgentRun | null>(null)
-  const { data: catalog } = useQuery({ queryKey: ['agent-catalog'], queryFn: api.getAgentCatalog })
-  const agents = catalog?.agents ?? []
+  const catalogQuery = useQuery({ queryKey: ['agent-catalog'], queryFn: api.getAgentCatalog })
+  const agents = catalogQuery.data?.agents ?? []
+  const catalogState = resolveArrayReadState(
+    catalogQuery.data?.agents,
+    catalogQuery.isPending,
+    catalogQuery.isError,
+    catalogQuery.isFetching,
+  )
   const run = useMutation({
     mutationFn: (name: string) => api.startAgentRun(name).then(r => ({ name, r })),
     onSuccess: ({ name }) => { toast('success', `${name} started`); qc.invalidateQueries({ queryKey: ['agent-runs'] }) },
@@ -157,13 +177,25 @@ function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
     <>
       <Card>
         <h3>Run an agent now</h3>
+        {catalogState !== 'available' && (
+          <DataStateMessage
+            state={catalogState}
+            message={catalogState === 'loading'
+              ? 'Agent catalog is loading…'
+              : catalogState === 'unavailable'
+                ? 'Agent catalog unavailable. The read failed; no manual-run allowlist is implied.'
+                : catalogState === 'stale'
+                  ? 'Agent catalog is stale. Retained agents are shown but manual runs are disabled.'
+                  : 'No agents are available for manual runs.'}
+          />
+        )}
         <div className="flex flex-wrap gap-1">
           {agents.map(a => (
             <span key={a.name} className="flex items-center gap-1">
               <Button
                 variant="secondary"
-                onClick={() => run.mutate(a.name)}
-                disabled={run.isPending || a.runnable === false}
+                onClick={() => { if (catalogState === 'available') run.mutate(a.name) }}
+                disabled={catalogState !== 'available' || run.isPending || a.runnable === false}
                 aria-label={a.blocked_reason ? `${a.name}: ${a.blocked_reason}` : a.name}
               >
                 {a.name}
@@ -310,63 +342,107 @@ function OpportunitiesTab({ opps, state }: { opps: Opportunity[], state?: DataSt
  * server/routes/data.py:236 for a while (#72 fix).
  */
 function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: string | null }) {
-  const { data: toolCalls = [], error: toolCallsError } = useQuery({
+  const toolCallsQuery = useQuery({
     queryKey: ['tool-calls', runId],
     queryFn: () => api.getAgentRunToolCalls(runId),
     enabled: !!runId,
   })
-  const { data: steps = [], error: stepsError } = useQuery({
+  const stepsQuery = useQuery({
     queryKey: ['agent-run-steps', runId],
     queryFn: () => api.getAgentRunSteps(runId),
     enabled: !!runId,
   })
 
-  const tools = toolCalls.length > 0
-    ? toolCalls as any[]
-    : (fallback ? (() => { try { return JSON.parse(fallback) } catch { return [] } })() : [])
-  const runNotFound = isMissingAgentRun(toolCallsError) || isMissingAgentRun(stepsError)
+  const toolCalls = (toolCallsQuery.data ?? []) as any[]
+  const steps = (stepsQuery.data ?? []) as any[]
+  const toolCallsState = resolveArrayReadState(
+    toolCallsQuery.data,
+    toolCallsQuery.isPending,
+    toolCallsQuery.isError,
+    toolCallsQuery.isFetching,
+  )
+  const stepsState = resolveArrayReadState(
+    stepsQuery.data,
+    stepsQuery.isPending,
+    stepsQuery.isError,
+    stepsQuery.isFetching,
+  )
+  const legacyTools = parseJson(fallback)
+  const runNotFound = isMissingAgentRun(toolCallsQuery.error) || isMissingAgentRun(stepsQuery.error)
 
   return (
     <DrawerSection label="Reasoning Steps">
       {runNotFound ? (
         <span className="text-muted text-sm">Run identity not found; trace unavailable.</span>
-      ) : (toolCalls as any[]).length > 0 ? (
-        <table className="drawer-table">
-          <thead>
-            <tr><th>Tool</th><th>Class</th><th>Permitted</th><th>Time</th></tr>
-          </thead>
-          <tbody>
-            {(toolCalls as any[]).map((tc: any, i: number) => (
-              <tr key={tc.id || i}>
-                <td className="mono">{tc.tool_name}</td>
-                <td>{humanize(tc.tool_class)}</td>
-                <td><span className={`badge ${tc.permitted ? 'badge-green' : 'badge-red'}`}>{tc.permitted ? 'Yes' : 'No'}</span></td>
-                <td className="mono">{tc.created_at?.slice(11, 19) || '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : tools.length > 0 ? (
-        <ul className="drawer-list">{tools.map((t: any, i: number) => <li key={i}>{typeof t === 'string' ? t : JSON.stringify(t)}</li>)}</ul>
       ) : (
-        <span className="text-muted text-sm">No tool calls recorded</span>
-      )}
-      {!runNotFound && (steps as any[]).length > 0 && (
-        <table className="drawer-table mt-2">
-          <thead>
-            <tr><th>#</th><th>Action</th><th>Input</th><th>Output</th></tr>
-          </thead>
-          <tbody>
-            {(steps as any[]).map((s: any, i: number) => (
-              <tr key={s.id || i}>
-                <td className="mono">{s.step_number ?? i + 1}</td>
-                <td className="mono">{s.action || '—'}</td>
-                <td className="mono text-muted">{s.input_data ? String(s.input_data).slice(0, 80) : '—'}</td>
-                <td className="mono text-muted">{s.output_data ? String(s.output_data).slice(0, 80) : '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <h4>Tool calls</h4>
+          {toolCallsState !== 'available' && toolCallsState !== 'empty' && (
+            <DataStateMessage
+              state={toolCallsState}
+              message={toolCallsState === 'loading'
+                ? 'Tool-call ledger is loading…'
+                : toolCallsState === 'stale'
+                  ? 'Tool-call ledger is stale. Retained rows may not reflect the latest read.'
+                  : 'Tool-call ledger unavailable. The read failed; no empty ledger is implied.'}
+            />
+          )}
+          {toolCalls.length > 0 ? (
+            <table className="drawer-table">
+              <thead>
+                <tr><th>Tool</th><th>Class</th><th>Permitted</th><th>Time</th></tr>
+              </thead>
+              <tbody>
+                {toolCalls.map((tc: any, i: number) => (
+                  <tr key={tc.id || i}>
+                    <td className="mono">{tc.tool_name}</td>
+                    <td>{humanize(tc.tool_class)}</td>
+                    <td><span className={`badge ${tc.permitted ? 'badge-green' : 'badge-red'}`}>{tc.permitted ? 'Yes' : 'No'}</span></td>
+                    <td className="mono">{tc.created_at?.slice(11, 19) || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : toolCallsState === 'empty' && legacyTools.length > 0 ? (
+            <>
+              <p className="text-muted text-sm">Legacy run snapshot (canonical tool-call ledger is empty)</p>
+              <ul className="drawer-list">{legacyTools.map((tool: any, i: number) => <li key={i}>{typeof tool === 'string' ? tool : JSON.stringify(tool)}</li>)}</ul>
+            </>
+          ) : toolCallsState === 'empty' ? (
+            <span className="text-muted text-sm">No tool calls recorded</span>
+          ) : null}
+
+          <h4 className="mt-2">Reasoning trace</h4>
+          {stepsState !== 'available' && stepsState !== 'empty' && (
+            <DataStateMessage
+              state={stepsState}
+              message={stepsState === 'loading'
+                ? 'Reasoning-step trace is loading…'
+                : stepsState === 'stale'
+                  ? 'Reasoning-step trace is stale. Retained rows may not reflect the latest read.'
+                  : 'Reasoning-step trace unavailable. The read failed; no empty trace is implied.'}
+            />
+          )}
+          {steps.length > 0 ? (
+            <table className="drawer-table mt-2">
+              <thead>
+                <tr><th>#</th><th>Action</th><th>Input</th><th>Output</th></tr>
+              </thead>
+              <tbody>
+                {steps.map((s: any, i: number) => (
+                  <tr key={s.id || i}>
+                    <td className="mono">{s.step_number ?? i + 1}</td>
+                    <td className="mono">{s.action || '—'}</td>
+                    <td className="mono text-muted">{s.input_data ? String(s.input_data).slice(0, 80) : '—'}</td>
+                    <td className="mono text-muted">{s.output_data ? String(s.output_data).slice(0, 80) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : stepsState === 'empty' ? (
+            <span className="text-muted text-sm">No reasoning steps recorded</span>
+          ) : null}
+        </>
       )}
     </DrawerSection>
   )
