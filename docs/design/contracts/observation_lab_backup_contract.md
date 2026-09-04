@@ -60,12 +60,38 @@ The scheduled runner and updater's read-only diagnostic call verification with
 `allow_main_outbox_progress=True`. They may additionally receive
 `ok=True, reason="main_outbox_append_only"` when every non-outbox input and the
 previously checkpointed Main prefix still match and every later receipt remains
-unacknowledged. This permits entry into the shared cycle-locked settlement
-barrier, not deployment. The barrier drains transport, rejects failed, retrying,
-or unavailable state, saves the completed cut, and requires a strict
-`fingerprint_match` before an authoritative backup or source switch. Backup,
-restore, authority cutover/rollback, ordinary CLI verification, and
-behavior-bearing consumers retain strict verification by default.
+unacknowledged. This permits entry into a cycle-locked settlement boundary, not
+deployment by itself.
+
+### Update activation cut
+
+The source/release activation boundary is intentionally narrower than an ordinary
+Observation maintenance pass. After receipt producers stop and while
+`worker_cycle_exclusion()` remains held through backup and activation, it performs
+only the work required to prove one deployable cut:
+
+1. verify the existing joint checkpoint;
+2. read the Main outbox watermark/pending state and Lab cursor/retry state;
+3. import the remaining contiguous delivery receipts when needed;
+4. require `pending=0`, an empty retry list and a Lab cursor equal to the durable
+   Main outbox watermark;
+5. save the changed cut and require strict `fingerprint_match`.
+
+When the strict checkpoint already matches and the delivery frontier is already
+caught up, the activation settlement is a read-only no-op: it reuses that trusted
+fingerprint and does not run empty importer, audit-mirror, pruning, compaction or
+checkpoint-save passes.
+
+Lab audit mirroring, acknowledged-outbox pruning, finalized-generation compaction
+and Observation-window advancement remain durable scheduled/manual maintenance.
+They are not prerequisites for source activation and therefore do not extend the
+update-critical section. Deferring them loses no evidence: their source rows remain
+durable and are included in the authoritative recovery boundary.
+
+The authoritative backup still occurs before the source switch and under the same
+Observation cycle exclusion. Backup, restore, authority cutover/rollback, ordinary
+CLI verification and behavior-bearing consumers retain strict verification by
+default.
 
 ## 4. Why the fingerprint uses these inputs
 
@@ -85,10 +111,11 @@ Once `verify_joint_checkpoint().ok is False` returns:
 
 ## 6. What this contract does NOT do
 
-- No coordinated backup script. Backup tooling is out of Observation Lab scope; the contract only says "if the resulting state is inconsistent, the Lab must not silently proceed". A future ops task can add a `aletheia observe backup` command that snapshots all three inputs together with the fingerprint recorded.
 - No automatic recovery. On a mismatch the operator resolves it manually — either by rolling forward the lagging file or by declaring the mismatch acceptable (a deliberate ledger reset) and starting a new checkpoint chain. The Lab cannot know which is correct.
-- No enforcement of when to call verify. The Lab runner (`aletheia/observation_lab/runner.py`) is the natural caller and will invoke it once per pass in a follow-up; this PR ships the primitives.
+- No incremental/Merkle checkpoint ledger. Checkpoint computation remains the current canonical full-state proof; performance work may remove redundant computations but may not replace strict evidence with an unverified cache.
+- No permission to skip, delete or force-acknowledge a blocking receipt. The contiguous importer remains fail-closed.
 
 ## 7. Verification
 
 - `tests/test_joint_checkpoint.py` covers: fresh install (empty ledger), matching fingerprint on repeat, runner-only pending Main progress, rejection of acknowledged suffixes and changed prefixes, mismatch on manifest set change, mismatch on app or Lab-only state change, schema identity, manifest immutability, and save-idempotency.
+- `tests/test_update_settlement_hot_path.py` covers: lazy preflight verification, the caught-up no-op path, delivery-only update settlement, retry refusal, cycle-lock lifetime and the separated stop/settle/backup progress boundary.
