@@ -13,6 +13,10 @@ specification must go. They are independent.
 - **D2** — substantial design change; requires accepted Proposal before target
   state enters Contract
 
+For D1/D2 or an explicitly selected high-risk D0, an optional advisory shadow
+audit is available; read
+[SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md) before using it.
+
 See [documentation governance](../../../governance/policies/documentation_governance.md)
 for the full rule.
 
