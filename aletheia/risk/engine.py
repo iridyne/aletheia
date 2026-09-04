@@ -39,11 +39,10 @@ from aletheia.storage.repositories import (
     update_trade_proposal,
     validate_trade_proposal_commit_hash,
 )
+from aletheia.trading.entry_compat import decode_entry_plan
 from aletheia.trading.entry_plan import (
-    EntryPlan,
     RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
-    entry_plan_payload,
     entry_plan_risk_reward_is_plausible,
     stop_distance_below_min_floor,
 )
@@ -108,8 +107,9 @@ def _entry_plan_authority_violations(
     if row is None:
         return ["entry_plan_not_found"]
     try:
-        plan = EntryPlan.model_validate_json(str(row["plan_json"]))
-        _, digest = entry_plan_payload(plan)
+        payload = str(row["plan_json"])
+        plan = decode_entry_plan(payload)
+        digest = hashlib.sha256(payload.encode()).hexdigest()
     except Exception:
         return ["entry_plan_contract_invalid"]
     violations = []
@@ -244,7 +244,7 @@ def _entry_execution_receipt_violations(
     if row is None:
         return ["entry_plan_not_found"]
     try:
-        plan = EntryPlan.model_validate_json(str(row["plan_json"]))
+        plan = decode_entry_plan(str(row["plan_json"]))
     except Exception:
         return ["entry_plan_contract_invalid"]
 

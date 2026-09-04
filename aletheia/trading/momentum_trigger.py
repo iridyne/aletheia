@@ -1,9 +1,9 @@
-"""Shadow-only Momentum TriggerSpec v2 state machine.
+"""Shadow-only Momentum TriggerSpec state machine.
 
-The engine consumes one exact instrument's public fast-stream facts and returns
-one deterministic ``TriggerReady`` bundle. It has no repository, provider,
-LLM, Risk, or Gateway access; the watcher decides whether that bundle is only
-observed or may reach the existing execution path.
+Consumes one exact instrument's public fast-stream facts and returns one
+deterministic TriggerReady bundle. It has no repository, provider, LLM, Risk,
+or Gateway access; the watcher decides whether the bundle is only observed or
+may reach the existing execution path.
 """
 
 from collections import deque
@@ -15,10 +15,9 @@ from aletheia.data.symbols import InstrumentId
 from aletheia.universe.fast_stream import FastMarketEvent, events_share_generation
 from aletheia.universe.fast_trigger import TriggerPolicy, TriggerReady
 
-TRIGGER_SPEC_ID = "momentum-retrace-reclaim"
-TRIGGER_SPEC_VERSION = "v2"
+TRIGGER_SPEC_ID = "momentum-retrace-reclaim-geometry"
 GEOMETRY_VERSION = "momentum-entry-geometry/v2"
-
+_LEGACY_GEOMETRY_VERSION = "anchor-retrace-reclaim-geometry/v1"
 State = Literal["armed", "pullback", "sweep", "reclaim", "triggered", "invalidated"]
 
 
@@ -42,7 +41,7 @@ def _zone(value: tuple[float, float], field: str) -> tuple[float, float]:
     return low, high
 
 
-class MomentumTriggerEngineV2:
+class MomentumTriggerEngine:
     """Deterministic ARMED→PULLBACK→SWEEP→RECLAIM→TRIGGERED engine."""
 
     def __init__(
@@ -60,7 +59,6 @@ class MomentumTriggerEngineV2:
         geometry_fingerprint: str,
         policy: TriggerPolicy,
         trigger_spec_id: str = TRIGGER_SPEC_ID,
-        trigger_spec_version: str = TRIGGER_SPEC_VERSION,
     ) -> None:
         if direction not in {"long", "short"}:
             raise ValueError("momentum_trigger_direction_invalid")
@@ -72,7 +70,7 @@ class MomentumTriggerEngineV2:
         self.entry_zone = _zone(entry_zone, "entry_zone")
         self.invalidation_price = _positive(invalidation_price, "invalidation_price")
         self.atr_abs = _positive(atr_abs, "atr_abs")
-        if geometry_version not in {GEOMETRY_VERSION, "anchor-retrace-reclaim-geometry/v1"}:
+        if geometry_version not in {GEOMETRY_VERSION, _LEGACY_GEOMETRY_VERSION}:
             raise ValueError("momentum_trigger_geometry_version_invalid")
         if (
             not isinstance(geometry_fingerprint, str)
@@ -82,13 +80,9 @@ class MomentumTriggerEngineV2:
             raise ValueError("momentum_trigger_geometry_fingerprint_invalid")
         self.geometry_version = geometry_version
         self.geometry_fingerprint = geometry_fingerprint
-        if (trigger_spec_id, trigger_spec_version) not in {
-            (TRIGGER_SPEC_ID, TRIGGER_SPEC_VERSION),
-            ("anchor-retrace-reclaim", "v1"),
-        }:
+        if trigger_spec_id not in {TRIGGER_SPEC_ID, "anchor-retrace-reclaim"}:
             raise ValueError("momentum_trigger_spec_identity_invalid")
         self.trigger_spec_id = trigger_spec_id
-        self.trigger_spec_version = trigger_spec_version
         self.policy = policy
         self.state: State = "armed"
         self.state_path: list[State] = ["armed"]
@@ -326,7 +320,6 @@ class MomentumTriggerEngineV2:
             entry_price=entry,
             entry_trigger={
                 "trigger_spec_id": self.trigger_spec_id,
-                "trigger_spec_version": self.trigger_spec_version,
                 "geometry_version": self.geometry_version,
                 "geometry_fingerprint": self.geometry_fingerprint,
                 "breakout_level": self.breakout_level,

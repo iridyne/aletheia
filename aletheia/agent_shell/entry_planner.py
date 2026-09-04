@@ -54,7 +54,6 @@ class _PlanIntentWire(BaseModel):
     execution_mode: Literal["RESTING_MAKER", "TRIGGERED"] | None
     order_tactic: Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"] | None
     trigger_spec_id: str | None
-    trigger_spec_version: str | None
     risk_tier: Literal["LOW", "MEDIUM", "NONE"]
     horizon: Literal["INTRADAY", "SWING", "NONE"]
 
@@ -62,7 +61,7 @@ class _PlanIntentWire(BaseModel):
 class PlanIntent(_PlanIntentWire):
     @model_validator(mode="after")
     def _validate_semantics(self) -> "PlanIntent":
-        trigger_fields_empty = self.trigger_spec_id is None and self.trigger_spec_version is None
+        trigger_fields_empty = self.trigger_spec_id is None
         if self.decision == "NO_PLAN":
             if self.reason_code == "OK":
                 raise PlanIntentError("NO_PLAN_REASON_REQUIRED")

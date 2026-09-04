@@ -21,10 +21,6 @@ STOP_DISTANCE_BELOW_VOL_TARGET = "stop_distance_below_vol_target"
 # Published-sideways demo floor: 1.5% vol_target sits inside a >2% daily range.
 SIDEWAYS_STOP_MULT = 2.0
 
-ENTRY_PLAN_VERSION = "entry-plan/v1"
-ENTRY_PLAN_V2_VERSION = "entry-plan/v2"
-PLANNING_IDENTITY_VERSION = "candidate-planning/v1"
-PLANNING_IDENTITY_V2_VERSION = "candidate-planning/v2"
 ENTRY_PLAN_EXECUTION_MODES = ("RESTING_MAKER", "TRIGGERED")
 ENTRY_PLAN_STATUSES = (
     "waiting",
@@ -166,7 +162,6 @@ class EntryPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     plan_id: str = Field(default_factory=_new_id)
-    version: Literal["entry-plan/v1", "entry-plan/v2"] = ENTRY_PLAN_VERSION
     planning_generation_id: str
     candidate_id: str
     candidate_family: str
@@ -179,7 +174,6 @@ class EntryPlan(BaseModel):
     scenario: str = Field(min_length=1)
     execution_mode: Literal["RESTING_MAKER", "TRIGGERED"]
     trigger_spec_id: str | None = None
-    trigger_spec_version: str | None = None
     trigger_params: dict = Field(default_factory=dict)
     trigger_data_requirements: tuple[str, ...] = ()
     trigger_freshness_ms: int | None = Field(default=None, gt=0)
@@ -212,26 +206,26 @@ class EntryPlan(BaseModel):
     risk_policy_id: str = Field(min_length=1)
     risk_policy_revision: int = Field(ge=1)
     risk_policy_hash: str = Field(min_length=1)
-    behavior_version: str = Field(min_length=1)
     treatment_exposure_id: str | None = None
     runtime_session_id: str | None = None
-    producer_commit: str | None = None
-    behavior_fingerprint: str | None = None
-    analysis_context_version: Literal[
-        "entry-analysis-context/v1", "entry-analysis-context/v2"
-    ] | None = None
-    analysis_context_fingerprint: str | None = None
-    entry_hypothesis_version: Literal["entry-hypothesis/v1", "entry-hypothesis/v2"] | None = None
+    producer_commit: str = Field(min_length=1)
+    behavior_fingerprint: str = Field(min_length=64, max_length=64)
+    schema_fingerprint: str = Field(min_length=64, max_length=64)
+    planning_identity: str = Field(min_length=64, max_length=64)
+    cycle_number: int = Field(ge=1)
+    analysis_context_fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
     entry_hypothesis_json: str | None = None
-    entry_hypothesis_hash: str | None = None
+    entry_hypothesis_hash: str | None = Field(default=None, min_length=64, max_length=64)
     primary_anchor_snapshot: dict | None = None
     invalidation_anchor_snapshot: dict | None = None
-    entry_profile_id: Literal[
-        "anchor-resting-maker", "anchor-retrace-reclaim",
-        "grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim",
-    ] | None = None
-    entry_profile_version: Literal["v1"] | None = None
-    compiled_geometry_fingerprint: str | None = None
+    entry_profile_id: (
+        Literal[
+            "grounded-anchor-resting-maker",
+            "grounded-anchor-retrace-reclaim",
+        ]
+        | None
+    ) = None
+    compiled_geometry_fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
 
     @field_validator(
         "stop_price",
@@ -246,37 +240,32 @@ class EntryPlan(BaseModel):
     @model_validator(mode="after")
     def _contract_is_coherent(self) -> EntryPlan:
         provenance_fields = (
-            "analysis_context_version",
             "analysis_context_fingerprint",
-            "entry_hypothesis_version",
             "entry_hypothesis_json",
             "entry_hypothesis_hash",
             "primary_anchor_snapshot",
             "invalidation_anchor_snapshot",
             "entry_profile_id",
-            "entry_profile_version",
             "compiled_geometry_fingerprint",
         )
-        if self.version == ENTRY_PLAN_VERSION:
-            if any(getattr(self, field) is not None for field in provenance_fields):
-                raise ValueError("entry_plan_v1_provenance_forbidden")
-        else:
-            if any(getattr(self, field) is None for field in provenance_fields):
-                raise ValueError("entry_plan_v2_provenance_required")
+        present = [getattr(self, field) is not None for field in provenance_fields]
+        if any(present) and not all(present):
+            raise ValueError("entry_plan_provenance_incomplete")
+        if all(present):
             try:
                 hypothesis = json.loads(str(self.entry_hypothesis_json))
             except json.JSONDecodeError as exc:
-                raise ValueError("entry_plan_v2_hypothesis_invalid") from exc
+                raise ValueError("entry_plan_hypothesis_invalid") from exc
             if hashlib.sha256(str(self.entry_hypothesis_json).encode()).hexdigest() != self.entry_hypothesis_hash:
-                raise ValueError("entry_plan_v2_hypothesis_hash_mismatch")
-            from aletheia.trading.entry_analysis import EntryAnchorV1, fingerprint
+                raise ValueError("entry_plan_hypothesis_hash_mismatch")
+            from aletheia.trading.entry_analysis import EntryAnchor, fingerprint
 
-            primary = EntryAnchorV1.model_validate(self.primary_anchor_snapshot)
-            invalidation = EntryAnchorV1.model_validate(self.invalidation_anchor_snapshot)
+            primary = EntryAnchor.model_validate(self.primary_anchor_snapshot)
+            invalidation = EntryAnchor.model_validate(self.invalidation_anchor_snapshot)
             if hypothesis.get("primary_anchor_ref") != primary.anchor_id:
-                raise ValueError("entry_plan_v2_primary_anchor_mismatch")
+                raise ValueError("entry_plan_primary_anchor_mismatch")
             if hypothesis.get("invalidation_anchor_ref") != invalidation.anchor_id:
-                raise ValueError("entry_plan_v2_invalidation_anchor_mismatch")
+                raise ValueError("entry_plan_invalidation_anchor_mismatch")
             geometry = {
                 "entry_zone": self.entry_zone,
                 "invalidation_price": self.invalidation_price,
@@ -285,7 +274,7 @@ class EntryPlan(BaseModel):
                 "trigger_params": self.trigger_params,
             }
             if fingerprint(geometry) != self.compiled_geometry_fingerprint:
-                raise ValueError("entry_plan_v2_geometry_hash_mismatch")
+                raise ValueError("entry_plan_geometry_hash_mismatch")
         low, high = self.entry_zone
         if low <= 0 or high < low:
             raise ValueError("entry_plan_entry_zone_invalid")
@@ -311,15 +300,11 @@ class EntryPlan(BaseModel):
         if expires <= approved:
             raise ValueError("entry_plan_expiry_invalid")
         if self.execution_mode == "TRIGGERED":
-            if not self.trigger_spec_id or not self.trigger_spec_version:
+            if not self.trigger_spec_id:
                 raise ValueError("triggered_entry_plan_requires_registered_trigger_spec")
             from aletheia.trading.trigger_specs import require_registered_trigger_spec
 
-            contract, params = require_registered_trigger_spec(
-                self.trigger_spec_id,
-                self.trigger_spec_version,
-                self.trigger_params,
-            )
+            contract, params = require_registered_trigger_spec(self.trigger_spec_id, self.trigger_params)
             if tuple(self.trigger_data_requirements) != contract.data_requirements:
                 raise ValueError("trigger_data_requirements_mismatch")
             if self.trigger_freshness_ms != contract.freshness_ms:
@@ -329,9 +314,9 @@ class EntryPlan(BaseModel):
             if params["invalidation_price"] != self.invalidation_price:
                 raise ValueError("trigger_invalidation_mismatch")
             object.__setattr__(self, "trigger_params", params)
-        elif self.trigger_spec_id is not None or self.trigger_spec_version is not None:
+        elif self.trigger_spec_id is not None:
             raise ValueError("resting_maker_cannot_require_trigger")
-        strict_tactic_contract = self.version == ENTRY_PLAN_V2_VERSION
+        strict_tactic_contract = True
         if self.order_tactic == "POST_ONLY_LIMIT":
             if not self.maker_required or self.time_in_force != "POST_ONLY":
                 raise ValueError("maker_tactic_requires_post_only")
@@ -369,7 +354,7 @@ class EntryPlan(BaseModel):
             ):
                 raise ValueError("urgent_taker_contract_incomplete")
         if self.taker_fallback_allowed:
-            raise ValueError("entry_plan_v1_taker_fallback_unavailable")
+            raise ValueError("entry_plan_taker_fallback_unavailable")
         if self.order_tactic == "POST_ONLY_LIMIT" and self.worst_price is not None:
             raise ValueError("worst_price_requires_taker_authority")
         return self
@@ -405,14 +390,11 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
             "policy_epoch": str(selection.get("policy_epoch") or "legacy"),
             "mechanism_version": str(opportunity.get("mechanism_version") or ""),
         }
-        identity_version = PLANNING_IDENTITY_V2_VERSION
         material = {
             **ownership,
             "capability_status": str(opportunity.get("capability_status") or ""),
             "capability_gaps": sorted(str(value) for value in opportunity.get("capability_gaps") or ()),
-            "primary_evidence_refs": sorted(
-                str(value) for value in opportunity.get("primary_evidence_refs") or ()
-            ),
+            "primary_evidence_refs": sorted(str(value) for value in opportunity.get("primary_evidence_refs") or ()),
             "context": context.context,
         }
     else:
@@ -423,7 +405,6 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
             "family": str(candidate.get("scanner_family") or ""),
             "direction": str(candidate.get("scanner_direction") or ""),
         }
-        identity_version = PLANNING_IDENTITY_VERSION
         risk_flags = candidate.get("risk_flags") or []
         if isinstance(risk_flags, str):
             try:
@@ -431,7 +412,6 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
             except json.JSONDecodeError:
                 risk_flags = [risk_flags]
         material = {
-            "identity_version": identity_version,
             **ownership,
             "regime": str(candidate.get("regime_tag") or "unknown"),
             "execution_eligible": bool(candidate.get("execution_eligible", True)),
@@ -447,17 +427,7 @@ def candidate_planning_identity(candidate: dict) -> tuple[str, str]:
 
 
 def entry_plan_payload(plan: EntryPlan) -> tuple[str, str]:
-    v2_fields = {
-        "analysis_context_version", "analysis_context_fingerprint",
-        "entry_hypothesis_version", "entry_hypothesis_json", "entry_hypothesis_hash",
-        "primary_anchor_snapshot", "invalidation_anchor_snapshot", "entry_profile_id",
-        "entry_profile_version", "compiled_geometry_fingerprint",
-    }
-    payload = json.dumps(
-        plan.model_dump(mode="json", exclude=v2_fields if plan.version == ENTRY_PLAN_VERSION else None),
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    payload = json.dumps(plan.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return payload, hashlib.sha256(payload.encode()).hexdigest()
 
 

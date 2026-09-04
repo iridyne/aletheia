@@ -96,12 +96,14 @@ policy epoch 只有在自身前瞻资格为 positive 且 owner 通过受保护 S
 
 ### 2.1a Candidate Planning Generation 与 Entry Plan
 
-携带有效 `candidate-opportunity-context/v1` 的新 Candidate 只进入一个 canonical
-Context → Hypothesis → Compiler → `entry-plan/v2` 实现。历史 numeric planner label 只读保留，
-不能选择当前行为；当前兼容与复用由 schema/behavior fingerprint 决定。其 ownership identity 由 exact instrument、
-Opportunity mechanism/direction、Candidate-selection policy/epoch 与 mechanism version 组成；
-family、rank、score、Utility、price 与普通 snapshot churn 不进入身份。机制或 policy epoch
-变化会保留并 supersede 旧 generation，同时 fail-closed 终结旧的 pre-order Entry Plan。
+携带有效 typed Candidate opportunity context 的新 Candidate 只进入一个 canonical
+Context → Hypothesis → Compiler → Entry Plan 实现。当前 writer 不写 Candidate、Planner、
+Hypothesis、Profile、TriggerSpec 或 Plan 的 numeric format label；历史 numeric label
+只读保留且不能选择当前行为。当前兼容与复用由 schema/behavior fingerprint 决定。
+其 ownership identity 由 exact instrument、Opportunity mechanism/direction、
+Candidate-selection policy/epoch 与 mechanism identity 组成；family、rank、score、
+Utility、price 与普通 snapshot churn 不进入身份。机制或 policy epoch 变化会保留并
+supersede 旧 generation，同时 fail-closed 终结旧的 pre-order Entry Plan。
 
 `candidate_planning_generations` 以 planning thread 与递增 `cycle_number` 建立耐久生命周期。
 每周期最多一个 planning owner；经济性 No-Plan 在相同 frozen material input 下耐久。Runtime/config/

@@ -7,11 +7,9 @@ from datetime import datetime, timezone
 import pytest
 
 from aletheia.trading.entry_analysis import (
-    EntryAnalysisContextV1,
-    EntryAnalysisContextV2,
-    EntryAnchorV1,
-    EntryHypothesisV1,
-    EntryHypothesisV2,
+    EntryAnalysisContext,
+    EntryAnchor,
+    EntryHypothesis,
     _candidate_opportunity_evidence_refs,
     canonical_json,
     entry_model_view,
@@ -19,36 +17,43 @@ from aletheia.trading.entry_analysis import (
 )
 
 
-def _anchor(kind: str, price: float, source: str) -> EntryAnchorV1:
-    return EntryAnchorV1(
+def _anchor(kind: str, price: float, source: str) -> EntryAnchor:
+    return EntryAnchor(
         venue="bitget", symbol="BTC/USDT", market_type="perp", kind=kind,
         price=price, directional_role="both", known_at_ms=1_700_000_000_000,
         source_fact_refs=(source,), source_fingerprint=source,
     )
 
 
-def _context(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV1:
-    return EntryAnalysisContextV1(
+def _context(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
+    from aletheia.learning.entry_context import empty_entry_learning_context
+
+    return EntryAnalysisContext(
         analysis_cutoff_at="2026-09-02T00:00:00Z",
         instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
-        planning_generation={"id": "g1", "planner_contract_version": "entry-planner/v3", "candidate_id": "c1", "candidate_family": "momentum"},
+        planning_generation={"id": "g1", "candidate_id": "c1", "candidate_family": "momentum"},
         candidate={"fact_refs": ["candidate:c1"]},
         candle_windows={key: {"availability": "unavailable", "bars": []} for key in ("4h", "1h", "15m")},
         market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
         portfolio_context={"availability": "unavailable"},
         execution_context={"availability": "available"}, anchors=anchors,
-        entry_profiles=({"id": "anchor-resting-maker", "version": "v1"},),
-        learning_context={"availability": "unavailable"},
+        entry_profiles=({"id": "grounded-anchor-resting-maker"},),
+        learning_context=empty_entry_learning_context(
+            as_of_at="2026-09-02T00:00:00Z", mechanism="continuation", direction="long",
+            market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+        ),
+        candidate_opportunity_context={"opportunity": {"primary_mechanism": "continuation", "direction": "long"}},
+        inference_identity={"caller": "agent_shell.entry_planner", "prompt_fingerprint": "f" * 64, "model_provider": "test"},
     )
 
 
-def _context_v2(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV2:
+def _context_v2(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
     from aletheia.learning.entry_context import empty_entry_learning_context
 
-    base = _context(anchors).model_dump(exclude={"context_version", "context_fingerprint"})
+    base = _context(anchors).model_dump(exclude={"context_fingerprint"})
     base.update(
         planning_generation={
-            "id": "g1", "planner_contract_version": "entry-planner/v4",
+            "id": "g1",
             "candidate_id": "c1", "candidate_family": "mean_reversion",
         },
         candle_windows={
@@ -60,7 +65,7 @@ def _context_v2(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV2:
             "15m": {"availability": "available"},
             "fact_refs": [anchors[-1].anchor_id],
         },
-        entry_profiles=({"id": "grounded-anchor-resting-maker", "version": "v1"},),
+        entry_profiles=({"id": "grounded-anchor-resting-maker"},),
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-02T00:00:00Z", mechanism="reversal", direction="long",
             market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
@@ -79,10 +84,10 @@ def _context_v2(anchors: tuple[EntryAnchorV1, ...]) -> EntryAnalysisContextV2:
             "model_provider": "test",
         },
     )
-    return EntryAnalysisContextV2(**base)
+    return EntryAnalysisContext(**base)
 
 
-def _maximal_context() -> EntryAnalysisContextV2:
+def _maximal_context() -> EntryAnalysisContext:
     primary = _anchor("candidate_reference", 100.0, "candidate:c1")
     invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
     data = _context_v2((primary, invalidation)).model_dump(
@@ -114,7 +119,7 @@ def _maximal_context() -> EntryAnalysisContextV2:
         "invalidation_anchor_kinds": ("confirmed_swing",),
         "supported_timeframes": ("15m",),
     },)
-    return EntryAnalysisContextV2.model_validate(data)
+    return EntryAnalysisContext.model_validate(data)
 
 
 def test_entry_model_view_excludes_raw_evidence_and_retains_grounding_identities():
@@ -185,7 +190,7 @@ def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(m
         "mechanism": "reversal", "direction": "long",
         "primary_anchor_ref": context.anchors[0].anchor_id,
         "invalidation_anchor_ref": context.anchors[1].anchor_id,
-        "entry_profile_id": "missing-profile", "entry_profile_version": "v1",
+        "entry_profile_id": "missing-profile",
         "execution_urgency": "PASSIVE", "risk_tier": "LOW", "horizon": "INTRADAY",
         "supporting_fact_refs": [context.anchors[1].anchor_id],
     }) == "entry_profile_not_registered"
@@ -195,42 +200,20 @@ def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(m
 def test_anchor_and_context_hashes_are_stable_and_aliases_do_not_vote_twice():
     first = _anchor("candidate_reference", 100.0, "candidate:c1")
     aliased = first.model_copy(update={"aliases": ("SMC", "PA", "SMC")})
-    rebuilt = EntryAnchorV1.model_validate(aliased.model_dump())
+    rebuilt = EntryAnchor.model_validate(aliased.model_dump())
     assert rebuilt.anchor_id == first.anchor_id
     assert rebuilt.aliases == ("PA", "SMC")
     assert _context((first,)).context_fingerprint == _context((first,)).context_fingerprint
-
-
-def test_hypothesis_references_are_strict_and_no_plan_is_canonical():
-    primary = _anchor("candidate_reference", 100.0, "candidate:c1")
-    invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
-    context = _context((primary, invalidation))
-    hypothesis = EntryHypothesisV1(
-        decision="ENTRY_PLAN", reason_code="OK", thesis="bounded", scenario="continuation",
-        setup_archetype="continuation", primary_anchor_ref=primary.anchor_id,
-        invalidation_anchor_ref=invalidation.anchor_id, entry_profile_id="anchor-resting-maker",
-        entry_profile_version="v1", execution_urgency="PASSIVE", risk_tier="LOW",
-        horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,),
-    )
-    validate_hypothesis_references(hypothesis, context)
-    no_plan = EntryHypothesisV1(
-        decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS", thesis="", scenario="",
-        primary_anchor_ref=primary.anchor_id, entry_profile_id="anchor-resting-maker",
-        entry_profile_version="v1", execution_urgency="PASSIVE", risk_tier="LOW",
-        horizon="SWING", supporting_fact_refs=(),
-    )
-    assert no_plan.primary_anchor_ref is None
-    assert no_plan.risk_tier == no_plan.horizon == "NONE"
 
 
 def test_v2_hypothesis_binds_mechanism_profile_and_current_market_fact():
     primary = _anchor("candidate_reference", 100.0, "candidate:c1")
     invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
     context = _context_v2((primary, invalidation))
-    hypothesis = EntryHypothesisV2(
+    hypothesis = EntryHypothesis(
         decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-resting-maker", entry_profile_version="v1",
+        entry_profile_id="grounded-anchor-resting-maker",
         execution_urgency="PASSIVE", risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,), learning_evidence_refs=("learning:1",),
     )
@@ -292,10 +275,10 @@ def test_v2_resting_maker_cannot_claim_bounded_urgent_execution():
     invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
 
     with pytest.raises(ValueError, match="resting_maker_must_be_passive"):
-        EntryHypothesisV2(
+        EntryHypothesis(
             decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
             primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-            entry_profile_id="grounded-anchor-resting-maker", entry_profile_version="v1",
+            entry_profile_id="grounded-anchor-resting-maker",
             execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY",
             supporting_fact_refs=(invalidation.anchor_id,),
         )
@@ -303,7 +286,7 @@ def test_v2_resting_maker_cannot_claim_bounded_urgent_execution():
 
 def test_v2_no_plan_still_binds_opportunity_identity_and_explanatory_refs():
     context = _context_v2((_anchor("candidate_reference", 100.0, "candidate:c1"),))
-    no_plan = EntryHypothesisV2(
+    no_plan = EntryHypothesis(
         decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS",
         mechanism="continuation", direction="long", risk_tier="NONE", horizon="NONE",
     )
@@ -331,7 +314,7 @@ def test_v2_no_plan_still_binds_opportunity_identity_and_explanatory_refs():
     ("continuation", "reversal", "positioning_forced_flow", "information_catalyst"),
 )
 def test_v2_schema_represents_every_mechanism_without_fabricating_a_plan(mechanism):
-    hypothesis = EntryHypothesisV2(
+    hypothesis = EntryHypothesis(
         decision="NO_PLAN",
         reason_code="NO_VALID_ENTRY_PROFILE",
         mechanism=mechanism,
@@ -343,36 +326,7 @@ def test_v2_schema_represents_every_mechanism_without_fabricating_a_plan(mechani
     assert hypothesis.mechanism == mechanism
     assert hypothesis.primary_anchor_ref is None
     with pytest.raises(ValueError, match="extra_forbidden"):
-        EntryHypothesisV2.model_validate({**hypothesis.model_dump(), "entry_price": 100.0})
-
-
-def test_entry_hypothesis_requires_roles_urgency_and_nonempty_text():
-    primary = EntryAnchorV1.model_validate({
-        **_anchor("candidate_reference", 100.0, "candidate:c1").model_dump(),
-        "directional_role": "invalidation_candidate", "anchor_id": "",
-    })
-    invalidation = EntryAnchorV1.model_validate({
-        **_anchor("confirmed_swing", 95.0, "swing:s1").model_dump(),
-        "directional_role": "entry_candidate", "anchor_id": "",
-    })
-    hypothesis = EntryHypothesisV1(
-        decision="ENTRY_PLAN", reason_code="OK", thesis=" bounded ", scenario=" continuation ",
-        setup_archetype="continuation", primary_anchor_ref=primary.anchor_id,
-        invalidation_anchor_ref=invalidation.anchor_id, entry_profile_id="anchor-retrace-reclaim",
-        entry_profile_version="v1", execution_urgency="PASSIVE", risk_tier="LOW",
-        horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,),
-    )
-    assert (hypothesis.thesis, hypothesis.scenario) == ("bounded", "continuation")
-    with pytest.raises(ValueError, match="hypothesis_primary_anchor_role_invalid"):
-        validate_hypothesis_references(hypothesis, _context((primary, invalidation)))
-    with pytest.raises(ValueError, match="entry_thesis_scenario_required"):
-        EntryHypothesisV1.model_validate({
-            **hypothesis.model_dump(), "thesis": "  ",
-        })
-    with pytest.raises(ValueError, match="entry_execution_urgency_required"):
-        EntryHypothesisV1.model_validate({
-            **hypothesis.model_dump(), "execution_urgency": None,
-        })
+        EntryHypothesis.model_validate({**hypothesis.model_dump(), "entry_price": 100.0})
 
 
 def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():

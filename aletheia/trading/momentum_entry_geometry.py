@@ -31,11 +31,10 @@ Direction = Literal["long", "short"]
 
 
 class MomentumGeometryUnavailable(ValueError):
-    """The admitted facts cannot prove a safe, causal v2 geometry."""
-
+    """The admitted facts cannot prove a safe, causal geometry."""
 
 @dataclass(frozen=True, slots=True)
-class MomentumEntryGeometryV2:
+class MomentumEntryGeometry:
     """Immutable geometry and provenance for one exact Candidate occurrence."""
 
     geometry_version: str
@@ -63,7 +62,7 @@ class MomentumEntryGeometryV2:
     geometry_fingerprint: str
 
     def trigger_params(self) -> dict[str, Any]:
-        """Return the exact v2 TriggerSpec parameter payload."""
+        """Return the exact TriggerSpec parameter payload."""
 
         return {
             "breakout_level": self.breakout_level,
@@ -86,7 +85,6 @@ class MomentumEntryGeometryV2:
             "geometry_version": self.geometry_version,
             "atr_version": self.atr_version,
             "source_cutoff_at": self.source_cutoff_at,
-            "source_candle_ids": list(self.source_candle_ids),
             "source_hash": self.source_hash,
             "candidate_id": self.candidate_id,
             "candidate_snapshot_id": self.candidate_snapshot_id,
@@ -351,7 +349,7 @@ def _risk_reward(
     return ratio
 
 
-def compile_momentum_entry_geometry_v2(
+def compile_momentum_entry_geometry(
     *,
     candidate: object,
     feature: object,
@@ -360,7 +358,7 @@ def compile_momentum_entry_geometry_v2(
     minimum_risk_reward: float,
     source_cutoff_at: str | datetime,
     valid_until: str | datetime,
-) -> MomentumEntryGeometryV2:
+) -> MomentumEntryGeometry:
     """Compile one causal Momentum geometry or raise a typed unavailable error."""
 
     if not isinstance(candidate, Mapping) or not isinstance(feature, Mapping):
@@ -476,7 +474,7 @@ def compile_momentum_entry_geometry_v2(
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     ).hexdigest()
-    return MomentumEntryGeometryV2(
+    return MomentumEntryGeometry(
         geometry_version=GEOMETRY_VERSION,
         atr_version=ATR_VERSION,
         source_cutoff_at=cutoff_at,

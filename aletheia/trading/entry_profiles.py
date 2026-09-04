@@ -1,4 +1,4 @@
-"""Versioned capability registry for deterministic Grounded Entry geometry."""
+"""Stable capability registry for deterministic Grounded Entry geometry."""
 
 from __future__ import annotations
 
@@ -14,16 +14,13 @@ Mechanism = Literal[
 @dataclass(frozen=True)
 class EntryProfileCapability:
     profile_id: str
-    version: str
     supported_mechanisms: tuple[Mechanism, ...]
     required_fact_sections: tuple[str, ...]
     primary_anchor_kinds: tuple[str, ...]
     invalidation_anchor_kinds: tuple[str, ...]
     supported_timeframes: tuple[str, ...]
     compiler_id: str
-    compiler_version: str
     trigger_spec_id: str | None
-    trigger_spec_version: str | None
     trigger_freshness_ms: int | None
     unavailable_reason: str | None = None
 
@@ -36,19 +33,18 @@ _SUPPORTED: tuple[Mechanism, ...] = (
 )
 _REGISTRY = (
     EntryProfileCapability(
-        "grounded-anchor-resting-maker", "v1", _SUPPORTED,
+        "grounded-anchor-resting-maker", _SUPPORTED,
         ("market_structure", "execution_context"),
         ("candidate_reference", "causal_breakout", "confirmed_swing", "broken_structure_level"),
         ("confirmed_swing", "broken_structure_level"),
-        ("15m",), "grounded-anchor-compiler", "v2", None, None, None,
+        ("15m",), "grounded-anchor-compiler", None, None,
     ),
     EntryProfileCapability(
-        "grounded-anchor-retrace-reclaim", "v1", _SUPPORTED,
+        "grounded-anchor-retrace-reclaim", _SUPPORTED,
         ("market_structure", "execution_context"),
         ("causal_breakout", "confirmed_swing", "broken_structure_level"),
         ("confirmed_swing", "broken_structure_level"),
-        ("15m",), "grounded-anchor-compiler", "v2",
-        "anchor-retrace-reclaim", "v1", 2_000,
+        ("15m",), "grounded-anchor-compiler", "anchor-retrace-reclaim", 2_000,
     ),
 )
 
@@ -61,18 +57,11 @@ def registered_entry_profiles() -> tuple[EntryProfileCapability, ...]:
     return _REGISTRY
 
 
-def require_compatible_entry_profile(
+def require_current_entry_profile(
     mechanism: str,
     profile_id: str,
-    version: str,
 ) -> EntryProfileCapability:
-    profile = next(
-        (
-            item for item in _REGISTRY
-            if (item.profile_id, item.version) == (profile_id, version)
-        ),
-        None,
-    )
+    profile = next((item for item in _REGISTRY if item.profile_id == profile_id), None)
     if profile is None:
         raise ValueError("entry_profile_not_registered")
     if mechanism not in profile.supported_mechanisms or profile.unavailable_reason:
@@ -82,5 +71,5 @@ def require_compatible_entry_profile(
 
 __all__ = [
     "EntryProfileCapability", "compatible_entry_profiles", "registered_entry_profiles",
-    "require_compatible_entry_profile",
+    "require_current_entry_profile",
 ]

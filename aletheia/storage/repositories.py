@@ -8241,7 +8241,6 @@ def plan_market_ohlcv_tiering(
 from aletheia.storage.models import (
     CandidatePlanningGeneration,
     EntryPlanRecord,
-    PLANNER_CONTRACT_VERSION,
     UniverseAsset,
     UniverseFeatureSnapshot,
     UniverseMember,
@@ -9198,7 +9197,11 @@ def get_candidate_planning_for_candidate(
             )
             .fetchone()
         )
-    return _effective_candidate_attention(dict(row) if row else None, now=now)
+    projected = _effective_candidate_attention(dict(row) if row else None, now=now)
+    if projected is not None:
+        for field in ("identity_version", "planner_contract_version", "activation_identity"):
+            projected.pop(field, None)
+    return projected
 
 
 def list_candidate_planning_cycles(*, planning_key: str) -> list[dict]:
@@ -9381,11 +9384,7 @@ def ensure_candidate_planning_generation(
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
-    from aletheia.storage.models import MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION
-    from aletheia.trading.entry_plan import (
-        PLANNING_IDENTITY_V2_VERSION,
-        candidate_planning_identity,
-    )
+    from aletheia.trading.entry_plan import candidate_planning_identity
     from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
@@ -9408,9 +9407,6 @@ def ensure_candidate_planning_generation(
         if context is None:
             raise ValueError("candidate_opportunity_context_missing")
         entry_behavior_fingerprint, schema_fingerprint = entry_contract_fingerprints()
-        # Retained only because historical schema requires a legacy format label.
-        # Current reuse and routing use machine-derived fingerprints below.
-        planner_contract_version = MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION
         planning_key, planning_identity = candidate_planning_identity(candidate)
         existing_row = (
             get_db().execute(
@@ -9595,9 +9591,6 @@ def ensure_candidate_planning_generation(
             market_type=str(candidate["market_type"]),
             candidate_family=str(candidate["scanner_family"]),
             direction=str(candidate["scanner_direction"]),
-            identity_version=(
-                PLANNING_IDENTITY_V2_VERSION if context is not None else "candidate-planning/v1"
-            ),
             opportunity_mechanism=(
                 str(context.opportunity["primary_mechanism"]) if context else None
             ),
@@ -9616,7 +9609,6 @@ def ensure_candidate_planning_generation(
             soft_expires_at=(current_time + timedelta(seconds=int(soft_lease_sec))).isoformat(),
             hard_expires_at=(current_time + timedelta(seconds=int(max_attention_age_sec))).isoformat(),
             attention_max_age_sec=int(max_attention_age_sec),
-            planner_contract_version=planner_contract_version,
             cycle_number=(
                 int(
                     get_db().execute(
@@ -10068,7 +10060,7 @@ def complete_candidate_planning_with_plan(
             return "stale", None
         if row["status"] != "planning":
             return "claim_lost", None
-        if plan.version == "entry-plan/v2":
+        if plan.entry_hypothesis_json is not None:
             from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
 
             try:
@@ -10119,7 +10111,6 @@ def complete_candidate_planning_with_plan(
             planning_generation_id=generation_id,
             candidate_id=plan.candidate_id,
             planning_key=row["planning_key"],
-            version=plan.version,
             venue=plan.venue,
             symbol=plan.symbol,
             market_type=plan.market_type,
@@ -10244,7 +10235,6 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
 
     projected = []
     for row in rows:
-        row.pop("planner_contract_version", None)
         projected.append({
             **row,
             **project_candidate_entry_lifecycle(
@@ -10362,8 +10352,6 @@ def list_planning_history(
         )
         .fetchall()
     ]
-    for row in rows:
-        row.pop("planner_contract_version", None)
     return rows
 
 

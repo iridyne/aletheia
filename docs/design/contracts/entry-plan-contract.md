@@ -13,10 +13,10 @@ Monitoring. Durable authority remains in `candidate_planning_generations`,
 `entry_plans`, canonical Proposals/Risk Decisions, and Orders. Risk is the only
 approval authority and Gateway is the only order/cancel authority.
 
-Historical and legacy planning retains `entry-plan/v1`; its canonical JSON and
-hash are not rewritten. Grounded planning uses `entry-plan/v2`, which
-additionally requires exact context, hypothesis, selected Anchor, Profile, and
-compiled geometry identities.
+Historical planning retains its numeric format labels; canonical JSON and hashes
+are not rewritten. Current Grounded planning writes no numeric Candidate, Planner,
+Hypothesis, Profile, TriggerSpec, or Plan format label. It requires exact context,
+hypothesis, selected Anchor, Profile, TriggerSpec, and compiled geometry identities.
 
 ## Canonical Entry hypothesis authority
 
@@ -30,39 +30,38 @@ cohort gate, or activation identity.
 The Planner binds one immutable canonical `planner_input_json/hash` per cycle.
 It contains bounded completed exact-instrument windows (30×4h, 48×1h, 96×15m),
 existing causal Market Structure facts, at most 12 canonical 15m Anchors, and
-explicit unavailable sections. The model emits `entry-hypothesis/v2`: controlled
-enums and supplied references only, with no price, size, leverage, ATR multiplier,
-slippage, or other numeric execution authority. `NO_PLAN` clears every execution
-field and requires a stable non-OK reason.
+explicit unavailable sections. The model emits one canonical `EntryHypothesis`:
+controlled enums and supplied references only, with no price, size, leverage, ATR
+multiplier, slippage, or other numeric execution authority. `NO_PLAN` clears every
+execution field and requires a stable non-OK reason.
 
-`anchor-resting-maker/v1` and `anchor-retrace-reclaim/v1` are deterministic
-compiler Profiles. The latter reuses the existing retrace/sweep/reclaim engine
-and 0.25 ATR semantics under its own identity; Fast Monitoring never invokes AI.
-Plan activation and execution revalidate the current generation fingerprints,
-shared runtime authority, immutable hashes, and `entry-plan/v2` provenance before
+`anchor-resting-maker` and `anchor-retrace-reclaim` are deterministic compiler
+Profiles. The latter reuses the existing retrace/sweep/reclaim engine and 0.25 ATR
+semantics under its stable identity; Fast Monitoring never invokes AI. Plan
+activation and execution revalidate the current generation fingerprints, shared
+runtime authority, immutable hashes, and canonical Entry Plan provenance before
 Proposal or Risk.
 
 ## Mechanism-aware Grounded Entry
 
-The canonical implementation consumes `candidate-opportunity-context/v1` through one
-`entry-analysis-context/v2` and one `entry-hypothesis/v2` path for Continuation,
-Reversal, Positioning/Forced Flow, and Information/Catalyst. Mechanism and
+The canonical implementation consumes the typed Candidate opportunity context
+through one `EntryAnalysisContext` and one `EntryHypothesis` path for
+Continuation, Reversal, Positioning/Forced Flow, and Information/Catalyst. Mechanism and
 direction are upstream facts and must match exactly. Candidate T0 evidence,
-Planning T1 facts, and T1-cutoff Learning evidence remain separate. V2 permits
-only `INTRADAY`; the Candidate policy's 4h comparison horizon is not a Swing
-Entry authority. At least one current Planning fact is mandatory, and AI owns
-no price, size, leverage, stop, target, slippage, trigger parameter, or Risk
-field.
+Planning T1 facts and T1-cutoff Learning evidence remain separate. Planning permits
+only `INTRADAY`; the Candidate policy's 4h comparison horizon is not a Swing Entry
+authority. At least one current Planning fact is mandatory, and AI owns no price,
+size, leverage, stop, target, slippage, trigger parameter, or Risk field.
 
-`candidate-planning/v2` identity is venue, symbol, market type, mechanism,
+Current planning identity is venue, symbol, market type, mechanism,
 direction, selection policy/epoch, and mechanism version. Rank, score, Utility,
 price, and ordinary snapshot churn are excluded. Any authority-dimension change
 supersedes the old generation and invalidates its active pre-order plan; Fast
 Monitoring and execution revalidate both the current generation and exact
 Candidate context/hash before creating or cancelling an order.
 
-The generic `grounded-anchor-resting-maker/v1` and
-`grounded-anchor-retrace-reclaim/v1` Profiles declare compatible mechanisms,
+The generic `grounded-anchor-resting-maker` and
+`grounded-anchor-retrace-reclaim` Profiles declare compatible mechanisms,
 required facts/anchors/timeframes, compiler and TriggerSpec identity, and
 freshness. They may reuse deterministic geometry because geometry is not the
 Alpha source. Historical Momentum profile/experiment identities are unchanged.
