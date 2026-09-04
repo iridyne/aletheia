@@ -321,7 +321,7 @@ async def test_llm_structured_requests_json_schema_and_skips_all_failed_models(t
         ]
     )
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured.append(request)
         return next(responses)
 
@@ -360,7 +360,7 @@ async def test_llm_structured_news_keeps_default_model_order_but_still_uses_json
 
     captured = []
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured.append(request)
         return ModelResponse(
             content='{"value": 1}',
@@ -399,7 +399,7 @@ async def test_llm_structured_repair_attempt_uses_a_nonce_and_new_messages(tmp_p
         ]
     )
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured.append(request)
         return next(responses)
 
@@ -862,6 +862,211 @@ async def test_openai_compatible_retries_without_json_schema_when_unsupported(mo
     assert resp.content == '{"decision": "NO_PLAN"}'
     assert payloads[0]["response_format"]["type"] == "json_schema"
     assert "response_format" not in payloads[1]
-    assert payloads[1]["messages"][-1]["content"].startswith(
-        "Respond with valid JSON matching this schema:"
+    fallback_content = payloads[1]["messages"][-1]["content"]
+    assert fallback_content.startswith("[JSON Output Contract]")
+    assert "decision" in fallback_content
+
+
+# ---------------------------------------------------------------------------
+# compact_schema_prompt — unit tests
+# ---------------------------------------------------------------------------
+
+def test_compact_schema_prompt_renders_required_enum_fields():
+    from aletheia.model_provider.base import compact_schema_prompt
+
+    schema = {
+        "properties": {
+            "decision": {"enum": ["arm", "refuse"]},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["decision", "reasoning"],
+    }
+    out = compact_schema_prompt(schema)
+    assert out.startswith("[JSON Output Contract]")
+    assert "'arm' | 'refuse'" in out
+    assert "Required fields:" in out
+    assert "Optional fields:" not in out
+    assert "decision" in out
+    assert "reasoning" in out
+
+
+def test_compact_schema_prompt_separates_optional_fields():
+    from aletheia.model_provider.base import compact_schema_prompt
+
+    schema = {
+        "properties": {
+            "decision": {"enum": ["ENTRY_PLAN", "NO_PLAN"]},
+            "anchor_ref": {"type": ["string", "null"]},
+        },
+        "required": ["decision"],
+    }
+    out = compact_schema_prompt(schema)
+    assert "Required fields:" in out
+    assert "Optional fields:" in out
+    assert "string or null" in out
+
+
+def test_compact_schema_prompt_resolves_defs():
+    from aletheia.model_provider.base import compact_schema_prompt
+
+    schema = {
+        "$defs": {"Dir": {"enum": ["long", "short"]}},
+        "properties": {
+            "direction": {"$ref": "#/$defs/Dir"},
+        },
+        "required": ["direction"],
+    }
+    out = compact_schema_prompt(schema)
+    assert "'long' | 'short'" in out
+
+
+def test_compact_schema_prompt_caps_long_enum():
+    from aletheia.model_provider.base import compact_schema_prompt
+
+    schema = {
+        "properties": {"x": {"enum": list(range(20))}},
+        "required": ["x"],
+    }
+    out = compact_schema_prompt(schema)
+    assert "..." in out
+    # 8 values: "0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | ..." → 8 separators total (7 within + 1 before ...)
+    assert out.count("|") == 8
+
+
+def test_compact_schema_prompt_empty_props():
+    from aletheia.model_provider.base import compact_schema_prompt
+
+    out = compact_schema_prompt({})
+    assert "Return ONLY a JSON object" in out
+
+
+# ---------------------------------------------------------------------------
+# repair_message includes compact schema hint on structural schema errors
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_repair_message_includes_schema_hint_on_outside_enum(tmp_path, monkeypatch):
+    """When schema validation fails with an enum error, the repair message must
+    include the compact field contract so the model sees valid choices."""
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
+    import pydantic
+    from typing import Literal
+
+    class _EnumSchema(pydantic.BaseModel):
+        decision: Literal["arm", "refuse"]
+
+    captured: list = []
+
+    async def complete(request, **_kwargs):
+        captured.append(request)
+        if len(captured) == 1:
+            # First attempt: wrong enum value → triggers schema error
+            return ModelResponse(content='{"decision": "maybe"}', model="m1", raw={"usage": {}})
+        # Second attempt: valid
+        return ModelResponse(content='{"decision": "arm"}', model="m1", raw={"usage": {}})
+
+    async def provider(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
+
+    data, error = await helpers.llm_structured("sys", "user", schema=_EnumSchema)
+    assert error is None
+    assert data == {"decision": "arm"}
+    assert len(captured) == 2
+    repair_content = captured[1].messages[-1]["content"]
+    assert "[JSON Output Contract]" in repair_content
+    assert "'arm' | 'refuse'" in repair_content
+
+
+@pytest.mark.asyncio
+async def test_repair_message_no_schema_hint_on_semantic_error(tmp_path, monkeypatch):
+    """Semantic errors must NOT include a schema hint — error code is sufficient."""
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
+    import pydantic
+
+    class _SimpleSchema(pydantic.BaseModel):
+        value: int
+
+    captured: list = []
+
+    async def complete(request, **_kwargs):
+        captured.append(request)
+        return ModelResponse(content='{"value": 1}', model="m1", raw={"usage": {}})
+
+    async def provider(_name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
+
+    data, error = await helpers.llm_structured(
+        "sys", "user", schema=_SimpleSchema,
+        semantic_validator=lambda _: "domain_constraint_failed",
     )
+    assert error == "structured_semantic_invalid:domain_constraint_failed"
+    assert len(captured) == 2
+    repair_content = captured[1].messages[-1]["content"]
+    assert "domain_constraint_failed" in repair_content
+    assert "[JSON Output Contract]" not in repair_content
+
+
+# ---------------------------------------------------------------------------
+# Fallback layer response_validator — switches models before consuming repair attempt
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_fallback_response_validator_switches_model_without_repair(tmp_path, monkeypatch):
+    """When the first fallback model returns invalid JSON, response_validator must
+    trigger immediate model switch without consuming a repair attempt."""
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.model_provider import fallback
+    from aletheia.model_provider.base import ModelResponse, ModelRequest
+
+    call_sequence = []
+
+    async def fake_brokered_complete(_pn, _provider, _request):
+        model_id = getattr(_provider, "model", "unknown")
+        call_sequence.append(model_id)
+        if model_id == "model-a":
+            # Model A returns prose, not JSON
+            return ModelResponse(content="Here is my analysis: the market looks good.", model="model-a", raw={"usage": {}})
+        # Model B returns valid JSON
+        return ModelResponse(content='{"value": 42}', model="model-b", raw={"usage": {}})
+
+    async def fake_candidate_models(_pn, _prov):
+        return ["model-a", "model-b"]
+
+    def fake_validator(response):
+        # Reject non-JSON responses (triggers model switch in fallback loop)
+        try:
+            import json
+            obj = json.loads((response.content or "").strip())
+            return isinstance(obj, dict)
+        except (json.JSONDecodeError, TypeError):
+            return False
+
+    monkeypatch.setattr(fallback, "brokered_complete", fake_brokered_complete)
+    monkeypatch.setattr(fallback, "_candidate_models", fake_candidate_models)
+
+    class FakeProvider:
+        model = "model-a"
+        name = "test"
+
+    resp = await fallback.complete_with_fallback(
+        ModelRequest(messages=[{"role": "user", "content": "x"}]),
+        provider=FakeProvider(),
+        provider_name="test",
+        response_validator=fake_validator,
+    )
+
+    # Model A was tried, failed validator → switched to Model B without repair
+    assert call_sequence == ["model-a", "model-b"]
+    assert resp.content == '{"value": 42}'
+    assert resp.model == "model-b"

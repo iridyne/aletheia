@@ -11,6 +11,7 @@ primary, and skip models that already returned unusable JSON for this call.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, asdict
 import logging
 import threading
@@ -562,12 +563,12 @@ def _enforce_budget_if_configured(cfg, request: ModelRequest) -> None:
         return
     raise BudgetExceededError(list(observations))
 
-
 async def complete_with_fallback(
     request: ModelRequest,
     *,
     provider_name: str | None = None,
     provider: ModelProvider | None = None,
+    response_validator: Callable[[ModelResponse], bool] | None = None,
 ) -> ModelResponse:
     """Complete with request-level model fallback on transient model errors.
 
@@ -685,6 +686,37 @@ metadata={
                     )
                 logger.warning(
                     "LLM model %s/%s returned empty content; trying fallback %s",
+                    pn,
+                    md,
+                    "/".join(to_try[idx + 1]),
+                )
+                continue
+            # Response content validator (optional) — for structured JSON calls, check
+            # if the response is parseable JSON matching the schema. If not, record
+            # model failure and continue to the next fallback candidate, unless this
+            # is the last attempt.
+            if response_validator is not None and not response_validator(response):
+                failure = ProviderResponseError("response_validator_rejected")
+                _record_model_failure(pn, md, failure)
+                if idx == len(to_try) - 1:
+                    _emit_terminal_failure(
+                        failure,
+                        provider_name=resolved_provider_name,
+                        requested_model=requested_model,
+                        attempted_models=attempted,
+                        skipped_cooldown_models=[
+                            f"{p}/{m}" for p, m in skipped_cooldown
+                        ],
+                    )
+                    return _with_fallback_meta(
+                        response,
+                        provider_name=resolved_provider_name,
+                        requested_model=requested_model,
+                        attempted_models=attempted,
+                        fallback_used=(pn, md) != requested,
+                    )
+                logger.warning(
+                    "LLM model %s/%s response failed validation; trying fallback %s",
                     pn,
                     md,
                     "/".join(to_try[idx + 1]),

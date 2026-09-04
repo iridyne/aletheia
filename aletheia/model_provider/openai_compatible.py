@@ -13,6 +13,7 @@ from aletheia.model_provider.base import (
     ModelResponse,
     ProviderResponseError,
     StructuredModelRequest,
+    compact_schema_prompt,
     health_from_model_catalogue,
     portable_json_schema_payload,
 )
@@ -188,9 +189,7 @@ class OpenAICompatibleProvider(ModelProvider):
                         *messages,
                         {
                             "role": "user",
-                            "content": (
-                                f"Respond with valid JSON matching this schema: {json.dumps(request.structured_schema)}"
-                            ),
+                            "content": compact_schema_prompt(request.structured_schema),
                         },
                     ]
             else:

@@ -37,7 +37,7 @@ async def test_llm_complete_threads_provider_name_to_complete_with_fallback():
 
     captured: dict = {}
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured["provider_name"] = provider_name
         captured["provider_object"] = provider
         return ModelResponse(content=" ok ", raw={})
@@ -65,7 +65,7 @@ async def test_llm_complete_forwards_none_when_caller_did_not_specify():
 
     captured: dict = {}
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured["provider_name"] = provider_name
         return ModelResponse(content="ok", raw={})
 
@@ -98,7 +98,7 @@ async def test_default_provider_identity_is_captured_before_config_reload():
             return cfg_a
         return cfg_b
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured["provider"] = provider
         captured["provider_name"] = provider_name
         assert loader.load_config().models.default_provider == "provider_b"
@@ -153,7 +153,7 @@ async def test_structured_default_provider_identity_is_captured_before_reload():
         captured["resolved_name"] = name
         return "provider-object-a"
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured["provider"] = provider
         captured["provider_name"] = provider_name
         assert loader.load_config().models.default_provider == "provider_b"
@@ -309,7 +309,7 @@ async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
 
     captured: dict = {}
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured["provider_name"] = provider_name
         return ModelResponse(content=json.dumps({"value": 42}), raw={"usage": {"completion_tokens": 5}})
 
@@ -342,7 +342,7 @@ async def test_llm_structured_threads_explicit_reasoning_effort_to_every_attempt
         ]
     )
 
-    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
+    async def fake_complete_with_fallback(request, *, provider=None, provider_name=None, response_validator=None):
         captured.append(request)
         return next(responses)
 

@@ -155,7 +155,7 @@ def _patch_llm(monkeypatch_obj, responses):
     calls = {"n": 0}
 
     # helpers now forwards provider_name= too (#161 fix) — accept and ignore.
-    async def fake_complete(req, provider=None, provider_name=None):
+    async def fake_complete(req, provider=None, provider_name=None, response_validator=None):
         i = min(calls["n"], len(responses) - 1)
         calls["n"] += 1
         return responses[i]
@@ -251,7 +251,7 @@ def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
     from aletheia.agents import helpers
     captured_messages = []
 
-    async def fake_complete(req, provider=None, provider_name=None):
+    async def fake_complete(req, provider=None, provider_name=None, response_validator=None):
         captured_messages.append(req.messages)
         if len(captured_messages) < 2:
             return _Resp("not json at all")
@@ -349,7 +349,7 @@ def test_llm_structured_cancels_hanging_provider_before_job_timeout(monkeypatch)
 
     cancelled = {"value": False}
 
-    async def hang(req, provider=None, provider_name=None):
+    async def hang(req, provider=None, provider_name=None, response_validator=None):
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:

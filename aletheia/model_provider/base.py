@@ -179,6 +179,65 @@ def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
     return payload
 
 
+def compact_schema_prompt(schema_dict: dict) -> str:
+    """Render a JSON Schema dict into a compact, model-readable field contract.
+
+    Used in two places:
+    - openai_compatible.py: text-fallback path when response_format is unsupported
+    - helpers.py: repair_message when schema validation fails with a structural error
+
+    Resolves $ref into $defs. Does not recurse into nested object sub-fields
+    (keeps output bounded). Caps enum lists at 8 values.
+    """
+    defs = schema_dict.get("$defs") or {}
+    props = schema_dict.get("properties") or {}
+    required = set(schema_dict.get("required") or [])
+
+    def _resolve(spec: dict) -> dict:
+        ref = spec.get("$ref", "")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            name = ref[len("#/$defs/"):]
+            return defs.get(name, spec)
+        return spec
+
+    def _render(spec: dict) -> str:
+        spec = _resolve(spec)
+        if "const" in spec:
+            return f"must be {spec['const']!r}"
+        if "enum" in spec:
+            vals = spec["enum"]
+            formatted = " | ".join(repr(v) for v in vals[:8])
+            return formatted + (" | ..." if len(vals) > 8 else "")
+        t = spec.get("type")
+        if isinstance(t, list):
+            non_null = [x for x in t if x != "null"]
+            base = " | ".join(non_null) if non_null else "any"
+            return (base + " or null") if "null" in t else base
+        if isinstance(t, str):
+            return t
+        return "any"
+
+    if not props:
+        return "[JSON Output Contract]\nReturn ONLY a JSON object."
+
+    req_lines: list[str] = []
+    opt_lines: list[str] = []
+    for name, raw_spec in props.items():
+        line = f"  {name}: {_render(raw_spec)}"
+        (req_lines if name in required else opt_lines).append(line)
+
+    parts = [
+        "[JSON Output Contract]",
+        "Return ONLY a JSON object. No prose, no markdown, no explanation.",
+    ]
+    if req_lines:
+        parts.append("Required fields:")
+        parts.extend(req_lines)
+    if opt_lines:
+        parts.append("Optional fields:")
+        parts.extend(opt_lines)
+    return "\n".join(parts)
+
 
 def _configured_provider_name(provider: Any) -> str:
     """Resolve an exact configured alias without changing provider routing."""

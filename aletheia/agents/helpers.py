@@ -17,6 +17,7 @@ from typing import Literal
 from aletheia.model_provider.base import (
     ModelRequest,
     StreamChunk,
+    compact_schema_prompt,
     model_json_schema_payload,
     portable_json_schema_payload,
 )
@@ -823,9 +824,18 @@ async def llm_structured(
                     )
                 elif last_schema_error_text:
                     repair_message += (
-                        "\nThe exact validator error from the previous response was:\n"
+                        "\nThe exact validator error from your previous response was:\n"
                         f"{last_schema_error_text}"
                     )
+                    # For structural errors, append the compact field contract so
+                    # the model has valid choices / required fields in view.
+                    if last_schema_error_code in {
+                        "outside_enum",
+                        "missing_required",
+                        "wrong_type",
+                        "constraint_violation",
+                    }:
+                        repair_message += "\n" + compact_schema_prompt(schema_dict)
                 messages.append({"role": "user", "content": repair_message})
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -853,6 +863,9 @@ async def llm_structured(
                         ),
                         provider=provider_instance,
                         provider_name=provider_name,
+                        response_validator=lambda r: isinstance(
+                            _extract_json_object((r.content or "").strip()), dict
+                        ),
                     ),
                     timeout=remaining,
                 )
