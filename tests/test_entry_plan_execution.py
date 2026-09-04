@@ -18,11 +18,76 @@ from aletheia.storage.models import (
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
 
 
-def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo") -> EntryPlan:
+@pytest.fixture(autouse=True)
+def _isolate_execution_contract(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.execution.entry_plan_execution._require_ai_entry_authority",
+        lambda _plan: None,
+    )
+
+
+def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo", provenance=True) -> EntryPlan:
+    from aletheia.trading.entry_analysis import EntryAnchor, EntryHypothesis, fingerprint
+
     now = datetime.now(timezone.utc)
     triggered = mode == "TRIGGERED"
     maker = tactic == "POST_ONLY_LIMIT"
-    return EntryPlan(
+    primary = EntryAnchor(
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        kind="causal_breakout" if triggered else "candidate_reference",
+        price=100.0,
+        directional_role="entry_candidate",
+        known_at_ms=int(now.timestamp() * 1000),
+        source_fact_refs=("candidate:candidate-1",),
+        source_fingerprint="a" * 64,
+    )
+    invalidation = EntryAnchor(
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        kind="confirmed_swing",
+        price=98.0,
+        directional_role="invalidation_candidate",
+        known_at_ms=int(now.timestamp() * 1000),
+        source_fact_refs=("swing:test",),
+        source_fingerprint="b" * 64,
+    )
+    hypothesis = EntryHypothesis(
+        decision="ENTRY_PLAN",
+        reason_code="OK",
+        mechanism="continuation",
+        direction="long",
+        primary_anchor_ref=primary.anchor_id,
+        invalidation_anchor_ref=invalidation.anchor_id,
+        entry_profile_id=("grounded-anchor-retrace-reclaim" if triggered else "grounded-anchor-resting-maker"),
+        execution_urgency="BOUNDED_URGENT" if triggered else "PASSIVE",
+        risk_tier="LOW",
+        horizon="INTRADAY",
+        supporting_fact_refs=(primary.anchor_id,),
+    )
+    hypothesis_json = hypothesis.model_dump_json()
+    trigger_params = (
+        {
+            "breakout_level": 100.0,
+            "pullback_low": 99.0,
+            "pullback_high": 100.0,
+            "entry_low": 100.0,
+            "entry_high": 101.0,
+            "invalidation_price": 98.0,
+        }
+        if triggered
+        else {}
+    )
+    geometry = {
+        "entry_zone": (100.0, 101.0),
+        "invalidation_price": 98.0,
+        "stop_price": 98.0,
+        "target_price": 105.0,
+        "trigger_params": trigger_params,
+    }
+    plan = EntryPlan(
         planning_generation_id="gen-1",
         candidate_id="candidate-1",
         candidate_family="momentum",
@@ -34,40 +99,30 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         scenario="retrace reclaim",
         execution_mode=mode,
         trigger_spec_id="momentum-retrace-reclaim" if triggered else None,
-        trigger_spec_version="v1" if triggered else None,
-        trigger_params={
-            "breakout_level": 100,
-            "pullback_low": 99,
-            "pullback_high": 100,
-            "entry_low": 100,
-            "entry_high": 101,
-            "invalidation_price": 98,
-        }
-        if triggered
-        else {},
+        trigger_params=trigger_params,
         trigger_data_requirements=("quote", "trade", "books5", "candle1m") if triggered else (),
         trigger_freshness_ms=2_000 if triggered else None,
-        entry_zone=(100, 101),
+        entry_zone=(100.0, 101.0),
         invalidation_conditions=("price_below_98",),
-        invalidation_price=98,
-        stop_price=98,
-        target_price=105,
+        invalidation_price=98.0,
+        stop_price=98.0,
+        target_price=105.0,
         expected_horizon_hours=4,
         approved_at=now.isoformat(),
         expires_at=(now + timedelta(hours=1)).isoformat(),
         order_tactic=tactic,
         maker_required=maker,
         time_in_force="POST_ONLY" if maker else "IOC",
-        limit_price=100 if maker else None,
+        limit_price=100.0 if maker else None,
         price_rule="EXACT_LIMIT" if maker else "OPPOSING_BBO",
         bbo_reference=None if maker else "ask",
         max_wait_sec=60 if maker else 0,
         cancel_replace_policy="CANCEL_ONLY",
         max_requotes=0,
         partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
-        max_slippage_bps=None if maker else 10,
+        max_slippage_bps=None if maker else 10.0,
         worst_price=None if maker else 101.2,
-        max_notional=100,
+        max_notional=100.0,
         max_risk_pct=0.25,
         max_leverage=2,
         required_permission="Paper",
@@ -75,17 +130,60 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         risk_policy_id="demo-v1",
         risk_policy_revision=1,
         risk_policy_hash="risk-hash",
-        behavior_version="entry-planner/v1",
+        producer_commit="test",
+        behavior_fingerprint="b" * 64,
+        schema_fingerprint="s" * 64,
+        planning_identity="p" * 64,
+        cycle_number=1,
+        analysis_context_fingerprint="c" * 64,
+        entry_hypothesis_json=hypothesis_json,
+        entry_hypothesis_hash=hashlib.sha256(hypothesis_json.encode()).hexdigest(),
+        primary_anchor_snapshot=primary.model_dump(mode="json"),
+        invalidation_anchor_snapshot=invalidation.model_dump(mode="json"),
+        entry_profile_id=hypothesis.entry_profile_id,
+        compiled_geometry_fingerprint=fingerprint(geometry),
+    )
+    if provenance:
+        return plan
+    return plan.model_copy(
+        update={
+            "analysis_context_fingerprint": None,
+            "entry_hypothesis_json": None,
+            "entry_hypothesis_hash": None,
+            "primary_anchor_snapshot": None,
+            "invalidation_anchor_snapshot": None,
+            "entry_profile_id": None,
+            "compiled_geometry_fingerprint": None,
+        }
     )
 
 
-def test_momentum_v2_requires_and_preserves_treatment_receipt(monkeypatch):
+def _with_geometry_hash(payload: dict) -> dict:
+    from aletheia.trading.entry_analysis import fingerprint
+
+    result = dict(payload)
+    result["compiled_geometry_fingerprint"] = fingerprint(
+        {
+            "entry_zone": tuple(float(value) for value in result["entry_zone"]),
+            "invalidation_price": float(result["invalidation_price"]),
+            "stop_price": float(result["stop_price"]),
+            "target_price": float(result["target_price"]),
+            "trigger_params": result["trigger_params"],
+        }
+    )
+    return result
+
+
+def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch):
     plan = _plan(account_mode="paper_internal").model_copy(
         update={
-            "trigger_spec_version": "v2",
+            "trigger_spec_id": "momentum-retrace-reclaim-geometry",
             "treatment_exposure_id": "exposure-treatment",
             "trigger_params": {
                 **_plan().trigger_params,
+                "sweep_low": 99.0,
+                "sweep_high": 100.0,
+                "atr_abs": 2.0,
                 "geometry_version": "momentum-entry-geometry/v2",
                 "geometry_fingerprint": "f" * 64,
             },
@@ -101,8 +199,17 @@ def test_momentum_v2_requires_and_preserves_treatment_receipt(monkeypatch):
         },
     )
     observed_at = datetime.now(timezone.utc).isoformat()
+    trigger_evidence = {
+        "trigger_spec_id": "momentum-retrace-reclaim-geometry",
+        "geometry_fingerprint": "f" * 64,
+    }
     proposal = build_entry_plan_order_intent(
-        plan, bid=100, ask=100.05, observed_at=observed_at, source_observed_at=observed_at
+        plan,
+        bid=100,
+        ask=100.05,
+        observed_at=observed_at,
+        source_observed_at=observed_at,
+        trigger_evidence=trigger_evidence,
     )
     attribution = json.loads(proposal.attribution_snapshot)
     assert attribution["treatment_exposure_id"] == "exposure-treatment"
@@ -115,7 +222,10 @@ def test_momentum_v2_requires_and_preserves_treatment_receipt(monkeypatch):
             ask=100.05,
             observed_at=observed_at,
             source_observed_at=observed_at,
+            trigger_evidence=trigger_evidence,
         )
+
+
 def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
     plan = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
     with pytest.raises(ValueError, match="post_only_would_cross_bbo"):
@@ -125,71 +235,6 @@ def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
             ask=100,
             observed_at=datetime.now(timezone.utc).isoformat(),
             source_observed_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-
-def test_ai_entry_runtime_authority_rejects_legacy_version_lineage(monkeypatch):
-    from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
-    from aletheia.trading.entry_analysis import EntryAnalysisContextV1, fingerprint
-
-    instant = datetime(2026, 9, 2, tzinfo=timezone.utc)
-    context = EntryAnalysisContextV1(
-        analysis_cutoff_at=instant.isoformat(),
-        instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
-        planning_generation={"id": "g-v3", "planner_contract_version": "entry-planner/v3", "candidate_id": "c1", "candidate_family": "momentum"},
-        candidate={"fact_refs": ["candidate:c1"]},
-        candle_windows={tf: {"availability": "unavailable", "bars": []} for tf in ("4h", "1h", "15m")},
-        market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
-        portfolio_context={"availability": "available", "fact_refs": []},
-        execution_context={"availability": "available", "fact_refs": []}, anchors=(),
-        entry_profiles=(), learning_context={"availability": "unavailable"},
-    )
-    generation = {
-        "id": "g-v3", "planner_contract_version": "entry-planner/v3",
-        "planner_input_json": context.model_dump_json(),
-        "planner_input_hash": fingerprint(context.model_dump(mode="json")),
-    }
-    plan = SimpleNamespace(
-        version="entry-plan/v2", planning_generation_id="g-v3", candidate_id="c1",
-        analysis_context_fingerprint=context.context_fingerprint,
-        venue="bitget", symbol="BTC/USDT", market_type="perp", direction="long",
-        required_permission="Paper", execution_account_mode="paper_internal",
-    )
-    cfg = SimpleNamespace(
-        agent=SimpleNamespace(permission_mode="Paper"),
-        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
-        live=SimpleNamespace(state="live_disabled"),
-    )
-    monkeypatch.setattr(repo, "get_candidate_planning_generation", lambda _id: generation)
-    monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_kwargs: cfg)
-    with pytest.raises(ValueError, match="ai_entry_generation_contract_mismatch"):
-        _require_ai_entry_authority(plan)
-
-
-def test_ai_entry_trigger_identity_must_match_plan(monkeypatch):
-    monkeypatch.setattr(
-        "aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority",
-        lambda _plan: None,
-    )
-    plan = _plan().model_copy(update={
-        "version": "entry-plan/v2",
-        "trigger_spec_id": "anchor-retrace-reclaim",
-        "trigger_spec_version": "v1",
-        "trigger_params": {**_plan().trigger_params, "geometry_fingerprint": "a" * 64},
-    })
-    now = datetime.now(timezone.utc).isoformat()
-    with pytest.raises(ValueError, match="ai_entry_trigger_evidence_required"):
-        build_entry_plan_order_intent(
-            plan, bid=100, ask=100.05, observed_at=now, source_observed_at=now,
-        )
-    with pytest.raises(ValueError, match="ai_entry_trigger_identity_mismatch"):
-        build_entry_plan_order_intent(
-            plan, bid=100, ask=100.05, observed_at=now, source_observed_at=now,
-            trigger_evidence={
-                "trigger_spec_id": "momentum-retrace-reclaim",
-                "trigger_spec_version": "v2",
-                "geometry_fingerprint": "a" * 64,
-            },
         )
 
 
@@ -244,7 +289,11 @@ def test_urgent_entry_cannot_escape_the_plan_zone():
     ],
 )
 def test_entry_plan_invalidation_must_stay_protective_to_selected_entry(
-    direction, invalidation, stop_price, target_price, error,
+    direction,
+    invalidation,
+    stop_price,
+    target_price,
+    error,
 ):
     payload = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT").model_dump()
     payload.update(
@@ -257,7 +306,7 @@ def test_entry_plan_invalidation_must_stay_protective_to_selected_entry(
     )
 
     with pytest.raises(ValueError, match=error):
-        EntryPlan(**payload)
+        EntryPlan(**_with_geometry_hash(payload))
 
 
 def test_dynamic_entry_plan_invalidation_covers_the_full_entry_zone():
@@ -271,7 +320,7 @@ def test_dynamic_entry_plan_invalidation_covers_the_full_entry_zone():
     }
 
     with pytest.raises(ValueError, match="long_invalidation_above_entry"):
-        EntryPlan(**payload)
+        EntryPlan(**_with_geometry_hash(payload))
 
 
 def test_realized_liquidity_comes_only_from_private_fill_evidence():
@@ -346,9 +395,7 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
         ("price", 102, "entry_plan_entry_envelope_exceeded"),
     ],
 )
-def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(
-    monkeypatch, field, value, violation
-):
+def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(monkeypatch, field, value, violation):
     from types import SimpleNamespace
 
     from aletheia.risk import engine
@@ -450,15 +497,9 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
         source_observed_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    assert engine._entry_plan_authority_violations(
-        proposal, capital_base=1_000, resolved_policy=resolved
-    ) == []
-    reduced = proposal.model_copy(
-        update={"quantity": proposal.quantity / 2, "leverage": 1}
-    )
-    assert engine._entry_plan_authority_violations(
-        reduced, capital_base=1_000, resolved_policy=resolved
-    ) == []
+    assert engine._entry_plan_authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
+    reduced = proposal.model_copy(update={"quantity": proposal.quantity / 2, "leverage": 1})
+    assert engine._entry_plan_authority_violations(reduced, capital_base=1_000, resolved_policy=resolved) == []
 
 
 def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkeypatch):
@@ -467,14 +508,13 @@ def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkey
     from aletheia.risk import engine
 
     original = _plan()
-    changed = EntryPlan.model_validate(
-        {
-            **original.model_dump(),
-            "plan_id": "new-plan-version",
-            "target_price": 106,
-            "expected_horizon_hours": 6,
-        }
-    )
+    changed_payload = {
+        **original.model_dump(),
+        "plan_id": "new-plan-version",
+        "target_price": 106,
+        "expected_horizon_hours": 6,
+    }
+    changed = EntryPlan.model_validate(_with_geometry_hash(changed_payload))
     payload, digest = entry_plan_payload(changed)
     monkeypatch.setattr(
         engine,
@@ -498,9 +538,7 @@ def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkey
         policy_hash="risk-hash",
     )
 
-    assert engine._entry_plan_authority_violations(
-        proposal, capital_base=1_000, resolved_policy=resolved
-    ) == []
+    assert engine._entry_plan_authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
 
 
 def test_canonical_risk_requires_exact_resting_maker_limit(monkeypatch):
@@ -663,7 +701,7 @@ def _persist_waiting_plan(
     repo.insert_candidate(candidate)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.claim_next_candidate_planning("owner")
-    plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic).model_copy(
+    plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic, provenance=False).model_copy(
         update={
             "planning_generation_id": generation["id"],
             "candidate_id": candidate_id,
@@ -776,11 +814,7 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         proposal.id,
         "interrupted-owner",
         (now - timedelta(seconds=601)).isoformat(),
-        (
-            (now + timedelta(seconds=60)).isoformat()
-            if claim_active
-            else (now - timedelta(seconds=1)).isoformat()
-        ),
+        ((now + timedelta(seconds=60)).isoformat() if claim_active else (now - timedelta(seconds=1)).isoformat()),
     )
     if order_present:
         decision = RiskDecision(
@@ -819,12 +853,11 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
     )
 
     assert outcome == expected_outcome
-    assert repo.get_entry_plan(plan.plan_id)["status"] == (
-        "invalidated" if authority_released else plan_status
-    )
+    assert repo.get_entry_plan(plan.plan_id)["status"] == ("invalidated" if authority_released else plan_status)
     assert (repo.get_entry_risk_reservation(proposal.id) is None) is authority_released
     assert (repo.get_proposal_execution_claim(proposal.id) is None) is authority_released
     assert repo.has_order_for_proposal(proposal.id) is order_present
+
 
 def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
     plan = _persist_waiting_plan()
@@ -942,9 +975,7 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
         now=now,
         **_execution_receipt_kwargs(now, depth=tactic == "OPPOSING_BBO_IOC"),
     )
-    assert result["status"] == (
-        "ordered" if tactic == "POST_ONLY_LIMIT" else "executed"
-    ), result
+    assert result["status"] == ("ordered" if tactic == "POST_ONLY_LIMIT" else "executed"), result
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
     order = repo.get_order(result["order_id"])
     assert proposal["execution_mode"] == "paper_internal"
@@ -1071,14 +1102,8 @@ def test_paper_entry_plan_crash_replay_rechecks_receipt_expiry(monkeypatch):
     assert repo.get_entry_risk_reservation(proposal.id) is not None
     assert repo.get_order_for_entry_plan(plan.plan_id) is None
 
-    expired = receipt.model_copy(
-        update={"expires_at": (now - timedelta(seconds=1)).isoformat()}
-    )
-    expired = expired.model_copy(
-        update={
-            "receipt_hash": hashlib.sha256(expired.canonical_json().encode()).hexdigest()
-        }
-    )
+    expired = receipt.model_copy(update={"expires_at": (now - timedelta(seconds=1)).isoformat()})
+    expired = expired.model_copy(update={"receipt_hash": hashlib.sha256(expired.canonical_json().encode()).hexdigest()})
     replay = gateway.execute_existing_proposal(
         proposal.id,
         "paper_internal",
@@ -1088,14 +1113,16 @@ def test_paper_entry_plan_crash_replay_rechecks_receipt_expiry(monkeypatch):
     assert replay["status"] == "attempt_rejected"
     assert "entry_execution_receipt_stale" in replay["risk_violations"]
     assert repo.get_order_for_entry_plan(plan.plan_id) is None
-    assert len(
-        [
-            row
-            for row in repo.list_risk_decisions(limit=20)
-            if row["proposal_id"] == proposal.id
-            and row["decision_role"] == "authoritative"
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                row
+                for row in repo.list_risk_decisions(limit=20)
+                if row["proposal_id"] == proposal.id and row["decision_role"] == "authoritative"
+            ]
+        )
+        == 1
+    )
 
 
 def test_paper_ioc_walks_only_visible_depth_and_cancels_remainder(monkeypatch):
@@ -1194,11 +1221,7 @@ def test_paper_maker_real_risk_places_open_order_without_inventing_fill(monkeypa
     assert repo.list_fills(order_id=order["id"]) == []
     assert repo.list_positions(execution_mode="paper_internal") == []
     assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
-    decision = next(
-        row
-        for row in repo.list_risk_decisions(limit=10)
-        if row["id"] == order["risk_decision_id"]
-    )
+    decision = next(row for row in repo.list_risk_decisions(limit=10) if row["id"] == order["risk_decision_id"])
     receipt = json.loads(decision["execution_receipt_json"])
     assert decision["approved"] == 1
     assert decision["execution_attempt_id"] == order["execution_attempt_id"]
@@ -1206,14 +1229,15 @@ def test_paper_maker_real_risk_places_open_order_without_inventing_fill(monkeypa
     assert receipt["receipt_hash"] == order["execution_receipt_hash"]
     from aletheia.execution.gateway import cancel_entry_plan_order
 
-    assert cancel_entry_plan_order(
-        plan.plan_id,
-        reason="maker_order_unfilled_until_expiry",
-    )["status"] == "cancelled"
-    assert repo.get_order(order["id"])["status"] == "cancelled"
-    assert repo.get_entry_plan(plan.plan_id)["terminal_reason"] == (
-        "maker_order_unfilled_until_expiry"
+    assert (
+        cancel_entry_plan_order(
+            plan.plan_id,
+            reason="maker_order_unfilled_until_expiry",
+        )["status"]
+        == "cancelled"
     )
+    assert repo.get_order(order["id"])["status"] == "cancelled"
+    assert repo.get_entry_plan(plan.plan_id)["terminal_reason"] == ("maker_order_unfilled_until_expiry")
     assert repo.get_entry_risk_reservation(order["proposal_id"]) is None
 
 
@@ -1235,9 +1259,7 @@ def test_paper_entry_plan_requires_exact_active_public_venue_rules(monkeypatch):
             "risk_policy_hash": resolved.policy_hash,
         },
     )
-    repo.get_db().execute(
-        "UPDATE universe_registry SET status='inactive' WHERE id='asset-btc'"
-    )
+    repo.get_db().execute("UPDATE universe_registry SET status='inactive' WHERE id='asset-btc'")
     monkeypatch.setattr(
         local_funding,
         "has_fresh_local_funding_schedule",
@@ -1327,12 +1349,8 @@ def test_paper_maker_fills_once_only_after_later_strict_opposite_trade(monkeypat
             side=side,
         )
 
-    assert gateway.observe_paper_entry_order_event(
-        trade(price=100.0, side="sell", sequence=12)
-    ) == []
-    assert gateway.observe_paper_entry_order_event(
-        trade(price=99.99, side="buy", sequence=13)
-    ) == []
+    assert gateway.observe_paper_entry_order_event(trade(price=100.0, side="sell", sequence=12)) == []
+    assert gateway.observe_paper_entry_order_event(trade(price=99.99, side="buy", sequence=13)) == []
     first_quantity = float(placed_order["quantity"]) / 2
     event = trade(price=99.99, side="sell", sequence=14, size=first_quantity)
     partial = gateway.observe_paper_entry_order_event(event)
@@ -1352,18 +1370,19 @@ def test_paper_maker_fills_once_only_after_later_strict_opposite_trade(monkeypat
         subscription_generation_id="subscription-2",
     )
     assert gateway.observe_paper_entry_order_event(restart_event) == []
-    assert gateway.rebind_open_paper_orders_to_monitoring(
-        instrument,
-        {
-            "state": "ready",
-            "stream_generation_id": "stream-2",
-            "subscription_generation_id": "subscription-2",
-        },
-    ) == 1
-    assert repo.get_order(placed["order_id"])["monitoring_gap_started_at"] is not None
-    filled = gateway.observe_paper_entry_order_event(
-        restart_event
+    assert (
+        gateway.rebind_open_paper_orders_to_monitoring(
+            instrument,
+            {
+                "state": "ready",
+                "stream_generation_id": "stream-2",
+                "subscription_generation_id": "subscription-2",
+            },
+        )
+        == 1
     )
+    assert repo.get_order(placed["order_id"])["monitoring_gap_started_at"] is not None
+    filled = gateway.observe_paper_entry_order_event(restart_event)
     assert len(filled) == 1
     assert filled[0]["order_status"] == "filled"
 
@@ -1377,9 +1396,7 @@ def test_paper_maker_fills_once_only_after_later_strict_opposite_trade(monkeypat
     assert {fill["realized_liquidity"] for fill in fills} == {None}
     assert {fill["simulated_liquidity"] for fill in fills} == {"maker"}
     assert {fill["paper_fill_model_version"] for fill in fills} == {"paper-order-fill/v1"}
-    assert {fill["execution_attempt_id"] for fill in fills} == {
-        order["execution_attempt_id"]
-    }
+    assert {fill["execution_attempt_id"] for fill in fills} == {order["execution_attempt_id"]}
     assert len(positions) == 1
     assert positions[0]["proposal_id"] == order["proposal_id"]
     assert positions[0]["order_id"] == order["id"]
@@ -1439,9 +1456,7 @@ def test_expired_execution_attempt_is_retryable_only_with_a_new_receipt(monkeypa
         **_execution_receipt_kwargs(fresh, depth=False),
     )
     assert replayed_market_fact["status"] == "attempt_rejected"
-    assert replayed_market_fact["risk_violations"] == [
-        "entry_execution_receipt_quote_invalid"
-    ]
+    assert replayed_market_fact["risk_violations"] == ["entry_execution_receipt_quote_invalid"]
 
     fresh = datetime.now(timezone.utc)
     placed = execute_entry_plan(
@@ -1490,43 +1505,65 @@ def test_one_trade_budget_is_shared_by_paper_orders_in_price_priority(monkeypatc
         plan_updates={**common, "limit_price": 100.1},
     )
     snapshot_id = repo.get_candidate("candidate-high")["snapshot_id"]
-    repo.insert_candidate(UniverseMember(
-        id="candidate-low", snapshot_id=snapshot_id, asset_id="asset-btc",
-        venue="bitget", symbol="BTC/USDT", market_type="perp", rank=2,
-        total_score=80, scanner_family="mean_reversion", scanner_direction="long",
-        expires_at="2099-01-01T00:00:00+00:00",
-    ))
-    low = _plan(
-        account_mode="paper_internal", mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT"
-    ).model_copy(update={
-        "planning_generation_id": "legacy-paper-budget-low-generation",
-        "candidate_id": "candidate-low", "candidate_family": "mean_reversion",
-        **common, "limit_price": 100.0,
-    })
+    repo.insert_candidate(
+        UniverseMember(
+            id="candidate-low",
+            snapshot_id=snapshot_id,
+            asset_id="asset-btc",
+            venue="bitget",
+            symbol="BTC/USDT",
+            market_type="perp",
+            rank=2,
+            total_score=80,
+            scanner_family="mean_reversion",
+            scanner_direction="long",
+            expires_at="2099-01-01T00:00:00+00:00",
+        )
+    )
+    low = _plan(account_mode="paper_internal", mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT").model_copy(
+        update={
+            "planning_generation_id": "legacy-paper-budget-low-generation",
+            "candidate_id": "candidate-low",
+            "candidate_family": "mean_reversion",
+            **common,
+            "limit_price": 100.0,
+        }
+    )
     low_generation = repo.get_candidate_planning_generation(high.planning_generation_id)
-    low_generation.update({
-        "id": low.planning_generation_id,
-        "planning_key": "legacy-paper-budget-low",
-        "planning_identity": "legacy-paper-budget-low",
-        "candidate_id": low.candidate_id,
-        "last_candidate_id": low.candidate_id,
-        "is_current": 0,
-        "status": "planned",
-        "entry_plan_id": low.plan_id,
-        "cycle_number": 1,
-    })
+    low_generation.update(
+        {
+            "id": low.planning_generation_id,
+            "planning_key": "legacy-paper-budget-low",
+            "planning_identity": "legacy-paper-budget-low",
+            "candidate_id": low.candidate_id,
+            "last_candidate_id": low.candidate_id,
+            "is_current": 0,
+            "status": "planned",
+            "entry_plan_id": low.plan_id,
+            "cycle_number": 1,
+        }
+    )
     repo._insert("candidate_planning_generations", low_generation)
     low_payload, low_hash = entry_plan_payload(low)
-    repo._insert("entry_plans", {
-        "id": low.plan_id, "planning_generation_id": low.planning_generation_id,
-        "candidate_id": low.candidate_id, "planning_key": "legacy-paper-budget-low",
-        "version": low.version, "venue": low.venue, "symbol": low.symbol,
-        "market_type": low.market_type, "direction": low.direction,
-        "execution_mode": low.execution_mode, "plan_json": low_payload,
-        "plan_hash": low_hash, "status": "waiting",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
+    repo._insert(
+        "entry_plans",
+        {
+            "id": low.plan_id,
+            "planning_generation_id": low.planning_generation_id,
+            "candidate_id": low.candidate_id,
+            "planning_key": "legacy-paper-budget-low",
+            "venue": low.venue,
+            "symbol": low.symbol,
+            "market_type": low.market_type,
+            "direction": low.direction,
+            "execution_mode": low.execution_mode,
+            "plan_json": low_payload,
+            "plan_hash": low_hash,
+            "status": "waiting",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
     monkeypatch.setattr(
         local_funding,
         "has_fresh_local_funding_schedule",
@@ -1638,9 +1675,10 @@ def test_one_trade_budget_is_shared_by_paper_orders_in_price_priority(monkeypatc
     ]
     assert repo.get_order(high_order["id"])["status"] == "filled"
     assert repo.get_order(low_order["id"])["status"] == "partially_filled"
-    assert sum(
-        fill["fill_quantity"] for fill in repo.list_fills(order_id=low_order["id"])
-    ) == pytest.approx(float(low_order["quantity"]) / 2)
+    assert sum(fill["fill_quantity"] for fill in repo.list_fills(order_id=low_order["id"])) == pytest.approx(
+        float(low_order["quantity"]) / 2
+    )
+
 
 def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
     from aletheia.execution import gateway
@@ -1719,7 +1757,6 @@ def test_paper_failure_terminalizes_plan_and_releases_reservation(monkeypatch):
     assert repo.get_entry_risk_reservation(proposal.id) is None
 
 
-
 def test_stale_exact_state_cannot_advance_triggered_plan():
     from aletheia.execution.entry_plan_execution import execute_entry_plan
 
@@ -1757,13 +1794,16 @@ def test_entry_plan_monitoring_persists_only_material_readiness_changes():
     }
 
     assert repo.record_entry_plan_monitoring(plan.plan_id, evidence) is True
-    assert repo.record_entry_plan_monitoring(
-        plan.plan_id,
-        {
-            **evidence,
-            "updated_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
-        },
-    ) is False
+    assert (
+        repo.record_entry_plan_monitoring(
+            plan.plan_id,
+            {
+                **evidence,
+                "updated_at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+            },
+        )
+        is False
+    )
     ready = {
         **evidence,
         "state": "ready",
@@ -1786,9 +1826,7 @@ def test_stale_source_state_cannot_advance_triggered_plan():
             bid=100,
             ask=100.05,
             observed_at=datetime.now(timezone.utc).isoformat(),
-            source_observed_at=(
-                datetime.now(timezone.utc) - timedelta(seconds=5)
-            ).isoformat(),
+            source_observed_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
             stream_generation_id="stream-1",
             subscription_generation_id="subscription-1",
             quote_sequence=1,
@@ -1871,6 +1909,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
         "cancel_entry_order",
         lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
     )
+
     async def exact_order(*_args, **_kwargs):
         return SimpleNamespace(
             completeness=ReadCompleteness.COMPLETE,

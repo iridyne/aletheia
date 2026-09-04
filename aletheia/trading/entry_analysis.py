@@ -11,19 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from aletheia.learning.entry_context import EntryLearningContextV1
+from aletheia.learning.entry_context import EntryLearningContext
 from aletheia.trading.entry_contract import entry_prompt_fingerprint
-
-
-CONTEXT_VERSION = "entry-analysis-context/v1"
-CONTEXT_V2_VERSION = "entry-analysis-context/v2"
-ANCHOR_VERSION = "entry-anchor/v1"
-HYPOTHESIS_VERSION = "entry-hypothesis/v1"
-HYPOTHESIS_V2_VERSION = "entry-hypothesis/v2"
-ENTRY_PROFILES = {
-    ("anchor-resting-maker", "v1"),
-    ("anchor-retrace-reclaim", "v1"),
-}
 
 
 def canonical_json(value: object) -> str:
@@ -49,17 +38,14 @@ def _aware_utc(value: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-class EntryAnchorV1(BaseModel):
+class EntryAnchor(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    anchor_version: Literal["entry-anchor/v1"] = ANCHOR_VERSION
     anchor_id: str = ""
     venue: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     market_type: Literal["spot", "perp"]
-    kind: Literal[
-        "candidate_reference", "causal_breakout", "confirmed_swing", "broken_structure_level"
-    ]
+    kind: Literal["candidate_reference", "causal_breakout", "confirmed_swing", "broken_structure_level"]
     timeframe: Literal["15m"] = "15m"
     price: float
     directional_role: Literal["entry_candidate", "invalidation_candidate", "both"]
@@ -77,7 +63,7 @@ class EntryAnchorV1(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _canonical_identity(self) -> "EntryAnchorV1":
+    def _canonical_identity(self) -> "EntryAnchor":
         material = self.model_dump(mode="json", exclude={"anchor_id", "aliases"})
         expected = fingerprint(material)
         if self.anchor_id and self.anchor_id != expected:
@@ -87,10 +73,9 @@ class EntryAnchorV1(BaseModel):
         return self
 
 
-class EntryAnalysisContextV1(BaseModel):
+class EntryAnalysisContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    context_version: Literal["entry-analysis-context/v1"] = CONTEXT_VERSION
     context_fingerprint: str = ""
     analysis_cutoff_at: str
     instrument: dict[str, Any]
@@ -101,16 +86,17 @@ class EntryAnalysisContextV1(BaseModel):
     quant_context: dict[str, Any]
     portfolio_context: dict[str, Any]
     execution_context: dict[str, Any]
-    anchors: tuple[EntryAnchorV1, ...]
+    anchors: tuple[EntryAnchor, ...]
     entry_profiles: tuple[dict[str, Any], ...]
-    learning_context: dict[str, Any]
+    learning_context: EntryLearningContext
     unavailable_sections: tuple[str, ...] = ()
+    candidate_opportunity_context: dict[str, Any]
+    inference_identity: dict[str, str]
 
     @model_validator(mode="after")
-    def _bounded_and_canonical(self) -> "EntryAnalysisContextV1":
+    def _bounded_and_canonical(self) -> "EntryAnalysisContext":
         cutoff = _aware_utc(self.analysis_cutoff_at)
-        limits = {"4h": 30, "1h": 48, "15m": 96}
-        for timeframe, limit in limits.items():
+        for timeframe, limit in {"4h": 30, "1h": 48, "15m": 96}.items():
             window = self.candle_windows.get(timeframe)
             if not isinstance(window, dict):
                 raise ValueError(f"candle_window_{timeframe}_missing")
@@ -125,49 +111,29 @@ class EntryAnalysisContextV1(BaseModel):
             raise ValueError("anchor_registry_too_large")
         if len({anchor.anchor_id for anchor in self.anchors}) != len(self.anchors):
             raise ValueError("duplicate_anchor")
-        profiles = {(item.get("id"), item.get("version")) for item in self.entry_profiles}
-        if self.context_version == CONTEXT_VERSION:
-            if not profiles.issubset(ENTRY_PROFILES):
-                raise ValueError("entry_profile_not_registered")
-        else:
-            from aletheia.trading.entry_profiles import require_compatible_entry_profile
+        opportunity = self.candidate_opportunity_context
+        mechanism = str((opportunity.get("opportunity") or {}).get("primary_mechanism") or "")
+        from aletheia.trading.entry_profiles import require_current_entry_profile
 
-            mechanism = str(getattr(self, "candidate_opportunity_context", {}).get(
-                "opportunity", {}
-            ).get("primary_mechanism") or "")
-            for profile_id, version in profiles:
-                require_compatible_entry_profile(mechanism, str(profile_id), str(version))
-        object.__setattr__(self, "analysis_cutoff_at", cutoff)
-        expected = fingerprint(
-            self.model_dump(mode="json", exclude={"context_fingerprint"})
-        )
-        if self.context_fingerprint and self.context_fingerprint != expected:
-            raise ValueError("context_fingerprint_mismatch")
-        object.__setattr__(self, "context_fingerprint", expected)
-        return self
-
-
-class EntryAnalysisContextV2(EntryAnalysisContextV1):
-    context_version: Literal["entry-analysis-context/v2"] = CONTEXT_V2_VERSION
-    candidate_opportunity_context: dict[str, Any]
-    inference_identity: dict[str, str]
-    learning_context: EntryLearningContextV1
-
-    @model_validator(mode="after")
-    def _inference_identity_is_exact(self) -> "EntryAnalysisContextV2":
+        for profile in self.entry_profiles:
+            require_current_entry_profile(mechanism, str(profile.get("id") or ""))
         if (
             self.inference_identity.get("caller") != "agent_shell.entry_planner"
             or len(str(self.inference_identity.get("prompt_fingerprint") or "")) != 64
             or not str(self.inference_identity.get("model_provider") or "").strip()
         ):
             raise ValueError("entry_inference_identity_invalid")
+        object.__setattr__(self, "analysis_cutoff_at", cutoff)
+        expected = fingerprint(self.model_dump(mode="json", exclude={"context_fingerprint"}))
+        if self.context_fingerprint and self.context_fingerprint != expected:
+            raise ValueError("context_fingerprint_mismatch")
+        object.__setattr__(self, "context_fingerprint", expected)
         return self
 
 
-class EntryHypothesisV1(BaseModel):
+class EntryHypothesis(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: Literal["entry-hypothesis/v1"] = HYPOTHESIS_VERSION
     decision: Literal["ENTRY_PLAN", "NO_PLAN"]
     reason_code: Literal[
         "OK",
@@ -177,78 +143,11 @@ class EntryHypothesisV1(BaseModel):
         "NO_VALID_ANCHOR",
         "NO_VALID_ENTRY_PROFILE",
     ]
-    thesis: str = Field(max_length=400)
-    scenario: str = Field(max_length=200)
-    setup_archetype: Literal["continuation"] | None = None
-    primary_anchor_ref: str | None = None
-    invalidation_anchor_ref: str | None = None
-    entry_profile_id: Literal["anchor-resting-maker", "anchor-retrace-reclaim"] | None = None
-    entry_profile_version: Literal["v1"] | None = None
-    execution_urgency: Literal["PASSIVE", "BOUNDED_URGENT"] | None = None
-    risk_tier: Literal["LOW", "MEDIUM", "NONE"]
-    horizon: Literal["INTRADAY", "SWING", "NONE"]
-    supporting_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
-    opposing_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
-    key_assumptions: tuple[str, ...] = Field(default_factory=tuple, max_length=3)
-
-    @model_validator(mode="after")
-    def _semantics(self) -> "EntryHypothesisV1":
-        execution = (
-            "setup_archetype", "primary_anchor_ref", "invalidation_anchor_ref",
-            "entry_profile_id", "entry_profile_version", "execution_urgency",
-        )
-        if self.decision == "NO_PLAN":
-            if self.reason_code == "OK":
-                raise ValueError("no_plan_reason_required")
-            for field in execution:
-                object.__setattr__(self, field, None)
-            object.__setattr__(self, "risk_tier", "NONE")
-            object.__setattr__(self, "horizon", "NONE")
-            return self
-        if self.reason_code != "OK":
-            raise ValueError("entry_plan_reason_must_be_ok")
-        thesis = self.thesis.strip()
-        scenario = self.scenario.strip()
-        if not thesis or not scenario:
-            raise ValueError("entry_thesis_scenario_required")
-        object.__setattr__(self, "thesis", thesis)
-        object.__setattr__(self, "scenario", scenario)
-        if self.setup_archetype != "continuation":
-            raise ValueError("setup_archetype_required")
-        if not self.primary_anchor_ref or not self.invalidation_anchor_ref:
-            raise ValueError("entry_anchor_required")
-        if self.primary_anchor_ref == self.invalidation_anchor_ref:
-            raise ValueError("entry_anchors_must_be_distinct")
-        if (self.entry_profile_id, self.entry_profile_version) not in ENTRY_PROFILES:
-            raise ValueError("entry_profile_required")
-        if self.execution_urgency not in {"PASSIVE", "BOUNDED_URGENT"}:
-            raise ValueError("entry_execution_urgency_required")
-        if self.entry_profile_id == "anchor-resting-maker" and self.execution_urgency != "PASSIVE":
-            raise ValueError("resting_maker_must_be_passive")
-        if self.risk_tier == "NONE" or self.horizon == "NONE":
-            raise ValueError("entry_risk_horizon_required")
-        if not self.supporting_fact_refs:
-            raise ValueError("supporting_fact_required")
-        return self
-
-
-class EntryHypothesisV2(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    version: Literal["entry-hypothesis/v2"] = HYPOTHESIS_V2_VERSION
-    decision: Literal["ENTRY_PLAN", "NO_PLAN"]
-    reason_code: Literal[
-        "OK", "INSUFFICIENT_EVIDENCE", "CONFLICTING_SIGNALS", "STALE_FACTS",
-        "NO_VALID_ANCHOR", "NO_VALID_ENTRY_PROFILE",
-    ]
-    mechanism: Literal[
-        "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
-    ]
+    mechanism: Literal["continuation", "reversal", "positioning_forced_flow", "information_catalyst"]
     direction: Literal["long", "short"]
     primary_anchor_ref: str | None = None
     invalidation_anchor_ref: str | None = None
     entry_profile_id: str | None = None
-    entry_profile_version: str | None = None
     execution_urgency: Literal["PASSIVE", "BOUNDED_URGENT"] | None = None
     risk_tier: Literal["LOW", "MEDIUM", "NONE"]
     horizon: Literal["INTRADAY", "NONE"]
@@ -257,13 +156,15 @@ class EntryHypothesisV2(BaseModel):
     learning_evidence_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
 
     @model_validator(mode="after")
-    def _semantics(self) -> "EntryHypothesisV2":
+    def _semantics(self) -> "EntryHypothesis":
         if self.decision == "NO_PLAN":
             if self.reason_code == "OK":
                 raise ValueError("no_plan_reason_required")
             for field in (
-                "primary_anchor_ref", "invalidation_anchor_ref", "entry_profile_id",
-                "entry_profile_version", "execution_urgency",
+                "primary_anchor_ref",
+                "invalidation_anchor_ref",
+                "entry_profile_id",
+                "execution_urgency",
             ):
                 object.__setattr__(self, field, None)
             object.__setattr__(self, "risk_tier", "NONE")
@@ -275,14 +176,11 @@ class EntryHypothesisV2(BaseModel):
             raise ValueError("entry_anchor_required")
         if self.primary_anchor_ref == self.invalidation_anchor_ref:
             raise ValueError("entry_anchors_must_be_distinct")
-        if not self.entry_profile_id or not self.entry_profile_version:
+        if not self.entry_profile_id:
             raise ValueError("entry_profile_required")
         if self.execution_urgency not in {"PASSIVE", "BOUNDED_URGENT"}:
             raise ValueError("entry_execution_urgency_required")
-        if (
-            self.entry_profile_id == "grounded-anchor-resting-maker"
-            and self.execution_urgency != "PASSIVE"
-        ):
+        if self.entry_profile_id == "grounded-anchor-resting-maker" and self.execution_urgency != "PASSIVE":
             raise ValueError("resting_maker_must_be_passive")
         if self.risk_tier == "NONE" or self.horizon != "INTRADAY":
             raise ValueError("entry_risk_horizon_required")
@@ -290,12 +188,6 @@ class EntryHypothesisV2(BaseModel):
             raise ValueError("supporting_fact_required")
         return self
 
-
-# Unsuffixed names are the only current writer/runtime contract. Suffixed names
-# remain importable solely to decode immutable historical payloads.
-EntryAnchor = EntryAnchorV1
-EntryAnalysisContext = EntryAnalysisContextV2
-EntryHypothesis = EntryHypothesisV2
 
 def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
     """Project frozen evidence into the bounded facts exposed to the model."""
@@ -307,10 +199,7 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
         "analysis_cutoff_at": data["analysis_cutoff_at"],
         "context_fingerprint": data["context_fingerprint"],
         "instrument": data["instrument"],
-        "planning_generation": {
-            key: planning.get(key)
-            for key in ("id", "candidate_id", "candidate_family")
-        },
+        "planning_generation": {key: planning.get(key) for key in ("id", "candidate_id", "candidate_family")},
         "candidate": {"fact_refs": data["candidate"].get("fact_refs", [])},
         "candidate_opportunity_context": data["candidate_opportunity_context"],
         "candle_windows": {
@@ -325,8 +214,11 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
                 timeframe: {
                     key: section.get(key)
                     for key in (
-                        "availability", "state", "atr14",
-                        "geometry_fingerprint", "fact_refs",
+                        "availability",
+                        "state",
+                        "atr14",
+                        "geometry_fingerprint",
+                        "fact_refs",
                     )
                 }
                 for timeframe, section in structures.items()
@@ -341,8 +233,13 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
             {
                 key: anchor.get(key)
                 for key in (
-                    "anchor_id", "kind", "timeframe", "price",
-                    "directional_role", "known_at_ms", "source_fact_refs",
+                    "anchor_id",
+                    "kind",
+                    "timeframe",
+                    "price",
+                    "directional_role",
+                    "known_at_ms",
+                    "source_fact_refs",
                 )
             }
             for anchor in data["anchors"]
@@ -352,9 +249,10 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
         "unavailable_sections": data["unavailable_sections"],
     }
 
+
 def validate_hypothesis_references(
-    hypothesis: EntryHypothesisV1 | EntryHypothesisV2,
-    context: EntryAnalysisContextV1 | EntryAnalysisContextV2,
+    hypothesis: EntryHypothesis,
+    context: EntryAnalysisContext,
 ) -> None:
     supplied_refs = set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs)
     anchors = {}
@@ -372,18 +270,14 @@ def validate_hypothesis_references(
             facts.update(str(item) for item in refs)
         if not supplied_refs.issubset(facts):
             raise ValueError("hypothesis_fact_ref_not_supplied")
-    if isinstance(hypothesis, EntryHypothesisV2):
-        opportunity = context.candidate_opportunity_context["opportunity"]
-        if (
-            hypothesis.mechanism != opportunity["primary_mechanism"]
-            or hypothesis.direction != opportunity["direction"]
-        ):
-            raise ValueError("hypothesis_opportunity_identity_mismatch")
-        learning_refs = set(context.learning_context.evidence_refs)
-        if hypothesis.learning_evidence_refs and context.learning_context.status == "unavailable":
-            raise ValueError("hypothesis_learning_context_unavailable")
-        if not set(hypothesis.learning_evidence_refs).issubset(learning_refs):
-            raise ValueError("hypothesis_learning_ref_not_supplied")
+    opportunity = context.candidate_opportunity_context["opportunity"]
+    if hypothesis.mechanism != opportunity["primary_mechanism"] or hypothesis.direction != opportunity["direction"]:
+        raise ValueError("hypothesis_opportunity_identity_mismatch")
+    learning_refs = set(context.learning_context.evidence_refs)
+    if hypothesis.learning_evidence_refs and context.learning_context.status == "unavailable":
+        raise ValueError("hypothesis_learning_context_unavailable")
+    if not set(hypothesis.learning_evidence_refs).issubset(learning_refs):
+        raise ValueError("hypothesis_learning_ref_not_supplied")
     if hypothesis.decision == "NO_PLAN":
         return
     if hypothesis.primary_anchor_ref not in anchors or hypothesis.invalidation_anchor_ref not in anchors:
@@ -391,53 +285,47 @@ def validate_hypothesis_references(
     if anchors[hypothesis.primary_anchor_ref].directional_role not in {"entry_candidate", "both"}:
         raise ValueError("hypothesis_primary_anchor_role_invalid")
     if anchors[hypothesis.invalidation_anchor_ref].directional_role not in {
-        "invalidation_candidate", "both",
+        "invalidation_candidate",
+        "both",
     }:
         raise ValueError("hypothesis_invalidation_anchor_role_invalid")
-    if isinstance(hypothesis, EntryHypothesisV2):
-        from aletheia.trading.entry_profiles import require_compatible_entry_profile
+    from aletheia.trading.entry_profiles import require_current_entry_profile
 
-        profile = require_compatible_entry_profile(
-            hypothesis.mechanism,
-            str(hypothesis.entry_profile_id),
-            str(hypothesis.entry_profile_version),
-        )
-        if (
-            anchors[hypothesis.primary_anchor_ref].kind not in profile.primary_anchor_kinds
-            or anchors[hypothesis.invalidation_anchor_ref].kind
-            not in profile.invalidation_anchor_kinds
-        ):
-            raise ValueError("hypothesis_profile_anchor_kind_invalid")
-        for section_name in profile.required_fact_sections:
-            section = getattr(context, section_name)
-            if section_name == "market_structure":
-                if not any(
-                    context.candle_windows.get(timeframe, {}).get("availability") == "available"
-                    and section.get(timeframe, {}).get("availability") == "available"
-                    for timeframe in profile.supported_timeframes
-                ):
-                    raise ValueError("hypothesis_profile_market_structure_unavailable")
-            elif section.get("availability") != "available":
-                raise ValueError(f"hypothesis_profile_{section_name}_unavailable")
-        current_facts = set()
-        for section in (
-            context.market_structure, context.quant_context,
-            context.portfolio_context, context.execution_context,
-        ):
-            current_facts.update(str(item) for item in section.get("fact_refs", ()))
-        current_facts.update(
-            anchor.anchor_id for anchor in context.anchors
-            if anchor.kind != "candidate_reference"
-        )
-        if not set(hypothesis.supporting_fact_refs) & current_facts:
-            raise ValueError("hypothesis_current_market_fact_required")
+    profile = require_current_entry_profile(hypothesis.mechanism, str(hypothesis.entry_profile_id))
+    if (
+        anchors[hypothesis.primary_anchor_ref].kind not in profile.primary_anchor_kinds
+        or anchors[hypothesis.invalidation_anchor_ref].kind not in profile.invalidation_anchor_kinds
+    ):
+        raise ValueError("hypothesis_profile_anchor_kind_invalid")
+    for section_name in profile.required_fact_sections:
+        section = getattr(context, section_name)
+        if section_name == "market_structure":
+            if not any(
+                context.candle_windows.get(timeframe, {}).get("availability") == "available"
+                and section.get(timeframe, {}).get("availability") == "available"
+                for timeframe in profile.supported_timeframes
+            ):
+                raise ValueError("hypothesis_profile_market_structure_unavailable")
+        elif section.get("availability") != "available":
+            raise ValueError(f"hypothesis_profile_{section_name}_unavailable")
+    current_facts = set()
+    for section in (
+        context.market_structure,
+        context.quant_context,
+        context.portfolio_context,
+        context.execution_context,
+    ):
+        current_facts.update(str(item) for item in section.get("fact_refs", ()))
+    current_facts.update(anchor.anchor_id for anchor in context.anchors if anchor.kind != "candidate_reference")
+    if not set(hypothesis.supporting_fact_refs) & current_facts:
+        raise ValueError("hypothesis_current_market_fact_required")
 
 
 def _bind_experimental_entry_learning_context(
-    learning_context: EntryLearningContextV1,
+    learning_context: EntryLearningContext,
     treatment: object,
     learning_scope: dict[str, Any],
-) -> EntryLearningContextV1:
+) -> EntryLearningContext:
     from aletheia.learning.entry_context import empty_entry_learning_context
 
     if learning_context.status != "observational":
@@ -445,17 +333,19 @@ def _bind_experimental_entry_learning_context(
             **learning_scope,
             reasons=learning_context.blocking_reasons,
         )
-    return EntryLearningContextV1.model_validate({
-        **learning_context.model_dump(mode="json"),
-        "status": "experimental",
-        "experiment_identity": {
-            "observation_id": getattr(treatment, "observation_id", None),
-            "generation": getattr(treatment, "generation", None),
-            "manifest_hash": getattr(treatment, "manifest_hash", None),
-            "receipt_id": getattr(treatment, "receipt_id", None),
-            "assignment": getattr(treatment, "assignment", None),
-        },
-    })
+    return EntryLearningContext.model_validate(
+        {
+            **learning_context.model_dump(mode="json"),
+            "status": "experimental",
+            "experiment_identity": {
+                "observation_id": getattr(treatment, "observation_id", None),
+                "generation": getattr(treatment, "generation", None),
+                "manifest_hash": getattr(treatment, "manifest_hash", None),
+                "receipt_id": getattr(treatment, "receipt_id", None),
+                "assignment": getattr(treatment, "assignment", None),
+            },
+        }
+    )
 
 
 def build_entry_analysis_context(
@@ -486,11 +376,9 @@ def build_entry_analysis_context(
     cutoff_ms = int(cutoff.timestamp() * 1000)
     serialized: dict[str, Any] = {}
     structures: dict[str, Any] = {}
-    anchors: list[EntryAnchorV1] = []
+    anchors: list[EntryAnchor] = []
     fact_refs: list[str] = []
-    venue, symbol, market_type = (
-        str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"])
-    )
+    venue, symbol, market_type = (str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"]))
     opportunity_context = None
     if generation.get("entry_behavior_fingerprint"):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
@@ -501,15 +389,12 @@ def build_entry_analysis_context(
         if (
             opportunity_context.candidate_id != candidate.get("id")
             or opportunity_context.context_hash != candidate.get("candidate_opportunity_context_hash")
-            or opportunity_context.opportunity["primary_mechanism"]
-            != generation.get("opportunity_mechanism")
+            or opportunity_context.opportunity["primary_mechanism"] != generation.get("opportunity_mechanism")
             or opportunity_context.opportunity["direction"] != generation.get("direction")
-            or opportunity_context.candidate_selection["policy"]
-            != generation.get("candidate_selection_policy")
+            or opportunity_context.candidate_selection["policy"] != generation.get("candidate_selection_policy")
             or opportunity_context.candidate_selection.get("policy_epoch")
             != generation.get("candidate_selection_policy_epoch")
-            or opportunity_context.opportunity["mechanism_version"]
-            != generation.get("mechanism_version")
+            or opportunity_context.opportunity["mechanism_version"] != generation.get("mechanism_version")
         ):
             raise ValueError("candidate_opportunity_generation_identity_mismatch")
     if (
@@ -517,10 +402,7 @@ def build_entry_analysis_context(
         or candidate.get("venue") != venue
         or candidate.get("symbol") != symbol
         or candidate.get("market_type") != market_type
-        or (
-            opportunity_context is None
-            and candidate.get("scanner_family") != generation.get("candidate_family")
-        )
+        or (opportunity_context is None and candidate.get("scanner_family") != generation.get("candidate_family"))
         or candidate.get("scanner_direction") != generation.get("direction")
     ):
         raise ValueError("candidate_generation_identity_mismatch")
@@ -543,7 +425,24 @@ def build_entry_analysis_context(
                     known = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
                     valid = valid and known.tzinfo is not None and known.timestamp() * 1000 <= cutoff_ms
             previous = ts if isinstance(ts, int) else previous
-            bars.append({key: row.get(key) for key in ("ts", "open", "high", "low", "close", "volume", "provider", "exchange", "market_type", "first_persisted_at", "last_mutated_at")})
+            bars.append(
+                {
+                    key: row.get(key)
+                    for key in (
+                        "ts",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "provider",
+                        "exchange",
+                        "market_type",
+                        "first_persisted_at",
+                        "last_mutated_at",
+                    )
+                }
+            )
         valid = valid and len({row.get("provider") for row in rows}) == 1
         if not valid:
             serialized[timeframe] = {"availability": "unavailable", "bars": [], "source_fingerprint": None}
@@ -552,7 +451,20 @@ def build_entry_analysis_context(
         source_hash = fingerprint(bars)
         serialized[timeframe] = {"availability": "available", "bars": bars, "source_fingerprint": source_hash}
         geometry = derive_market_structure(
-            [Candle(int(row["ts"]), float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"]), float(row["volume"]), True, str(row["provider"]), venue) for row in bars],
+            [
+                Candle(
+                    int(row["ts"]),
+                    float(row["open"]),
+                    float(row["high"]),
+                    float(row["low"]),
+                    float(row["close"]),
+                    float(row["volume"]),
+                    True,
+                    str(row["provider"]),
+                    venue,
+                )
+                for row in bars
+            ],
             tf_ms=interval,
         )
         swings, events = canonical_market_structure_facts(geometry, instrument_id, timeframe)
@@ -602,31 +514,42 @@ def build_entry_analysis_context(
         if timeframe == "15m" and geometry.availability == "available":
             direction = str(generation["direction"])
             for item in swings:
-                anchors.append(EntryAnchorV1(
-                    venue=venue, symbol=symbol, market_type=market_type,
-                    kind="confirmed_swing", price=item.price,
-                    directional_role=(
-                        "invalidation_candidate"
-                        if (direction == "long" and item.kind == "low")
-                        or (direction == "short" and item.kind == "high")
-                        else "entry_candidate"
-                    ),
-                    known_at_ms=item.known_at_ms,
-                    source_fact_refs=(item.id,),
-                    source_fingerprint=fingerprint(asdict(item)),
-                    geometry_fingerprint=geometry.geometry_fingerprint,
-                    aliases=("price_action", "smc"),
-                ))
+                anchors.append(
+                    EntryAnchor(
+                        venue=venue,
+                        symbol=symbol,
+                        market_type=market_type,
+                        kind="confirmed_swing",
+                        price=item.price,
+                        directional_role=(
+                            "invalidation_candidate"
+                            if (direction == "long" and item.kind == "low")
+                            or (direction == "short" and item.kind == "high")
+                            else "entry_candidate"
+                        ),
+                        known_at_ms=item.known_at_ms,
+                        source_fact_refs=(item.id,),
+                        source_fingerprint=fingerprint(asdict(item)),
+                        geometry_fingerprint=geometry.geometry_fingerprint,
+                        aliases=("price_action", "smc"),
+                    )
+                )
             for item in events:
-                anchors.append(EntryAnchorV1(
-                    venue=venue, symbol=symbol, market_type=market_type,
-                    kind="broken_structure_level", price=item.broken_level,
-                    directional_role="both", known_at_ms=item.known_at_ms,
-                    source_fact_refs=(item.id, item.broken_swing_id),
-                    source_fingerprint=fingerprint(asdict(item)),
-                    geometry_fingerprint=geometry.geometry_fingerprint,
-                    aliases=("price_action", "smc"),
-                ))
+                anchors.append(
+                    EntryAnchor(
+                        venue=venue,
+                        symbol=symbol,
+                        market_type=market_type,
+                        kind="broken_structure_level",
+                        price=item.broken_level,
+                        directional_role="both",
+                        known_at_ms=item.known_at_ms,
+                        source_fact_refs=(item.id, item.broken_swing_id),
+                        source_fingerprint=fingerprint(asdict(item)),
+                        geometry_fingerprint=geometry.geometry_fingerprint,
+                        aliases=("price_action", "smc"),
+                    )
+                )
     if opportunity_context is not None:
         candidate_detected_at = str(opportunity_context.source["detected_at"])
     if candidate_detected_at is None:
@@ -639,53 +562,90 @@ def build_entry_analysis_context(
     if detected_ms > cutoff_ms:
         raise ValueError("candidate_detected_at_after_cutoff")
     candidate_ref = f"candidate:{candidate['id']}"
-    anchors.append(EntryAnchorV1(
-        venue=venue, symbol=symbol, market_type=market_type,
-        kind="candidate_reference", price=float(candidate["entry_price_usd"]),
-        directional_role="entry_candidate", known_at_ms=detected_ms,
-        source_fact_refs=(candidate_ref,), source_fingerprint=fingerprint(candidate_ref),
-    ))
+    anchors.append(
+        EntryAnchor(
+            venue=venue,
+            symbol=symbol,
+            market_type=market_type,
+            kind="candidate_reference",
+            price=float(candidate["entry_price_usd"]),
+            directional_role="entry_candidate",
+            known_at_ms=detected_ms,
+            source_fact_refs=(candidate_ref,),
+            source_fingerprint=fingerprint(candidate_ref),
+        )
+    )
     if serialized.get("15m", {}).get("availability") == "available":
         from datetime import timedelta
         from aletheia.trading.momentum_entry_geometry import (
             MomentumGeometryUnavailable,
-            compile_momentum_entry_geometry_v2,
+            compile_momentum_entry_geometry,
         )
 
         try:
-            geometry = compile_momentum_entry_geometry_v2(
-                candidate=candidate, feature=feature,
+            geometry = compile_momentum_entry_geometry(
+                candidate=candidate,
+                feature=feature,
                 candles=serialized["15m"]["bars"][-21:],
-                direction=generation["direction"], minimum_risk_reward=1.5,
-                source_cutoff_at=cutoff, valid_until=cutoff + timedelta(hours=4),
+                direction=generation["direction"],
+                minimum_risk_reward=1.5,
+                source_cutoff_at=cutoff,
+                valid_until=cutoff + timedelta(hours=4),
             )
         except MomentumGeometryUnavailable:
             geometry = None
         if geometry is not None:
-            anchors.append(EntryAnchorV1(
-                venue=venue, symbol=symbol, market_type=market_type,
-                kind="causal_breakout", price=geometry.breakout_level,
-                directional_role="entry_candidate",
-                known_at_ms=max(int(row["ts"]) + 15 * 60 * 1000 for row in serialized["15m"]["bars"][-21:]),
-                source_fact_refs=tuple(geometry.source_candle_ids),
-                source_fingerprint=geometry.source_hash,
-                geometry_fingerprint=geometry.geometry_fingerprint,
-                aliases=("price_action", "smc"),
-            ))
+            anchors.append(
+                EntryAnchor(
+                    venue=venue,
+                    symbol=symbol,
+                    market_type=market_type,
+                    kind="causal_breakout",
+                    price=geometry.breakout_level,
+                    directional_role="entry_candidate",
+                    known_at_ms=max(int(row["ts"]) + 15 * 60 * 1000 for row in serialized["15m"]["bars"][-21:]),
+                    source_fact_refs=tuple(geometry.source_candle_ids),
+                    source_fingerprint=geometry.source_hash,
+                    geometry_fingerprint=geometry.geometry_fingerprint,
+                    aliases=("price_action", "smc"),
+                )
+            )
     unique = {item.anchor_id: item for item in anchors if item.known_at_ms <= cutoff_ms}
     selected = tuple(sorted(unique.values(), key=lambda item: (item.known_at_ms, item.anchor_id), reverse=True)[:12])
     orderbook_available = False
-    if orderbook and all(orderbook.get(key) is not None for key in ("bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd", "observed_at")):
+    if orderbook and all(
+        orderbook.get(key) is not None
+        for key in ("bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd", "observed_at")
+    ):
         observed = datetime.fromisoformat(str(orderbook["observed_at"]).replace("Z", "+00:00"))
-        age_ms = (cutoff - observed.astimezone(timezone.utc)).total_seconds() * 1000 if observed.tzinfo else float("inf")
+        age_ms = (
+            (cutoff - observed.astimezone(timezone.utc)).total_seconds() * 1000 if observed.tzinfo else float("inf")
+        )
         orderbook_available = 0 <= age_ms <= 2_000
     estimated_cost = candidate.get("estimated_cost")
     quant_fields = (
-        "atr_pct", "rsi_15m", "atr_15m_pct", "return_15m", "return_1h",
-        "return_4h", "return_24h", "funding_rate", "open_interest", "oi_delta_1h",
-        "long_short_ratio", "top_trader_position_ratio", "taker_buy_ratio", "vol_ratio",
-        "relative_strength_24h", "oi_price_divergence", "rsi_4h", "atr_4h_pct",
-        "bb_width_4h", "vol_ratio_4h", "bb_squeeze", "data_freshness_sec",
+        "atr_pct",
+        "rsi_15m",
+        "atr_15m_pct",
+        "return_15m",
+        "return_1h",
+        "return_4h",
+        "return_24h",
+        "funding_rate",
+        "open_interest",
+        "oi_delta_1h",
+        "long_short_ratio",
+        "top_trader_position_ratio",
+        "taker_buy_ratio",
+        "vol_ratio",
+        "relative_strength_24h",
+        "oi_price_divergence",
+        "rsi_4h",
+        "atr_4h_pct",
+        "bb_width_4h",
+        "vol_ratio_4h",
+        "bb_squeeze",
+        "data_freshness_sec",
     )
     try:
         feature_at = datetime.fromisoformat(str(feature.get("ts") or "").replace("Z", "+00:00"))
@@ -699,8 +659,7 @@ def build_entry_analysis_context(
         and feature_at.astimezone(timezone.utc) <= cutoff
     )
     quant_values = (
-        {key: feature.get(key) for key in quant_fields if feature.get(key) is not None}
-        if feature_valid else {}
+        {key: feature.get(key) for key in quant_fields if feature.get(key) is not None} if feature_valid else {}
     )
     feature_ref = f"feature:{feature.get('id')}" if feature_valid else None
     admitted_positions = []
@@ -725,7 +684,8 @@ def build_entry_analysis_context(
         "open_position_count": len(admitted_positions),
         "total_notional_usd": sum(item[1] for item in admitted_positions),
         "same_instrument_notional_usd": sum(
-            item[1] for item in admitted_positions
+            item[1]
+            for item in admitted_positions
             if item[0].get("symbol") == symbol and item[0].get("market_type") == market_type
         ),
         "long_count": sum(item[0].get("direction") == "long" for item in admitted_positions),
@@ -733,22 +693,16 @@ def build_entry_analysis_context(
         "fact_refs": portfolio_refs,
     }
     if opportunity_context is None:
-        profiles = (
-            {"id": "anchor-resting-maker", "version": "v1"},
-            {"id": "anchor-retrace-reclaim", "version": "v1"},
-        )
+        profiles = ()
     else:
         from aletheia.trading.entry_profiles import compatible_entry_profiles
 
         profiles = tuple(
-            profile.as_dict() for profile in compatible_entry_profiles(
-                str(opportunity_context.opportunity["primary_mechanism"])
-            )
+            profile.as_dict()
+            for profile in compatible_entry_profiles(str(opportunity_context.opportunity["primary_mechanism"]))
         )
     if opportunity_context is None:
-        learning_context: object = {
-            "availability": "unavailable", "reason": "exact_ai_entry_evidence_unavailable"
-        }
+        learning_context: object = {"availability": "unavailable", "reason": "exact_ai_entry_evidence_unavailable"}
     else:
         from aletheia.learning.entry_context import (
             build_entry_learning_context,
@@ -765,7 +719,8 @@ def build_entry_analysis_context(
             "policy_epoch": opportunity_context.candidate_selection.get("policy_epoch"),
         }
         treatment = resolve_entry_learning_treatment(
-            planning_generation_id=str(generation["id"]), **learning_scope,
+            planning_generation_id=str(generation["id"]),
+            **learning_scope,
         )
         if treatment.payload.get("include_learning_context") is True:
             from aletheia.config.loader import load_config
@@ -788,7 +743,9 @@ def build_entry_analysis_context(
                 current_behavior_identity=current_behavior_identity,
             )
             learning_context = _bind_experimental_entry_learning_context(
-                learning_context, treatment, learning_scope,
+                learning_context,
+                treatment,
+                learning_scope,
             )
         else:
             learning_context = empty_entry_learning_context(
@@ -797,9 +754,7 @@ def build_entry_analysis_context(
             )
     candidate_fact_refs = [candidate_ref]
     if opportunity_context is not None:
-        candidate_fact_refs.extend(
-            _candidate_opportunity_evidence_refs(opportunity_context.opportunity)
-        )
+        candidate_fact_refs.extend(_candidate_opportunity_evidence_refs(opportunity_context.opportunity))
     context_fields = dict(
         analysis_cutoff_at=cutoff.isoformat(),
         instrument={"venue": venue, "symbol": symbol, "market_type": market_type, "direction": generation["direction"]},
@@ -814,21 +769,19 @@ def build_entry_analysis_context(
         candidate={
             "candidate_price": candidate["entry_price_usd"],
             "detected_at": detected.isoformat(),
-            "motive_evidence": (
-                None if opportunity_context is not None else candidate.get("inclusion_reason")
-            ),
+            "motive_evidence": (None if opportunity_context is not None else candidate.get("inclusion_reason")),
             "risk_flags": candidate.get("risk_flags"),
             "fact_refs": candidate_fact_refs,
         },
-        candle_windows=serialized, market_structure={**structures, "fact_refs": fact_refs},
+        candle_windows=serialized,
+        market_structure={**structures, "fact_refs": fact_refs},
         quant_context={
             "availability": "available" if feature_ref and quant_values else "unavailable",
             "feature_snapshot_id": feature.get("id") if feature_valid else None,
             "feature_snapshot_at": feature.get("ts") if feature_valid else None,
             "technical_algorithm_version": feature.get("technical_algorithm_version") if feature_valid else None,
             "technical_snapshot_manifest_hash": (
-                fingerprint(feature.get("technical_snapshot_manifest") or "{}")
-                if feature_valid else None
+                fingerprint(feature.get("technical_snapshot_manifest") or "{}") if feature_valid else None
             ),
             "values": quant_values,
             "unavailable_fields": sorted(set(quant_fields) - set(quant_values)),
@@ -858,4 +811,4 @@ def build_entry_analysis_context(
         "prompt_fingerprint": entry_prompt_fingerprint(),
         "model_provider": str(model_provider),
     }
-    return EntryAnalysisContext(**context_fields)
+    return EntryAnalysisContext.model_validate(context_fields)

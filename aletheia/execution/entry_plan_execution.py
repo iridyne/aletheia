@@ -13,15 +13,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import TradeProposal
+from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
 from aletheia.trading.entry_plan import (
     EntryPlan,
     calculate_entry_plan_risk_reward,
     opposing_bbo_price,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
+from aletheia.trading.trigger_specs import require_registered_trigger_spec
 
 
-_MOMENTUM_V2_TRIGGER = ("momentum-retrace-reclaim", "v2")
+_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 _RECEIPT_VERSION = "entry-execution-receipt/v1"
 _RECEIPT_CHANNELS = frozenset({"quote", "trade", "depth", "candle"})
 
@@ -177,8 +179,8 @@ def build_entry_execution_receipt(
     )
 
 
-def _require_momentum_v2_authority(plan: EntryPlan) -> None:
-    if _trigger_identity(plan) != _MOMENTUM_V2_TRIGGER:
+def _require_momentum_geometry_authority(plan: EntryPlan) -> None:
+    if _trigger_id(plan) != _MOMENTUM_GEOMETRY_TRIGGER:
         return
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")
@@ -198,7 +200,7 @@ def _require_momentum_v2_authority(plan: EntryPlan) -> None:
 
 
 def _require_ai_entry_authority(plan: EntryPlan) -> None:
-    if plan.version != "entry-plan/v2":
+    if plan.entry_hypothesis_json is None:
         return
     generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
     if (
@@ -257,14 +259,18 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
 def require_entry_plan_runtime_authority(plan: EntryPlan) -> None:
     """Revalidate persisted plan lineage and global authority without creating an Order."""
 
-    _require_momentum_v2_authority(plan)
+    _require_momentum_geometry_authority(plan)
     _require_ai_entry_authority(plan)
 
 
-def _trigger_identity(plan: EntryPlan) -> tuple[str, str] | None:
-    if plan.trigger_spec_id is None or plan.trigger_spec_version is None:
+def _trigger_id(plan: EntryPlan) -> str | None:
+    historical = historical_trigger_id(plan)
+    if historical is not None:
+        return historical
+    if plan.trigger_spec_id is None:
         return None
-    return str(plan.trigger_spec_id), str(plan.trigger_spec_version)
+    contract, _params = require_registered_trigger_spec(plan.trigger_spec_id, plan.trigger_params)
+    return contract.spec_id
 
 
 def _instant(raw: str) -> datetime:
@@ -286,17 +292,17 @@ def build_entry_plan_order_intent(
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
     require_entry_plan_runtime_authority(plan)
-    if plan.version == "entry-plan/v2" and plan.execution_mode == "TRIGGERED":
+    if _trigger_id(plan) == _MOMENTUM_GEOMETRY_TRIGGER:
         if trigger_evidence is None:
             raise ValueError("ai_entry_trigger_evidence_required")
+        trigger_id = _trigger_id(plan)
         if (
-            trigger_evidence.get("trigger_spec_id") != plan.trigger_spec_id
-            or trigger_evidence.get("trigger_spec_version") != plan.trigger_spec_version
+            trigger_id is None
+            or trigger_evidence.get("trigger_spec_id") != trigger_id
             or trigger_evidence.get("geometry_fingerprint")
             != plan.trigger_params.get("geometry_fingerprint")
         ):
             raise ValueError("ai_entry_trigger_identity_mismatch")
-
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if _instant(plan.expires_at) <= current:
         raise ValueError("entry_plan_expired")
@@ -360,21 +366,12 @@ def build_entry_plan_order_intent(
                 "treatment_exposure_id": plan.treatment_exposure_id,
                 "geometry_version": plan.trigger_params.get("geometry_version"),
                 "geometry_fingerprint": plan.trigger_params.get("geometry_fingerprint"),
-                "entry_behavior_fingerprint": (
-                    (repo.get_candidate_planning_generation(plan.planning_generation_id) or {}).get(
-                        "entry_behavior_fingerprint"
-                    ) if plan.version == "entry-plan/v2" else None
-                ),
-                "entry_plan_version": plan.version,
-                "entry_behavior_version": plan.behavior_version,
-                "analysis_context_version": plan.analysis_context_version,
+                "entry_behavior_fingerprint": plan.behavior_fingerprint,
                 "analysis_context_fingerprint": plan.analysis_context_fingerprint,
-                "entry_hypothesis_version": plan.entry_hypothesis_version,
                 "entry_hypothesis_hash": plan.entry_hypothesis_hash,
                 "primary_anchor_id": (plan.primary_anchor_snapshot or {}).get("anchor_id"),
                 "invalidation_anchor_id": (plan.invalidation_anchor_snapshot or {}).get("anchor_id"),
                 "entry_profile_id": plan.entry_profile_id,
-                "entry_profile_version": plan.entry_profile_version,
                 "compiled_geometry_fingerprint": plan.compiled_geometry_fingerprint,
                 "required_permission": plan.required_permission,
                 "execution_account_mode": plan.execution_account_mode,
@@ -426,7 +423,7 @@ def execute_entry_plan(
     payload = str(row["plan_json"])
     if hashlib.sha256(payload.encode()).hexdigest() != row["plan_hash"]:
         raise ValueError("entry_plan_hash_mismatch")
-    plan = EntryPlan.model_validate_json(payload)
+    plan = decode_entry_plan(payload)
     require_entry_plan_runtime_authority(plan)
     if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
         raise ValueError("entry_plan_tactic_capability_unavailable")

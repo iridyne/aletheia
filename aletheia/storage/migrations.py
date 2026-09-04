@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v69"
+SCHEMA_VERSION = "aletheia-sqlite-v70"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7507,6 +7507,157 @@ def _apply_serenity_retry_idempotency_v15(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+_ENTRY_VERSION_COLLAPSE_CHECKSUM = hashlib.sha256(
+    b"entry-version-collapse-v70"
+).hexdigest()
+
+
+def _apply_entry_version_collapse_v70(db: sqlite3.Connection) -> None:
+    """Make retired Entry format labels nullable without rewriting payloads."""
+
+    generation_columns = [
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(candidate_planning_generations)")
+    ]
+    plan_columns = [str(row[1]) for row in db.execute("PRAGMA table_info(entry_plans)")]
+    historical_generation = {
+        "identity_version",
+        "planner_contract_version",
+        "activation_identity",
+    }
+    if (
+        not historical_generation.intersection(generation_columns)
+        and "version" not in plan_columns
+    ):
+        return
+
+    def table_sql(name: str) -> str:
+        row = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone()
+        if row is None or not row[0]:
+            raise MigrationStateError(f"entry_version_collapse_missing_table:{name}")
+        return str(row[0])
+
+    def required_replace_any(
+        source: str, olds: tuple[str, ...], new: str, field: str
+    ) -> str:
+        matches = [old for old in olds if source.count(old) == 1]
+        if len(matches) != 1:
+            raise MigrationStateError(
+                f"entry_version_collapse_schema_mismatch:{field}"
+            )
+        return source.replace(matches[0], new, 1)
+
+    candidate_sql = table_sql("candidate_planning_generations")
+    candidate_sql = required_replace_any(
+        candidate_sql,
+        (
+            "identity_version TEXT NOT NULL "
+            "CHECK(identity_version='candidate-planning/v1'),",
+            "identity_version TEXT NOT NULL CHECK(identity_version IN "
+            "('candidate-planning/v1','candidate-planning/v2')),",
+        ),
+        "identity_version TEXT,",
+        "identity_version",
+    )
+    planner_prefix = (
+        "planner_contract_version TEXT NOT NULL DEFAULT 'entry-planner/v1'\n"
+        "        CHECK(planner_contract_version IN ("
+    )
+    candidate_sql = required_replace_any(
+        candidate_sql,
+        tuple(
+            planner_prefix
+            + ",".join(f"'entry-planner/v{index}'" for index in range(1, ceiling + 1))
+            + ")),"
+            for ceiling in (2, 3, 4)
+        ),
+        "planner_contract_version TEXT,",
+        "planner_contract_version",
+    )
+    candidate_sql = required_replace_any(
+        candidate_sql,
+        ('CREATE TABLE "candidate_planning_generations"',),
+        "CREATE TABLE candidate_planning_generations_v70",
+        "candidate_planning_generations",
+    )
+    plan_sql = table_sql("entry_plans")
+    plan_sql = required_replace_any(
+        plan_sql,
+        (
+            "version TEXT NOT NULL CHECK(version='entry-plan/v1'),",
+            "version TEXT NOT NULL CHECK(version IN ('entry-plan/v1','entry-plan/v2')),",
+        ),
+        "version TEXT,",
+        "version",
+    )
+    plan_sql = required_replace_any(
+        plan_sql,
+        ('CREATE TABLE "entry_plans"',),
+        "CREATE TABLE entry_plans_v70",
+        "entry_plans",
+    )
+    objects = [
+        (str(row[0]), str(row[1]), str(row[2]))
+        for row in db.execute(
+            "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND "
+            "(type='trigger' OR (type='index' AND tbl_name IN "
+            "('candidate_planning_generations','entry_plans')))"
+        )
+    ]
+    generation_count = int(
+        db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0]
+    )
+    plan_count = int(db.execute("SELECT COUNT(*) FROM entry_plans").fetchone()[0])
+
+    db.execute("PRAGMA defer_foreign_keys=ON")
+    db.execute("SAVEPOINT entry_version_collapse_v70")
+    try:
+        for object_type, name, _sql in objects:
+            if object_type == "trigger":
+                quoted_name = name.replace('"', '""')
+                db.execute(f'DROP TRIGGER "{quoted_name}"')
+        db.execute(candidate_sql)
+        db.execute(plan_sql)
+        quoted_generation = ",".join(f'"{name}"' for name in generation_columns)
+        quoted_plan = ",".join(f'"{name}"' for name in plan_columns)
+        db.execute(
+            f"INSERT INTO candidate_planning_generations_v70 ({quoted_generation}) "
+            f"SELECT {quoted_generation} FROM candidate_planning_generations"
+        )
+        db.execute(
+            f"INSERT INTO entry_plans_v70 ({quoted_plan}) "
+            f"SELECT {quoted_plan} FROM entry_plans"
+        )
+        db.execute("DROP TABLE entry_plans")
+        db.execute("DROP TABLE candidate_planning_generations")
+        db.execute(
+            "ALTER TABLE candidate_planning_generations_v70 "
+            "RENAME TO candidate_planning_generations"
+        )
+        db.execute("ALTER TABLE entry_plans_v70 RENAME TO entry_plans")
+        for _object_type, _name, sql in objects:
+            db.execute(sql)
+        if int(
+            db.execute(
+                "SELECT COUNT(*) FROM candidate_planning_generations"
+            ).fetchone()[0]
+        ) != generation_count:
+            raise MigrationStateError(
+                "entry_version_collapse_generation_count_mismatch"
+            )
+        if int(db.execute("SELECT COUNT(*) FROM entry_plans").fetchone()[0]) != plan_count:
+            raise MigrationStateError("entry_version_collapse_plan_count_mismatch")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("entry_version_collapse_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT entry_version_collapse_v70")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT entry_version_collapse_v70")
+        db.execute("RELEASE SAVEPOINT entry_version_collapse_v70")
+        raise
+    db.execute("PRAGMA optimize")
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -7915,6 +8066,12 @@ _MIGRATIONS = (
         checksum=_LEGACY_ENTRY_UPDATED_AT_V69_CHECKSUM,
         schema_version="aletheia-sqlite-v69",
         apply=_apply_legacy_entry_updated_at_v69,
+    ),
+    MigrationStep(
+        migration_id="20260904_0069_entry_version_collapse_v70",
+        checksum=_ENTRY_VERSION_COLLAPSE_CHECKSUM,
+        schema_version="aletheia-sqlite-v70",
+        apply=_apply_entry_version_collapse_v70,
     ),
 )
 

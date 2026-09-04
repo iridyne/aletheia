@@ -7,9 +7,9 @@ import pytest
 from aletheia.trading.momentum_entry_geometry import (
     BAR_MS,
     GEOMETRY_VERSION,
-    MomentumEntryGeometryV2,
+    MomentumEntryGeometry,
     MomentumGeometryUnavailable,
-    compile_momentum_entry_geometry_v2,
+    compile_momentum_entry_geometry,
 )
 
 
@@ -74,7 +74,7 @@ def _bars(direction: str) -> tuple[list[dict], int]:
 
 def _compile(direction: str = "long", *, minimum_risk_reward: float = 1.5):
     bars, cutoff = _bars(direction)
-    return compile_momentum_entry_geometry_v2(
+    return compile_momentum_entry_geometry(
         candidate=_candidate(direction),
         feature={
             "id": "feature-1",
@@ -93,7 +93,7 @@ def _compile(direction: str = "long", *, minimum_risk_reward: float = 1.5):
 def test_long_geometry_uses_true_breakout_and_worst_entry_rr():
     geometry = _compile()
 
-    assert isinstance(geometry, MomentumEntryGeometryV2)
+    assert isinstance(geometry, MomentumEntryGeometry)
     assert geometry.geometry_version == GEOMETRY_VERSION
     assert geometry.breakout_level == 100.0
     assert geometry.atr_abs == pytest.approx(30 / 14)
@@ -115,16 +115,16 @@ def test_short_geometry_is_direction_symmetric():
         assert (entry - geometry.target_price) / (geometry.stop_price - entry) >= 1.5
 
 
-def test_geometry_exports_exact_v2_trigger_payload():
+def test_geometry_exports_exact_trigger_payload():
     geometry = _compile()
     params = geometry.trigger_params()
 
     from aletheia.trading.trigger_specs import require_registered_trigger_spec
 
     contract, normalized = require_registered_trigger_spec(
-        "momentum-retrace-reclaim", "v2", params
+        "momentum-retrace-reclaim-geometry", params
     )
-    assert contract.version == "v2"
+    assert contract.spec_id == "momentum-retrace-reclaim-geometry"
     assert normalized["breakout_level"] == geometry.breakout_level
     assert normalized["atr_abs"] == geometry.atr_abs
     assert normalized["geometry_version"] == GEOMETRY_VERSION
@@ -147,7 +147,7 @@ def test_geometry_rejects_future_forming_or_stale_latest_bar():
     forming = [*bars]
     forming[-1]["is_closed"] = False
     with pytest.raises(MomentumGeometryUnavailable, match="bar_forming"):
-        compile_momentum_entry_geometry_v2(candles=forming, **kwargs)
+        compile_momentum_entry_geometry(candles=forming, **kwargs)
 
     stale = [*bars]
     for bar in stale:
@@ -156,7 +156,7 @@ def test_geometry_rejects_future_forming_or_stale_latest_bar():
     stale_kwargs["source_cutoff_at"] = _instant(22 * BAR_MS)
     stale_kwargs["valid_until"] = _instant(23 * BAR_MS)
     with pytest.raises(MomentumGeometryUnavailable, match="latest_completed_bar_missing"):
-        compile_momentum_entry_geometry_v2(candles=stale, **stale_kwargs)
+        compile_momentum_entry_geometry(candles=stale, **stale_kwargs)
 
 
 def test_geometry_rejects_gap_identity_and_provenance_mismatch():
@@ -172,18 +172,18 @@ def test_geometry_rejects_gap_identity_and_provenance_mismatch():
     gap = [*bars]
     gap[10]["ts"] += BAR_MS
     with pytest.raises(MomentumGeometryUnavailable, match="bar_sequence_discontinuous"):
-        compile_momentum_entry_geometry_v2(candles=gap, **kwargs)
+        compile_momentum_entry_geometry(candles=gap, **kwargs)
 
     wrong_instrument = [*bars]
     wrong_instrument[5]["exchange"] = "other-venue"
     with pytest.raises(MomentumGeometryUnavailable, match="bar_instrument_identity_mismatch"):
-        compile_momentum_entry_geometry_v2(candles=wrong_instrument, **kwargs)
+        compile_momentum_entry_geometry(candles=wrong_instrument, **kwargs)
 
     missing_provenance = [*bars]
     missing_provenance[5]["exchange"] = "bitget"
     missing_provenance[5]["last_mutated_at"] = None
     with pytest.raises(MomentumGeometryUnavailable, match="bar_availability_provenance_unavailable"):
-        compile_momentum_entry_geometry_v2(candles=missing_provenance, **kwargs)
+        compile_momentum_entry_geometry(candles=missing_provenance, **kwargs)
 
 
 def test_geometry_rejects_non_confirming_breakout_and_future_feature():
@@ -201,7 +201,7 @@ def test_geometry_rejects_non_confirming_breakout_and_future_feature():
     non_confirming = [*bars]
     non_confirming[-1]["close"] = 100.0
     with pytest.raises(MomentumGeometryUnavailable, match="breakout_confirmation_missing"):
-        compile_momentum_entry_geometry_v2(**kwargs | {"candles": non_confirming})
+        compile_momentum_entry_geometry(**kwargs | {"candles": non_confirming})
 
     future_feature = dict(kwargs)
     future_feature["feature"] = {
@@ -210,18 +210,21 @@ def test_geometry_rejects_non_confirming_breakout_and_future_feature():
         "ts": _instant(cutoff + 1),
     }
     with pytest.raises(MomentumGeometryUnavailable, match="feature_snapshot_after_cutoff"):
-        compile_momentum_entry_geometry_v2(**future_feature)
+        compile_momentum_entry_geometry(**future_feature)
 
 
-def test_v2_is_registered_but_not_visible_to_current_planner():
+def test_geometry_trigger_is_registered_but_not_planner_visible():
     from aletheia.trading.trigger_specs import compatible_trigger_specs, registered_trigger_specs
 
-    assert [(spec.spec_id, spec.version) for spec in compatible_trigger_specs("momentum")] == [
-        ("momentum-retrace-reclaim", "v1")
+    assert [spec.spec_id for spec in compatible_trigger_specs("momentum")] == [
+        "momentum-retrace-reclaim"
     ]
-    v2 = next(spec for spec in registered_trigger_specs() if spec.version == "v2")
-    assert v2.planner_visible is False
+    geometry = next(
+        spec for spec in registered_trigger_specs()
+        if spec.spec_id == "momentum-retrace-reclaim-geometry"
+    )
+    assert geometry.planner_visible is False
     with pytest.raises(ValueError, match="trigger_spec_not_planner_visible"):
         from aletheia.trading.trigger_specs import require_compatible_trigger_spec
 
-        require_compatible_trigger_spec("momentum", "momentum-retrace-reclaim", "v2")
+        require_compatible_trigger_spec("momentum", geometry.spec_id)

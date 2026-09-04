@@ -359,8 +359,8 @@ def test_full_internal_route_reaches_one_model_and_compiler(_inmemory_db, monkey
             "primary_anchor_ref": primary.anchor_id,
             "invalidation_anchor_ref": invalidation.anchor_id,
             "entry_profile_id": "grounded-anchor-resting-maker",
-            "entry_profile_version": "v1", "execution_urgency": "PASSIVE",
-            "risk_tier": "LOW", "horizon": "INTRADAY",
+            "execution_urgency": "PASSIVE", "risk_tier": "LOW",
+            "horizon": "INTRADAY",
             "supporting_fact_refs": [f"candidate:{candidate.id}"],
         }
 
@@ -478,8 +478,8 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
             "primary_anchor_ref": "ignored-until-authority-recovers",
             "invalidation_anchor_ref": "also-ignored",
             "entry_profile_id": "grounded-anchor-resting-maker",
-            "entry_profile_version": "v1", "execution_urgency": "PASSIVE",
-            "risk_tier": "LOW", "horizon": "INTRADAY",
+            "execution_urgency": "PASSIVE", "risk_tier": "LOW",
+            "horizon": "INTRADAY",
             "supporting_fact_refs": ["ignored"],
         }
 

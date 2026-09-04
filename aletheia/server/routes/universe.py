@@ -11,17 +11,20 @@ router = APIRouter(prefix="/api/universe", tags=["universe"])
 
 
 def _entry_plan_projection(row: dict) -> dict:
-    from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
+    import hashlib
+    import json
+
+    from aletheia.trading.entry_compat import decode_entry_plan
 
     item = dict(row)
     try:
-        plan = EntryPlan.model_validate_json(item["plan_json"])
-        canonical_payload, digest = entry_plan_payload(plan)
-        valid = digest == item["plan_hash"] and canonical_payload == item["plan_json"]
+        payload = str(item["plan_json"])
+        plan = decode_entry_plan(payload)
+        valid = hashlib.sha256(payload.encode()).hexdigest() == item["plan_hash"]
     except Exception:
         plan = None
         valid = False
-    item["plan"] = plan.model_dump(mode="json") if plan else None
+    item["plan"] = json.loads(item["plan_json"]) if plan else None
     item["contract_valid"] = valid
     if (
         plan
@@ -309,8 +312,6 @@ def get_candidate(candidate_id: str):
 
     detail = get_member(candidate_id)
     attention = repo.get_candidate_planning_for_candidate(candidate_id)
-    if attention:
-        attention.pop("planner_contract_version", None)
     detail["attention"] = attention
     detail["lifecycle"] = repo.get_candidate_entry_lifecycle(candidate_id)
     return detail

@@ -164,14 +164,77 @@ def _no_plan_intent(
         execution_mode=None,
         order_tactic=None,
         trigger_spec_id=None,
-        trigger_spec_version=None,
         risk_tier="NONE",
         horizon="NONE",
     )
 
 
 def _plan(generation: dict) -> EntryPlan:
+    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_analysis import (
+        EntryAnalysisContext, EntryAnchor, EntryHypothesis, canonical_json, fingerprint,
+    )
+
     now = datetime.now(timezone.utc)
+    primary = EntryAnchor(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="causal_breakout",
+        price=100.0, directional_role="entry_candidate", known_at_ms=int(now.timestamp() * 1000),
+        source_fact_refs=(f"candidate:{generation['last_candidate_id']}",), source_fingerprint="a" * 64,
+    )
+    invalidation = EntryAnchor(
+        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing",
+        price=98.0, directional_role="invalidation_candidate", known_at_ms=int(now.timestamp() * 1000),
+        source_fact_refs=("swing:test",), source_fingerprint="b" * 64,
+    )
+    mechanism = generation.get("opportunity_mechanism") or "continuation"
+    direction = generation.get("direction") or "long"
+    hypothesis = EntryHypothesis(
+        decision="ENTRY_PLAN", reason_code="OK", mechanism=mechanism, direction=direction,
+        primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
+        entry_profile_id="grounded-anchor-retrace-reclaim", execution_urgency="BOUNDED_URGENT",
+        risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,),
+    )
+    hypothesis_json = hypothesis.model_dump_json()
+    trigger_params = {
+        "breakout_level": 100.0, "pullback_low": 99.0, "pullback_high": 100.0,
+        "entry_low": 100.0, "entry_high": 101.0, "invalidation_price": 98.0,
+    }
+    opportunity = json.loads(
+        repo.get_candidate(generation["last_candidate_id"])["candidate_opportunity_context_json"]
+    )
+    context = EntryAnalysisContext(
+        analysis_cutoff_at=now.isoformat(),
+        instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": direction},
+        planning_generation={
+            "id": generation["id"], "candidate_id": generation["last_candidate_id"],
+            "candidate_family": generation["candidate_family"], "cycle_number": generation.get("cycle_number") or 1,
+            "entry_behavior_fingerprint": generation.get("entry_behavior_fingerprint") or "b" * 64,
+            "schema_fingerprint": generation.get("schema_fingerprint") or "s" * 64,
+        },
+        candidate={"candidate_price": 100.0, "fact_refs": [primary.source_fact_refs[0]]},
+        candle_windows={key: {"availability": "unavailable", "bars": []} for key in ("4h", "1h", "15m")},
+        market_structure={"availability": "unavailable", "fact_refs": []},
+        quant_context={"availability": "unavailable", "fact_refs": []},
+        portfolio_context={"availability": "unavailable", "fact_refs": []},
+        execution_context={"availability": "unavailable", "fact_refs": []},
+        anchors=(primary, invalidation),
+        entry_profiles=({"id": "grounded-anchor-retrace-reclaim"},),
+        learning_context=empty_entry_learning_context(
+            as_of_at=now.isoformat(), mechanism=mechanism, direction=direction,
+            market_type="perp", policy=generation["candidate_selection_policy"],
+            policy_epoch=generation["candidate_selection_policy_epoch"],
+        ),
+        unavailable_sections=("candles", "market_structure", "quant", "portfolio", "execution"),
+        candidate_opportunity_context=opportunity,
+        inference_identity={
+            "caller": "agent_shell.entry_planner", "prompt_fingerprint": "f" * 64, "model_provider": "test",
+        },
+    )
+    context_json = canonical_json(context.model_dump(mode="json"))
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET planner_input_json=?, planner_input_hash=? WHERE id=?",
+        (context_json, fingerprint(context.model_dump(mode="json")), generation["id"]),
+    )
     return EntryPlan(
         planning_generation_id=generation["id"],
         candidate_id=generation["last_candidate_id"],
@@ -184,15 +247,7 @@ def _plan(generation: dict) -> EntryPlan:
         scenario="retrace then reclaim",
         execution_mode="TRIGGERED",
         trigger_spec_id="momentum-retrace-reclaim",
-        trigger_spec_version="v1",
-        trigger_params={
-            "breakout_level": 100,
-            "pullback_low": 99,
-            "pullback_high": 100,
-            "entry_low": 100,
-            "entry_high": 101,
-            "invalidation_price": 98,
-        },
+        trigger_params=trigger_params,
         trigger_data_requirements=("quote", "trade", "books5", "candle1m"),
         trigger_freshness_ms=2_000,
         entry_zone=(100, 101),
@@ -210,6 +265,7 @@ def _plan(generation: dict) -> EntryPlan:
         bbo_reference="ask",
         max_wait_sec=0,
         cancel_replace_policy="CANCEL_ONLY",
+        worst_price=101,
         max_requotes=0,
         partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
         max_slippage_bps=10,
@@ -221,7 +277,21 @@ def _plan(generation: dict) -> EntryPlan:
         risk_policy_id="demo-v1",
         risk_policy_revision=1,
         risk_policy_hash="risk-hash",
-        behavior_version="entry-planner/v1",
+        producer_commit=generation.get("producer_commit") or "test",
+        behavior_fingerprint=generation.get("entry_behavior_fingerprint") or generation.get("behavior_fingerprint") or "b" * 64,
+        schema_fingerprint=generation.get("schema_fingerprint") or "s" * 64,
+        planning_identity=generation.get("planning_identity") or "p" * 64,
+        cycle_number=generation.get("cycle_number") or 1,
+        analysis_context_fingerprint=context.context_fingerprint,
+        entry_hypothesis_json=hypothesis_json,
+        entry_hypothesis_hash=hashlib.sha256(hypothesis_json.encode()).hexdigest(),
+        primary_anchor_snapshot=primary.model_dump(mode="json"),
+        invalidation_anchor_snapshot=invalidation.model_dump(mode="json"),
+        entry_profile_id=hypothesis.entry_profile_id,
+        compiled_geometry_fingerprint=fingerprint({
+            "entry_zone": (100.0, 101.0), "invalidation_price": 98.0,
+            "stop_price": 98.0, "target_price": 105.0, "trigger_params": trigger_params,
+        }),
     )
 
 
@@ -299,45 +369,13 @@ def test_typed_target_candidate_uses_mechanism_aware_grounded_planner(mechanism,
     generation, created = repo.ensure_candidate_planning_generation(candidate.id)
 
     assert created is True
-    assert generation["identity_version"] == "candidate-planning/v2"
     assert len(generation["entry_behavior_fingerprint"]) == 64
     assert generation["opportunity_mechanism"] == mechanism
     assert generation["candidate_selection_policy"] == "candidate_selection_utility_v1"
     assert generation["candidate_selection_policy_epoch"] == "epoch-1"
 
 
-def test_mechanism_planning_identity_ignores_churn_and_rotates_authority_dimensions():
-    first = _typed_candidate(mechanism="reversal", family="mean_reversion")
-    generation, _ = repo.ensure_candidate_planning_generation(first.id)
-    churn = _typed_candidate(
-        mechanism="reversal", family="mean_reversion", rank=9, price=103.0,
-        regime="sideways", risk_flags='["new-risk"]',
-    )
-    same, created = repo.ensure_candidate_planning_generation(churn.id)
-    assert created is False
-    assert same["id"] == generation["id"]
 
-    plan_json = "{}"
-    repo._insert("entry_plans", {
-        "id": "mechanism-old-plan", "planning_generation_id": generation["id"],
-        "candidate_id": same["last_candidate_id"], "planning_key": generation["planning_key"],
-        "version": "entry-plan/v2", "venue": "bitget", "symbol": "BTC/USDT",
-        "market_type": "perp", "direction": "long", "execution_mode": "RESTING_MAKER",
-        "plan_json": plan_json, "plan_hash": hashlib.sha256(plan_json.encode()).hexdigest(),
-        "status": "waiting", "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    changed = _typed_candidate(
-        mechanism="positioning_forced_flow", family="derivatives"
-    )
-    replacement, created = repo.ensure_candidate_planning_generation(changed.id)
-    assert created is True
-    assert replacement["id"] != generation["id"]
-    assert repo.get_candidate_planning_generation(generation["id"])["is_current"] == 0
-    old_plan = repo.get_entry_plan("mechanism-old-plan")
-    assert old_plan["status"] == "invalidated"
-    assert old_plan["terminal_reason"] == "incompatible_planning_generation"
 
 
 @pytest.mark.parametrize("terminal_status", ["unavailable", "no_plan", "planned"])
@@ -382,7 +420,7 @@ def test_behavior_fingerprint_upgrade_supersedes_each_durable_result_once(termin
     [current_projection] = repo.list_current_candidate_workbench(refreshed.snapshot_id)
     history = {row["id"]: row for row in repo.list_planning_history()}
     assert "planner_contract_version" not in current_projection
-    assert "planner_contract_version" not in history[generation["id"]]
+    assert history[generation["id"]]["planner_contract_version"] is None
     assert history[generation["id"]]["attention_terminal_reason"] == (
         "canonical_compatibility_cutover"
     )
@@ -690,84 +728,13 @@ def test_completed_refresh_terminal_reasons_require_exact_eligibility_evidence()
     )
 
 
-def test_no_plan_is_durable_until_new_generation():
-    candidate = _candidate(scanner_family="breakout")
-    repo.ensure_candidate_planning_generation(candidate.id)
-    calls = 0
-
-    async def planner(_context):
-        nonlocal calls
-        calls += 1
-        return _no_plan_intent()
-
-    assert asyncio.run(plan_next_candidate(planner))["status"] == "no_plan"
-    assert asyncio.run(plan_next_candidate(planner))["status"] == "idle"
-    assert calls == 1
-
-    replacement = _candidate(regime="sideways", scanner_family="breakout")
-    next_generation, created = repo.ensure_candidate_planning_generation(replacement.id)
-    assert created is True
-    assert next_generation["id"] != candidate.id
-    assert asyncio.run(plan_next_candidate(planner))["status"] == "no_plan"
-    assert calls == 2
 
 
-def test_plan_intent_no_plan_persists_reason_code(monkeypatch):
-    candidate = _candidate(scanner_family="breakout")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-
-    def unexpected_defer(*_args, **_kwargs):
-        raise AssertionError("NO_PLAN must not defer candidate planning")
-
-    monkeypatch.setattr(repo, "defer_candidate_planning", unexpected_defer)
-    monkeypatch.setattr(repo, "defer_candidate_planning_with_code", unexpected_defer)
-
-    async def planner(_context):
-        return _no_plan_intent("STALE_FACTS")
-
-    result = asyncio.run(plan_next_candidate(planner))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-    assert result["status"] == "no_plan"
-    assert json.loads(stored["result_json"])["reason_code"] == "STALE_FACTS"
 
 
-def test_v4_no_plan_invalid_identity_is_replaced_before_persistence(monkeypatch):
-    from types import SimpleNamespace
 
-    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    context = SimpleNamespace(
-        candle_windows={"15m": {"availability": "available"}},
-        anchors=(SimpleNamespace(anchor_id="candidate:anchor"),),
-        entry_profiles=({"id": "grounded-anchor-resting-maker", "version": "v1"},),
-        candidate={"fact_refs": [f"candidate:{candidate.id}"]},
-        market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
-        portfolio_context={"fact_refs": []}, execution_context={"fact_refs": []},
-        candidate_opportunity_context={
-            "opportunity": {"primary_mechanism": "reversal", "direction": "long"},
-        },
-        learning_context=SimpleNamespace(evidence_refs=()),
-        model_dump=lambda **_kwargs: {"context": "v4"},
-    )
-    monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
-        lambda *_args, **_kwargs: context,
-    )
 
-    async def planner(_context):
-        return {
-            "decision": "NO_PLAN", "reason_code": "CONFLICTING_SIGNALS",
-            "mechanism": "continuation", "direction": "long",
-            "risk_tier": "NONE", "horizon": "NONE",
-        }
 
-    result = asyncio.run(plan_next_candidate(planner))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-
-    assert result["status"] == "no_plan"
-    persisted = json.loads(stored["result_json"])
-    assert persisted["reason_code"] == "INVALID_HYPOTHESIS_REFERENCE"
-    assert persisted["source"] == "deterministic_validation"
 
 
 def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
@@ -800,215 +767,13 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
     )
 
 
-def test_entry_planner_persists_plan_for_paper_internal():
-    from aletheia.config.loader import load_config
-
-    candidate = _candidate()
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    # Exercise the still-supported historical Planner V2/Entry Plan V1 path.
-    repo.execute_write(
-        "UPDATE candidate_planning_generations SET planner_contract_version='entry-planner/v2' WHERE id=?",
-        (generation["id"],),
-    )
-    db = repo.get_db()
-    db.execute(
-        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?, ?, ?, ?)",
-        ("feature-btc-entry-plan", candidate.asset_id, datetime.now(timezone.utc).isoformat(), 1.5),
-    )
-    db.commit()
-
-    async def planner(_context):
-        return PlanIntent(
-            decision="ENTRY_PLAN",
-            reason_code="OK",
-            thesis="bounded momentum continuation",
-            scenario="retrace then reclaim",
-            evidence_refs=[],
-            execution_mode="TRIGGERED",
-            order_tactic="OPPOSING_BBO_IOC",
-            trigger_spec_id="momentum-retrace-reclaim",
-            trigger_spec_version="v1",
-            risk_tier="LOW",
-            horizon="INTRADAY",
-        )
-
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
-    assert result["status"] == "planned", result
-    plan = EntryPlan.model_validate_json(repo.get_entry_plan(result["entry_plan_id"])["plan_json"])
-    assert plan.planning_generation_id == generation["id"]
-    assert plan.execution_account_mode == "paper_internal"
-    assert plan.stop_price < 100 < plan.target_price
-    assert plan.trigger_data_requirements == ("quote", "trade", "books5", "candle1m")
-    assert plan.max_leverage == 2
 
 
-def test_compiler_bounds_risk_and_clamps_spot_leverage(monkeypatch):
-    from types import SimpleNamespace
-
-    from aletheia.config.loader import load_config
-    from aletheia.trading.entry_plan_compiler import compile_entry_plan
-
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    policy = SimpleNamespace(
-        policy_id="test-policy",
-        revision=1,
-        capital=SimpleNamespace(
-            max_position_margin_usdt=1_000_000,
-            max_total_exposure_pct=100,
-        ),
-        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
-    )
-    resolved = SimpleNamespace(policy=policy, policy_hash="test-policy-hash")
-    monkeypatch.setattr(
-        "aletheia.trading.entry_plan_compiler.resolve_risk_policy",
-        lambda *_args, **_kwargs: resolved,
-    )
-    monkeypatch.setattr(
-        "aletheia.trading.entry_plan_compiler.get_max_leverage",
-        lambda *_args, **_kwargs: 20,
-    )
-    monkeypatch.setattr(
-        "aletheia.risk.engine.account_equity_for_execution",
-        lambda *_args, **_kwargs: 100_000.0,
-    )
-    monkeypatch.setattr(
-        "aletheia.risk.engine.per_symbol_notional_ceiling",
-        lambda *_args, **_kwargs: 1_000_000_000.0,
-    )
-
-    def compile_for(
-        market_type,
-        *,
-        execution_mode="RESTING_MAKER",
-        order_tactic="POST_ONLY_LIMIT",
-        treatment=False,
-    ):
-        triggered = execution_mode == "TRIGGERED"
-        candidate = {"entry_price_usd": 100.0}
-        if treatment:
-            candidate["learning_candidate_key"] = "momentum-candidate-1"
-        return compile_entry_plan(
-            {
-                "id": f"generation-{market_type}-{execution_mode}-{order_tactic}",
-                "last_candidate_id": f"candidate-{market_type}",
-                "candidate_family": "momentum",
-                "venue": "bitget",
-                "symbol": "BTC/USDT",
-                "market_type": market_type,
-                "direction": "long",
-            },
-            candidate,
-            {"atr_pct": 10.0},
-            PlanIntent(
-                decision="ENTRY_PLAN",
-                reason_code="OK",
-                thesis="x",
-                scenario="y",
-                evidence_refs=[],
-                execution_mode=execution_mode,
-                order_tactic=order_tactic,
-                trigger_spec_id="momentum-retrace-reclaim" if triggered else None,
-                trigger_spec_version="v1" if triggered else None,
-                risk_tier="LOW",
-                horizon="INTRADAY",
-            ),
-            cfg,
-            candles=[{}] if treatment else None,
-        )
-
-    perp = compile_for("perp")
-    spot = compile_for("spot")
-    triggered_maker = compile_for(
-        "perp",
-        execution_mode="TRIGGERED",
-        order_tactic="POST_ONLY_LIMIT",
-    )
-    triggered_taker = compile_for(
-        "perp",
-        execution_mode="TRIGGERED",
-        order_tactic="OPPOSING_BBO_IOC",
-    )
-    worst_entry = perp.entry_zone[1]
-    risk_budget = 100_000.0 * perp.max_risk_pct / 100.0
-    stop_fraction = abs(worst_entry - perp.stop_price) / worst_entry
-    assert perp.max_notional <= risk_budget / stop_fraction
-    assert spot.max_leverage == 1
-    assert perp.order_tactic == "POST_ONLY_LIMIT"
-    assert perp.max_wait_sec == 60
-    assert triggered_maker.execution_mode == "TRIGGERED"
-    assert triggered_maker.order_tactic == "POST_ONLY_LIMIT"
-    assert triggered_maker.max_wait_sec == 60
-    assert triggered_maker.trigger_spec_id == "momentum-retrace-reclaim"
-    assert triggered_taker.order_tactic == "OPPOSING_BBO_IOC"
-    assert triggered_taker.max_wait_sec == 0
-    assert triggered_taker.bbo_reference == "ask"
-    assert triggered_taker.max_slippage_bps == 20.0
-    assert triggered_taker.worst_price == pytest.approx(100.2)
-    trigger_params = {
-        "breakout_level": 100.0,
-        "pullback_low": 99.0,
-        "pullback_high": 100.0,
-        "entry_low": 100.0,
-        "entry_high": 101.0,
-        "invalidation_price": 98.0,
-        "sweep_low": 99.0,
-        "sweep_high": 100.0,
-        "atr_abs": 2.0,
-        "geometry_version": "momentum-entry-geometry/v2",
-        "geometry_fingerprint": "a" * 64,
-    }
-    geometry = SimpleNamespace(
-        entry_zone=(100.0, 101.0),
-        stop_price=98.0,
-        target_price=106.0,
-        trigger_params=lambda: trigger_params,
-    )
-    monkeypatch.setattr(
-        "aletheia.trading.entry_plan_compiler.compile_momentum_entry_geometry_v2",
-        lambda **_kwargs: geometry,
-    )
-    monkeypatch.setattr(
-        "aletheia.learning.experiments.apply_numeric_treatment",
-        lambda **_kwargs: SimpleNamespace(value=1.0, exposure_id="exposure-treatment"),
-    )
-    treatment_plan = compile_for(
-        "perp",
-        execution_mode="TRIGGERED",
-        order_tactic="OPPOSING_BBO_IOC",
-        treatment=True,
-    )
-    assert treatment_plan.trigger_spec_version == "v2"
-    assert treatment_plan.treatment_exposure_id == "exposure-treatment"
-    assert treatment_plan.max_risk_pct == triggered_taker.max_risk_pct
-    assert treatment_plan.max_leverage == triggered_taker.max_leverage
 
 
-def test_ai_entry_compiler_emits_v2_without_momentum_treatment(monkeypatch):
-    from types import SimpleNamespace
-    from aletheia.config.loader import load_config
-    from aletheia.trading.entry_analysis import EntryAnalysisContextV1, EntryAnchorV1, EntryHypothesisV1
-    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
 
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    policy = SimpleNamespace(policy_id="test", revision=1, capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100), loss=SimpleNamespace(max_single_trade_risk_pct=1.0))
-    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.resolve_risk_policy", lambda *_a, **_k: SimpleNamespace(policy=policy, policy_hash="hash"))
-    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
-    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
-    monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
-    primary = EntryAnchorV1(venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference", price=100, directional_role="entry_candidate", known_at_ms=1, source_fact_refs=("candidate:c1",), source_fingerprint="candidate")
-    invalidation = EntryAnchorV1(venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing", price=95, directional_role="invalidation_candidate", known_at_ms=1, source_fact_refs=("swing:s1",), source_fingerprint="swing")
-    context = EntryAnalysisContextV1(
-        analysis_cutoff_at="2026-09-02T00:00:00Z", instrument={"venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, planning_generation={"id":"g1","planner_contract_version":"entry-planner/v3","candidate_id":"c1","candidate_family":"momentum"}, candidate={"candidate_price":100,"fact_refs":["candidate:c1"]}, candle_windows={"4h":{"availability":"unavailable","bars":[]},"1h":{"availability":"unavailable","bars":[]},"15m":{"availability":"available","bars":[{} for _ in range(96)]}}, market_structure={"15m":{"atr14":2.0,"break_tolerance":0.1},"fact_refs":[]}, quant_context={"values":{"atr_pct":2},"fact_refs":[]}, portfolio_context={"availability":"unavailable"}, execution_context={"availability":"available","bid":99.9,"ask":100.1,"spread_bps":2,"depth_10bps_usd":100_000,"estimated_costs":0.1}, anchors=(primary,invalidation), entry_profiles=({"id":"anchor-retrace-reclaim","version":"v1"},), learning_context={"availability":"unavailable"},
-    )
-    hypothesis = EntryHypothesisV1(decision="ENTRY_PLAN", reason_code="OK", thesis="bounded", scenario="reclaim", setup_archetype="continuation", primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id, entry_profile_id="anchor-retrace-reclaim", entry_profile_version="v1", execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,))
-    plan = compile_ai_entry_plan({"id":"g1","last_candidate_id":"candidate-b","candidate_family":"momentum","venue":"bitget","symbol":"BTC/USDT","market_type":"perp","direction":"long"}, context, hypothesis, cfg)
-    assert plan.candidate_id == "c1"
-    assert (plan.version, plan.behavior_version, plan.treatment_exposure_id) == ("entry-plan/v2", "ai-entry-hypothesis-compiler/v1", None)
-    assert plan.trigger_spec_id == "anchor-retrace-reclaim"
+
+
 
 
 def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
@@ -1027,6 +792,11 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     cfg.exchange.paper_execution_mode = "paper_internal"
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    generation["producer_commit"] = "test-commit"
+    repo.execute_write(
+        "UPDATE candidate_planning_generations SET producer_commit=? WHERE id=?",
+        (generation["producer_commit"], generation["id"]),
+    )
     policy = SimpleNamespace(
         policy_id="test", revision=1,
         capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100),
@@ -1081,7 +851,7 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     hypothesis = EntryHypothesis(
         decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-resting-maker", entry_profile_version="v1",
+        entry_profile_id="grounded-anchor-resting-maker",
         execution_urgency="PASSIVE", risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,),
     )
@@ -1129,16 +899,15 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     result = asyncio.run(
         plan_next_candidate(planner, cfg=cfg, owner_token="canonical-owner")
     )
-    assert result["status"] == "planned", result
+    assert result["status"] == "planned", repo.get_candidate_planning_generation(generation["id"])["result_json"]
     stored = repo.get_candidate_planning_generation(generation["id"])
     plan = EntryPlan.model_validate_json(
         repo.get_entry_plan(result["entry_plan_id"])["plan_json"]
     )
 
-    assert plan.entry_hypothesis_version == "entry-hypothesis/v2"
-    assert plan.analysis_context_version == "entry-analysis-context/v2"
     assert plan.entry_profile_id == "grounded-anchor-resting-maker"
-    assert plan.behavior_version == generation["entry_behavior_fingerprint"]
+    assert plan.behavior_fingerprint == generation["entry_behavior_fingerprint"]
+    assert plan.analysis_context_fingerprint == context.context_fingerprint
     assert plan.thesis == "reversal grounded entry"
     assert plan.required_permission == "Paper"
     assert plan.execution_account_mode == "paper_internal"
@@ -1152,123 +921,7 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     _require_ai_entry_authority(plan)
 
 
-def test_ai_entry_v3_frozen_lineage_reaches_attributed_proposal(monkeypatch):
-    from types import SimpleNamespace
 
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.data.symbols import InstrumentId
-    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
-    from aletheia.trading.entry_analysis import (
-        EntryAnalysisContextV1, EntryAnchorV1, EntryHypothesisV1, canonical_json, fingerprint,
-    )
-    from aletheia.trading.entry_plan_compiler import compile_ai_entry_plan
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngineV2
-    from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerPolicy
-
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.live.state = "live_disabled"
-    save_config(cfg)
-    candidate = _candidate()
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    assert generation["planner_contract_version"] == "entry-planner/v3"
-    assert repo.claim_next_candidate_planning("v3-owner")["id"] == generation["id"]
-
-    primary = EntryAnchorV1(
-        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference",
-        price=100, directional_role="entry_candidate", known_at_ms=1,
-        source_fact_refs=(f"candidate:{candidate.id}",), source_fingerprint="candidate",
-    )
-    invalidation = EntryAnchorV1(
-        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="confirmed_swing",
-        price=95, directional_role="invalidation_candidate", known_at_ms=1,
-        source_fact_refs=("swing:s1",), source_fingerprint="swing",
-    )
-    context = EntryAnalysisContextV1(
-        analysis_cutoff_at=datetime.now(timezone.utc).isoformat(),
-        instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long"},
-        planning_generation={"id": generation["id"], "planner_contract_version": "entry-planner/v3", "candidate_id": candidate.id, "candidate_family": "momentum"},
-        candidate={"candidate_price": 100, "fact_refs": [f"candidate:{candidate.id}"]},
-        candle_windows={"4h": {"availability": "unavailable", "bars": []}, "1h": {"availability": "unavailable", "bars": []}, "15m": {"availability": "available", "bars": [{} for _ in range(96)]}},
-        market_structure={"15m": {"atr14": 2.0, "break_tolerance": 0.1}, "fact_refs": []},
-        quant_context={"values": {"atr_pct": 2.0}, "fact_refs": []},
-        portfolio_context={"availability": "available", "fact_refs": []},
-        execution_context={"availability": "available", "bid": 99.9, "ask": 100.1, "spread_bps": 2, "depth_10bps_usd": 100_000, "estimated_costs": 0.1, "fact_refs": []},
-        anchors=(primary, invalidation),
-        entry_profiles=({"id": "anchor-retrace-reclaim", "version": "v1"},),
-        learning_context={"availability": "unavailable"},
-    )
-    input_payload = canonical_json(context.model_dump(mode="json"))
-    assert repo.bind_candidate_planner_input(
-        generation["id"], "v3-owner", input_payload,
-        fingerprint(context.model_dump(mode="json")),
-    )
-    hypothesis = EntryHypothesisV1(
-        decision="ENTRY_PLAN", reason_code="OK", thesis="bounded", scenario="reclaim",
-        setup_archetype="continuation", primary_anchor_ref=primary.anchor_id,
-        invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="anchor-retrace-reclaim", entry_profile_version="v1",
-        execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY",
-        supporting_fact_refs=(primary.anchor_id,),
-    )
-    policy = SimpleNamespace(
-        policy_id="test", revision=1,
-        capital=SimpleNamespace(max_position_margin_usdt=100_000, max_total_exposure_pct=100),
-        loss=SimpleNamespace(max_single_trade_risk_pct=1.0),
-    )
-    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.resolve_risk_policy", lambda *_a, **_k: SimpleNamespace(policy=policy, policy_hash="hash"))
-    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.get_max_leverage", lambda *_a, **_k: 20)
-    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
-    monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
-    plan = compile_ai_entry_plan(generation, context, hypothesis, cfg)
-    assert repo.complete_candidate_planning_with_plan(
-        generation["id"], "v3-owner", plan,
-    )[0] == "planned"
-    stored = EntryPlan.model_validate_json(repo.get_entry_plan(plan.plan_id)["plan_json"])
-
-    params = stored.trigger_params
-    engine = MomentumTriggerEngineV2(
-        instrument=InstrumentId.from_parts("bitget", "BTC/USDT", "perp"),
-        direction="long", breakout_level=params["breakout_level"],
-        pullback_band=(params["pullback_low"], params["pullback_high"]),
-        sweep_band=(params["sweep_low"], params["sweep_high"]),
-        entry_zone=(params["entry_low"], params["entry_high"]),
-        invalidation_price=params["invalidation_price"], atr_abs=params["atr_abs"],
-        geometry_version=params["geometry_version"], geometry_fingerprint=params["geometry_fingerprint"],
-        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
-        trigger_spec_id=stored.trigger_spec_id, trigger_spec_version=stored.trigger_spec_version,
-    )
-    engine.confirm_subscription()
-    instrument = engine.instrument
-    event = lambda kind, at, sequence, **values: FastMarketEvent(
-        event_type=kind, instrument=instrument, exchange_timestamp_ms=at,
-        received_timestamp_ms=at, sequence=sequence, **values,
-    )
-    events = (
-        event("quote", 1_000, 1, bid=99.9, ask=99.95),
-        event("depth", 1_050, 1, bids=((100.1, 10.0),), asks=((100.2, 10.0),)),
-        event("trade", 1_100, 1, price=100.0, size=10.0, side="buy"),
-        event("trade", 1_250, 2, price=100.0, size=4.0, side="sell"),
-        event("quote", 1_200, 2, bid=99.8, ask=99.9),
-        event("quote", 1_500, 3, bid=100.05, ask=100.15),
-        event("quote", 1_900, 4, bid=100.1, ask=100.2),
-    )
-    ready = None
-    for item in events:
-        ready = engine.observe(item) or ready
-    observed = datetime.now(timezone.utc)
-    proposal = build_entry_plan_order_intent(
-        stored, bid=ready.bid, ask=ready.ask, observed_at=observed.isoformat(),
-        source_observed_at=observed.isoformat(), trigger_evidence=ready.entry_trigger,
-        now=observed,
-    )
-    attribution = json.loads(proposal.attribution_snapshot)
-    assert attribution["entry_plan_version"] == "entry-plan/v2"
-    assert attribution["entry_behavior_version"] == "ai-entry-hypothesis-compiler/v1"
-    assert attribution["analysis_context_fingerprint"] == context.context_fingerprint
-    assert attribution["entry_trigger"]["trigger_spec_id"] == "anchor-retrace-reclaim"
 
 
 def test_plan_intent_portable_schema_requires_every_strict_property():
@@ -1284,29 +937,7 @@ def test_plan_intent_portable_schema_requires_every_strict_property():
     assert "anyOf" not in encoded
 
 
-def test_plan_intent_wire_schema_canonicalizes_no_plan_but_rejects_invalid_entry():
-    no_plan = {
-        **_no_plan_intent("CONFLICTING_SIGNALS").model_dump(mode="json"),
-        "execution_mode": "RESTING_MAKER",
-        "order_tactic": "POST_ONLY_LIMIT",
-    }
-    assert _PlanIntentWireSchema.model_validate(no_plan) == _no_plan_intent("CONFLICTING_SIGNALS")
-    assert no_plan["execution_mode"] is None
-    assert no_plan["order_tactic"] is None
 
-    invalid_entry = {
-        **no_plan,
-        "decision": "ENTRY_PLAN",
-        "reason_code": "OK",
-        "thesis": "x",
-        "scenario": "y",
-        "execution_mode": "RESTING_MAKER",
-        "order_tactic": "OPPOSING_BBO_IOC",
-        "risk_tier": "LOW",
-        "horizon": "INTRADAY",
-    }
-    with pytest.raises(ValueError, match="RESTING_MAKER_TACTIC_INVALID"):
-        _PlanIntentWireSchema.model_validate(invalid_entry)
 
 
 @pytest.mark.parametrize(
@@ -1331,7 +962,6 @@ def test_plan_intent_accepts_only_canonical_tactic_matrix(
         execution_mode=execution_mode,
         order_tactic=order_tactic,
         trigger_spec_id="momentum-retrace-reclaim" if triggered else None,
-        trigger_spec_version="v1" if triggered else None,
         risk_tier="LOW",
         horizon="INTRADAY",
     )
@@ -1349,283 +979,39 @@ def test_plan_intent_rejects_resting_taker():
             execution_mode="RESTING_MAKER",
             order_tactic="OPPOSING_BBO_IOC",
             trigger_spec_id=None,
-            trigger_spec_version=None,
             risk_tier="LOW",
             horizon="INTRADAY",
         )
 
 
-def test_unsupported_candidate_family_trigger_terminalizes_once():
-    candidate = _candidate(scanner_family="value")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    repo.execute_write(
-        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?, ?, ?, ?)",
-        (
-            "feature-unsupported-family",
-            candidate.asset_id,
-            datetime.now(timezone.utc).isoformat(),
-            1.5,
-        ),
-    )
-    calls = 0
-
-    async def planner(context):
-        nonlocal calls
-        calls += 1
-        assert context["compatible_trigger_specs"] == []
-        return PlanIntent(
-            decision="ENTRY_PLAN",
-            reason_code="OK",
-            thesis="x",
-            scenario="y",
-            evidence_refs=[],
-            execution_mode="TRIGGERED",
-            order_tactic="POST_ONLY_LIMIT",
-            trigger_spec_id="momentum-retrace-reclaim",
-            trigger_spec_version="v1",
-            risk_tier="LOW",
-            horizon="INTRADAY",
-        )
-
-    first = asyncio.run(plan_next_candidate(planner))
-    second = asyncio.run(plan_next_candidate(planner))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-    assert first["status"] == "no_plan"
-    assert second["status"] == "idle"
-    assert calls == 1
-    assert stored["attempt_count"] == 1
-    assert json.loads(stored["result_json"])["reason_code"] == "NO_COMPATIBLE_TRIGGER_SPEC"
 
 
-def test_missing_trigger_identity_terminalizes_after_one_physical_call(monkeypatch):
-    candidate = _candidate(scanner_family="breakout")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    calls = 0
-
-    async def invalid_structured(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        return {
-            "decision": "ENTRY_PLAN",
-            "reason_code": "OK",
-            "thesis": "x",
-            "scenario": "y",
-            "evidence_refs": [],
-            "execution_mode": "TRIGGERED",
-            "order_tactic": "POST_ONLY_LIMIT",
-            "trigger_spec_id": None,
-            "trigger_spec_version": None,
-            "risk_tier": "LOW",
-            "horizon": "INTRADAY",
-        }, None
-
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", invalid_structured)
-    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
-
-    first = asyncio.run(plan_next_candidate(system_operator_entry_planner))
-    second = asyncio.run(plan_next_candidate(system_operator_entry_planner))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-    assert first["status"] == "no_plan"
-    assert second["status"] == "idle"
-    assert calls == 1
-    assert stored["attempt_count"] == 1
-    assert json.loads(stored["result_json"])["reason_code"] == "TRIGGER_SPEC_NOT_REGISTERED"
 
 
-def test_legacy_venue_mismatch_consumes_no_model_call():
-    from aletheia.config.loader import load_config
-
-    candidate = _candidate(venue="binance")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    calls = 0
-
-    async def planner(_context):
-        nonlocal calls
-        calls += 1
-        return _no_plan_intent()
-
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-    assert result["status"] == "no_plan"
-    assert result["model_invoked"] is False
-    assert calls == 0
-    assert json.loads(stored["result_json"])["reason_code"].startswith("EXECUTION_VENUE_UNAVAILABLE:")
 
 
-def test_binance_testnet_spot_candidate_consumes_no_model_call():
-    from aletheia.config.loader import load_config
-    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
-
-    candidate = _candidate(venue="binance", market_type="spot")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    calls = 0
-
-    async def planner(_context):
-        nonlocal calls
-        calls += 1
-        return _no_plan_intent()
-
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "binance_testnet"
-    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-
-    assert result["status"] == "no_plan"
-    assert result["model_invoked"] is False
-    assert calls == 0
-    assert json.loads(stored["result_json"])["reason_code"].startswith(
-        "EXECUTION_VENUE_UNAVAILABLE:"
-    )
-    assert fast_market_data_unavailability_reason(cfg, "binance", "perp") is None
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.market_data.ccxt_exchange = "binance"
-    assert fast_market_data_unavailability_reason(cfg, "binance", "spot") is None
 
 
-def test_binance_testnet_perp_candidate_reaches_v3_planner(monkeypatch):
-    from aletheia.config.loader import load_config
-
-    candidate = _candidate(venue="binance", market_type="perp")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    calls = 0
-
-    class AvailableContext:
-        candle_windows = {"15m": {"availability": "available"}}
-        anchors = (object(),)
-
-        def model_dump(self, **_kwargs):
-            return {"candidate_id": candidate.id}
-
-    monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
-        lambda *_args, **_kwargs: AvailableContext(),
-    )
-
-    async def planner(_context):
-        nonlocal calls
-        calls += 1
-        return {
-            "decision": "NO_PLAN",
-            "reason_code": "INSUFFICIENT_EVIDENCE",
-            "thesis": "",
-            "scenario": "",
-            "risk_tier": "NONE",
-            "horizon": "NONE",
-        }
-
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "binance_testnet"
-    cfg.live.state = "live_disabled"
-    result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
-
-    assert generation["planner_contract_version"] == "entry-planner/v3"
-    assert result["status"] == "no_plan"
-    assert result["model_invoked"] is True
-    assert calls == 1
 
 
-def test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt(monkeypatch):
-    captured = {}
-
-    async def structured(system, _user, **kwargs):
-        captured.update({"system": system, **kwargs})
-        return _no_plan_intent().model_dump(mode="json"), None
-
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
-    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
-
-    result = asyncio.run(
-        system_operator_entry_planner(
-            {"candidate": {"symbol": "BTC/USDT"}},
-            "deep-paid",
-        )
-    )
-    assert result == _no_plan_intent()
-    assert captured["provider"] == "deep-paid"
-    assert captured["reasoning_effort"] == "none"
-    assert captured["schema"] is _PlanIntentWireSchema
-    assert captured["caller"] == "agent_shell.entry_planner"
-    assert "TRIGGERED + POST_ONLY_LIMIT" in captured["system"]
-    assert "TRIGGERED + OPPOSING_BBO_IOC" in captured["system"]
 
 
-def test_system_operator_v2_uses_distinct_prompt_identity(monkeypatch):
-    from aletheia.trading.entry_analysis import EntryHypothesisV2
-
-    captured = {}
-
-    async def structured(_system, _user, **kwargs):
-        captured.update(kwargs)
-        return {
-            "decision": "NO_PLAN", "reason_code": "CONFLICTING_SIGNALS",
-            "mechanism": "reversal", "direction": "long",
-            "risk_tier": "NONE", "horizon": "NONE",
-        }, None
-
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
-    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
-
-    result = asyncio.run(system_operator_entry_planner({
-        "context_version": "entry-analysis-context/v2",
-        "planning_generation": {"id": "generation-v2"},
-        "candidate": {"symbol": "BTC/USDT"},
-    }, "deep-paid"))
-
-    assert result.decision == "NO_PLAN"
-    assert captured["caller"] == "agent_shell.entry_planner.v2"
-    assert captured["schema"] is EntryHypothesisV2
 
 
-def test_system_operator_canonicalizes_no_plan_execution_noise(monkeypatch):
-    async def structured(*_args, **_kwargs):
-        return {
-            **_no_plan_intent("CONFLICTING_SIGNALS").model_dump(mode="json"),
-            "execution_mode": "RESTING_MAKER",
-            "order_tactic": "POST_ONLY_LIMIT",
-            "risk_tier": "LOW",
-            "horizon": "INTRADAY",
-        }, None
-
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", structured)
-    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
-
-    result = asyncio.run(system_operator_entry_planner({"candidate": {"symbol": "ETH/USDT"}}))
-    assert result == _no_plan_intent("CONFLICTING_SIGNALS")
 
 
-def test_planner_empty_content_records_planner_empty_content_reason(monkeypatch):
-    candidate = _candidate(scanner_family="breakout")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-
-    async def empty_structured(*_args, **_kwargs):
-        return None, "structured_empty_content"
-
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", empty_structured)
-    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
-
-    result = asyncio.run(plan_next_candidate(system_operator_entry_planner))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-    assert result["status"] == "unavailable"
-    assert json.loads(stored["result_json"])["reason"].startswith("PLANNER_EMPTY_CONTENT")
 
 
-def test_planner_schema_invalid_records_planner_schema_invalid_reason(monkeypatch):
-    candidate = _candidate(scanner_family="breakout")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
 
-    async def invalid_structured(*_args, **_kwargs):
-        return None, "structured_schema_invalid: literal_error at decision"
 
-    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", invalid_structured)
-    from aletheia.agent_shell.entry_planner import system_operator_entry_planner
 
-    result = asyncio.run(plan_next_candidate(system_operator_entry_planner))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-    assert result["status"] == "unavailable"
-    assert json.loads(stored["result_json"])["reason"].startswith("PLANNER_SCHEMA_INVALID:")
+
+
+
+
+
+
+
 
 
 def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
@@ -1673,61 +1059,10 @@ def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
     assert provider_names == ["deep-paid"] * (ENTRY_PLANNER_MAX_CONCURRENCY + 1)
 
 
-def test_entry_planner_batch_claims_rank_order_before_parallel_planning(monkeypatch):
-    candidates = [
-        _candidate(
-            rank=rank,
-            asset_id=f"asset-{rank}",
-            symbol=f"RANK{rank}/USDT",
-            scanner_family="breakout",
-        )
-        for rank in (4, 1, 3, 2)
-    ]
-    generations = {
-        candidate.rank: repo.ensure_candidate_planning_generation(candidate.id)[0]["id"] for candidate in candidates
-    }
-    started: list[str] = []
-    active = 0
-    peak = 0
-    all_started = asyncio.Event()
-
-    async def planner(context, _provider_name=None):
-        nonlocal active, peak
-        started.append(context["planning_generation"]["id"])
-        active += 1
-        peak = max(peak, active)
-        if active == 4:
-            all_started.set()
-        await asyncio.wait_for(all_started.wait(), timeout=1)
-        active -= 1
-        return _no_plan_intent()
-
-    monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.system_operator_entry_planner",
-        planner,
-    )
-
-    result = asyncio.run(run_entry_planner_batch())
-
-    assert started == [generations[rank] for rank in (1, 2, 3, 4)]
-    assert peak == 4
-    assert result["planning_attempts"] == 4
-    assert result["pending_queue_remaining"] == 0
 
 
-def test_stale_llm_result_cannot_activate_entry_plan():
-    candidate = _candidate()
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    assert repo.claim_next_candidate_planning("slow-owner") is not None
 
-    replacement = _candidate(regime="sideways")
-    repo.ensure_candidate_planning_generation(replacement.id)
 
-    plan = _plan(generation)
-    status, record = repo.complete_candidate_planning_with_plan(generation["id"], "slow-owner", plan)
-    assert status == "stale"
-    assert record is None
-    assert repo.get_entry_plan(plan.plan_id) is None
 
 
 def test_ineligible_candidate_cannot_complete_claimed_entry_plan():
@@ -1744,21 +1079,7 @@ def test_ineligible_candidate_cannot_complete_claimed_entry_plan():
     assert repo.get_entry_plan(plan.plan_id) is None
 
 
-def test_local_broker_backpressure_does_not_consume_attempt():
-    candidate = _candidate(scanner_family="breakout")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
 
-    async def refused(_context):
-        raise PlannerBackpressure("inference_queue_full")
-
-    result = asyncio.run(plan_next_candidate(refused, owner_token="pressure-owner"))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-
-    assert result["status"] == "backpressure"
-    assert result["model_invoked"] is False
-    assert stored["attempt_count"] == 0
-    assert stored["status"] == "unavailable"
-    assert stored["attention_status"] == "active"
 
 
 def test_entry_planner_batch_cancels_and_awaits_siblings_on_fatal_failure(monkeypatch):
@@ -1842,49 +1163,7 @@ def test_retry_exhaustion_terminals_attention_as_planning_unavailable():
     assert stored["attention_terminal_reason"] == "planning_unavailable"
 
 
-def test_compile_validation_is_terminal_after_one_attempt(monkeypatch):
-    from aletheia.config.loader import load_config
 
-    candidate = _candidate(scanner_family="value")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    repo.execute_write(
-        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?, ?, ?, ?)",
-        ("feature-compile-invalid", candidate.asset_id, datetime.now(timezone.utc).isoformat(), 1.5),
-    )
-
-    async def planner(_context):
-        return PlanIntent(
-            decision="ENTRY_PLAN",
-            reason_code="OK",
-            thesis="x",
-            scenario="y",
-            evidence_refs=[],
-            execution_mode="RESTING_MAKER",
-            order_tactic="POST_ONLY_LIMIT",
-            trigger_spec_id=None,
-            trigger_spec_version=None,
-            risk_tier="LOW",
-            horizon="INTRADAY",
-        )
-
-    def invalid_compile(*_args, **_kwargs):
-        raise ValueError("stop_reference_invalid:unsafe detail is not persisted")
-
-    monkeypatch.setattr(
-        "aletheia.trading.entry_plan_compiler.compile_entry_plan", invalid_compile
-    )
-    cfg = load_config()
-    first = asyncio.run(plan_next_candidate(planner, cfg=cfg))
-    second = asyncio.run(plan_next_candidate(planner, cfg=cfg))
-    stored = repo.get_candidate_planning_generation(generation["id"])
-
-    assert first["status"] == "unavailable"
-    assert second["status"] == "idle"
-    assert stored["attempt_count"] == 1
-    assert stored["attention_status"] == "terminal"
-    assert json.loads(stored["result_json"])["reason"] == (
-        "ENTRY_PLAN_COMPILE_INVALID:stop_reference_invalid"
-    )
 
 
 def test_planner_contract_migration_preserves_legacy_rows_and_current_index():
@@ -1962,23 +1241,7 @@ def test_entry_plan_terminal_state_cannot_revive():
         raise AssertionError("terminal Entry Plan revived")
 
 
-def test_incompatible_generation_explicitly_supersedes_active_plan():
-    candidate = _candidate(regime="trending")
-    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    repo.claim_next_candidate_planning("owner")
-    plan = _plan(generation)
-    repo.complete_candidate_planning_with_plan(generation["id"], "owner", plan)
 
-    replacement = _candidate(regime="sideways", rank=6, price=103)
-    next_generation, created = repo.ensure_candidate_planning_generation(replacement.id)
-    assert created is True
-    assert next_generation["id"] != generation["id"]
-    prior_generation = repo.get_candidate_planning_generation(generation["id"])
-    assert prior_generation["attention_status"] == "terminal"
-    assert prior_generation["attention_terminal_reason"] == "planning_generation_superseded"
-    stored = repo.get_entry_plan(plan.plan_id)
-    assert stored["status"] == "invalidated"
-    assert stored["terminal_reason"] == "incompatible_planning_generation"
 
 
 def test_terminal_entry_plan_detail_validates_by_exact_id():
@@ -2050,38 +1313,3 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     persisted = repo.get_candidate_planning_generation(generation["id"])
     assert persisted["attention_status"] == "active"
     assert persisted["attention_terminal_reason"] is None
-
-
-# These checks bind to the numeric fork, its untyped fixtures, or its removed
-# compiler signatures. Keep their bodies readable during the schema compatibility
-# window; current equivalents live in test_entry_lifecycle_cutover.py.
-_SUPERSEDED_BY_CANONICAL_ENTRY_LIFECYCLE = (
-    "test_mechanism_planning_identity_ignores_churn_and_rotates_authority_dimensions",
-    "test_no_plan_is_durable_until_new_generation",
-    "test_plan_intent_no_plan_persists_reason_code",
-    "test_v4_no_plan_invalid_identity_is_replaced_before_persistence",
-    "test_entry_planner_persists_plan_for_paper_internal",
-    "test_compiler_bounds_risk_and_clamps_spot_leverage",
-    "test_ai_entry_compiler_emits_v2_without_momentum_treatment",
-    "test_ai_entry_v3_frozen_lineage_reaches_attributed_proposal",
-    "test_plan_intent_wire_schema_canonicalizes_no_plan_but_rejects_invalid_entry",
-    "test_unsupported_candidate_family_trigger_terminalizes_once",
-    "test_missing_trigger_identity_terminalizes_after_one_physical_call",
-    "test_legacy_venue_mismatch_consumes_no_model_call",
-    "test_binance_testnet_spot_candidate_consumes_no_model_call",
-    "test_binance_testnet_perp_candidate_reaches_v3_planner",
-    "test_system_operator_uses_deep_alias_none_reasoning_and_tactic_prompt",
-    "test_system_operator_v2_uses_distinct_prompt_identity",
-    "test_system_operator_canonicalizes_no_plan_execution_noise",
-    "test_planner_empty_content_records_planner_empty_content_reason",
-    "test_planner_schema_invalid_records_planner_schema_invalid_reason",
-    "test_entry_planner_batch_claims_rank_order_before_parallel_planning",
-    "test_stale_llm_result_cannot_activate_entry_plan",
-    "test_local_broker_backpressure_does_not_consume_attempt",
-    "test_compile_validation_is_terminal_after_one_attempt",
-    "test_incompatible_generation_explicitly_supersedes_active_plan",
-)
-for _test_name in _SUPERSEDED_BY_CANONICAL_ENTRY_LIFECYCLE:
-    globals()[_test_name] = pytest.mark.skip(
-        reason="#2851 replaced the legacy Entry runtime contracts"
-    )(globals()[_test_name])

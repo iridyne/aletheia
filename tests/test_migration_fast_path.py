@@ -93,15 +93,11 @@ def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monk
         assert migrations.run_migrations() is True
         db = sqlite_store.get_db()
         authority = db.execute(
-            "SELECT authority_source FROM observation_authority_state "
-            "WHERE state_key='experiment_authority'"
+            "SELECT authority_source FROM observation_authority_state WHERE state_key='experiment_authority'"
         ).fetchone()[0]
         assert authority == "lab"
         legacy_tables = {
-            str(row[0])
-            for row in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert not legacy_tables.intersection(migrations._LEGACY_EXPERIMENT_TABLES)
     finally:
@@ -205,9 +201,9 @@ def test_ai_entry_v57_repairs_incomplete_schema_in_one_retry(_inmemory_db):
 
     migrations._apply_ai_entry_v57_integrity_v60(db)
     names = {
-        row[0] for row in db.execute(
-            "SELECT name FROM sqlite_master WHERE name IN "
-            "('trg_entry_plan_no_delete','idx_entry_plans_watch')"
+        row[0]
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE name IN ('trg_entry_plan_no_delete','idx_entry_plans_watch')"
         )
     }
     assert names == {"trg_entry_plan_no_delete", "idx_entry_plans_watch"}
@@ -288,9 +284,104 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 70)
+        f"aletheia-sqlite-v{version}" for version in range(2, 71)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v69"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v70"
+    connection.close()
+
+
+def test_entry_version_collapse_preserves_historical_rows_and_schema_objects():
+    import hashlib
+    import json
+
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    for step in migrations._MIGRATIONS[:-1]:
+        step.apply(connection)
+    now = "2026-09-04T00:00:00+00:00"
+    payload = json.dumps(
+        {
+            "version": "entry-plan/v2",
+            "entry_profile_version": "v1",
+            "trigger_spec_version": "v2",
+        }
+    )
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    connection.execute(
+        "INSERT INTO candidate_planning_generations "
+        "(id,planning_key,planning_identity,identity_version,candidate_id,last_candidate_id,"
+        "venue,symbol,market_type,candidate_family,direction,status,result_kind,entry_plan_id,"
+        "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "g",
+            "k",
+            "i",
+            "candidate-planning/v1",
+            "c",
+            "c",
+            "bitget",
+            "BTC/USDT",
+            "perp",
+            "momentum",
+            "long",
+            "planned",
+            "entry_plan",
+            "p",
+            now,
+            now,
+        ),
+    )
+    connection.execute(
+        "INSERT INTO entry_plans "
+        "(id,planning_generation_id,candidate_id,planning_key,version,venue,symbol,market_type,"
+        "direction,execution_mode,plan_json,plan_hash,status,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "p",
+            "g",
+            "c",
+            "k",
+            "entry-plan/v2",
+            "bitget",
+            "BTC/USDT",
+            "perp",
+            "long",
+            "TRIGGERED",
+            payload,
+            digest,
+            "waiting",
+            now,
+            now,
+        ),
+    )
+    objects = {
+        row["name"]: row["sql"]
+        for row in connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE tbl_name IN "
+            "('candidate_planning_generations','entry_plans') AND type IN ('index','trigger')"
+        )
+    }
+
+    migrations._apply_entry_version_collapse_v70(connection)
+
+    generation = connection.execute(
+        "SELECT identity_version,planner_contract_version,activation_identity "
+        "FROM candidate_planning_generations WHERE id='g'"
+    ).fetchone()
+    plan = connection.execute("SELECT version,plan_json,plan_hash FROM entry_plans WHERE id='p'").fetchone()
+    rebuilt_objects = {
+        row["name"]: row["sql"]
+        for row in connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE tbl_name IN "
+            "('candidate_planning_generations','entry_plans') AND type IN ('index','trigger')"
+        )
+    }
+    assert tuple(generation) == ("candidate-planning/v1", "entry-planner/v1", None)
+    assert tuple(plan) == ("entry-plan/v2", payload, digest)
+    assert rebuilt_objects == objects
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
     connection.close()
 
 
@@ -775,39 +866,30 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260904_0068_legacy_entry_updated_at_v69",
-        "aletheia-sqlite-v69",
+        "20260904_0069_entry_version_collapse_v70",
+        "aletheia-sqlite-v70",
     )
-    audit_columns = {
-        row[1] for row in connection.execute("PRAGMA table_info(audit_events)")
-    }
+    audit_columns = {row[1] for row in connection.execute("PRAGMA table_info(audit_events)")}
     assert {
         "jsonl_mirror_status",
         "jsonl_attempt_count",
         "jsonl_last_error_class",
         "jsonl_mirrored_at",
     } <= audit_columns
-    assert tuple(connection.execute(
-        "SELECT jsonl_mirror_status, jsonl_attempt_count, "
-        "jsonl_last_error_class, jsonl_mirrored_at "
-        "FROM audit_events WHERE id='legacy-audit'"
-    ).fetchone()) == (None, None, None, None)
+    assert tuple(
+        connection.execute(
+            "SELECT jsonl_mirror_status, jsonl_attempt_count, "
+            "jsonl_last_error_class, jsonl_mirrored_at "
+            "FROM audit_events WHERE id='legacy-audit'"
+        ).fetchone()
+    ) == (None, None, None, None)
     index_sql = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type='index' "
-        "AND name='idx_audit_events_jsonl_outbox'"
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_audit_events_jsonl_outbox'"
     ).fetchone()[0]
     compact_index_sql = "".join(str(index_sql).lower().split())
     assert "onaudit_events(jsonl_mirror_status,timestamp,id)" in compact_index_sql
-    assert (
-        "wherejsonl_mirror_statusin('pending','failed')"
-        in compact_index_sql
-    )
-    cursor_columns = {
-        row[1]
-        for row in connection.execute(
-            "PRAGMA table_info(broker_funding_settlement_cursor)"
-        )
-    }
+    assert "wherejsonl_mirror_statusin('pending','failed')" in compact_index_sql
+    cursor_columns = {row[1] for row in connection.execute("PRAGMA table_info(broker_funding_settlement_cursor)")}
     assert cursor_columns == {
         "queue_id",
         "last_closed_at",
@@ -850,9 +932,7 @@ def test_candidate_attention_migration_backfills_only_legitimate_clock_evidence(
     )
 
     migrations._apply_candidate_attention_v49(connection)
-    row = connection.execute(
-        "SELECT * FROM candidate_planning_generations WHERE id='generation-1'"
-    ).fetchone()
+    row = connection.execute("SELECT * FROM candidate_planning_generations WHERE id='generation-1'").fetchone()
     assert row["attention_started_at"] == "2026-08-28T00:00:00+00:00"
     assert row["last_requalified_at"] is None
     assert row["hard_expires_at"] == "2026-08-28T01:00:00.000+00:00"

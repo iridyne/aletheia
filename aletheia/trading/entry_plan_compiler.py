@@ -12,9 +12,9 @@ from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
 from aletheia.trading.instruments import get_max_leverage
 from aletheia.trading.momentum_entry_geometry import (
-    MomentumEntryGeometryV2,
+    MomentumEntryGeometry,
     MomentumGeometryUnavailable,
-    compile_momentum_entry_geometry_v2,
+    compile_momentum_entry_geometry,
 )
 from aletheia.trading.trigger_specs import (
     require_compatible_trigger_spec,
@@ -30,7 +30,7 @@ _RISK_TIER_LEVERAGE_CAP = {"LOW": 2, "MEDIUM": 3}
 _RISK_TIER_MAX_RISK_PCT = {"LOW": 0.5, "MEDIUM": 1.0}
 _HORIZON_HOURS = {"INTRADAY": 4.0, "SWING": 24.0}
 _HORIZON_LIFETIME_MINUTES = {"INTRADAY": 60, "SWING": 240}
-_MOMENTUM_V2 = ("momentum-retrace-reclaim", "v2")
+_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 
 
 def _number(value: Any, code: str, *, positive: bool = False) -> float:
@@ -74,28 +74,19 @@ def _require_trigger(
     stop_price: float,
     entry_price: float,
     *,
-    geometry: MomentumEntryGeometryV2 | None = None,
+    geometry: MomentumEntryGeometry | None = None,
 ):
     spec_id = str(intent.trigger_spec_id)
-    spec_version = str(intent.trigger_spec_version)
-    if (spec_id, spec_version) == _MOMENTUM_V2:
+    if spec_id == _MOMENTUM_GEOMETRY_TRIGGER:
         if geometry is None:
             raise _intent_error("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
         try:
-            return require_registered_trigger_spec(
-                spec_id,
-                spec_version,
-                geometry.trigger_params(),
-            )
+            return require_registered_trigger_spec(spec_id, geometry.trigger_params())
         except ValueError as exc:
             raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
 
     try:
-        contract = require_compatible_trigger_spec(
-            candidate_family,
-            spec_id,
-            spec_version,
-        )
+        contract = require_compatible_trigger_spec(candidate_family, spec_id)
     except ValueError as exc:
         code = (
             "NO_COMPATIBLE_TRIGGER_SPEC"
@@ -172,22 +163,21 @@ def _compile_bounded_risk_envelope(
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[intent.horizon])
         treatment_exposure_id: str | None = None
-        selected_geometry: MomentumEntryGeometryV2 | None = None
+        selected_geometry: MomentumEntryGeometry | None = None
         candidate_key = candidate.get("learning_candidate_key")
         execution_account_mode = str(cfg.exchange.paper_execution_mode)
-        is_v1_momentum = (
+        is_baseline_momentum = (
             execution_mode == "TRIGGERED"
             and generation.get("candidate_family") == "momentum"
-            and (str(intent.trigger_spec_id), str(intent.trigger_spec_version))
-            == ("momentum-retrace-reclaim", "v1")
+            and str(intent.trigger_spec_id) == "momentum-retrace-reclaim"
         )
-        if is_v1_momentum and execution_account_mode in {"paper_internal", "bitget_demo"} and candidate_key:
+        if is_baseline_momentum and execution_account_mode in {"paper_internal", "bitget_demo"} and candidate_key:
             geometry_error: str | None = None
             if candles is None:
                 geometry_error = "momentum_candles_missing"
             else:
                 try:
-                    selected_geometry = compile_momentum_entry_geometry_v2(
+                    selected_geometry = compile_momentum_entry_geometry(
                         candidate=candidate,
                         feature=feature or {},
                         candles=candles,
@@ -203,7 +193,7 @@ def _compile_bounded_risk_envelope(
             decision = apply_numeric_treatment(
                 path_id="momentum_entry_geometry",
                 scope={"candidate_family": "momentum", "execution_mode": "paper"},
-                action={"trigger_spec_id": "momentum-retrace-reclaim", "trigger_spec_version": "v2"},
+                action={"trigger_spec_id": _MOMENTUM_GEOMETRY_TRIGGER},
                 source_cohort="exact-momentum-candidate/v1",
                 target_horizon="4h",
                 candidate_key=str(candidate_key),
@@ -214,8 +204,8 @@ def _compile_bounded_risk_envelope(
                 outcome_candidate_key=f"{candidate_key}:4h",
                 manifest={
                     "candidate_id": generation["last_candidate_id"],
-                    "control": "momentum-retrace-reclaim/v1",
-                    "treatment": "momentum-retrace-reclaim/v2",
+                    "control": "momentum-retrace-reclaim",
+                    "treatment": _MOMENTUM_GEOMETRY_TRIGGER,
                     "geometry_available": selected_geometry is not None,
                     "unavailable_reason": geometry_error,
                 },
@@ -223,22 +213,19 @@ def _compile_bounded_risk_envelope(
             treatment_exposure_id = decision.exposure_id
             if selected_geometry is not None and decision.value == 1.0:
                 intent = intent.model_copy(
-                    update={
-                        "trigger_spec_id": "momentum-retrace-reclaim",
-                        "trigger_spec_version": "v2",
-                    }
+                    update={"trigger_spec_id": _MOMENTUM_GEOMETRY_TRIGGER}
                 )
 
-        geometry: MomentumEntryGeometryV2 | None = selected_geometry
-        if execution_mode == "TRIGGERED" and (
-            str(intent.trigger_spec_id),
-            str(intent.trigger_spec_version),
-        ) == _MOMENTUM_V2:
+        geometry: MomentumEntryGeometry | None = selected_geometry
+        if (
+            execution_mode == "TRIGGERED"
+            and str(intent.trigger_spec_id) == _MOMENTUM_GEOMETRY_TRIGGER
+        ):
             if geometry is None:
                 if candles is None:
                     raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
                 try:
-                    geometry = compile_momentum_entry_geometry_v2(
+                    geometry = compile_momentum_entry_geometry(
                         candidate=candidate,
                         feature=feature or {},
                         candles=candles,
@@ -325,23 +312,11 @@ def _compile_bounded_risk_envelope(
 
         maker = order_tactic == "POST_ONLY_LIMIT"
         trigger_spec_id = None
-        trigger_spec_version = None
         trigger_params: dict = {}
         trigger_requirements: tuple[str, ...] = ()
         trigger_freshness_ms = None
         if execution_mode == "TRIGGERED":
-            contract, trigger_params = _require_trigger(
-                intent,
-                candidate_family=str(generation["candidate_family"]),
-                entry_zone=entry_zone,
-                stop_price=stop_price,
-                entry_price=candidate_price,
-                geometry=geometry,
-            )
-            trigger_spec_id = intent.trigger_spec_id
-            trigger_spec_version = intent.trigger_spec_version
-            trigger_requirements = contract.data_requirements
-            trigger_freshness_ms = contract.freshness_ms
+            raise PlanIntentError("CURRENT_COMPILER_TRIGGER_ROUTE_INVALID")
 
         plan_entry_price = (
             (entry_zone[0] + entry_zone[1]) / 2.0
@@ -353,9 +328,8 @@ def _compile_bounded_risk_envelope(
         ) if geometry is not None else (
             candidate_price * (1.002 if direction == "long" else 0.998)
         )
-        behavior_version = "bounded-risk-envelope/internal"
         try:
-            return EntryPlan(
+            return EntryPlan.model_construct(
                 planning_generation_id=generation["id"],
                 candidate_id=generation["last_candidate_id"],
                 candidate_family=generation["candidate_family"],
@@ -368,7 +342,6 @@ def _compile_bounded_risk_envelope(
                 scenario=intent.scenario,
                 execution_mode=execution_mode,
                 trigger_spec_id=trigger_spec_id,
-                trigger_spec_version=trigger_spec_version,
                 trigger_params=trigger_params,
                 trigger_data_requirements=trigger_requirements,
                 trigger_freshness_ms=trigger_freshness_ms,
@@ -401,7 +374,6 @@ def _compile_bounded_risk_envelope(
                 risk_policy_id=str(policy.policy_id),
                 risk_policy_revision=int(policy.revision),
                 risk_policy_hash=resolved_policy.policy_hash,
-                behavior_version=behavior_version,
                 treatment_exposure_id=treatment_exposure_id,
             )
         except ValueError as exc:
@@ -461,9 +433,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     tolerance = float(structure.get("break_tolerance") or 0.05 * atr)
     stop = invalidation.price - tolerance if direction == "long" else invalidation.price + tolerance
     rr = _RISK_REWARD_TARGET[hypothesis.risk_tier]
-    retrace = hypothesis.entry_profile_id in {
-        "anchor-retrace-reclaim", "grounded-anchor-retrace-reclaim",
-    }
+    retrace = hypothesis.entry_profile_id == "grounded-anchor-retrace-reclaim"
     quarter = 0.25 * atr
     if retrace:
         zone = (
@@ -540,7 +510,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         decision="ENTRY_PLAN", reason_code="OK", thesis=thesis,
         scenario=scenario, evidence_refs=list(hypothesis.supporting_fact_refs),
         execution_mode="RESTING_MAKER", order_tactic="POST_ONLY_LIMIT",
-        trigger_spec_id=None, trigger_spec_version=None,
+        trigger_spec_id=None,
         risk_tier=hypothesis.risk_tier, horizon=hypothesis.horizon,
     )
     base = _compile_bounded_risk_envelope(
@@ -562,7 +532,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         raise PlanIntentError("POST_ONLY_WOULD_CROSS")
     hypothesis_json = canonical_json(hypothesis.model_dump(mode="json"))
     updates = {
-        "version": "entry-plan/v2", "entry_zone": zone,
+        "entry_zone": zone,
         "execution_mode": "TRIGGERED" if retrace else "RESTING_MAKER",
         "order_tactic": "POST_ONLY_LIMIT" if maker else "OPPOSING_BBO_IOC",
         "maker_required": maker, "time_in_force": "POST_ONLY" if maker else "IOC",
@@ -570,8 +540,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "bbo_reference": None if maker else ("ask" if direction == "long" else "bid"),
         "max_wait_sec": 60 if maker else 0,
         "max_slippage_bps": None if maker else 20.0,
-        "trigger_spec_id": "anchor-retrace-reclaim" if retrace else None,
-        "trigger_spec_version": "v1" if retrace else None,
+        "trigger_spec_id": _MOMENTUM_GEOMETRY_TRIGGER if retrace else None,
         "invalidation_price": invalidation.price, "stop_price": stop, "target_price": target,
         "trigger_params": trigger_params,
         "trigger_data_requirements": (("quote", "trade", "books5", "candle1m") if retrace else ()),
@@ -579,26 +548,20 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "limit_price": limit_price,
         "worst_price": (worst_entry if not maker else None),
         "max_notional": bounded_notional,
-        "behavior_version": (
-            generation.get("entry_behavior_fingerprint")
-            or "canonical-entry-behavior-unavailable"
-        ),
         "required_permission": authority.minimum_permission,
         "execution_account_mode": authority.execution_route,
         "treatment_exposure_id": None,
-        "analysis_context_version": context.context_version,
+        "producer_commit": generation.get("producer_commit"),
+        "behavior_fingerprint": generation.get("entry_behavior_fingerprint"),
+        "schema_fingerprint": generation.get("schema_fingerprint"),
+        "planning_identity": generation.get("planning_identity"),
+        "cycle_number": generation.get("cycle_number"),
         "analysis_context_fingerprint": context.context_fingerprint,
-        "entry_hypothesis_version": hypothesis.version,
         "entry_hypothesis_json": hypothesis_json,
         "entry_hypothesis_hash": hashlib.sha256(hypothesis_json.encode()).hexdigest(),
         "primary_anchor_snapshot": primary.model_dump(mode="json"),
         "invalidation_anchor_snapshot": invalidation.model_dump(mode="json"),
         "entry_profile_id": hypothesis.entry_profile_id,
-        "entry_profile_version": hypothesis.entry_profile_version,
         "compiled_geometry_fingerprint": fingerprint(geometry_material),
     }
     return EntryPlan.model_validate({**base.model_dump(mode="json"), **updates})
-
-
-# Historical import compatibility; current runtime imports compile_entry_plan.
-compile_ai_entry_plan = compile_entry_plan

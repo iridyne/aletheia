@@ -49,32 +49,44 @@ def _bounded_evidence(refs: list[str]) -> tuple[tuple[str, ...], int, bool]:
 
 
 def _filled_unit_outcome(
-    db, *, row: dict[str, Any], position: dict[str, Any], cutoff: datetime,
+    db,
+    *,
+    row: dict[str, Any],
+    position: dict[str, Any],
+    cutoff: datetime,
 ) -> tuple[float, float, float, tuple[str, ...]] | tuple[None, None, None, str]:
     """Return the notional-weighted fixed-4h outcome of exact entry Fills."""
 
     if not bool(position.get("outcome_eligible")):
         return None, None, None, "entry_learning_position_outcome_incomplete"
-    fills = [dict(item) for item in db.execute(
-        "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?) "
-        "ORDER BY filled_at,id",
-        (position["order_id"], cutoff.isoformat()),
-    ).fetchall()]
+    fills = [
+        dict(item)
+        for item in db.execute(
+            "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?) ORDER BY filled_at,id",
+            (position["order_id"], cutoff.isoformat()),
+        ).fetchall()
+    ]
     if not fills:
         return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
     from aletheia.analytics.outcome_semantics import validated_outcome_economics
 
     weighted: list[tuple[float, float, float, float, str]] = []
     for fill in fills:
-        outcomes = [dict(item) for item in db.execute(
-            "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=? "
-            "AND horizon='4h' AND venue=? AND symbol=? AND market_type=? "
-            "AND LOWER(direction)=LOWER(?) ORDER BY id",
-            (
-                f"entry-fill:{fill['id']}", row["venue"], row["symbol"],
-                row["market_type"], row["direction"],
-            ),
-        ).fetchall()]
+        outcomes = [
+            dict(item)
+            for item in db.execute(
+                "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=? "
+                "AND horizon='4h' AND venue=? AND symbol=? AND market_type=? "
+                "AND LOWER(direction)=LOWER(?) ORDER BY id",
+                (
+                    f"entry-fill:{fill['id']}",
+                    row["venue"],
+                    row["symbol"],
+                    row["market_type"],
+                    row["direction"],
+                ),
+            ).fetchall()
+        ]
         if len(outcomes) != 1:
             return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
         outcome = outcomes[0]
@@ -89,10 +101,7 @@ def _filled_unit_outcome(
         if outcome.get("status") != "settled" or due_at > cutoff or settled_at > cutoff:
             return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
         economics = validated_outcome_economics(outcome)
-        if (
-            economics is None or entry_at != filled_at
-            or not math.isfinite(notional) or notional <= 0
-        ):
+        if economics is None or entry_at != filled_at or not math.isfinite(notional) or notional <= 0:
             return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
         try:
             mfe = float(outcome["mfe_pct"])
@@ -100,10 +109,7 @@ def _filled_unit_outcome(
         except (TypeError, ValueError):
             return None, None, None, "entry_learning_fixed_horizon_path_invalid"
         utility = economics.get("net_return_pct")
-        if (
-            utility is None or not math.isfinite(mfe) or not math.isfinite(mae)
-            or mfe < 0 or mae > 0
-        ):
+        if utility is None or not math.isfinite(mfe) or not math.isfinite(mae) or mfe < 0 or mae > 0:
             return None, None, None, "entry_learning_fixed_horizon_path_invalid"
         weighted.append((notional, utility, mfe, mae, str(outcome["id"])))
     total_notional = sum(item[0] for item in weighted)
@@ -116,12 +122,16 @@ def _filled_unit_outcome(
 
 
 def _planning_inference_evidence(
-    db, *, generation_id: str, cutoff: datetime,
+    db,
+    *,
+    generation_id: str,
+    cutoff: datetime,
 ) -> tuple[set[tuple[str, ...]], float | None, list[str], set[str]]:
     """Read exact logical/physical inference identities already tied to one generation."""
 
     tables = {
-        str(row[0]) for row in db.execute(
+        str(row[0])
+        for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
             "('llm_context_artifacts','llm_inference_calls','runtime_cost_events')"
         )
@@ -129,14 +139,17 @@ def _planning_inference_evidence(
     required = {"llm_context_artifacts", "llm_inference_calls", "runtime_cost_events"}
     if tables != required:
         return set(), None, [], {"entry_learning_inference_ledger_unavailable"}
-    calls = [dict(row) for row in db.execute(
-        "SELECT DISTINCT c.* FROM llm_context_artifacts a "
-        "JOIN llm_inference_calls c ON c.logical_call_id=a.logical_call_id "
-        "WHERE a.stable_id=? AND a.caller='agent_shell.entry_planner' "
-        "AND c.finished_at IS NOT NULL AND julianday(c.finished_at)<=julianday(?) "
-        "ORDER BY c.started_at,c.logical_call_id",
-        (f"planning-generation:{generation_id}", cutoff.isoformat()),
-    ).fetchall()]
+    calls = [
+        dict(row)
+        for row in db.execute(
+            "SELECT DISTINCT c.* FROM llm_context_artifacts a "
+            "JOIN llm_inference_calls c ON c.logical_call_id=a.logical_call_id "
+            "WHERE a.stable_id=? AND a.caller='agent_shell.entry_planner' "
+            "AND c.finished_at IS NOT NULL AND julianday(c.finished_at)<=julianday(?) "
+            "ORDER BY c.started_at,c.logical_call_id",
+            (f"planning-generation:{generation_id}", cutoff.isoformat()),
+        ).fetchall()
+    ]
     if not calls or not any(row.get("status") == "success" for row in calls):
         return set(), None, [], {"entry_learning_inference_identity_unavailable"}
     identities = {
@@ -153,12 +166,15 @@ def _planning_inference_evidence(
         reasons.add("entry_learning_mixed_model_identity")
     call_ids = [str(row["logical_call_id"]) for row in calls]
     placeholders = ",".join("?" for _ in call_ids)
-    costs = [dict(row) for row in db.execute(
-        f"SELECT * FROM runtime_cost_events WHERE call_id IN ({placeholders}) "
-        "AND julianday(COALESCE(finished_at,started_at))<=julianday(?) "
-        "ORDER BY started_at,id",
-        (*call_ids, cutoff.isoformat()),
-    ).fetchall()]
+    costs = [
+        dict(row)
+        for row in db.execute(
+            f"SELECT * FROM runtime_cost_events WHERE call_id IN ({placeholders}) "
+            "AND julianday(COALESCE(finished_at,started_at))<=julianday(?) "
+            "ORDER BY started_at,id",
+            (*call_ids, cutoff.isoformat()),
+        ).fetchall()
+    ]
     if not costs or any(
         row.get("estimated_cost_usd") is None
         or row.get("cost_status") == "unknown"
@@ -177,7 +193,7 @@ def _planning_inference_evidence(
     return identities, cost, refs, reasons
 
 
-class EntryLearningContextV1(BaseModel):
+class EntryLearningContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     version: Literal["entry-learning-context/v1"] = ENTRY_LEARNING_CONTEXT_VERSION
@@ -199,7 +215,7 @@ class EntryLearningContextV1(BaseModel):
         return _instant(value).isoformat()
 
     @model_validator(mode="after")
-    def _bounded(self) -> "EntryLearningContextV1":
+    def _bounded(self) -> "EntryLearningContext":
         for name in ("complete_outcome_coverage",):
             value = self.support.get(name)
             if value is not None and (
@@ -245,15 +261,17 @@ class EntryLearningTreatmentAdapter:
     def eligible(self, manifest, context: dict[str, Any]) -> bool:
         population = manifest.eligible_population or {}
         for key in (
-            "mechanism", "direction", "market_type", "candidate_selection_policy",
+            "mechanism",
+            "direction",
+            "market_type",
+            "candidate_selection_policy",
             "candidate_selection_policy_epoch",
         ):
             if population.get(key) != context.get(key):
                 return False
         return (
             manifest.interference_key == ENTRY_LEARNING_INTERFERENCE_KEY
-            and manifest.behavior_policy_epoch_ref
-            == context.get("candidate_selection_policy_epoch")
+            and manifest.behavior_policy_epoch_ref == context.get("candidate_selection_policy_epoch")
             and manifest.deterministic_baseline == {"include_learning_context": False}
             and manifest.control_payload == {"include_learning_context": False}
             and manifest.treatment_payload == {"include_learning_context": True}
@@ -278,8 +296,13 @@ class EntryLearningTreatmentAdapter:
 
 
 def resolve_entry_learning_treatment(
-    *, planning_generation_id: str, mechanism: str, direction: str,
-    market_type: str, policy: str, policy_epoch: str | None,
+    *,
+    planning_generation_id: str,
+    mechanism: str,
+    direction: str,
+    market_type: str,
+    policy: str,
+    policy_epoch: str | None,
     as_of_at: str,
 ):
     """Resolve the canonical Lab treatment; unavailable paths stay empty."""
@@ -318,40 +341,66 @@ def resolve_entry_learning_treatment(
 
 
 def empty_entry_learning_context(
-    *, as_of_at: str, mechanism: str, direction: str, market_type: str,
-    policy: str, policy_epoch: str | None,
+    *,
+    as_of_at: str,
+    mechanism: str,
+    direction: str,
+    market_type: str,
+    policy: str,
+    policy_epoch: str | None,
     reasons: tuple[str, ...] = ("entry_learning_evidence_unavailable",),
-) -> EntryLearningContextV1:
-    return EntryLearningContextV1(
+) -> EntryLearningContext:
+    return EntryLearningContext(
         as_of_at=as_of_at,
         status="unavailable",
         scope={
-            "mechanism": mechanism, "direction": direction, "market_type": market_type,
-            "entry_profile_id": "mechanism-aware-grounded/v1", "horizon": "4h",
-            "candidate_selection_policy": policy, "policy_epoch": policy_epoch,
+            "mechanism": mechanism,
+            "direction": direction,
+            "market_type": market_type,
+            "entry_profile_id": "mechanism-aware-grounded/v1",
+            "horizon": "4h",
+            "candidate_selection_policy": policy,
+            "policy_epoch": policy_epoch,
         },
         support={
-            "independent_n": 0, "distinct_symbols": 0, "distinct_dates": 0,
-            "cycle_n": 0, "planning_thread_n": 0, "max_cycles_per_thread": 0,
+            "independent_n": 0,
+            "distinct_symbols": 0,
+            "distinct_dates": 0,
+            "cycle_n": 0,
+            "planning_thread_n": 0,
+            "max_cycles_per_thread": 0,
             "complete_outcome_coverage": 0.0,
-            "evidence_ref_total": 0, "evidence_refs_truncated": False,
+            "evidence_ref_total": 0,
+            "evidence_refs_truncated": False,
         },
         metrics={
-            "intent_to_treat_net_utility_pct": None, "fill_rate": None,
-            "no_plan_rate": None, "no_trigger_rate": None, "no_fill_rate": None,
-            "mae_p95_pct": None, "mfe_pct": None, "mfe_to_realized_capture": None,
+            "intent_to_treat_net_utility_pct": None,
+            "fill_rate": None,
+            "no_plan_rate": None,
+            "no_trigger_rate": None,
+            "no_fill_rate": None,
+            "mae_p95_pct": None,
+            "mfe_pct": None,
+            "mfe_to_realized_capture": None,
             "model_and_data_cost": None,
         },
-        evidence_refs=(), source_fingerprint=None,
+        evidence_refs=(),
+        source_fingerprint=None,
         blocking_reasons=tuple(sorted(set(reasons))),
     )
 
 
 def build_entry_learning_context(
-    *, as_of_at: str, mechanism: str, direction: str, market_type: str,
-    policy: str, policy_epoch: str | None, exclude_generation_id: str = "",
+    *,
+    as_of_at: str,
+    mechanism: str,
+    direction: str,
+    market_type: str,
+    policy: str,
+    policy_epoch: str | None,
+    exclude_generation_id: str = "",
     current_behavior_identity: dict[str, str] | None = None,
-) -> EntryLearningContextV1:
+) -> EntryLearningContext:
     """Project existing planning/execution owners; never creates or updates evidence."""
 
     from aletheia.storage import repositories as repo
@@ -366,15 +415,20 @@ def build_entry_learning_context(
         "FROM candidate_planning_generations pg "
         "JOIN universe_members um ON um.id=pg.candidate_id "
         "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
-        "WHERE pg.identity_version='candidate-planning/v2' "
+        "WHERE pg.opportunity_mechanism IS NOT NULL "
         "AND pg.opportunity_mechanism=? AND pg.direction=? AND pg.market_type=? "
         "AND pg.candidate_selection_policy=? "
         "AND COALESCE(pg.candidate_selection_policy_epoch,'')=COALESCE(?, '') "
         "AND pg.id<>? "
         "AND julianday(pg.created_at)<=julianday(?) ORDER BY pg.created_at,pg.id",
         (
-            mechanism, direction, market_type, policy, policy_epoch,
-            exclude_generation_id, cutoff.isoformat(),
+            mechanism,
+            direction,
+            market_type,
+            policy,
+            policy_epoch,
+            exclude_generation_id,
+            cutoff.isoformat(),
         ),
     ).fetchall()
     from aletheia.trading.entry_compat import classify_legacy_planning_outcome
@@ -393,8 +447,12 @@ def build_entry_learning_context(
     rows = eligible_rows
     if not rows:
         return empty_entry_learning_context(
-            as_of_at=cutoff.isoformat(), mechanism=mechanism, direction=direction,
-            market_type=market_type, policy=policy, policy_epoch=policy_epoch,
+            as_of_at=cutoff.isoformat(),
+            mechanism=mechanism,
+            direction=direction,
+            market_type=market_type,
+            policy=policy,
+            policy_epoch=policy_epoch,
             reasons=("entry_learning_no_eligible_units",),
         )
 
@@ -405,7 +463,7 @@ def build_entry_learning_context(
     no_plan = no_trigger = no_fill = filled = complete = 0
     identity_values: set[tuple[str, ...]] = set()
     inference_identities: set[tuple[str, ...]] = set()
-    profile_identities: set[tuple[str, str]] = set()
+    profile_identities: set[str] = set()
     inference_costs: list[float] = []
     maes: list[float] = []
     mfes: list[float] = []
@@ -414,8 +472,13 @@ def build_entry_learning_context(
     invalid_reasons: set[str] = set()
     current_identity = current_behavior_identity or {}
     required_current_identity = (
-        "producer_commit", "behavior_fingerprint", "entry_behavior_fingerprint",
-        "schema_fingerprint", "mechanism_version", "model_provider", "model",
+        "producer_commit",
+        "behavior_fingerprint",
+        "entry_behavior_fingerprint",
+        "schema_fingerprint",
+        "mechanism_version",
+        "model_provider",
+        "model",
         "prompt_fingerprint",
         "entry_profile_registry_hash",
     )
@@ -439,8 +502,7 @@ def build_entry_learning_context(
             frozen = json.loads(planner_input)
             inference = frozen["inference_identity"]
             if (
-                hashlib.sha256(planner_input.encode()).hexdigest()
-                != row.get("planner_input_hash")
+                hashlib.sha256(planner_input.encode()).hexdigest() != row.get("planner_input_hash")
                 or inference.get("caller") != "agent_shell.entry_planner"
                 or len(str(inference.get("prompt_fingerprint") or "")) != 64
                 or not inference.get("model_provider")
@@ -449,20 +511,22 @@ def build_entry_learning_context(
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             invalid_reasons.add("entry_learning_planner_identity_unavailable")
             inference = {}
-        identity_values.add((
-            str(row.get("producer_commit") or "unavailable"),
-            str(row.get("behavior_fingerprint") or "unavailable"),
-            str(row.get("entry_behavior_fingerprint") or "unavailable"),
-            str(row.get("schema_fingerprint") or "unavailable"),
-            str(row.get("mechanism_version") or "unavailable"),
-            str(inference.get("model_provider") or "unavailable"),
-            str(inference.get("prompt_fingerprint") or "unavailable"),
-            _fingerprint(frozen.get("entry_profiles") or []),
-        ))
-        call_identities, inference_cost, inference_refs, inference_reasons = (
-            _planning_inference_evidence(
-                db, generation_id=str(row["id"]), cutoff=cutoff,
+        identity_values.add(
+            (
+                str(row.get("producer_commit") or "unavailable"),
+                str(row.get("behavior_fingerprint") or "unavailable"),
+                str(row.get("entry_behavior_fingerprint") or "unavailable"),
+                str(row.get("schema_fingerprint") or "unavailable"),
+                str(row.get("mechanism_version") or "unavailable"),
+                str(inference.get("model_provider") or "unavailable"),
+                str(inference.get("prompt_fingerprint") or "unavailable"),
+                _fingerprint(frozen.get("entry_profiles") or []),
             )
+        )
+        call_identities, inference_cost, inference_refs, inference_reasons = _planning_inference_evidence(
+            db,
+            generation_id=str(row["id"]),
+            cutoff=cutoff,
         )
         inference_identities.update(call_identities)
         evidence_refs.extend(inference_refs)
@@ -488,20 +552,21 @@ def build_entry_learning_context(
             continue
         try:
             plan_payload = json.loads(str(row.get("plan_json") or ""))
-            profile_identity = (
-                str(plan_payload["entry_profile_id"]),
-                str(plan_payload["entry_profile_version"]),
-            )
-            if not all(profile_identity):
+            profile_identity = str(plan_payload["entry_profile_id"])
+            if not profile_identity:
                 raise ValueError
             profile_identities.add(profile_identity)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             invalid_reasons.add("entry_learning_profile_identity_unavailable")
         evidence_refs.append(f"entry-plan:{plan_id}")
-        orders = [dict(item) for item in db.execute(
-            "SELECT * FROM orders WHERE entry_plan_id=? AND julianday(created_at)<=julianday(?) "
-            "ORDER BY created_at,id", (plan_id, cutoff.isoformat()),
-        ).fetchall()]
+        orders = [
+            dict(item)
+            for item in db.execute(
+                "SELECT * FROM orders WHERE entry_plan_id=? AND julianday(created_at)<=julianday(?) "
+                "ORDER BY created_at,id",
+                (plan_id, cutoff.isoformat()),
+            ).fetchall()
+        ]
         if not orders:
             try:
                 plan_terminal_at = _instant(row["plan_terminal_at"])
@@ -519,9 +584,7 @@ def build_entry_learning_context(
                 ).fetchone()
                 if proposal is not None:
                     evidence_refs.append(f"trade-proposal:{proposal['id']}")
-                no_trigger += int(
-                    row.get("execution_mode") == "TRIGGERED" and proposal is None
-                )
+                no_trigger += int(row.get("execution_mode") == "TRIGGERED" and proposal is None)
                 no_fill += 1
                 complete += 1
                 utilities.append(0.0)
@@ -530,10 +593,13 @@ def build_entry_learning_context(
             continue
         order = orders[-1]
         evidence_refs.append(f"order:{order['id']}")
-        fills = [dict(item) for item in db.execute(
-            "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?)",
-            (order["id"], cutoff.isoformat()),
-        ).fetchall()]
+        fills = [
+            dict(item)
+            for item in db.execute(
+                "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?)",
+                (order["id"], cutoff.isoformat()),
+            ).fetchall()
+        ]
         if not fills:
             try:
                 plan_terminal_at = _instant(row["plan_terminal_at"])
@@ -562,15 +628,16 @@ def build_entry_learning_context(
             continue
         position = dict(position)
         utility, mfe, mae, outcome_ids = _filled_unit_outcome(
-            db, row=row, position=position, cutoff=cutoff,
+            db,
+            row=row,
+            position=position,
+            cutoff=cutoff,
         )
         if utility is None:
             invalid_reasons.add(str(outcome_ids))
             continue
         evidence_refs.append(f"position:{position['id']}")
-        evidence_refs.extend(
-            f"filter-candidate-outcome:{outcome_id}" for outcome_id in outcome_ids
-        )
+        evidence_refs.extend(f"filter-candidate-outcome:{outcome_id}" for outcome_id in outcome_ids)
         complete += 1
         utilities.append(utility)
         if mfe is not None and mae is not None:
@@ -595,16 +662,14 @@ def build_entry_learning_context(
     }
     if identity_values != expected_identity:
         invalid_reasons.add("entry_learning_mixed_identity")
-    if (
-        len(inference_identities) != 1
-        or any(
-            identity[:3] != (
-                str(current_identity.get("model_provider") or "unavailable"),
-                str(current_identity.get("model") or "unavailable"),
-                str(current_identity.get("prompt_fingerprint") or "unavailable"),
-            )
-            for identity in inference_identities
+    if len(inference_identities) != 1 or any(
+        identity[:3]
+        != (
+            str(current_identity.get("model_provider") or "unavailable"),
+            str(current_identity.get("model") or "unavailable"),
+            str(current_identity.get("prompt_fingerprint") or "unavailable"),
         )
+        for identity in inference_identities
     ):
         invalid_reasons.add("entry_learning_mixed_model_identity")
     if len(inference_costs) != total:
@@ -612,66 +677,84 @@ def build_entry_learning_context(
     if complete != total:
         invalid_reasons.add("entry_learning_incomplete_outcomes")
     scope = {
-        "mechanism": mechanism, "direction": direction, "market_type": market_type,
-        "entry_profile_id": "mechanism-aware-grounded/v1", "horizon": "4h",
-        "candidate_selection_policy": policy, "policy_epoch": policy_epoch,
+        "mechanism": mechanism,
+        "direction": direction,
+        "market_type": market_type,
+        "entry_profile_id": "mechanism-aware-grounded/v1",
+        "horizon": "4h",
+        "candidate_selection_policy": policy,
+        "policy_epoch": policy_epoch,
     }
     support = {
-        "independent_n": len(planning_thread_counts), "distinct_symbols": len(symbols),
-        "distinct_dates": len(dates), "complete_outcome_coverage": coverage,
-        "cycle_n": total, "planning_thread_n": len(planning_thread_counts),
+        "independent_n": len(planning_thread_counts),
+        "distinct_symbols": len(symbols),
+        "distinct_dates": len(dates),
+        "complete_outcome_coverage": coverage,
+        "cycle_n": total,
+        "planning_thread_n": len(planning_thread_counts),
         "max_cycles_per_thread": max(planning_thread_counts.values(), default=0),
         "entry_profile_scope": "parent_summary",
-        "entry_profile_identities": [list(item) for item in sorted(profile_identities)],
+        "entry_profile_identities": sorted(profile_identities),
         "current_behavior_identity": dict(sorted(current_identity.items())),
     }
-    bounded_refs, evidence_ref_total, evidence_refs_truncated = _bounded_evidence(
-        evidence_refs
-    )
+    bounded_refs, evidence_ref_total, evidence_refs_truncated = _bounded_evidence(evidence_refs)
     support.update(
         evidence_ref_total=evidence_ref_total,
         evidence_refs_truncated=evidence_refs_truncated,
     )
     rates = lambda value: value / total
     metrics = {
-        "intent_to_treat_net_utility_pct": (
-            sum(utilities) / total if complete == total else None
-        ),
-        "fill_rate": rates(filled), "no_plan_rate": rates(no_plan),
-        "no_trigger_rate": rates(no_trigger), "no_fill_rate": rates(no_fill),
+        "intent_to_treat_net_utility_pct": (sum(utilities) / total if complete == total else None),
+        "fill_rate": rates(filled),
+        "no_plan_rate": rates(no_plan),
+        "no_trigger_rate": rates(no_trigger),
+        "no_fill_rate": rates(no_fill),
         "mae_p95_pct": _percentile(maes, 0.95) if len(maes) == filled else None,
         "mfe_pct": sum(mfes) / filled if len(mfes) == filled and filled else None,
-        "mfe_to_realized_capture": (
-            sum(captures) / filled if len(captures) == filled and filled else None
-        ),
-        "model_and_data_cost": (
-            sum(inference_costs) / total if len(inference_costs) == total else None
-        ),
+        "mfe_to_realized_capture": (sum(captures) / filled if len(captures) == filled and filled else None),
+        "model_and_data_cost": (sum(inference_costs) / total if len(inference_costs) == total else None),
     }
     material = {
-        "as_of_at": cutoff.isoformat(), "scope": scope, "support": support,
-        "metrics": metrics, "evidence_refs": sorted(set(evidence_refs)),
+        "as_of_at": cutoff.isoformat(),
+        "scope": scope,
+        "support": support,
+        "metrics": metrics,
+        "evidence_refs": sorted(set(evidence_refs)),
         "identity": sorted(identity_values),
         "inference_identity": sorted(inference_identities),
         "profile_identity": sorted(profile_identities),
     }
     if invalid_reasons:
-        return EntryLearningContextV1(
-            as_of_at=cutoff.isoformat(), status="unavailable", scope=scope,
-            support=support, metrics=metrics, evidence_refs=bounded_refs,
-            source_fingerprint=None, blocking_reasons=tuple(sorted(invalid_reasons)),
+        return EntryLearningContext(
+            as_of_at=cutoff.isoformat(),
+            status="unavailable",
+            scope=scope,
+            support=support,
+            metrics=metrics,
+            evidence_refs=bounded_refs,
+            source_fingerprint=None,
+            blocking_reasons=tuple(sorted(invalid_reasons)),
         )
-    return EntryLearningContextV1(
-        as_of_at=cutoff.isoformat(), status="observational", scope=scope,
-        support=support, metrics=metrics, evidence_refs=bounded_refs,
-        source_fingerprint=_fingerprint(material), blocking_reasons=(),
+    return EntryLearningContext(
+        as_of_at=cutoff.isoformat(),
+        status="observational",
+        scope=scope,
+        support=support,
+        metrics=metrics,
+        evidence_refs=bounded_refs,
+        source_fingerprint=_fingerprint(material),
+        blocking_reasons=(),
     )
 
 
 __all__ = [
-    "ENTRY_LEARNING_ADAPTER_ID", "ENTRY_LEARNING_ADAPTER_VERSION",
-    "ENTRY_LEARNING_CONTEXT_VERSION", "ENTRY_LEARNING_INTERFERENCE_KEY",
-    "EntryLearningContextV1", "EntryLearningTreatmentAdapter",
-    "build_entry_learning_context", "empty_entry_learning_context",
+    "ENTRY_LEARNING_ADAPTER_ID",
+    "ENTRY_LEARNING_ADAPTER_VERSION",
+    "ENTRY_LEARNING_CONTEXT_VERSION",
+    "ENTRY_LEARNING_INTERFERENCE_KEY",
+    "EntryLearningContext",
+    "EntryLearningTreatmentAdapter",
+    "build_entry_learning_context",
+    "empty_entry_learning_context",
     "resolve_entry_learning_treatment",
 ]

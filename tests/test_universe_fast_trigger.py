@@ -1062,6 +1062,7 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
     from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
     from aletheia.universe.service import _ensure_planning_generations
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
     now = datetime.now(timezone.utc)
     cfg = AletheiaConfig()
@@ -1077,6 +1078,33 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
         universe_size=2,
     )
     repo.insert_universe_snapshot(snapshot)
+    opportunity = CandidateOpportunityContextV1(
+        candidate_id="binance-planning-candidate",
+        candidate_selection={
+            "policy": "candidate_selection_utility_v1",
+            "policy_epoch": "epoch-1",
+            "source_record_hash": "a" * 64,
+        },
+        source={
+            "detected_at": now.isoformat(),
+            "source_cutoff_at": now.isoformat(),
+            "feature_snapshot_id": "feature-1",
+        },
+        opportunity={
+            "primary_mechanism": "continuation",
+            "mechanism_version": "continuation/v1",
+            "mechanism_source": "target_authority",
+            "source_component_id": "momentum",
+            "direction": "long",
+            "horizon": "4h",
+            "economic_utility_pct": 1.0,
+            "capability_status": "supported",
+            "capability_gaps": (),
+            "primary_evidence_refs": (),
+            "secondary_mechanisms": (),
+        },
+        context={"regime": "trending"},
+    )
     binance = UniverseMember(
         id="binance-planning-candidate",
         snapshot_id=snapshot.id,
@@ -1089,6 +1117,17 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
         scanner_family="momentum",
         scanner_direction="long",
         execution_eligible=fast_market_data_unavailability_reason(cfg, "binance") is None,
+        candidate_selection_policy="candidate_selection_utility_v1",
+        candidate_selection_policy_epoch="epoch-1",
+        candidate_selection_utility_pct=1.0,
+        opportunity_mechanism="continuation",
+        opportunity_mechanism_version="continuation/v1",
+        opportunity_source_component="momentum",
+        opportunity_source_cutoff_at=now.isoformat(),
+        opportunity_evidence_hash="b" * 64,
+        candidate_opportunity_context_version=opportunity.version,
+        candidate_opportunity_context_json=opportunity.model_dump_json(),
+        candidate_opportunity_context_hash=opportunity.context_hash,
         expires_at=snapshot.expires_at,
     )
     unsupported = UniverseMember(
@@ -2933,7 +2972,7 @@ async def test_entry_plan_watcher_dispatches_hidden_momentum_v2_engine(monkeypat
     from types import SimpleNamespace
 
     from aletheia.agent_runtime import fast_trigger_watch as watch
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngineV2
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     payload = "{}"
     row = {
@@ -2959,7 +2998,7 @@ async def test_entry_plan_watcher_dispatches_hidden_momentum_v2_engine(monkeypat
         market_type="perp",
         direction="long",
         trigger_spec_id="momentum-retrace-reclaim",
-        trigger_spec_version="v2",
+        _historical_entry_metadata={"trigger_spec_version": "v2"},
         trigger_params={
             "breakout_level": 100.0,
             "pullback_low": 99.5,
@@ -2998,7 +3037,7 @@ async def test_entry_plan_watcher_dispatches_hidden_momentum_v2_engine(monkeypat
     plans, engines = await watch._load_entry_plan_watchers(cfg)
 
     assert plans[plan.plan_id] is plan
-    assert isinstance(engines[plan.plan_id], MomentumTriggerEngineV2)
+    assert isinstance(engines[plan.plan_id], MomentumTriggerEngine)
 
 
 @pytest.mark.asyncio
@@ -3009,12 +3048,12 @@ async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_pa
     from aletheia.agent_runtime import fast_trigger_watch as watch
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage import repositories as repo
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngineV2
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
     from aletheia.universe.fast_stream import FastMarketEvent
     from aletheia.universe.fast_trigger import TriggerPolicy
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = MomentumTriggerEngineV2(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
@@ -3031,7 +3070,7 @@ async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_pa
     plan = SimpleNamespace(
         plan_id="v2-audit-plan",
         trigger_spec_id="momentum-retrace-reclaim",
-        trigger_spec_version="v2",
+        _historical_entry_metadata={"trigger_spec_version": "v2"},
         trigger_params={
             "geometry_version": "momentum-entry-geometry/v2",
             "geometry_fingerprint": "b" * 64,
@@ -3082,18 +3121,18 @@ async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_pa
     assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_state_transition")) == 4
     assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_trigger_observed")) == 1
 
-    anchor_engine = MomentumTriggerEngineV2(
+    anchor_engine = MomentumTriggerEngine(
         instrument=instrument, direction="long", breakout_level=100.0,
         pullback_band=(99.5, 100.5), sweep_band=(99.5, 100.0),
         entry_zone=(100.0, 100.5), invalidation_price=98.0, atr_abs=2.0,
         geometry_version="anchor-retrace-reclaim-geometry/v1",
         geometry_fingerprint="c" * 64,
         policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
-        trigger_spec_id="anchor-retrace-reclaim", trigger_spec_version="v1",
+        trigger_spec_id="anchor-retrace-reclaim",
     )
     anchor_engine.confirm_subscription()
     anchor_ready = None
     for observed in events:
         anchor_ready = anchor_engine.observe(observed) or anchor_ready
     assert anchor_ready.entry_trigger["trigger_spec_id"] == "anchor-retrace-reclaim"
-    assert anchor_ready.entry_trigger["trigger_spec_version"] == "v1"
+    assert "trigger_spec_version" not in anchor_ready.entry_trigger

@@ -1731,21 +1731,12 @@ class UniverseMember(BaseModel):
 
 Candidate = UniverseMember
 
-PLANNER_CONTRACT_VERSION = "entry-planner/v2"
-AI_ENTRY_PLANNER_CONTRACT_VERSION = "entry-planner/v3"
-MECHANISM_ENTRY_PLANNER_CONTRACT_VERSION = "entry-planner/v4"
-
-
 class CandidatePlanningGeneration(_Provenanced):
     """Durable ownership/result state for one thesis-level planning generation."""
 
     id: str = Field(default_factory=new_id)
     planning_key: str = Field(min_length=64, max_length=64)
     planning_identity: str = Field(min_length=64, max_length=64)
-    identity_version: Literal["candidate-planning/v1", "candidate-planning/v2"] = "candidate-planning/v1"
-    planner_contract_version: Literal[
-        "entry-planner/v2", "entry-planner/v3", "entry-planner/v4"
-    ] = PLANNER_CONTRACT_VERSION
     candidate_id: str
     last_candidate_id: str
     venue: str
@@ -1785,8 +1776,6 @@ class CandidatePlanningGeneration(_Provenanced):
     attention_terminal_reason: str | None = None
     planner_input_json: str | None = None
     planner_input_hash: str | None = Field(default=None, min_length=64, max_length=64)
-    # Deprecated schema field retained for historical row compatibility.
-    activation_identity: str | None = None
     cycle_number: int = Field(default=1, ge=1)
     previous_generation_id: str | None = None
     cycle_reason: str = "initial_candidate"
@@ -1812,7 +1801,7 @@ class CandidatePlanningGeneration(_Provenanced):
             self.candidate_selection_policy,
             self.mechanism_version,
         )
-        if self.identity_version == "candidate-planning/v2":
+        if any(value is not None for value in (*fields, self.candidate_selection_policy_epoch)):
             if any(value is None or not str(value).strip() for value in fields):
                 raise ValueError("mechanism planning identity is incomplete")
             if (
@@ -1820,8 +1809,6 @@ class CandidatePlanningGeneration(_Provenanced):
                 and not str(self.candidate_selection_policy_epoch or "").strip()
             ):
                 raise ValueError("target mechanism planning epoch is missing")
-        elif any(value is not None for value in (*fields, self.candidate_selection_policy_epoch)):
-            raise ValueError("legacy planning identity carries mechanism authority")
         return self
 
 
@@ -1832,7 +1819,6 @@ class EntryPlanRecord(_Provenanced):
     planning_generation_id: str
     candidate_id: str
     planning_key: str
-    version: Literal["entry-plan/v1", "entry-plan/v2"] = "entry-plan/v1"
     venue: str
     symbol: str
     market_type: Literal["spot", "perp"]

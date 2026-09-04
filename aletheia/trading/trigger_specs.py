@@ -10,7 +10,6 @@ from typing import Callable
 @dataclass(frozen=True)
 class TriggerSpecContract:
     spec_id: str
-    version: str
     candidate_families: tuple[str, ...]
     data_requirements: tuple[str, ...]
     freshness_ms: int
@@ -42,18 +41,10 @@ def _momentum_params(raw: dict) -> dict:
     return params
 
 
-def _momentum_v2_params(raw: dict) -> dict:
+def _momentum_geometry_params(raw: dict) -> dict:
     allowed = {
-        "breakout_level",
-        "pullback_low",
-        "pullback_high",
-        "entry_low",
-        "entry_high",
-        "invalidation_price",
-        "sweep_low",
-        "sweep_high",
-        "atr_abs",
-        "geometry_version",
+        "breakout_level", "pullback_low", "pullback_high", "entry_low", "entry_high",
+        "invalidation_price", "sweep_low", "sweep_high", "atr_abs", "geometry_version",
         "geometry_fingerprint",
     }
     if set(raw) != allowed:
@@ -83,42 +74,38 @@ def _momentum_v2_params(raw: dict) -> dict:
         or any(char not in "0123456789abcdef" for char in fingerprint)
     ):
         raise ValueError("momentum_geometry_fingerprint_invalid")
-    return {
-        **params,
-        "geometry_version": raw["geometry_version"],
-        "geometry_fingerprint": fingerprint,
-    }
+    return {**params, "geometry_version": raw["geometry_version"], "geometry_fingerprint": fingerprint}
 
 
 def _anchor_retrace_params(raw: dict) -> dict:
-    params = _momentum_v2_params({**raw, "geometry_version": "momentum-entry-geometry/v2"})
     if raw.get("geometry_version") != "anchor-retrace-reclaim-geometry/v1":
         raise ValueError("anchor_geometry_version_invalid")
+    current = {key: value for key, value in raw.items() if key != "geometry_version"}
+    params = _momentum_geometry_params(
+        {**current, "geometry_version": "momentum-entry-geometry/v2"}
+    )
     params["geometry_version"] = raw["geometry_version"]
     return params
 
 
 _REGISTRY = {
-    ("momentum-retrace-reclaim", "v1"): TriggerSpecContract(
+    "momentum-retrace-reclaim": TriggerSpecContract(
         spec_id="momentum-retrace-reclaim",
-        version="v1",
         candidate_families=("momentum",),
         data_requirements=("quote", "trade", "books5", "candle1m"),
         freshness_ms=2_000,
         validate_params=_momentum_params,
     ),
-    ("momentum-retrace-reclaim", "v2"): TriggerSpecContract(
-        spec_id="momentum-retrace-reclaim",
-        version="v2",
+    "momentum-retrace-reclaim-geometry": TriggerSpecContract(
+        spec_id="momentum-retrace-reclaim-geometry",
         candidate_families=("momentum",),
         data_requirements=("quote", "trade", "books5", "candle1m"),
         freshness_ms=2_000,
-        validate_params=_momentum_v2_params,
+        validate_params=_momentum_geometry_params,
         planner_visible=False,
     ),
-    ("anchor-retrace-reclaim", "v1"): TriggerSpecContract(
+    "anchor-retrace-reclaim": TriggerSpecContract(
         spec_id="anchor-retrace-reclaim",
-        version="v1",
         candidate_families=("momentum",),
         data_requirements=("quote", "trade", "books5", "candle1m"),
         freshness_ms=2_000,
@@ -144,10 +131,9 @@ def compatible_trigger_specs(candidate_family: str) -> tuple[TriggerSpecContract
 def require_compatible_trigger_spec(
     candidate_family: str,
     spec_id: str,
-    version: str,
 ) -> TriggerSpecContract:
     try:
-        contract = _REGISTRY[(spec_id, version)]
+        contract = _REGISTRY[spec_id]
     except KeyError as exc:
         raise ValueError("trigger_spec_not_registered") from exc
     if str(candidate_family) not in contract.candidate_families:
@@ -159,11 +145,10 @@ def require_compatible_trigger_spec(
 
 def require_registered_trigger_spec(
     spec_id: str,
-    version: str,
     params: dict,
 ) -> tuple[TriggerSpecContract, dict]:
     try:
-        contract = _REGISTRY[(spec_id, version)]
+        contract = _REGISTRY[spec_id]
     except KeyError as exc:
         raise ValueError("trigger_spec_not_registered") from exc
     return contract, contract.validate_params(params)
