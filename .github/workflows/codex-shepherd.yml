@@ -10,130 +10,13 @@ on:
   issue_comment:
     types: [created]
   workflow_run:
-    # Aletheia Change Contract gate is an isolated same-head metadata status
-    # boundary (#2167 Phase 1): its failure handoff is posted here without
-    # holding/labeling the PR, because a PR-body-only edit on the same head
-    # must be able to re-run it and recover normally.
-    workflows: [Aletheia CI, Aletheia Change Contract gate]
+    workflows: [Aletheia CI]
     types: [completed]
 
 permissions:
   contents: read
 
 jobs:
-  metadata-ci-recovery:
-    name: Recover same-head CI after metadata repair
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.name == 'Aletheia Change Contract gate' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.status == 'completed' &&
-      github.event.workflow_run.conclusion == 'success'
-    permissions:
-      actions: write
-      checks: read
-      contents: read
-      pull-requests: read
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
-    timeout-minutes: 5
-    # A successful metadata-gate completion is a unique recovery edge. Do not
-    # let later review/comment activity cancel the sole retry callback.
-    concurrency:
-      group: codex-shepherd-metadata-recovery-${{ github.event.workflow_run.id || github.run_id }}
-      cancel-in-progress: false
-    steps:
-      - name: Re-run metadata-blocked deep CI on the exact head
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
-        with:
-          retries: 3
-          script: |
-            const metadataRun = context.payload.workflow_run;
-            const prNumbers = [...new Set(
-              (metadataRun.pull_requests || []).map(({number}) => number)
-            )];
-            if (prNumbers.length !== 1) {
-              core.info(`expected one pull request, found ${prNumbers.length}`);
-              return;
-            }
-
-            const {data: pullRequest} = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: prNumbers[0],
-            });
-            if (
-              pullRequest.state !== 'open' ||
-              pullRequest.base.ref !== 'master' ||
-              pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-              pullRequest.head.sha !== metadataRun.head_sha
-            ) {
-              core.info('metadata callback is not bound to the current same-repository PR head');
-              return;
-            }
-
-            const {data: checks} = await github.rest.checks.listForRef({
-              ...context.repo,
-              ref: pullRequest.head.sha,
-              check_name: 'Verify Change Contract',
-              filter: 'latest',
-              per_page: 100,
-            });
-            const latestMetadataCheck = checks.check_runs
-              .filter((check) =>
-                check.name === 'Verify Change Contract' &&
-                check.app?.slug === 'github-actions'
-              )
-              .sort((left, right) =>
-                Date.parse(right.completed_at || right.started_at || 0) -
-                Date.parse(left.completed_at || left.started_at || 0)
-              )[0];
-            if (latestMetadataCheck?.conclusion !== 'success') {
-              core.info('latest exact-head metadata check is not successful');
-              return;
-            }
-
-            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
-              ...context.repo,
-              event: 'pull_request',
-              head_sha: pullRequest.head.sha,
-              per_page: 100,
-            });
-            const mainRun = runs
-              .filter((run) => run.name === 'Aletheia CI')
-              .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0];
-            if (mainRun?.status !== 'completed' || mainRun.conclusion !== 'failure') {
-              core.info('exact-head main CI is not a completed metadata-blocked failure');
-              return;
-            }
-
-            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-              ...context.repo,
-              run_id: mainRun.id,
-              filter: 'latest',
-              per_page: 100,
-            });
-            const preflight = jobs.find((job) =>
-              job.name === 'Change Contract preflight for deep CI'
-            );
-            const metadataFailure = preflight?.conclusion === 'failure' &&
-              (preflight.steps || []).some((step) =>
-                step.conclusion === 'failure' &&
-                String(step.name || '').includes('Verify Change Contract')
-              );
-            if (!metadataFailure) {
-              core.info('main CI failure was not the Change Contract preflight');
-              return;
-            }
-
-            // This is the sole automatic retry: current metadata is green and the
-            // exact-head main run was blocked before product code executed. GitHub
-            // re-runs the failed prerequisite and its skipped dependants on the same
-            // immutable PR event/merge SHA; no blanket test retry is permitted.
-            await github.rest.actions.reRunWorkflowFailedJobs({
-              ...context.repo,
-              run_id: mainRun.id,
-            });
-            core.info(`re-ran metadata-blocked Aletheia CI run ${mainRun.id}`);
-
   shepherd:
     name: Codex PR shepherd
     permissions:
@@ -144,7 +27,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04, casi]
     timeout-minutes: 10
     # Review/state callbacks are reconstructible from current PR state and may
-    # converge to the newest event without affecting metadata recovery above.
+    # converge to the newest event.
     concurrency:
       group: codex-shepherd-reconcile-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
       cancel-in-progress: true

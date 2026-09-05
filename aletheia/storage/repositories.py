@@ -7959,13 +7959,16 @@ def upsert_ohlcv_candles(
         "ON CONFLICT(exchange, symbol, market_type, timeframe, ts) DO UPDATE SET "
         "open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, "
         "volume=excluded.volume, provider=excluded.provider, "
+        "first_persisted_at=COALESCE(market_ohlcv.first_persisted_at, excluded.first_persisted_at), "
         "last_mutated_at=excluded.last_mutated_at "
         "WHERE market_ohlcv.open IS NOT excluded.open "
         "OR market_ohlcv.high IS NOT excluded.high "
         "OR market_ohlcv.low IS NOT excluded.low "
         "OR market_ohlcv.close IS NOT excluded.close "
         "OR market_ohlcv.volume IS NOT excluded.volume "
-        "OR market_ohlcv.provider IS NOT excluded.provider",
+        "OR market_ohlcv.provider IS NOT excluded.provider"
+        " OR market_ohlcv.first_persisted_at IS NULL "
+        "OR market_ohlcv.last_mutated_at IS NULL",
         [
             (
                 effective_exchange,

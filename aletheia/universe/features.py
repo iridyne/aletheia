@@ -617,6 +617,15 @@ async def _fetch_single_feature(
 
     venue = str(asset.get("venue") or getattr(exchange, "id", "unknown"))
     market_type = str(asset.get("market_type") or "spot")
+    from aletheia.data.providers import parse_ohlcv_candle
+
+    # Persist the exact closed inputs before handing their features to planning.
+    for timeframe, rows in (("15m", ohlcv_15m), ("1h", ohlcv_1h), ("4h", ohlcv_4h)):
+        candles = [candle for row in rows
+                   if (candle := parse_ohlcv_candle(row, provider="ccxt", exchange=venue)) is not None]
+        await asyncio.to_thread(repo.upsert_ohlcv_candles, symbol, timeframe, candles,
+                                exchange=venue, market_type=market_type)
+
     technical_service = get_technical_snapshot_service()
     technical_15m = technical_service.snapshot_from_bars(
         _technical_bars(ohlcv_15m), exchange=venue, symbol=symbol,
