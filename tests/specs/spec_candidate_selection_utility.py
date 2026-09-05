@@ -73,21 +73,8 @@ def test_opportunity_evidence_has_four_non_summed_mechanisms():
 
 
 @spec_claim(SpecClaim(
-    "CSU-S03", _CONTRACT, "EconomicUtilityEstimateV2", "L2a",
-    "Actionable economic estimates use only frozen 4h cost-after clustered evidence with uncertainty and tail status.",
-    status="implemented",
-))
-def test_economic_utility_contract_is_frozen_and_cost_after():
-    from aletheia.universe.economic_utility import ECONOMIC_ESTIMATOR_VERSION
-    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-
-    assert ECONOMIC_ESTIMATOR_VERSION == "candidate-economic-utility-estimator/v3"
-    assert COST_MODEL_VERSION == "v1"
-
-
-@spec_claim(SpecClaim(
     "CSU-S04", _CONTRACT, "CandidateSelectionUtilityV1", "L2a",
-    "Target authority requires a positive exact policy epoch and explicit owner admission; legacy remains the default and rollback.",
+    "Target runtime uses exact semantic identity without economic admission; legacy is historical only.",
     status="implemented",
 ))
 def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
@@ -106,25 +93,12 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
         candidate_selection_policy=TARGET_CANDIDATE_POLICY,
         candidate_selection_policy_epoch="candidate-selection-utility:qualified",
     )
-    positive = {
-        "verdict": "positive",
-        "promotion_eligible": True,
-        "policy_epoch_id": target.candidate_selection_policy_epoch,
-        "selection_policy": candidate_selection_policy_identity(target),
-        "blocking_reasons": [],
-        "invalid_reasons": [],
-    }
-    assert candidate_selection_authority_block_reason(
-        target, positive,
-    ) == "candidate_selection_admission_record_missing"
-    assert candidate_selection_authority_block_reason(
-        target, positive, require_admission_record=False,
-    ) is None
-    assert candidate_selection_authority_block_reason(
-        target,
-        {**positive, "verdict": "neutral"},
-        require_admission_record=False,
-    ) == "candidate_selection_qualification_not_positive"
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
+    assert candidate_selection_authority_block_reason(target) == "candidate_selection_policy_epoch_mismatch"
+    target.candidate_selection_policy_epoch = canonical_fingerprint(candidate_selection_policy_identity(target))
+    assert candidate_selection_authority_block_reason(target) is None
+    target.max_candidates += 1
+    assert candidate_selection_authority_block_reason(target) == "candidate_selection_policy_epoch_mismatch"
     monkeypatch.setattr(
         "aletheia.learning.ledger.list_open_experiments",
         lambda **_kwargs: [{"stage": "paper_10"}],
@@ -135,27 +109,3 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
     )
 
 
-@spec_claim(SpecClaim(
-    "CSU-S06", "candidate_selection_utility", "Typed Candidate Opportunity handoff", "L2a",
-    "Target selection persists typed mechanism/source authority; legacy projection maps only unambiguous families.",
-    status="implemented",
-))
-def test_candidate_opportunity_handoff_never_uses_display_reasons_as_authority():
-    import inspect
-
-    from aletheia.universe.candidate_opportunity import LEGACY_MECHANISM_MAP
-    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
-    from aletheia.universe.opportunity_evidence import MechanismEvidenceV1
-
-    assert LEGACY_MECHANISM_MAP == {
-        "momentum": "continuation",
-        "short_bias": "continuation",
-        "mean_reversion": "reversal",
-        "derivatives": "positioning_forced_flow",
-    }
-    assert "volatility" not in LEGACY_MECHANISM_MAP
-    assert "event" not in LEGACY_MECHANISM_MAP
-    assert "source_component_id" in MechanismEvidenceV1.__dataclass_fields__
-    source = inspect.getsource(target_candidates_from_bundle)
-    assert 'mechanism["source_component_id"]' in source
-    assert "reason_codes" not in source

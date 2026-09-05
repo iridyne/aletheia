@@ -85,10 +85,14 @@ function monitoringLabel(plan: EntryPlan) {
   }
 }
 
-function selectionMetric(row: Pick<CandidateWorkbenchRow, 'candidate_selection_policy' | 'candidate_selection_utility_pct' | 'total_score'> | CandidateAttention) {
+function selectionMetric(row: Pick<CandidateWorkbenchRow, 'candidate_selection_policy' | 'candidate_selection_utility_pct' | 'total_score' | 'admission_basis' | 'startup_reason' | 'pessimistic_strength'> | CandidateAttention) {
+  if (row.admission_basis === 'startup') {
+    const reason = ({ no_history: '暂无历史样本', parent_sample_insufficient: '父组样本不足', child_sample_insufficient: '子组样本不足' } as Record<string, string>)[row.startup_reason ?? ''] ?? row.startup_reason ?? '原因未知'
+    return `冷启动：信号强度 ${row.pessimistic_strength == null ? '未知' : fmtNum(row.pessimistic_strength)} · 预期净收益未知 · ${reason}`
+  }
   return row.candidate_selection_policy === 'candidate_selection_utility_v1'
-    ? `Utility ${row.candidate_selection_utility_pct == null ? '—' : `${fmtNum(row.candidate_selection_utility_pct)}%`}`
-    : `Legacy score ${row.total_score ?? '—'}`
+    ? `收益排序：预期净收益 ${row.candidate_selection_utility_pct == null ? '未知' : `${fmtNum(row.candidate_selection_utility_pct)}%`}`
+    : `Legacy score ${row.total_score ?? '—'}（历史）`
 }
 
 function lifecycleLabel(row: Pick<CandidateWorkbenchRow, 'lifecycle_state' | 'current_cycle_number' | 'expired_plan_count' | 'lifecycle_reason'> | CandidateAttention) {
@@ -137,7 +141,7 @@ const candidateColumns = [
   candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why' }),
   candidateCol.display({
     id: 'quality',
-    header: 'Utility / Liquidity / Spread',
+    header: '选择依据 / Liquidity / Spread',
     cell: ({ row }) => {
       const r = row.original
       return (
@@ -362,6 +366,21 @@ export default function Universe() {
       <MetricTile label="Active Entry Plans" value={summary?.active_entry_plans ?? '—'} context="waiting through partially filled" />
     </section>
 
+    <Card className="entry-workbench-notice" aria-label="Candidate path progress">
+      <strong>Candidate path progress:</strong>{' '}
+      {data?.progress ? <>
+        {data.progress.availability.available ? humanize(data.progress.availability.reason ?? 'observed') : `Unavailable: ${humanize(data.progress.availability.reason ?? 'unknown')}`}. {' '}
+        Sample: {data.progress.generated_at ?? 'not sampled'} · Age: {data.progress.age_seconds == null ? 'unknown' : `${Math.round(data.progress.age_seconds)}s`} / {data.progress.ttl_seconds}s. {' '}
+        Last refresh attempt: {data.progress.last_attempt_at ?? 'unknown'}; success: {data.progress.last_success_at ?? 'unknown'}. {' '}
+        Policy: {data.progress.selection_policy ?? 'unknown'}; epoch: {data.progress.policy_epoch ?? 'not available'}. {' '}
+        Selected: {data.progress.selected_count ?? '—'}; supported: {data.progress.planning_supported_count ?? '—'}; observe only: {data.progress.observe_only_count ?? '—'}. {' '}
+        Ready planning: {data.progress.ready_planning_count ?? '—'} (oldest {data.progress.oldest_ready_at ?? 'none / unknown'}); expired claims: {data.progress.expired_claim_count ?? '—'}. {' '}
+        Due outcomes: {data.progress.due_outcome_count ?? '—'} (oldest {data.progress.oldest_due_at ?? 'none / unknown'}). {' '}
+        Shadow: {data.progress.shadow_capture_status ?? 'not available'} {data.progress.shadow_capture_reason ?? ''}. {' '}
+        {[...(data.progress.issues ?? []), ...Object.entries(data.progress.blocking_reason_counts ?? {}).map(([reason, count]) => `${humanize(reason)}: ${count}`), ...Object.entries(data.progress.selection_reason_counts ?? {}).map(([reason, count]) => `${humanize(reason)}: ${count}`)].join(' · ')}
+      </> : 'Not sampled; business health is unavailable.'}
+    </Card>
+
     <Card className="entry-workbench-notice">
       {currentCandidates ? <>Planning: pending {stageCounts.pending}, planning {stageCounts.planning}, blocked {stageCounts.blocked}, unavailable {stageCounts.unavailable}, no-plan {stageCounts.no_plan}, planned {stageCounts.planned}. Current-Snapshot terminal Entry Plans: {stageCounts.terminal}. </> : 'Candidate stage counts unavailable. '}
       Active Entry Plans: {plans == null ? 'not available' : plans.length}. {' '}
@@ -489,17 +508,25 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <DrawerField label="Status" value="Candidate is visible independently of planning" />
       </DrawerSection>}
       {lifecycle?.cycles?.length ? <DrawerSection label="Planning cycles">
-        {lifecycle.cycles.map(cycle => <DrawerField
-          key={cycle.generation_id}
-          label={`Cycle ${cycle.cycle_number}`}
-          value={`${humanize(cycle.outcome_class ?? cycle.entry_plan_status ?? cycle.last_stage)} · ${cycle.events.map(event => `${humanize(event.event)} ${fmtTimestamp(event.at)}`).join(' · ')}`}
-        />)}
+        {lifecycle.cycles.map(cycle => <div key={cycle.generation_id}>
+          <DrawerField label={`Cycle ${cycle.cycle_number}`} value={`${humanize(cycle.outcome_class ?? cycle.entry_plan_status ?? cycle.last_stage)} · ${cycle.events.map(event => `${humanize(event.event)} ${fmtTimestamp(event.at)}`).join(' · ')}`} />
+          <DrawerField label="Execution" value={humanize(cycle.execution_state ?? 'UNAVAILABLE')} />
+          {cycle.execution ? <>
+            <DrawerField label="Order / fills" value={cycle.execution.availability.available ? `${cycle.execution.order?.id ?? 'Not submitted'} · ${cycle.execution.fills?.ids.join(', ') || 'No fills'}` : `Unavailable: ${humanize(cycle.execution.availability.reason)}`} mono />
+            <DrawerField label="Position" value={cycle.execution.availability.available ? cycle.execution.position?.id ?? 'Not opened' : 'Unavailable'} mono />
+            <DrawerField label="Opened / closed" value={`${fmtTimestamp(cycle.execution.position?.opened_at)} / ${fmtTimestamp(cycle.execution.position?.closed_at)}`} />
+            <DrawerField label="Economics" value={`${humanize(cycle.execution.economics.status)} · ${humanize(cycle.execution.economics.reason ?? cycle.execution.availability.reason)}`} />
+            <DrawerField label="Close orders / fills" value={`${cycle.execution.close_orders.map(order => order.id).join(', ') || 'None recorded'} / ${cycle.execution.close_fills.map(fill => fill.id).join(', ') || 'None recorded'}`} mono />
+            <DrawerField label="Fixed 4h entry outcomes" value={cycle.execution.entry_outcomes?.map(outcome => `${outcome.fill_id}: ${humanize(outcome.status)} (${humanize(outcome.reason)})`).join(' · ') || 'No entry fills'} />
+            <a href="/trades?tab=blotter">View trade ledger</a>
+          </> : null}
+        </div>)}
       </DrawerSection> : null}
       <DrawerSection label="Candidate evidence">
         <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family ?? currentCandidate?.scanner_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason ?? currentCandidate?.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />
         <DrawerField label="Selection policy" value={humanize(detail.data?.member.candidate_selection_policy)} mono />
-        <DrawerField label="Candidate utility" value={detail.data?.member.candidate_selection_utility_pct == null ? 'Not applicable' : `${fmtNum(detail.data.member.candidate_selection_utility_pct)}%`} />
+        <DrawerField label="选择依据" value={detail.data?.member ? selectionMetric(detail.data.member) : '未知'} />
         <DrawerField label="Legacy score (compatibility)" value={detail.data?.member.total_score} />
         <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />
         <DrawerField label="Execution eligible" value={detail.data?.member.execution_eligible == null ? 'Unavailable' : detail.data.member.execution_eligible ? 'Yes' : 'No'} />

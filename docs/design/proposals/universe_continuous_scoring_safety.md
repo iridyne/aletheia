@@ -12,9 +12,27 @@ supersedes: []
 
 > Proposal status: accepted design, not an implementation or runtime claim.
 >
-> Accepted scope: continuous Shadow scoring and the prerequisites for any
-> later factor-level Learning experiment. The current step scorer remains the
-> only authority until a separate owner-gated Paper admission.
+> Original scope: continuous Shadow scoring and prerequisites for later
+> factor-level Learning experiments. The 2026-09-05 accepted Candidate
+> measured/Startup amendment below supersedes the original step-authority
+> prerequisite for Demo Candidate selection, not factor-treatment permissions.
+
+## Candidate runtime amendment — 2026-09-05
+
+The existing Utility policy family now owns Demo Candidate selection without
+Legacy ranking/allocation/calibration or a positive economic-admission gate.
+Measured, above-floor estimates rank first; genuine sample scarcity may fill
+remaining existing capacity using supported, directed conservative signal
+strength. Startup explicitly records its basis/reason and null Utility. Invalid
+history, overdue settlement, missing costs/MAE, tail harm and known economic
+rejection cannot be reclassified as scarcity or bypassed through another route.
+Per-refresh cutoff/fingerprint evidence is dynamic, not frozen economic
+qualification. Legacy and prior fixed-look results remain historical audit
+evidence only. See the current
+[Candidate Selection Utility contract](../contracts/candidate_selection_utility_contract.md).
+Risk, Gateway, Live unlock and separate Learning treatment permissions remain
+unchanged. The stages and experiment safeguards below retain their original
+factor-treatment scope; they are not a Demo runtime prerequisite.
 
 ## Summary
 
@@ -41,7 +59,7 @@ online neural scorer. For Aletheia's small, non-stationary, high-consequence
 sample, the frontier-relevant improvement is more honest uncertainty and safer
 causal evaluation, not greater model complexity.
 
-## Current fact
+## Original proposal baseline (historical)
 
 The normative [Learning contract](../contracts/learning_contract.md) currently
 marks only `universe_family_calibration` as measurement-supported. Factor,
@@ -407,6 +425,26 @@ twin consumer or expiry/refreeze of a separately admitted treatment; it never
 rewrites historical records.
 
 ## Resolution
+
+### Accepted amendment — 2026-09-05: Candidate acquisition identity
+
+The approved D2 cutover acquires exact-instrument books with the existing bound
+provider independently of Candidate/Opportunity existence, reuses fresh durable
+books, validates with the existing microstructure parser, and persists before
+use. Canonical planning generations own priority without legacy pending wakes.
+The semantic manifest freezes `feature_acquisition` as
+`candidate-feature-acquisition/v2`; each Shadow evidence record carries
+`feature_acquisition_version`. Training requires equality to the explicit
+policy version before building labels. Missing matches only missing historical
+versions; training is not filtered by epoch. Historical hashes and frozen
+prefixes, Legacy authority, fixed-look gates, owner admission, Risk/Gateway and
+#2556 isolation remain unchanged. Incompatible target epochs fail closed.
+
+Collection distinguishes legitimate filtered emptiness from total acquisition
+failure. Scanner metrics commit with publication; Legacy Shadow follows commit.
+A timed-out live worker remains pending until its same-run completion arrives.
+Terminal fixed looks stay terminal. Candidate reads contain only durable members,
+with static instruments retained solely as explicit observation fallback.
 
 Accepted on 2026-08-07 for staged, non-authoritative implementation. Acceptance
 authorizes the next pure-curve task only; it does not claim implementation,

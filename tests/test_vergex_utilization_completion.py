@@ -231,10 +231,10 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
             ]
 
         async def fetch_funding_rate(self, _symbol):
-            return {"fundingRate": 0.0002, "markPrice": 101.0}
+            return {"fundingRate": 0.0002, "markPrice": 101.0, "timestamp": int(now.timestamp() * 1000)}
 
         async def fetch_open_interest(self, _symbol):
-            return {"openInterestValue": 12_000_000.0}
+            return {"openInterestValue": 12_000_000.0, "timestamp": int(now.timestamp() * 1000)}
 
     db = get_db()
     db.execute(

@@ -33,10 +33,14 @@ invent prices, select size/leverage, alter Risk, or bypass Gateway.
 Candidate Selection Utility persists the exact selected mechanism, typed source
 component, direction, mechanism version, capability truth, supporting and opposing
 evidence, 4h economic horizon, policy epoch, target-record hash, source cutoff,
-and bounded context as `candidate-opportunity-context/v1`. Legacy compatibility is
-limited to Momentum/Short Bias -> continuation, Mean Reversion -> reversal, and
-Derivatives -> positioning proxy with explicit capability gaps. Volatility and
-Event remain on the legacy path because neither has an unambiguous mechanism.
+and bounded context as `candidate-opportunity-context/v1`. The current Demo
+handoff also records measured/startup admission basis and the exact scarcity
+reason: valid Startup retains null economic Utility, not a synthetic return.
+It has the same supported-capability and planning-time evidence requirements.
+Legacy compatibility is historical only: Momentum/Short Bias -> continuation,
+Mean Reversion -> reversal and Derivatives -> positioning proxy retain explicit
+gaps. Volatility and Event do not gain invented mechanisms or new Legacy
+runtime authority. Old JSON/hashes are never rewritten for this amendment.
 
 `candidate-planning/v2` ownership is venue, symbol, market type, mechanism,
 direction, Candidate-selection policy and epoch, and mechanism version. A change

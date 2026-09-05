@@ -2,7 +2,7 @@
 
 Covers:
 
-* ``universe/features.py::_wake_pi_daemon_for_refreshed_defers`` — wakes
+* ``data/candidate_market_facts.py::wake_pending_candidate_defers`` — legacy
   ``pi_daemon`` only when a candidate-specific (data-availability) defer exists
   for a symbol whose feature batch was just committed. Market-quiet defers
   (direct_skip_not_confirmed, operator_low_conviction, debate_not_confirmed)
@@ -100,7 +100,7 @@ def _seed_feature_snapshot(conn, *, snapshot_id: str, asset_id: str, ts_iso: str
 
 
 class TestFeatureSnapshotWake:
-    """`_wake_pi_daemon_for_refreshed_defers` correctness."""
+    """Historical exact data-availability defer behavior remains supported."""
 
     def test_wakes_daemon_when_deferred_carrier_matches_committed_asset(
         self, tmp_path, monkeypatch
@@ -125,9 +125,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+        wake_pending_candidate_defers(asset_ids={"asset-btc"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == ["feature_snapshot_committed"]
 
@@ -160,9 +160,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-eth"})
+        wake_pending_candidate_defers(asset_ids={"asset-eth"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == []
 
@@ -192,9 +192,9 @@ class TestFeatureSnapshotWake:
             "notify_pi_daemon",
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-btc-spot"})
+        wake_pending_candidate_defers(asset_ids={"asset-btc-spot"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
         assert calls == []
 
     def test_exact_mark_refresh_wakes_only_mark_unavailability(
@@ -253,9 +253,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+        wake_pending_candidate_defers(asset_ids={"asset-btc"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == []
 
@@ -271,9 +271,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers(set())
+        wake_pending_candidate_defers(asset_ids=set(), defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == []
 
@@ -300,9 +300,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+        wake_pending_candidate_defers(asset_ids={"asset-btc"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == [], "market-quiet defer must not trigger feature-refresh wake"
 
@@ -329,9 +329,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+        wake_pending_candidate_defers(asset_ids={"asset-btc"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == [], "market-quiet defer must not trigger feature-refresh wake"
 
@@ -358,9 +358,9 @@ class TestFeatureSnapshotWake:
             lambda source=None, event=None: calls.append(str(source)) or True,
         )
 
-        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+        from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+        wake_pending_candidate_defers(asset_ids={"asset-btc"}, defer_reasons={"candidate_technical_snapshot_unavailable", "candidate_technical_snapshot_incomplete", "candidate_technical_snapshot_stale"}, source="feature_snapshot_committed")
 
         assert calls == ["feature_snapshot_committed"]
 

@@ -139,20 +139,14 @@ def test_active_paper_learning_identity_fails_closed_on_ambiguity():
 def test_fallback_when_disabled(svc, disabled_cfg):
     with patch("aletheia.universe.service.load_config", return_value=disabled_cfg):
         members = svc.get_current_universe()
-    assert len(members) == 3
-    assert members[0]["symbol"] == "BTC/USDT"
-    assert members[0]["scanner_family"] == "core"
-    assert members[0]["snapshot_id"] is None
-    assert members[0]["candidate_selection_policy"] == "legacy_total_score_v1"
-    assert members[0]["candidate_selection_utility_pct"] is None
+    assert members == []
 
 
 def test_fallback_when_no_snapshot(svc, enabled_cfg):
     with patch("aletheia.universe.service.load_config", return_value=enabled_cfg):
         with patch("aletheia.universe.service.repo.get_active_universe_snapshot", return_value=None):
             members = svc.get_current_universe()
-    assert len(members) == 3
-    assert members[0]["symbol"] == "BTC/USDT"
+    assert members == []
 
 
 def test_fallback_when_snapshot_empty(svc, enabled_cfg):
@@ -161,8 +155,7 @@ def test_fallback_when_snapshot_empty(svc, enabled_cfg):
         with patch("aletheia.universe.service.repo.get_active_universe_snapshot", return_value=snap):
             with patch("aletheia.universe.service.repo.list_universe_members", return_value=[]):
                 members = svc.get_current_universe()
-    assert len(members) == 3
-    assert members[0]["scanner_family"] == "core"
+    assert members == []
 
 
 def test_target_snapshot_empty_is_intentional_no_fill(svc, enabled_cfg):
@@ -192,97 +185,6 @@ def test_target_snapshot_empty_is_intentional_no_fill(svc, enabled_cfg):
         assert svc.get_current_universe() == []
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("family,mechanism", [("volatility", None), ("momentum", "continuation")])
-async def test_refresh_persists_legacy_family_opportunity_context(
-    tmp_path, monkeypatch, family, mechanism,
-):
-    from tests.test_entry_logic import setup_env
-
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config
-    from aletheia.storage import repositories as repo
-    from aletheia.universe import service
-
-    cfg = load_config()
-    cfg.universe.enabled = True
-    cfg.regime.enabled = False
-    feature = {
-        "asset_id": "legacy-volatility-asset",
-        "venue": "bitget",
-        "symbol": "BTC/USDT",
-        "market_type": "spot",
-        "last_price": 60_000.0,
-        "quote_volume_24h": 1_000_000_000.0,
-        "spread_bps": 2.0,
-        "execution_eligible": False,
-    }
-    scanner_result = {
-        "scanner_family": family,
-        "scanner_direction": "long",
-        "opportunity_score": 70.0,
-        "all_scores": {family: 70.0},
-        "reasons": ["volatility expansion"],
-        "risk_flags": [],
-    }
-    allocated = [{**feature, **scanner_result, "total_score": 70.0, "ttl_sec": 3600}]
-
-    async def one_feature(*_args, **_kwargs):
-        return [feature]
-
-    async def no_op(*_args, **_kwargs):
-        return 0
-
-    monkeypatch.setattr(service, "load_config", lambda: cfg)
-    monkeypatch.setattr(service, "_active_paper_learning_identity", lambda _path: (False, None))
-    monkeypatch.setattr(service, "_previous_snapshot_fingerprint", lambda _market: (None, None, None))
-    monkeypatch.setattr(service, "_should_sample_alpha_control", lambda _now: False)
-    monkeypatch.setattr(service, "_persist_candidate_selection_shadow_nonfatal", no_op)
-    monkeypatch.setattr(service, "_capture_universe_discovery_nonfatal", lambda **_kwargs: None)
-    monkeypatch.setattr(service, "_notify_operator_feature_refresh", lambda _source: True)
-    monkeypatch.setattr(service, "fast_market_data_unavailability_reason", lambda *_args: None)
-    monkeypatch.setattr(repo, "list_universe_assets", lambda **_kwargs: [feature])
-    monkeypatch.setattr("aletheia.universe.registry.sync_registry", no_op)
-    monkeypatch.setattr("aletheia.universe.features.collect_features", one_feature)
-    monkeypatch.setattr("aletheia.universe.filters.apply_coarse_tradability_filters", lambda rows, *_args, **_kwargs: rows)
-    monkeypatch.setattr("aletheia.universe.filters.apply_fine_tradability_filters", lambda rows, *_args, **_kwargs: rows)
-    monkeypatch.setattr("aletheia.universe.scanners.run_all_scanners", lambda _row: scanner_result)
-    monkeypatch.setattr("aletheia.universe.allocator.compute_total_score", lambda *_args, **_kwargs: 70.0)
-    monkeypatch.setattr("aletheia.universe.allocator.get_family_multipliers", lambda **_kwargs: {})
-    monkeypatch.setattr("aletheia.universe.allocator.allocate_universe", lambda *_args, **_kwargs: allocated)
-    monkeypatch.setattr("aletheia.universe.outcome_recorder.settle_due", no_op)
-    monkeypatch.setattr("aletheia.universe.outcome_recorder.build_pending", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr("aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None)
-    monkeypatch.setattr(
-        "aletheia.universe.candidate_selection_shadow.candidate_selection_frozen_family_spread_control",
-        lambda _policy: ({}, {}),
-    )
-
-    snapshot_id = await UniverseService().refresh()
-    assert snapshot_id is not None
-    member = repo.list_universe_members(snapshot_id, limit=10)[0]
-
-    assert member["scanner_family"] == family
-    assert member["opportunity_mechanism"] == mechanism
-    if mechanism is None:
-        assert member["candidate_opportunity_context_version"] is None
-        assert member["candidate_opportunity_context_json"] is None
-        assert member["candidate_opportunity_context_hash"] is None
-    else:
-        from aletheia.storage.models import UniverseMember
-
-        context = json.loads(member["candidate_opportunity_context_json"])
-        assert member["opportunity_source_cutoff_at"] == context["source"]["source_cutoff_at"]
-        for overrides in (
-            {"opportunity_source_cutoff_at": "2000-01-01T00:00:00+00:00"},
-            {"candidate_selection_utility_pct": 1.0},
-            {"opportunity_source_component": "target"},
-            {"candidate_opportunity_context_version": None,
-             "candidate_opportunity_context_json": None,
-             "candidate_opportunity_context_hash": None},
-        ):
-            with pytest.raises(ValueError):
-                UniverseMember.model_validate({**member, **overrides})
 
 
 def test_returns_active_members(svc, enabled_cfg):
@@ -459,9 +361,7 @@ def test_fallback_all_expired(svc, enabled_cfg):
         with patch("aletheia.universe.service.repo.get_active_universe_snapshot", return_value=snap):
             with patch("aletheia.universe.service.repo.list_universe_members", return_value=mock_members):
                 members = svc.get_current_universe()
-    # Should fallback since all expired
-    assert len(members) == 3
-    assert members[0]["symbol"] == "BTC/USDT"
+    assert members == []
 
 
 def test_limit_parameter(svc, enabled_cfg):
@@ -768,3 +668,22 @@ def test_venue_ineligible_candidate_does_not_gain_planning_generation(tmp_path, 
     assert count == 0
     assert selected == set()
     assert get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 0
+
+def test_canonical_planning_priority_without_legacy_carriers(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from tests.test_entry_planner import _candidate
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseAsset
+    setup_env(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    repo.upsert_universe_asset(UniverseAsset(id="asset-btc", venue="bitget", symbol="BTC/USDT", market_type="perp"))
+    candidate = _candidate(source_at=now.isoformat())
+    generation, created = repo.ensure_candidate_planning_generation(candidate.id, now=now)
+    assert created
+    rows = repo.list_candidate_planning_refresh_assets(venue="bitget", now=now)
+    assert [(row["id"], row["market_type"]) for row in rows] == [("asset-btc", "perp")]
+    assert repo.list_candidate_planning_refresh_assets(venue="okx", now=now) == []
+    assert repo.list_candidate_planning_refresh_assets(venue="bitget", now=now + timedelta(days=2)) == []
+    assert repo.get_db().execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+    repo.execute_write("UPDATE candidate_planning_generations SET is_current=0 WHERE id=?", (generation["id"],))
+    assert repo.list_candidate_planning_refresh_assets(venue="bitget", now=now) == []

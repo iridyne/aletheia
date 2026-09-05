@@ -16,7 +16,7 @@ from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
 ECONOMIC_UTILITY_VERSION = "universe-economic-utility/v2"
-ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v3"
+ECONOMIC_ESTIMATOR_VERSION = "candidate-economic-utility-estimator/v4"
 CANDIDATE_SELECTION_OUTCOME_VERSION = "candidate-selection-utility-outcome/v1"
 INDEPENDENT_UNIT_VERSION = "scanner-t0-cross-section-nonoverlap-4h/v1"
 INDEPENDENT_UNIT_INTERVAL = timedelta(hours=4)
@@ -127,6 +127,7 @@ class _CohortSummary:
     minimum_edge: float | None
     source_outcome_fingerprint: str | None
     identity_invalid: bool
+    failure_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,7 @@ def build_economic_utility_cohort_index(
     expected_costs = _cost_assumptions(cost_assumptions)
     by_cohort: dict[tuple[str, str, str, str], dict[str, Mapping[str, object]]] = {}
     invalid: set[tuple[str, str, str, str]] = set()
+    failures: dict[tuple[str, str, str, str], set[str]] = {}
     comparable = (
         "scanner_run_id",
         "status",
@@ -175,10 +177,8 @@ def build_economic_utility_cohort_index(
             row.get("horizon") != "4h"
             or row.get("mechanism_behavior_version") != OPPORTUNITY_EVIDENCE_VERSION
             or row.get("outcome_contract_version") != CANDIDATE_SELECTION_OUTCOME_VERSION
-            or row.get("cost_assumptions") != expected_costs
-            or entry is None
-            or entry > cutoff
-            or (row.get("status") == "settled" and (settled is None or settled > cutoff))
+            or (row.get("cost_assumptions") is not None and row.get("cost_assumptions") != expected_costs)
+            or (entry is not None and entry >= cutoff)
         ):
             continue
         key = (
@@ -187,6 +187,25 @@ def build_economic_utility_cohort_index(
             str(row.get("venue") or ""),
             str(row.get("market_type") or "spot"),
         )
+        by_cohort.setdefault(key, {})
+        if entry is None or (settled is not None and settled < entry + INDEPENDENT_UNIT_INTERVAL):
+            failures.setdefault(key, set()).add("history_time_invalid")
+            row = {**row, "status": "invalid"}
+        elif row.get("status") != "settled" or (settled is not None and settled > cutoff):
+            if entry + INDEPENDENT_UNIT_INTERVAL <= cutoff:
+                failures.setdefault(key, set()).add("settlement_overdue")
+            row = {**row, "status": "pending", "net_return_pct": None, "mae_pct": None}
+        elif settled is None:
+            failures.setdefault(key, set()).add("history_time_invalid")
+        elif not row.get("scanner_run_id") or not row.get("symbol"):
+            invalid.add(key)
+        elif row.get("cost_assumptions") is None or any(_finite(row.get(field)) is None for field in (
+            "net_return_pct", "mae_pct", "min_tradable_edge_pct",
+            "estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct",
+        )) or row.get("cost_model_version") != COST_MODEL_VERSION:
+            failures.setdefault(key, set()).add("history_economics_incomplete")
+        elif float(row["net_return_pct"]) < _TAIL_HARM_FLOOR_PCT:
+            failures.setdefault(key, set()).add("tail_harm")
         identity = str(row.get("outcome_candidate_key") or "")
         if not identity:
             invalid.add(key)
@@ -273,6 +292,7 @@ def build_economic_utility_cohort_index(
             next(iter(edges)) if len(edges) == 1 else None,
             canonical_fingerprint(source_material) if complete else None,
             key in invalid,
+            min(failures.get(key, ()), default=None),
         )
     return EconomicUtilityCohortIndex(source_cutoff_at, expected_costs, summaries)
 
@@ -293,8 +313,8 @@ class EconomicUtilityEstimateV2:
     direction: Literal["long", "short"]
     venue: str
     market_type: str
-    strength_percentile: float
-    strength_quintile: int
+    strength_percentile: float | None
+    strength_quintile: int | None
     horizon: Literal["4h"]
     estimate_status: Literal["available", "diagnostic_parent_only", "unavailable"]
     expected_net_return_pct: float | None
@@ -309,6 +329,7 @@ class EconomicUtilityEstimateV2:
     parent_independent_n: int = 0
     child_independent_n: int = 0
     outcome_coverage: float = 0.0
+    unavailable_reason: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -321,15 +342,17 @@ def estimate_economic_utility(
     direction: Literal["long", "short"],
     venue: str,
     market_type: str,
-    strength_percentile: float,
+    strength_percentile: float | None,
     outcomes: Sequence[Mapping[str, object]] = (),
     source_cutoff_at: str | None = None,
     cost_assumptions: Mapping[str, object] | None = None,
     cohort_index: EconomicUtilityCohortIndex | None = None,
 ) -> EconomicUtilityEstimateV2:
-    if not math.isfinite(strength_percentile) or not 0 <= strength_percentile <= 1:
+    if strength_percentile is not None and (
+        not math.isfinite(strength_percentile) or not 0 <= strength_percentile <= 1
+    ):
         raise ValueError("strength_percentile_out_of_range")
-    quintile = min(5, int(strength_percentile * 5) + 1)
+    quintile = min(5, int(strength_percentile * 5) + 1) if strength_percentile is not None else None
     if cohort_index is None:
         if source_cutoff_at is None:
             raise ValueError("source_cutoff_at_invalid")
@@ -383,6 +406,23 @@ def estimate_economic_utility(
     minimum_edge = summary.minimum_edge if summary else None
     if status == "available" and minimum_edge is None:
         status, expected, standard_error, utility = "unavailable", None, None, None
+    reason = None
+    if summary and summary.identity_invalid:
+        reason = "history_identity_invalid"
+    elif summary and summary.failure_reason:
+        reason = summary.failure_reason
+    elif summary and summary.parent_values and summary.minimum_edge is None:
+        reason = "history_economics_incomplete"
+    elif not summary:
+        reason = "no_history"
+    elif not parent_supported:
+        reason = "parent_sample_insufficient"
+    elif quintile is None:
+        reason = "percentile_unavailable"
+    elif not child_supported:
+        reason = "child_sample_insufficient"
+    if reason not in {None, "child_sample_insufficient"}:
+        status, expected, standard_error, utility = "unavailable", None, None, None
     cohort = {
         "version": ECONOMIC_UTILITY_VERSION,
         "independent_unit": INDEPENDENT_UNIT_VERSION,
@@ -432,6 +472,7 @@ def estimate_economic_utility(
         len(parent_values),
         len(child_values),
         coverage,
+        reason,
     )
 
 

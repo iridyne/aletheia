@@ -1689,8 +1689,8 @@ class UniverseMember(BaseModel):
         )
         if target and (
             not str(self.candidate_selection_policy_epoch or "").strip()
-            or self.candidate_selection_utility_pct is None
-            or not math.isfinite(self.candidate_selection_utility_pct)
+            or (self.candidate_selection_utility_pct is not None
+                and not math.isfinite(self.candidate_selection_utility_pct))
             or any(not str(value or "").strip() for value in mechanism_evidence)
         ):
             raise ValueError("target Candidate selection evidence is incomplete")
@@ -1726,6 +1726,11 @@ class UniverseMember(BaseModel):
                 or context.candidate_selection["policy"] != self.candidate_selection_policy
                 or context.candidate_selection.get("policy_epoch") != self.candidate_selection_policy_epoch
                 or context.opportunity["direction"] != self.scanner_direction
+                or (target and (
+                    context.opportunity.get("economic_utility_pct") != self.candidate_selection_utility_pct
+                    or context.opportunity["mechanism_version"] != self.opportunity_mechanism_version
+                    or context.opportunity["source_component_id"] != self.opportunity_source_component
+                ))
                 or (
                     self.opportunity_source_cutoff_at is not None
                     and self.opportunity_source_cutoff_at != context.source["source_cutoff_at"]

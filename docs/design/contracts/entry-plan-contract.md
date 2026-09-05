@@ -78,6 +78,19 @@ supersedes the old generation and invalidates its active pre-order plan; Fast
 Monitoring and execution revalidate both the current generation and exact
 Candidate context/hash before creating or cancelling an order.
 
+Demo Candidate selection uses one Utility-family path: measured returns rank
+first and genuine sample scarcity may fill unused slots by conservative signal
+strength. Startup carries explicit admission_basis/startup_reason and null
+economic_utility_pct through the typed Context; null is not zero return or
+economic qualification. A valid supported Startup Candidate may reach the same
+Planner/Compiler without measured-history admission, but still requires all
+planning-time facts, anchors, capability and profile checks. Invalid history,
+overdue settlement, missing costs/MAE and known economic/tail rejection cannot
+be relabelled Startup. Dynamic per-refresh cutoffs do not claim a frozen
+qualification window. Historical Legacy JSON/hashes remain unchanged; Legacy
+does not supply new Demo Candidates or fallback generations. Risk, Gateway and
+Live-unlock authority are unchanged.
+
 The generic `grounded-anchor-resting-maker` and
 `grounded-anchor-retrace-reclaim` Profiles declare compatible mechanisms,
 required facts/anchors/timeframes, compiler and TriggerSpec identity, and
@@ -97,8 +110,11 @@ are explicitly an exact profile or the declared `mechanism-aware-grounded/v1`
 parent summary. Any unavailable or mixed evidence is replaced by the deterministic
 empty context before inference. Observation Lab measures this path under
 `mechanism_entry_learning` with the same planning-generation outcome key.
-An unsupported mechanism, currently Information/Catalyst, has no visible
-Profile and reaches `NO_PLAN` without a model call.
+An unsupported mechanism, currently Information/Catalyst, is blocked without a
+model call. Positioning remains observe_only. Missing compatible registry or
+frozen-context Profiles produce `planning_blocked` / `NO_VALID_ENTRY_PROFILE`
+at `runtime_preflight`, never economic NO_PLAN. Registry preflight precedes
+market acquisition and inference.
 
 ## Contract identity and planning cycles
 
@@ -197,16 +213,20 @@ After the model selects `NO_PLAN`, execution-only fields are non-authoritative
 and are canonicalized to the null/`NONE` row above before semantic validation.
 The model-owned decision, reason, thesis, scenario, and evidence remain unchanged.
 
-The TriggerSpec registry is the only source of Candidate-family compatibility,
-data requirements, freshness, and parameter validation. Planner context lists
-only specs compatible with the Candidate family. An unsupported or absent
-family/spec combination is terminal `NO_PLAN` after at most one physical model
-attempt; it is not provider unavailability and cannot consume attempts two or
-three.
+Profile/TriggerSpec registries own compatibility, required data and validation.
+Missing capability/Profile blocks before inference; invalid model references,
+JSON/schema and compiler validation are terminal non-economic failures. Only
+valid model economic refusal produces terminal `NO_PLAN`. Provider timeout and
+empty content retain bounded unavailable retries.
 
-Provider timeout, empty content, invalid JSON, and schema failure retain the
-bounded `planning_unavailable` retry policy. Model economic refusal remains a
-terminal `NO_PLAN` with an allowed economic reason.
+Missing input releases refund the current attempt with 60-second backoff; broker
+backpressure uses one second. Releases record current planning_unavailable while
+preserving stage/invocation history. Pre-dispatch cancellation releases only the
+still-owned claim under shield/CAS. After entering the planner cancellation
+defers with `PLANNER_CANCELLED_DISPATCH_UNKNOWN`, retains the attempt and emits
+`model_dispatch_unavailable`, not `model_skipped`, without inventing invocation.
+Post-inference cancellation retains observed invocation facts. Block/defer/fail
+keep these facts monotonic; existing attempt limits and material recovery apply.
 
 Deterministic compiler validation failure is terminal after one model attempt
 and persists `ENTRY_PLAN_COMPILE_INVALID:<bounded-code>`. Unexpected internal

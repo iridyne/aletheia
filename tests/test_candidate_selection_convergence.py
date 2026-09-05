@@ -209,7 +209,7 @@ def test_policy_identity_ignores_commit_but_rotates_semantic_contract(monkeypatc
     monkeypatch.setattr(
         authority,
         "candidate_selection_semantic_manifest",
-        lambda: {**original_manifest, "economic_estimator": "candidate-economic-utility-estimator/v4"},
+        lambda: {**original_manifest, "economic_estimator": "future-estimator-contract"},
     )
     assert candidate_selection_policy_identity(cfg) != commit_a
 
@@ -352,7 +352,7 @@ async def test_shadow_not_due_skips_expensive_candidate_build(monkeypatch):
             captured_at="2026-09-03T00:00:00+00:00",
             cfg=AletheiaConfig(),
         )
-        == 0
+        == {"status": "not_due", "record_count": 0, "reason": None}
     )
 
 
@@ -481,7 +481,7 @@ async def test_terminal_candidate_qualification_stops_confirmatory_capture(monke
             scanner_run_id="terminal",
             captured_at=captured_at,
             cfg=AletheiaConfig(),
-        ) == 0
+        ) == {"status": "terminal", "record_count": 0, "reason": None}
     assert evaluations == 1
 
     policy["epoch"] = 2
@@ -492,5 +492,50 @@ async def test_terminal_candidate_qualification_stops_confirmatory_capture(monke
         scanner_run_id="new-policy",
         captured_at="2026-09-03T08:00:00+00:00",
         cfg=AletheiaConfig(),
-    ) == 0
+    ) == {"status": "terminal", "record_count": 0, "reason": None}
     assert evaluations == 2
+
+
+@pytest.mark.anyio
+async def test_shadow_timeout_late_atomic_commit_updates_same_scanner(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    import threading
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseScannerRun
+    from aletheia.universe import service
+    from aletheia.universe import candidate_selection_evaluation
+    setup_env(tmp_path, monkeypatch)
+    bundle, _ = _authority_bundle()
+    scanner_id = bundle.batch.scanner_run_id
+    repo.insert_universe_scanner_run(UniverseScannerRun(
+        id=scanner_id, status="completed", metrics=json.dumps({"candidate_path": {"shadow_capture_status": "pending"}}),
+    ))
+    monkeypatch.setattr(service, "_terminal_candidate_selection_policy_fingerprint", None)
+    monkeypatch.setattr(candidate_selection_evaluation, "evaluate_candidate_selection_policy", lambda **kwargs: {"verdict": "insufficient"})
+    monkeypatch.setattr(service, "_build_candidate_selection_bundle", lambda **kwargs: bundle)
+    monkeypatch.setattr(repo, "universe_twin_shadow_capture_due", lambda *args, **kwargs: True)
+    monkeypatch.setattr(service, "_TWIN_SHADOW_TIMEOUT_SEC", 0.1)
+    entered, release = threading.Event(), threading.Event()
+    original_insert = repo.insert_universe_twin_shadow_bundle
+    def delayed_insert(*args, **kwargs):
+        count = original_insert(*args, **kwargs)
+        entered.set()
+        assert release.wait(5)
+        return count
+    monkeypatch.setattr(repo, "insert_universe_twin_shadow_bundle", delayed_insert)
+    try:
+        result = await service._persist_candidate_selection_shadow_nonfatal(
+            population=[], legacy_scored=[], legacy_allocated=[], scanner_run_id=scanner_id,
+            captured_at=bundle.batch.captured_at, cfg=AletheiaConfig(),
+        )
+        assert entered.is_set()
+        assert result == {"status": "pending", "record_count": 0, "reason": "capture_completion_unknown"}
+    finally:
+        release.set()
+        await asyncio.gather(*tuple(service._candidate_shadow_tasks))
+    metrics = json.loads(repo.get_db().execute("SELECT metrics FROM universe_scanner_runs WHERE id=?", (scanner_id,)).fetchone()[0])
+    assert metrics["candidate_path"]["shadow_capture_status"] == "captured"
+    assert repo.get_db().execute("SELECT COUNT(*) FROM universe_twin_shadow_batches WHERE scanner_run_id=?", (scanner_id,)).fetchone()[0] == 1

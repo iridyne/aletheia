@@ -2166,6 +2166,8 @@ export interface components {
             notify_daily_summary: boolean;
             /** Notify Trade Fills */
             notify_trade_fills: boolean;
+            /** Secret Configured */
+            secret_configured: boolean;
             /** Timeout Sec */
             timeout_sec: number;
             /** Url */
@@ -2398,7 +2400,7 @@ export interface components {
             candidate_max_continuous_age_sec: number;
             /**
              * Candidate Selection Policy
-             * @default legacy_total_score_v1
+             * @default candidate_selection_utility_v1
              * @enum {string}
              */
             candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";

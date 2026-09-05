@@ -1,6 +1,27 @@
 import time
 
 
+def test_candidate_progress_cache_requires_clock_and_is_detached(monkeypatch):
+    from datetime import datetime, timezone
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_candidate_path_progress", {
+        "availability": {"available": True, "reason": None}, "issues": [],
+    })
+    assert health.get_candidate_path_progress_snapshot()["availability"]["reason"] == "cache_invalid"
+    health._candidate_path_progress["generated_at"] = datetime.now(timezone.utc).isoformat()
+    snapshot = health.get_candidate_path_progress_snapshot()
+    snapshot["issues"].append("candidate_refresh_failed")
+    snapshot["availability"]["available"] = False
+    assert health.get_candidate_path_progress_snapshot()["issues"] == []
+    assert health.get_candidate_path_progress_snapshot()["availability"]["available"] is True
+
+
+def test_candidate_progress_cache_missing_is_unavailable(monkeypatch):
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_candidate_path_progress", None, raising=False)
+    assert health.get_candidate_path_progress_snapshot()["availability"]["available"] is False
+
+
 def test_exchange_reachable_uses_cached_connectivity_probe(monkeypatch):
     import aletheia.agent_runtime.connectivity as connectivity
     from aletheia.agent_runtime.health import _exchange_reachable

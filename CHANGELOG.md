@@ -8,6 +8,9 @@ their own independent versions.
 
 ### Changed
 
+* **candidate:** use measured-first Utility selection with explicit signal-based Startup for genuine sample scarcity in Demo; retire Legacy selection/admission controls, preserve historical evidence, acquire exact discovery books, and expose selection/business-progress diagnostics.
+* **entry:** recover bounded planning interruptions without inventing economic refusal, and show exact order/fill/position, cash-settlement, and separate four-hour outcome evidence across planning cycles.
+* **paper:** settle venue-reduced approved entry quantities and cancelled partial-fill remainders against actual fills while retaining Risk identity and position/cash reconciliation checks.
 * **entry:** split Entry Planner PlanIntent production from deterministic EntryPlan compilation, with portable strict structured outputs and operator-configurable deep-tier fallback (including DeepSeek V4 Flash).
 * **entry:** fail closed on unmonitorable exact venues, restore Resting Maker, Triggered Maker, and Triggered Taker, cancel new maker Orders after 60 seconds from durable Order creation, and align planner admission with the configured deep provider ([#2546](https://github.com/iridyne/aletheia/issues/2546)).
 * **entry:** canonicalize non-authoritative execution fields after a model selects `NO_PLAN`, preserving the decision across strict-schema model defaults ([#2557](https://github.com/iridyne/aletheia/issues/2557)).

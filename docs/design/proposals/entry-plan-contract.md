@@ -103,3 +103,53 @@ semantics rotates its affected generation under its own contract.
 The numeric V3 amendment is retained as historical rationale. The accepted
 [canonical Entry lifecycle cutover](canonical_entry_lifecycle.md) supersedes its
 runtime version selection without rewriting historical plans or evidence.
+
+## Accepted 2026-09-05 planning recovery amendment (D2)
+
+The approved Candidate lifecycle completion preserves implemented status and
+historical decisions. Missing registry or frozen-context Profiles are runtime
+blocks, never synthetic NO_PLAN. Dependency/broker releases refund only the
+current pre-dispatch attempt and record unavailable without erasing invocation
+facts. Cancellation after dispatch retains the attempt and uses bounded provider
+defer with unknown dispatch; before dispatch it releases only the still-owned
+claim under shield/CAS. Compiler geometry, causal generation rules, historical
+JSON/hashes, Legacy qualification/owner admission, Risk and Gateway are unchanged.
+No scheduler, activation gate or writable Opportunity entity is introduced.
+
+## Accepted 2026-09-05 execution lineage amendment (D2)
+
+The logical opportunity is a read-only view across existing attention, planning,
+execution and economics owners, not a new identity, ledger or writable state.
+Cycles retain their original Candidate/input/hash/Plan and follow only persisted
+predecessor/association links. A shared batched snapshot read follows exact
+Plan→Proposal/Order→Fill→Position and Position→close Order→close Fill relations.
+Missing/conflicting historical links are unavailable, never inferred by symbol
+or time. Candidate attention never owns an activated Plan, Order or Position.
+
+Execution is projected separately from planning: not-started, working/cancel
+pending, confirmed zero-fill termination, open/closing Position, closed pending
+economics, closed, excluded or unavailable. Fill without Position is unavailable;
+FILLED alone is not completion. Existing economics validators and settlement
+facts prove cost-complete closure, including paper-account net cash consistency
+within 1e-8. GET performs no settlement writes. Position realized economics and
+exact Fill-T0 four-hour Entry outcomes remain distinct; Candidate forward
+returns cannot substitute for either. Risk/Gateway and accounting permissions
+remain unchanged. Existing detail/list consumers share this read owner.
+
+## Accepted 2026-09-05 business progress amendment (D2)
+
+Background health samples the canonical Candidate ledgers, never a qualification
+evaluator or provider. Current frozen-epoch Twin outcome keys and exact Entry
+Fill outcome keys include debt from previous processes, excluding other epochs.
+Scanner pending Shadow capture is reconciled against its committed batch in the
+read projection; health does not repair or rewrite either ledger.
+
+The health job atomically replaces one in-process progress cache before health
+evaluation. Workbench and health share it; the default 600-second cadence yields
+a 1200-second TTL, derived from the actual job interval when overridden. Missing,
+failed, expired, or unconfigured probes cannot establish healthy business state.
+Disabled and paused modes remain explicit. Refresh failure/stall, ready planning
+stall and overdue outcomes are alert-only, never restart or authority signals.
+Normal empty selection, observe-only capability, future retries, natural Trigger
+or Fill waits and terminal qualification capture remain normal explanations.
+The normative clocks and projection fields are in the decision lifecycle contract.

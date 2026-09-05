@@ -66,6 +66,7 @@ def project_candidate_entry_lifecycle(candidate: dict, cycles: list[dict]) -> di
     )
     return {
         "lifecycle_state": state,
+        "execution_state": (current.get("execution") or {}).get("execution_state", "NOT_STARTED") if current else "NOT_STARTED",
         "lifecycle_reason": reason,
         "current_cycle_number": int(current.get("cycle_number") or 1) if current else None,
         "expired_plan_count": expired_count,
@@ -98,7 +99,9 @@ def _cycle_projection(cycle: dict) -> dict[str, Any]:
         events.append({"event": "planning_started", "at": cycle["planning_started_at"], "reason": None})
     if cycle.get("model_invoked") or outcome:
         events.append({
-            "event": "model_invoked" if cycle.get("model_invoked") else "model_skipped",
+            "event": ("model_invoked" if cycle.get("model_invoked") else
+                      "model_dispatch_unavailable" if reason == "PLANNER_CANCELLED_DISPATCH_UNKNOWN" else
+                      "model_skipped"),
             "at": cycle.get("model_invoked_at") or cycle.get("completed_at") or cycle.get("updated_at"),
             "reason": None if cycle.get("model_invoked") else reason,
         })
@@ -130,6 +133,8 @@ def _cycle_projection(cycle: dict) -> dict[str, Any]:
         "outcome_class": outcome,
         "outcome_reason": reason,
         "entry_plan_id": cycle.get("entry_plan_id"),
+        "execution": cycle.get("execution"),
+        "execution_state": (cycle.get("execution") or {}).get("execution_state", "NOT_STARTED"),
         "entry_plan_status": cycle.get("entry_plan_status"),
         "events": sorted(events, key=lambda event: (str(event.get("at") or ""), event["event"])),
     }

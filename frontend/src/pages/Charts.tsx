@@ -189,7 +189,8 @@ function StructureTab({
               <>
                 <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? attention?.rank ?? '—'}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Family</span><span>{humanize(attention?.candidate_family ?? member?.scanner_family ?? '—')}</span></div>
-                <div className="flex justify-between"><span className="text-muted">Selection Utility</span><span className="mono">{member?.candidate_selection_utility_pct != null ? `${fmtNum(member.candidate_selection_utility_pct)}%` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">{member?.admission_basis === 'startup' ? '冷启动：信号强度' : '收益排序：预期净收益'}</span><span className="mono">{member?.admission_basis === 'startup' ? (member.pessimistic_strength == null ? '未知' : fmtNum(member.pessimistic_strength)) : member?.candidate_selection_utility_pct != null ? `${fmtNum(member.candidate_selection_utility_pct)}%` : '未知'}</span></div>
+                {member?.admission_basis === 'startup' && <p className="hint">预期净收益未知 · {({ no_history: '暂无历史样本', parent_sample_insufficient: '父组样本不足', child_sample_insufficient: '子组样本不足' } as Record<string, string>)[member.startup_reason ?? ''] ?? member.startup_reason ?? '原因未知'}</p>}
                 <div className="flex justify-between"><span className="text-muted">Spread</span><span className="mono">{member?.spread_bps != null ? `${member.spread_bps} bps` : '—'}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Liquidity Score</span><span className="mono">{member?.liquidity_score ?? '—'}</span></div>
               </>
@@ -840,7 +841,7 @@ export default function Charts() {
       {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}
     </Card>}
     {candidateId && !entryPlanId && <Card className="entry-workbench-notice">
-      Candidate {candidateId.slice(0, 8)} · {candidateDetail?.attention?.candidate_family ?? candidateDetail?.member?.scanner_family ?? 'observed'} · {candidateDetail?.member?.total_score != null ? `score ${fmtNum(candidateDetail.member.total_score)}` : 'candidate context'}
+      Candidate {candidateId.slice(0, 8)} · {candidateDetail?.attention?.candidate_family ?? candidateDetail?.member?.scanner_family ?? 'observed'} · {candidateDetail?.member?.admission_basis === 'startup' ? '冷启动：信号强度' : candidateDetail?.member?.candidate_selection_policy === 'candidate_selection_utility_v1' ? '收益排序：预期净收益' : '历史 Candidate'}
     </Card>}
     <div ref={shellRef} className="market-workbench-shell">
       <aside className="market-instrument-rail">{navigator}</aside>
