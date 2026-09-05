@@ -1,18 +1,23 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Routes, Route, NavLink, Navigate, Link, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Diamond, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { bootApi } from './api/boot'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
+import { DriftUpdatePill } from './components/DriftUpdatePill'
+import { NotificationCenter } from './components/notifications/NotificationCenter'
 import StatusCluster from './components/StatusCluster'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { devPreviewLabel } from './dev-preview'
+import { useDialogFocus } from './components/ui/useDialogFocus'
+import { useTabSync } from './lib/tabSync'
+import { initWakeupGate } from './lib/wakeupGate'
+import { dumpIncidentSnapshot } from './lib/incidentDump'
 import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
 import { deferTask } from './lib/deferred'
 import { NAV } from './routeManifest'
-import { useDialogFocus } from './components/ui/useDialogFocus'
 
 // Local paper exchange honesty is rendered by AccountSnapshot: Local paper · no exchange.
 
@@ -81,7 +86,14 @@ export default function App() {
     refetchInterval: 10_000,
     retry: 1,
   })
+  const qc = useQueryClient()
   const realtime = useRealtimeUpdates(Boolean(shell.data))
+  const driftIssue = (shell.data?.health?.issues ?? []).find(
+    (i: string) => i.startsWith('code_updated_pending_restart:'),
+  ) ?? ''
+  const driftRange = driftIssue.replace('code_updated_pending_restart:', '')
+  useTabSync(qc)
+  useEffect(() => initWakeupGate(qc), [qc])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
@@ -179,6 +191,26 @@ export default function App() {
           </button>
           <MarketTicker />
           {previewLabel && <span className="dev-preview-banner">{previewLabel}</span>}
+          <DriftUpdatePill driftIssue={driftIssue} driftRange={driftRange} />
+          <button
+            type="button"
+            className="cmdk-topbar-pill mono"
+            onClick={() => setPaletteRequested(true)}
+            aria-label="Open command palette"
+            title="Command palette (⌘K)"
+          >
+            <span className="cmdk-icon" aria-hidden="true">⌘K</span>
+          </button>
+          <button
+            type="button"
+            className="topbar-btn"
+            onClick={() => dumpIncidentSnapshot(qc)}
+            aria-label="Download incident snapshot"
+            title="Download frontend cache snapshot for incident debugging"
+          >
+            <span aria-hidden="true" style={{ fontSize: '0.75rem' }}>⬇ Dump</span>
+          </button>
+          <NotificationCenter />
           <StatusCluster data={shell.data} realtime={realtime} />
         </header>
         <main className="main">

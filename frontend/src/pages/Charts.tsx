@@ -16,7 +16,7 @@ import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDr
 import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
-import { fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
+import { fmtCompact, fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 import type { Candidate, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
 
@@ -250,7 +250,7 @@ function TimeframeMenu({ open, anchorRef, current, onSelect, onClose }: {
       tabIndex={-1}
       aria-label="More timeframes"
       className="market-tf-menu"
-      style={pos ? { top: pos.top, left: pos.left, visibility: 'visible' } : { top: -9999, left: -9999, visibility: 'hidden' }}
+      style={pos ? { top: pos.top, left: pos.left, opacity: 1 } : { top: 0, left: 0, visibility: 'hidden' }}
       onMouseDown={event => event.stopPropagation()}
     >
       {OVERFLOW_TIMEFRAME_GROUPS.map(group => <div className="market-tf-menu-group" key={group.title}>
@@ -727,14 +727,23 @@ export default function Charts() {
     />
 
     <div className="market-workbench-context">
-      <span className="market-context-static mono">{fmtSymbol(active.symbol, active.marketType)}</span>
       <Button variant="ghost" className="market-context-picker" aria-expanded={pickerOpen} aria-controls={dialogId} onClick={() => setPickerOpen(true)}>
-        <span>Choose instrument</span><strong>{fmtSymbol(active.symbol, active.marketType)} · {active.marketType}</strong><span aria-hidden="true">⌄</span>
+        <strong className="mono">{fmtSymbol(active.symbol, active.marketType).toUpperCase()} {active.marketType === 'perp' ? 'PERP' : active.marketType === 'futures' ? 'FUT' : ''}</strong>
+        <span className="text-muted mono">· {(active.exchange || 'exchange').toUpperCase()}</span>
+        <span aria-hidden="true" className="text-muted">⌄</span>
       </Button>
-      <strong className="market-context-price mono">{currentSnapshot?.price == null ? 'Price not available' : fmtNum(currentSnapshot.price)}</strong>
-      {currentSnapshot?.change_pct_24h != null && <span className={currentSnapshot.change_pct_24h > 0 ? 'pnl-positive' : currentSnapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}>{fmtDelta(currentSnapshot.change_pct_24h)}%</span>}
-      <span>{active.exchange || 'default exchange'} · {active.marketType}</span>
-      <span className="market-context-provenance">{dataMeta ? `Data refreshed ${metaAge}` : 'Data source not available'}</span>
+      <strong className="market-context-price mono">{currentSnapshot?.price == null ? '—' : fmtNum(currentSnapshot.price)}</strong>
+      {currentSnapshot?.change_pct_24h != null && (
+        <span className={`mono ${currentSnapshot.change_pct_24h > 0 ? 'pnl-positive' : currentSnapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}`}>
+          {currentSnapshot.change_pct_24h > 0 ? '▲' : currentSnapshot.change_pct_24h < 0 ? '▼' : ''}{fmtDelta(currentSnapshot.change_pct_24h)}%
+        </span>
+      )}
+      {currentSnapshot?.volume_24h != null && (
+        <span className="mono text-muted">VOL ${fmtCompact(currentSnapshot.volume_24h)}</span>
+      )}
+      {dataMeta?.ageMs != null && (
+        <span className="mono text-muted market-context-age">{metaAge}</span>
+      )}
     </div>
     {entryPlanId && <Card className="entry-workbench-notice">
       {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}

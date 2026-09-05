@@ -32,7 +32,7 @@ describe('StatusCluster popover contract', () => {
     expect(SRC).toContain('role="dialog"')
     expect(SRC).toContain('onPointerDown')
     expect(SRC).toContain("event.key !== 'Escape'")
-    expect(SRC).toContain('tabIndex={popoverOpen ? 0 : -1}')
+    // tabIndex contract moved to DriftUpdatePill which manages the restart button
     expect(CSS).toContain('.status-cluster-wrap:hover .status-popover')
     expect(CSS).toContain('.status-popover.is-open')
   })
@@ -59,16 +59,14 @@ describe('StatusCluster popover contract', () => {
 
     const opener = host.querySelector<HTMLButtonElement>('.status-cluster')!
     const popover = host.querySelector<HTMLElement>('[role="dialog"]')!
-    const restart = host.querySelector<HTMLButtonElement>('.sp-drift button')!
     expect(opener.tagName).toBe('BUTTON')
     expect(opener.getAttribute('aria-expanded')).toBe('false')
     expect(popover.getAttribute('aria-hidden')).toBe('true')
-    expect(restart.tabIndex).toBe(-1)
 
     act(() => opener.click())
     expect(opener.getAttribute('aria-expanded')).toBe('true')
     expect(popover.getAttribute('aria-hidden')).toBe('false')
-    expect(restart.tabIndex).toBe(0)
+    // sp-drift section removed; drift pill now lives in topbar (DriftUpdatePill)
 
     act(() => opener.click())
     expect(opener.getAttribute('aria-expanded')).toBe('false')
@@ -78,7 +76,6 @@ describe('StatusCluster popover contract', () => {
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
     expect(opener.getAttribute('aria-expanded')).toBe('false')
     expect(document.activeElement).toBe(opener)
-    expect(restart.tabIndex).toBe(-1)
 
     act(() => opener.click())
     act(() => document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })))

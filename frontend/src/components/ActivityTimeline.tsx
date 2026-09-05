@@ -14,6 +14,16 @@ type ActivityItem = {
 
 type Filter = 'all' | 'agent' | 'risk' | 'trade' | 'system'
 
+function safeLength(raw: string | undefined | null): number {
+  if (!raw) return 0
+  try {
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr.length : 0
+  } catch {
+    return 0
+  }
+}
+
 function normalizeRuns(runs: any[]): ActivityItem[] {
   return runs.map(r => ({
     id: `run-${r.id}`,
@@ -21,11 +31,10 @@ function normalizeRuns(runs: any[]): ActivityItem[] {
     type: 'agent_run' as const,
     icon: '◈',
     title: `${r.agent_name} ${r.status === 'completed' ? 'completed' : r.status}`,
-    subtitle: r.outputs_created ? `outputs: ${JSON.parse(r.outputs_created || '[]').length}` : undefined,
+    subtitle: r.outputs_created ? `outputs: ${safeLength(r.outputs_created)}` : undefined,
     status: r.status,
   }))
 }
-
 function normalizeEvents(events: any[]): ActivityItem[] {
   return events.map(e => ({
     id: `evt-${e.id}`,

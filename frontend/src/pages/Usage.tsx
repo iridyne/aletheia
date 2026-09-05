@@ -36,9 +36,34 @@ const agentColumns: ColumnDef<UsageAgentBreakdown>[] = [
   { accessorKey: 'p95_latency_ms', header: 'P95 latency', cell: info => duration(info.getValue<number | null>()) },
 ]
 const modelColumns: ColumnDef<UsageModelBreakdown>[] = [
-  { accessorKey: 'model', header: 'Model' }, { accessorKey: 'provider', header: 'Provider' }, { accessorKey: 'calls', header: 'Calls', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'success_rate_pct', header: 'Success', cell: info => percent(info.getValue<number | null>()) }, { accessorKey: 'input_tokens', header: 'Input', cell: info => integer(info.getValue<number | null>()) },
-  { accessorKey: 'output_tokens', header: 'Output', cell: info => integer(info.getValue<number | null>()) }, { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
+  { accessorKey: 'model', header: 'Model' }, { accessorKey: 'provider', header: 'Provider' },
+  {
+    id: 'invocations',
+    header: 'Invocations',
+    cell: ({ row }) => {
+      const d = row.original
+      return (
+        <span className="mono">
+          {integer(d.calls)}
+          <br /><span className="text-muted text-sm">{percent(d.success_rate_pct)} ok</span>
+        </span>
+      )
+    },
+  },
+  {
+    id: 'tokens_combo',
+    header: 'Tokens (In / Out)',
+    cell: ({ row }) => {
+      const d = row.original
+      return (
+        <span className="mono">
+          {integer((d.input_tokens ?? 0) + (d.output_tokens ?? 0))}
+          <br /><span className="text-muted text-sm">{integer(d.input_tokens)} / {integer(d.output_tokens)}</span>
+        </span>
+      )
+    },
+  },
+  { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
   { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
 ]
 const providerColumns: ColumnDef<UsageProviderBreakdown>[] = [

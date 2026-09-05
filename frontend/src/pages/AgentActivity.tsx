@@ -10,7 +10,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
 import ThesisText from '../components/ThesisText'
-import { Badge, Button, Card, useToast } from '../components/ui'
+import { Badge, Button, Card, SymbolLink, useToast } from '../components/ui'
 import {
   fmtOpportunityScore,
   fmtScore100,
@@ -68,17 +68,37 @@ function resolveArrayReadState(
 const runColumns = [
   runCol.accessor('agent_name', { header: 'Agent', cell: info => humanize(info.getValue()) }),
   runCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
-  runCol.accessor('trigger_type', { header: 'Trigger', cell: info => humanize(info.getValue()) }),
-  runCol.accessor('model_provider', { header: 'Provider', cell: info => info.getValue() || '—' }),
+  runCol.display({
+    id: 'trigger_provider',
+    header: 'Trigger · Provider',
+    cell: ({ row }) => {
+      const r = row.original
+      return (
+        <span className="mono">
+          {humanize(r.trigger_type)}
+          {r.model_provider ? <span className="text-muted"> · {r.model_provider}</span> : null}
+        </span>
+      )
+    },
+  }),
   runCol.accessor('outputs_created', {
     header: 'Outputs',
-    cell: info => { try { return <span className="mono">{JSON.parse(info.getValue() || '[]').length}</span> } catch { return <span className="mono">0</span> } },
+    cell: info => {
+      try {
+        const count = JSON.parse(info.getValue() || '[]').length
+        return count === 0
+          ? <span className="text-muted">none</span>
+          : <span className="mono">{count} artifact{count === 1 ? '' : 's'}</span>
+      } catch {
+        return <span className="text-muted">none</span>
+      }
+    },
   }),
   runCol.accessor('started_at', { header: 'Started', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
 const oppColumns = [
-  oppCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market)}</span> }),
+  oppCol.accessor('symbol', { header: 'Symbol', cell: info => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market} bold /> }),
   oppCol.accessor('market', { header: 'Market', cell: info => humanize(info.getValue()) }),
   oppCol.accessor('direction_bias', { header: 'Direction', cell: info => humanize(info.getValue()) }),
   oppCol.accessor('confidence_score', {
@@ -325,7 +345,7 @@ function OpportunitiesTab({ opps, state }: { opps: Opportunity[], state?: DataSt
               {selected.asset_class === 'prediction' ? (
                 <Button variant="secondary" onClick={() => navigate('/prediction-markets')}>View in Prediction Lens</Button>
               ) : (
-                <Button variant="secondary" onClick={() => navigate('/charts')}>View on Chart</Button>
+                <Button variant="secondary" onClick={() => navigate(`/charts?symbol=${encodeURIComponent(selected.symbol || '')}&market_type=${encodeURIComponent(selected.market || 'spot')}`)}>View on Chart</Button>
               )}
             </div>
           </>
@@ -426,13 +446,12 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
           {steps.length > 0 ? (
             <table className="drawer-table mt-2">
               <thead>
-                <tr><th>#</th><th>Action</th><th>Input</th><th>Output</th></tr>
+                <tr><th>Step / Action</th><th>Input</th><th>Output</th></tr>
               </thead>
               <tbody>
                 {steps.map((s: any, i: number) => (
                   <tr key={s.id || i}>
-                    <td className="mono">{s.step_number ?? i + 1}</td>
-                    <td className="mono">{s.action || '—'}</td>
+                    <td className="mono">{s.step_number ?? i + 1}. {s.action || '—'}</td>
                     <td className="mono text-muted">{s.input_data ? String(s.input_data).slice(0, 80) : '—'}</td>
                     <td className="mono text-muted">{s.output_data ? String(s.output_data).slice(0, 80) : '—'}</td>
                   </tr>

@@ -303,7 +303,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         {(() => {
           const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
           const ok = Math.abs(total - 1.0) < 0.001
-          return <div style={{ fontSize: '0.72rem', color: ok ? 'var(--green)' : 'var(--red)', marginTop: 'var(--space-1)' }}>Total: {total.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
+          return <div className={`text-2xs mt-1 ${ok ? 'text-green' : 'text-red'}`}>Total: {total.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
         })()}
       </div>
       <Collapsible title="Per-regime family quota overrides">
@@ -328,7 +328,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
                   </label>
                 ))}
               </div>
-              <div style={{ fontSize: '0.72rem', color: ok ? 'var(--green)' : 'var(--red)', marginTop: 'var(--space-1)' }}>Total: {rt.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
+              <div className={`text-2xs mt-1 ${ok ? 'text-green' : 'text-red'}`}>Total: {rt.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
             </div>
           )
         })}
@@ -633,7 +633,7 @@ function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       </div>
 
       {/* Symbol chips */}
-      <div className="flex flex-wrap gap-1 mb-3" style={{ minHeight: '2rem' }}>
+      <div className="flex flex-wrap gap-1 mb-3 min-h-8">
         {draft.map(s => (
           <span key={s} className={`symbol-chip ${chipTone}`}>
             {s}
@@ -653,7 +653,7 @@ function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           value={input} placeholder="e.g. SUIUSDT"
           onChange={e => setInput(e.target.value.toUpperCase())}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          style={{ width: '140px', fontFamily: 'var(--mono)', textTransform: 'uppercase' }}
+          className="mono w-36 uppercase"
         />
         <button className="secondary" onClick={add}>Add</button>
         {dirty && (
@@ -663,7 +663,7 @@ function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         )}
       </div>
       {mode === 'whitelist' && draft.length === 0 && dirty && (
-        <div className="settings-save-msg err" style={{ marginTop: 'var(--space-1)' }}>Add at least one symbol to save in whitelist mode</div>
+        <div className="settings-save-msg err mt-1">Add at least one symbol to save in whitelist mode</div>
       )}
       <SaveMsg msg={msg} />
       <p className="hint">

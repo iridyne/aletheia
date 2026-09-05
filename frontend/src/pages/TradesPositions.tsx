@@ -27,6 +27,7 @@ import {
 	Badge,
 	Button,
 	Card,
+	SymbolLink,
 	TableWrap,
 	useConfirm,
 	useToast,
@@ -41,6 +42,7 @@ import {
 	marketBadgeTone,
 	isPerpMarket,
 } from "../lib/format";
+import { useCellFlash } from "../lib/useCellFlash";
 import { orderIntent, orderIntentLabel, type OrderIntent } from "../lib/orderIntent";
 import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import { bootApi } from "../api/boot";
@@ -81,6 +83,24 @@ export const pnlCell = (v: number | null | undefined) => {
 		</span>
 	);
 };
+
+/** PnL cell with 380ms flash feedback. */
+function FlashPnLCell({ value }: { value: number | null | undefined }) {
+  const flash = useCellFlash(value)
+  if (value == null) return <span className="mono text-muted">—</span>
+  if (value === 0) return <span className="mono">{fmtNum(value)}</span>
+  return (
+    <span className={`mono ${value > 0 ? 'pnl-positive' : 'pnl-negative'} ${flash}`}>
+      {fmtSigned(value)}
+    </span>
+  )
+}
+
+/** Price cell with 380ms flash feedback. */
+function FlashPriceCell({ value }: { value: number | null | undefined }) {
+  const flash = useCellFlash(value)
+  return <span className={`mono ${flash}`}>{fmtNum(value)}</span>
+}
 
 type CloseResult = Awaited<ReturnType<typeof api.closePosition>>;
 
@@ -155,79 +175,98 @@ const orderIntentBadge = (order: Order) => {
 };
 
 const openColumns = [
-	posCol.accessor("symbol", {
-		header: "Symbol",
-		cell: (info) => (
-			<span className="mono">
-				{fmtSymbol(info.getValue(), info.row.original.market_type)}
-			</span>
-		),
-	}),
-	posCol.accessor("execution_mode", {
-		id: "exchange",
-		header: "Exchange",
-		cell: (info) => exchangeOf(info.getValue()),
-	}),
-	posCol.accessor("market_type", {
-		id: "market",
-		header: "Market",
-		cell: (info) => marketBadge(info.getValue()),
-	}),
-	posCol.accessor("direction", {
-		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
-	}),
-	posCol.accessor("quantity", {
-		header: "Qty",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("entry_price", {
-		header: "Entry (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("current_price", {
-		header: "Current (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
 	posCol.display({
-		id: "leverage",
-		header: "Lev",
+		id: 'instrument',
+		header: 'Instrument',
 		cell: ({ row }) => {
-			const lev = (row.original as any).leverage;
-			return lev && lev > 1 ? (
-				<Badge tone="blue">{lev}x</Badge>
-			) : (
-				<span className="text-muted">1x</span>
-			);
+			const p = row.original
+			const lev = p.leverage
+			return (
+				<span>
+					<SymbolLink symbol={p.symbol} marketType={p.market_type} bold />
+					<br />
+					<span className="text-muted text-sm mono">{exchangeOf(p.execution_mode)} · {p.market_type}{lev && lev > 1 ? ` · ${lev}x` : ''}</span>
+				</span>
+			)
 		},
 	}),
-	posCol.accessor("stop_price", {
-		header: "Stop (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("take_profit_price", {
-		header: "TP (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("unrealized_pnl", {
-		header: "uPnL (USDT)",
-		cell: (info) => pnlCell(info.getValue()),
-	}),
+	// 2. Side / Qty
 	posCol.display({
-		id: "unrealized_pnl_source",
-		header: "uPnL source",
-		cell: ({ row }) => pnlSourceBadge(row.original.unrealized_pnl_source),
+		id: 'side_qty',
+		header: 'Side / Qty',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span>
+					<Badge tone={p.direction === 'long' ? 'green' : 'red'}>{humanize(p.direction)}</Badge>
+					<br />
+					<span className="mono text-sm">{fmtNum(p.quantity)}</span>
+				</span>
+			)
+		},
+	}),
+	// 3. Price (Entry / Current)
+	posCol.display({
+		id: 'price_pair',
+		header: 'Entry / Current',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span className="mono">
+					{fmtNum(p.entry_price)}
+					<br />
+					<FlashPriceCell value={p.current_price} />
+				</span>
+			)
+		},
+	}),
+	// 4. Risk Bracket (SL / TP)
+	posCol.display({
+		id: 'bracket',
+		header: 'SL / TP',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span className="mono">
+					{fmtNum(p.stop_price)} / {fmtNum(p.take_profit_price)}
+				</span>
+			)
+		},
+	}),
+	// 5. Unrealized PnL (value + source badge)
+	posCol.display({
+		id: 'upnl',
+		header: 'Unrealized PnL',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span>
+					<FlashPnLCell value={p.unrealized_pnl} />
+					{p.unrealized_pnl_source && (
+						<br />
+					)}
+					{p.unrealized_pnl_source && pnlSourceBadge(p.unrealized_pnl_source)}
+				</span>
+			)
+		},
+	}),
+	// 6. Actions (kept as-is for close button)
+	posCol.display({
+		id: 'actions',
+		header: '',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<PositionActions position={p} />
+			)
+		},
 	}),
 ];
 
 const closedColumns = [
 	posCol.accessor("symbol", {
 		header: "Symbol",
-		cell: (info) => (
-			<span className="mono">
-				{fmtSymbol(info.getValue(), info.row.original.market_type)}
-			</span>
-		),
+		cell: (info) => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} bold />,
 	}),
 	posCol.accessor("direction", {
 		header: "Dir",
@@ -241,43 +280,26 @@ const closedColumns = [
 		header: "Entry (USDT)",
 		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
 	}),
-	posCol.accessor("realized_pnl", {
-		header: "PnL (USDT)",
-		cell: (info) => pnlCell(info.getValue()),
-	}),
 	posCol.display({
-		id: "pnl_status",
-		header: "PnL status",
+		id: "realized_pnl_combo",
+		header: "PnL",
 		cell: ({ row }) => {
-			if (row.original.realized_pnl_complete !== false) {
-				return <span className="text-muted">complete</span>;
-			}
-			const reason =
-				row.original.realized_pnl_unavailable_reason || "economics unavailable";
-			// Terminal "gave up" state is distinct from an in-flight retry — the
-			// settler has stopped trying. Surface it in warning tone so the operator
-			// doesn't read "Incomplete Funding Economics" as "still working on it".
-			if (reason === "funding_permanently_unrecoverable") {
-				return (
-					<span
-						className="pnl-warning"
-						title="paper_funding_settler exhausted retries; realized_pnl stays NULL (never fabricated)"
-					>
-						funding lost
-					</span>
-				);
-			}
-			if (reason === "broker_funding_history_expired") {
-				return (
-					<span
-						className="pnl-warning"
-						title="UTA private funding history expired; realized_pnl stays NULL (never fabricated)"
-					>
-						funding history expired
-					</span>
-				);
-			}
-			return <span className="text-muted">{humanize(reason)}</span>;
+			const p = row.original
+			const statusNode = p.realized_pnl_complete !== false ? null : (
+				<span className="pnl-warning text-sm">
+					{p.realized_pnl_unavailable_reason === "funding_permanently_unrecoverable"
+						? 'funding lost'
+						: p.realized_pnl_unavailable_reason === "broker_funding_history_expired"
+							? 'history expired'
+							: humanize(p.realized_pnl_unavailable_reason ?? 'incomplete')}
+				</span>
+			)
+			return (
+				<span>
+					<FlashPnLCell value={p.realized_pnl} />
+					{statusNode && <><br />{statusNode}</>}
+				</span>
+			)
 		},
 	}),
 	posCol.accessor("close_reason", {
@@ -286,9 +308,7 @@ const closedColumns = [
 	}),
 	posCol.accessor("closed_at", {
 		header: "Closed",
-		cell: (info) => (
-			<span className="mono">{fmtTimestamp(info.getValue())}</span>
-		),
+		cell: (info) => <span className="mono">{fmtTimestamp(info.getValue())}</span>,
 	}),
 ];
 
@@ -300,11 +320,7 @@ const orderColumns = [
 	}),
 	ordCol.accessor("symbol", {
 		header: "Symbol",
-		cell: (info) => (
-			<span className="mono">
-				{fmtSymbol(info.getValue(), info.row.original.market_type)}
-			</span>
-		),
+		cell: (info) => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} bold />,
 	}),
 	ordCol.accessor("direction", {
 		header: "Dir",
@@ -822,9 +838,7 @@ function ReconciliationCard({
 									<tbody>
 										{external.map((i, idx) => (
 											<tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
-												<td className="mono">
-													{fmtSymbol(i.symbol, i.market_type)}
-												</td>
+												<td><SymbolLink symbol={i.symbol} marketType={i.market_type} /></td>
 												<td>{humanize(i.direction)}</td>
 												<td className="mono">{fmtNum(i.exchange?.quantity)}</td>
 												<td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
@@ -858,9 +872,7 @@ function ReconciliationCard({
 									<tbody>
 										{orphaned.map((i, idx) => (
 											<tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
-												<td className="mono">
-													{fmtSymbol(i.symbol, i.market_type)}
-												</td>
+												<td><SymbolLink symbol={i.symbol} marketType={i.market_type} /></td>
 												<td>{humanize(i.direction)}</td>
 												<td className="mono">{fmtNum(i.local?.quantity)}</td>
 												<td className="mono">{fmtNum(i.local?.entry_price)}</td>

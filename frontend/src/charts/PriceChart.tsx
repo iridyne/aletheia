@@ -10,12 +10,12 @@ import {
   calculateRsi, calculateStochastic, DEFAULT_CHART_SETTINGS, estimateVisibleVolumeProfile,
   MAIN_INDICATOR_IDS, MAX_INDICATORS_PER_ZONE, SUBCHART_INDICATOR_IDS,
   type Bar, type ChartMarker, type ChartMarkerBucket, type ChartSettings, type MainIndicatorId,
-  type MarkerKind, type PositionLevel, type SubchartIndicatorId, type VisibleVolumeProfile,
+  type MarkerKind, type PositionLevel, type SubchartIndicatorId, type VisibleVolumeProfile, type VolumeProfileBin,
 } from './priceChartModel'
 
 export type {
   Bar, ChartMarker, ChartMarkerBucket, ChartSettings, MainIndicatorId, MarkerKind,
-  PositionLevel, SubchartIndicatorId, VisibleVolumeProfile,
+  PositionLevel, SubchartIndicatorId, VisibleVolumeProfile, VolumeProfileBin,
 }
 export {
   bucketChartMarkers, calculateAtr, calculateBollingerBands, calculateEma, calculateMacd,
@@ -301,6 +301,8 @@ export default function PriceChart({
   const timesRef = useRef<Set<number>>(new Set())
   const bucketsRef = useRef<ChartMarkerBucket[]>([])
   const profileLinesRef = useRef<IPriceLine[]>([])
+  const vpCanvasRef = useRef<HTMLCanvasElement>(null)
+  const profileRef = useRef<VisibleVolumeProfile | null>(null)
   const levelLinesRef = useRef<IPriceLine[]>([])
   const initializedRef = useRef(false)
   const isSyncingRangeRef = useRef(false)
@@ -336,6 +338,50 @@ export default function PriceChart({
       }))
     }
   }, [])
+  const drawVpCanvas = useCallback(() => {
+    const canvas = vpCanvasRef.current
+    const series = candleRef.current
+    const profile = profileRef.current
+    if (!canvas || !series || !profile || !profile.bins.length) {
+      if (canvas) { const ctx = canvas.getContext('2d'); ctx?.clearRect(0, 0, canvas.width, canvas.height) }
+      return
+    }
+    const container = canvas.parentElement
+    if (!container) return
+    const { width, height } = container.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+    }
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.scale(dpr, dpr)
+    const BAR_MAX_WIDTH = Math.round(width * 0.12) // max 12% of chart width for VP bars
+    const { bins, maxVolume } = profile
+    for (const bin of bins) {
+      const y1 = series.priceToCoordinate(bin.priceHigh)
+      const y2 = series.priceToCoordinate(bin.priceLow)
+      if (y1 == null || y2 == null) continue
+      const barHeight = Math.max(1, Math.abs(y2 - y1) - 1)
+      const barWidth = maxVolume > 0 ? Math.max(2, (bin.volume / maxVolume) * BAR_MAX_WIDTH) : 2
+      const x = width - barWidth // right-aligned
+      const y = Math.min(y1, y2)
+      if (bin.isPoc) {
+        ctx.fillStyle = 'rgba(46, 230, 168, 0.65)'
+      } else if (bin.isValueArea) {
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.22)'
+      } else {
+        ctx.fillStyle = 'rgba(125, 137, 151, 0.18)'
+      }
+      ctx.fillRect(x, y, barWidth, barHeight)
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+  }, [])
+
   const applyProfile = useCallback((range?: LogicalRange | null) => {
     const chart = chartRef.current
     const series = candleRef.current
@@ -344,14 +390,16 @@ export default function PriceChart({
     const visible = range ?? chart.timeScale().getVisibleLogicalRange()
     const profile = settingsRef.current.overlays.profile && visible
       ? estimateVisibleVolumeProfile(barsRef.current, visible.from, visible.to) : null
-    if (!profile) return
+    profileRef.current = profile
+    if (!profile) { drawVpCanvas(); return }
     const axisLabelVisible = settingsRef.current.scale.priceLabels
     profileLinesRef.current.push(
       series.createPriceLine({ price: profile.poc, title: 'Est. POC', color: chartTheme.lineColor, lineWidth: 2, lineStyle: LineStyle.Solid, axisLabelVisible }),
       series.createPriceLine({ price: profile.vah, title: 'Est. VAH', color: chartTheme.borderColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible }),
       series.createPriceLine({ price: profile.val, title: 'Est. VAL', color: chartTheme.borderColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible }),
     )
-  }, [])
+    drawVpCanvas()
+  }, [drawVpCanvas])
   const applyMarkers = useCallback(() => {
     const series = candleRef.current
     if (!series) return
@@ -517,7 +565,10 @@ export default function PriceChart({
     const poll = window.setInterval(() => void pollLatest(), LIVE_POLL_MS)
     const resizeObserver = new ResizeObserver(() => {
       const priceRect = priceContainer.getBoundingClientRect()
-      if (priceRect.width && priceRect.height) chart.applyOptions({ width: priceRect.width, height: priceRect.height })
+      if (priceRect.width && priceRect.height) {
+        chart.applyOptions({ width: priceRect.width, height: priceRect.height })
+        drawVpCanvas()
+      }
     })
     resizeObserver.observe(priceContainer)
     return () => {
@@ -657,13 +708,19 @@ export default function PriceChart({
       data-chart-engine="tradingview-lite"
       data-subchart-count={subcharts.length}
     >
-      <div className="market-price-chart-wrap">
+      <div className="market-price-chart-wrap" style={{ position: 'relative' }}>
         <div
           ref={priceContainerRef}
           id="market-price-chart"
           className="market-price-chart"
           aria-label={`${symbol} candlestick chart`}
           data-chart-library="lightweight-charts"
+        />
+        <canvas
+          ref={vpCanvasRef}
+          className="market-vp-canvas"
+          aria-hidden="true"
+          style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
         />
         {settings.indicators.main.length > 0 && (
           <div className="market-chart-indicator-legend" aria-label="Main chart indicators">

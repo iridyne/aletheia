@@ -16,7 +16,7 @@ import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDr
 import PageHeader from '../components/PageHeader'
 import MetricTile from '../components/MetricTile'
 import Tabs from '../components/Tabs'
-import { Badge, Button, Card } from '../components/ui'
+import { Badge, Button, Card, SymbolLink } from '../components/ui'
 import { fmtNum, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 
 const planCol = createColumnHelper<EntryPlan>()
@@ -104,7 +104,7 @@ function lifecycleLabel(row: Pick<CandidateWorkbenchRow, 'lifecycle_state' | 'cu
 const planColumns = [
   planCol.accessor('symbol', {
     header: 'Exact instrument',
-    cell: info => <><strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
+    cell: info => <><SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} exchange={info.row.original.venue} bold /><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
   }),
   planCol.accessor('direction', { header: 'Side', cell: info => humanize(info.getValue()) }),
   planCol.accessor(row => entryLabel(row), { id: 'entry', header: 'Entry', cell: info => <span className="mono">{info.getValue()}</span> }),
@@ -118,24 +118,56 @@ const planColumns = [
 ]
 
 const candidateColumns = [
+  candidateCol.display({
+    id: 'rank',
+    header: 'Rank',
+    cell: ({ row }) => row.original.rank != null
+      ? <span className="rank-badge mono">{row.original.rank}</span>
+      : <span className="text-muted">—</span>,
+  }),
   candidateCol.accessor('symbol', {
     header: 'Candidate',
-    cell: info => <strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong>,
+    cell: info => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} exchange={info.row.original.venue} bold />,
   }),
-  candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why selected' }),
-  candidateCol.accessor(row => `Rank ${row.rank ?? '—'} · ${selectionMetric(row)} · Liquidity ${row.liquidity_score ?? '—'} · Spread ${row.spread_bps ?? '—'} bps`, { id: 'quality', header: 'Selection metric / market quality' }),
-  candidateCol.accessor(row => lifecycleLabel(row), { id: 'state', header: 'Entry lifecycle' }),
-  candidateCol.accessor('last_requalified_at', { header: 'Last requalified', cell: info => fmtTimestamp(info.getValue()) }),
-  candidateCol.accessor(row => `${fmtTimestamp(row.soft_expires_at)} / ${fmtTimestamp(row.hard_expires_at)}`, { id: 'deadlines', header: 'Soft / hard deadline' }),
-  candidateCol.accessor('attention_terminal_reason', { header: 'Terminal reason', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
+  candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why' }),
+  candidateCol.display({
+    id: 'quality',
+    header: 'Utility / Liquidity / Spread',
+    cell: ({ row }) => {
+      const r = row.original
+      return (
+        <span className="mono">
+          {selectionMetric(r)}{' '}
+          <span className="text-muted">· {r.liquidity_score ?? '—'} liq · {r.spread_bps != null ? `${r.spread_bps} bps` : '—'}</span>
+        </span>
+      )
+    },
+  }),
+  candidateCol.accessor(row => lifecycleLabel(row), { id: 'state', header: 'Lifecycle' }),
+  candidateCol.accessor('last_requalified_at', { header: 'Requalified', cell: info => fmtTimestamp(info.getValue()) }),
+  candidateCol.accessor(row => `${fmtTimestamp(row.soft_expires_at)} / ${fmtTimestamp(row.hard_expires_at)}`, { id: 'deadlines', header: 'SL / HL deadline' }),
+  candidateCol.accessor('attention_terminal_reason', { header: 'Terminal', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
 ]
 
 const currentCandidateColumns = [
   currentCandidateCol.accessor('symbol', {
     header: 'Candidate',
-    cell: info => <><strong className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</strong><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
+    cell: info => <><SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} exchange={info.row.original.venue} bold /><br /><span>{info.row.original.venue} · {info.row.original.market_type}</span></>,
   }),
-  currentCandidateCol.accessor(row => `Rank ${row.rank} · ${selectionMetric(row)} · ${humanize(row.scanner_family)}`, { id: 'source', header: 'Source / rank' }),
+  currentCandidateCol.display({
+    id: 'source',
+    header: 'Source / rank',
+    cell: ({ row }) => {
+      const r = row.original
+      return (
+        <span className="mono">
+          {humanize(r.scanner_family)}
+          {r.rank != null && <span className="text-muted"> · #{r.rank}</span>}
+          <br /><span className="text-muted text-sm">{selectionMetric(r)}</span>
+        </span>
+      )
+    },
+  }),
   currentCandidateCol.accessor(row => row.execution_eligible ? 'Eligible' : 'Blocked', {
     id: 'eligible', header: 'Planning eligible', cell: info => <Badge tone={info.row.original.execution_eligible ? 'green' : 'red'}>{info.getValue()}</Badge>,
   }),
@@ -145,9 +177,21 @@ const currentCandidateColumns = [
 ]
 
 const historyColumns = [
-  historyCol.accessor('symbol', { header: 'Instrument', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
+  historyCol.accessor('symbol', { header: 'Instrument', cell: info => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} exchange={info.row.original.venue} /> }),
   historyCol.accessor('updated_at', { header: 'Updated', cell: info => fmtTimestamp(info.getValue()) }),
-  historyCol.accessor(row => `${humanize(row.outcome_class ?? row.status)} · cycle ${row.cycle_number ?? 1}`, { id: 'outcome', header: 'Planning outcome' }),
+  historyCol.display({
+    id: 'outcome',
+    header: 'Outcome',
+    cell: ({ row }) => {
+      const r = row.original
+      return (
+        <span className="mono">
+          {humanize(r.outcome_class ?? r.status)}
+          {r.cycle_number != null && r.cycle_number > 1 && <span className="text-muted"> · c{r.cycle_number}</span>}
+        </span>
+      )
+    },
+  }),
   historyCol.accessor('attention_terminal_reason', { header: 'Attention result', cell: info => info.getValue() ? humanize(info.getValue()!) : 'Active' }),
   historyCol.accessor('entry_plan_status', { header: 'Entry Plan', cell: info => info.getValue() ? humanize(info.getValue()!) : '—' }),
 ]
@@ -410,13 +454,17 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
 }
 
 function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: { candidateId: string; candidate?: CandidateAttention; currentCandidate?: CandidateWorkbenchRow; onClose: () => void }) {
+  const navigate = useNavigate()
   const detail = useQuery({
     queryKey: ['universe-candidate', candidateId],
     queryFn: () => api.getCandidate(candidateId),
   })
   const attention = candidate ?? detail.data?.attention
   const lifecycle = detail.data?.lifecycle ?? candidate ?? currentCandidate
-  return <DetailDrawer open title={`${candidate?.symbol ?? currentCandidate?.symbol ?? 'Candidate'} Candidate`} onClose={onClose}>
+  const sym = candidate?.symbol ?? currentCandidate?.symbol ?? detail.data?.attention?.symbol ?? detail.data?.member.symbol
+  const marketType = candidate?.market_type ?? currentCandidate?.market_type ?? detail.data?.attention?.market_type
+  const venue = currentCandidate?.venue ?? detail.data?.attention?.venue
+  return <DetailDrawer open title={`${sym ?? 'Candidate'} Candidate`} onClose={onClose}>
     {detail.isError ? <p>Candidate detail is unavailable.</p> : <>
       {attention ? <DrawerSection label="Attention">
         <DrawerField label="Candidate ID" value={candidateId} mono />
@@ -453,6 +501,16 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <DrawerField label="Risk flags" value={evidenceLabel(detail.data?.member.risk_flags)} />
         <DrawerField label="Candidate expiry" value={fmtTimestamp(detail.data?.member.expires_at)} />
       </DrawerSection>
+      {sym && (
+        <div className="flex gap-2 mt-3">
+          <Button
+            variant="secondary"
+            onClick={() => navigate(`/charts?symbol=${encodeURIComponent(sym)}${marketType && marketType !== 'spot' ? `&market_type=${encodeURIComponent(marketType)}` : ''}${venue ? `&exchange=${encodeURIComponent(venue)}` : ''}`)}
+          >
+            View on Charts
+          </Button>
+        </div>
+      )}
     </>}
   </DetailDrawer>
 }

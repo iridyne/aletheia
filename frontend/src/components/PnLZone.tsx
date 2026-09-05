@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import MetricTile from './MetricTile'
+import { SymbolLink } from './ui'
 import type { OverviewBootstrap } from '../api/boot'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
+import { useCellFlash } from '../lib/useCellFlash'
 
 // Legacy local-paper contract is surfaced by AccountSnapshot: execution_target === 'local_paper'.
 
@@ -163,10 +165,12 @@ function useTooltipPosition(open: boolean) {
   return { triggerRef, tooltipRef, pos }
 }
 
-function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }: {
+function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip, flashValue }: {
   label: string; value: React.ReactNode; tone?: Tone; context?: React.ReactNode
   onClick?: () => void; tooltip: Record<string, number | null>
+  flashValue?: number | null
 }) {
+  const flash = useCellFlash(flashValue ?? undefined)
   const [show, setShow] = useState(false)
   const entries = Object.entries(tooltip).sort(
     (a, b) => Math.abs(b[1] ?? 0) - Math.abs(a[1] ?? 0),
@@ -192,7 +196,7 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
       onKeyDown={(e) => { if (e.key === 'Escape') close() }}
     >
       <div className="metric-label">{label}</div>
-      <div className={`metric-value ${toneClass}`}>{value}</div>
+      <div className={`metric-value ${toneClass} ${flash}`}>{value}</div>
       {context && <div className="metric-context">{context}</div>}
       {show && hasTooltip && (
         <div
@@ -211,7 +215,7 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
                   so it renders as spot which matches the prior behaviour but
                   routes through the shared helper so future market_type-aware
                   callers change one place. */}
-              <span className="mono">{fmtSymbol(sym)}</span>
+              <SymbolLink symbol={sym} />
               <span className={`mono ${val != null && val > 0 ? 'pnl-positive' : val != null && val < 0 ? 'pnl-negative' : ''}`}>
                 {val != null && val > 0 ? '+' : ''}{fmtNum(val)}
               </span>
@@ -347,6 +351,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             label="Today PnL"
             value={todayNum == null ? 'not available' : fmtCompactSigned(todayNum)}
             tone={toneOf(todayNum)}
+            flashValue={todayNum}
             context={todayNum == null
               ? todayComplete ? 'no data' : 'funding or close economics unavailable'
               : usingLegacyToday
@@ -361,6 +366,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             label="Unrealized"
             value={fmtCompactSigned(unrealNum)}
             tone={toneOf(unrealNum)}
+            flashValue={unrealNum}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={unrealBySymbol}
           />

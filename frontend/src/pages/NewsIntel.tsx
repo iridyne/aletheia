@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, ListRowButton, useToast } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, SymbolLink, useToast } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
@@ -187,7 +187,7 @@ export default function NewsIntel() {
                     <span className="text-muted text-sm">{item.source}</span>
                     <span className="text-muted text-sm mono">{fmtTimestamp(item.published_at)}</span>
                     {item.symbols_mentioned?.map(s => (
-                      <Badge key={s} tone="blue">{s}</Badge>
+                      <SymbolLink key={s} symbol={s} className="text-sm" />
                     ))}
                   </div>
                 </div>
@@ -225,7 +225,7 @@ export default function NewsIntel() {
               <DrawerSection label="Related Assets">
                 <div className="flex gap-2 flex-wrap">
                   {selected.symbols_mentioned.map(s => (
-                    <Badge key={s} tone="blue">{s}</Badge>
+                    <SymbolLink key={s} symbol={s} />
                   ))}
                 </div>
               </DrawerSection>

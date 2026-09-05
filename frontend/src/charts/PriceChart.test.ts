@@ -33,10 +33,13 @@ const bar = (time: number, low: number, high: number, volume: number, close = hi
 })
 
 it('estimates a deterministic visible OHLCV value area from POC outward', () => {
-  expect(estimateVisibleVolumeProfile([
+  const result = estimateVisibleVolumeProfile([
     bar(1, 0, 2, 100),
     bar(2, 0, 1, 100),
-  ], 0, 1, 2)).toEqual({ poc: 0.5, val: 0, vah: 1 })
+  ], 0, 1, 2)
+  expect(result?.poc).toBe(0.5)
+  expect(result?.val).toBe(0)
+  expect(result?.vah).toBe(1)
 })
 
 it('assigns flat candles to the close bin and ignores bars outside the visible range', () => {
@@ -45,7 +48,9 @@ it('assigns flat candles to the close bin and ignores bars outside the visible r
     bar(2, 1.5, 1.5, 100, 1.5),
     bar(3, 100, 200, 1_000),
   ], 0, 1, 2)
-  expect(result).toEqual({ poc: 1.5, val: 1, vah: 2 })
+  expect(result?.poc).toBe(1.5)
+  expect(result?.val).toBe(1)
+  expect(result?.vah).toBe(2)
 })
 
 it('reports an unavailable profile without positive volume', () => {

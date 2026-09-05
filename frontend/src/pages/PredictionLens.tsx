@@ -302,25 +302,29 @@ function ObserverRunsTab({ runs, state }: { runs: PredictionObserverRun[]; state
           <table>
           <thead>
             <tr>
-              <th>Started</th>
+              <th>Execution (Started · Duration)</th>
               <th>Status</th>
               <th>Markets</th>
               <th>Opps Created</th>
-              <th>Completed</th>
               <th>Errors</th>
             </tr>
           </thead>
           <tbody>
-            {runs.map(r => (
+            {runs.map(r => {
+              const dur = r.started_at && r.completed_at
+                ? Math.round((new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000)
+                : null
+              const durStr = dur == null ? null : dur < 60 ? `${dur}s` : `${Math.round(dur / 60)}m`
+              return (
               <tr key={r.id}>
-                <td>{shortDate(r.started_at)}</td>
+                <td className="mono">{shortDate(r.started_at)}{durStr ? ` (${durStr})` : ''}</td>
                 <td><StatusBadge status={r.status} /></td>
                 <td>{r.markets_scanned}</td>
                 <td>{r.opportunities_created}</td>
-                <td>{shortDate(r.completed_at)}</td>
                 <td>{r.errors.length > 0 ? <StatusText tone="red">{r.errors.length}</StatusText> : '—'}</td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
           </table>
         </TableWrap>
