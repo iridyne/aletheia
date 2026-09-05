@@ -571,7 +571,9 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
             self.calls.append(symbol)
             return {"symbol": symbol, "bids": [[99.99, 100]], "asks": [[100.01, 100]]}
         async def fetch_ohlcv(self, symbol, timeframe, limit):
-            return [[int((now - timedelta(days=1)).timestamp() * 1000), 100, 101, 99, 100, 1000]]
+            interval = {"15m": 900000, "1h": 3600000, "4h": 14400000}[timeframe]
+            end = int(now.timestamp() * 1000) // interval * interval
+            return [[end - i * interval, 100, 101, 99, 100, 1000] for i in range(limit - 1, -1, -1)]
 
     exchange = Exchange()
     for market in ("spot", "perp"):
@@ -584,8 +586,20 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         assert feature["depth_10bps_usd"] == (40000 if market == "perp" else 20000)
         row = repo.latest_orderbook("ETH/USDT", exchange="okx", market_type=market)
         assert row["total_depth_10bps_usd"] == feature["depth_10bps_usd"]
+        from aletheia.trading.entry_analysis import entry_causal_windows
+        cutoff = datetime.now(timezone.utc)
+        windows = {tf: repo.get_ohlcv_candles("ETH/USDT", tf, n, "okx", market, include_provenance=True)
+                   for tf, n in (("15m", 96), ("1h", 48), ("4h", 30))}
+        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", windows, cutoff)
+        assert all(window["availability"] == "available" for window in admitted.values())
+        repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=NULL, last_mutated_at=NULL WHERE exchange=? AND symbol=? AND market_type=?",
+                           ("okx", "ETH/USDT", market))
         repeated = await features._fetch_single_feature(exchange, asset, {"quoteVolume": 2000000}, now, lambda s: f"{s}:USDT")
         assert repeated["feature_snapshot_id"] == feature["feature_snapshot_id"]
+        recovered = repo.get_ohlcv_candles("ETH/USDT", "15m", 96, "okx", market, include_provenance=True)
+        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", {"15m": recovered}, datetime.now(timezone.utc))
+        assert admitted["15m"]["availability"] == "available"
+        assert all(datetime.fromisoformat(bar["first_persisted_at"]) >= cutoff for bar in recovered)
         current_id = features.persist_feature_snapshot_for_emission(repeated)
         persisted = get_db().execute("SELECT * FROM universe_feature_snapshots WHERE id=?", (current_id,)).fetchone()
         assert current_id != feature["feature_snapshot_id"]

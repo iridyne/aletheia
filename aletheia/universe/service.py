@@ -1418,6 +1418,12 @@ class UniverseService:
                             snapshot_policy_id,
                             qualification["selection_policy"],
                         )
+                        repo.insert_universe_twin_shadow_bundle(
+                            candidate_selection_authority_bundle.batch,
+                            candidate_selection_authority_bundle.evidence,
+                            outcomes=candidate_selection_authority_bundle.outcomes,
+                            min_interval_sec=0,
+                        )
                     if candidate_selection_authority_bundle is not None:
                         refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
                             prev_snapshot_id,
@@ -1648,6 +1654,12 @@ class UniverseService:
                     _assert_candidate_selection_publication_authority(
                         snapshot_policy_id,
                         qualification["selection_policy"],
+                    )
+                    repo.insert_universe_twin_shadow_bundle(
+                        candidate_selection_authority_bundle.batch,
+                        candidate_selection_authority_bundle.evidence,
+                        outcomes=candidate_selection_authority_bundle.outcomes,
+                        min_interval_sec=0,
                     )
                 _persist_attempt_learning_exposures(deferred_exposure_writes)
                 repo.insert_universe_snapshot(snap)

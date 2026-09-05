@@ -8,6 +8,8 @@ their own independent versions.
 
 ### Changed
 
+* **entry:** persist Discovery closed candles for exact-instrument planning; establish missing legacy candle provenance only on a real refetch, preserving existing timestamps on unchanged observations.
+* **candidate:** persist each runtime selection evidence bundle and its outcome labels atomically with publication so subsequent economic estimation can load the produced evidence.
 * **candidate:** use measured-first Utility selection with explicit signal-based Startup for genuine sample scarcity in Demo; retire Legacy selection/admission controls, preserve historical evidence, acquire exact discovery books, and expose selection/business-progress diagnostics.
 * **entry:** recover bounded planning interruptions without inventing economic refusal, and show exact order/fill/position, cash-settlement, and separate four-hour outcome evidence across planning cycles.
 * **paper:** settle venue-reduced approved entry quantities and cancelled partial-fill remainders against actual fills while retaining Risk identity and position/cash reconciliation checks.

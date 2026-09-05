@@ -56,6 +56,22 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     assert candidate.candidate_selection_policy_epoch == cfg.universe.candidate_selection_policy_epoch
     return candidate
 
+def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.universe.candidate_selection_shadow import load_candidate_selection_outcomes
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    candidate = _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+    )
+    outcomes = load_candidate_selection_outcomes(selection_policy=candidate_selection_policy_identity(load_config()))
+    assert any(row["symbol"] == candidate.symbol and row["direction"] == "long"
+               and row["mechanism_id"] == "continuation" for row in outcomes)
+
 
 
 
