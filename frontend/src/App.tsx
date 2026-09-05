@@ -1,18 +1,22 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Routes, Route, NavLink, Navigate, Link, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Diamond, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Diamond, Eye, EyeOff, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { bootApi } from './api/boot'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
+import { DriftUpdatePill } from './components/DriftUpdatePill'
+import { NotificationCenter } from './components/notifications/NotificationCenter'
 import StatusCluster from './components/StatusCluster'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { devPreviewLabel } from './dev-preview'
-import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
-import { deferTask } from './lib/deferred'
-import { NAV } from './routeManifest'
 import { useDialogFocus } from './components/ui/useDialogFocus'
+import { useTabSync } from './lib/tabSync'
+import { initWakeupGate } from './lib/wakeupGate'
+import { dumpIncidentSnapshot } from './lib/incidentDump'
+import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
+import { NAV } from './routeManifest'
 
 // Local paper exchange honesty is rendered by AccountSnapshot: Local paper · no exchange.
 
@@ -70,6 +74,7 @@ export default function App() {
     try { return localStorage.getItem(RAIL_STORAGE_KEY) === 'true' } catch { return false }
   })
   const [paletteRequested, setPaletteRequested] = useState(false)
+  const [privacyMode, setPrivacyMode] = useState(false)
   const [updateRequested, setUpdateRequested] = useState(false)
   const shellMarked = useRef(false)
   const sidebarRef = useRef<HTMLElement | null>(null)
@@ -81,7 +86,14 @@ export default function App() {
     refetchInterval: 10_000,
     retry: 1,
   })
+  const qc = useQueryClient()
   const realtime = useRealtimeUpdates(Boolean(shell.data))
+  const driftIssue = (shell.data?.health?.issues ?? []).find(
+    (i: string) => i.startsWith('code_updated_pending_restart:'),
+  ) ?? ''
+  const driftRange = driftIssue.replace('code_updated_pending_restart:', '')
+  useTabSync(qc)
+  useEffect(() => initWakeupGate(qc), [qc])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
@@ -108,19 +120,30 @@ export default function App() {
       performance.mark('aletheia:first-real-shell')
     }
   }, [shell.data])
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteRequested(true)
+      } else if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        setPrivacyMode(prev => !prev)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  useEffect(() => deferTask(() => setUpdateRequested(true), { delayMs: 3000 }), [])
+  useEffect(() => {
+    const timer = setTimeout(() => setUpdateRequested(true), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (privacyMode) document.body.classList.add('privacy-redact-mode')
+    else document.body.classList.remove('privacy-redact-mode')
+    return () => document.body.classList.remove('privacy-redact-mode')
+  }, [privacyMode])
 
   const toggle = (group: string) => setCollapsed(value => ({ ...value, [group]: !value[group] }))
   const closeSidebar = () => setSidebarOpen(false)
@@ -179,6 +202,35 @@ export default function App() {
           </button>
           <MarketTicker />
           {previewLabel && <span className="dev-preview-banner">{previewLabel}</span>}
+          <DriftUpdatePill driftIssue={driftIssue} driftRange={driftRange} />
+          <button
+            type="button"
+            className="command-pill mono"
+            onClick={() => setPaletteRequested(true)}
+            aria-label="Open command palette"
+            title="Command palette (⌘K)"
+          >
+            <span className="command-pill-icon" aria-hidden="true">⌘K</span>
+          </button>
+          <button
+            type="button"
+            className="topbar-btn"
+            onClick={() => dumpIncidentSnapshot(qc)}
+            aria-label="Download incident snapshot"
+            title="Download frontend cache snapshot for incident debugging"
+          >
+            <span aria-hidden="true" style={{ fontSize: '0.75rem' }}>⬇ Dump</span>
+          </button>
+          <button
+            type="button"
+            className={`topbar-btn${privacyMode ? ' active' : ''}`}
+            onClick={() => setPrivacyMode(prev => !prev)}
+            aria-label={privacyMode ? 'Disable privacy redact mode' : 'Enable privacy redact mode (Cmd+Shift+P)'}
+            title={privacyMode ? 'Privacy redact mode active (click to reveal balances)' : 'Privacy redact mode (Cmd+Shift+P) — blur balances for screenshotting'}
+          >
+            {privacyMode ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+          </button>
+          <NotificationCenter />
           <StatusCluster data={shell.data} realtime={realtime} />
         </header>
         <main className="main">

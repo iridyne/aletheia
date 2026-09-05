@@ -6,6 +6,7 @@ import {
   NumberFieldGrid as NumGrid,
   SaveMessage as SaveMsg,
   SettingsRow as Row,
+  StatusDot,
   Switch as Toggle,
   SwitchGrid as ToggleGrid,
   type BoolField,
@@ -307,13 +308,13 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
           <Row label="Promote lock TTL" hint="Seconds the exclusive promote/rollback lock is held. Prevents concurrent transitions.">
             <input type="number" min={30} max={3600} value={runtime.runtime_continuity_lock_ttl_sec ?? 300}
               onChange={e => safeRuntimeMut({ runtime_continuity_lock_ttl_sec: Math.max(30, Math.min(3600, parseInt(e.target.value) || 300)) })}
-              disabled={runtimeMut.isPending} style={{ width: '80px' }} />
+              disabled={runtimeMut.isPending} className="w-20" />
             <span className="hint m-0">sec</span>
           </Row>
           <Row label="Shadow port offset" hint="Shadow gateway listens on dashboard_port + this offset (e.g. 8787 + 100 = 8887).">
             <input type="number" min={1} max={10000} value={runtime.runtime_continuity_shadow_port_offset ?? 100}
               onChange={e => safeRuntimeMut({ runtime_continuity_shadow_port_offset: Math.max(1, Math.min(10000, parseInt(e.target.value) || 100)) })}
-              disabled={runtimeMut.isPending} style={{ width: '80px' }} />
+              disabled={runtimeMut.isPending} className="w-20" />
           </Row>
         </>
       )}
@@ -532,9 +533,8 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const isConfigured = !!host.trim()
   const composed = isConfigured ? `${protocol}://${host.trim()}:${port || '?'}` : '(disabled — direct connection)'
-  let statusDot = <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>●</span>
-  if (isConfigured && testResult?.reachable) statusDot = <span style={{ color: 'var(--green)', fontSize: '0.75rem' }}>●</span>
-  else if (isConfigured && testResult && !testResult.reachable) statusDot = <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>●</span>
+  const dotTone = isConfigured && testResult?.reachable ? 'green' : isConfigured && testResult && !testResult.reachable ? 'red' : 'muted'
+  const statusDot = <StatusDot tone={dotTone as 'green' | 'red' | 'muted'} />
 
   return (
     <div className="flex flex-col gap-2">
@@ -552,7 +552,7 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
             type="text" value={host}
             onChange={e => setHost(e.target.value)}
             placeholder="127.0.0.1"
-            className="mono text-sm" style={{ width: '160px' }}
+            className="mono text-sm w-40"
           />
         </div>
       </Row>
@@ -561,7 +561,7 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           type="number" value={port}
           onChange={e => setPort(e.target.value)}
           placeholder="7890"
-          className="mono text-sm" style={{ width: '110px' }}
+          className="mono text-sm w-28"
         />
       </Row>
       <Row label="Enforce (fail-closed)" hint="Require ALL outbound traffic to go through the proxy. If the proxy is unreachable, requests fail and trading auto-pauses instead of silently connecting direct and leaking your real IP. Recommended for production.">
@@ -572,10 +572,10 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           type="text" value={noProxy}
           onChange={e => setNoProxy(e.target.value)}
           placeholder="example.internal"
-          className="mono text-sm" style={{ width: '220px' }}
+          className="mono text-sm w-56"
         />
       </Row>
-      <div className="hint" style={{ paddingLeft: '0.2rem' }}>Effective proxy: <span className="mono">{composed}</span></div>
+      <div className="hint pl-1">Effective proxy: <span className="mono">{composed}</span></div>
       <div className="flex gap-2 flex-wrap">
         <button onClick={handleSave} disabled={mut.isPending}>Save</button>
         <button className="secondary" onClick={handleTest} disabled={testing}>

@@ -391,16 +391,6 @@ export default function StatusCluster({
             {operator?.last_error && <div className="sp-row"><span className="sp-issue-icon sp-issue-red">⚠</span><span className="sp-issue-label">{operator.last_error}</span></div>}
           </div>
 
-          {driftIssue && (
-            <div className="sp-drift">
-              <div className="sp-section-label sp-drift-label">⚠ Code Drift</div>
-              <span className="sp-value">{driftRange}</span>
-              <button className="topbar-btn secondary" onClick={() => restart.mutate()} disabled={restart.isPending} tabIndex={popoverOpen ? 0 : -1} title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state.">
-                {restart.isPending ? 'restarting…' : '↻ Cold Restart'}
-              </button>
-              <p className="sp-drift-hint">Hot-reload missed these commits. Cold restart loads the new code.</p>
-            </div>
-          )}
         </div>
       </div>
 

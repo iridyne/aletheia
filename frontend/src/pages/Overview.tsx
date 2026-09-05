@@ -87,11 +87,12 @@ export default function Overview() {
 }
 
 function SetupNotice({ required }: { required?: boolean }) {
+  const navigate = useNavigate()
   if (!required) return null
   return (
     <Card className="setup-banner" role="status">
-      <strong>Setup required</strong>
-      <span className="text-muted">Configure a model provider in Settings before enabling agent work.</span>
+      <strong className="mono text-xs tracking-widest">NO MODEL CONFIGURED</strong>
+      <button className="btn btn-sm secondary" onClick={() => navigate('/settings?tab=agent')}>Configure Model Provider →</button>
     </Card>
   )
 }
@@ -179,10 +180,10 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
         <StatusRow label="Connectivity" light={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
         <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
         <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
-        {collectorHealth && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}
+        {collectorHealth && collectorHealth.status !== 'healthy' && expanded !== 'collectors' && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}
         <StatusRow label="Data coverage" light={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
         <StatusRow label="Model" light="muted" value={modelProvider} onClick={() => navigate('/settings?tab=agent')} externalLink />
-        <StatusRow label="Mode" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} onClick={() => toggle('mode')} expanded={expanded === 'mode'} />
+        <StatusRow label="Mode" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={shell?.kill_switch?.active ? 'KILL SWITCH' : shell?.live?.enabled ? `Live: ${humanize(shell?.live?.state || 'active')}` : humanize(shell?.permission?.mode || 'Paper')} onClick={() => toggle('mode')} expanded={expanded === 'mode'} title={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} />
         <StatusRow label="Code" light={!bootCommit ? 'muted' : codeDrift ? 'yellow' : 'green'} value={bootCommit ? bootCommit.slice(0, 12) : 'not available'} title={bootCommit ? (codeDrift ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}.` : `Running backend commit: ${bootCommit}`) : 'Running commit is not available.'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
         <StatusRow label="Runtime" light="muted" value={runtime?.mode || 'not available'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
       </tbody></table>
@@ -294,8 +295,9 @@ function EntrySummaryStrip({ summary }: { summary?: OverviewBootstrap['summary']
   const active = summary?.active_entry_plans
   const needsPlanning = summary?.needs_planning
   const expiring = summary?.expiring_soon
+  const dest = needsPlanning && needsPlanning > 0 ? '/universe?tab=candidates' : '/universe'
   return (
-    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/universe')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/universe') } }} title="Open Entry Workbench">
+    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate(dest)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(dest) } }} title="Open Entry Workbench">
       <span className="ov-blotter-label">Entry Workbench</span><span className="ov-blotter-item">Active Plans <b className="mono">{active ?? '—'}</b></span><span className="ov-blotter-item">Needs Planning <b className={`mono ${needsPlanning ? 'ov-blotter-yellow' : ''}`}>{needsPlanning ?? '—'}</b></span><span className="ov-blotter-item">Expiring Soon <b className={`mono ${expiring ? 'ov-blotter-yellow' : ''}`}>{expiring ?? '—'}</b></span><span className="ov-blotter-arrow">→</span>
     </div>
   )
@@ -344,7 +346,7 @@ function GoLiveScoreCard() {
   return (
     <Card className="rail-card scorecard-panel">
       <Button type="button" variant="ghost" className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
-        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={stale ? 'yellow' : dataTone}>{label}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
+        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={stale ? 'yellow' : dataTone}>{label}</StatusText></div><span className="text-muted text-xs">{expanded ? '▼' : '▶'}</span>
       </Button>
       {expanded && scorecardQuery.isPending && !data && <p className="text-muted text-sm" role="status">Loading qualification details…</p>}
       {expanded && scorecardQuery.isError && !data && <div className="scorecard-unavailable" role="status"><p className="text-muted text-sm">Qualification details are unavailable.</p><Button type="button" variant="secondary" onClick={() => void scorecardQuery.refetch()}>Retry</Button></div>}

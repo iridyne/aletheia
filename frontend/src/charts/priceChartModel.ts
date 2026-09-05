@@ -18,7 +18,15 @@ export interface PositionLevel {
   price: number
   title: string
 }
-export interface VisibleVolumeProfile { poc: number; vah: number; val: number }
+export interface VolumeProfileBin { priceLow: number; priceHigh: number; volume: number; isPoc: boolean; isValueArea: boolean }
+export interface VisibleVolumeProfile { poc: number; vah: number; val: number; bins: VolumeProfileBin[]; maxVolume: number }
+export interface ThesisEnvelope {
+  openedAt: number
+  closedAt?: number | null
+  entryPrice: number
+  takeProfitPrice: number
+  stopPrice: number
+}
 export interface Bar { time: number; open: number; high: number; low: number; close: number; volume: number }
 
 
@@ -92,7 +100,14 @@ export function estimateVisibleVolumeProfile(
     if (leftVolume >= rightVolume) accumulated += volumes[--left]
     else accumulated += volumes[++right]
   }
-  return { poc: low + (pocIndex + 0.5) * width, val: low + left * width, vah: low + (right + 1) * width }
+  const bins: VolumeProfileBin[] = volumes.map((volume, i) => ({
+    priceLow: low + i * width,
+    priceHigh: low + (i + 1) * width,
+    volume,
+    isPoc: i === pocIndex,
+    isValueArea: i >= left && i <= right,
+  }))
+  return { poc: low + (pocIndex + 0.5) * width, val: low + left * width, vah: low + (right + 1) * width, bins, maxVolume: volumes[pocIndex] }
 }
 
 export interface IndicatorPoint { time: number; value: number }

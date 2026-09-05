@@ -12,6 +12,9 @@ const LEGACY_UTILITIES = [
 	"mb-0", "mb-1", "mb-2", "mb-3", "mb-4",
 	"m-0", "ml-auto", "pt-3", "w-auto", "w-full",
 	"text-sm", "text-xs", "text-2xs",
+	// Added for Settings inline-style → Tailwind conversions (Phases 2-4)
+	"w-20", "w-28", "w-36", "w-40", "w-56",
+	"min-h-8", "pl-1", "uppercase", "tracking-widest",
 ];
 
 let compiledCSS = "";

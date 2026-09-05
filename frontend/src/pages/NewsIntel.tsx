@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, ListRowButton, useToast } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, SymbolLink, useToast } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
@@ -143,17 +143,17 @@ export default function NewsIntel() {
       {showAdd && (
         <Card className="mb-3">
           <div className="news-add-form">
-            <input placeholder="Title *" value={addForm.title} onChange={e => setAddForm(f => ({ ...f, title: e.target.value }))} />
-            <input placeholder="Source (e.g. CoinDesk)" value={addForm.source} onChange={e => setAddForm(f => ({ ...f, source: e.target.value }))} />
-            <input placeholder="URL (optional)" value={addForm.url} onChange={e => setAddForm(f => ({ ...f, url: e.target.value }))} />
-            <input placeholder="Symbols (comma-separated, e.g. BTC,ETH)" value={addForm.symbols} onChange={e => setAddForm(f => ({ ...f, symbols: e.target.value }))} />
-            <select value={addForm.sentiment} onChange={e => setAddForm(f => ({ ...f, sentiment: e.target.value }))}>
+            <input aria-label="News title" placeholder="Title *" value={addForm.title} onChange={e => setAddForm(f => ({ ...f, title: e.target.value }))} />
+            <input aria-label="News source" placeholder="Source (e.g. CoinDesk)" value={addForm.source} onChange={e => setAddForm(f => ({ ...f, source: e.target.value }))} />
+            <input aria-label="News URL" placeholder="URL (optional)" value={addForm.url} onChange={e => setAddForm(f => ({ ...f, url: e.target.value }))} />
+            <input aria-label="Related symbols" placeholder="Symbols (comma-separated, e.g. BTC,ETH)" value={addForm.symbols} onChange={e => setAddForm(f => ({ ...f, symbols: e.target.value }))} />
+            <select aria-label="Sentiment" value={addForm.sentiment} onChange={e => setAddForm(f => ({ ...f, sentiment: e.target.value }))}>
               <option value="neutral">Neutral</option>
               <option value="bullish">Bullish</option>
               <option value="bearish">Bearish</option>
               <option value="mixed">Mixed</option>
             </select>
-            <textarea placeholder="Summary / key points" value={addForm.summary} onChange={e => setAddForm(f => ({ ...f, summary: e.target.value }))} rows={3} />
+            <textarea aria-label="Summary or key points" placeholder="Summary / key points" value={addForm.summary} onChange={e => setAddForm(f => ({ ...f, summary: e.target.value }))} rows={3} />
             <Button onClick={handleCreate} disabled={createMut.isPending || !addForm.title.trim()}>
               {createMut.isPending ? 'Adding…' : 'Add Item'}
             </Button>
@@ -187,7 +187,7 @@ export default function NewsIntel() {
                     <span className="text-muted text-sm">{item.source}</span>
                     <span className="text-muted text-sm mono">{fmtTimestamp(item.published_at)}</span>
                     {item.symbols_mentioned?.map(s => (
-                      <Badge key={s} tone="blue">{s}</Badge>
+                      <SymbolLink key={s} symbol={s} className="text-sm" />
                     ))}
                   </div>
                 </div>
@@ -225,7 +225,7 @@ export default function NewsIntel() {
               <DrawerSection label="Related Assets">
                 <div className="flex gap-2 flex-wrap">
                   {selected.symbols_mentioned.map(s => (
-                    <Badge key={s} tone="blue">{s}</Badge>
+                    <SymbolLink key={s} symbol={s} />
                   ))}
                 </div>
               </DrawerSection>

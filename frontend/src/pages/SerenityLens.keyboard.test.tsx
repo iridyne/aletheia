@@ -87,6 +87,7 @@ describe('Serenity Lens keyboard interactions', () => {
 
   it('uses a keyboard-accessible Bear Case disclosure', () => {
     mount(
+      <MemoryRouter>
       <table><tbody>
         <OpportunityRow
           id="opp-1"
@@ -98,7 +99,8 @@ describe('Serenity Lens keyboard interactions', () => {
           status="open"
           bearCase="Demand could slow."
         />
-      </tbody></table>,
+      </tbody></table>
+      </MemoryRouter>,
     )
     const toggle = host.querySelector<HTMLButtonElement>('.serenity-bearcase-toggle')!
     expect(toggle.getAttribute('aria-expanded')).toBe('false')

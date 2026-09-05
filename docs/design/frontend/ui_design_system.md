@@ -662,19 +662,46 @@ button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 添加新 health issue 时，必须同步在 `App.tsx parseIssue()` 里加对应 `hint`。`hint` 样式：`.sp-issue-hint`，`color: var(--muted)`，`font-size: 0.62rem`，换行显示在 label 下方。
 
-### Tick Flash 动画
+### 价格变动敏捷反馈规范（Cell Flash · 尾数变色 + 高对比微底色）
 
-价格变化时施加 600ms background pulse（绿=涨、红=跌）：
+在全站所有展示标的价格或数值变动的场景中，统一采用对标 TradingView 与币安的标准机制，严禁自造粗暴全数字闪烁：
+
+1. **尾数变动位着色（Tail Digits Coloration）**：
+   - 只有发生变动的小数尾数变色（涨亮绿 `#34d399`，跌警示红 `#f87171`）；
+   - 未变动的前缀数字稳固保持常规纯白中性（`#e6edf3`），帮助交易员瞬间锁定变化的数位。
+2. **深邃低明度底色（明暗对比度 > 7:1）**：
+   - 背景亮起带微圆角的低明度底色（涨：`rgba(16, 185, 129, 0.16)`，跌：`rgba(239, 68, 68, 0.16)`）；
+   - 底色亮度仅 ~6%，前景色亮度 ~65%，文字字字锐利清晰，绝不被底色吞没。
+3. **380ms 极速敏捷归位**：
+   - 激活仅停留 380 毫秒（不到半秒），随后背景和字体颜色在 300 毫秒内迅速收敛归零，绝不拖泥带水。
 
 ```css
-@keyframes tick-up   { from { background: rgba(46,230,168,0.18); } to { background: transparent; } }
-@keyframes tick-down { from { background: rgba(255,93,108,0.18); } to { background: transparent; } }
-.tick-flash-up   { animation: tick-up 600ms ease-out; }
-.tick-flash-down { animation: tick-down 600ms ease-out; }
+.ticker-price {
+  font-weight: 600;
+  display: inline-flex;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: background-color 300ms ease-out;
+}
+.ticker-prefix { color: var(--text); }
+.ticker-suffix { color: var(--text); transition: color 300ms ease-out; }
+
+/* 涨：380ms 瞬间微绿底 + 尾数高亮绿字 */
+.ticker-flash-up { background-color: rgba(16, 185, 129, 0.16); }
+.ticker-flash-up .ticker-suffix { color: #34d399; }
+
+/* 跌：380ms 瞬间微红底 + 尾数高亮红字 */
+.ticker-flash-down { background-color: rgba(239, 68, 68, 0.16); }
+.ticker-flash-down .ticker-suffix { color: #f87171; }
 ```
 
-React：`useRef<Record<string, number>>` 存上次价格；`useEffect` 比较 prev/next；650ms `setTimeout` 清空 flash state。应用位置：`MarketTicker.tsx`（topbar）、`Charts.tsx`（watchlist cards）。
-
+**全站通用应用范围**：
+凡反映标的价格或盈亏动态跳变的组件统一接入该机制：
+* 顶栏行情条：`MarketTicker.tsx`
+* 统一台账持仓现价：`TradesPositions.tsx` (Current Price 列)
+* 候选工作台最新价：`Universe.tsx` (Candidate Price 列)
+* 概览态势收益变动：`Overview.tsx` (PnLZone 数值)
+* 控制台中枢行情表：`CommandCenter.tsx` (Top Symbols 表格)
 ### Watchlist Sparkline
 
 `Sparkline.tsx` — 卡片内嵌 24h 趋势线（SVG polyline），从 `/api/market/ohlcv?symbol=X&timeframe=1h&limit=24` 拉 close 数据，归一化到 SVG 坐标。尺寸 100×20px，`opacity: 0.85`，`aria-hidden="true"`，60s refetch。

@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aletheia Trading OS — Overview Cockpit Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ─────────────────────────────────────────────────────────────────────────────
+   Aletheia Design Tokens (docs/design/frontend/ui_design_system.md)
+   ──────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* 物理表面分层 (Surface Elevation Hierarchy) */
+  --bg:          #0a0e12; /* 应用深冷黑底 */
+  --bg-2:        #0f141a; /* 内容区内嵌底色 */
+  --surface:     #141a21; /* 卡片与边栏基底 */
+  --surface-2:   #1e2631; /* 提升明度：悬停态、输入框与二级面板 */
+  --surface-overlay: #263240; /* 弹窗与抽屉顶层 */
+
+  /* 边框规范 */
+  --border:      #232c36;
+  --border-2:    #2e3946;
+  --border-strong: #3b495c;
+
+  /* 文字色阶 */
+  --text:        #e6edf3;
+  --muted:       #7d8997;
+  --faint:       #4a5562;
+
+  /* 状态与交互色彩光谱 (四元组标准) */
+  --accent:      #22d3ee; /* Signal Cyan - 唯一饱和交互色 */
+  --accent-dim:  #0e7490;
+  --green:       #2ee6a8; /* 成功 / 正常 */
+  --red:         #ff5d6c; /* 危险 / 阻断 */
+  --yellow:      #f5b942; /* 注意 / 降级 */
+  --blue:        #60a5fa; /* 辅助信息 (拉开与 Cyan 的视觉差距) */
+
+  /* 4px 栅格步进 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* 9 阶收敛字号 Token */
+  --fs-2xs: 0.625rem;
+  --fs-xs:  0.6875rem;
+  --fs-sm:  0.75rem;
+  --fs-base:0.8125rem;
+  --fs-md:  0.875rem;
+  --fs-lg:  0.9375rem;
+  --fs-xl:  1rem;
+  --fs-2xl: 1.25rem;
+
+  --r:    8px;
+  --r-sm: 5px;
+
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --display: 'Space Grotesk', var(--sans);
+}
+
+/* 基础重置 (无 Preflight，严守列表原生样式) */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 全站等宽与斜线零 (Slashed Zero) 强制开启 */
+.mono, .tnum, table {
+  font-family: var(--mono);
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   价格变动敏捷反馈 (尾数变色 + 背景微底色 + 380ms 极速归位)
+   ──────────────────────────────────────────────────────────────────────────── */
+.ticker-price {
+  font-weight: 600;
+  display: inline-flex;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: background-color 300ms ease-out;
+}
+.ticker-prefix {
+  color: var(--text);
+}
+.ticker-suffix {
+  color: var(--text);
+  transition: color 300ms ease-out;
+}
+
+/* 涨：低明度深邃微绿底 + 高明度晶亮绿字 (明暗对比度 > 7:1) */
+.ticker-flash-up {
+  background-color: rgba(16, 185, 129, 0.16); /* 低明度底色 (~6% 亮度) */
+}
+.ticker-flash-up .ticker-suffix {
+  color: #34d399; /* 高明度前景色 (~65% 亮度)，文字锐利突出不被底色吞没 */
+}
+
+/* 跌：低明度暗红底 + 高明度警示红字 (明暗对比度 > 7:1) */
+.ticker-flash-down {
+  background-color: rgba(239, 68, 68, 0.16); /* 低明度底色 (~5% 亮度) */
+}
+.ticker-flash-down .ticker-suffix {
+  color: #f87171; /* 高明度前景色 (~55% 亮度)，文字锐利突出 */
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   布局骨架 (Shell Layout)
+   ──────────────────────────────────────────────────────────────────────────── */
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* 左侧边栏 (导航) */
+.sidebar {
+  width: 220px;
+  flex: 0 0 220px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  height: 52px;
+  padding: 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.brand-mark {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent);
+  transform: rotate(45deg);
+}
+.brand-name {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+.brand-sub {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.nav-group { padding: var(--space-2) var(--space-2) 0; }
+.nav-group-label {
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+  padding: var(--space-1) var(--space-2);
+  letter-spacing: 0.05em;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+  transition: background 80ms, color 80ms;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.active { background: var(--surface-2); color: var(--accent); font-weight: 500; }
+.nav-icon { width: 14px; height: 14px; stroke-width: 2; }
+
+/* 右侧内容主区 */
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶栏 (Topbar) */
+.topbar {
+  height: 52px;
+  padding: 0 var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* 顶栏行情条 */
+.market-ticker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-xs);
+}
+.ticker-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 4px;
+}
+.ticker-sym { color: var(--muted); font-weight: 500; }
+.ticker-price { font-weight: 600; padding: 1px 3px; }
+
+/* 顶栏 ⌘K 胶囊 (提升命令中枢发现性) */
+.topbar-search-pill {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: border-color 80ms;
+}
+.topbar-search-pill:hover { border-color: var(--border-strong); color: var(--text); }
+.topbar-search-pill kbd {
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: var(--fs-2xs);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+/* 独立通知铃铛 (带未读角标) */
+.notification-bell-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+  transition: color 80ms, border-color 80ms;
+}
+.notification-bell-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.bell-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--red);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 999px;
+  border: 2px solid var(--surface);
+}
+
+/* 系统状态集群 (纯净瞬时状态，无臃肿面板) */
+.status-cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+}
+.status-dots { display: flex; gap: 3px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; }
+.dot-green  { background: var(--green); }
+.dot-yellow { background: var(--yellow); }
+.dot-red    { background: var(--red); }
+.status-word { font-weight: 600; color: var(--green); text-transform: uppercase; font-size: var(--fs-2xs); }
+.status-hb   { color: var(--muted); font-size: var(--fs-2xs); }
+
+/* 主工作区 */
+.main {
+  flex: 1;
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-2);
+  overflow-y: auto;
+}
+
+/* 页面标题 */
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+.page-title {
+  font-family: var(--display);
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.page-meta {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PnL 态势感知区 (PnLZone) - 显式权威物理时钟界限
+   ──────────────────────────────────────────────────────────────────────────── */
+.pnl-zone {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr) 1.5fr;
+  gap: var(--space-4);
+  align-items: center;
+}
+.pnl-tile { display: flex; flex-direction: column; }
+.pnl-tile-label {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.pnl-tile-value {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+.pnl-tile-sub {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  margin-top: 2px;
+}
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
+.mini-chart {
+  height: 48px;
+  width: 100%;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   入场计划简报条 (EntrySummaryStrip)
+   ──────────────────────────────────────────────────────────────────────────── */
+.entry-summary-strip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-sm);
+}
+.strip-facts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.strip-fact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.strip-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: var(--fs-xs);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.strip-link:hover { text-decoration: underline; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   驾驶舱双列主从网关 (Cockpit Main & Sticky Rail)
+   ──────────────────────────────────────────────────────────────────────────── */
+.cockpit-main {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* 左列：Agent 运行流 (AgentFeed) */
+.feed-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.card-head {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-title {
+  font-family: var(--display);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.feed-list { list-style: none; }
+.feed-item {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-3);
+  align-items: baseline;
+  transition: background 80ms;
+}
+.feed-item:last-child { border-bottom: none; }
+.feed-item:hover { background: var(--surface-2); }
+.feed-icon {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+.feed-content { display: flex; flex-direction: column; gap: 2px; }
+.feed-headline { font-size: var(--fs-sm); font-weight: 500; }
+.feed-thesis { font-size: var(--fs-xs); color: var(--muted); }
+.feed-ts { font-size: var(--fs-2xs); color: var(--faint); }
+
+/* 右列：紧凑轨道 (Sticky Rail 解决长流悬空) */
+.cockpit-rail {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.rail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: var(--space-3) var(--space-4);
+  max-height: 380px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.rail-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+.rail-card-title {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+/* 状态键值行 (Status Row) */
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: var(--fs-xs);
+}
+.stat-label { color: var(--muted); }
+.stat-val { font-weight: 500; }
+
+/* 候选雷达预览项 */
+.radar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-top: var(--space-1);
+}
+.radar-symbol { font-weight: 600; }
+.radar-utility { color: var(--accent); }
+.radar-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: var(--fs-2xs);
+  margin-left: auto;
+  padding-left: var(--space-2);
+}
+.radar-link:hover { text-decoration: underline; }
+
+/* 极简 Badge 原语 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.badge-green { background: rgba(46, 230, 168, 0.12); color: var(--green); border: 1px solid rgba(46, 230, 168, 0.25); }
+.badge-blue  { background: rgba(96, 165, 250, 0.12); color: var(--blue);  border: 1px solid rgba(96, 165, 250, 0.25); }
+.badge-muted { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- 1. 左侧纯净导航边栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">ALETHEIA</span>
+      <span class="brand-sub">trading os</span>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Mission Control</div>
+      <a href="#" class="nav-item active">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        Overview
+      </a>
+      <a href="#" class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/></svg>
+        Command Center
+      </a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Research & Strategy</div>
+      <a href="#" class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+        Markets (Charts)
+      </a>
+      <a href="#" class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+        Universe Workbench
+      </a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Ledger & Risk</div>
+      <a href="#" class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/></svg>
+        Trades & Positions
+      </a>
+      <a href="#" class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Risk & Controls
+      </a>
+      <a href="#" class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Learning
+      </a>
+    </div>
+  </aside>
+
+  <!-- 2. 主区域 -->
+  <div class="content">
+    <!-- 顶栏 (精简高密度 HUD) -->
+    <header class="topbar">
+      <!-- 实时变动背景闪烁行情条 (850ms Cell Flash) -->
+      <div class="market-ticker mono">
+        <div class="ticker-pair">
+          <span class="ticker-sym">BTC</span>
+          <span id="btc-price" class="ticker-price">63,420.50</span>
+        </div>
+        <div class="ticker-pair">
+          <span class="ticker-sym">ETH</span>
+          <span id="eth-price" class="ticker-price">2,485.20</span>
+        </div>
+        <div class="ticker-pair">
+          <span class="ticker-sym">SOL</span>
+          <span id="sol-price" class="ticker-price">134.85</span>
+        </div>
+      </div>
+
+      <!-- 顶栏 ⌘K 搜索胶囊 -->
+      <button class="topbar-search-pill" onclick="alert('Command Palette (Cmd+K) Triggered')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>Search or jump to...</span>
+        <kbd class="mono">⌘K</kbd>
+      </button>
+
+      <!-- 独立持久化通知中心铃铛 (已从 StatusCluster 抽离) -->
+      <button class="notification-bell-btn" title="Notifications & Alerts" onclick="alert('Open Notification Drawer')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="bell-badge mono">2</span>
+      </button>
+
+      <!-- 系统状态集群 (只反映瞬时运行体征) -->
+      <div class="status-cluster">
+        <div class="status-dots">
+          <span class="dot dot-green" title="Gateway: running"></span>
+          <span class="dot dot-green" title="Scheduler: running"></span>
+          <span class="dot dot-green" title="Risk Engine: healthy"></span>
+          <span class="dot dot-green" title="Connectivity: 18ms"></span>
+        </div>
+        <span class="status-word">OPERATIONAL</span>
+        <span class="status-hb mono">hb &lt;1m</span>
+      </div>
+    </header>
+
+    <!-- 主面板 -->
+    <main class="main">
+      <div class="page-header">
+        <h1 class="page-title">Mission Overview</h1>
+        <span class="page-meta mono">OBSERVER CADENCE · REFRESH 10s · GATEWAY RTT 18ms</span>
+      </div>
+
+      <!-- PnL 态势感知区 (权威物理窗口注脚，零模糊词) -->
+      <section class="pnl-zone" aria-label="Portfolio Telemetry">
+        <div class="pnl-tile">
+          <span class="pnl-tile-label">Day Realized PnL</span>
+          <span class="pnl-tile-value mono pos">+$142.50</span>
+          <span class="pnl-tile-sub mono">WINDOW: UTC 00:00 → NOW</span>
+        </div>
+        <div class="pnl-tile">
+          <span class="pnl-tile-label">Unrealized PnL</span>
+          <span class="pnl-tile-value mono pos">+$48.20 (+0.76%)</span>
+          <span class="pnl-tile-sub mono">3 ACTIVE POSITIONS</span>
+        </div>
+        <div class="pnl-tile">
+          <span class="pnl-tile-label">Total Equity</span>
+          <span class="pnl-tile-value mono">$6,350.20</span>
+          <span class="pnl-tile-sub mono">LOCAL PAPER · NO DRIFT</span>
+        </div>
+        <div class="pnl-tile">
+          <span class="pnl-tile-label">Margin Usage</span>
+          <span class="pnl-tile-value mono">18.9%</span>
+          <span class="pnl-tile-sub mono">$1,200.00 COMMITTED</span>
+        </div>
+        <div class="pnl-tile">
+          <span class="pnl-tile-label">24H Performance Curve</span>
+          <!-- 极简 SVG 收益曲线 -->
+          <svg class="mini-chart" viewBox="0 0 200 48" preserveAspectRatio="none">
+            <path d="M0,40 Q30,35 60,38 T120,20 T160,25 T200,8" fill="none" stroke="var(--green)" stroke-width="2"/>
+            <path d="M0,40 Q30,35 60,38 T120,20 T160,25 T200,8 L200,48 L0,48 Z" fill="rgba(46, 230, 168, 0.08)"/>
+          </svg>
+        </div>
+      </section>
+
+      <!-- 入场计划简报条 (带直接跳转直达链接，消灭孤立数字) -->
+      <div class="entry-summary-strip">
+        <div class="strip-facts mono">
+          <div class="strip-fact">
+            <span class="text-muted">ACTIVE PLANS:</span>
+            <strong>2</strong>
+          </div>
+          <div class="strip-fact">
+            <span class="text-muted">NEEDS PLANNING:</span>
+            <strong style="color: var(--yellow)">1 CANDIDATE</strong>
+          </div>
+          <div class="strip-fact">
+            <span class="text-muted">24H AGENT RUNS:</span>
+            <strong>700</strong>
+          </div>
+        </div>
+        <a href="#" class="strip-link mono">
+          Resolve Candidates in Universe Workbench →
+        </a>
+      </div>
+
+      <!-- 双列主从布局 (左：事件流，右：吸顶控制轨道) -->
+      <div class="cockpit-main">
+        <!-- 左列：自主智能体实时事件流 -->
+        <div class="feed-card">
+          <div class="card-head">
+            <span class="card-title">Autonomous Agent Telemetry</span>
+            <span class="badge badge-blue mono">LIVE FEED</span>
+          </div>
+          <ul class="feed-list">
+            <li class="feed-item">
+              <span class="feed-icon" style="color: var(--accent)">◆</span>
+              <div class="feed-content">
+                <div class="feed-headline">
+                  <strong>entry_planner</strong> compiled Plan for <span class="mono" style="color: var(--accent)">SOL/USDT</span> (RESTING_MAKER)
+                </div>
+                <div class="feed-thesis">
+                  Thesis: Volume breakout 2.4x confirms continuation; limit 134.20, stop 131.00, target 141.50 (R:R 2.28).
+                </div>
+              </div>
+              <span class="feed-ts mono">14:05:02</span>
+            </li>
+
+            <li class="feed-item">
+              <span class="feed-icon" style="color: var(--green)">✓</span>
+              <div class="feed-content">
+                <div class="feed-headline">
+                  <strong>risk_engine</strong> approved proposal <span class="mono">p-946a1b</span> for UNI/USDT
+                </div>
+                <div class="feed-thesis">
+                  All 4 hard gates passed; margin headroom 81.1%; max loss within $15.00 envelope.
+                </div>
+              </div>
+              <span class="feed-ts mono">13:58:20</span>
+            </li>
+
+            <li class="feed-item">
+              <span class="feed-icon" style="color: var(--yellow)">⚠</span>
+              <div class="feed-content">
+                <div class="feed-headline">
+                  <strong>market_observer</strong> flagged funding crowding on <span class="mono">ETH/USDT</span>
+                </div>
+                <div class="feed-thesis">
+                  FR +0.0150% (> 90th percentile). Long conviction reduced from 74 to 62.
+                </div>
+              </div>
+              <span class="feed-ts mono">13:42:15</span>
+            </li>
+
+            <li class="feed-item">
+              <span class="feed-icon" style="color: var(--muted)">•</span>
+              <div class="feed-content">
+                <div class="feed-headline">
+                  <strong>post_trade_reviewer</strong> completed attribution cycle 46
+                </div>
+                <div class="feed-thesis">
+                  Indexed 1 realized close (UNI/USDT +$10.17). Generated 0 rule candidates; outcome matches thesis.
+                </div>
+              </div>
+              <span class="feed-ts mono">12:30:00</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 右列：紧凑吸顶控制轨道 (Sticky Rail 解决长流悬空) -->
+        <div class="cockpit-rail">
+          <!-- 1. 风控刹车状态卡片 -->
+          <div class="rail-card">
+            <div class="rail-card-head">
+              <span class="rail-card-title">Risk Engine Console</span>
+              <span class="badge badge-green mono">HEALTHY</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Kill Switch</span>
+              <span class="stat-val mono text-muted">INACTIVE</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Daily Loss Budget</span>
+              <span class="stat-val mono">$142.50 / $300.00</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Active Violations</span>
+              <span class="stat-val mono text-muted">None (0)</span>
+            </div>
+          </div>
+
+          <!-- 2. 系统底层状态卡片 -->
+          <div class="rail-card">
+            <div class="rail-card-head">
+              <span class="rail-card-title">System Runtime</span>
+              <span class="badge badge-muted mono">v0.8.4</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Gateway PID</span>
+              <span class="stat-val mono">3207222 (active)</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Trading Daemon</span>
+              <span class="stat-val mono">Event-driven</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Execution Target</span>
+              <span class="stat-val mono">Local Paper (Bitget)</span>
+            </div>
+          </div>
+
+          <!-- 3. 候选集雷达微型卡片 (直接打通去往 Markets 的秒跳入口) -->
+          <div class="rail-card">
+            <div class="rail-card-head">
+              <span class="rail-card-title">Top Candidate Radar</span>
+              <span class="badge badge-blue mono">RANK #1</span>
+            </div>
+            <div class="radar-item">
+              <div>
+                <div class="radar-symbol mono">UNI/USDT perp</div>
+                <div class="stat-label mono" style="font-size: var(--fs-2xs)">Utility: <span class="radar-utility font-bold">60.3%</span> · Spread 2.2bp</div>
+              </div>
+              <a href="#" class="radar-link mono" onclick="alert('Jump to Charts: /charts?symbol=UNI/USDT&market_type=perp')">
+                Chart & Profile ↗
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 价格变动敏捷反馈演示脚本 (尾数变色 + 背景微底色 + 380ms 极速归位) -->
+<script>
+const btcEl = document.getElementById('btc-price');
+const ethEl = document.getElementById('eth-price');
+let prevBtc = "63,420.50";
+let prevEth = "2,485.20";
+
+function updatePriceTradingViewStyle(el, prevStr, currStr, direction) {
+  const minLen = Math.min(prevStr.length, currStr.length);
+  let divergeIdx = 0;
+  while (divergeIdx < minLen && prevStr[divergeIdx] === currStr[divergeIdx]) {
+    divergeIdx++;
+  }
+  const prefix = currStr.slice(0, divergeIdx);
+  const suffix = currStr.slice(divergeIdx);
+  
+  // 1. 渲染公共前缀与变动尾数
+  el.innerHTML = `<span class="ticker-prefix">${prefix}</span><span class="ticker-suffix">${suffix}</span>`;
+  
+  // 2. 瞬间激活背景微光与尾数文字变色
+  el.classList.remove('ticker-flash-up', 'ticker-flash-down');
+  void el.offsetWidth;
+  const flashClass = direction === 'up' ? 'ticker-flash-up' : 'ticker-flash-down';
+  el.classList.add(flashClass);
+  
+  // 3. 极速 380ms 后清除高亮类，背景与字体在 300ms 内快速收敛归位，绝不拖泥带水
+  if (el._timer) clearTimeout(el._timer);
+  el._timer = setTimeout(() => {
+    el.classList.remove('ticker-flash-up', 'ticker-flash-down');
+  }, 380);
+}
+// 模拟真实行情 Tick
+setInterval(() => {
+  // 模拟 BTC 随机变动尾数
+  const raw = (63420 + (Math.random() * 2 - 0.9)).toFixed(2);
+  const currBtc = Number(raw).toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const dir = parseFloat(currBtc.replace(/,/g, '')) >= parseFloat(prevBtc.replace(/,/g, '')) ? 'up' : 'down';
+  updatePriceTradingViewStyle(btcEl, prevBtc, currBtc, dir);
+  prevBtc = currBtc;
+}, 3000);
+
+setInterval(() => {
+  // 模拟 ETH 随机变动尾数
+  const raw = (2485 + (Math.random() * 1.5 - 0.8)).toFixed(2);
+  const currEth = Number(raw).toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const dir = parseFloat(currEth.replace(/,/g, '')) >= parseFloat(prevEth.replace(/,/g, '')) ? 'up' : 'down';
+  updatePriceTradingViewStyle(ethEl, prevEth, currEth, dir);
+  prevEth = currEth;
+}, 4200);
+</script>
+</body>
+</html>

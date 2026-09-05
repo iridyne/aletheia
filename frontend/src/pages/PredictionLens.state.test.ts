@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import SRC from './PredictionLens.tsx?raw'
 import { PredictionStatusNotice, resolvePredictionDataState, resolvePredictionStatusState } from './PredictionLens'
@@ -22,7 +23,7 @@ describe('Prediction Lens status presentation', () => {
   })
 
   it('renders distinct notices for disabled, unavailable, stale, and loading states', () => {
-    expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'disabled', enabled: false }))).toContain('configuration-only')
+    expect(renderToStaticMarkup(createElement(MemoryRouter, null, createElement(PredictionStatusNotice, { state: 'disabled', enabled: false })))).toContain('configuration-only')
     expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'unavailable', enabled: undefined }))).toContain('status read failed')
     expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'stale', enabled: true }))).toContain('stale')
     expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'loading', enabled: undefined }))).toContain('Loading Prediction Markets status')

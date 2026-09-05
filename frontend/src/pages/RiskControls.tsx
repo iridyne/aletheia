@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { Card, CardHeader, Button, StatusText, Meter, useConfirm } from '../components/ui'
+import { Card, CardHeader, Button, StatusText, Meter, SymbolLink, useConfirm } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
@@ -473,8 +474,8 @@ export default function RiskControls() {
               <ul className="exposure-list">
                 {exposure.map(([sym, val]) => (
                   <li key={sym} className="exposure-row">
-                    <span className="exposure-sym mono">
-                      {fmtSymbol(sym, marketTypeBySymbol[sym])}
+                    <span className="exposure-sym">
+                      <SymbolLink symbol={sym} marketType={marketTypeBySymbol[sym]} />
                       {/* #47/#53 fix: flag when this symbol has BOTH spot and
                           perp/futures locally. The backend exposure figure
                           groups them under one key (#52 deferred), so this
@@ -509,7 +510,7 @@ export default function RiskControls() {
 
       {/* Zone 3 — Configured limits (read-only reference) */}
       <Card>
-        <CardHeader title="Configured Limits" meta="Read-only — edit in Settings → Risk." />
+        <CardHeader title="Configured Limits" meta={<>Read-only — <Link to="/settings?tab=risk" className="text-accent">Edit in Settings ↗</Link></>} />
         {boundariesPending && !boundaries ? (
           <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
         ) : boundariesError ? (

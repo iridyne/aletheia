@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { StatusBadge } from '../components/DataTable'
-import { Badge, Button, Card, StatusDot, StatusText, Switch, TableWrap, type StatusTone, useToast } from '../components/ui'
+import { Badge, Button, Card, StatusDot, StatusText, Switch, SymbolLink, TableWrap, type StatusTone, useToast } from '../components/ui'
 import { fmtTimestamp, fmtPct, humanize, fmtSymbol } from '../lib/format'
 import { safeErrorText } from '../lib/mutationErrors'
 import ThesisText from '../components/ThesisText'
@@ -269,14 +269,20 @@ export function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: 
             <th>Status</th>
             <th>Trigger</th>
             <th>Mode</th>
-            <th>Started</th>
-            <th>Finished</th>
+            <th>Execution (Started · Duration)</th>
             <th>Themes</th>
             <th>Claims</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((r: any) => (
+          {items.map((r: any) => {
+            const startedAt = r.startedAt || r.started_at
+            const finishedAt = r.finishedAt || r.finished_at
+            const dur = startedAt && finishedAt
+              ? Math.round((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000)
+              : null
+            const durStr = dur == null ? null : dur < 60 ? `${dur}s` : `${Math.round(dur / 60)}m`
+            return (
             <tr
               key={r.id}
               className={onSelect ? 'clickable' : ''}
@@ -289,17 +295,17 @@ export function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: 
               } : undefined}
               tabIndex={onSelect ? 0 : undefined}
               data-serenity-run-id={onSelect ? r.id : undefined}
-              aria-label={onSelect ? `Open ${humanize(r.status)} run details from ${shortDate(r.startedAt || r.started_at)}` : undefined}
+              aria-label={onSelect ? `Open ${humanize(r.status)} run details from ${shortDate(startedAt)}` : undefined}
             >
               <td><RunStatusBadge status={r.status} /></td>
               <td>{r.triggerType || r.trigger_type ? humanize(r.triggerType || r.trigger_type) : '—'}</td>
               <td>{r.mode ? humanize(r.mode) : '—'}</td>
-              <td className="mono">{shortDate(r.startedAt || r.started_at)}</td>
-              <td className="mono">{shortDate(r.finishedAt || r.finished_at)}</td>
+              <td className="mono">{shortDate(startedAt)}{durStr ? ` (${durStr})` : ''}</td>
               <td className="mono">{r.artifactCounts?.themes ?? jsonCount(r.artifact_counts, 'themes')}</td>
               <td>{r.artifactCounts?.claims ?? jsonCount(r.artifact_counts, 'claims')}</td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </TableWrap>
@@ -654,10 +660,11 @@ export function ThemesTab() {
 
 // U1: Opportunity row with expandable bear_case
 export function OpportunityRow({
-  id, symbol, direction, rec, grade, evidenceTier, status, bearCase
+  id, symbol, marketType, direction, rec, grade, evidenceTier, status, bearCase
 }: {
   id: string
   symbol: string
+  marketType?: string | null
   direction: string
   rec?: string
   grade: string
@@ -672,19 +679,19 @@ export function OpportunityRow({
   return (
     <>
       <tr>
-        <td className="mono">
+        <td>
           {hasBearCase ? (
             <Button
               type="button"
-              className="serenity-bearcase-toggle"
+              className="serenity-bearcase-toggle mono"
               aria-expanded={expanded}
               aria-controls={bearCaseId}
               aria-label={`${expanded ? 'Hide' : 'Show'} bear case for ${symbol}`}
               onClick={() => setExpanded(v => !v)}
             >
-              <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {symbol}
+              <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> <SymbolLink symbol={symbol} marketType={marketType} />
             </Button>
-          ) : symbol}
+          ) : <SymbolLink symbol={symbol} marketType={marketType} />}
         </td>
         <td>{direction}</td>
         <td>
@@ -791,7 +798,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                   <td>{e.title}</td>
                   <td>{humanize(e.source)}</td>
                   <td>{humanize(e.assessed_tier || e.tier)}</td>
-                  <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
+                  <td>{e.symbol ? <SymbolLink symbol={e.symbol} marketType={e.market_type} /> : <span className="text-muted mono">—</span>}</td>
                   <td>
                     {e.agent_lens
                       ? <Badge tone="muted">{e.agent_lens}</Badge>
@@ -830,7 +837,8 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                     <OpportunityRow
                       key={o.id}
                       id={o.id}
-                      symbol={fmtSymbol(o.symbol, o.market_type)}
+                      symbol={o.symbol}
+                      marketType={o.market_type}
                       direction={humanize(o.direction)}
                       rec={rec}
                       grade={grade}
@@ -905,7 +913,7 @@ function EvidenceTab() {
               const marketId = typeof e.source_ref === 'string' ? e.source_ref.trim() : ''
               return (
                 <tr key={e.id}>
-                  <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
+                  <td>{e.symbol ? <SymbolLink symbol={e.symbol} marketType={e.market_type} /> : <span className="text-muted mono">—</span>}</td>
                   <td>
                     {e.title}
                     {e.source === 'prediction_market' && marketId && (

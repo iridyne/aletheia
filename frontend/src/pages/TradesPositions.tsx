@@ -27,6 +27,7 @@ import {
 	Badge,
 	Button,
 	Card,
+	SymbolLink,
 	TableWrap,
 	useConfirm,
 	useToast,
@@ -41,6 +42,7 @@ import {
 	marketBadgeTone,
 	isPerpMarket,
 } from "../lib/format";
+import { useCellFlash } from "../lib/useCellFlash";
 import { orderIntent, orderIntentLabel, type OrderIntent } from "../lib/orderIntent";
 import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import { bootApi } from "../api/boot";
@@ -81,6 +83,24 @@ export const pnlCell = (v: number | null | undefined) => {
 		</span>
 	);
 };
+
+/** PnL cell with 380ms flash feedback. */
+function FlashPnLCell({ value }: { value: number | null | undefined }) {
+  const flash = useCellFlash(value)
+  if (value == null) return <span className="mono text-muted">—</span>
+  if (value === 0) return <span className="mono">{fmtNum(value)}</span>
+  return (
+    <span className={`mono ${value > 0 ? 'pnl-positive' : 'pnl-negative'} ${flash}`}>
+      {fmtSigned(value)}
+    </span>
+  )
+}
+
+/** Price cell with 380ms flash feedback. */
+function FlashPriceCell({ value }: { value: number | null | undefined }) {
+  const flash = useCellFlash(value)
+  return <span className={`mono ${flash}`}>{fmtNum(value)}</span>
+}
 
 type CloseResult = Awaited<ReturnType<typeof api.closePosition>>;
 
@@ -155,79 +175,98 @@ const orderIntentBadge = (order: Order) => {
 };
 
 const openColumns = [
-	posCol.accessor("symbol", {
-		header: "Symbol",
-		cell: (info) => (
-			<span className="mono">
-				{fmtSymbol(info.getValue(), info.row.original.market_type)}
-			</span>
-		),
-	}),
-	posCol.accessor("execution_mode", {
-		id: "exchange",
-		header: "Exchange",
-		cell: (info) => exchangeOf(info.getValue()),
-	}),
-	posCol.accessor("market_type", {
-		id: "market",
-		header: "Market",
-		cell: (info) => marketBadge(info.getValue()),
-	}),
-	posCol.accessor("direction", {
-		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
-	}),
-	posCol.accessor("quantity", {
-		header: "Qty",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("entry_price", {
-		header: "Entry (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("current_price", {
-		header: "Current (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
 	posCol.display({
-		id: "leverage",
-		header: "Lev",
+		id: 'instrument',
+		header: 'Instrument',
 		cell: ({ row }) => {
-			const lev = (row.original as any).leverage;
-			return lev && lev > 1 ? (
-				<Badge tone="blue">{lev}x</Badge>
-			) : (
-				<span className="text-muted">1x</span>
-			);
+			const p = row.original
+			const lev = p.leverage
+			return (
+				<span>
+					<SymbolLink symbol={p.symbol} marketType={p.market_type} bold />
+					<br />
+					<span className="text-muted text-sm mono">{exchangeOf(p.execution_mode)} · {p.market_type}{lev && lev > 1 ? ` · ${lev}x` : ''}</span>
+				</span>
+			)
 		},
 	}),
-	posCol.accessor("stop_price", {
-		header: "Stop (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("take_profit_price", {
-		header: "TP (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	posCol.accessor("unrealized_pnl", {
-		header: "uPnL (USDT)",
-		cell: (info) => pnlCell(info.getValue()),
-	}),
+	// 2. Side / Qty
 	posCol.display({
-		id: "unrealized_pnl_source",
-		header: "uPnL source",
-		cell: ({ row }) => pnlSourceBadge(row.original.unrealized_pnl_source),
+		id: 'side_qty',
+		header: 'Side / Qty',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span>
+					<Badge tone={p.direction === 'long' ? 'green' : 'red'}>{humanize(p.direction)}</Badge>
+					<br />
+					<span className="mono text-sm">{fmtNum(p.quantity)}</span>
+				</span>
+			)
+		},
+	}),
+	// 3. Price (Entry / Current)
+	posCol.display({
+		id: 'price_pair',
+		header: 'Entry / Current',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span className="mono">
+					{fmtNum(p.entry_price)}
+					<br />
+					<FlashPriceCell value={p.current_price} />
+				</span>
+			)
+		},
+	}),
+	// 4. Risk Bracket (SL / TP)
+	posCol.display({
+		id: 'bracket',
+		header: 'SL / TP',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span className="mono">
+					{fmtNum(p.stop_price)} / {fmtNum(p.take_profit_price)}
+				</span>
+			)
+		},
+	}),
+	// 5. Unrealized PnL (value + source badge)
+	posCol.display({
+		id: 'upnl',
+		header: 'Unrealized PnL',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<span>
+					<FlashPnLCell value={p.unrealized_pnl} />
+					{p.unrealized_pnl_source && (
+						<br />
+					)}
+					{p.unrealized_pnl_source && pnlSourceBadge(p.unrealized_pnl_source)}
+				</span>
+			)
+		},
+	}),
+	// 6. Actions (kept as-is for close button)
+	posCol.display({
+		id: 'actions',
+		header: '',
+		cell: ({ row }) => {
+			const p = row.original
+			return (
+				<PositionActions position={p} />
+			)
+		},
 	}),
 ];
 
 const closedColumns = [
 	posCol.accessor("symbol", {
 		header: "Symbol",
-		cell: (info) => (
-			<span className="mono">
-				{fmtSymbol(info.getValue(), info.row.original.market_type)}
-			</span>
-		),
+		cell: (info) => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} bold />,
 	}),
 	posCol.accessor("direction", {
 		header: "Dir",
@@ -241,43 +280,26 @@ const closedColumns = [
 		header: "Entry (USDT)",
 		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
 	}),
-	posCol.accessor("realized_pnl", {
-		header: "PnL (USDT)",
-		cell: (info) => pnlCell(info.getValue()),
-	}),
 	posCol.display({
-		id: "pnl_status",
-		header: "PnL status",
+		id: "realized_pnl_combo",
+		header: "PnL",
 		cell: ({ row }) => {
-			if (row.original.realized_pnl_complete !== false) {
-				return <span className="text-muted">complete</span>;
-			}
-			const reason =
-				row.original.realized_pnl_unavailable_reason || "economics unavailable";
-			// Terminal "gave up" state is distinct from an in-flight retry — the
-			// settler has stopped trying. Surface it in warning tone so the operator
-			// doesn't read "Incomplete Funding Economics" as "still working on it".
-			if (reason === "funding_permanently_unrecoverable") {
-				return (
-					<span
-						className="pnl-warning"
-						title="paper_funding_settler exhausted retries; realized_pnl stays NULL (never fabricated)"
-					>
-						funding lost
-					</span>
-				);
-			}
-			if (reason === "broker_funding_history_expired") {
-				return (
-					<span
-						className="pnl-warning"
-						title="UTA private funding history expired; realized_pnl stays NULL (never fabricated)"
-					>
-						funding history expired
-					</span>
-				);
-			}
-			return <span className="text-muted">{humanize(reason)}</span>;
+			const p = row.original
+			const statusNode = p.realized_pnl_complete !== false ? null : (
+				<span className="pnl-warning text-sm">
+					{p.realized_pnl_unavailable_reason === "funding_permanently_unrecoverable"
+						? 'funding lost'
+						: p.realized_pnl_unavailable_reason === "broker_funding_history_expired"
+							? 'history expired'
+							: humanize(p.realized_pnl_unavailable_reason ?? 'incomplete')}
+				</span>
+			)
+			return (
+				<span>
+					<FlashPnLCell value={p.realized_pnl} />
+					{statusNode && <><br />{statusNode}</>}
+				</span>
+			)
 		},
 	}),
 	posCol.accessor("close_reason", {
@@ -286,60 +308,63 @@ const closedColumns = [
 	}),
 	posCol.accessor("closed_at", {
 		header: "Closed",
-		cell: (info) => (
-			<span className="mono">{fmtTimestamp(info.getValue())}</span>
-		),
+		cell: (info) => <span className="mono">{fmtTimestamp(info.getValue())}</span>,
 	}),
 ];
 
 const orderColumns = [
 	ordCol.display({
 		id: "intent",
-		header: "Intent",
-		cell: ({ row }) => orderIntentBadge(row.original),
-	}),
-	ordCol.accessor("symbol", {
-		header: "Symbol",
-		cell: (info) => (
-			<span className="mono">
-				{fmtSymbol(info.getValue(), info.row.original.market_type)}
+		header: "Intent / Side",
+		cell: ({ row }) => (
+			<span>
+				{orderIntentBadge(row.original)}
+				<br />
+				<span className="mono text-sm">{humanize(row.original.direction)}</span>
 			</span>
 		),
 	}),
-	ordCol.accessor("direction", {
-		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
-	}),
-	ordCol.accessor("quantity", {
-		header: "Qty",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	ordCol.accessor("price", {
-		header: "Price (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	ordCol.accessor("execution_mode", {
-		header: "Mode",
-		cell: (info) => humanize(info.getValue()),
-	}),
-	ordCol.accessor("status", {
-		header: "Status",
-		cell: (info) => <StatusBadge status={info.getValue()} />,
-	}),
-	ordCol.accessor("error_reason", {
-		header: "Error",
-		cell: (info) => info.getValue() || "—",
-	}),
-	ordCol.accessor("filled_at", {
-		header: "Filled",
-		cell: (info) => (
-			<span className="mono">{fmtTimestamp(info.getValue())}</span>
+	ordCol.display({
+		id: "instrument",
+		header: "Instrument",
+		cell: ({ row }) => (
+			<span>
+				<SymbolLink symbol={row.original.symbol} marketType={row.original.market_type} bold />
+				<br />
+				<span className="text-muted text-sm mono">{humanize(row.original.execution_mode)} · {row.original.market_type}</span>
+			</span>
 		),
 	}),
-	ordCol.accessor("created_at", {
-		header: "Created",
-		cell: (info) => (
-			<span className="mono">{fmtTimestamp(info.getValue())}</span>
+	ordCol.display({
+		id: "qty_price",
+		header: "Qty @ Price",
+		cell: ({ row }) => (
+			<span className="mono">
+				{fmtNum(row.original.quantity)}
+				<br />
+				<span className="text-muted text-sm">@ {row.original.price != null ? fmtNum(row.original.price) : 'MKT'}</span>
+			</span>
+		),
+	}),
+	ordCol.display({
+		id: "status",
+		header: "Status",
+		cell: ({ row }) => (
+			<span>
+				<StatusBadge status={row.original.status} />
+				{row.original.error_reason && (
+					<><br /><span className="text-red text-sm">{row.original.error_reason}</span></>
+				)}
+			</span>
+		),
+	}),
+	ordCol.display({
+		id: "time",
+		header: "Time",
+		cell: ({ row }) => (
+			<span className="mono text-sm">
+				{fmtTimestamp(row.original.filled_at || row.original.created_at)}
+			</span>
 		),
 	}),
 ];
@@ -419,6 +444,8 @@ export default function TradesPositions() {
 	const requestedTab = searchParams.get("tab");
 	const entryPlanId = searchParams.get("entry_plan_id");
 	const activeTab = isTradesTab(requestedTab) ? requestedTab : "blotter";
+	const [closedExhausted, setClosedExhausted] = useState(false);
+	const [closedExtra, setClosedExtra] = useState<Position[]>([]);
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
@@ -442,6 +469,23 @@ export default function TradesPositions() {
 		? overviewBootstrap.account.execution_mode
 		: undefined;
 
+	const [closedLoadingMore, setClosedLoadingMore] = useState(false);
+	const loadMoreClosed = useCallback(async (currentClosed: Position[]) => {
+		const last = currentClosed[currentClosed.length - 1];
+		if (!last) return;
+		setClosedLoadingMore(true);
+		try {
+			const next = await api.getPositionsPaged({ limit: 100, cursor_id: last.id, status: 'closed' });
+			if (next.length) {
+				setClosedExtra(prev => [...prev, ...next]);
+			} else {
+				setClosedExhausted(true);
+			}
+		} finally {
+			setClosedLoadingMore(false);
+		}
+	}, []);
+
 	const positionsArray = positions ?? []
 	const ordersArray = orders ?? []
 	const positionsAvailable = !positionsPending && !positionsError && positions != null
@@ -457,7 +501,7 @@ export default function TradesPositions() {
 
 	const allPos = positionsArray as Position[];
 	const open = allPos.filter((p) => p.status === "open");
-	const closed = allPos.filter((p) => p.status !== "open");
+	const closed = [...allPos.filter((p) => p.status !== "open"), ...closedExtra];
 	const orderRows = ordersArray as Order[];
 	const selectedOrder =
 		sel?.kind === "order"
@@ -467,6 +511,15 @@ export default function TradesPositions() {
 		sel?.kind === "position"
 			? allPos.find((position) => position.id === sel.id) ?? null
 			: null;
+	// Lazy-load full position detail (includes raw_json reasoning fields) when drawer opens.
+	// Falls back to the light projection row already in memory while loading.
+	const { data: positionDetail } = useQuery({
+		queryKey: ['position-detail', selectedPosition?.id],
+		queryFn: () => api.getPosition(selectedPosition!.id),
+		enabled: !!selectedPosition,
+		staleTime: 60_000,
+	});
+	const displayedPosition = positionDetail ?? selectedPosition;
 
 	useEffect(() => {
 		if (requestedTab === activeTab) return;
@@ -653,22 +706,36 @@ export default function TradesPositions() {
 											</Card>
 									</div>
 
-									{closed.length > 0 && (
-										<div className="blotter-col">
-											<div className="blotter-section-head">
-												<h3>Closed Positions</h3>
-											</div>
-												<Card>
-													<DataTable
-														data={closed}
-														columns={closedColumns}
-														onRowClick={(p) =>
-															setSel({ kind: "position", id: p.id })
-														}
-													/>
-												</Card>
+								{closed.length > 0 && (
+									<div className="blotter-col">
+										<div className="blotter-section-head">
+											<h3>Closed Positions</h3>
+											{closed.length >= 200 && (
+												<span className="text-muted text-sm">First {closed.length} rows</span>
+											)}
 										</div>
-									)}
+										<Card>
+											<DataTable
+												data={closed}
+												columns={closedColumns}
+												onRowClick={(p) =>
+													setSel({ kind: "position", id: p.id })
+												}
+											/>
+										</Card>
+										{!closedExhausted && (closed.length >= 200 || closedExtra.length > 0) && (
+											<div className="mt-2 flex justify-end">
+												<Button
+													variant="secondary"
+													onClick={() => loadMoreClosed(closed)}
+													disabled={closedLoadingMore}
+												>
+													{closedLoadingMore ? 'Loading…' : 'Load more closed positions'}
+												</Button>
+											</div>
+										)}
+									</div>
+								)}
 								</div>
 							</>
 						),
@@ -710,11 +777,11 @@ export default function TradesPositions() {
 						)
 					)}
 					{sel?.kind === "position" && (
-						positionsAvailable && selectedPosition ? (
-							<PositionDetail
-								position={selectedPosition}
-								onClose={() => setSel(null)}
-							/>
+					positionsAvailable && displayedPosition ? (
+						<PositionDetail
+							position={displayedPosition}
+							onClose={() => setSel(null)}
+						/>
 						) : (
 							<SelectionUnavailable kind="position" unavailable={!positionsAvailable} />
 						)
@@ -822,9 +889,7 @@ function ReconciliationCard({
 									<tbody>
 										{external.map((i, idx) => (
 											<tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
-												<td className="mono">
-													{fmtSymbol(i.symbol, i.market_type)}
-												</td>
+												<td><SymbolLink symbol={i.symbol} marketType={i.market_type} /></td>
 												<td>{humanize(i.direction)}</td>
 												<td className="mono">{fmtNum(i.exchange?.quantity)}</td>
 												<td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
@@ -858,9 +923,7 @@ function ReconciliationCard({
 									<tbody>
 										{orphaned.map((i, idx) => (
 											<tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
-												<td className="mono">
-													{fmtSymbol(i.symbol, i.market_type)}
-												</td>
+												<td><SymbolLink symbol={i.symbol} marketType={i.market_type} /></td>
 												<td>{humanize(i.direction)}</td>
 												<td className="mono">{fmtNum(i.local?.quantity)}</td>
 												<td className="mono">{fmtNum(i.local?.entry_price)}</td>

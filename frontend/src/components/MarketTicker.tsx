@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { bootApi } from '../api/boot'
 import { fmtNum, fmtSigned, fmtTimestamp, isoToEpochSeconds } from '../lib/format'
+import { useCellFlash } from '../lib/useCellFlash'
 
 /**
  * MarketTicker — Bloomberg-flavored top-bar ticker.
@@ -48,6 +49,30 @@ function fmtClock(d: Date, utc: boolean): string {
   return `${pad2(h)}:${pad2(m)}:${pad2(s)}`
 }
 
+function CryptoTickerToken({ sym, label, snap, nowSec }: {
+  sym: string; label: string; snap: any; nowSec: number
+}) {
+  const price: number | null = snap?.price ?? null
+  const flash = useCellFlash(price)
+  const pct: number | null = snap?.change_pct_24h ?? null
+  const ageSec = snap ? isoToEpochSeconds(snap.snapshot_at) : null
+  const stale = ageSec != null && nowSec - ageSec > STALE_SECONDS
+  const tone = pct == null ? 'muted' : pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'
+  const title = snap
+    ? `${sym} · 24h change · updated ${fmtTimestamp(snap.snapshot_at)}${stale ? ' (stale feed)' : ''}`
+    : `${sym} · no snapshot feed yet`
+  return (
+    <span className={`ticker-token${stale ? ' ticker-stale' : ''}`} title={title}>
+      <span className="ticker-label">{label}</span>
+      <span className={`ticker-price ${flash}`}>{price != null ? fmtNum(price) : '—'}</span>
+      <span className={`ticker-pct ticker-${tone}`}>
+        {price != null && pct != null ? `${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${fmtSigned(pct)}%` : ''}
+      </span>
+      {stale && <span className="ticker-stale-dot" aria-hidden="true">◦</span>}
+    </span>
+  )
+}
+
 export default function MarketTicker() {
   const [now, setNow] = useState(() => new Date())
 
@@ -64,32 +89,7 @@ export default function MarketTicker() {
     meta: { background: true },
   })
 
-  const snaps = CRYPTO.map(({ sym }) => shell?.ticker?.[sym] || null) as any[]
-
   const nowSec = Math.floor(now.getTime() / 1000)
-
-  // Tick flash: compare current vs previous prices.
-  const prevPrices = useRef<Record<string, number>>({})
-  const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
-  const priceSig = snaps.map((s) => s?.price ?? '').join(',')
-
-  useEffect(() => {
-    const next: Record<string, 'up' | 'down'> = {}
-    CRYPTO.forEach(({ sym }, i) => {
-      const price = snaps[i]?.price
-      const prev = prevPrices.current[sym]
-      if (price != null && prev != null && price !== prev) {
-        next[sym] = price > prev ? 'up' : 'down'
-      }
-      if (price != null) prevPrices.current[sym] = price
-    })
-    if (Object.keys(next).length > 0) {
-      setFlashes(next)
-      const t = setTimeout(() => setFlashes({}), 650)
-      return () => clearTimeout(t)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [priceSig])
 
   return (
     <div className="market-ticker" role="status" aria-label="Market ticker">
@@ -106,28 +106,15 @@ export default function MarketTicker() {
       <span className="ticker-divider" aria-hidden="true" />
 
       {/* Crypto tokens — real data */}
-      {CRYPTO.map(({ sym, label }, i) => {
-        const snap = snaps[i]
-        const price = snap?.price
-        const pct = snap?.change_pct_24h
-        const ageSec = snap ? isoToEpochSeconds(snap.snapshot_at) : null
-        const stale = ageSec != null && nowSec - ageSec > STALE_SECONDS
-        const tone = pct == null ? 'muted' : pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'
-        const title = snap
-          ? `${sym} · 24h change · updated ${fmtTimestamp(snap.snapshot_at)}${stale ? ' (stale feed)' : ''}`
-          : `${sym} · no snapshot feed yet`
-        return (
-          <span key={sym} className={`ticker-token${stale ? ' ticker-stale' : ''}`} title={title}>
-            <span className="ticker-label">{label}</span>
-            <span className={`ticker-price${flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''}`}>{price != null ? fmtNum(price) : '—'}</span>
-            <span className={`ticker-pct ticker-${tone}`}>
-              {price != null && pct != null ? `${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${fmtSigned(pct)}%` : ''}
-            </span>
-            {stale && <span className="ticker-stale-dot" aria-hidden="true">◦</span>}
-          </span>
-        )
-      })}
-
+      {CRYPTO.map(({ sym, label }) => (
+        <CryptoTickerToken
+          key={sym}
+          sym={sym}
+          label={label}
+          snap={shell?.ticker?.[sym] ?? null}
+          nowSec={nowSec}
+        />
+      ))}
     </div>
   )
 }

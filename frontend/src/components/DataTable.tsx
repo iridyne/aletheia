@@ -179,9 +179,10 @@ export function DataTable<T>({
               } : undefined}
               tabIndex={onRowClick ? 0 : undefined}
             >
-              {row.getVisibleCells().map(cell => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-              ))}
+              {row.getVisibleCells().map(cell => {
+                const label = typeof cell.column.columnDef.header === 'string' ? cell.column.columnDef.header : cell.column.id
+                return <td key={cell.id} data-label={label}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              })}
             </tr>
           ))}
         </tbody>

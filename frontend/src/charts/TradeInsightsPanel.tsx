@@ -33,10 +33,12 @@ const C = {
   accent:  '#22d3ee',
   yellow:  '#f5b942',
   purple:  '#a78bfa',
+  blue:    '#38bdf8',
+  pink:    '#f472b6',
   surface: '#141a21',
   border:  '#232c36',
   text:    '#e6edf3',
-  muted:   '#7a8a99',
+  muted:   '#7d8997',
 }
 
 // ── Shared Recharts props ─────────────────────────────────────────────────────
@@ -463,7 +465,7 @@ function SymbolDirectionMatrix({ data }: { data: TradeInsights['symbol_direction
       <SectionLabel>Symbol × Direction Win Rate</SectionLabel>
       <div className="sdm-table">
         <div className="sdm-header">
-          <span>Symbol</span><span>Dir</span><span>WR%</span><span>Avg PnL%</span><span>#</span>
+          <span>Symbol</span><span>Dir</span><span>WR%</span><span>Avg PnL%</span><span>Trades</span>
         </div>
         {data.slice(0, 15).map((row, i) => (
           <div key={i} className="sdm-row">
@@ -502,7 +504,7 @@ function HoldDurationBuckets({ data }: { data: TradeInsights['hold_duration_buck
       </ResponsiveContainer>
       <div className="sdm-table" style={{ marginTop: 8 }}>
         <div className="sdm-header">
-          <span>Bucket</span><span>#</span><span>WR%</span><span>Avg%</span>
+          <span>Bucket</span><span>Trades</span><span>WR%</span><span>Avg%</span>
         </div>
         {data.map((b, i) => (
           <div key={i} className="sdm-row">
@@ -542,7 +544,7 @@ function RMultipleDistribution({ data }: { data: TradeInsights['r_multiple_distr
 
 // ── 13. Exit Reason Breakdown ────────────────────────────────────────────────
 function ExitReasonBreakdown({ data }: { data: TradeInsights['by_exit_reason'] }) {
-  const PIE_COLORS = [C.accent, C.green, C.yellow, C.red, C.purple, '#60a5fa', '#f472b6']
+  const PIE_COLORS = [C.accent, C.green, C.yellow, C.red, C.purple, C.blue, C.pink]
   return (
     <Card>
       <SectionLabel>Exit Reason Breakdown</SectionLabel>
@@ -567,7 +569,7 @@ function ExitReasonBreakdown({ data }: { data: TradeInsights['by_exit_reason'] }
         </ResponsiveContainer>
         <div className="sdm-table">
           <div className="sdm-header">
-            <span>Reason</span><span>#</span><span>WR%</span><span>PnL</span>
+            <span>Reason</span><span>Trades</span><span>WR%</span><span>PnL</span>
           </div>
           {data.map((row, i) => (
             <div key={i} className="sdm-row">

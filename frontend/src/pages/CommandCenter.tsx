@@ -7,7 +7,7 @@ import { getOperatorDisplayStatus } from '../lib/systemState'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import { safeErrorText } from '../lib/mutationErrors'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useConfirm, useToast } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, StatusText, SymbolLink, TableWrap, useConfirm, useToast } from '../components/ui'
 import type {
   OperatorCommandAudit,
   OperatorCommandPreview,
@@ -556,7 +556,7 @@ function HeartbeatZone({
                 const mt = pos?.market_type
                 return (
                   <tr key={sym}>
-                    <td className="mono text-sm">{fmtSymbol(sym, mt)}</td>
+                    <td><SymbolLink symbol={sym} marketType={mt} /></td>
                     <td className="text-right">
                       <PnlFlash value={Number(pnl)} />
                     </td>
@@ -586,7 +586,7 @@ function HeartbeatZone({
           <ul className="cc-thesis-list">
             {thesisItems.map(({ symbol, market_type, thesis }) => (
               <li key={symbol} className="cc-thesis-item">
-                <span className="mono text-xs cc-thesis-sym">{fmtSymbol(symbol, market_type)}</span>
+                <SymbolLink symbol={symbol} marketType={market_type} className="text-xs cc-thesis-sym" />
                 <span className="text-sm cc-thesis-body">{thesis}</span>
               </li>
             ))}
@@ -614,7 +614,7 @@ export default function CommandCenter() {
   const [inspectorFocus, setInspectorFocus] = useState<InspectorFocus>({ kind: 'session', id: 'operator-main' })
   const deferredPreviewInput = useDeferredValue(input)
   const deferredHistoryFilter = useDeferredValue(historyFilter)
-
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const draft = searchParams.get('draft') || ''
 
   useEffect(() => {
@@ -685,6 +685,8 @@ export default function CommandCenter() {
     if (!inspectorFocus && selectedSessionId) {
       setInspectorFocus({ kind: 'session', id: selectedSessionId })
     }
+    // Focus composer when session branch switches
+    composerRef.current?.focus()
   }, [inspectorFocus, selectedSessionId])
 
   const { data: sessionDetail } = useQuery<OperatorSessionDetail>({
@@ -726,24 +728,28 @@ export default function CommandCenter() {
     const stream = new EventSource('/api/operator/events/stream?limit=100')
 
     const handleOperatorEvent = (event: MessageEvent<string>) => {
-      const parsed = JSON.parse(event.data) as OperatorEvent
-      startTransition(() => {
-        qc.setQueryData<OperatorEvent[]>(['operator-events'], current =>
-          mergeEvents(current || [], parsed),
-        )
-      })
-      void qc.invalidateQueries({ queryKey: ['operator-status'] })
-      void qc.invalidateQueries({ queryKey: ['operator-extensions'] })
-      void qc.invalidateQueries({ queryKey: ['operator-sessions'] })
-      void qc.invalidateQueries({ queryKey: ['operator-tasks'] })
-      void qc.invalidateQueries({ queryKey: ['operator-recommendations'] })
-      void qc.invalidateQueries({ queryKey: ['operator-commands'] })
-      void qc.invalidateQueries({ queryKey: ['operator-session'] })
-      void qc.invalidateQueries({ queryKey: ['operator-events', 'session'] })
-      void qc.invalidateQueries({ queryKey: ['operator-events', 'task'] })
-      void qc.invalidateQueries({ queryKey: ['operator-context'] })
+      if (!event.data || event.data.startsWith(':')) return
+      try {
+        const parsed = JSON.parse(event.data) as OperatorEvent
+        startTransition(() => {
+          qc.setQueryData<OperatorEvent[]>(['operator-events'], current =>
+            mergeEvents(current || [], parsed),
+          )
+        })
+        void qc.invalidateQueries({ queryKey: ['operator-status'] })
+        void qc.invalidateQueries({ queryKey: ['operator-extensions'] })
+        void qc.invalidateQueries({ queryKey: ['operator-sessions'] })
+        void qc.invalidateQueries({ queryKey: ['operator-tasks'] })
+        void qc.invalidateQueries({ queryKey: ['operator-recommendations'] })
+        void qc.invalidateQueries({ queryKey: ['operator-commands'] })
+        void qc.invalidateQueries({ queryKey: ['operator-session'] })
+        void qc.invalidateQueries({ queryKey: ['operator-events', 'session'] })
+        void qc.invalidateQueries({ queryKey: ['operator-events', 'task'] })
+        void qc.invalidateQueries({ queryKey: ['operator-context'] })
+      } catch {
+        // Ignore malformed chunks or SSE pings to prevent stream crash
+      }
     }
-
     stream.addEventListener('operator_event', handleOperatorEvent as EventListener)
     return () => {
       stream.removeEventListener('operator_event', handleOperatorEvent as EventListener)
@@ -1204,6 +1210,7 @@ export default function CommandCenter() {
 
           <div className="command-composer">
             <textarea
+              ref={composerRef}
               value={input}
               onChange={event => setInput(event.target.value)}
               placeholder="Ask the operator to explain state, inspect a run, review a proposal, pause background activity, or run an enabled slash command."

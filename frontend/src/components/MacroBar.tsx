@@ -43,28 +43,28 @@ export default function MacroBar() {
   if (isError && !data) {
     return (
       <div className="macro-bar macro-bar-pending">
-        <DataStateMessage state="unavailable" message="Macro data unavailable. The read failed; this is not an empty result." />
+        <span className="macro-bar-hint mono text-muted">MACRO N/A</span>
       </div>
     )
   }
   if (isLoading && !data) {
     return (
       <div className="macro-bar macro-bar-pending">
-        <span className="macro-bar-hint">Macro data pending — collector initializing</span>
+        <span className="macro-bar-hint mono text-muted">MACRO —</span>
       </div>
     )
   }
   if (isError && data && (!data.available || !data.data)) {
     return (
       <div className="macro-bar macro-bar-pending">
-        <DataStateMessage state="stale" message="Macro data is stale. The latest read failed, so cached availability cannot be confirmed." />
+        <span className="macro-bar-hint mono text-muted">MACRO STALE</span>
       </div>
     )
   }
   if (!data?.available || !data?.data) {
     return (
       <div className="macro-bar macro-bar-pending">
-        <span className="macro-bar-hint">Macro data pending — collector initializing</span>
+        <span className="macro-bar-hint mono text-muted">MACRO —</span>
       </div>
     )
   }

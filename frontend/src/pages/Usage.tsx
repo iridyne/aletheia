@@ -30,15 +30,51 @@ const usd = (value: number | null | undefined) => value == null ? 'N/A' : new In
 const delta = (complete: boolean, value: number | null | undefined, points = false) => !complete || value == null ? 'Selected window' : `${value > 0 ? '+' : ''}${value.toFixed(1)}${points ? ' pp' : '%'} vs previous`
 
 const agentColumns: ColumnDef<UsageAgentBreakdown>[] = [
-  { accessorKey: 'agent', header: 'Agent' }, { accessorKey: 'runs', header: 'Runs', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'calls', header: 'LLM calls', cell: info => integer(info.getValue<number>()) }, { accessorKey: 'success_rate_pct', header: 'Success', cell: info => percent(info.getValue<number | null>()) },
-  { accessorKey: 'tokens', header: 'Tokens', cell: info => integer(info.getValue<number | null>()) }, { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
+  { accessorKey: 'agent', header: 'Agent' },
+  {
+    id: 'runs_calls',
+    header: 'Runs · Calls',
+    cell: ({ row }) => (
+      <span className="mono">
+        {integer(row.original.runs)}
+        <span className="text-muted text-sm ml-1">({integer(row.original.calls)} calls)</span>
+      </span>
+    ),
+  },
+  { accessorKey: 'success_rate_pct', header: 'Success', cell: info => percent(info.getValue<number | null>()) },
+  { accessorKey: 'tokens', header: 'Tokens', cell: info => integer(info.getValue<number | null>()) },
+  { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
   { accessorKey: 'p95_latency_ms', header: 'P95 latency', cell: info => duration(info.getValue<number | null>()) },
 ]
 const modelColumns: ColumnDef<UsageModelBreakdown>[] = [
-  { accessorKey: 'model', header: 'Model' }, { accessorKey: 'provider', header: 'Provider' }, { accessorKey: 'calls', header: 'Calls', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'success_rate_pct', header: 'Success', cell: info => percent(info.getValue<number | null>()) }, { accessorKey: 'input_tokens', header: 'Input', cell: info => integer(info.getValue<number | null>()) },
-  { accessorKey: 'output_tokens', header: 'Output', cell: info => integer(info.getValue<number | null>()) }, { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
+  { accessorKey: 'model', header: 'Model' }, { accessorKey: 'provider', header: 'Provider' },
+  {
+    id: 'invocations',
+    header: 'Invocations',
+    cell: ({ row }) => {
+      const d = row.original
+      return (
+        <span className="mono">
+          {integer(d.calls)}
+          <br /><span className="text-muted text-sm">{percent(d.success_rate_pct)} ok</span>
+        </span>
+      )
+    },
+  },
+  {
+    id: 'tokens_combo',
+    header: 'Tokens (In / Out)',
+    cell: ({ row }) => {
+      const d = row.original
+      return (
+        <span className="mono">
+          {integer((d.input_tokens ?? 0) + (d.output_tokens ?? 0))}
+          <br /><span className="text-muted text-sm">{integer(d.input_tokens)} / {integer(d.output_tokens)}</span>
+        </span>
+      )
+    },
+  },
+  { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
   { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
 ]
 const providerColumns: ColumnDef<UsageProviderBreakdown>[] = [
@@ -48,13 +84,42 @@ const providerColumns: ColumnDef<UsageProviderBreakdown>[] = [
   { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
 ]
 const toolColumns: ColumnDef<UsageToolBreakdown>[] = [
-  { accessorKey: 'tool', header: 'Tool' }, { accessorKey: 'class', header: 'Class' }, { accessorKey: 'permitted', header: 'Permitted', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'denied', header: 'Denied', cell: info => integer(info.getValue<number>()) }, { accessorKey: 'calls', header: 'Calls', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'p50_latency_ms', header: 'P50', cell: info => duration(info.getValue<number | null>()) }, { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
+  { accessorKey: 'tool', header: 'Tool' }, { accessorKey: 'class', header: 'Class' },
+  {
+    id: 'permitted_denied',
+    header: 'Permitted / Denied',
+    cell: ({ row }) => (
+      <span className="mono">
+        <span className="text-green">{integer(row.original.permitted)}</span>
+        {' / '}
+        <span className={row.original.denied > 0 ? 'text-red' : 'text-muted'}>{integer(row.original.denied)}</span>
+      </span>
+    ),
+  },
+  { accessorKey: 'calls', header: 'Calls', cell: info => integer(info.getValue<number>()) },
+  { accessorKey: 'p50_latency_ms', header: 'P50', cell: info => duration(info.getValue<number | null>()) },
+  { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
 ]
 const budgetColumns: ColumnDef<UsageBudget>[] = [
-  { accessorKey: 'limit_usd', header: 'Limit', cell: info => usd(info.getValue<number>()) }, { accessorKey: 'spend_usd', header: 'Spend', cell: info => usd(info.getValue<number | null>()) },
-  { accessorKey: 'remaining_usd', header: 'Remaining', cell: info => usd(info.getValue<number | null>()) }, { accessorKey: 'utilization_pct', header: 'Utilization', cell: info => percent(info.getValue<number | null>()) },
+  {
+    id: 'spend_limit',
+    header: 'Spend / Limit',
+    cell: ({ row }) => (
+      <span className="mono">
+        {usd(row.original.spend_usd)} / {usd(row.original.limit_usd)}
+      </span>
+    ),
+  },
+  {
+    id: 'remaining_util',
+    header: 'Remaining (% Used)',
+    cell: ({ row }) => (
+      <span className="mono">
+        {usd(row.original.remaining_usd)}
+        <span className="text-muted text-sm ml-1">({percent(row.original.utilization_pct)})</span>
+      </span>
+    ),
+  },
   { accessorKey: 'period', header: 'Period' },
 ]
 
@@ -81,16 +146,16 @@ export default function Usage() {
       {!summary ? <Skeleton label="usage overview" /> : <>
         <section className="usage-section">
           <div className="usage-primary-metrics">
-            <MetricTile label="Cost" value={usd(summary.overview.cost_usd)} context={delta(summary.comparison.complete, summary.comparison.cost_usd_change_pct)} />
+            <MetricTile label="Cost" value={usd(summary.overview.cost_usd)} context={summary.overview.cost_usd == null ? 'Pricing unconfigured in Settings' : delta(summary.comparison.complete, summary.comparison.cost_usd_change_pct)} />
             <MetricTile label="Total tokens" value={<span title={integer(summary.overview.total_tokens)}>{compact(summary.overview.total_tokens)}</span>} context={delta(summary.comparison.complete, summary.comparison.total_tokens_change_pct)} />
             <MetricTile label="LLM calls" value={integer(summary.overview.llm_calls)} context={delta(summary.comparison.complete, summary.comparison.llm_calls_change_pct)} />
             <MetricTile label="Success rate" value={percent(summary.overview.success_rate_pct)} context={delta(summary.comparison.complete, summary.comparison.success_rate_change_pct_points, true)} />
-            <MetricTile label="Avg cost / call" value={usd(summary.overview.avg_cost_per_call_usd)} context={delta(summary.comparison.complete, summary.comparison.avg_cost_per_call_usd_change_pct)} />
+            <MetricTile label="Avg cost / call" value={usd(summary.overview.avg_cost_per_call_usd)} context={summary.overview.avg_cost_per_call_usd == null ? 'Pricing unconfigured in Settings' : delta(summary.comparison.complete, summary.comparison.avg_cost_per_call_usd_change_pct)} />
           </div>
         </section>
 
         <section className="usage-section"><div className="usage-section-head"><h2>Trend</h2><div className="seg-toggle" aria-label="Trend metric">{TREND_OPTIONS.map(option => <Button key={option} variant="ghost" className={`seg-btn${trendMetric === option ? ' active' : ''}`} aria-pressed={trendMetric === option} onClick={() => setTrendMetric(option)}>{option}</Button>)}</div></div>
-          <Card>{costTrendUnavailable ? <div className="usage-trend-empty" role="status">N/A for selected window</div> : <ResponsiveContainer width="100%" height={280}><BarChart data={summary.trend}><CartesianGrid stroke={C.border} vertical={false} /><XAxis dataKey="started_at" tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={value => String(value).slice(5, 16)} /><YAxis tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={value => fmtCompact(Number(value))} /><Tooltip {...tooltipProps} formatter={(value: unknown, name: unknown) => [trendMetric === 'Cost' ? usd(Number(value)) : integer(Number(value)), String(name).replace(/_/g, ' ')]} />{trendMetric === 'Tokens' && <Legend />}{trendMetric === 'Cost' && <Bar dataKey="cost_usd" fill={C.accent} />}{trendMetric === 'Calls' && <Bar dataKey="llm_calls" fill={C.accent} />}{trendMetric === 'Tokens' && <><Bar dataKey="input_tokens" stackId="tokens" fill={C.accent} /><Bar dataKey="output_tokens" stackId="tokens" fill={C.green} /></>}</BarChart></ResponsiveContainer>}</Card>
+          <Card>{costTrendUnavailable ? <div className="usage-trend-empty" role="status">N/A for selected window — pricing unconfigured in Settings</div> : <ResponsiveContainer width="100%" height={280}><BarChart data={summary.trend}><CartesianGrid stroke={C.border} vertical={false} /><XAxis dataKey="started_at" tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={value => String(value).slice(5, 16)} /><YAxis tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={value => fmtCompact(Number(value))} /><Tooltip {...tooltipProps} formatter={(value: unknown, name: unknown) => [trendMetric === 'Cost' ? usd(Number(value)) : integer(Number(value)), String(name).replace(/_/g, ' ')]} />{trendMetric === 'Tokens' && <Legend />}{trendMetric === 'Cost' && <Bar dataKey="cost_usd" fill={C.accent} />}{trendMetric === 'Calls' && <Bar dataKey="llm_calls" fill={C.accent} />}{trendMetric === 'Tokens' && <><Bar dataKey="input_tokens" stackId="tokens" fill={C.accent} /><Bar dataKey="output_tokens" stackId="tokens" fill={C.green} /></>}</BarChart></ResponsiveContainer>}</Card>
         </section>
 
         <section className="usage-section"><div className="usage-section-head"><h2>Token composition</h2></div><Card><CardHeader title="Input and output" meta="Cache and reasoning are included in input/output; do not add them again." /><div className="usage-composition-grid"><div><span>Input</span><strong>{integer(summary.token_composition.input_tokens)}</strong></div><div><span>Output</span><strong>{integer(summary.token_composition.output_tokens)}</strong></div>{summary.token_composition.cache_read_tokens !== undefined && <div><span>Cache read</span><strong>{integer(summary.token_composition.cache_read_tokens)}</strong></div>}{summary.token_composition.cache_write_tokens !== undefined && <div><span>Cache write</span><strong>{integer(summary.token_composition.cache_write_tokens)}</strong></div>}{summary.token_composition.reasoning_tokens !== undefined && <div><span>Reasoning</span><strong>{integer(summary.token_composition.reasoning_tokens)}</strong></div>}</div></Card></section>

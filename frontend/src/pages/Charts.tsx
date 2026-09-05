@@ -16,8 +16,8 @@ import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDr
 import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
-import { fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
-import type { Candidate, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
+import { fmtCompact, fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
+import type { Candidate, CandidateDetail, EntryPlan, MarketMicrostructure, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
 
 const PINNED_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -129,6 +129,92 @@ function InstrumentDialog({ open, id, children, onClose }: {
       {children}
     </div>
   </div>
+}
+
+function StructureTab({
+  active,
+  snapshot,
+  microstructure,
+  candidateDetail,
+  entryPlan,
+  position,
+}: {
+  active: MarketInstrument
+  snapshot?: MarketSnapshot | null
+  microstructure?: MarketMicrostructure | null
+  candidateDetail?: CandidateDetail | null
+  entryPlan?: EntryPlan | null
+  position?: Position | null
+}) {
+  const member = candidateDetail?.member
+  const attention = candidateDetail?.attention
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Card>
+          <CardHeader title="Market Telemetry" meta={active.exchange || 'Default exchange'} />
+          <div className="flex flex-col gap-1 text-sm">
+            <div className="flex justify-between"><span className="text-muted">Symbol</span><span className="mono font-bold">{fmtSymbol(active.symbol, active.marketType)}</span></div>
+            <div className="flex justify-between"><span className="text-muted">Market Type</span><span className="mono uppercase">{active.marketType}</span></div>
+            <div className="flex justify-between"><span className="text-muted">Price</span><span className="mono">{snapshot?.price != null ? fmtNum(snapshot.price) : '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted">24h Change</span><span className={`mono ${snapshot?.change_pct_24h != null && snapshot.change_pct_24h > 0 ? 'pnl-positive' : snapshot?.change_pct_24h != null && snapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}`}>{snapshot?.change_pct_24h != null ? `${fmtSigned(snapshot.change_pct_24h)}%` : '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted">24h Volume</span><span className="mono">{snapshot?.volume_24h != null ? `$${fmtCompact(snapshot.volume_24h)}` : '—'}</span></div>
+            {microstructure?.spread_bps != null && (
+              <div className="flex justify-between"><span className="text-muted">Spread</span><span className="mono">{microstructure.spread_bps} bps</span></div>
+            )}
+            {microstructure?.depth_10bps_usd != null && (
+              <div className="flex justify-between"><span className="text-muted">Depth (10bps)</span><span className="mono">${fmtCompact(microstructure.depth_10bps_usd)}</span></div>
+            )}
+            {microstructure?.funding_rate != null && (
+              <div className="flex justify-between"><span className="text-muted">Funding Rate</span><span className="mono">{fmtSigned(microstructure.funding_rate * 100)}%</span></div>
+            )}
+            {microstructure?.open_interest_usd != null && (
+              <div className="flex justify-between"><span className="text-muted">Open Interest</span><span className="mono">${fmtCompact(microstructure.open_interest_usd)}</span></div>
+            )}
+          </div>
+        </Card>
+        <Card>
+          <CardHeader title="Trade & Risk Geometry" meta={position ? 'Active position' : entryPlan ? 'Entry plan' : 'No open trade'} />
+          <div className="flex flex-col gap-1 text-sm">
+            {position ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted">Direction</span><Badge tone={position.direction === 'long' ? 'green' : 'red'}>{humanize(position.direction)}</Badge></div>
+                <div className="flex justify-between"><span className="text-muted">Entry Price</span><span className="mono">{fmtNum(position.entry_price)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Quantity</span><span className="mono">{fmtNum(position.quantity)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">uPnL</span><span className="mono">{position.unrealized_pnl != null ? `${fmtSigned(position.unrealized_pnl)} USDT` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Bracket (SL/TP)</span><span className="mono">{fmtNum(position.stop_price)} / {fmtNum(position.take_profit_price)}</span></div>
+              </>
+            ) : entryPlan ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted">Plan Status</span><Badge tone="green">{humanize(entryPlan.status)}</Badge></div>
+                <div className="flex justify-between"><span className="text-muted">Direction</span><span className="mono uppercase">{entryPlan.direction}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Mode</span><span className="mono">{humanize(entryPlan.execution_mode)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Stop / Target</span><span className="mono">{fmtNum(entryPlan.plan?.stop_price)} / {fmtNum(entryPlan.plan?.target_price)}</span></div>
+              </>
+            ) : (
+              <p className="text-muted text-sm m-0">No active position or planned entry for this instrument.</p>
+            )}
+          </div>
+        </Card>
+        <Card>
+          <CardHeader title="Candidate Selection Evidence" meta={candidateDetail ? 'Observed member' : 'Not in candidate pool'} />
+          <div className="flex flex-col gap-1 text-sm">
+            {candidateDetail ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? attention?.rank ?? '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Family</span><span>{humanize(attention?.candidate_family ?? member?.scanner_family ?? '—')}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Selection Utility</span><span className="mono">{member?.candidate_selection_utility_pct != null ? `${fmtNum(member.candidate_selection_utility_pct)}%` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Spread</span><span className="mono">{member?.spread_bps != null ? `${member.spread_bps} bps` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Liquidity Score</span><span className="mono">{member?.liquidity_score ?? '—'}</span></div>
+              </>
+            ) : (
+              <p className="text-muted text-sm m-0">Instrument selected directly via navigator (not linked from Candidate pool).</p>
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  )
 }
 
 export function SignalsTab({ onInstrumentSelect }: { onInstrumentSelect: (instrument: MarketInstrument) => void }) {
@@ -250,7 +336,7 @@ function TimeframeMenu({ open, anchorRef, current, onSelect, onClose }: {
       tabIndex={-1}
       aria-label="More timeframes"
       className="market-tf-menu"
-      style={pos ? { top: pos.top, left: pos.left, visibility: 'visible' } : { top: -9999, left: -9999, visibility: 'hidden' }}
+      style={pos ? { top: pos.top, left: pos.left, opacity: 1 } : { top: 0, left: 0, visibility: 'hidden' }}
       onMouseDown={event => event.stopPropagation()}
     >
       {OVERFLOW_TIMEFRAME_GROUPS.map(group => <div className="market-tf-menu-group" key={group.title}>
@@ -519,6 +605,7 @@ function ChartSettings({ open, scope, settings, onChange, onReset, onClose }: {
 export default function Charts() {
   const [searchParams, setSearchParams] = useSearchParams()
   const entryPlanId = searchParams.get('entry_plan_id')
+  const candidateId = searchParams.get('candidate_id')
   const [active, setActive] = useState<MarketInstrument>({
     symbol: searchParams.get('symbol') || 'BTC/USDT',
     exchange: searchParams.get('exchange') || '',
@@ -557,6 +644,23 @@ export default function Charts() {
     queryFn: () => api.getEntryPlan(entryPlanId!),
     enabled: Boolean(entryPlanId),
   })
+  const { data: candidateDetail } = useQuery({
+    queryKey: ['candidate-charts', candidateId],
+    queryFn: () => api.getCandidate(candidateId!),
+    enabled: Boolean(candidateId),
+  })
+
+  useEffect(() => {
+    if (!candidateId || !candidateDetail) return
+    const m = candidateDetail.attention ?? candidateDetail.member
+    if (m?.symbol) {
+      setActive({
+        symbol: m.symbol,
+        exchange: (m as any).venue || defaultExchange,
+        marketType: (m as any).market_type || 'spot',
+      })
+    }
+  }, [candidateDetail, candidateId, defaultExchange])
 
   useEffect(() => {
     if (!entryPlanId || !entryPlan) return
@@ -568,9 +672,10 @@ export default function Charts() {
     if (active.exchange) params.exchange = active.exchange
     if (active.marketType !== 'spot') params.market_type = active.marketType
     if (entryPlanId && !clearEntryPlanOnNextSync.current) params.entry_plan_id = entryPlanId
+    if (candidateId) params.candidate_id = candidateId
     clearEntryPlanOnNextSync.current = false
     setSearchParams(params, { replace: true })
-  }, [active, entryPlanId, setSearchParams])
+  }, [active, candidateId, entryPlanId, setSearchParams])
   const { data: universe } = useQuery({ queryKey: ['universe-current'], queryFn: api.getUniverseCurrent, refetchInterval: 120_000 })
   const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 500), refetchInterval: 30_000 })
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions, refetchInterval: 30_000 })
@@ -582,6 +687,11 @@ export default function Charts() {
     queryFn: () => api.getMarketOpportunities(active.symbol, active.marketType), refetchInterval: 60_000,
   })
   const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades, refetchInterval: 30_000 })
+  const { data: microstructure } = useQuery({
+    queryKey: ['market-microstructure', active.symbol, active.exchange, active.marketType],
+    queryFn: () => api.getMarketMicrostructure(active.symbol, active.exchange, active.marketType),
+    refetchInterval: 15_000,
+  })
 
   const snapshotMap = useMemo(() => {
     const map = new Map<string, MarketSnapshot>()
@@ -727,17 +837,35 @@ export default function Charts() {
     />
 
     <div className="market-workbench-context">
-      <span className="market-context-static mono">{fmtSymbol(active.symbol, active.marketType)}</span>
       <Button variant="ghost" className="market-context-picker" aria-expanded={pickerOpen} aria-controls={dialogId} onClick={() => setPickerOpen(true)}>
-        <span>Choose instrument</span><strong>{fmtSymbol(active.symbol, active.marketType)} · {active.marketType}</strong><span aria-hidden="true">⌄</span>
+        <strong className="mono">{fmtSymbol(active.symbol, active.marketType).toUpperCase()} {active.marketType === 'perp' ? 'PERP' : active.marketType === 'futures' ? 'FUT' : ''}</strong>
+        <span className="text-muted mono">· {(active.exchange || 'exchange').toUpperCase()}</span>
+        <span aria-hidden="true" className="text-muted">⌄</span>
       </Button>
-      <strong className="market-context-price mono">{currentSnapshot?.price == null ? 'Price not available' : fmtNum(currentSnapshot.price)}</strong>
-      {currentSnapshot?.change_pct_24h != null && <span className={currentSnapshot.change_pct_24h > 0 ? 'pnl-positive' : currentSnapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}>{fmtDelta(currentSnapshot.change_pct_24h)}%</span>}
-      <span>{active.exchange || 'default exchange'} · {active.marketType}</span>
-      <span className="market-context-provenance">{dataMeta ? `Data refreshed ${metaAge}` : 'Data source not available'}</span>
+      <strong className="market-context-price mono">{currentSnapshot?.price == null ? '—' : fmtNum(currentSnapshot.price)}</strong>
+      {currentSnapshot?.change_pct_24h != null && (
+        <span className={`mono ${currentSnapshot.change_pct_24h > 0 ? 'pnl-positive' : currentSnapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}`}>
+          {currentSnapshot.change_pct_24h > 0 ? '▲' : currentSnapshot.change_pct_24h < 0 ? '▼' : ''}{fmtDelta(currentSnapshot.change_pct_24h)}%
+        </span>
+      )}
+      {currentSnapshot?.volume_24h != null && (
+        <span className="mono text-muted">VOL ${fmtCompact(currentSnapshot.volume_24h)}</span>
+      )}
+      {microstructure?.funding_rate != null && (
+        <span className="mono text-muted">FR {(microstructure.funding_rate * 100).toFixed(4)}%</span>
+      )}
+      {microstructure?.spread_bps != null && (
+        <span className="mono text-muted">SPREAD {microstructure.spread_bps} bp</span>
+      )}
+      {dataMeta?.ageMs != null && (
+        <span className="mono text-muted market-context-age">{metaAge}</span>
+      )}
     </div>
     {entryPlanId && <Card className="entry-workbench-notice">
       {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}
+    </Card>}
+    {candidateId && !entryPlanId && <Card className="entry-workbench-notice">
+      Candidate {candidateId.slice(0, 8)} · {candidateDetail?.attention?.candidate_family ?? candidateDetail?.member?.scanner_family ?? 'observed'} · {candidateDetail?.member?.total_score != null ? `score ${fmtNum(candidateDetail.member.total_score)}` : 'candidate context'}
     </Card>}
     <div ref={shellRef} className="market-workbench-shell">
       <aside className="market-instrument-rail">{navigator}</aside>
@@ -775,6 +903,16 @@ export default function Charts() {
     <InstrumentDialog open={pickerOpen} id={dialogId} onClose={() => setPickerOpen(false)}>{navigator}</InstrumentDialog>
     <MacroBar />
     <Tabs value={activeTab} onChange={id => setActiveTab(id)} tabs={([
+      { id: 'structure', label: 'Structure & Profile', render: () => (
+        <StructureTab
+          active={active}
+          snapshot={currentSnapshot}
+          microstructure={microstructure}
+          candidateDetail={candidateDetail}
+          entryPlan={entryPlan}
+          position={positions.find(p => p.symbol === active.symbol && p.status === 'open') ?? null}
+        />
+      )},
       { id: 'signals', label: 'Signals', badge: signalCount || undefined, render: () => <SignalsTab onInstrumentSelect={selectFromSignals} /> },
       { id: 'news', label: 'News', render: () => <NewsTab /> },
       { id: 'predictions', label: 'Predictions', render: () => <PredictionsTab /> },

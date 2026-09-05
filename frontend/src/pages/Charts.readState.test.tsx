@@ -94,7 +94,7 @@ describe('Charts read-state contract', () => {
   it('renders macro read failures as unavailable and retained values as stale', () => {
     state.macro = undefined
     state.macroError = true
-    expect(renderToStaticMarkup(<MacroBar />)).toContain('Macro data unavailable')
+    expect(renderToStaticMarkup(<MacroBar />)).toContain('MACRO N/A')
 
     state.macro = { available: true, data: { risk_regime: 'neutral', vix_close: 18 } }
     expect(renderToStaticMarkup(<MacroBar />)).toContain('Macro data is stale')
@@ -105,7 +105,7 @@ describe('Charts read-state contract', () => {
     state.macro = { available: false, data: null }
     state.macroError = true
     const html = renderToStaticMarkup(<MacroBar />)
-    expect(html).toContain('Macro data is stale')
+    expect(html).toContain('MACRO STALE')
     expect(html).not.toContain('collector initializing')
   })
 
@@ -121,7 +121,7 @@ describe('Charts read-state contract', () => {
     state.macro = { available: false, data: null }
     state.macroError = false
     const macro = renderToStaticMarkup(<MacroBar />)
-    expect(macro).toContain('collector initializing')
-    expect(macro).not.toContain('Macro data is stale')
+    expect(macro).toContain('MACRO')
+    expect(macro).not.toContain('MACRO STALE')
   })
 })
