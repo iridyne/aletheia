@@ -177,7 +177,7 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
       <table className="status-board"><tbody>
         <StatusRow label="Gateway" light={shell?.gateway?.running ? (shell.gateway.paused ? 'yellow' : 'green') : !shell ? 'muted' : 'red'} value={shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'} />
         <StatusRow label="Scheduler" light={scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted'} value={scheduler?.state || 'not available'} />
-        <StatusRow label="Connectivity" light={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
+        <StatusRow label="Connectivity" light={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason || undefined} />
         <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
         <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
         {collectorHealth && collectorHealth.status !== 'healthy' && expanded !== 'collectors' && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}

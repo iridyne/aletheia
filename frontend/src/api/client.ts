@@ -3036,25 +3036,9 @@ export const api = {
 		if (days != null) q.set("days", String(days));
 		if (execution_mode) q.set("execution_mode", execution_mode);
 		const qs = q.toString();
-		return fetchJson<
-			OutcomeCohort & {
-				default_curve: "genuine_verified";
-				raw_curve_label: string;
-				genuine_curve_label: string;
-				raw_recorded_points: EquityPoint[];
-				genuine_points: EquityPoint[];
-				points: EquityPoint[];
-				current_unrealized: number;
-				current_mark_point:
-					| (EquityPoint & {
-							closed_raw_pnl: number;
-							current_unrealized: number;
-					  })
-					| null;
-				total_realized: number | null;
-				raw_total_recorded_realized: number | null;
-			}
-		>(`/analytics/equity-curve${qs ? `?${qs}` : ""}`);
+		return fetchJson<components["schemas"]["EquityCurveResponse"]>(
+			`/analytics/equity-curve${qs ? `?${qs}` : ""}`,
+		);
 	},
 	getTradeInsights: (execution_mode?: string) =>
 		fetchJson<TradeInsights>(_withMode("/analytics/trade-insights", execution_mode)),

@@ -7,11 +7,45 @@ import time
 from datetime import datetime, timedelta, timezone
 import json
 from threading import RLock
+from typing import Any
 
 from fastapi import APIRouter, Response
+from pydantic import BaseModel, ConfigDict
+
+
+class EquityPoint(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    time: str
+    cumulative_pnl: float
+    raw_pnl: float | None = None
+    outcome: str | None = None
+    execution_mode: str | None = None
+
+
+class EquityCurveResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    default_curve: str = "genuine_verified"
+    raw_curve_label: str = "raw_recorded_account_events"
+    genuine_curve_label: str = "verified_strategy_outcomes"
+    raw_recorded_points: list[EquityPoint] = []
+    genuine_points: list[EquityPoint] = []
+    points: list[EquityPoint] = []
+    current_unrealized: float = 0.0
+    current_mark_point: dict[str, Any] | None = None
+    total_realized: float | None = None
+    raw_total_recorded_realized: float | None = None
+
+class TradeInsightsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class TradeStatsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
-
 _DECISION_COUNT_KEYS = (
     "trade",
     "operator_skip",
@@ -175,7 +209,7 @@ def get_trade_paths():
     return build_trade_path_rows(limit=200)
 
 
-@router.get("/trade-stats")  # TODO: add response_model for OpenAPI schema (#1187)
+@router.get("/trade-stats", response_model=TradeStatsResponse)
 def get_trade_stats(execution_mode: str | None = None):
     """Trade analytics: by-source and by-family aggregation for the Analytics panel.
 
@@ -222,7 +256,7 @@ def get_strategy_kpis(execution_mode: str | None = None):
     }
 
 
-@router.get("/equity-curve")
+@router.get("/equity-curve", response_model=EquityCurveResponse)
 def get_equity_curve(
     execution_mode: str | None = None,
     days: int | None = None,
@@ -364,7 +398,7 @@ def get_equity_curve(
     }
 
 
-@router.get("/trade-insights")  # TODO: add response_model for OpenAPI schema (#1187)
+@router.get("/trade-insights", response_model=TradeInsightsResponse)
 def get_trade_insights(execution_mode: str | None = None):
     """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc.
 

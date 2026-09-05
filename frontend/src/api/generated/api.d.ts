@@ -7109,6 +7109,18 @@ export interface components {
             /** Session Id */
             session_id?: string | null;
         };
+        /** ConnectivitySnapshot */
+        ConnectivitySnapshot: {
+            /** Reason */
+            reason?: string | null;
+            /**
+             * State
+             * @default not_available
+             */
+            state: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** ContinuityBody */
         ContinuityBody: {
             /**
@@ -7413,6 +7425,69 @@ export interface components {
             /** Tickers */
             tickers: string[];
         };
+        /** EquityCurveResponse */
+        EquityCurveResponse: {
+            /** Current Mark Point */
+            current_mark_point?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Current Unrealized
+             * @default 0
+             */
+            current_unrealized: number;
+            /**
+             * Default Curve
+             * @default genuine_verified
+             */
+            default_curve: string;
+            /**
+             * Genuine Curve Label
+             * @default verified_strategy_outcomes
+             */
+            genuine_curve_label: string;
+            /**
+             * Genuine Points
+             * @default []
+             */
+            genuine_points: components["schemas"]["EquityPoint"][];
+            /**
+             * Points
+             * @default []
+             */
+            points: components["schemas"]["EquityPoint"][];
+            /**
+             * Raw Curve Label
+             * @default raw_recorded_account_events
+             */
+            raw_curve_label: string;
+            /**
+             * Raw Recorded Points
+             * @default []
+             */
+            raw_recorded_points: components["schemas"]["EquityPoint"][];
+            /** Raw Total Recorded Realized */
+            raw_total_recorded_realized?: number | null;
+            /** Total Realized */
+            total_realized?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EquityPoint */
+        EquityPoint: {
+            /** Cumulative Pnl */
+            cumulative_pnl: number;
+            /** Execution Mode */
+            execution_mode?: string | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Raw Pnl */
+            raw_pnl?: number | null;
+            /** Time */
+            time: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * EventTriggerConfig
          * @description Real-time-ish event detection on price_feed ticks.
@@ -7543,6 +7618,27 @@ export interface components {
             /** Mode */
             mode: string;
         };
+        /** ExchangeSnapshot */
+        ExchangeSnapshot: {
+            /** Data Exchange */
+            data_exchange?: string | null;
+            /**
+             * Exchange Diverged
+             * @default false
+             */
+            exchange_diverged: boolean;
+            /** Execution Exchange */
+            execution_exchange?: string | null;
+            /** Paper Execution Mode */
+            paper_execution_mode?: string | null;
+            /**
+             * Status
+             * @default not_available
+             */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * FastTriggerConfig
          * @description Deterministic trigger capability plus legacy Setup rollout compatibility.
@@ -7586,6 +7682,21 @@ export interface components {
             max_setups?: number | null;
             /** Mode */
             mode?: ("off" | "shadow" | "execute") | null;
+        };
+        /** GatewaySnapshot */
+        GatewaySnapshot: {
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
+        } & {
+            [key: string]: unknown;
         };
         /** GuardConfig */
         GuardConfig: {
@@ -7846,6 +7957,28 @@ export interface components {
             /** Supervisor Restart Window Sec */
             supervisor_restart_window_sec?: number | null;
         };
+        /** HealthSnapshot */
+        HealthSnapshot: {
+            /**
+             * Availability
+             * @default available
+             */
+            availability: string;
+            /**
+             * Issues
+             * @default []
+             */
+            issues: string[];
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Status
+             * @default not_available
+             */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * HistoricalDataConfig
          * @description Local OHLCV storage and bulk download settings.
@@ -7943,6 +8076,16 @@ export interface components {
              */
             reason: string;
         };
+        /** KillSwitchSnapshot */
+        KillSwitchSnapshot: {
+            /**
+             * Active
+             * @default false
+             */
+            active: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         /** KillSwitchStatusResponse */
         KillSwitchStatusResponse: {
             /** Active */
@@ -8033,6 +8176,21 @@ export interface components {
             unlock_evidence?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** LiveSnapshot */
+        LiveSnapshot: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * State
+             * @default not_available
+             */
+            state: string;
+        } & {
+            [key: string]: unknown;
         };
         /** LiveUnlockRequest */
         LiveUnlockRequest: {
@@ -8979,6 +9137,34 @@ export interface components {
              */
             user_input: string;
         };
+        /** OperatorSnapshot */
+        OperatorSnapshot: {
+            /** Current Intent */
+            current_intent?: string | null;
+            /** Heartbeat Age Sec */
+            heartbeat_age_sec?: number | null;
+            /** Last Seen At */
+            last_seen_at?: string | null;
+            /** Mode */
+            mode?: string | null;
+            /** Model Provider */
+            model_provider?: string | null;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Stale */
+            stale?: boolean | null;
+            /**
+             * Status
+             * @default not_available
+             */
+            status: string;
+            /** Trading Daemon */
+            trading_daemon?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** OperatorTaskCreate */
         OperatorTaskCreate: {
             /**
@@ -9109,6 +9295,88 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** OverviewBootstrapResponse */
+        OverviewBootstrapResponse: {
+            /**
+             * Account
+             * @default {}
+             */
+            account: {
+                [key: string]: unknown;
+            };
+            /**
+             * Activity
+             * @default []
+             */
+            activity: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Availability
+             * @default available
+             */
+            availability: string;
+            /**
+             * Coverage
+             * @default {}
+             */
+            coverage: {
+                [key: string]: unknown;
+            };
+            /**
+             * Errors
+             * @default {}
+             */
+            errors: {
+                [key: string]: unknown;
+            };
+            /** Freshness */
+            freshness?: {
+                [key: string]: unknown;
+            } | null;
+            /** Generated At */
+            generated_at: string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Schema Version
+             * @default ui-overview-v1
+             */
+            schema_version: string;
+            /**
+             * Setup Required
+             * @default false
+             */
+            setup_required: boolean;
+            summary?: components["schemas"]["OverviewSummarySnapshot"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OverviewSummarySnapshot */
+        OverviewSummarySnapshot: {
+            /**
+             * Active Entry Plans
+             * @default 0
+             */
+            active_entry_plans: number;
+            /**
+             * Expiring Soon
+             * @default 0
+             */
+            expiring_soon: number;
+            /**
+             * Needs Planning
+             * @default 0
+             */
+            needs_planning: number;
+            /**
+             * Runs 24H
+             * @default 0
+             */
+            runs_24h: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** PaperAccountAdjustmentRequest */
         PaperAccountAdjustmentRequest: {
             /** Amount Usdt */
@@ -9162,6 +9430,16 @@ export interface components {
         PermissionModeRequest: {
             /** Mode */
             mode: string;
+        };
+        /** PermissionSnapshot */
+        PermissionSnapshot: {
+            /**
+             * Mode
+             * @default not_available
+             */
+            mode: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * PersonaParam
@@ -10266,6 +10544,26 @@ export interface components {
              */
             max_open_positions: number;
         };
+        /** RiskSnapshot */
+        RiskSnapshot: {
+            /**
+             * Kill Switch Active
+             * @default false
+             */
+            kill_switch_active: boolean;
+            /**
+             * Status
+             * @default not_evaluated
+             */
+            status: string;
+            /**
+             * Violations
+             * @default []
+             */
+            violations: string[];
+        } & {
+            [key: string]: unknown;
+        };
         /** RiskStatusResponse */
         RiskStatusResponse: {
             /**
@@ -10450,6 +10748,32 @@ export interface components {
             /** Scheduler Enabled */
             scheduler_enabled?: boolean | null;
         };
+        /** RuntimeSnapshot */
+        RuntimeSnapshot: {
+            /** Boot Commit */
+            boot_commit?: string | null;
+            /** Current Commit */
+            current_commit?: string | null;
+            /**
+             * Mode
+             * @default development
+             */
+            mode: string;
+            /**
+             * Update
+             * @default {}
+             */
+            update: {
+                [key: string]: unknown;
+            };
+            /**
+             * Version
+             * @default
+             */
+            version: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** RuntimeTransitionRequest */
         RuntimeTransitionRequest: {
             /**
@@ -10469,6 +10793,26 @@ export interface components {
             force: boolean;
             /** Runtime Id */
             runtime_id?: string | null;
+        };
+        /** SchedulerSnapshot */
+        SchedulerSnapshot: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
+            /**
+             * State
+             * @default not_available
+             */
+            state: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * SerenityConfig
@@ -10972,6 +11316,113 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** ShellBootstrapResponse */
+        ShellBootstrapResponse: {
+            /**
+             * Availability
+             * @default available
+             */
+            availability: string;
+            /**
+             * @default {
+             *       "state": "not_available"
+             *     }
+             */
+            connectivity: components["schemas"]["ConnectivitySnapshot"];
+            /**
+             * @default {
+             *       "exchange_diverged": false,
+             *       "status": "not_available"
+             *     }
+             */
+            exchange: components["schemas"]["ExchangeSnapshot"];
+            /** Freshness */
+            freshness?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * @default {
+             *       "paused": false,
+             *       "running": false
+             *     }
+             */
+            gateway: components["schemas"]["GatewaySnapshot"];
+            /** Generated At */
+            generated_at: string;
+            /**
+             * @default {
+             *       "availability": "available",
+             *       "issues": [],
+             *       "status": "not_available"
+             *     }
+             */
+            health: components["schemas"]["HealthSnapshot"];
+            /**
+             * @default {
+             *       "active": false
+             *     }
+             */
+            kill_switch: components["schemas"]["KillSwitchSnapshot"];
+            /**
+             * @default {
+             *       "enabled": false,
+             *       "state": "not_available"
+             *     }
+             */
+            live: components["schemas"]["LiveSnapshot"];
+            /**
+             * @default {
+             *       "status": "not_available"
+             *     }
+             */
+            operator: components["schemas"]["OperatorSnapshot"];
+            /**
+             * @default {
+             *       "mode": "not_available"
+             *     }
+             */
+            permission: components["schemas"]["PermissionSnapshot"];
+            /** Reason */
+            reason?: string | null;
+            /**
+             * @default {
+             *       "kill_switch_active": false,
+             *       "status": "not_evaluated",
+             *       "violations": []
+             *     }
+             */
+            risk: components["schemas"]["RiskSnapshot"];
+            /**
+             * @default {
+             *       "mode": "development",
+             *       "update": {},
+             *       "version": ""
+             *     }
+             */
+            runtime: components["schemas"]["RuntimeSnapshot"];
+            /**
+             * @default {
+             *       "enabled": false,
+             *       "running": false,
+             *       "state": "not_available"
+             *     }
+             */
+            scheduler: components["schemas"]["SchedulerSnapshot"];
+            /**
+             * Schema Version
+             * @default ui-shell-v1
+             */
+            schema_version: string;
+            /**
+             * Ticker
+             * @default {}
+             */
+            ticker: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
         /** StartAgentRequest */
         StartAgentRequest: {
             /**
@@ -11122,6 +11573,14 @@ export interface components {
         TestConnectionRequest: {
             /** Mode */
             mode?: string | null;
+        };
+        /** TradeInsightsResponse */
+        TradeInsightsResponse: {
+            [key: string]: unknown;
+        };
+        /** TradeStatsResponse */
+        TradeStatsResponse: {
+            [key: string]: unknown;
         };
         /** TradingConfig */
         TradingConfig: {
@@ -12066,7 +12525,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EquityCurveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12578,7 +13037,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TradeInsightsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12629,7 +13088,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TradeStatsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -21543,7 +22002,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OverviewBootstrapResponse"];
                 };
             };
         };
@@ -21563,7 +22022,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ShellBootstrapResponse"];
                 };
             };
         };

@@ -5,9 +5,134 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import shutil
 import time
+from typing import Any
 
 from fastapi import APIRouter, Response
+from pydantic import BaseModel, ConfigDict
 
+
+class HealthSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str = "not_available"
+    issues: list[str] = []
+    availability: str = "available"
+    reason: str | None = None
+
+
+class RiskSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str = "not_evaluated"
+    violations: list[str] = []
+    kill_switch_active: bool = False
+
+
+class GatewaySnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    running: bool = False
+    paused: bool = False
+
+
+class SchedulerSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    running: bool = False
+    state: str = "not_available"
+    enabled: bool = False
+
+
+class LiveSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    state: str = "not_available"
+    enabled: bool = False
+
+
+class PermissionSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    mode: str = "not_available"
+
+
+class ExchangeSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str = "not_available"
+    execution_exchange: str | None = None
+    data_exchange: str | None = None
+    exchange_diverged: bool = False
+    paper_execution_mode: str | None = None
+
+
+class RuntimeSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    version: str = ""
+    boot_commit: str | None = None
+    current_commit: str | None = None
+    mode: str = "development"
+    update: dict[str, Any] = {}
+
+class OperatorSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str = "not_available"
+    mode: str | None = None
+    permission_mode: str | None = None
+    model_provider: str | None = None
+    last_seen_at: str | None = None
+    stale: bool | None = None
+    heartbeat_age_sec: float | None = None
+    current_intent: str | None = None
+    trading_daemon: dict[str, Any] | None = None
+
+
+class ConnectivitySnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    state: str = "not_available"
+    reason: str | None = None
+
+
+class KillSwitchSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    active: bool = False
+
+
+class OverviewSummarySnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    active_entry_plans: int = 0
+    needs_planning: int = 0
+    expiring_soon: int = 0
+    runs_24h: int = 0
+
+class ShellBootstrapResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str = "ui-shell-v1"
+    generated_at: str
+    freshness: dict[str, Any] | None = None
+    availability: str = "available"
+    reason: str | None = None
+    gateway: GatewaySnapshot = GatewaySnapshot()
+    scheduler: SchedulerSnapshot = SchedulerSnapshot()
+    live: LiveSnapshot = LiveSnapshot()
+    permission: PermissionSnapshot = PermissionSnapshot()
+    kill_switch: KillSwitchSnapshot = KillSwitchSnapshot()
+    risk: RiskSnapshot = RiskSnapshot()
+    exchange: ExchangeSnapshot = ExchangeSnapshot()
+    operator: OperatorSnapshot = OperatorSnapshot()
+    connectivity: ConnectivitySnapshot = ConnectivitySnapshot()
+    health: HealthSnapshot = HealthSnapshot()
+    runtime: RuntimeSnapshot = RuntimeSnapshot()
+    ticker: dict[str, Any] = {}
+
+class OverviewBootstrapResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str = "ui-overview-v1"
+    generated_at: str
+    freshness: dict[str, Any] | None = None
+    availability: str = "available"
+    reason: str | None = None
+    account: dict[str, Any] = {}
+    summary: OverviewSummarySnapshot | None = None
+    activity: list[dict[str, Any]] = []
+    setup_required: bool = False
+    coverage: dict[str, Any] = {}
+    errors: dict[str, Any] = {}
 from aletheia import __version__
 from aletheia.config.exchange_alignment import exchange_alignment
 from aletheia.config.secrets import get_secret
@@ -169,7 +294,7 @@ def _count_summary() -> dict:
     }
 
 
-@router.get("/shell-bootstrap")
+@router.get("/shell-bootstrap", response_model=ShellBootstrapResponse)
 def shell_bootstrap(response: Response):
     started = time.perf_counter()
     cfg_result = _safe("config", lambda: load_config(persist_migrations=False), None)
@@ -228,7 +353,7 @@ def shell_bootstrap(response: Response):
     return payload
 
 
-@router.get("/overview-bootstrap")
+@router.get("/overview-bootstrap", response_model=OverviewBootstrapResponse)
 def overview_bootstrap(response: Response):
     started = time.perf_counter()
     # #1939: never stamp Overview cards with a current-mode identity while
