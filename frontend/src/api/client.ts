@@ -398,17 +398,6 @@ export function extractApiError(status: number, body: string): string {
 // stuck for minutes when the backend is slow to respond after a restart.
 const _FETCH_TIMEOUT_MS = 15_000;
 
-// Server-clock offset: updated on every successful JSON response that carries
-// an HTTP `Date` header. Used by getSyncedNow() to align UI countdown timers,
-// freshness stamps, and PnL windows to the gateway's authoritative clock,
-// not the browser's potentially-drifted local clock.
-let _serverTimeOffsetMs = 0;
-
-/** Returns the current time aligned to the gateway's server clock (milliseconds). */
-export function getSyncedNow(): number {
-  return Date.now() + _serverTimeOffsetMs;
-}
-
 export async function fetchJson<T>(
 	path: string,
 	init?: RequestInit,
@@ -443,11 +432,6 @@ export async function fetchJson<T>(
 			signal: timeoutCtrl.signal,
 		});
 		if (!res.ok) throw parseApiError(res.status, await res.text(), res.headers);
-		const serverDate = res.headers.get('date');
-		if (serverDate) {
-			const parsed = new Date(serverDate).getTime();
-			if (Number.isFinite(parsed)) _serverTimeOffsetMs = parsed - Date.now();
-		}
 		const body: unknown = await res.json();
 		return decode ? decode(body, res.headers) : body as T;
 	} finally {

@@ -100,7 +100,7 @@ export class OperatorLoop {
     this.eventRouter = deps.eventRouter ?? new EventRouter(this.backendClient)
     this.repairEngine = deps.repairEngine ?? new RepairEngine()
     this.recommendationEngine = deps.recommendationEngine ?? new RecommendationEngine()
-    this.piRuntime = new PiRuntimeAdapter(this.backendClient, config.gatewayBaseUrl)
+    this.piRuntime = new PiRuntimeAdapter(config.gatewayBaseUrl)
   }
 
   private isReviewTaskType(taskType: string | undefined): boolean {

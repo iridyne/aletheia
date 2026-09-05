@@ -220,14 +220,15 @@ async def test_local_run_has_trigger_type_manual(client, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.anyio
-async def test_disallowed_agent_returns_403_no_run(client, tmp_path, monkeypatch):
+@pytest.mark.parametrize("agent_name", ["round_robin", "stock_observer"])
+async def test_disallowed_agent_returns_403_no_run(client, tmp_path, monkeypatch, agent_name):
     """Agent not in allowlist → 403 with typed error, no run created."""
     secret = _enable_tunnel(tmp_path)
     fake = _fake_manager_patch(monkeypatch)
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "round_robin"},  # not in _MANUAL_AGENT_ALLOWLIST
+        json={"agent_name": agent_name},
         headers={"X-Aletheia-Token": secret},
     )
     assert response.status_code == 403

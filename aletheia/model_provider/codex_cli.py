@@ -190,20 +190,12 @@ def _extract_json(text: str) -> dict:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Find the first balanced {...} or [...] span.
-    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+    for open_ch in ("{", "["):
         start = text.find(open_ch)
         if start == -1:
             continue
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == open_ch:
-                depth += 1
-            elif text[i] == close_ch:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start:i + 1])
-                    except json.JSONDecodeError:
-                        break
+        try:
+            return json.JSONDecoder().raw_decode(text, start)[0]
+        except json.JSONDecodeError:
+            pass
     raise RuntimeError("Codex structured output contained no parseable JSON")

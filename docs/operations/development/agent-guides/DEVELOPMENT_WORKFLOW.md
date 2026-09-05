@@ -83,12 +83,10 @@ as GitHub CI, needs no fabricated GitHub event payload, performs no network I/O
 or Runtime startup, and prints bounded structured reason codes on failure.
 
 If only `SDD Depth` / `Contract Delta` metadata is invalid after a PR exists,
-fix the PR body on the **same head SHA**, rerun this command, and let `Verify
-Change Contract` re-run from the PR `edited` event. Never add a no-op,
-retrigger, or metadata-only source commit. Existing successful deep evidence for
-that head remains unchanged; if metadata blocked the original run, the trusted
-recovery job re-runs only its failed prerequisite and dependent jobs on the same
-head. Auto-merge reads metadata and deep checks as separate exact-head gates.
+fix the PR body on the **same head SHA** and rerun the local preflight. Never
+add a no-op, retrigger, or metadata-only source commit. Existing successful
+deep evidence for that head remains unchanged. Remote CI remains manual-only
+and requires an explicit owner request, including after metadata repair.
 
 - Inspect first; add focused failure-path coverage for safety, lifecycle, audit,
   secrets, and trading changes; implement the smallest fix; broaden tests only

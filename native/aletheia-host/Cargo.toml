@@ -8,7 +8,6 @@ license = "MIT"
 
 [lib]
 name = "aletheia_host"
-path = "src/hostlib.rs"
 
 [[bin]]
 name = "aletheia"

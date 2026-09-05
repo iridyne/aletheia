@@ -1284,7 +1284,7 @@ def observer_llm_deadline(
     per_symbol_cap_sec and the remaining run budget.  When omitted (or None),
     simply grants per_symbol_cap_sec from now.
 
-    Use this helper in equity_observer, prediction_observer, and stock_observer
+    Use this helper in equity_observer and prediction_observer
     to enforce the same per-call cap as market_observer without duplicating the
     monotonic-to-loop-time conversion.
 

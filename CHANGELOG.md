@@ -8,6 +8,7 @@ their own independent versions.
 
 ### Changed
 
+* **maintenance:** retire the superseded stock observer manual entry; remove unused UI, shell, host and CI layers, use standard-library JSON/file hashing, and drop the unused multipart dependency. Historical equity evidence and legacy equity configuration remain readable.
 * **candidate:** use measured-first Utility selection with explicit signal-based Startup for genuine sample scarcity in Demo; retire Legacy selection/admission controls, preserve historical evidence, acquire exact discovery books, and expose selection/business-progress diagnostics.
 * **entry:** recover bounded planning interruptions without inventing economic refusal, and show exact order/fill/position, cash-settlement, and separate four-hour outcome evidence across planning cycles.
 * **paper:** settle venue-reduced approved entry quantities and cancelled partial-fill remainders against actual fills while retaining Risk identity and position/cash reconciliation checks.

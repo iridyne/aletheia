@@ -127,7 +127,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "fast_trigger_authorizer": 300.0,
     "pi_trading_decision": 300.0,
     "equity_observer": 240.0,
-    "stock_observer": 240.0,  # kept for backwards-compat; superseded by equity_observer
     "prediction_observer": 240.0,
     "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
