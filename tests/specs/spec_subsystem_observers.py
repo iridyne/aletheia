@@ -137,20 +137,15 @@ def test_xstock_base_to_ticker_mapping_exists():
 
 @spec_claim(
     SpecClaim(
-        "OBS-S08", "agent_contracts", "§4 stock_observer deprecated", "L2a",
-        "stock_observer (deprecated) is NOT registered in scheduler.py via add_job",
+        "OBS-S08", "agent_contracts", "§4 stock_observer retired", "L2b",
+        "The retired stock_observer cannot be resolved for execution",
     ),
 )
-def test_stock_observer_not_registered_in_scheduler():
-    src = _SCHEDULER.read_text(encoding="utf-8")
-    lines = src.splitlines()
-    add_job_lines = [i for i, ln in enumerate(lines) if "add_job" in ln]
-    for lineno in add_job_lines:
-        block = "\n".join(lines[lineno : lineno + 6])
-        assert "stock_observer" not in block, (
-            f"scheduler.py add_job at line {lineno + 1} still registers "
-            "deprecated stock_observer"
-        )
+def test_retired_stock_observer_cannot_run():
+    from aletheia.agents import get_agent_fn
+
+    with pytest.raises(ValueError, match="Unknown agent"):
+        get_agent_fn("stock_observer")
 
 
 # ---------------------------------------------------------------------------

@@ -74,7 +74,6 @@ def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkey
 
 
 
-
 def test_runtime_epoch_does_not_require_economic_admission():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.candidate_eligibility import canonical_fingerprint

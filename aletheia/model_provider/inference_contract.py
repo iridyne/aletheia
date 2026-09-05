@@ -97,7 +97,6 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
         _spec("equity_observer.market_read", OutputMode.STRUCTURED),
         _spec("market_observer.market_read", OutputMode.STRUCTURED),
         _spec("prediction_observer.market_read", OutputMode.STRUCTURED),
-        _spec("stock_observer.market_read", OutputMode.STRUCTURED),
         _spec("news_analyzer.analysis", OutputMode.STRUCTURED),
         _spec("startup_gate.provider_probe", OutputMode.TEXT),
         _spec("provider_settings.ping", OutputMode.TEXT),

@@ -59,7 +59,7 @@ def _is_allowed_serenity_symbol(symbol: str) -> bool:
     two labels have distinct meanings:
 
       - `asset_class='equity'`         → observation-only. Emitted by
-                                          equity_observer / stock_observer.
+                                          equity_observer.
                                           trading_decision.py:1324 skips these.
       - `asset_class='equity_tradeable'` → Serenity-research xStocks tokens
                                           that ARE spot-tradable on Bitget.

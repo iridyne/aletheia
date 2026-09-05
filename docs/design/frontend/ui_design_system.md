@@ -702,10 +702,6 @@ button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 * 候选工作台最新价：`Universe.tsx` (Candidate Price 列)
 * 概览态势收益变动：`Overview.tsx` (PnLZone 数值)
 * 控制台中枢行情表：`CommandCenter.tsx` (Top Symbols 表格)
-### Watchlist Sparkline
-
-`Sparkline.tsx` — 卡片内嵌 24h 趋势线（SVG polyline），从 `/api/market/ohlcv?symbol=X&timeframe=1h&limit=24` 拉 close 数据，归一化到 SVG 坐标。尺寸 100×20px，`opacity: 0.85`，`aria-hidden="true"`，60s refetch。
-
 ---
 
 ## 7. 验收清单（强制）

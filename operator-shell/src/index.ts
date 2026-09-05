@@ -1,12 +1,12 @@
 import { loadConfig } from './config.js'
-import { OperatorShellServer } from './server.js'
+import { OperatorLoop } from './operator_loop.js'
 
 async function main(): Promise<void> {
   const config = loadConfig()
-  const server = new OperatorShellServer(config)
+  const loop = new OperatorLoop(config)
 
   const shutdown = async () => {
-    await server.stop()
+    await loop.stop()
   }
 
   process.on('SIGINT', () => {
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
     void shutdown().finally(() => process.exit(0))
   })
 
-  await server.start()
+  await loop.start()
 }
 
 void main().catch((error) => {
