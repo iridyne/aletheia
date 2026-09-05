@@ -348,6 +348,19 @@ def _bind_experimental_entry_learning_context(
     )
 
 
+def entry_orderbook_available(orderbook: dict | None, cutoff: datetime) -> bool:
+    if not orderbook or any(
+        orderbook.get(key) is None
+        for key in ("bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd", "observed_at")
+    ):
+        return False
+    try:
+        observed = datetime.fromisoformat(str(orderbook["observed_at"]).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    return observed.tzinfo is not None and 0 <= (cutoff - observed).total_seconds() <= 2
+
+
 def build_entry_analysis_context(
     generation: dict,
     candidate: dict,
@@ -612,16 +625,7 @@ def build_entry_analysis_context(
             )
     unique = {item.anchor_id: item for item in anchors if item.known_at_ms <= cutoff_ms}
     selected = tuple(sorted(unique.values(), key=lambda item: (item.known_at_ms, item.anchor_id), reverse=True)[:12])
-    orderbook_available = False
-    if orderbook and all(
-        orderbook.get(key) is not None
-        for key in ("bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd", "observed_at")
-    ):
-        observed = datetime.fromisoformat(str(orderbook["observed_at"]).replace("Z", "+00:00"))
-        age_ms = (
-            (cutoff - observed.astimezone(timezone.utc)).total_seconds() * 1000 if observed.tzinfo else float("inf")
-        )
-        orderbook_available = 0 <= age_ms <= 2_000
+    orderbook_available = entry_orderbook_available(orderbook, cutoff)
     estimated_cost = candidate.get("estimated_cost")
     quant_fields = (
         "atr_pct",

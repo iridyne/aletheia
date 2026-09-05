@@ -49,13 +49,16 @@ def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkey
     class Provider:
         _primary_name = "binance"
 
-        def _ensure_primary(self):
+        _market_type_context = ccxt_provider.CCXTProvider._market_type_context
+
+        def _ensure_primary(self, market_type):
+            assert market_type == "futures"
             return Exchange()
 
         async def close(self):
             return None
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda: Provider())
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **kwargs: Provider())
     result = asyncio.run(
         MicrostructureCollector().collect(
             [InstrumentId("binance", "BTC/USDT", "futures")]

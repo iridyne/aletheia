@@ -204,12 +204,12 @@ def test_filter_outcome_settler_has_capacity_before_universe_mirror_backlog(
     SpecClaim(
         "FE-B04a", _CONTRACT, "§4 fixed-horizon settlement", "L2b",
         "Within the canonical settlement quota, due outcomes belonging to the "
-        "current behavior contract of the open Universe Learning epoch are processed "
+        "frozen behavior contract of an active Observation Lab window are processed "
         "before older-contract rows and unrelated historical backlog.",
         status="implemented",
     )
 )
-def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
+def test_filter_outcome_settler_prioritizes_active_lab_contract(
     monkeypatch,
 ):
     from aletheia.universe import filter_outcome_recorder
@@ -266,40 +266,13 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
             for row in rows
         }
 
-    key_queries = []
-    hash_horizons = []
-
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
-        "list_open_learning_target_horizons",
-        lambda path_ids: {
-            ("universe_family_calibration", "1h"),
-            ("universe_family_calibration", "4h"),
-            ("ranker_case_score", "4h"),
-        },
-        raising=False,
-    )
-
-    def open_learning_keys(path_ids, behavior_contract_hash=None):
-        key_queries.append((tuple(path_ids), behavior_contract_hash))
-        if behavior_contract_hash == "universe_family_calibration:1h":
-            return {"current-ufc-1h-candidate:1h"}
-        if behavior_contract_hash == "universe_family_calibration:4h":
-            return {"current-ufc-4h-candidate:4h"}
-        if behavior_contract_hash == "ranker_case_score:4h":
-            return {"current-ranker-candidate:4h"}
-        return {
-            "current-ufc-1h-candidate:1h",
-            "current-ufc-4h-candidate:4h",
+        "list_observation_filter_outcome_priority_keys",
+        lambda **kwargs: ({
+            "current-ufc-1h-candidate:1h", "current-ufc-4h-candidate:4h",
             "current-ranker-candidate:4h",
-            "previous-build-ufc-candidate:4h",
-        }
-
-    monkeypatch.setattr(
-        filter_outcome_recorder.repo,
-        "list_open_learning_outcome_candidate_keys",
-        open_learning_keys,
-        raising=False,
+        }, {"previous-build-ufc-candidate:4h"}),
     )
 
     def pending_for_keys(before_ts, outcome_candidate_keys, limit, deadline=None):
@@ -319,17 +292,6 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         "list_pending_filter_candidate_outcomes_for_keys",
         pending_for_keys,
         raising=False,
-    )
-    monkeypatch.setattr(
-        "aletheia.learning.experiments.current_policy_epoch",
-        lambda _path_id: "current-epoch",
-    )
-    monkeypatch.setattr(
-        "aletheia.learning.behavior_contracts.current_behavior_contract_hash",
-        lambda **kwargs: hash_horizons.append(
-            (kwargs["path_id"], kwargs["target_horizon"])
-        )
-        or f"{kwargs['path_id']}:{kwargs['target_horizon']}",
     )
     monkeypatch.setattr(
         filter_outcome_recorder.repo,
@@ -372,91 +334,58 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         "current-ufc-4h",
         "current-ranker-4h",
     ]
-    assert hash_horizons == [
-        ("ranker_case_score", "4h"),
-        ("universe_family_calibration", "1h"),
-        ("universe_family_calibration", "4h"),
-    ]
-    assert key_queries == [
-        (("ranker_case_score",), "ranker_case_score:4h"),
-        (("universe_family_calibration",), "universe_family_calibration:1h"),
-        (("universe_family_calibration",), "universe_family_calibration:4h"),
-        (("universe_family_calibration", "ranker_case_score"), None),
-    ]
 
 
-def test_open_learning_target_horizons_are_distinct_and_current():
+
+def test_lab_priority_uses_frozen_contract_and_proven_retention():
+    import time
+    from aletheia.observation_lab.canonical import _hash, record_generation_contract, upsert_retention_claim
+    from aletheia.observation_lab.db import get_lab_db
     from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
 
-    db = get_db()
-    now = "2026-08-22T00:00:00+00:00"
-    db.execute(
-        "INSERT INTO learning_policy_epochs "
-        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
-        "affected_path_ids_json, started_at, ended_at, created_at) "
-        "VALUES (?, ?, ?, '{}', '[]', ?, NULL, ?)",
-        ("epoch-ufc", "decision_policy:universe_family_calibration", "hash-ufc", now, now),
-    )
-    db.execute(
-        "INSERT INTO learning_policy_epochs "
-        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
-        "affected_path_ids_json, started_at, ended_at, created_at) "
-        "VALUES (?, ?, ?, '{}', '[]', ?, NULL, ?)",
-        ("epoch-ranker", "decision_policy:ranker_case_score", "hash-ranker", now, now),
-    )
-    for path_id, horizon in (
-        ("universe_family_calibration", "1h"),
-        ("universe_family_calibration", "4h"),
-        ("ranker_case_score", "4h"),
+    lab = get_lab_db()
+    now = "2026-01-01T00:00:00+00:00"
+    for name, status, behavior, retained in (
+        ("current", "active", "frozen", False),
+        ("older", "finalized", "old", True),
+        ("mismatch", "active", "old", True),
+        ("unretained", "finalized", "old", False),
     ):
-        suffix = f"{path_id}-{horizon}"
-        db.execute(
-            "INSERT INTO learning_hypotheses "
-            "(hypothesis_id, fingerprint, cohort_id, path_id, overlap_group, "
-            "source_type, scope_json, action_json, consumer, target_horizon, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, 'cohort', ?, 'group', 'source', '{}', '{}', "
-            "'consumer', ?, ?, ?)",
-            (f"hyp-{suffix}", f"fp-{suffix}", path_id, horizon, now, now),
+        lab.execute(
+            "INSERT INTO observation_windows "
+            "(observation_id,kind,handler_version,generation,slot_key,authority_mode,status,"
+            "spec_json,spec_hash,started_at,collect_until,finalize_not_before) "
+            "VALUES (?, 'test','v1',1,?,'observe_only',?,'{}','spec',?,?,?)",
+            (name, name, status, now, now, now),
         )
-        db.execute(
-            "INSERT INTO learning_experiments "
-            "(experiment_id, hypothesis_id, stage, assignment_salt, allocation_pct, "
-            "min_samples_per_arm, min_market_days, primary_metric, status, "
-            "started_at, created_at) "
-            "VALUES (?, ?, 'shadow', 'salt', 0.5, 1, 0, 'net', 'active', ?, ?)",
-            (f"exp-{suffix}", f"hyp-{suffix}", now, now),
+        record_generation_contract(
+            observation_id=name, generation=1, stage="shadow",
+            assignment_policy="stable_assignment_by_key", assignment_namespace_key=name,
+            assignment_salt="salt", assignment_unit_key_template="{unit}", allocation_pct=0.5,
+            target_horizon="4h", outcome_contract_version="outcome/v1", metric_version="metric/v1",
+            behavior_contract_hash="frozen", started_at=now,
         )
-        db.execute(
-            "INSERT INTO learning_exposures "
-            "(exposure_id, dedup_key, experiment_id, hypothesis_id, assignment, "
-            "consumer, consumer_stage, path_id, overlap_group, candidate_key, "
-            "outcome_candidate_key, outcome_source, outcome_contract_version, "
-            "concurrent_policy_epoch, exposed_at) "
-            "VALUES (?, ?, ?, ?, 'control', 'consumer', 'stage', ?, 'group', "
-            "?, ?, 'fixed_horizon_candidate', 'v1', ?, ?)",
-            (
-                f"exposure-{suffix}",
-                f"dedup-{suffix}",
-                f"exp-{suffix}",
-                f"hyp-{suffix}",
-                path_id,
-                f"candidate-{suffix}",
-                f"candidate-{suffix}:{horizon}",
-                "epoch-ufc" if path_id == "universe_family_calibration" else "epoch-ranker",
-                now,
-            ),
+        key = name + ":4h"
+        lab.execute(
+            "INSERT INTO observation_exposures "
+            "(exposure_id,source_receipt_id,observation_id,generation,assignment_unit_key,"
+            "candidate_key,assignment,applied,behavior_changed,baseline_payload_hash,applied_payload_hash,"
+            "outcome_candidate_key,outcome_source,resolution_reason,behavior_contract_hash,exposed_at,imported_at) "
+            "VALUES (?,?,?,1,?,?,'control',0,0,'base','base',?,'fixed_horizon_candidate','control',?,?,?)",
+            (name, name, name, key, name, key, behavior, now, now),
         )
-    db.commit()
-
-    assert repo.list_open_learning_target_horizons(
-        ("universe_family_calibration", "ranker_case_score")
-    ) == {
-        ("universe_family_calibration", "1h"),
-        ("universe_family_calibration", "4h"),
-        ("ranker_case_score", "4h"),
-    }
+        if retained:
+            upsert_retention_claim(
+                observation_id=name, generation=1, source_kind="outcome_candidate_key", source_ref=key,
+                source_hash=_hash({"receipt_id": name, "sequence": None, "outcome_candidate_key": key}),
+                claim_domain="filter_candidate_outcomes", derived_from_fingerprint="evidence",
+            )
+    lab.commit()
+    assert repo.list_observation_filter_outcome_priority_keys(deadline=time.monotonic()+5) == (
+        {"current:4h"}, {"older:4h", "mismatch:4h"},
+    )
+    with pytest.raises((TimeoutError, repo.sqlite3.OperationalError)):
+        repo.list_observation_filter_outcome_priority_keys(deadline=time.monotonic()-1)
 
 
 @spec_claim(

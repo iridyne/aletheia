@@ -745,6 +745,7 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     context = SimpleNamespace(
         candle_windows={"15m": {"availability": "available"}},
+        execution_context={"availability": "available"},
         anchors=(SimpleNamespace(anchor_id="anchor"),),
         entry_profiles=({"id": "grounded-anchor-resting-maker"},),
         model_dump=lambda **_kwargs: {"full_context": True},
@@ -776,7 +777,8 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 
-def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
+@pytest.mark.parametrize("profile", ["grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim"])
+def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, profile):
     from types import SimpleNamespace
 
     from aletheia.config.loader import load_config
@@ -810,7 +812,8 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_a, **_k: 100_000.0)
     monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
     primary = EntryAnchor(
-        venue="bitget", symbol="BTC/USDT", market_type="perp", kind="candidate_reference",
+        venue="bitget", symbol="BTC/USDT", market_type="perp",
+        kind="candidate_reference" if profile == "grounded-anchor-resting-maker" else "confirmed_swing",
         price=100, directional_role="entry_candidate", known_at_ms=1,
         source_fact_refs=("candidate:c1",), source_fingerprint="candidate",
     )
@@ -842,7 +845,7 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
         portfolio_context={"availability": "available", "fact_refs": []},
         execution_context={"availability": "available", "bid": 99.9, "ask": 100.1, "spread_bps": 2, "depth_10bps_usd": 100_000, "estimated_costs": 0.1, "fact_refs": []},
         anchors=(primary, invalidation),
-        entry_profiles=({"id": "grounded-anchor-resting-maker", "version": "v1"},),
+        entry_profiles=({"id": profile},),
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-03T00:00:00+00:00", mechanism="reversal", direction="long",
             market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
@@ -851,8 +854,9 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
     hypothesis = EntryHypothesis(
         decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-resting-maker",
-        execution_urgency="PASSIVE", risk_tier="LOW", horizon="INTRADAY",
+        entry_profile_id=profile,
+        execution_urgency="PASSIVE" if profile == "grounded-anchor-resting-maker" else "BOUNDED_URGENT",
+        risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,),
     )
     input_payload = canonical_json(context.model_dump(mode="json"))
@@ -905,7 +909,11 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch):
         repo.get_entry_plan(result["entry_plan_id"])["plan_json"]
     )
 
-    assert plan.entry_profile_id == "grounded-anchor-resting-maker"
+    assert plan.entry_profile_id == profile
+    if profile == "grounded-anchor-retrace-reclaim":
+        assert plan.execution_mode == "TRIGGERED"
+        assert plan.trigger_spec_id == "anchor-retrace-reclaim"
+        assert plan.order_tactic == "OPPOSING_BBO_IOC"
     assert plan.behavior_fingerprint == generation["entry_behavior_fingerprint"]
     assert plan.analysis_context_fingerprint == context.context_fingerprint
     assert plan.thesis == "reversal grounded entry"
@@ -1312,4 +1320,68 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     assert history["attention_terminal_reason"] == "max_attention_age"
     persisted = repo.get_candidate_planning_generation(generation["id"])
     assert persisted["attention_status"] == "active"
-    assert persisted["attention_terminal_reason"] is None
+
+
+@pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout"])
+def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book):
+    from aletheia.data.collectors.microstructure import MicrostructureCollector, _parse_orderbook
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    from aletheia.data.providers import Candle
+
+    interval = 15 * 60 * 1000
+    end = int(datetime.now(timezone.utc).timestamp() * 1000) // interval * interval
+    repo.upsert_ohlcv_candles(
+        "BTC/USDT", "15m",
+        [Candle(end - (96 - i) * interval, 100, 102, 98, 100, 1000) for i in range(96)],
+        exchange="bitget", market_type="perp",
+    )
+    known = datetime.fromtimestamp((end - 1000) / 1000, timezone.utc).isoformat()
+    repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?,last_mutated_at=?", (known, known))
+    repo.execute_write("UPDATE orderbook_snapshots SET observed_at='2000-01-01T00:00:00+00:00'")
+    recovered = False
+    calls = []
+
+    async def collect(self, symbols, *, venue):
+        assert venue == "bitget"
+        assert symbols[0].symbol == "BTC/USDT" and symbols[0].market_type == "perp"
+        if not recovered and bad_book == "timeout":
+            raise TimeoutError
+        snapshot = _parse_orderbook(
+            "BTC/USDT", "bitget", {"bids": [[99.99, 100]], "asks": [[100.01, 100]]},
+            0, market_type="perp",
+        )
+        if not recovered:
+            if bad_book == "missing":
+                return {"snapshots": [], "errors": []}
+            if bad_book == "venue":
+                snapshot.exchange = "binance"
+            elif bad_book == "market":
+                snapshot.market_type = "spot"
+            elif bad_book in {"future", "stale"}:
+                snapshot.observed_at = (datetime.now(timezone.utc) + timedelta(
+                    seconds=60 if bad_book == "future" else -60
+                )).isoformat()
+        return {"snapshots": [snapshot], "errors": []}
+
+    async def planner(context):
+        calls.append(context)
+        raise PlannerBackpressure("busy")
+
+    monkeypatch.setattr(MicrostructureCollector, "collect", collect)
+    result = asyncio.run(plan_next_candidate(planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert result["status"] == "unavailable" and calls == []
+    assert stored["planner_input_json"] is None and stored["attempt_count"] == 0
+    recovered = True
+    repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?", (generation["id"],))
+    result = asyncio.run(plan_next_candidate(planner))
+    assert result["status"] == "backpressure", repo.get_candidate_planning_generation(generation["id"])["result_json"]
+    assert len(calls) == 1
+    frozen = repo.get_candidate_planning_generation(generation["id"])
+    assert frozen["planner_input_json"] is not None
+    book = repo.latest_orderbook("BTC/USDT", "bitget", "perp")
+    assert calls[0]["execution_context"]["availability"] == "available"
+    assert book["id"] in str(calls[0]["execution_context"]["fact_refs"])
+

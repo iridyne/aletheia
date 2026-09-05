@@ -9411,17 +9411,9 @@ def ensure_candidate_planning_generation(
         existing_row = (
             get_db().execute(
                 "SELECT * FROM candidate_planning_generations "
-                + (
-                    "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
-                    "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1"
-                    if context is not None else
-                    "WHERE planning_key=? AND is_current=1 "
-                    "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1"
-                ),
-                (
-                    (str(candidate["venue"]), str(candidate["symbol"]), str(candidate["market_type"]))
-                    if context is not None else (planning_key,)
-                ),
+                "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
+                "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1",
+                (str(candidate["venue"]), str(candidate["symbol"]), str(candidate["market_type"])),
             ).fetchone()
         )
         existing = dict(existing_row) if existing_row else None
@@ -9456,22 +9448,27 @@ def ensure_candidate_planning_generation(
         try:
             newer_requalification_cutoff = bool(
                 plan_expiry
-                and candidate.get("opportunity_source_cutoff_at")
-                and _normalized_utc_datetime(str(candidate["opportunity_source_cutoff_at"]))
+                and _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
                 > _normalized_utc_datetime(str(plan_expiry))
             )
         except (TypeError, ValueError):
             newer_requalification_cutoff = False
         try:
+            existing_context = (
+                CandidateOpportunityContextV1.model_validate_json(
+                    existing_candidate["candidate_opportunity_context_json"]
+                )
+                if existing_candidate and existing_candidate.get("candidate_opportunity_context_json")
+                else None
+            )
             later_completed_requalification = bool(
                 existing_candidate
                 and str(existing.get("last_candidate_id")) != candidate_id
                 and candidate_snapshot_complete
-                and candidate.get("opportunity_source_cutoff_at")
-                and existing_candidate.get("opportunity_source_cutoff_at")
-                and _normalized_utc_datetime(str(candidate["opportunity_source_cutoff_at"]))
+                and existing_context is not None
+                and _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
                 > _normalized_utc_datetime(
-                    str(existing_candidate["opportunity_source_cutoff_at"])
+                    str(existing_context.source["source_cutoff_at"])
                 )
             )
         except (TypeError, ValueError):
@@ -11357,69 +11354,42 @@ def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int
     return int(row["n"] or 0)
 
 
-def list_open_learning_outcome_candidate_keys(
-    path_ids: tuple[str, ...],
-    *,
-    behavior_contract_hash: str | None = None,
-) -> set[str]:
-    """Return exact outcome keys attached to active experiments in open epochs.
+def list_observation_filter_outcome_priority_keys(*, deadline: float) -> tuple[set[str], set[str]]:
+    """Prioritize frozen active Lab evidence, then proven retained historical keys."""
+    from aletheia.observation_lab.canonical import _validate_retention_claim_source
+    from aletheia.observation_lab.db import readonly_lab_db
 
-    When ``behavior_contract_hash`` is supplied, restrict the keys to the
-    current measured behavior so settlement can prioritize usable evidence
-    without treating unrelated builds as different cohorts.
-    """
-    if not path_ids:
-        return set()
-    placeholders = ", ".join("?" for _ in path_ids)
-    behavior_clause = " AND le.behavior_contract_hash=?" if behavior_contract_hash else ""
-    parameters: tuple[object, ...] = (*path_ids, behavior_contract_hash) if behavior_contract_hash else path_ids
-    rows = (
-        get_db()
-        .execute(
-            "SELECT DISTINCT le.outcome_candidate_key "
-            "FROM learning_exposures le "
-            "JOIN learning_experiments e "
-            "  ON e.experiment_id=le.experiment_id AND e.status='active' "
-            "JOIN learning_hypotheses h ON h.hypothesis_id=le.hypothesis_id "
-            "JOIN learning_policy_epochs pe "
-            "  ON pe.epoch_id=le.concurrent_policy_epoch AND pe.ended_at IS NULL "
-            f"WHERE h.path_id IN ({placeholders}) "
-            "AND pe.epoch_kind=('decision_policy:' || h.path_id) "
-            "AND le.outcome_candidate_key IS NOT NULL"
-            f"{behavior_clause}",
-            parameters,
-        )
-        .fetchall()
-    )
-    return {str(row["outcome_candidate_key"]) for row in rows if row["outcome_candidate_key"]}
+    current: set[str] = set()
+    retained: set[str] = set()
+    with readonly_lab_db() as lab:
+        lab.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        try:
+            for row in lab.execute(
+                "SELECT DISTINCT e.outcome_candidate_key FROM observation_exposures e "
+                "JOIN observation_windows w USING(observation_id,generation) "
+                "JOIN observation_generation_contracts c USING(observation_id,generation) "
+                "WHERE w.status='active' AND e.outcome_source='fixed_horizon_candidate' "
+                "AND e.behavior_contract_hash=c.behavior_contract_hash "
+                "AND e.outcome_candidate_key IS NOT NULL"
+            ):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("observation_priority_deadline")
+                current.add(str(row[0]))
+            for row in lab.execute(
+                "SELECT * FROM observation_retention_claims WHERE status='active' "
+                "AND claim_domain='filter_candidate_outcomes' AND source_kind='outcome_candidate_key'"
+            ):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("observation_priority_deadline")
+                _validate_retention_claim_source(
+                    lab, observation_id=row["observation_id"], generation=row["generation"],
+                    source_kind=row["source_kind"], source_ref=row["source_ref"], source_hash=row["source_hash"],
+                )
+                retained.add(str(row["source_ref"]))
+        finally:
+            lab.set_progress_handler(None, 0)
+    return current, retained - current
 
-
-def list_open_learning_target_horizons(path_ids: tuple[str, ...]) -> set[tuple[str, str]]:
-    """Return distinct measured horizons referenced by active open Learning exposures."""
-    if not path_ids:
-        return set()
-    placeholders = ", ".join("?" for _ in path_ids)
-    rows = (
-        get_db()
-        .execute(
-            "SELECT DISTINCT h.path_id, h.target_horizon "
-            "FROM learning_exposures le "
-            "JOIN learning_experiments e "
-            "  ON e.experiment_id=le.experiment_id AND e.status='active' "
-            "JOIN learning_hypotheses h ON h.hypothesis_id=le.hypothesis_id "
-            "JOIN learning_policy_epochs pe "
-            "  ON pe.epoch_id=le.concurrent_policy_epoch AND pe.ended_at IS NULL "
-            f"WHERE h.path_id IN ({placeholders}) "
-            "AND pe.epoch_kind=('decision_policy:' || h.path_id) "
-            "AND le.outcome_candidate_key IS NOT NULL "
-            "AND TRIM(h.target_horizon) <> ''",
-            path_ids,
-        )
-        .fetchall()
-    )
-    return {
-        (str(row["path_id"]), str(row["target_horizon"])) for row in rows if row["path_id"] and row["target_horizon"]
-    }
 
 
 def list_open_universe_twin_outcome_candidate_keys() -> set[str]:

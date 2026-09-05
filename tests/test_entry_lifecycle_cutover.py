@@ -62,6 +62,11 @@ def _typed_candidate(
         candidate_opportunity_context_hash=context.context_hash,
     )
     repo.insert_candidate(candidate)
+    # Historical projections can be NULL while the frozen context retains its clock.
+    repo.execute_write(
+        "UPDATE universe_members SET opportunity_source_cutoff_at=NULL WHERE id=?",
+        (candidate.id,),
+    )
     return candidate
 
 
@@ -183,7 +188,7 @@ def _insert_expired_plan(repo, generation: dict, candidate_id: str, plan_id: str
 
 
 def _bind_test_context(repo, generation: dict) -> None:
-    from aletheia.trading.entry_analysis import fingerprint
+    from aletheia.trading.entry_analysis import canonical_json, fingerprint
     from tests.test_entry_analysis import _anchor, _context_v2
 
     context = _context_v2((
@@ -193,7 +198,7 @@ def _bind_test_context(repo, generation: dict) -> None:
     repo.execute_write(
         "UPDATE candidate_planning_generations SET planner_input_json=?,planner_input_hash=? WHERE id=?",
         (
-            context.model_dump_json(),
+            canonical_json(context.model_dump(mode="json")),
             fingerprint(context.model_dump(mode="json")),
             generation["id"],
         ),
@@ -257,6 +262,8 @@ def test_no_plan_rotates_only_for_later_material_evidence(_inmemory_db):
         source_at="2026-09-03T00:00:00+00:00", primary_ref="fact-a",
     )
     first, _ = repo.ensure_candidate_planning_generation(first_candidate.id)
+    _bind_test_context(repo, first)
+    frozen = repo.get_candidate_planning_generation(first["id"])
     repo.execute_write(
         "UPDATE candidate_planning_generations SET status='no_plan', result_kind='no_plan', "
         "result_json='{}', attention_status='terminal' WHERE id=?",
@@ -269,6 +276,15 @@ def test_no_plan_rotates_only_for_later_material_evidence(_inmemory_db):
     assert created is False
     assert same["id"] == first["id"]
 
+    for source_at, status in (
+        ("2026-09-03T00:00:00+00:00", "active"),
+        ("2026-09-02T23:00:00+00:00", "active"),
+        ("2026-09-03T02:00:00+00:00", "superseded"),
+    ):
+        unavailable = _typed_candidate(source_at=source_at, primary_ref="fact-b")
+        repo.execute_write("UPDATE universe_snapshots SET status=? WHERE id=?", (status, unavailable.snapshot_id))
+        same, created = repo.ensure_candidate_planning_generation(unavailable.id)
+        assert created is False and same["id"] == first["id"]
     new_evidence = _typed_candidate(
         source_at="2026-09-03T02:00:00+00:00", primary_ref="fact-b",
     )
@@ -276,6 +292,15 @@ def test_no_plan_rotates_only_for_later_material_evidence(_inmemory_db):
     assert created is True
     assert second["cycle_number"] == 2
     assert second["cycle_reason"] == "material_input_changed"
+    replay, created = repo.ensure_candidate_planning_generation(new_evidence.id)
+    assert not created and replay["id"] == second["id"]
+    old = repo.get_candidate_planning_generation(first["id"])
+    assert (old["planner_input_json"], old["planner_input_hash"]) == (
+        frozen["planner_input_json"], frozen["planner_input_hash"],
+    )
+    assert not repo.bind_candidate_planner_input(
+        first["id"], "old-owner", frozen["planner_input_json"], frozen["planner_input_hash"],
+    )
 
 
 def test_unresolved_prior_order_prevents_successor_cycle(_inmemory_db):
