@@ -1,23 +1,59 @@
 """Risk API routes: kill switch, status, and boundaries display."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from aletheia.agent_shell.operator_recommendations import build_risk_summary
 from aletheia.config.loader import load_config
+from aletheia.config.schema import RiskConfig
 from aletheia.risk import kill_switch
 from aletheia.storage.repositories import list_risk_decisions
+
+
+class KillSwitchStatusResponse(BaseModel):
+    active: bool
+
+
+class BrakesStatusResponse(BaseModel):
+    global_active: bool
+    demo_active: bool
+    live_active: bool
+
+
+class RiskStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    kill_switch_active: bool
+    demo_brake_active: bool = False
+    live_brake_active: bool = False
+    live_state: str = ""
+    permission_mode: str = ""
+    latest_risk_decision: dict[str, Any] | None = None
+    status: str = "not_evaluated"
+    violations: list[str] = []
+    pause_owners: list[dict[str, Any]] = []
+    pause_blockers: list[str] = []
+    resume_blocked_reason: str | None = None
+
+
+class RiskSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    recent_rejected_decisions: list[dict[str, Any]] = []
+    needs_operator_risk_boundary_proposals: list[dict[str, Any]] = []
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])
 
 
-@router.get("/boundaries")
+@router.get("/boundaries", response_model=RiskConfig)
 def get_risk_boundaries():
     """Return the hard risk limits for display. Read-only over the API."""
-    return load_config().risk.model_dump()
+    return load_config().risk
 
 
-@router.get("/kill-switch")
+@router.get("/kill-switch", response_model=KillSwitchStatusResponse)
 def kill_switch_status():
     return {"active": kill_switch.is_active()}
 
@@ -30,12 +66,12 @@ def _brake_status() -> dict:
     }
 
 
-@router.get("/brakes")
+@router.get("/brakes", response_model=BrakesStatusResponse)
 def brakes_status():
     return _brake_status()
 
 
-@router.get("/status")
+@router.get("/status", response_model=RiskStatusResponse)
 def risk_status():
     cfg = load_config()
     from aletheia.agent_runtime.pause_ownership import (
@@ -88,7 +124,7 @@ def risk_status():
     }
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=RiskSummaryResponse)
 def risk_summary():
     """Operator-facing summary of recent risk rejections and pending proposal-worthy boundary changes."""
     return build_risk_summary()

@@ -372,14 +372,7 @@ export interface PositionsReconciliation {
   orphaned: ReconcileItem[]
 }
 
-export interface RiskStatus {
-  kill_switch_active: boolean
-  live_state: string
-  permission_mode: string
-  latest_risk_decision: RiskDecision | null
-  status: string
-  violations: string[]
-}
+export type RiskStatus = components['schemas']['RiskStatusResponse']
 
 export interface SystemStatus {
   gateway_running: boolean
@@ -1091,7 +1084,6 @@ export interface UniverseCurrentResponse {
   stale: boolean
   stale_count: number
 }
-
 export interface UniverseFeatureSnapshot {
   id: string
   asset_id: string

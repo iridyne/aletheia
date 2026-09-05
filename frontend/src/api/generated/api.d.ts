@@ -7025,6 +7025,15 @@ export interface components {
              */
             mode: string;
         };
+        /** BrakesStatusResponse */
+        BrakesStatusResponse: {
+            /** Demo Active */
+            demo_active: boolean;
+            /** Global Active */
+            global_active: boolean;
+            /** Live Active */
+            live_active: boolean;
+        };
         /** BypassDistressGateRequest */
         BypassDistressGateRequest: {
             /** Enabled */
@@ -7364,6 +7373,40 @@ export interface components {
              * @default 60
              */
             terminal_cooldown_minutes: number;
+        };
+        /** EntryWorkbenchResponse */
+        EntryWorkbenchResponse: {
+            /**
+             * Availability
+             * @default {}
+             */
+            availability: {
+                [key: string]: unknown;
+            };
+            /** Candidate Attention */
+            candidate_attention?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Current Candidates */
+            current_candidates?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Entry Plans */
+            entry_plans?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Generated At */
+            generated_at: string;
+            /** Summary */
+            summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Universe */
+            universe?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
         };
         /** EquitiesConfigUpdate */
         EquitiesConfigUpdate: {
@@ -7899,6 +7942,11 @@ export interface components {
              * @default
              */
             reason: string;
+        };
+        /** KillSwitchStatusResponse */
+        KillSwitchStatusResponse: {
+            /** Active */
+            active: boolean;
         };
         /**
          * LearningConfig
@@ -9206,6 +9254,20 @@ export interface components {
             /** Task Generation */
             task_generation: number;
         };
+        /** PlanningHistoryResponse */
+        PlanningHistoryResponse: {
+            /**
+             * Items
+             * @default []
+             */
+            items: {
+                [key: string]: unknown;
+            }[];
+            /** Next Before */
+            next_before?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PositionView
          * @description Typed read model for /api/positions owner-facing presentation.
@@ -10203,6 +10265,80 @@ export interface components {
              * @default 3
              */
             max_open_positions: number;
+        };
+        /** RiskStatusResponse */
+        RiskStatusResponse: {
+            /**
+             * Demo Brake Active
+             * @default false
+             */
+            demo_brake_active: boolean;
+            /** Kill Switch Active */
+            kill_switch_active: boolean;
+            /** Latest Risk Decision */
+            latest_risk_decision?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Live Brake Active
+             * @default false
+             */
+            live_brake_active: boolean;
+            /**
+             * Live State
+             * @default
+             */
+            live_state: string;
+            /**
+             * Pause Blockers
+             * @default []
+             */
+            pause_blockers: string[];
+            /**
+             * Pause Owners
+             * @default []
+             */
+            pause_owners: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Permission Mode
+             * @default
+             */
+            permission_mode: string;
+            /** Resume Blocked Reason */
+            resume_blocked_reason?: string | null;
+            /**
+             * Status
+             * @default not_evaluated
+             */
+            status: string;
+            /**
+             * Violations
+             * @default []
+             */
+            violations: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** RiskSummaryResponse */
+        RiskSummaryResponse: {
+            /**
+             * Needs Operator Risk Boundary Proposals
+             * @default []
+             */
+            needs_operator_risk_boundary_proposals: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Recent Rejected Decisions
+             * @default []
+             */
+            recent_rejected_decisions: {
+                [key: string]: unknown;
+            }[];
+        } & {
+            [key: string]: unknown;
         };
         /** RuntimeCandidateRequest */
         RuntimeCandidateRequest: {
@@ -11376,6 +11512,42 @@ export interface components {
             snapshot_ttl_enabled?: boolean | null;
             /** Snapshot Ttl Hours */
             snapshot_ttl_hours?: number | null;
+        };
+        /** UniverseCurrentResponse */
+        UniverseCurrentResponse: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Fallback
+             * @default false
+             */
+            fallback: boolean;
+            /**
+             * Members
+             * @default []
+             */
+            members: {
+                [key: string]: unknown;
+            }[];
+            /** Snapshot */
+            snapshot?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Stale
+             * @default false
+             */
+            stale: boolean;
+            /**
+             * Stale Count
+             * @default 0
+             */
+            stale_count: number;
+        } & {
+            [key: string]: unknown;
         };
         /** UpdateConfig */
         UpdateConfig: {
@@ -17677,7 +17849,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RiskConfig"];
                 };
             };
         };
@@ -17697,7 +17869,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BrakesStatusResponse"];
                 };
             };
         };
@@ -17752,7 +17924,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["KillSwitchStatusResponse"];
                 };
             };
         };
@@ -17805,7 +17977,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RiskStatusResponse"];
                 };
             };
         };
@@ -17825,7 +17997,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RiskSummaryResponse"];
                 };
             };
         };
@@ -21462,7 +21634,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseCurrentResponse"];
                 };
             };
         };
@@ -21578,7 +21750,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PlanningHistoryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -21732,7 +21904,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EntryWorkbenchResponse"];
                 };
             };
             /** @description Validation Error */

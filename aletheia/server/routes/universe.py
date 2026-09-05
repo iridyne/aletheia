@@ -1,9 +1,40 @@
 """Universe Generator and owner-facing Entry Workbench API routes."""
 
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, ConfigDict
 
+
+class EntryWorkbenchResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    generated_at: str
+    availability: dict[str, Any] = {}
+    universe: dict[str, Any] | None = None
+    summary: dict[str, Any] | None = None
+    entry_plans: list[dict[str, Any]] | None = None
+    current_candidates: list[dict[str, Any]] | None = None
+    candidate_attention: list[dict[str, Any]] | None = None
+
+
+class UniverseCurrentResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    snapshot: dict[str, Any] | None = None
+    members: list[dict[str, Any]] = []
+    enabled: bool = True
+    fallback: bool = False
+    stale: bool = False
+    stale_count: int = 0
+
+
+class PlanningHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    items: list[dict[str, Any]] = []
+    next_before: str | None = None
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
 
@@ -79,7 +110,7 @@ def _entry_plan_lineage(row: dict) -> dict:
     }
 
 
-@router.get("/workbench")
+@router.get("/workbench", response_model=EntryWorkbenchResponse)
 def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
     """Bounded direct-ledger projection; section failures remain explicit."""
 
@@ -169,7 +200,7 @@ def get_entry_plan_detail(plan_id: str):
     return projection
 
 
-@router.get("/planning-history")
+@router.get("/planning-history", response_model=PlanningHistoryResponse)
 def get_planning_history(
     limit: int = Query(default=50, ge=1, le=200),
     before: str | None = None,
@@ -240,7 +271,7 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     return enriched
 
 
-@router.get("/current")
+@router.get("/current", response_model=UniverseCurrentResponse)
 def get_current_universe():
     """Return the current active universe snapshot and its Candidates."""
     from aletheia.universe.service import UniverseService
@@ -313,7 +344,10 @@ def get_candidate(candidate_id: str):
     detail = get_member(candidate_id)
     attention = repo.get_candidate_planning_for_candidate(candidate_id)
     detail["attention"] = attention
-    detail["lifecycle"] = repo.get_candidate_entry_lifecycle(candidate_id)
+    try:
+        detail["lifecycle"] = repo.get_candidate_entry_lifecycle(candidate_id)
+    except ValueError:
+        detail["lifecycle"] = None
     return detail
 
 
