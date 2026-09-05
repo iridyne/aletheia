@@ -78,6 +78,13 @@ def _model_provider_usable(cfg) -> bool:
     return False
 
 
+def _connectivity_snapshot() -> dict:
+    from aletheia.agent_runtime.connectivity import get_status
+
+    status = get_status()["external_connectivity"]
+    return {"state": status["state"], "reason": status["message"]}
+
+
 def _scheduler_snapshot() -> dict:
     try:
         from aletheia.agent_runtime.scheduler import status_snapshot
@@ -182,6 +189,7 @@ def shell_bootstrap(response: Response):
     health = _safe("health", _cached_compute_health, {"status": "not_available", "issues": []})
     scheduler = _safe("scheduler", _scheduler_snapshot, {})
     operator = _safe("operator", _operator_snapshot, {})
+    connectivity = _safe("connectivity", _connectivity_snapshot, {})
     try:
         from aletheia.risk import kill_switch
 
@@ -218,7 +226,7 @@ def shell_bootstrap(response: Response):
             "paper_execution_mode": alignment_value.get("paper_execution_mode"),
         },
         "operator": operator["value"],
-        "connectivity": {"state": "not_available", "reason": "deferred_until_diagnostics"},
+        "connectivity": connectivity["value"] if connectivity["reason"] is None else {"state": "unknown", "reason": connectivity["reason"]},
         "health": {"status": health["value"].get("status", "not_available"), "issues": health["value"].get("issues", [])[:3], "availability": health["availability"], "reason": health["reason"]},
         "runtime": {"version": __version__, "boot_commit": _safe("boot_commit", lambda: __import__("aletheia.agent_runtime.build_info", fromlist=["get_boot_commit"]).get_boot_commit(), None)["value"], "current_commit": current_commit["value"], "mode": "packaged" if packaged["value"] else "development", "update": _safe("update", lambda: __import__("aletheia.update.applier", fromlist=["update_progress"]).update_progress(), {})["value"]},
         "ticker": ticker["value"],

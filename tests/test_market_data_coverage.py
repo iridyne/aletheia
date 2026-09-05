@@ -11,34 +11,38 @@ import pytest
 NOW = datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
 
 
-def test_data_coverage_distinguishes_fresh_stale_empty_and_idle(monkeypatch):
-    from aletheia.data import data_coverage
+def test_current_orderbook_coverage_requires_exact_venue_and_market(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.data_coverage import get_data_coverage_report
+    from aletheia.storage.repositories import insert_orderbook_snapshot
 
-    rows = {
-        "orderbook": {"row_count": 4, "symbol_count": 2, "newest": (NOW - timedelta(minutes=2)).isoformat()},
-        "primary_funding": {"row_count": 3, "symbol_count": 2, "newest": (NOW - timedelta(minutes=20)).isoformat()},
-        "primary_open_interest": {"row_count": 0, "symbol_count": 0, "newest": None},
-        "long_short_ratio": {"row_count": 1, "symbol_count": 1, "newest": (NOW - timedelta(minutes=2)).isoformat()},
-        "liquidations": {"row_count": 10, "symbol_count": 2, "newest": (NOW - timedelta(hours=3)).isoformat()},
-        "macro": {"row_count": 2, "symbol_count": 0, "newest": (NOW - timedelta(minutes=5)).isoformat()},
-        "onchain": {"row_count": 2, "symbol_count": 0, "newest": (NOW - timedelta(minutes=5)).isoformat()},
-        "ohlcv": {"row_count": 200, "symbol_count": 2, "newest": int((NOW - timedelta(minutes=40)).timestamp() * 1000)},
-    }
-    monkeypatch.setattr(data_coverage, "_query_domain", lambda definition: {
-        **rows[definition.domain], "source_counts": {"okx": rows[definition.domain]["row_count"]},
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.observed_instruments = ["binance:BTC/USDT:perp"]
+    monkeypatch.setattr(loader, "load_config", lambda **kwargs: cfg)
+    for exchange, market in [("bybit", "perp"), ("binance", "spot")]:
+        insert_orderbook_snapshot({
+            "symbol": "BTC/USDT", "exchange": exchange, "market_type": market,
+            "bid_price": 100.0, "ask_price": 101.0, "spread_bps": 100.0,
+            "observed_at": (NOW - timedelta(minutes=2)).isoformat(),
+        })
+    report = get_data_coverage_report(now=NOW)
+    domains = {row["domain"]: row for row in report["domains"]}
+    assert domains["orderbook"]["state"] == "empty"
+    assert domains["orderbook"]["missing_target_count"] == 1
+    assert domains["orderbook"]["inventory"]["state"] == "fresh"
+    assert domains["liquidations"]["state"] == "idle"
+    insert_orderbook_snapshot({
+        "symbol": "BTC/USDT", "exchange": "binance", "market_type": "perp",
+        "bid_price": 100.0, "ask_price": 101.0, "spread_bps": 100.0,
+        "observed_at": (NOW - timedelta(minutes=20)).isoformat(),
     })
-    data_coverage.clear_data_coverage_cache()
+    report = get_data_coverage_report(now=NOW)
+    orderbook = next(row for row in report["domains"] if row["domain"] == "orderbook")
+    assert orderbook["state"] == "stale"
+    assert orderbook["inventory"]["state"] == "fresh"
 
-    report = data_coverage.get_data_coverage_report(now=NOW)
-    states = {row["domain"]: row["state"] for row in report["domains"]}
-
-    assert states["orderbook"] == "fresh"
-    assert states["primary_funding"] == "stale"
-    assert states["primary_open_interest"] == "empty"
-    assert states["liquidations"] == "idle"
-    assert states["ohlcv"] == "fresh"
-    assert report["status"] == "attention"
-    assert report["critical_problem_count"] == 2
 
 
 @pytest.mark.parametrize(
@@ -73,25 +77,22 @@ def test_primary_derivative_coverage_uses_canonical_two_clock_freshness(
     acquired_at,
     expected_state,
 ):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.data import data_coverage
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
 
-    def query(definition):
-        values = {
-            "row_count": 1,
-            "symbol_count": 1,
-            "newest": source_observed_at or acquired_at,
-            "source_counts": {"okx": 1},
-        }
-        if definition.domain == "primary_funding":
-            values["freshness_rows"] = [{
-                "observed_at": source_observed_at or acquired_at,
-                "source_observed_at": source_observed_at,
-                "acquired_at": acquired_at,
-                "source_time_status": source_time_status,
-            }]
-        return values
-
-    monkeypatch.setattr(data_coverage, "_query_domain", query)
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "okx"
+    cfg.market_data.observed_instruments = ["okx:BTC/USDT:perp"]
+    monkeypatch.setattr(loader, "load_config", lambda **kwargs: cfg)
+    insert_funding_rate_snapshot({
+        "symbol": "BTC/USDT", "exchange": "okx", "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.1095,
+        "observed_at": source_observed_at or acquired_at,
+        "source_observed_at": source_observed_at,
+        "acquired_at": acquired_at, "source_time_status": source_time_status,
+    })
 
     report = data_coverage.get_data_coverage_report(now=NOW)
     funding = next(
@@ -106,9 +107,16 @@ def test_primary_derivative_coverage_uses_canonical_two_clock_freshness(
     )
 
 
-def test_primary_derivative_coverage_uses_latest_acquisition_from_sqlite():
+def test_primary_derivative_coverage_uses_latest_acquisition_from_sqlite(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.data.data_coverage import get_data_coverage_report
     from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "okx"
+    cfg.market_data.observed_instruments = ["okx:BTC/USDT:perp"]
+    monkeypatch.setattr(loader, "load_config", lambda **kwargs: cfg)
 
     financial = {
         "symbol": "BTC/USDT",
@@ -142,6 +150,59 @@ def test_primary_derivative_coverage_uses_latest_acquisition_from_sqlite():
     assert funding["fresh_row_count"] == 1
     assert funding["unavailable_row_count"] == 0
     assert funding["freshness_state_counts"] == {"fresh": 1}
+
+
+def test_current_coverage_keeps_retired_bad_rows_in_inventory_only(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.data_coverage import get_data_coverage_report
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.observed_instruments = ["binance:BTC/USDT:perp"]
+    monkeypatch.setattr(loader, "load_config", lambda **kwargs: cfg)
+    recent = (NOW - timedelta(minutes=2)).isoformat()
+    for symbol, acquired in [("BTC/USDT", recent), ("OLD/USDT", None)]:
+        insert_funding_rate_snapshot({
+            "symbol": symbol, "exchange": "binance", "funding_rate": 0.0001,
+            "funding_rate_annualized": 0.1095, "observed_at": recent,
+            "source_time_status": "provided" if acquired else None,
+            "source_observed_at": acquired, "acquired_at": acquired,
+        })
+
+    report = get_data_coverage_report(now=NOW)
+    funding = next(row for row in report["domains"] if row["domain"] == "primary_funding")
+    assert funding["state"] == "fresh"
+    assert funding["target_count"] == 1
+    assert funding["missing_target_count"] == 0
+    assert funding["inventory"]["state"] == "invalid"
+    assert funding["inventory"]["unavailable_row_count"] == 1
+
+
+def test_current_coverage_detects_missing_target_even_with_fresh_peer(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.data_coverage import get_data_coverage_report
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.observed_instruments = ["binance:BTC/USDT:perp", "binance:ETH/USDT:perp"]
+    monkeypatch.setattr(loader, "load_config", lambda **kwargs: cfg)
+    recent = (NOW - timedelta(minutes=2)).isoformat()
+    insert_funding_rate_snapshot({
+        "symbol": "BTC/USDT", "exchange": "binance", "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.1095, "observed_at": recent,
+        "source_time_status": "provided", "source_observed_at": recent, "acquired_at": recent,
+    })
+    report = get_data_coverage_report(now=NOW)
+    funding = next(row for row in report["domains"] if row["domain"] == "primary_funding")
+    assert funding["state"] == "invalid"
+    assert funding["target_count"] == 2
+    assert funding["missing_target_count"] == 1
+    assert funding["fresh_row_count"] == 1
+    assert funding["inventory"]["state"] == "fresh"
 
 
 def test_inspect_microstructure_uses_exact_venue_and_real_imbalance(monkeypatch, capsys):

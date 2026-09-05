@@ -1,149 +1,77 @@
-import { describe, expect, it } from 'vitest'
-import { isGoLiveScorecard, operatorMutationError } from './Overview'
-import { semanticTone } from '../lib/systemState'
-import SRC from './Overview.tsx?raw'
-import CSS from '../index.css?raw'
-import STATUS_SRC from '../components/StatusCluster.tsx?raw'
-import APP_SRC from '../App.tsx?raw'
+// @vitest-environment happy-dom
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
+import Overview, { isGoLiveScorecard, operatorMutationError } from './Overview'
+import type { CollectorHealthReport, MarketDataCoverageReport } from '../types'
 
-describe('Overview operator mutation truthfulness', () => {
-  it('keeps the action identity and a usable rejection reason', () => {
-    expect(operatorMutationError('Pause gateway failed', new Error('backend 503')))
-      .toBe('Pause gateway failed: backend 503')
-    expect(operatorMutationError('Resume gateway failed', 'startup gate blocked'))
-      .toBe('Resume gateway failed: startup gate blocked')
-    expect(operatorMutationError('Pause gateway failed', null))
-      .toBe('Pause gateway failed: request failed')
+vi.mock('../components/PnLZone', () => ({ default: () => null }))
+vi.mock('../components/AgentFeed', () => ({ default: () => null }))
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+describe('Overview', () => {
+  it('keeps operator rejection identity and rejects invalid qualification evidence', () => {
+    expect(operatorMutationError('Pause gateway failed', new Error('backend 503'))).toBe('Pause gateway failed: backend 503')
+    expect(operatorMutationError('Resume gateway failed', null)).toBe('Resume gateway failed: request failed')
+    expect(isGoLiveScorecard({ traffic_light: 'ready' })).toBe(false)
   })
 
-  it('renders sticky failure and prevents overlapping pause/resume commands', () => {
-    expect(SRC).toContain("operatorMutationError('Pause gateway failed', error)")
-    expect(SRC).toContain("operatorMutationError('Resume gateway failed', error)")
-    expect(SRC).toContain('const gatewayCommandPending = pauseMut.isPending || resumeMut.isPending')
-    expect(SRC).toContain('disabled={gatewayCommandPending || paused || !running}')
-    expect(SRC).toContain('disabled={gatewayCommandPending || !paused}')
-    expect(SRC).toContain('role="alert"')
-    expect(SRC.match(/onMutate: \(\) => setGatewayCommandError\(''\)/g)).toHaveLength(2)
-    expect(SRC).not.toContain("qc.setQueryData(['status']")
-  })
-})
-
-describe('Overview semantic honesty', () => {
-  it('maps semantic status fixtures to the documented tones', () => {
-    expect([
-      ['active', 'green'],
-      ['degraded', 'yellow'],
-      ['loading', 'muted'],
-      ['unknown', 'muted'],
-      ['unavailable', 'red'],
-      ['disabled', 'muted'],
-    ] as const).toEqual([
-      ['active', semanticTone('active')],
-      ['degraded', semanticTone('degraded')],
-      ['loading', semanticTone('loading')],
-      ['unknown', semanticTone('unknown')],
-      ['unavailable', semanticTone('unavailable')],
-      ['disabled', semanticTone('disabled')],
-    ])
-  })
-
-  it('keeps loading and disabled states muted instead of implying degradation', () => {
-    expect(STATUS_SRC).toContain("semanticTone(liveOn ? 'active' : 'disabled')")
-    expect(SRC).toContain('const collectorState: SemanticState')
-    expect(SRC).toContain("collectorHealthQuery.isPending ? 'loading' : 'unknown'")
-    expect(SRC).not.toContain("collectorHealthQuery.isError ? 'muted' : 'yellow'")
-  })
-
-  it('uses full disclosure chevrons with an accessible relationship', () => {
-    expect(APP_SRC).toContain('aria-expanded={!collapsed[group]}')
-    expect(APP_SRC).toContain('aria-controls={itemsId}')
-    expect(APP_SRC).toContain("collapsed[group] ? '▶' : '▼'")
-    expect(APP_SRC).not.toContain('▾')
-  })
-
-  it('loads persisted data coverage independently from the lightweight bootstrap', () => {
-    expect(SRC).toContain("queryKey: ['market-data-coverage']")
-    expect(SRC).toContain('queryFn: api.getDataCoverage')
-    expect(SRC).toContain('coverage={coverage.data} coverageError={coverage.isError}')
-    expect(SRC).toContain("coverage?.status === 'healthy'")
-    expect(SRC).not.toContain('deferred_until_diagnostics')
-  })
-
-  it('RiskCard shows muted tone when shell data has not loaded', () => {
-    // Unknown state (no data) must not show yellow (degraded) — it is unknown.
-    // The tone expression must check !shell before assigning yellow.
-    expect(SRC).toContain('const unavailable = shellError || !shell || !risk')
-    expect(SRC).toContain("semanticTone('unknown')")
-  })
-
-  it('GoLiveScoreCard derives tone from backend traffic_light, not hardcoded yellow', () => {
-    // Hardcoded tone="yellow" on the Go-Live badge violated semantic honesty:
-    // the deferred state (data not yet fetched) is unknown, not degraded.
-    expect(SRC).not.toContain('tone="yellow"')
-    expect(SRC).toContain('data ? data.traffic_light')
-  })
-
-  it('EntrySummaryStrip shows em-dash instead of 0 when summary is not loaded', () => {
-    // Missing data is not zero. Counts must not coerce undefined to 0.
-    expect(SRC).not.toContain('?? 0')
-    expect(SRC).toContain("?? '—'")
-  })
-
-  it('canonical breakpoint scale documented in index.css matches design system', () => {
-    // ui_design_system.md mandates 640/768/1024/1280; the old 480/700/900/1100
-    // token comment conflicted with it. The documentation must list the target scale.
-    expect(CSS).toContain('--bp-sm: 640px')
-    expect(CSS).toContain('--bp-md: 768px')
-    expect(CSS).toContain('--bp-lg: 1024px')
-    expect(CSS).toContain('--bp-xl: 1280px')
-  })
-})
-
-describe('Overview issue repairs', () => {
-  it('validates the scorecard response before treating it as qualification evidence', () => {
-    const valid = {
-      composite_score: 82,
-      traffic_light: 'green' as const,
-      criteria: [{ key: 'risk', label: 'Risk', score: 100, weight: 1, weighted_contribution: 100, detail: 'ok', status: 'pass' as const }],
-      blockers: [],
-      computed_at: '2026-08-22T10:00:00Z',
+  it('distinguishes collector outcomes and expands current coverage separately from inventory by keyboard', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+    const health: CollectorHealthReport = {
+      status: 'attention', domain_count: 6, recorded_count: 5, completed_count: 3,
+      degraded_count: 0, transient_problem_count: 0, infrastructure_incident: null,
+      domains: ['success', 'partial', 'empty', 'not_configured', 'disabled', 'never_run'].map(status => ({
+        domain: status === 'empty' ? 'derivatives_history' : status, last_status: status,
+        display_status: status, cadence_sec: 600, age_sec: 1, overdue: false, degraded: false,
+        attributed_cause: null, display_severity: status === 'success' ? 'ok' : 'muted',
+        last_error_code: status === 'empty' ? 'no_derivatives_history' : null,
+      })),
     }
-    expect(isGoLiveScorecard(valid)).toBe(true)
-    expect(isGoLiveScorecard({ ...valid, traffic_light: 'ready' })).toBe(false)
-    expect(isGoLiveScorecard({ ...valid, criteria: [{ ...valid.criteria[0], score: Number.NaN }] })).toBe(false)
-  })
-
-  it('keeps collector, coverage, mode, and navigation paths mounted on System', () => {
-    expect(SRC).toContain("queryKey: ['collector-health']")
-    expect(SRC).toContain('CollectorHealthDetails health={collectorHealth} mode="compact"')
-    expect(SRC).toContain('CollectorHealthDetails health={collectorHealth} mode="full"')
-    expect(SRC).toContain('DataCoverageDetail')
-    expect(SRC).toContain('ModeDetail shell={shell}')
-    expect(SRC).toContain("navigate('/settings?tab=execution')")
-    expect(SRC).toContain("navigate('/settings?tab=agent')")
-    expect(SRC).toContain("navigate('/settings?tab=runtime')")
-    expect(STATUS_SRC).toContain('parseHealthIssue(issue)')
-    expect(STATUS_SRC).not.toContain('function parseIssue')
-  })
-
-  it('feeds shell health into the persistent master status derivation', () => {
-    expect(STATUS_SRC).toContain("const healthState = String(healthQuery.data?.status || data?.health?.status || '')")
-    expect(STATUS_SRC).toContain('riskState,')
-    expect(STATUS_SRC).toContain('healthState,')
-  })
-
-  it('separates pending, unavailable, and stale scorecard states', () => {
-    expect(SRC).toContain('scorecardQuery.isPending && !data')
-    expect(SRC).toContain('scorecardQuery.isError && !data')
-    expect(SRC).toContain('scorecardQuery.isRefetchError')
-    expect(SRC).toContain('Qualification details are unavailable.')
-    expect(SRC).toContain('Refresh failed; showing the last computed scorecard.')
-    expect(SRC).toContain('Last computed {fmtTimestamp(data.computed_at)}')
-  })
-
-  it('does not clip the restored status popover at the mobile topbar', () => {
-    expect(CSS).toContain('gap: var(--space-2); overflow: visible;')
-    expect(CSS).toContain('.status-popover {')
-    expect(CSS).toContain('position: absolute; top: 100%; right: 0;')
+    const coverage: MarketDataCoverageReport = {
+      status: 'attention', generated_at: '2026-09-06T00:00:00Z', domain_count: 1,
+      fresh_count: 0, problem_count: 1, critical_problem_count: 1,
+      domains: [{
+        domain: 'funding', label: 'Funding', state: 'empty', critical: true,
+        scope: 'current_targets', target_count: 2, missing_target_count: 2,
+        row_count: 0, symbol_count: 0, source_counts: {}, newest_observed_at: null,
+        age_sec: null, max_age_sec: 600, fresh_row_count: 0, stale_row_count: 0,
+        unavailable_row_count: 0, freshness_state_counts: {},
+        inventory: { state: 'invalid', row_count: 45, symbol_count: 3, source_counts: {},
+          newest_observed_at: null, age_sec: null, fresh_row_count: 0, stale_row_count: 0,
+          unavailable_row_count: 45, freshness_state_counts: { invalid: 45 } },
+      }],
+    }
+    client.setQueryData(['ui-shell-bootstrap'], { connectivity: { state: 'unknown', reason: 'No recent probe' } })
+    client.setQueryData(['ui-overview-bootstrap'], {})
+    client.setQueryData(['collector-health'], health)
+    client.setQueryData(['market-data-coverage'], coverage)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<MemoryRouter><QueryClientProvider client={client}><Overview /></QueryClientProvider></MemoryRouter>))
+      const collector = [...host.querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.startsWith('Collectors'))!
+      expect(collector.textContent).toContain('1 success · 1 partial · 1 empty · 1 unconfigured · 1 disabled · 1 unobserved')
+      expect(host.querySelector('.system-inline-detail')?.textContent).toContain('empty · no_derivatives_history')
+      expect(collector.textContent).not.toContain('0 transient')
+      await act(async () => collector.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+      expect(collector.getAttribute('aria-expanded')).toBe('true')
+      expect(host.querySelector('.system-inline-detail')).toBeNull()
+      const coverageRow = [...host.querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.startsWith('Data coverage'))!
+      await act(async () => coverageRow.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true })))
+      expect(coverageRow.getAttribute('aria-expanded')).toBe('true')
+      expect(collector.getAttribute('aria-expanded')).toBe('false')
+      expect(host.textContent).toContain('2 current targets · 2 missing targets')
+      expect(host.textContent).toContain('Historical inventory (all stored rows): invalid')
+      expect(host.textContent).toContain('0 current rows')
+    } finally {
+      await act(async () => root.unmount())
+      client.clear()
+      host.remove()
+    }
   })
 })

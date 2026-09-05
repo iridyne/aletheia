@@ -39,6 +39,23 @@ function report(status: CollectorHealthReport['status']): CollectorHealthReport 
 }
 
 describe('CollectorHealthDetails', () => {
+  it('shows empty reasons without hiding independent failures behind connectivity', () => {
+    const health = report('attention')
+    health.domains[2].last_error_code = 'no_derivatives_history'
+    health.domains[0].overdue = true
+    health.infrastructure_incident = {
+      code: 'external_connectivity_unavailable', status: 'active', severity: 'warning',
+      priority: 1, message: 'Network unavailable', action: 'Check network',
+      detected_at: null, observed_at: null, affected_domains: ['source_partial'],
+    }
+    const markup = renderToStaticMarkup(<CollectorHealthDetails health={health} mode="compact" />)
+    expect(markup).toContain('no_rows')
+    expect(markup).toContain('empty · no_derivatives_history')
+    expect(markup).toContain('1 dependent collector')
+    expect(markup).toContain('success · overdue')
+    expect(markup).not.toContain('source_partial')
+  })
+
   it('counts only exact success as healthy and preserves initialization', () => {
     const full = renderToStaticMarkup(
       <CollectorHealthDetails health={report('attention')} mode="full" />,
@@ -50,8 +67,9 @@ describe('CollectorHealthDetails', () => {
     expect(full).toContain('SOURCE PARTIAL')
     expect(full).toContain('1 healthy collector')
     expect(full).toContain('1 empty')
-    expect(full).toContain('2 inactive')
-    expect(full).toContain('1 never run')
+    expect(full).toContain('1 disabled')
+    expect(full).toContain('1 unconfigured')
+    expect(full).toContain('1 unobserved')
     expect(full).not.toContain('6 healthy collectors')
     expect(compact).toContain('initializing')
     expect(compact).not.toContain('5/6 healthy')

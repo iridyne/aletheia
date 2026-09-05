@@ -2,7 +2,7 @@
 
 Covers:
   - _parse_oi: LSR threading (value present + value None)
-  - _fetch_lsr_binance_batch: graceful HTTP failure (returns {} without raising)
+  - _fetch_binance_ratio_batch: graceful HTTP failure (returns {} without raising)
   - _maybe_backfill_funding_history: idempotency with ≥3 existing rows
   - _maybe_backfill_oi_history: swallows NotSupported (Bitget) into errors list
 
@@ -15,7 +15,6 @@ Async functions are driven via asyncio.run(); no pytest-asyncio dependency.
 from __future__ import annotations
 
 import asyncio
-import inspect
 from datetime import datetime, timezone, timedelta
 
 import pytest
@@ -185,11 +184,11 @@ def test_parse_oi_drops_invalid_optional_positioning_without_dropping_oi(
 
 
 # ---------------------------------------------------------------------------
-# _fetch_lsr_binance_batch — graceful HTTP failure
+# _fetch_binance_ratio_batch — graceful HTTP failure
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_lsr_binance_batch_returns_empty_on_http_error(monkeypatch):
+def test_fetch_binance_ratio_batch_returns_empty_on_http_error(monkeypatch):
     """Monkeypatch httpx_client so every client.get() raises — assert the function
     returns an empty dict and does not propagate (the per-symbol try/except inside
     the loop swallows each failure).
@@ -214,7 +213,7 @@ def test_fetch_lsr_binance_batch_returns_empty_on_http_error(monkeypatch):
 
     monkeypatch.setattr(mod, "httpx_client", fake_client)
 
-    result = asyncio.run(mod._fetch_lsr_binance_batch(["BTC/USDT", "ETH/USDT"]))
+    result = asyncio.run(mod._fetch_binance_ratio_batch(["BTC/USDT", "ETH/USDT"], mod._BINANCE_LSR_URL))
     assert result == {}, f"expected empty dict on HTTP failure; got: {result!r}"
 
 
@@ -240,12 +239,13 @@ def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
 
     monkeypatch.setattr(mod, "httpx_client", lambda **_kwargs: Context())
     result = asyncio.run(
-        mod._fetch_top_position_ratio_binance_batch(["BTC/USDT"])
+        mod._fetch_binance_ratio_batch(["BTC/USDT"], mod._BINANCE_TOP_POSITION_RATIO_URL)
     )
     assert result == {"BTC/USDT": 1.42}
 
 
-def test_lsr_timeout_does_not_cancel_primary_funding_or_oi(monkeypatch):
+@pytest.mark.parametrize("failure", ["timeout", "http_error"])
+def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure):
     """LSR is optional enrichment; its timeout must not consume the live path."""
     import aletheia.data.collectors.derivatives as mod
     from aletheia.config import loader as cfg_loader
@@ -274,8 +274,24 @@ def test_lsr_timeout_does_not_cancel_primary_funding_or_oi(monkeypatch):
         async def close(self):
             return None
 
-    async def _stalled_lsr(symbols):
-        await asyncio.Event().wait()
+    cancelled = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, url, *, params):
+            if url == mod._BINANCE_LSR_URL and params["symbol"] == "BTCUSDT":
+                return type("Response", (), {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]})()
+            if failure == "http_error":
+                return type("Response", (), {"status_code": 503})()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append((url, params["symbol"]))
 
     cfg = type(
         "Cfg", (), {"market_data": type("MD", (), {
@@ -285,27 +301,22 @@ def test_lsr_timeout_does_not_cancel_primary_funding_or_oi(monkeypatch):
     )()
     monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
     monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(mod, "_fetch_lsr_binance_batch", _stalled_lsr)
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
     monkeypatch.setattr(mod, "_LSR_BUDGET_SEC", 0.01)
 
-    result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT"]))
+    result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT", "ETH/USDT"]))
 
     assert len(result["funding"]) == 1
     assert len(result["open_interest"]) == 1
-    assert "lsr_batch_timeout" in result["errors"]
+    assert result["open_interest"][0].long_short_ratio == 1.42
+    assert result["open_interest"][0].top_trader_position_ratio is None
+    assert "top_position_ratio_missing BTC/USDT" in result["errors"]
+    assert "global_account_ratio_missing ETH/USDT" in result["errors"]
+    assert len(cancelled) == (3 if failure == "timeout" else 0)
+    from aletheia.data.collector_health import classify_collector_result
+    assert classify_collector_result(result) == "partial"
 
 
-def test_live_derivatives_collect_does_not_run_history_backfill():
-    """Sparse history is maintenance work, not part of the two-minute live path."""
-    from aletheia.data.collectors.derivatives import DerivativesCollector
-
-    live_source = inspect.getsource(DerivativesCollector.collect)
-    history_source = inspect.getsource(DerivativesCollector.collect_history)
-
-    assert "_maybe_backfill_funding_history" not in live_source
-    assert "_maybe_backfill_oi_history" not in live_source
-    assert "_maybe_backfill_funding_history" in history_source
-    assert "_maybe_backfill_oi_history" in history_source
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +343,8 @@ def test_maybe_backfill_funding_idempotent_with_3_rows(tmp_path, monkeypatch):
         repo.insert_funding_rate_snapshot({
             "symbol": sym,
             "exchange": "binance",
-            "funding_rate": 0.0001,
-            "funding_rate_annualized": 0.1095,
+            "funding_rate": 0.0001 * offset,
+            "funding_rate_annualized": 0.1095 * offset,
             "observed_at": (now - timedelta(minutes=offset)).isoformat(),
         })
 
@@ -348,7 +359,7 @@ def test_maybe_backfill_funding_idempotent_with_3_rows(tmp_path, monkeypatch):
     result = asyncio.run(_maybe_backfill_funding_history(
         _FakeExchange(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
-    assert result == 0, (
+    assert result == (0, True), (
         f"backfill must be a no-op with 3 existing rows; got {result} inserts"
     )
     sq.close_db()
@@ -361,7 +372,7 @@ def test_maybe_backfill_funding_idempotent_with_3_rows(tmp_path, monkeypatch):
 
 def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
     """When the exchange raises a 'not supported' exception (Bitget shape),
-    _maybe_backfill_oi_history must return 0 and append a descriptive entry
+    _maybe_backfill_oi_history must return (0, False) and append a descriptive entry
     to the errors list — NOT re-raise.
     """
     from aletheia.config import loader as cfg_loader
@@ -382,7 +393,7 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
         _FakeBitget(), "BTC/USDT", "BTC/USDT:USDT", "bitget",
         since_hours=24, errors=errors,
     ))
-    assert result == 0, f"expected 0 inserts on NotSupported; got {result}"
+    assert result == (0, False), f"expected 0 inserts on NotSupported; got {result}"
     assert errors, "errors list must be populated when fetch fails"
     assert any("not supported" in e.lower() for e in errors), (
         f"errors must record the 'not supported' failure; got: {errors}"
@@ -786,7 +797,7 @@ def test_history_backfill_rejects_invalid_rows_before_persistence(
         )
     )
 
-    assert (funding_count, oi_count) == (0, 0)
+    assert (funding_count, oi_count) == ((0, False), (0, False))
     assert errors == [
         "funding_history_invalid BTC/USDT",
         "oi_history_invalid BTC/USDT",
@@ -839,7 +850,7 @@ def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeyp
         _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
     assert fetch_called["n"] == 1, "Binance fetch must occur when only Bybit rows exist"
-    assert result > 0, f"expected ≥1 Binance insert; got {result}"
+    assert result == (2, False), f"expected Binance event/transition inserts; got {result}"
     sq.close_db()
 
 
@@ -894,11 +905,91 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
     result = asyncio.run(_maybe_backfill_oi_history(
         _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
-    assert result == 1, f"expected 1 Binance OI insert at shared timestamp; got {result}"
+    assert result == (1, False), f"expected 1 Binance OI insert at shared timestamp; got {result}"
 
     # same-venue rerun must be idempotent
     result2 = asyncio.run(_maybe_backfill_oi_history(
         _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
-    assert result2 == 0, f"same-venue rerun must be a no-op; got {result2}"
+    assert result2 == (0, False), f"same-venue rerun must be a no-op; got {result2}"
+    sq.close_db()
+
+
+def test_ratio_batch_covers_unique_targets_with_bounded_concurrency(monkeypatch):
+    import aletheia.data.collectors.derivatives as mod
+    active = peak = 0
+    calls = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            assert active == 0
+
+        async def get(self, url, *, params):
+            nonlocal active, peak
+            calls.append(params["symbol"])
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return type("Response", (), {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]})()
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    symbols = [f"T{i}/USDT" for i in range(23)]
+    result = asyncio.run(mod._fetch_binance_ratio_batch(symbols + symbols[:2], mod._BINANCE_LSR_URL))
+    assert result == dict.fromkeys(symbols, 1.42)
+    assert len(calls) == 23
+    assert 1 < peak <= 4
+
+
+def test_history_already_current_is_success_but_empty_is_not(tmp_path, monkeypatch):
+    from aletheia.storage import repositories as repo, sqlite as sq
+    from aletheia.data.collector_health import classify_collector_result
+
+    class Exchange:
+        id = "okx"
+        markets = {"BTC/USDT:USDT": {}, "ETH/USDT:USDT": {}}
+
+        async def load_markets(self):
+            pass
+
+        async def fetch_funding_rate_history(self, *args, **kwargs):
+            return []
+
+        async def fetch_open_interest_history(self, *args, **kwargs):
+            return []
+
+    mod = _patch_collect_env(monkeypatch, tmp_path, Exchange())
+    from aletheia.config import loader
+    loader.load_config().market_data.derivatives_history_hours = 24
+    now = datetime.now(timezone.utc)
+    for offset in (1, 2, 3):
+        observed = (now - timedelta(minutes=offset)).isoformat()
+        repo.insert_funding_rate_snapshot({"symbol": "BTC/USDT", "exchange": "okx", "funding_rate": 0.0001 * offset, "funding_rate_annualized": 0.1095 * offset, "observed_at": observed})
+        repo.insert_open_interest_snapshot({"symbol": "BTC/USDT", "exchange": "okx", "open_interest_usd": 100, "observed_at": observed})
+    current = asyncio.run(mod.DerivativesCollector().collect_history(["BTC/USDT"]))
+    assert classify_collector_result(current) == "success", current
+    assert current["already_current"] == 2
+    assert current["funding"] == current["open_interest"] == 0
+    empty = asyncio.run(mod.DerivativesCollector().collect_history(["ETH/USDT"]))
+    assert classify_collector_result(empty) != "success"
+    mixed = asyncio.run(mod.DerivativesCollector().collect_history(["BTC/USDT", "ETH/USDT"]))
+    assert classify_collector_result(mixed) == "partial"
+    assert classify_collector_result(asyncio.run(mod.DerivativesCollector().collect_history([]))) == "empty"
+    unsupported = asyncio.run(mod.DerivativesCollector().collect_history(["BTC/USDT", "UNKNOWN/USDT"]))
+    assert classify_collector_result(unsupported) == "partial"
+
+    async def history(*args, **kwargs):
+        return [{"timestamp": int(now.timestamp() * 1000), "openInterestValue": 100}]
+
+    def fail_write(data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Exchange, "fetch_open_interest_history", history)
+    monkeypatch.setattr(repo, "insert_open_interest_snapshot", fail_write)
+    failed = asyncio.run(mod.DerivativesCollector().collect_history(["BTC/USDT", "ETH/USDT"]))
+    assert classify_collector_result(failed) == "partial"
+    assert any("disk full" in error for error in failed["errors"])
     sq.close_db()
