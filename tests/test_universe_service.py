@@ -372,27 +372,14 @@ def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from tests.test_entry_planner import _typed_candidate
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.service import _ensure_planning_generations
 
     now = datetime.now(timezone.utc)
-    first_snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(first_snapshot)
-    ineligible = UniverseMember(
-        snapshot_id=first_snapshot.id,
-        asset_id="asset-btc",
-        venue="bitget",
-        symbol="BTC/USDT",
-        market_type="perp",
-        rank=1,
-        total_score=90,
-        scanner_family="momentum",
-        scanner_direction="long",
-        execution_eligible=False,
-        expires_at="2099-01-01T00:00:00+00:00",
-    )
-    repo.insert_candidate(ineligible)
+    ineligible = _typed_candidate(mechanism="continuation", family="momentum", source_at=now.isoformat())
+    ineligible.execution_eligible = False
+    repo.execute_write("UPDATE universe_members SET execution_eligible=0 WHERE id=?", (ineligible.id,))
 
     assert _ensure_planning_generations([ineligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now) == (
         set(),
@@ -411,16 +398,10 @@ def test_execution_ineligible_candidate_cannot_gain_or_revive_planning_authority
     assert repo.claim_next_candidate_planning("legacy-owner", now=now) is None
     assert repo.candidate_attention_is_active(legacy["id"], now=now) is False
 
-    recovery_snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(recovery_snapshot)
-    eligible = ineligible.model_copy(
-        update={
-            "id": "eligible-recovery",
-            "snapshot_id": recovery_snapshot.id,
-            "execution_eligible": True,
-        }
+    eligible = _typed_candidate(
+        mechanism="continuation", family="momentum",
+        source_at=(now + timedelta(seconds=1)).isoformat(),
     )
-    repo.insert_candidate(eligible)
 
     selected, created_ids, created_count = _ensure_planning_generations(
         [eligible], soft_lease_sec=900, max_attention_age_sec=3600, now=now

@@ -396,6 +396,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     validate_hypothesis_references(hypothesis, context)
 
     from aletheia.trading.entry_authority import require_entry_runtime_authority
+    from aletheia.trading.entry_profiles import require_current_entry_profile
 
     authority = require_entry_runtime_authority(cfg)
 
@@ -540,7 +541,9 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "bbo_reference": None if maker else ("ask" if direction == "long" else "bid"),
         "max_wait_sec": 60 if maker else 0,
         "max_slippage_bps": None if maker else 20.0,
-        "trigger_spec_id": _MOMENTUM_GEOMETRY_TRIGGER if retrace else None,
+        "trigger_spec_id": require_current_entry_profile(
+            hypothesis.mechanism, hypothesis.entry_profile_id,
+        ).trigger_spec_id,
         "invalidation_price": invalidation.price, "stop_price": stop, "target_price": target,
         "trigger_params": trigger_params,
         "trigger_data_requirements": (("quote", "trade", "books5", "candle1m") if retrace else ()),

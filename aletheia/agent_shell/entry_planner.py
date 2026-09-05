@@ -18,6 +18,7 @@ from aletheia.trading.entry_analysis import (
     build_entry_analysis_context,
     canonical_json,
     entry_model_view,
+    entry_orderbook_available,
     fingerprint,
     validate_hypothesis_references,
 )
@@ -205,6 +206,40 @@ async def plan_next_candidate(
                 candidate = repo.get_candidate(generation["last_candidate_id"])
                 if candidate is None:
                     raise ValueError("candidate_not_found")
+                from aletheia.data.collectors.microstructure import MicrostructureCollector
+                from aletheia.data.symbols import InstrumentId
+
+                orderbook = repo.latest_orderbook(
+                    generation["symbol"], generation["venue"], generation["market_type"]
+                )
+                if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+                    instrument = InstrumentId(
+                        generation["venue"], generation["symbol"], generation["market_type"]
+                    )
+                    try:
+                        async with asyncio.timeout(5):
+                            result = await MicrostructureCollector().collect(
+                                [instrument], venue=generation["venue"]
+                            )
+                        orderbook = None
+                        for snapshot in result["snapshots"]:
+                            if (snapshot.exchange, snapshot.symbol, snapshot.market_type) == (
+                                generation["venue"], generation["symbol"], generation["market_type"]
+                            ):
+                                orderbook = snapshot.model_dump()
+                                if entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+                                    repo.insert_orderbook_snapshot(orderbook)
+                                else:
+                                    orderbook = None
+                                break
+                    except Exception:
+                        orderbook = None
+                if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+                    repo.release_candidate_planning_claim(
+                        generation["id"], owner, "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
+                        retry_seconds=60,
+                    )
+                    return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
                 feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
                 cutoff = datetime.now(timezone.utc)
                 cutoff_ms = int(cutoff.timestamp() * 1000)
@@ -221,17 +256,17 @@ async def plan_next_candidate(
                         str(candidate["snapshot_id"])
                     ),
                     positions=repo.list_all_open_positions(),
-                    orderbook=repo.latest_orderbook(
-                        generation["symbol"], generation["venue"], generation["market_type"]
-                    ),
+                    orderbook=orderbook,
                     model_provider=model_provider,
                 )
                 if (
                     context_model.candle_windows["15m"]["availability"] != "available"
                     or not context_model.anchors
+                    or context_model.execution_context["availability"] != "available"
                 ):
-                    repo.defer_candidate_planning_with_code(
-                        generation["id"], owner, "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE"
+                    repo.release_candidate_planning_claim(
+                        generation["id"], owner, "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+                        retry_seconds=60,
                     )
                     return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
                 payload = canonical_json(context_model.model_dump(mode="json"))

@@ -364,11 +364,14 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 - `outcome_settler` 在处理较大的 `universe_forward_outcomes` mirror 队列前，必须为
   canonical `filter_candidate_outcomes` 保留有界的 row/time capacity；mirror backlog
   不得让已经到期的 Learning/filter 权威结果永久饥饿。
-- 在上述 canonical capacity 内，当前 open
-  `decision_policy:universe_family_calibration` epoch 已引用且已经到期的 exact
-  `outcome_candidate_key + horizon` 必须先于无关历史 canonical backlog 结算；剩余
-  capacity 继续按 `due_at` oldest-first，不能丢弃、改写或跳过历史行。该优先级只改变
-  测量取价顺序，不改变 outcome 经济公式、候选分配、Learning authority 或交易行为。
+- 在上述 canonical capacity 内，Observation Lab active window 中与该 generation
+  冻结 behavior contract 匹配的 exact outcome keys 优先；其次为仍有经过原始
+  exposure 校验的 active retention claim 的历史 keys，再按 `due_at` oldest-first。
+  已持久化的 horizon-qualified key 不重复拼接 horizon。保留 discovery benchmark
+  与 Candidate Selection Utility/twin pending 优先集合。当前结算不查询退役 Learning 表。
+  Lab 通过物理只读连接读取，受既有 prologue deadline 限制；不可用时显式报告
+  `Lab priority unavailable` 并继续普通到期队列，不假报健康。该优先级只改变有界
+  结算顺序，不改变冻结成本、精确市场价格、retention、经济资格或交易权限。
 - `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
 - `outcome_settler` 每 15 分钟运行；刚到期的 filter outcome 在 20 分钟宽限内标为
   `awaiting_cadence`，不算故障。超过宽限的 `stale_overdue` 才参与积压告警，口径与主 forward

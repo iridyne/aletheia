@@ -16,44 +16,34 @@ logger = logging.getLogger("aletheia.data.collectors.microstructure")
 class MicrostructureCollector:
     domain = "microstructure"
 
-    async def collect(self, symbols: list[str]) -> dict[str, Any]:
+    async def collect(self, symbols: list[str], *, venue: str | None = None) -> dict[str, Any]:
         from aletheia.data.ccxt_provider import get_market_data_provider
 
-        provider = get_market_data_provider()
+        provider = get_market_data_provider(exchange=venue, native_ccxt=True)
         snapshots: list[OrderbookSnapshot] = []
         errors: list[str] = []
 
         try:
-            from aletheia.data.symbols import to_ccxt_perp, InstrumentId
-
-            exchange = provider._ensure_primary()
-            try:
-                await exchange.load_markets()
-            except Exception as e:
-                errors.append(f"load_markets failed: {e}")
-                logger.warning("microstructure: load_markets failed, skipping tick: %s", e)
-                return {"snapshots": snapshots, "errors": errors}
+            from aletheia.data.symbols import InstrumentId
 
             for sym in symbols:
                 try:
-                    # InstrumentId-aware: set defaultType and ccxt symbol per market_type
                     if isinstance(sym, InstrumentId):
-                        is_perp = sym.market_type in {"perp", "futures"}
                         fetch_sym = sym.to_ccxt_symbol()
                         canonical_sym = sym.symbol
                         market_type = sym.market_type
                     else:
-                        is_perp = False
                         fetch_sym = sym
                         canonical_sym = sym
                         market_type = "spot"
 
-                    exchange.options["defaultType"] = "swap" if is_perp else "spot"
-                    market = exchange.market(fetch_sym)
-                    contract_size = _contract_size(market)
-
-                    t0 = time.time()
-                    ob = await exchange.fetch_order_book(fetch_sym, limit=20)
+                    exchange = provider._ensure_primary(market_type)
+                    with provider._market_type_context(exchange, market_type):
+                        await exchange.load_markets()
+                        market = exchange.market(fetch_sym)
+                        contract_size = _contract_size(market)
+                        t0 = time.time()
+                        ob = await exchange.fetch_order_book(fetch_sym, limit=20)
                     latency_ms = int((time.time() - t0) * 1000)
 
                     snap = _parse_orderbook(

@@ -1641,7 +1641,10 @@ class UniverseService:
                     ),
                     opportunity_mechanism_version=item.get("opportunity_mechanism_version"),
                     opportunity_source_component=item.get("opportunity_source_component"),
-                    opportunity_source_cutoff_at=item.get("opportunity_source_cutoff_at"),
+                    opportunity_source_cutoff_at=(
+                        opportunity_context.source["source_cutoff_at"]
+                        if opportunity_context else None
+                    ),
                     opportunity_evidence_hash=item.get("opportunity_evidence_hash"),
                     candidate_opportunity_context_version=(
                         opportunity_context.version if opportunity_context else None

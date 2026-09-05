@@ -193,10 +193,19 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     assert shadow_row["resolved_at"]
 
 
-def test_candidate_settlement_uses_capture_time_costs(monkeypatch):
+@pytest.mark.parametrize("lab_unavailable", [False, True])
+def test_candidate_settlement_uses_capture_time_costs_without_learning_tables(monkeypatch, lab_unavailable):
     from aletheia.storage import repositories as repo
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
 
+    from aletheia.observation_lab.db import get_lab_db
+
+    get_lab_db()
+    repo.get_db().execute("DROP TABLE IF EXISTS learning_exposures")
+    if lab_unavailable:
+        def unavailable(**kwargs):
+            raise FileNotFoundError("lab priority unavailable")
+        monkeypatch.setattr(repo, "list_observation_filter_outcome_priority_keys", unavailable)
     outcome = _due_filter_outcome("candidate-selection-utility:v1:frozen-costs:long")
     outcome.scanner_family = "candidate_selection_utility"
     repo.insert_filter_candidate_outcomes_batch([outcome])
