@@ -348,19 +348,24 @@ def _bind_experimental_entry_learning_context(
     )
 
 
-def build_entry_analysis_context(
-    generation: dict,
-    candidate: dict,
-    feature: dict,
-    candle_windows: dict[str, list[dict]],
-    *,
-    cutoff_at: datetime,
-    candidate_detected_at: str | None,
-    positions: list[dict] | None = None,
-    orderbook: dict | None = None,
-    model_provider: str = "custom_planner",
-) -> EntryAnalysisContext:
-    """Freeze exact stored bars and existing causal structure into one model input."""
+def entry_orderbook_available(orderbook: dict | None, cutoff: datetime) -> bool:
+    if not orderbook or any(
+        orderbook.get(key) is None
+        for key in ("bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd", "observed_at")
+    ):
+        return False
+    try:
+        observed = datetime.fromisoformat(str(orderbook["observed_at"]).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    return observed.tzinfo is not None and 0 <= (cutoff - observed).total_seconds() <= 2
+
+
+def entry_causal_windows(
+    venue: str, symbol: str, market_type: str, direction: str,
+    candle_windows: dict, cutoff: datetime,
+) -> tuple[dict, dict, list[EntryAnchor], list[str]]:
+    """Share the Planner's exact causal admission and structure kernel."""
     from aletheia.data.ccxt_provider import timeframe_ms
     from aletheia.data.market_structure import (
         CONTRACT_VERSION,
@@ -372,40 +377,11 @@ def build_entry_analysis_context(
     from aletheia.data.providers import Candle
     from aletheia.data.symbols import InstrumentId
 
-    cutoff = cutoff_at.astimezone(timezone.utc)
     cutoff_ms = int(cutoff.timestamp() * 1000)
     serialized: dict[str, Any] = {}
     structures: dict[str, Any] = {}
     anchors: list[EntryAnchor] = []
     fact_refs: list[str] = []
-    venue, symbol, market_type = (str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"]))
-    opportunity_context = None
-    if generation.get("entry_behavior_fingerprint"):
-        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
-
-        opportunity_context = CandidateOpportunityContextV1.model_validate_json(
-            candidate.get("candidate_opportunity_context_json") or ""
-        )
-        if (
-            opportunity_context.candidate_id != candidate.get("id")
-            or opportunity_context.context_hash != candidate.get("candidate_opportunity_context_hash")
-            or opportunity_context.opportunity["primary_mechanism"] != generation.get("opportunity_mechanism")
-            or opportunity_context.opportunity["direction"] != generation.get("direction")
-            or opportunity_context.candidate_selection["policy"] != generation.get("candidate_selection_policy")
-            or opportunity_context.candidate_selection.get("policy_epoch")
-            != generation.get("candidate_selection_policy_epoch")
-            or opportunity_context.opportunity["mechanism_version"] != generation.get("mechanism_version")
-        ):
-            raise ValueError("candidate_opportunity_generation_identity_mismatch")
-    if (
-        candidate.get("id") != generation.get("last_candidate_id")
-        or candidate.get("venue") != venue
-        or candidate.get("symbol") != symbol
-        or candidate.get("market_type") != market_type
-        or (opportunity_context is None and candidate.get("scanner_family") != generation.get("candidate_family"))
-        or candidate.get("scanner_direction") != generation.get("direction")
-    ):
-        raise ValueError("candidate_generation_identity_mismatch")
     instrument_id = InstrumentId.from_parts(venue, symbol, market_type)
     for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96)):
         interval = timeframe_ms(timeframe)
@@ -512,7 +488,6 @@ def build_entry_analysis_context(
             "fact_refs": section_refs,
         }
         if timeframe == "15m" and geometry.availability == "available":
-            direction = str(generation["direction"])
             for item in swings:
                 anchors.append(
                     EntryAnchor(
@@ -550,6 +525,76 @@ def build_entry_analysis_context(
                         aliases=("price_action", "smc"),
                     )
                 )
+    return serialized, structures, anchors, fact_refs
+
+def planning_structure_material(structures: dict) -> dict | None:
+    """Only the latest confirmed 15m high, low and break can requalify a thesis.
+
+    Rolling-window hashes, ATR, candidate anchors and disappearing old facts
+    are not new material. The full immutable fact values remain replayable.
+    """
+    section = structures.get("15m", {})
+    if section.get("availability") != "available":
+        return None
+    swings = section.get("swings", ())
+    groups = ([s for s in swings if s["kind"] == "high"],
+              [s for s in swings if s["kind"] == "low"], section.get("events", ()))
+    facts = [max(group, key=lambda f: (f["known_at_ms"], f["id"])) for group in groups if group]
+    if not facts:
+        return None
+    facts = sorted(facts, key=lambda f: f["id"])
+    return {"facts": facts, "fingerprint": fingerprint(facts)}
+
+
+
+
+
+def build_entry_analysis_context(
+    generation: dict,
+    candidate: dict,
+    feature: dict,
+    candle_windows: dict[str, list[dict]],
+    *,
+    cutoff_at: datetime,
+    candidate_detected_at: str | None,
+    positions: list[dict] | None = None,
+    orderbook: dict | None = None,
+    model_provider: str = "custom_planner",
+) -> EntryAnalysisContext:
+    """Freeze exact stored bars and existing causal structure into one model input."""
+    cutoff = cutoff_at.astimezone(timezone.utc)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    venue, symbol, market_type = (str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"]))
+    opportunity_context = None
+    if generation.get("entry_behavior_fingerprint"):
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+        opportunity_context = CandidateOpportunityContextV1.model_validate_json(
+            candidate.get("candidate_opportunity_context_json") or ""
+        )
+        if (
+            opportunity_context.candidate_id != candidate.get("id")
+            or opportunity_context.context_hash != candidate.get("candidate_opportunity_context_hash")
+            or opportunity_context.opportunity["primary_mechanism"] != generation.get("opportunity_mechanism")
+            or opportunity_context.opportunity["direction"] != generation.get("direction")
+            or opportunity_context.candidate_selection["policy"] != generation.get("candidate_selection_policy")
+            or opportunity_context.candidate_selection.get("policy_epoch")
+            != generation.get("candidate_selection_policy_epoch")
+            or opportunity_context.opportunity["mechanism_version"] != generation.get("mechanism_version")
+        ):
+            raise ValueError("candidate_opportunity_generation_identity_mismatch")
+    if (
+        candidate.get("id") != generation.get("last_candidate_id")
+        or candidate.get("venue") != venue
+        or candidate.get("symbol") != symbol
+        or candidate.get("market_type") != market_type
+        or (opportunity_context is None and candidate.get("scanner_family") != generation.get("candidate_family"))
+        or candidate.get("scanner_direction") != generation.get("direction")
+    ):
+        raise ValueError("candidate_generation_identity_mismatch")
+    serialized, structures, anchors, fact_refs = entry_causal_windows(
+        venue, symbol, market_type, str(generation["direction"]), candle_windows, cutoff,
+    )
     if opportunity_context is not None:
         candidate_detected_at = str(opportunity_context.source["detected_at"])
     if candidate_detected_at is None:
@@ -612,16 +657,7 @@ def build_entry_analysis_context(
             )
     unique = {item.anchor_id: item for item in anchors if item.known_at_ms <= cutoff_ms}
     selected = tuple(sorted(unique.values(), key=lambda item: (item.known_at_ms, item.anchor_id), reverse=True)[:12])
-    orderbook_available = False
-    if orderbook and all(
-        orderbook.get(key) is not None
-        for key in ("bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd", "observed_at")
-    ):
-        observed = datetime.fromisoformat(str(orderbook["observed_at"]).replace("Z", "+00:00"))
-        age_ms = (
-            (cutoff - observed.astimezone(timezone.utc)).total_seconds() * 1000 if observed.tzinfo else float("inf")
-        )
-        orderbook_available = 0 <= age_ms <= 2_000
+    orderbook_available = entry_orderbook_available(orderbook, cutoff)
     estimated_cost = candidate.get("estimated_cost")
     quant_fields = (
         "atr_pct",

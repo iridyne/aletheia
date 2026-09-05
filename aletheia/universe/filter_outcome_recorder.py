@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -95,39 +96,18 @@ async def settle_due_filter_outcomes(
     # the old log line only fired when settled > 0 — so canonical settlement
     # stopped for hours while the forward mirror kept draining and every probe
     # stayed quiet.
-    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
-    from aletheia.learning.experiments import current_policy_epoch
-    from aletheia.learning.registry import (
-        metric_version_for_path,
-        outcome_contract_version_for_path,
-    )
-
     prologue_started = time.monotonic()
     prologue_deadline = min(
         deadline,
         prologue_started + max(0.0, time_budget_sec) * _PROLOGUE_BUDGET_FRACTION,
     )
-    learning_path_ids = ("universe_family_calibration", "ranker_case_score")
-    learning_target_horizons = repo.list_open_learning_target_horizons(learning_path_ids)
-    current_behavior_keys: set[str] = set()
-    for path_id, target_horizon in sorted(learning_target_horizons):
-        policy_epoch = current_policy_epoch(path_id)
-        behavior_hash = (
-            current_behavior_contract_hash(
-                path_id=path_id,
-                policy_epoch=policy_epoch,
-                target_horizon=target_horizon,
-                outcome_contract_version=outcome_contract_version_for_path(path_id),
-                metric_version=metric_version_for_path(path_id),
-            )
-            if policy_epoch
-            else None
+    try:
+        current_behavior_keys, older_behavior_keys = repo.list_observation_filter_outcome_priority_keys(
+            deadline=prologue_deadline,
         )
-        if behavior_hash:
-            current_behavior_keys |= repo.list_open_learning_outcome_candidate_keys(
-                (path_id,),
-                behavior_contract_hash=behavior_hash,
-            )
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        logger.warning("filter outcome settler: Lab priority unavailable (%s)", type(exc).__name__)
+        current_behavior_keys, older_behavior_keys = set(), set()
     # The prospective continuous-score comparison is not a Learning treatment,
     # but its exact 4h rows must not starve behind the historical canonical
     # backlog. This changes queue order only; it does not change settlement
@@ -145,10 +125,8 @@ async def settle_due_filter_outcomes(
         deadline=prologue_deadline,
     )
     priority_pending = benchmark_pending + learning_pending
-    all_priority_keys = repo.list_open_learning_outcome_candidate_keys(
-        learning_path_ids,
-    ) | twin_shadow_keys
-    older_behavior_keys = all_priority_keys - current_behavior_keys
+    older_behavior_keys -= current_behavior_keys
+    all_priority_keys = current_behavior_keys | older_behavior_keys
     remaining_priority_rows = max(0, max_rows - len(priority_pending))
     if remaining_priority_rows and older_behavior_keys:
         older_rows, older_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(

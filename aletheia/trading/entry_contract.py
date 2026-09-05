@@ -22,6 +22,11 @@ def entry_prompt_fingerprint() -> str:
 
 @lru_cache(maxsize=1)
 def entry_contract_fingerprints() -> tuple[str, str]:
+    from aletheia.agent_shell.entry_planner import plan_next_candidate
+    from aletheia.storage.repositories import prepare_candidate_requalification, ensure_candidate_planning_generation
+    from aletheia.trading.entry_analysis import entry_causal_windows, planning_structure_material
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.trading.entry_analysis import entry_orderbook_available
     from aletheia.execution.venue_capabilities import ENTRY_EXECUTION_MINIMUM_PERMISSION
     from aletheia.trading.entry_authority import resolve_entry_runtime_authority
     from aletheia.trading.entry_analysis import (
@@ -46,8 +51,15 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         "prompt_fingerprint": entry_prompt_fingerprint(),
         "compiler": "mechanism-aware-grounded-compiler",
         "implementation_source": {
+            "planner": inspect.getsource(plan_next_candidate),
+            "orderbook_collector": inspect.getsource(MicrostructureCollector.collect),
+            "orderbook_availability": inspect.getsource(entry_orderbook_available),
             "context": inspect.getsource(EntryAnalysisContext),
             "context_builder": inspect.getsource(build_entry_analysis_context),
+            "causal_windows": inspect.getsource(entry_causal_windows),
+            "planning_material": inspect.getsource(planning_structure_material),
+            "requalification_preparation": inspect.getsource(prepare_candidate_requalification),
+            "planning_lifecycle": inspect.getsource(ensure_candidate_planning_generation),
             "hypothesis": inspect.getsource(EntryHypothesis),
             "reference_validation": inspect.getsource(validate_hypothesis_references),
             "compiler": inspect.getsource(compile_entry_plan),

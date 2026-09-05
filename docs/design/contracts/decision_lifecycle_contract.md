@@ -110,6 +110,10 @@ supersede 旧 generation，同时 fail-closed 终结旧的 pre-order Entry Plan�
 capability block 在同一周期恢复且不算 No-Plan；validation/compiler failure 也不进入经济学习分母。
 Plan expiry 仅在后续完成的 Universe requalification、更新 source cutoff 且无未决 Order/Fill/Position
 时创建下一周期。模型返回必须 CAS 当前周期；stale result 可审计但不可激活。
+相同发现身份不代表相同 PA 材料：终态且无 Plan 的周期，可凭更新的已确认 15m 结构证明建立一次 successor。
+未调用模型的缺失盘口/必需上下文终态，须有新闭合窗口及终态后的真实新鲜盘口恢复证明；不能清零旧尝试或刷新旧冻结输入。
+证明在 publication 写事务前准备，事务内重验 source/snapshot、current owner、behavior/schema 与未决执行；
+普通新 bar、时间、价格、排名变化不重开。材料边界及持久归属见 [Entry Plan contract](entry-plan-contract.md#contract-identity-and-planning-cycles)。
 
 `entry_plans` 是唯一 active plan ledger。不可变 JSON 固定 instrument、generation、方向、thesis、
 execution mode、注册 TriggerSpec、entry/invalidation/stop/target/horizon、风险上限、order tactic、
