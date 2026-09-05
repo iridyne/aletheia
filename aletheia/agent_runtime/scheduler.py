@@ -4599,6 +4599,11 @@ _DC_DEADLINE_S = 50.0
 # inherits elapsed work from the primary-venue collector lane.
 _DC_CONTEXT_DEADLINE_S = 55.0
 
+# The context lane's two-wave split exists for exactly one data dependency.
+# Everything else in both waves is independent, so a new independent collector
+# belongs in wave two unless a later wave consumes its output.
+_CONTEXT_LANE_WAVE_DEPENDENCY = "volume_scanner -> macro.top_movers_summary"
+
 
 async def _shielded_wait_for(coro, timeout: float):
     """Wait for `coro` using the Python 3.12-safe shield pattern (#253).
@@ -4681,6 +4686,33 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         return None
 
 
+def _schedule_collector(
+    tasks: list[tuple[str, object]],
+    label: str,
+    *,
+    enabled: bool,
+    configured: bool,
+    make_coro,
+    cap: float,
+    deadline: float,
+) -> None:
+    """Queue one context collector, or record honestly why it was not queued.
+
+    A collector is skipped for two distinct reasons that operators must be able
+    to tell apart: ``disabled`` (config turned it off) outranks
+    ``not_configured`` (enabled but it has no symbols/instruments to work on).
+    ``make_coro`` is only called when the collector will actually run, so a
+    skipped collector never builds an un-awaited coroutine.
+    """
+    if not enabled:
+        _record_collector_health(label, "disabled")
+        return
+    if not configured:
+        _record_collector_health(label, "not_configured")
+        return
+    tasks.append((label, _bounded(make_coro(), label, cap, deadline)))
+
+
 async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
     from aletheia.data.collectors.microstructure import MicrostructureCollector
@@ -4694,7 +4726,7 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     # Keep venue + market identity for primary-exchange collectors.
     instruments = _get_observed_instruments(cfg)
     derivative_symbols = _get_derivative_symbols(instruments)
-    funding_venue = str(cfg.market_data.ccxt_exchange or "").strip().lower()
+    funding_venue = str(getattr(cfg.market_data, "ccxt_exchange", "") or "").strip().lower()
     try:
         derivative_symbols = list(dict.fromkeys([
             *derivative_symbols,
@@ -4819,10 +4851,12 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     persistence remains synchronous and therefore serial on the same thread.
     """
     import time as _time
+    from aletheia.data.collectors.coinalyze import CoinalyzeCollector
     from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.hyperliquid import HyperliquidCollector
     from aletheia.data.collectors.macro import MacroCollector
+    from aletheia.data.collectors.options_structure import OptionsStructureCollector
     from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.storage import repositories as repo
 
@@ -4834,40 +4868,35 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     # Wave one gives the previously starved context feeds an equal start.  The
     # volume scan is the only primary-venue CCXT call in this lane; Hyperliquid
     # and DefiLlama use separate public HTTP sources.
+    #
+    # The wave split exists for exactly one data dependency:
+    #   volume_scanner.top_symbols -> _latest_volume_ranking (read by wave two)
+    #   coingecko_top.movers_summary -> macro_snapshot.top_movers_summary
+    # Every other collector in both waves is independent; a new independent
+    # collector belongs in wave two unless a later wave consumes its output.
     wave_one: dict[str, object] = {}
     tasks: list[tuple[str, object]] = []
-    if instruments:
-        tasks.append((
-            "volume_scanner",
-            _bounded(
-                VolumeScannerCollector(top_n=30).collect(instruments[:200]),
-                "volume_scanner", 20.0, deadline,
-            ),
-        ))
-    else:
-        _record_collector_health("volume_scanner", "not_configured")
-    if getattr(cfg.market_data, "enable_hyperliquid", True) and symbols:
-        tasks.append((
-            "hyperliquid",
-            _bounded(
-                HyperliquidCollector(persist=False).collect(symbols),
-                "hyperliquid", 12.0, deadline,
-            ),
-        ))
-    elif not getattr(cfg.market_data, "enable_hyperliquid", True):
-        _record_collector_health("hyperliquid", "disabled")
-    else:
-        _record_collector_health("hyperliquid", "not_configured")
-    if getattr(cfg.market_data, "enable_defillama", True):
-        tasks.append((
-            "defillama",
-            _bounded(
-                DefiLlamaCollector(persist=False).collect(),
-                "defillama", 12.0, deadline,
-            ),
-        ))
-    else:
-        _record_collector_health("defillama", "disabled")
+    _schedule_collector(
+        tasks, "volume_scanner",
+        enabled=True,
+        configured=bool(instruments),
+        make_coro=lambda: VolumeScannerCollector(top_n=30).collect(instruments[:200]),
+        cap=20.0, deadline=deadline,
+    )
+    _schedule_collector(
+        tasks, "hyperliquid",
+        enabled=getattr(cfg.market_data, "enable_hyperliquid", True),
+        configured=bool(symbols),
+        make_coro=lambda: HyperliquidCollector().collect(symbols),
+        cap=12.0, deadline=deadline,
+    )
+    _schedule_collector(
+        tasks, "defillama",
+        enabled=getattr(cfg.market_data, "enable_defillama", True),
+        configured=True,
+        make_coro=lambda: DefiLlamaCollector().collect(),
+        cap=12.0, deadline=deadline,
+    )
     if tasks:
         wave_one = dict(zip(
             (label for label, _ in tasks),
@@ -4889,42 +4918,36 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     # both return so the macro row can receive the same-tick movers summary.
     wave_two: dict[str, object] = {}
     tasks = []
-    if getattr(cfg.market_data, "enable_coingecko_top", True):
-        tasks.append((
-            "coingecko_top",
-            _bounded(
-                CoinGeckoTopCollector().collect(
-                    top_n=getattr(cfg.market_data, "coingecko_top_n", 100)
-                ),
-                "coingecko_top", 15.0, deadline,
-            ),
-        ))
-    else:
-        _record_collector_health("coingecko_top", "disabled")
-    tasks.append((
-        "macro",
-        _bounded(MacroCollector().collect(symbols), "macro", 25.0, deadline),
-    ))
-    if getattr(cfg.market_data, "enable_coinalyze", True) and symbols:
-        from aletheia.data.collectors.coinalyze import CoinalyzeCollector
-
-        tasks.append((
-            "coinalyze",
-            _bounded(CoinalyzeCollector().collect(symbols), "coinalyze", 12.0, deadline),
-        ))
-    elif not getattr(cfg.market_data, "enable_coinalyze", True):
-        _record_collector_health("coinalyze", "disabled")
-    else:
-        _record_collector_health("coinalyze", "not_configured")
-    if getattr(cfg.market_data, "enable_options_structure", True):
-        from aletheia.data.collectors.options_structure import OptionsStructureCollector
-
-        tasks.append((
-            "options_structure",
-            _bounded(OptionsStructureCollector().collect(), "options_structure", 20.0, deadline),
-        ))
-    else:
-        _record_collector_health("options_structure", "disabled")
+    _schedule_collector(
+        tasks, "coingecko_top",
+        enabled=getattr(cfg.market_data, "enable_coingecko_top", True),
+        configured=True,
+        make_coro=lambda: CoinGeckoTopCollector().collect(
+            top_n=getattr(cfg.market_data, "coingecko_top_n", 100)
+        ),
+        cap=15.0, deadline=deadline,
+    )
+    _schedule_collector(
+        tasks, "macro",
+        enabled=True,
+        configured=True,
+        make_coro=lambda: MacroCollector().collect(symbols),
+        cap=25.0, deadline=deadline,
+    )
+    _schedule_collector(
+        tasks, "coinalyze",
+        enabled=getattr(cfg.market_data, "enable_coinalyze", True),
+        configured=bool(symbols),
+        make_coro=lambda: CoinalyzeCollector().collect(symbols),
+        cap=12.0, deadline=deadline,
+    )
+    _schedule_collector(
+        tasks, "options_structure",
+        enabled=getattr(cfg.market_data, "enable_options_structure", True),
+        configured=True,
+        make_coro=lambda: OptionsStructureCollector().collect(),
+        cap=20.0, deadline=deadline,
+    )
     wave_two = dict(zip(
         (label for label, _ in tasks),
         await asyncio.gather(*(coro for _, coro in tasks)),

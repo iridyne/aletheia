@@ -249,14 +249,16 @@ def test_defillama_db_write_three_rows(tmp_path, monkeypatch):
     finally:
         mod.httpx_client = original
 
-    assert not any("db_write" in e for e in result["errors"]), (
-        f"DB write must succeed; errors: {result['errors']}"
-    )
     assert len(result["snapshots"]) == 3, (
         f"Expected 3 snapshots (stable+tvl+dex); got {len(result['snapshots'])}"
     )
 
+    # collect() is pure; the caller owns persistence. This spec covers the
+    # storage contract, so it writes the returned rows the way callers do.
     from aletheia.storage import repositories as repo
+    repo.insert_onchain_snapshot_batch(
+        [snap.model_dump() for snap in result["snapshots"]]
+    )
     for mt in ("stablecoin_mcap", "chain_tvl", "dex_volume"):
         rows = repo.latest_onchain_snapshots(metric_type=mt)
         assert rows, f"No onchain_snapshots row for metric_type={mt}"
@@ -335,8 +337,12 @@ def test_defillama_one_endpoint_failure_isolated(tmp_path, monkeypatch):
         f"Error for stablecoins not reported; errors: {result['errors']}"
     )
 
-    # The other two metric_types should still be in DB
+    # The other two metric_types must survive into storage; collect() is pure,
+    # so persist the returned rows the way callers do.
     from aletheia.storage import repositories as repo
+    repo.insert_onchain_snapshot_batch(
+        [snap.model_dump() for snap in result["snapshots"]]
+    )
     for mt in ("chain_tvl", "dex_volume"):
         rows = repo.latest_onchain_snapshots(metric_type=mt)
         assert rows, f"No row for {mt} despite that endpoint succeeding"
@@ -403,6 +409,12 @@ def test_defillama_empty_payloads_do_not_emit_zero_snapshots(tmp_path, monkeypat
         "dex_volume": "empty_or_invalid",
     }
     assert classify_collector_result(result) == "partial"
+
+    # Empty payloads must not reach storage as zero rows; collect() is pure, so
+    # persist exactly what it returned.
+    repo.insert_onchain_snapshot_batch(
+        [snap.model_dump() for snap in result["snapshots"]]
+    )
     assert repo.latest_onchain_snapshots(metric_type="stablecoin_mcap")
     assert repo.latest_onchain_snapshots(metric_type="chain_tvl") == []
     assert repo.latest_onchain_snapshots(metric_type="dex_volume") == []
@@ -481,6 +493,13 @@ async def test_defillama_live_e2e(tmp_path, monkeypatch):
 
     from aletheia.data.collectors.defillama import DefiLlamaCollector
     result = await DefiLlamaCollector().collect()
+
+    # Collection is pure; the caller owns persistence (scheduler batches it into
+    # one transaction). This E2E asserts the DB write, so persist explicitly.
+    from aletheia.storage import repositories as _repo
+    _repo.insert_onchain_snapshot_batch(
+        [snap.model_dump() for snap in result["snapshots"]]
+    )
 
     assert len(result["snapshots"]) == 3, (
         f"Expected 3 metric snapshots from live API; got {len(result['snapshots'])}. "

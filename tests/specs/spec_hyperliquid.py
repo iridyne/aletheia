@@ -288,13 +288,16 @@ def test_hyperliquid_db_write(tmp_path, monkeypatch):
     finally:
         mod.httpx_client = original
 
-    assert not result["errors"] or all("db_write" not in e for e in result["errors"]), (
-        f"DB write should not fail; errors: {result['errors']}"
-    )
     assert len(result["funding"]) > 0, "At least one funding rate snapshot expected"
     assert len(result["open_interest"]) > 0, "At least one OI snapshot expected"
 
+    # collect() is pure; the caller owns persistence. This spec covers the
+    # storage contract, so it writes the returned rows the way callers do.
     from aletheia.storage import repositories as repo
+    repo.insert_collector_snapshot_batch(
+        funding=[row.model_dump() for row in result["funding"]],
+        open_interest=[row.model_dump() for row in result["open_interest"]],
+    )
     # All fixtures have ≤5 assets; first should be BTC (name='BTC' → BTC/USDT)
     universe = raw_meta[0].get("universe", [])
     first_name = universe[0].get("name") if universe else None
@@ -349,6 +352,14 @@ async def test_hyperliquid_live_e2e(tmp_path, monkeypatch):
 
     from aletheia.data.collectors.hyperliquid import HyperliquidCollector
     result = await HyperliquidCollector().collect(symbols=["BTC/USDT", "ETH/USDT"])
+
+    # Collection is pure; the caller owns persistence (scheduler batches it into
+    # one transaction). This E2E asserts the DB write, so persist explicitly.
+    from aletheia.storage import repositories as _repo
+    _repo.insert_collector_snapshot_batch(
+        funding=[row.model_dump() for row in result["funding"]],
+        open_interest=[row.model_dump() for row in result["open_interest"]],
+    )
 
     assert len(result["funding"]) > 0, (
         f"Live API returned no funding data. errors: {result['errors']}"

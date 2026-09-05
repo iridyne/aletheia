@@ -37,12 +37,6 @@ _OI_DELTA_SANITY_PCT = 300.0
 class HyperliquidCollector:
     domain = "hyperliquid"
 
-    def __init__(self, *, persist: bool = True) -> None:
-        # Direct callers retain the documented collect-and-store behavior.
-        # Scheduler ticks pass persist=False and publish all collector rows in
-        # one short transaction after network work has completed.
-        self.persist = persist
-
     async def collect(self, symbols: list[str] | None = None) -> dict[str, Any]:
         """Collect OI and funding rate for all Hyperliquid perpetuals.
 
@@ -118,20 +112,6 @@ class HyperliquidCollector:
         except Exception as e:
             errors.append(f"predictedFundings: {e}")
             logger.debug("Hyperliquid predictedFundings failed: %s", e)
-
-        # Step 3: persist to DB for standalone use. Scheduler-owned collection
-        # defers this phase so all domains share one commit.
-        if self.persist:
-            try:
-                from aletheia.storage.repositories import insert_collector_snapshot_batch
-
-                insert_collector_snapshot_batch(
-                    funding=[snap.model_dump() for snap in funding],
-                    open_interest=[snap.model_dump() for snap in oi],
-                )
-            except Exception as e:
-                errors.append(f"db_write: {e}")
-                logger.error("Hyperliquid DB write failed: %s", e)
 
         logger.info(
             "Hyperliquid collected: %d funding, %d OI, %d errors",

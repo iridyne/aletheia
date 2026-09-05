@@ -128,7 +128,6 @@ def test_context_collector_defers_network_results_into_one_transaction(tmp_path,
     now = datetime.now(timezone.utc).isoformat()
 
     async def collect_defillama(self):
-        assert self.persist is False
         return {
             "snapshots": [
                 OnchainSnapshot(
