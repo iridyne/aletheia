@@ -17,7 +17,7 @@ import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../co
 import { DataStateMessage } from '../components/DataState'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
 import { fmtCompact, fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
-import type { Candidate, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
+import type { Candidate, CandidateDetail, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
 
 const PINNED_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -129,6 +129,78 @@ function InstrumentDialog({ open, id, children, onClose }: {
       {children}
     </div>
   </div>
+}
+
+function StructureTab({
+  active,
+  snapshot,
+  candidateDetail,
+  entryPlan,
+  position,
+}: {
+  active: MarketInstrument
+  snapshot?: MarketSnapshot | null
+  candidateDetail?: CandidateDetail | null
+  entryPlan?: EntryPlan | null
+  position?: Position | null
+}) {
+  const member = candidateDetail?.member
+  const attention = candidateDetail?.attention
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Card>
+          <CardHeader title="Market Telemetry" meta={active.exchange || 'Default exchange'} />
+          <div className="flex flex-col gap-1 text-sm">
+            <div className="flex justify-between"><span className="text-muted">Symbol</span><span className="mono font-bold">{fmtSymbol(active.symbol, active.marketType)}</span></div>
+            <div className="flex justify-between"><span className="text-muted">Market Type</span><span className="mono uppercase">{active.marketType}</span></div>
+            <div className="flex justify-between"><span className="text-muted">Price</span><span className="mono">{snapshot?.price != null ? fmtNum(snapshot.price) : '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted">24h Change</span><span className={`mono ${snapshot?.change_pct_24h != null && snapshot.change_pct_24h > 0 ? 'pnl-positive' : snapshot?.change_pct_24h != null && snapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}`}>{snapshot?.change_pct_24h != null ? `${fmtSigned(snapshot.change_pct_24h)}%` : '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted">24h Volume</span><span className="mono">{snapshot?.volume_24h != null ? `$${fmtCompact(snapshot.volume_24h)}` : '—'}</span></div>
+          </div>
+        </Card>
+        <Card>
+          <CardHeader title="Trade & Risk Geometry" meta={position ? 'Active position' : entryPlan ? 'Entry plan' : 'No open trade'} />
+          <div className="flex flex-col gap-1 text-sm">
+            {position ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted">Direction</span><Badge tone={position.direction === 'long' ? 'green' : 'red'}>{humanize(position.direction)}</Badge></div>
+                <div className="flex justify-between"><span className="text-muted">Entry Price</span><span className="mono">{fmtNum(position.entry_price)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Quantity</span><span className="mono">{fmtNum(position.quantity)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">uPnL</span><span className="mono">{position.unrealized_pnl != null ? `${fmtSigned(position.unrealized_pnl)} USDT` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Bracket (SL/TP)</span><span className="mono">{fmtNum(position.stop_price)} / {fmtNum(position.take_profit_price)}</span></div>
+              </>
+            ) : entryPlan ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted">Plan Status</span><Badge tone="green">{humanize(entryPlan.status)}</Badge></div>
+                <div className="flex justify-between"><span className="text-muted">Direction</span><span className="mono uppercase">{entryPlan.direction}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Mode</span><span className="mono">{humanize(entryPlan.execution_mode)}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Stop / Target</span><span className="mono">{fmtNum(entryPlan.plan?.stop_price)} / {fmtNum(entryPlan.plan?.target_price)}</span></div>
+              </>
+            ) : (
+              <p className="text-muted text-sm m-0">No active position or planned entry for this instrument.</p>
+            )}
+          </div>
+        </Card>
+        <Card>
+          <CardHeader title="Candidate Selection Evidence" meta={candidateDetail ? 'Observed member' : 'Not in candidate pool'} />
+          <div className="flex flex-col gap-1 text-sm">
+            {candidateDetail ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? attention?.rank ?? '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Family</span><span>{humanize(attention?.candidate_family ?? member?.scanner_family ?? '—')}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Selection Utility</span><span className="mono">{member?.candidate_selection_utility_pct != null ? `${fmtNum(member.candidate_selection_utility_pct)}%` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Spread</span><span className="mono">{member?.spread_bps != null ? `${member.spread_bps} bps` : '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Liquidity Score</span><span className="mono">{member?.liquidity_score ?? '—'}</span></div>
+              </>
+            ) : (
+              <p className="text-muted text-sm m-0">Instrument selected directly via navigator (not linked from Candidate pool).</p>
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  )
 }
 
 export function SignalsTab({ onInstrumentSelect }: { onInstrumentSelect: (instrument: MarketInstrument) => void }) {
@@ -519,6 +591,7 @@ function ChartSettings({ open, scope, settings, onChange, onReset, onClose }: {
 export default function Charts() {
   const [searchParams, setSearchParams] = useSearchParams()
   const entryPlanId = searchParams.get('entry_plan_id')
+  const candidateId = searchParams.get('candidate_id')
   const [active, setActive] = useState<MarketInstrument>({
     symbol: searchParams.get('symbol') || 'BTC/USDT',
     exchange: searchParams.get('exchange') || '',
@@ -557,6 +630,23 @@ export default function Charts() {
     queryFn: () => api.getEntryPlan(entryPlanId!),
     enabled: Boolean(entryPlanId),
   })
+  const { data: candidateDetail } = useQuery({
+    queryKey: ['candidate-charts', candidateId],
+    queryFn: () => api.getCandidate(candidateId!),
+    enabled: Boolean(candidateId),
+  })
+
+  useEffect(() => {
+    if (!candidateId || !candidateDetail) return
+    const m = candidateDetail.attention ?? candidateDetail.member
+    if (m?.symbol) {
+      setActive({
+        symbol: m.symbol,
+        exchange: (m as any).venue || defaultExchange,
+        marketType: (m as any).market_type || 'spot',
+      })
+    }
+  }, [candidateDetail, candidateId, defaultExchange])
 
   useEffect(() => {
     if (!entryPlanId || !entryPlan) return
@@ -568,9 +658,10 @@ export default function Charts() {
     if (active.exchange) params.exchange = active.exchange
     if (active.marketType !== 'spot') params.market_type = active.marketType
     if (entryPlanId && !clearEntryPlanOnNextSync.current) params.entry_plan_id = entryPlanId
+    if (candidateId) params.candidate_id = candidateId
     clearEntryPlanOnNextSync.current = false
     setSearchParams(params, { replace: true })
-  }, [active, entryPlanId, setSearchParams])
+  }, [active, candidateId, entryPlanId, setSearchParams])
   const { data: universe } = useQuery({ queryKey: ['universe-current'], queryFn: api.getUniverseCurrent, refetchInterval: 120_000 })
   const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 500), refetchInterval: 30_000 })
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions, refetchInterval: 30_000 })
@@ -748,6 +839,9 @@ export default function Charts() {
     {entryPlanId && <Card className="entry-workbench-notice">
       {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}
     </Card>}
+    {candidateId && !entryPlanId && <Card className="entry-workbench-notice">
+      Candidate {candidateId.slice(0, 8)} · {candidateDetail?.attention?.candidate_family ?? candidateDetail?.member?.scanner_family ?? 'observed'} · {candidateDetail?.member?.total_score != null ? `score ${fmtNum(candidateDetail.member.total_score)}` : 'candidate context'}
+    </Card>}
     <div ref={shellRef} className="market-workbench-shell">
       <aside className="market-instrument-rail">{navigator}</aside>
       <Card className="market-workbench-chart-card">
@@ -784,6 +878,15 @@ export default function Charts() {
     <InstrumentDialog open={pickerOpen} id={dialogId} onClose={() => setPickerOpen(false)}>{navigator}</InstrumentDialog>
     <MacroBar />
     <Tabs value={activeTab} onChange={id => setActiveTab(id)} tabs={([
+      { id: 'structure', label: 'Structure & Profile', render: () => (
+        <StructureTab
+          active={active}
+          snapshot={currentSnapshot}
+          candidateDetail={candidateDetail}
+          entryPlan={entryPlan}
+          position={positions.find(p => p.symbol === active.symbol && p.status === 'open') ?? null}
+        />
+      )},
       { id: 'signals', label: 'Signals', badge: signalCount || undefined, render: () => <SignalsTab onInstrumentSelect={selectFromSignals} /> },
       { id: 'news', label: 'News', render: () => <NewsTab /> },
       { id: 'predictions', label: 'Predictions', render: () => <PredictionsTab /> },

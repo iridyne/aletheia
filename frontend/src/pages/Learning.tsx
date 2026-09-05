@@ -655,9 +655,18 @@ async function fetchKnowledgeTab(tab: KnowledgeTabKey, offset: number, search: s
 
 const kbCol = createColumnHelper<KnowledgeItem>()
 const kbColumns = [
-  kbCol.accessor('title', { header: 'Title' }),
+  kbCol.accessor('title', {
+    header: 'Title',
+    cell: info => (
+      <span>
+        {info.getValue()}
+        {info.row.original.confidence && (
+          <span className="ml-2"><ConfidenceBadge value={info.row.original.confidence} /></span>
+        )}
+      </span>
+    ),
+  }),
   kbCol.accessor('item_type', { header: 'Type', cell: info => <Badge tone="blue">{humanize(info.getValue() || 'unknown')}</Badge> }),
-  kbCol.accessor('confidence', { header: 'Confidence', cell: info => <ConfidenceBadge value={info.getValue()} /> }),
   kbCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
   kbCol.accessor('producer_run_id', { header: 'Producer', cell: info => <span className="mono">{info.getValue() ? String(info.getValue()).slice(0, 12) : 'Not recorded'}</span> }),
   kbCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),

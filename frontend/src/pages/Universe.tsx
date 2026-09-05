@@ -108,11 +108,16 @@ const planColumns = [
   }),
   planCol.accessor('direction', { header: 'Side', cell: info => humanize(info.getValue()) }),
   planCol.accessor(row => entryLabel(row), { id: 'entry', header: 'Entry', cell: info => <span className="mono">{info.getValue()}</span> }),
-  planCol.accessor(row => triggerLabel(row), { id: 'trigger', header: 'TriggerSpec' }),
   planCol.accessor(row => `${fmtNum(row.plan?.stop_price)} / ${fmtNum(row.plan?.target_price)} / ${riskReward(row)}`, {
     id: 'risk_geometry', header: 'Stop / Target / R:R', cell: info => <span className="mono">{info.getValue()}</span>,
   }),
-  planCol.accessor(row => `${humanize(row.execution_mode)} · ${tacticLabel(row)}`, { id: 'execution', header: 'Execution / tactic' }),
+  planCol.accessor(row => {
+    const trigger = triggerLabel(row)
+    const tactic = tacticLabel(row)
+    const mode = humanize(row.execution_mode)
+    const spec = trigger !== '—' && trigger !== tactic ? ` · ${trigger}` : ''
+    return `${mode} · ${tactic}${spec}`
+  }, { id: 'execution', header: 'Execution / Tactic' }),
   planCol.accessor('status', { header: 'Status', cell: info => <Badge tone="green">{humanize(info.getValue())}</Badge> }),
   planCol.accessor(row => expiryLabel(row.plan?.expires_at), { id: 'expires_at', header: 'Expiry / countdown' }),
 ]
@@ -505,7 +510,7 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <div className="flex gap-2 mt-3">
           <Button
             variant="secondary"
-            onClick={() => navigate(`/charts?symbol=${encodeURIComponent(sym)}${marketType && marketType !== 'spot' ? `&market_type=${encodeURIComponent(marketType)}` : ''}${venue ? `&exchange=${encodeURIComponent(venue)}` : ''}`)}
+            onClick={() => navigate(`/charts?symbol=${encodeURIComponent(sym)}&candidate_id=${encodeURIComponent(candidateId)}${marketType && marketType !== 'spot' ? `&market_type=${encodeURIComponent(marketType)}` : ''}${venue ? `&exchange=${encodeURIComponent(venue)}` : ''}`)}
           >
             View on Charts
           </Button>
