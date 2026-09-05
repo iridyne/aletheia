@@ -1,6 +1,6 @@
 import type { CollectorHealthDomain, CollectorHealthReport } from '../types'
 
-const PROBLEM_STATUSES = new Set(['failed', 'timed_out', 'skipped_budget', 'partial'])
+const PROBLEM_STATUSES = new Set(['failed', 'timed_out', 'skipped_budget', 'partial', 'empty'])
 
 function fmtAge(sec: number | null): string {
   if (sec == null) return 'never'
@@ -20,15 +20,14 @@ function fmtDomain(name: string): string {
 
 function domainLight(d: CollectorHealthDomain): 'red' | 'yellow' | 'green' | 'muted' {
   if (d.display_severity === 'info') return 'yellow'
-  if (d.display_severity === 'muted') return 'muted'
   if (d.degraded) return 'red'
-  if (PROBLEM_STATUSES.has(d.last_status)) return 'yellow'
-  if (d.last_status === 'not_configured' || d.last_status === 'disabled') return 'muted'
-  return 'green'
+  if (d.overdue || PROBLEM_STATUSES.has(d.last_status)) return 'yellow'
+  if (d.display_severity === 'muted' || d.last_status === 'not_configured' || d.last_status === 'disabled') return 'muted'
+  return d.last_status === 'success' ? 'green' : 'muted'
 }
 
 function isProblem(d: CollectorHealthDomain): boolean {
-  return d.degraded || PROBLEM_STATUSES.has(d.last_status)
+  return d.degraded || d.overdue || PROBLEM_STATUSES.has(d.last_status)
 }
 
 function FullDetails({ health }: { health: CollectorHealthReport }) {
@@ -40,14 +39,16 @@ function FullDetails({ health }: { health: CollectorHealthReport }) {
   const incident = health.infrastructure_incident
   const attributed = new Set(incident?.affected_domains ?? [])
   const independentProblems = problems.filter(d => !attributed.has(d.domain))
-  const healthyCount = sorted.filter(d => d.last_status === 'success').length
+  const healthyCount = sorted.filter(d => d.last_status === 'success' && !isProblem(d)).length
   const emptyCount = sorted.filter(d => d.last_status === 'empty').length
-  const inactiveCount = sorted.filter(d => d.last_status === 'disabled' || d.last_status === 'not_configured').length
+  const disabledCount = sorted.filter(d => d.last_status === 'disabled').length
+  const unconfiguredCount = sorted.filter(d => d.last_status === 'not_configured').length
   const neverRunCount = sorted.filter(d => d.last_status === 'never_run').length
   const otherStates = [
     emptyCount > 0 ? `${emptyCount} empty` : '',
-    inactiveCount > 0 ? `${inactiveCount} inactive` : '',
-    neverRunCount > 0 ? `${neverRunCount} never run` : '',
+    disabledCount > 0 ? `${disabledCount} disabled` : '',
+    unconfiguredCount > 0 ? `${unconfiguredCount} unconfigured` : '',
+    neverRunCount > 0 ? `${neverRunCount} unobserved` : '',
   ].filter(Boolean)
   const incidentTone = 'yellow'
 
@@ -117,11 +118,11 @@ function CompactDetails({ health }: { health: CollectorHealthReport }) {
     )
   }
   if (health.status === 'healthy') {
-    const healthyCount = health.domains.filter(d => d.last_status === 'success').length
+    const healthyCount = health.domains.filter(d => d.last_status === 'success' && !isProblem(d)).length
     return (
       <div className="sp-row">
         <span className="sp-label">Collectors</span>
-        <span className="sp-value">{healthyCount} healthy</span>
+        <span className="sp-value sp-value-wrap">{healthyCount} success · {health.domains.length - healthyCount} inactive or unobserved</span>
       </div>
     )
   }

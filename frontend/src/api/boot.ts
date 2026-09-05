@@ -16,7 +16,7 @@ export interface ShellBootstrap {
   risk?: { status?: string; violations?: string[]; kill_switch_active?: boolean }
   exchange?: { status?: string; execution_exchange?: string | null; data_exchange?: string | null; exchange_diverged?: boolean; paper_execution_mode?: string | null }
   operator?: { status?: string; mode?: string; permission_mode?: string; model_provider?: string | null; last_seen_at?: string | null; stale?: boolean; heartbeat_age_sec?: number; current_intent?: string | null; trading_daemon?: { evaluating?: boolean; state?: string; last_error_summary?: string | null } }
-  connectivity?: { state?: string; reason?: string }
+  connectivity?: { state: 'reachable' | 'unavailable' | 'recovering' | 'unknown'; reason: string }
   health?: { status?: string; issues?: string[]; availability?: string; reason?: string | null }
   runtime?: { version?: string; boot_commit?: string | null; current_commit?: string | null; mode?: string; update?: Record<string, unknown> }
   ticker?: Record<string, Record<string, unknown>>

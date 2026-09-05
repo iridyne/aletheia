@@ -24,6 +24,38 @@ def test_shell_bootstrap_is_compact_local_and_no_store():
     assert len(str(payload)) < 20_000
 
 
+@pytest.mark.parametrize("reachable,age,recovered,state", [
+    (True, 0, False, "reachable"),
+    (False, 0, False, "unavailable"),
+    (True, 100000, False, "unknown"),
+    (None, 0, False, "unknown"),
+    (True, 0, True, "recovering"),
+])
+def test_shell_connectivity_uses_cached_probe(monkeypatch, reachable, age, recovered, state):
+    import time
+    from aletheia.agent_runtime import connectivity
+    from aletheia.server.routes.ui import shell_bootstrap
+
+    monkeypatch.setattr(connectivity, "_last_external_probe_result", None if reachable is None else {"reachable": reachable, "ts": time.time() - age})
+    monkeypatch.setattr(connectivity, "_external_last_recovery_at", time.time() if recovered else None)
+    projection = shell_bootstrap(Response())["connectivity"]
+    assert projection["state"] == state
+    assert projection["reason"]
+
+
+def test_shell_connectivity_failure_is_isolated(monkeypatch):
+    from aletheia.agent_runtime import connectivity
+    from aletheia.server.routes.ui import shell_bootstrap
+
+    def fail():
+        raise RuntimeError("monitor unavailable")
+
+    monkeypatch.setattr(connectivity, "get_status", fail)
+    payload = shell_bootstrap(Response())
+    assert payload["connectivity"] == {"state": "unknown", "reason": "connectivity:RuntimeError"}
+    assert payload["gateway"]["running"] is True
+
+
 def test_bootstrap_failure_isolation_keeps_schema(monkeypatch):
     import aletheia.server.routes.ui as ui
 

@@ -518,17 +518,28 @@ export interface CollectorHealthReport {
   domains: CollectorHealthDomain[]
 }
 
-export interface MarketDataCoverageDomain {
-  domain: string
-  label: string
+export interface MarketDataCoverageInventory {
   state: 'fresh' | 'stale' | 'empty' | 'invalid' | 'idle'
-  critical: boolean
   row_count: number
   symbol_count: number
   source_counts: Record<string, number>
   newest_observed_at: string | null
   age_sec: number | null
+  fresh_row_count: number
+  stale_row_count: number
+  unavailable_row_count: number
+  freshness_state_counts: Record<string, number>
+}
+
+export interface MarketDataCoverageDomain extends MarketDataCoverageInventory {
+  domain: string
+  label: string
+  critical: boolean
   max_age_sec: number
+  scope: 'current_targets' | 'global'
+  target_count: number | null
+  missing_target_count: number
+  inventory: MarketDataCoverageInventory
 }
 
 export interface MarketDataCoverageReport {

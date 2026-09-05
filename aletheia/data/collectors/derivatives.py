@@ -61,13 +61,10 @@ class DerivativesCollector:
         top_position_map: dict[str, float] = {}
         try:
             if cfg.market_data.enable_long_short_ratio:
-                positioning_results = await asyncio.wait_for(
-                    asyncio.gather(
-                        _fetch_lsr_binance_batch(symbols),
-                        _fetch_top_position_ratio_binance_batch(symbols),
-                        return_exceptions=True,
-                    ),
-                    timeout=_LSR_BUDGET_SEC,
+                positioning_results = await asyncio.gather(
+                    _fetch_binance_ratio_batch(symbols, _BINANCE_LSR_URL),
+                    _fetch_binance_ratio_batch(symbols, _BINANCE_TOP_POSITION_RATIO_URL),
+                    return_exceptions=True,
                 )
                 for label, result in zip(
                     ("global_account_ratio", "top_position_ratio"),
@@ -80,9 +77,10 @@ class DerivativesCollector:
                         lsr_map = result
                     else:
                         top_position_map = result
-        except asyncio.TimeoutError:
-            errors.append("lsr_batch_timeout")
-            logger.debug("LSR batch fetch exceeded %.1fs local budget", _LSR_BUDGET_SEC)
+                    if not isinstance(result, BaseException):
+                        for sym in dict.fromkeys(symbols):
+                            if sym not in result:
+                                errors.append(f"{label}_missing {sym}")
         except Exception as e:
             errors.append(f"lsr_batch: {e}")
             logger.debug("LSR batch fetch failed (non-fatal): %s", e)
@@ -202,33 +200,47 @@ class DerivativesCollector:
         errors: list[str] = []
         funding_count = 0
         oi_count = 0
+        already_current = 0
+        empty: list[str] = []
         primary_name = provider._primary_name
         try:
             exchange = provider._ensure_primary()
             await exchange.load_markets()
-            for sym in symbols:
+            for sym in dict.fromkeys(symbols):
                 perp_sym = _to_perp_symbol(sym, exchange)
                 if not perp_sym:
+                    errors.append(f"history_unsupported {sym}")
                     continue
                 try:
-                    funding_count += await _maybe_backfill_funding_history(
+                    inserted, current = await _maybe_backfill_funding_history(
                         exchange, sym, perp_sym, primary_name, history_hours,
                         errors=errors,
                     )
+                    funding_count += inserted
+                    already_current += current
+                    if not inserted and not current:
+                        empty.append(f"funding_history_empty {sym}")
                 except Exception as exc:
                     errors.append(f"funding_history {sym}: {exc}")
                 try:
-                    oi_count += await _maybe_backfill_oi_history(
+                    inserted, current = await _maybe_backfill_oi_history(
                         exchange, sym, perp_sym, primary_name, history_hours,
                         errors=errors,
                     )
+                    oi_count += inserted
+                    already_current += current
+                    if not inserted and not current:
+                        empty.append(f"oi_history_empty {sym}")
                 except Exception as exc:
                     errors.append(f"oi_history {sym}: {exc}")
         finally:
             await provider.close()
+        if funding_count or oi_count or already_current:
+            errors.extend(empty)
         return {
             "funding": funding_count,
             "open_interest": oi_count,
+            "already_current": already_current,
             "errors": errors,
         }
 
@@ -514,7 +526,7 @@ def _insert_historical_funding_snapshot_pair(
 async def _maybe_backfill_funding_history(
     exchange, sym: str, perp_sym: str, exchange_name: str, since_hours: int,
     errors: list[str] | None = None,
-) -> int:
+) -> tuple[int, bool]:
     """Backfill funding rate history when the local window is sparse.
 
     Idempotency (per spec MS-C05): no-op if ≥3 rows already exist within
@@ -522,6 +534,7 @@ async def _maybe_backfill_funding_history(
     event+transition anchor pair (via _insert_historical_funding_snapshot_pair)
     so compute_local_funding() can reconstruct position economics even when
     the real-time collector had a gap spanning a settlement window.
+    Already-covered symbol windows are reported separately from inserted rows.
     """
     from aletheia.storage.repositories import _select_all
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
@@ -530,13 +543,13 @@ async def _maybe_backfill_funding_history(
         where="symbol=? AND exchange=? AND observed_at>?", params=(sym, exchange_name, cutoff), limit=3,
     )
     if len(existing) >= 3:
-        return 0
+        return 0, True
     try:
         history = await exchange.fetch_funding_rate_history(perp_sym, limit=24)
     except Exception as e:
         if errors is not None:
             errors.append(f"funding_history {sym}: {e}")
-        return 0
+        return 0, False
     valid_items: list[tuple[int, float]] = []
     invalid_found = False
     for item in history:
@@ -555,19 +568,19 @@ async def _maybe_backfill_funding_history(
             errors.append(code)
         # Funding rows form a settlement transition chain.  Removing an invalid
         # middle row and joining its neighbours would falsely prove completeness.
-        return 0
+        return 0, False
     valid_items.sort(key=lambda item: item[0])
     n = 0
     for i, (ts_ms, rate) in enumerate(valid_items):
         next_ts_ms = valid_items[i + 1][0] if i + 1 < len(valid_items) else None
         n += _insert_historical_funding_snapshot_pair(sym, exchange_name, ts_ms, rate, next_ts_ms=next_ts_ms)
-    return n
+    return n, False
 
 
 async def _maybe_backfill_oi_history(
     exchange, sym: str, perp_sym: str, exchange_name: str, since_hours: int,
     errors: list[str] | None = None,
-) -> int:
+) -> tuple[int, bool]:
     """Same shape as funding backfill. Bitget raises NotSupported — caller must
     not re-raise (per spec MS-C06)."""
     from aletheia.storage.repositories import _select_all, insert_open_interest_snapshot
@@ -577,7 +590,7 @@ async def _maybe_backfill_oi_history(
         where="symbol=? AND exchange=? AND observed_at>?", params=(sym, exchange_name, cutoff), limit=3,
     )
     if len(existing) >= 3:
-        return 0
+        return 0, True
     try:
         history = await exchange.fetch_open_interest_history(perp_sym, "1h", limit=24)
     except Exception as e:
@@ -589,7 +602,7 @@ async def _maybe_backfill_oi_history(
             "OI history not available for %s on %s (%s: %s) — skipping backfill",
             sym, exchange_name, type(e).__name__, e,
         )
-        return 0
+        return 0, False
     n = 0
     for item in history:
         raw_ts = item.get("timestamp")
@@ -629,59 +642,38 @@ async def _maybe_backfill_oi_history(
         )
         insert_open_interest_snapshot(snap.model_dump())
         n += 1
-    return n
+    return n, False
 
 
-async def _fetch_lsr_binance_batch(symbols: list[str]) -> dict[str, float]:
-    """Fetch latest 1h global long/short account ratio from Binance Futures.
-
-    Returns a dict mapping canonical symbol → ratio. Symbols Binance does not
-    recognize are silently omitted. USDT-margined linear perps only.
-    """
+async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, float]:
     results: dict[str, float] = {}
-    async with httpx_client(timeout=10) as client:
-        for sym in symbols[:20]:  # cap to keep tick budget tight
-            binance_sym = sym.replace("/", "")
-            try:
-                resp = await client.get(
-                    _BINANCE_LSR_URL,
-                    params={"symbol": binance_sym, "period": "1h", "limit": 1},
-                )
-                if resp.status_code != 200:
-                    continue
-                items = resp.json()
-                if items and isinstance(items, list):
-                    ratio = items[0].get("longShortRatio")
-                    if ratio is not None:
-                        results[sym] = float(ratio)
-            except Exception as e:
-                logger.debug("LSR fetch failed for %s: %s", sym, e)
-    return results
+    semaphore = asyncio.Semaphore(4)
+    # Four requests per stream, eight combined; CCXT remains sequential.
+    async with httpx_client(timeout=_LSR_BUDGET_SEC) as client:
+        async def fetch(sym: str) -> None:
+            async with semaphore:
+                try:
+                    resp = await client.get(
+                        url,
+                        params={"symbol": sym.replace("/", ""), "period": "1h", "limit": 1},
+                    )
+                    if resp.status_code != 200:
+                        return
+                    items = resp.json()
+                    if isinstance(items, list) and items:
+                        ratio = _finite_float(items[0].get("longShortRatio"))
+                        if ratio is not None and ratio > 0:
+                            results[sym] = ratio
+                except Exception as exc:
+                    logger.debug("Ratio fetch failed for %s: %s", sym, exc)
 
-
-async def _fetch_top_position_ratio_binance_batch(
-    symbols: list[str],
-) -> dict[str, float]:
-    """Fetch latest 1h top-trader long/short position ratio from Binance."""
-    results: dict[str, float] = {}
-    async with httpx_client(timeout=10) as client:
-        for sym in symbols[:20]:
-            try:
-                resp = await client.get(
-                    _BINANCE_TOP_POSITION_RATIO_URL,
-                    params={
-                        "symbol": sym.replace("/", ""),
-                        "period": "1h",
-                        "limit": 1,
-                    },
-                )
-                if resp.status_code != 200:
-                    continue
-                items = resp.json()
-                if items and isinstance(items, list):
-                    ratio = items[0].get("longShortRatio")
-                    if ratio is not None:
-                        results[sym] = float(ratio)
-            except Exception as exc:
-                logger.debug("Top position ratio fetch failed for %s: %s", sym, exc)
+        tasks = [asyncio.create_task(fetch(sym)) for sym in dict.fromkeys(symbols)]
+        try:
+            if tasks:
+                await asyncio.wait(tasks, timeout=_LSR_BUDGET_SEC)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     return results

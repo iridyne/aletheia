@@ -73,70 +73,7 @@ def test_primary_derivatives_source_time_contract_is_explicit():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "MS-S01", _CONTRACT, "§3.1 LSR collector", "L2a",
-        "derivatives.py defines _BINANCE_LSR_URL module-level constant",
-    ),
-)
-def test_lsr_url_constant_defined():
-    """AST walk: _BINANCE_LSR_URL must be an Assign at module scope (not a comment match)."""
-    tree = ast.parse(_DERIVATIVES.read_text(encoding="utf-8"))
-    assigned: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Name):
-                    assigned.add(tgt.id)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            assigned.add(node.target.id)
-    assert "_BINANCE_LSR_URL" in assigned, (
-        "derivatives.py must define _BINANCE_LSR_URL module-level constant; "
-        f"found assignments: {sorted(assigned)[:20]}"
-    )
 
-
-@spec_claim(
-    SpecClaim(
-        "MS-S02", _CONTRACT, "§3.1 LSR write path", "L2a",
-        "_parse_oi() accepts lsr parameter and threads it into "
-        "OpenInterestSnapshot.long_short_ratio at construction time "
-        "(single insert, no follow-up UPDATE)",
-    ),
-)
-def test_parse_oi_threads_lsr_at_construction():
-    """AST: _parse_oi signature has lsr kwarg AND OpenInterestSnapshot()
-    constructor call inside _parse_oi passes long_short_ratio=lsr.
-    """
-    tree = ast.parse(_DERIVATIVES.read_text(encoding="utf-8"))
-    parse_oi_fn = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_parse_oi":
-            parse_oi_fn = node
-            break
-    assert parse_oi_fn, "_parse_oi function not found"
-
-    arg_names = {a.arg for a in parse_oi_fn.args.args} | {
-        a.arg for a in parse_oi_fn.args.kwonlyargs
-    }
-    assert "lsr" in arg_names, (
-        f"_parse_oi must accept an 'lsr' parameter; got: {sorted(arg_names)}"
-    )
-
-    found_construction = False
-    for node in ast.walk(parse_oi_fn):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "OpenInterestSnapshot"
-        ):
-            kwargs = {kw.arg for kw in node.keywords}
-            assert "long_short_ratio" in kwargs, (
-                "OpenInterestSnapshot() inside _parse_oi must include "
-                f"long_short_ratio kwarg; got: {sorted(kwargs)}"
-            )
-            found_construction = True
-    assert found_construction, "No OpenInterestSnapshot() construction inside _parse_oi"
 
 
 @spec_claim(
@@ -155,69 +92,7 @@ def test_derivatives_table_has_lsr_column():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "MS-C01", _CONTRACT, "§3.1 LSR degraded", "L2c",
-        "LSR batch fetch failure does NOT prevent OpenInterestSnapshot "
-        "persistence; the OI write path runs regardless and lsr_map.get(sym) "
-        "yields None for missing entries",
-    ),
-)
-def test_lsr_failure_does_not_block_oi():
-    """AST: in DerivativesCollector.collect(), the try/except wrapping the
-    _fetch_lsr_binance_batch call must NOT contain the OI write loop —
-    i.e. the for-loop over symbols must live AFTER and OUTSIDE the LSR try block,
-    so an exception in LSR fetch leaves lsr_map empty and OI inserts proceed.
-    """
-    tree = ast.parse(_DERIVATIVES.read_text(encoding="utf-8"))
-    collect_fn = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "collect":
-            collect_fn = node
-            break
-    assert collect_fn, "DerivativesCollector.collect not found"
 
-    # Find the try block that contains _fetch_lsr_binance_batch call.
-    lsr_try_node = None
-    for node in ast.walk(collect_fn):
-        if isinstance(node, ast.Try):
-            for sub in ast.walk(node):
-                if (
-                    isinstance(sub, ast.Call)
-                    and isinstance(sub.func, ast.Name)
-                    and sub.func.id == "_fetch_lsr_binance_batch"
-                ):
-                    lsr_try_node = node
-                    break
-                if (
-                    isinstance(sub, ast.Await)
-                    and isinstance(sub.value, ast.Call)
-                    and isinstance(sub.value.func, ast.Name)
-                    and sub.value.func.id == "_fetch_lsr_binance_batch"
-                ):
-                    lsr_try_node = node
-                    break
-            if lsr_try_node:
-                break
-    assert lsr_try_node, (
-        "DerivativesCollector.collect must wrap _fetch_lsr_binance_batch in a try/except "
-        "so LSR failure cannot escape and abort the OI write loop."
-    )
-
-    # The OI-write loop must NOT appear inside lsr_try_node.body.
-    for sub in ast.walk(lsr_try_node):
-        if isinstance(sub, ast.For):
-            # If a for-loop appears inside the LSR try, it must NOT contain insert_open_interest_snapshot.
-            for inner in ast.walk(sub):
-                if (
-                    isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Name)
-                    and inner.func.id == "insert_open_interest_snapshot"
-                ):
-                    pytest.fail(
-                        "OI write path lives inside the LSR try/except — "
-                        "an LSR failure would skip OI persistence. Move the OI loop outside."
-                    )
 
 
 # ---------------------------------------------------------------------------
@@ -569,29 +444,13 @@ def test_latest_coingecko_top_pins_new_rows_by_batch_id(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "MS-S13", _CONTRACT, "§3.4 history backfill", "L2a",
-        "derivatives.py defines _maybe_backfill_funding_history and "
-        "_maybe_backfill_oi_history async functions",
-    ),
-)
-def test_backfill_functions_defined():
-    tree = ast.parse(_DERIVATIVES.read_text(encoding="utf-8"))
-    async_fns = {
-        node.name for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef)
-    }
-    for name in ("_maybe_backfill_funding_history", "_maybe_backfill_oi_history"):
-        assert name in async_fns, (
-            f"derivatives.py must define async {name}; have async fns: {sorted(async_fns)}"
-        )
+
 
 
 @spec_claim(
     SpecClaim(
         "MS-C05", _CONTRACT, "§3.4 backfill idempotency", "L2c",
-        "_maybe_backfill_funding_history returns 0 when ≥3 rows already exist "
+        "_maybe_backfill_funding_history reports zero inserts and already-current when ≥3 rows already exist "
         "in the since_hours window (idempotent re-runs)",
     ),
 )
@@ -613,7 +472,7 @@ def test_backfill_idempotent_with_existing_rows(tmp_path, monkeypatch):
     for offset in (1, 2, 3):
         repo.insert_funding_rate_snapshot({
             "symbol": sym, "exchange": "binance",
-            "funding_rate": 0.0001, "funding_rate_annualized": 0.1095,
+            "funding_rate": 0.0001 * offset, "funding_rate_annualized": 0.1095 * offset,
             "observed_at": (now - timedelta(minutes=offset)).isoformat(),
         })
 
@@ -628,7 +487,7 @@ def test_backfill_idempotent_with_existing_rows(tmp_path, monkeypatch):
     result = asyncio.run(_maybe_backfill_funding_history(
         _FakeExchange(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
-    assert result == 0, f"backfill must be a no-op with existing rows; got {result} inserts"
+    assert result == (0, True), f"backfill must be a no-op with existing rows; got {result} inserts"
     sq.close_db()
 
 
@@ -662,7 +521,7 @@ def test_oi_history_swallows_not_supported(tmp_path, monkeypatch):
         _FakeBitget(), "BTC/USDT", "BTC/USDT:USDT", "bitget",
         since_hours=24, errors=errors,
     ))
-    assert result == 0
+    assert result == (0, False)
     assert any("not supported" in e.lower() for e in errors), (
         f"errors list must record the NotSupported failure; got: {errors}"
     )

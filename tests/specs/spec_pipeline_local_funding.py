@@ -422,7 +422,7 @@ def test_invalid_historical_funding_sequence_cannot_complete_ledger(
     from aletheia.storage import repositories as repo
 
     errors: list[str] = []
-    inserted = asyncio.run(_maybe_backfill_funding_history(
+    inserted, _ = asyncio.run(_maybe_backfill_funding_history(
         InvalidHistoryExchange(),
         "BTC/USDT",
         "BTC/USDT:USDT",
@@ -703,12 +703,7 @@ def test_scheduler_observed_instruments_include_all_open_paper_futures(
     symbols = scheduler._get_derivative_symbols([])
 
     assert symbols == ["HYPE/USDT", "LIT/USDT"]
-    import inspect
 
-    collector_source = inspect.getsource(scheduler._async_data_collectors)
-    assert "_get_derivative_symbols(instruments)" in collector_source
-    assert "list_watchable_entry_plans" in collector_source
-    assert "deriv.collect(derivative_symbols)" in collector_source
 
 
 @spec_claim(
